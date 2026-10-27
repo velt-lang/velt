@@ -193,6 +193,14 @@ impl<M: Module> Translator<'_, '_, M> {
                 _ => {}
             }
         }
+        if symbol == "velt_rt_math_f64_bits" && params == [Ty::F64] && ret == Ty::U64 {
+            let flags = ir::MemFlags::new();
+            return Some(self.builder.ins().bitcast(ir::types::I64, flags, args[0]));
+        }
+        if symbol == "velt_rt_math_bits_f64" && params == [Ty::U64] && ret == Ty::F64 {
+            let flags = ir::MemFlags::new();
+            return Some(self.builder.ins().bitcast(ir::types::F64, flags, args[0]));
+        }
         if symbol == "velt_rt_math_umulh" && params == [Ty::U64, Ty::U64] && ret == Ty::U64 {
             return Some(self.builder.ins().umulhi(args[0], args[1]));
         }

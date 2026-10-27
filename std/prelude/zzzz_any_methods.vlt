@@ -163,6 +163,10 @@ export function __anyStr_charCodeAt(s: string, args: any[]): any {
   return s.charCodeAt(i) as number;
 }
 
+export function __anyStr_codePointAt(s: string, args: any[]): any {
+  return s.codePointAt(__anyIntArg(args, 0, 0));
+}
+
 export function __anyStr_at(s: string, args: any[]): any {
   return s.at(__anyIntArg(args, 0, 0));
 }
@@ -494,10 +498,12 @@ export function __anyArr_toString<T>(a: T[], args: any[]): any {
 // parameter): `__any<Class>_<name><type arguments>(value, args)` (velt_vir any_builtin.rs,
 // `any_class_call`); those of `Set` are in std/collections/set.vlt.
 
-/** `m.forEach(f)` through `any`: `f(value, key, m)` per entry, in insertion order. */
-export function __anyMap_forEach<K, V>(m: Map<K, V>, args: any[]): any {
+/**
+ * `m.forEach(f)` through `any`: `f(value, key, whole)` per entry, in insertion order; `whole` is
+ * `m` as an `any` of its own class (a class extending `Map`, with its own members).
+ */
+export function __anyMap_forEach<K, V>(m: Map<K, V>, args: any[], whole: any): any {
   const f = __anyFnArg(args, 0);
-  const whole: any = m;
   m.forEach((v, k) => {
     const value: any = v;
     const key: any = k;

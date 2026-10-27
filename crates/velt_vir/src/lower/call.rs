@@ -51,6 +51,18 @@ impl FnLower<'_, '_> {
                     // interface its interface is or extends (#1368): through its table.
                     return self.call_dyn(slot, method_type_args, args, ty, transfer);
                 }
+                if let Some(field) = self.dyn_getter_only(*iface, *slot, recv_ty) {
+                    // A write to a field the value has only a getter for: Node's `TypeError`
+                    // in strict code.
+                    self.panic_msg(&format!(
+                        "TypeError: Cannot set property {field} of #<Object> which has only a getter"
+                    ));
+                    self.terminate(vir::Terminator::Unreachable);
+                    let dead = self.new_block();
+                    self.switch_to(dead);
+                    let vt = self.cx.ty(ty);
+                    return self.zero_value(vt);
+                }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
                 // A generic method's own type args follow its owner's.

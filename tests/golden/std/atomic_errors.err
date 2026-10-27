@@ -1,7 +1,7 @@
-atomic_errors.vlt:4:10: error: `Atomic<T>` needs an integer type or `bool`, found `T`
+atomic_errors.vlt:4:10: error: `Atomic<T>` needs a number type or `bool`, found `T`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`
 
-atomic_errors.vlt:7:15: error: `Atomic<T>` needs an integer type or `bool`, found `string`
+atomic_errors.vlt:7:15: error: `Atomic<T>` needs a number type or `bool`, found `string`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`
 
 atomic_errors.vlt:10:8: error: mismatched types
@@ -19,9 +19,9 @@ atomic_errors.vlt:13:35: error: mismatched types
 atomic_errors.vlt:14:14: error: mismatched types
   = note: expected "acquire" | "seqcst" | "release" | "acqrel", found "relaxed"
 
-atomic_errors.vlt:16:1: error: `add` needs an integer `Atomic`, found `Atomic<boolean>`
+atomic_errors.vlt:16:1: error: `add` needs an `Atomic` of a number, found `Atomic<boolean>`
 
-atomic_errors.vlt:17:1: error: `max` needs an integer `Atomic`, found `Atomic<boolean>`
+atomic_errors.vlt:17:1: error: `max` needs an `Atomic` of a number, found `Atomic<boolean>`
 
 atomic_errors.vlt:18:13: error: `Atomic`'s method `load` cannot be used as a function value
   = note: call it where it is used: `.load(…)`
@@ -29,6 +29,5 @@ atomic_errors.vlt:18:13: error: `Atomic`'s method `load` cannot be used as a fun
 atomic_errors.vlt:24:8: error: an ordering must be a string literal
   = note: the compiler picks the instruction for it: write "relaxed", "acquire", "release", "acqrel" or "seqcst"
 
-atomic_errors.vlt:25:21: error: `Atomic<T>` needs an integer type or `bool`, found `f64`
-  = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`
+atomic_errors.vlt:27:1: error: `or` needs an `Atomic` of an integer or `bool`, found `Atomic<f64>`
   = note: for an integer counter, write its type: `new Atomic<u64>(…)`

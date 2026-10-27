@@ -1,5 +1,5 @@
-// Prelude: JS string methods, `String.fromCharCode`, `parseInt`, `parseFloat`, `Number(s)`
-// (runtime string functions, rt_abi_async.md §12.2).
+// Prelude: JS string methods, `String.fromCharCode`, `String.fromCodePoint`, `parseInt`,
+// `parseFloat`, `Number(s)` (runtime string functions, rt_abi_async.md §12.2).
 //
 // Positions and lengths count UTF-16 code units, as in JavaScript (`"😀".length` is 2): a
 // position may fall between the two halves of a surrogate pair, and slicing there keeps the
@@ -224,12 +224,32 @@ extend string {
   charCodeAt(i: i64 = 0): i64 {
     return __intrinsic_str_char_code_at(this, i);
   }
+
+  /**
+   * The code point at `i`: a surrogate pair's character when `i` is at its high surrogate,
+   * otherwise the code unit there (a lone surrogate, or the low half of a pair). `undefined` if
+   * `i` is out of range, as in JS.
+   */
+  codePointAt(i: i64 = 0): number | undefined {
+    const high = __intrinsic_str_char_code_at(this, i);
+    if (high < 0) {
+      return undefined;
+    }
+    if (high >= 0xd800 && high < 0xdc00) {
+      const low = __intrinsic_str_char_code_at(this, i + 1);
+      if (low >= 0xdc00 && low < 0xe000) {
+        return (0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00)) as number;
+      }
+    }
+    // Every code point is exact in a number.
+    return high as number;
+  }
 }
 
 /**
- * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
- * `string` itself. `String(x)` converts any printable value as `${x}` does (the compiler
- * writes it).
+ * The static members of JS's `String` (`String.fromCharCode`, `String.fromCodePoint`). The
+ * methods of strings are on `string` itself. `String(x)` converts any printable value as `${x}`
+ * does (the compiler writes it).
  */
 export class String {
   /**
@@ -245,6 +265,29 @@ export class String {
     let s = "";
     for (const code of codes) {
       s += velt_rt_str_from_char_code((code % 65536) as i64);
+    }
+    return s;
+  }
+
+  /**
+   * JS `String.fromCodePoint(...codePoints)`: the string of these code points (one or two
+   * UTF-16 code units each). A RangeError panic for a code point that is not an integer from 0
+   * to 0x10FFFF, as JS throws one. A lone surrogate's code point gives that lone surrogate.
+   */
+  static fromCodePoint(...codePoints: f64[]): string {
+    let s = "";
+    for (const cp of codePoints) {
+      if (!(cp >= 0 && cp <= 0x10ffff) || Math.trunc(cp) != cp) {
+        panic(`RangeError: Invalid code point ${cp}`);
+      }
+      const c = cp as i64;
+      if (c < 0x10000) {
+        s += velt_rt_str_from_char_code(c);
+      } else {
+        // The pair's halves join into one character.
+        s += velt_rt_str_from_char_code(0xd800 + ((c - 0x10000) >> 10));
+        s += velt_rt_str_from_char_code(0xdc00 + ((c - 0x10000) & 0x3ff));
+      }
     }
     return s;
   }

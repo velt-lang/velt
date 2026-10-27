@@ -372,7 +372,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "set",
         ],
     ),
-    ("String", &["fromCharCode"]),
+    ("String", &["fromCharCode", "fromCodePoint"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
     ("WeakSet", &["add", "delete", "has"]),
@@ -383,6 +383,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "at",
             "charAt",
             "charCodeAt",
+            "codePointAt",
             "endsWith",
             "includes",
             "indexOf",
@@ -593,7 +594,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("compareTo", COMPARE),
             ("countOnes", "count the set bits in a loop"),
+            (
+                "fromBits",
+                "read the bits through a `DataView` (`setBigUint64`, `getFloat64`)",
+            ),
             ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            (
+                "toBits",
+                "write the number to a `DataView` (`setFloat64`) and read `getBigUint64`",
+            ),
             ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
         ],
     ),

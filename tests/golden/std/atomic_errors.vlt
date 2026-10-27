@@ -1,5 +1,5 @@
 // `Atomic<T>`'s type errors: what `T` can be, orderings (literal, and one the operation can
-// have), integer-only methods, and methods used as values.
+// have), number-only and bitwise methods, and methods used as values.
 function first<T>(a: Atomic<T>): T {
   return a.load();
 }
@@ -22,4 +22,6 @@ function pick(fast: bool): "relaxed" | "acquire" {
 }
 
 n.load(pick(true));
+// A number literal makes an `Atomic<f64>`, which has no bitwise methods.
 const untyped = new Atomic(5);
+untyped.or(1);

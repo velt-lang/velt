@@ -179,8 +179,37 @@ impl FnLower<'_, '_> {
             return None;
         };
         let name = &want.methods.get(slot as usize)?.name;
-        let found = own.methods.iter().position(|m| &m.name == name)?;
+        if let Some(found) = own.methods.iter().position(|m| &m.name == name) {
+            return Some(found as u32);
+        }
+        // A field's getter (`<v>`) or setter (`<set v>`) slot of the bound, filled by a getter
+        // or setter of a literal's own interface (`T extends { v: number }`).
+        let inner = name.strip_prefix('<')?.strip_suffix('>')?;
+        let found = own.methods.iter().position(|m| m.name == inner)?;
         Some(found as u32)
+    }
+
+    /// The field whose setter slot `slot` of bound `iface` is, when the interface value `recv`
+    /// instantiating the bound has only a getter for it (a literal `{ get v() { … } }` passed
+    /// for `T extends { v: number }` and written through `T`).
+    pub(super) fn dyn_getter_only(
+        &mut self,
+        iface: DefId,
+        slot: u32,
+        recv: TyId,
+    ) -> Option<String> {
+        let TyKind::Dyn(have, _) = self.cx.kind(recv) else {
+            return None;
+        };
+        let hir::Def::Interface(want) = self.cx.hir.def(iface) else {
+            return None;
+        };
+        let name = want.methods.get(slot as usize)?.name.clone();
+        let field = name.strip_prefix("<set ")?.strip_suffix('>')?.to_string();
+        let hir::Def::Interface(own) = self.cx.hir.def(have) else {
+            return None;
+        };
+        own.methods.iter().any(|m| m.name == field).then_some(field)
     }
 
     pub(super) fn call_dyn(

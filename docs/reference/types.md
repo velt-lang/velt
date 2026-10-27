@@ -2871,8 +2871,9 @@ on, as in TypeScript, where Velt knows the literal's type:
   there; one where an object type is expected that declares only fields
   (`{ value: T }`, sigx's `toSignal`) is a view of the literal in a program that makes proxies
   ([views](#any-and-unknown)), as `obj as Computed<T>` is. Passed for a type parameter whose
-  bound declares fields (`T extends { v: number }`), the literal is a value of the bound, its
-  getters filling the fields. Each read runs the getter at that moment and each write runs the
+  bound declares fields (`T extends { v: number }`), the literal satisfies the bound, its
+  getters filling the fields, and `T` is the literal's own type; writing a field it has only a
+  getter for is a `TypeError`. Each read runs the getter at that moment and each write runs the
   setter. As text (`` `${o}` ``, `String(o)`, `o + ""`) it is `[object Object]`, as in Node. `console.log` and `JSON.stringify` show such a
   literal as Node does: `{ n: 10, double: [Getter], only: [Setter] }`, and the getters' results
   in JSON (a setter alone is left out).

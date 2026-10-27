@@ -181,3 +181,46 @@ const asText = {
   },
 };
 console.log(`${asText}`, String(asText), asText + "", "x" + asText);
+
+// `T` is the literal's own type: the result prints, and members beyond the bound stay.
+function same2<T extends { v: number }>(x: T): T {
+  return x;
+}
+
+const r2 = same2({
+  get v() {
+    return 5;
+  },
+});
+console.log(r2.v, r2);
+const q2 = same2({
+  get v() {
+    return 3;
+  },
+  w: 1,
+});
+console.log(q2.v, q2.w);
+
+// A write through another function's bound of the same shape is that value's own.
+function setIt<T extends { v: number }>(x: T): void {
+  x.v = 7;
+}
+
+const plainV = { v: 1 };
+setIt(plainV);
+console.log(plainV.v);
+
+function readIt<T extends { v: number }>(x: T): number {
+  return x.v;
+}
+
+console.log(
+  readIt({
+    get v() {
+      return 2;
+    },
+  }),
+);
+
+// `join` and `toString` of a list of them write each as `[object Object]`.
+console.log([asText].join(), [asText, asText].join("|"), [asText].toString());
