@@ -19,7 +19,8 @@ function toSignals<T extends object>(source: T): ToSignals<T> {
 const r = toSignals({ count: 1, name: "a" });
 console.log(r.count.value, r.name.value, tracked.hits);
 
-const o: any = {};
+// (A record: a fixed-shape object gets no new keys through `any` yet, #924.)
+const o: any = {} as Record<string, number>;
 (o as Record<string, number>)["a"] = 1;
 (o as Record<string, number>).b = 2;
 const k = "c";
