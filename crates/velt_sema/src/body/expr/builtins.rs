@@ -226,7 +226,7 @@ impl FnCx<'_, '_> {
     fn print(&mut self, intr: Intrinsic, args: &[ast::Expr], span: Span) -> hir::Expr {
         let mut out = vec![];
         for a in args {
-            let h = self.expr(a, None, Want::Borrow);
+            let h = self.printed_expr(a);
             let h = self.read_shared(h);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");

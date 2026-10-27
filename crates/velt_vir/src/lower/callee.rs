@@ -47,7 +47,12 @@ impl super::Cx<'_> {
         }
     }
 
-    fn match_all(&self, xs: &[TyId], ys: &[TyId], binds: &mut Vec<Option<TyId>>) -> bool {
+    pub(super) fn match_all(
+        &self,
+        xs: &[TyId],
+        ys: &[TyId],
+        binds: &mut Vec<Option<TyId>>,
+    ) -> bool {
         xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.match_ty(*x, *y, binds))
     }
 
@@ -76,7 +81,7 @@ impl super::Cx<'_> {
     }
 
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
-    fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
+    pub(super) fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
         let mut out = vec![ty];
         let mut cur = ty;
         while let TyKind::Adt(d, args) = self.kind(cur) {
@@ -102,27 +107,6 @@ impl super::Cx<'_> {
             by_iface.into_iter().map(|(k, v)| (k, v.into())).collect()
         });
         index.get(&iface).cloned().unwrap_or_else(|| Rc::from([]))
-    }
-
-    /// The impl of `iface<iargs>` for concrete `ty` (or a base class of it): its index.
-    pub(super) fn find_impl(&mut self, iface: DefId, iargs: &[TyId], ty: TyId) -> u32 {
-        let impls = self.impls_of(iface);
-        for cand in self.self_and_bases(ty) {
-            for &i in impls.iter() {
-                let imp = &self.hir.impls[i as usize];
-                let mut binds = vec![None; imp.generics as usize];
-                if self.match_ty(imp.ty, cand, &mut binds)
-                    && imp.iface_args.len() == iargs.len()
-                    && self.match_all(&imp.iface_args, iargs, &mut binds)
-                {
-                    return i;
-                }
-            }
-        }
-        ice(format_args!(
-            "no impl of interface for type `{}`",
-            self.type_name(ty)
-        ))
     }
 
     /// Method `slot` of impl `index` for concrete `ty`: the def and its type args. A default

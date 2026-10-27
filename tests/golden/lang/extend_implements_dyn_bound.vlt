@@ -1,0 +1,65 @@
+// An interface value meets a block's bound on its interface, or on one its interface extends:
+// `P`, `P2 extends P`, and as the type argument of a generic target (`Box<P>`).
+
+interface P {
+  p(): string;
+}
+
+interface P2 extends P {
+  p2(): string;
+}
+
+interface Q {
+  q(): string;
+}
+
+interface R {
+  r(): string;
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+extend<T extends P> T implements Q {
+  q(): string {
+    return "Q of " + this.p();
+  }
+}
+
+extend<T extends P> Box<T> implements R {
+  r(): string {
+    return "R of box of " + this.v.p();
+  }
+}
+
+class A implements P2 {
+  p(): string {
+    return "A.p";
+  }
+  p2(): string {
+    return "A.p2";
+  }
+}
+
+function needQ<T extends Q>(x: T): string {
+  return x.q();
+}
+
+function needR<T extends R>(x: T): string {
+  return x.r();
+}
+
+function main() {
+  const w: P = new A();
+  const v: P2 = new A();
+  console.log(needQ(w));
+  console.log(needQ(v));
+  console.log(needR(new Box(w)));
+  console.log(needR(new Box(v)));
+  console.log(needR(new Box(new A())));
+  const q: Q = w;
+  console.log(q.q());
+  const r: R = new Box(w);
+  console.log(r.r());
+}

@@ -87,7 +87,10 @@ impl FnCx<'_, '_> {
                 method_type_args: vec![],
             }
         } else {
-            Callee::Dyn { slot: slot as u32 }
+            Callee::Dyn {
+                slot: slot as u32,
+                method_type_args: vec![],
+            }
         };
         let kind = H::Call {
             callee,

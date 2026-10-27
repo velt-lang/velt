@@ -263,7 +263,7 @@ impl FnCx<'_, '_> {
 
     /// A spread for fixed parameters whose length is not known when compiling (reported).
     fn unknown_length_spread(&mut self, inner: &ast::Expr) {
-        let h = self.expr(inner, None, Want::Borrow);
+        let h = self.payload_expr(inner, None, Want::Borrow);
         if self.cx.ty.is_bottom(h.ty) {
             return;
         }

@@ -31,8 +31,11 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         let outer: Vec<TyId> = args.drain(..info.outer.len().min(args.len())).collect();
-        if info.expanding {
-            if let Some(own) = self.recursive_union_ref(a) {
+        if self.aliases[a as usize].expanding {
+            // With its defaults (`type D<T = number> = string | T | D[]`).
+            let own = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
+            let full = [outer, own].concat();
+            if let Some(own) = self.recursive_union_ref(a, &full, t.span) {
                 return own;
             }
             let d =
@@ -46,7 +49,7 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let args = [outer, args].concat();
-        if let Some(own) = self.recursive_union(a, t.span) {
+        if let Some(own) = self.recursive_union(a, args.clone(), t.span) {
             return own;
         }
         self.alias_body(a, args, t.span)
@@ -105,4 +108,42 @@ impl Ctx<'_> {
         let t = self.subst(body, &args);
         self.reduce_known_intersection(t)
     }
+}
+
+/// Resolve every type alias that nothing expanded, so its errors are reported too
+/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
+/// were checked at their uses.
+pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
+    cx.checking_unused_aliases = true;
+    for a in 0..cx.aliases.len() {
+        if cx.aliases[a].used {
+            continue;
+        }
+        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
+        // A recursive union alias is checked as its union (`crate::recursive_unions`).
+        if decl.generics.is_empty()
+            && cx.aliases[a].outer.is_empty()
+            && cx
+                .recursive_union(a as u32, vec![], decl.name.span)
+                .is_some()
+        {
+            continue;
+        }
+        let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        cx.aliases[a].used = true;
+        cx.aliases[a].expanding = true;
+        // An alias of a generic function type that nothing uses as a type is fine: constants
+        // of it are generic functions (`generic_arrows::typed`). Its function type is checked
+        // with the type parameters in scope; a use elsewhere reports the form.
+        let ty = match &decl.ty.kind {
+            ast::TypeExprKind::GenericFunction { type_params, ty } => {
+                names.extend(type_params.iter().map(|g| g.name.name.clone()));
+                &**ty
+            }
+            _ => &decl.ty,
+        };
+        cx.resolve_type(ty, &TyEnv::new(module, &names));
+        cx.aliases[a].expanding = false;
+    }
+    cx.checking_unused_aliases = false;
 }

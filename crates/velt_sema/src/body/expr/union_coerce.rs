@@ -295,7 +295,9 @@ impl FnCx<'_, '_> {
         // A narrowed field is read again where it is used: a call since the test may have
         // changed it (the message of lowering's one-member check, `check_narrowed_variant`).
         let msg = match self.field_retag {
-            true => "a narrowed field was set to a value of another type before this read",
+            true => {
+                "TypeError: a narrowed field was set to a value of another type before this read"
+            }
             false => "unreachable union member",
         };
         let msg = self.str_lit(msg, span);

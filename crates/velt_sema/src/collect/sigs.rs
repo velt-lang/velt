@@ -694,10 +694,16 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         };
         methods.insert(key, r);
     }
+    let implements = e
+        .implements
+        .iter()
+        .filter_map(|t| super::shapes::iface_bound(cx, t, &env).map(|b| (b, t.span)))
+        .collect();
     cx.extensions.push(Extension {
         generics,
         target,
         methods,
+        implements,
     });
 }
 

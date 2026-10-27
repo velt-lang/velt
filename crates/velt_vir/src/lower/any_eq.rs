@@ -313,8 +313,10 @@ impl FnLower<'_, '_> {
             .cx
             .prelude_def(LOOSE_EQ)
             .unwrap_or_else(|| ice(format_args!("no prelude `{LOOSE_EQ}`")));
+        // Known when lowering (not in an instance that takes its caller's location at run time).
         let text = self
             .panic_loc()
+            .filter(|l| *l != super::srcloc::ARG_LOC)
             .and_then(|l| self.cx.locs.as_ref().map(|m| m.describe(l)))
             .unwrap_or_else(|| "an unknown location".into());
         let at = self.str_lit(&text);

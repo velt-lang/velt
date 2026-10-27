@@ -1,0 +1,17 @@
+[package]
+name = "btree_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[dependencies]
+# bbtree's main branch at the time of the comparison (faster at deletes than its 0.1.5 release).
+bbtree = { git = "https://github.com/XiangpengHao/bbtree", rev = "8adae97a0ed97e5c98fa2790312eb0aec9719846" }
+
+# As bbtree's own benchmark builds (bbtree/bench/Cargo.toml).
+[profile.release]
+codegen-units = 1
+lto = "fat"

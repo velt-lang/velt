@@ -1,0 +1,15 @@
+null
+null [ null ] none none
+anull nullr null
+pnull
+[ 5, 0 ] 1 null
+1 [ 0, 1 ]
+null
+null [ null ] none none
+anull qw 1
+pnull
+[ 5, 0 ] 1 null
+1 [ 0, 1 ]
+{ x: 9 } null
+{ x: 10 } null
+{ a: 9 } null

@@ -243,7 +243,7 @@ impl FnCx<'_, '_> {
             return Err(None);
         }
         let keyed = keyed_method(method);
-        let h = self.expr(e, None, want);
+        let h = self.payload_expr(e, None, want);
         let symbolic = self.symbolic_key_type(h.ty);
         match keyed {
             Some(m) if symbolic => Ok((h, m)),
@@ -279,7 +279,7 @@ impl FnCx<'_, '_> {
         if k != str_ || plain {
             return self.expr(e, Some(k), want);
         }
-        let h = self.expr(e, None, want);
+        let h = self.payload_expr(e, None, want);
         self.string_key_of(k, h)
     }
 
@@ -301,7 +301,7 @@ impl FnCx<'_, '_> {
         if k != self.cx.ty.str_ {
             return self.expr(e, Some(k), want);
         }
-        let h = self.expr(e, None, want);
+        let h = self.payload_expr(e, None, want);
         self.computed_key_of(k, h, e)
     }
 

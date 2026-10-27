@@ -207,7 +207,10 @@ fn dyn_values_clone_print_and_enum_eq() {
             vec![
                 f.bw(d2),
                 callee(
-                    velt_sema::hir::Callee::Dyn { slot: 0 },
+                    velt_sema::hir::Callee::Dyn {
+                        slot: 0,
+                        method_type_args: vec![],
+                    },
                     vec![f.bw(d)],
                     t.str,
                 ),

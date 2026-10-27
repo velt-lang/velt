@@ -19,6 +19,11 @@ impl FnLower<'_, '_> {
             .unwrap_or_else(|| super::ice(format_args!("`{symbol}` is not a SIMD operation")));
         let (params, ret) = call.signature();
         let id = self.cx.extern_sym(symbol, params, ret, false);
+        if ret == Ty::Unit {
+            // `velt_simd_prefetch`: nothing to give.
+            self.call(Callee::Extern(id), args, None, false);
+            return super::unit();
+        }
         let out = self.temp(ret);
         self.call(Callee::Extern(id), args, Some(Place::local(out)), false);
         Operand::Copy(Place::local(out))

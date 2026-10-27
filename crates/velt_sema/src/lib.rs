@@ -30,6 +30,7 @@ mod absent_fields;
 mod alias_expand;
 mod anon;
 mod any;
+mod any_iface_sites;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -429,6 +430,8 @@ fn check_timed(
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();
+    let extension_impls = collect::ext_impls::hir_bounds(&cx);
+    let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -440,6 +443,7 @@ fn check_timed(
         gen_throw,
         super_calls,
         cpu_targets,
+        generic_called,
         ..
     } = cx;
     let defs = defs
@@ -470,6 +474,9 @@ fn check_timed(
         upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
+        generic_dyn_methods: generic_called.names().collect(),
+        extension_impls: extension_impls.into_iter().collect(),
+        dyn_bounds: dyn_bounds.into_iter().collect(),
     };
     (Some(program), diags)
 }
@@ -497,7 +504,7 @@ fn analyze(
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    resolve::check_unused_aliases(cx);
+    alias_expand::check_unused_aliases(cx);
     entry
 }
 
@@ -546,6 +553,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     }) {
         return;
     }
+    // After the cycles: it carries calls and conversions through instantiations.
+    timings::pass("any_iface_sites::check", || any_iface_sites::check(cx));
     // Before the passes that read instantiated types: deferred types reduced per instance.
     timings::pass("type_level::instances::reach", || {
         type_level::instances::reach(cx)

@@ -37,7 +37,7 @@ impl Generics {
 }
 
 /// `T extends Iface<args>`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Bound {
     pub iface: DefId,
     pub args: Vec<TyId>,
@@ -401,7 +401,8 @@ pub(crate) struct IfaceMethod {
     /// `get name()`: read as a property.
     pub is_getter: bool,
     /// The method's own type params (`m<U>(...)`): `Param(iface generics + 1 + k)`, after the
-    /// implementor. Generic methods are dispatched statically only (`T extends I`).
+    /// implementor. Called on an interface value, through the slot's table of instantiations
+    /// (#943).
     pub generics: Generics,
     /// `throws` clause: bounds what implementations may throw (else inferred from them).
     pub throws: Option<DeclaredThrows>,
@@ -477,6 +478,8 @@ pub(crate) struct Extension {
     /// Target type pattern (uses `Param(0..generics)`).
     pub target: TyId,
     pub methods: FxHashMap<String, MethodRef>,
+    /// `implements A, B`, each with the span of its entry (collect/ext_impls.rs).
+    pub implements: Vec<(Bound, velt_common::Span)>,
 }
 
 /// The member name of method-table key `key` (`set #v` names `#v`).

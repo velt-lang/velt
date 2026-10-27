@@ -50,6 +50,7 @@ mod format_array;
 mod format_map;
 mod format_object;
 mod format_promise;
+mod generic_slots;
 mod literals;
 mod many;
 mod thunk;
@@ -58,6 +59,7 @@ mod transfer;
 mod transfer_env;
 mod vtable;
 
+pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};
 pub(super) use vtable::VtableKey;

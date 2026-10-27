@@ -506,3 +506,63 @@ fn modification_propagates_up_a_long_call_chain() {
     let p = ok_src(&src);
     assert_eq!(func(&p, "g1499").params[0].mode, PassMode::BorrowMut);
 }
+
+/// `Math.max` / `Math.min` of up to 16 plain arguments compile to a balanced tree of `max2` /
+/// `min2` calls, not to a chain as deep as the call is wide, and wider calls keep the ordinary
+/// call with its rest array: a chain or tree per argument made later passes quadratic (5,000
+/// arguments took numrep from 3 ms to 247 ms, 20,000 took 127 s to build in debug).
+#[test]
+fn wide_math_min_max_calls_stay_shallow() {
+    let _serial = serial();
+    use velt_sema::hir::{Callee, Def, Expr, ExprKind as E};
+    fn depth(e: &Expr) -> usize {
+        match &e.kind {
+            E::Call { args, .. } => 1 + args.iter().map(depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    let list = |n: usize| -> String {
+        let args: Vec<String> = (0..n).map(|i| format!("{}", (i * 7919) % 10007)).collect();
+        args.join(", ")
+    };
+    let src = format!(
+        "function narrow(): number {{\n  return Math.max({});\n}}\n\
+         function odd(): number {{\n  return Math.min({});\n}}\n\
+         function wide(): number {{\n  return Math.max({});\n}}\n\
+         function main() {{\n  console.log(narrow(), odd(), wide());\n}}\n",
+        list(16),
+        list(9),
+        list(5000)
+    );
+    let p = ok_src(&src);
+    let named = |c: &Callee| match c {
+        Callee::Def(d, _) => match p.def(*d) {
+            Def::Fn(f) => f.name.clone(),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    // `min2` / `max2`, whatever path the name carries.
+    let helper = |c: &Callee| {
+        let n = named(c);
+        n.ends_with("min2") || n.ends_with("max2")
+    };
+    for (name, calls, deepest) in [("narrow", 15, 4), ("odd", 8, 4), ("wide", 0, 0)] {
+        let f = func(&p, name);
+        let helpers = common::hir_walk::calls(f)
+            .into_iter()
+            .filter(|(c, _)| helper(c))
+            .count();
+        let d = common::hir_walk::exprs(f)
+            .into_iter()
+            .filter(|e| matches!(&e.kind, E::Call { callee, .. } if helper(callee)))
+            .map(depth)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            (helpers, d),
+            (calls, deepest),
+            "{name}: helper calls and their depth"
+        );
+    }
+}

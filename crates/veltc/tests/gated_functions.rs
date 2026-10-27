@@ -402,9 +402,17 @@ fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
                 "{triple}: {f}, reached from {gated}, tests the CPU flag:\n{body}"
             );
         }
-        let plain = reachable(&functions, &name("N5plain"));
+        // `plain` may be inlined into `main` (one call site): the check is somewhere `main`
+        // reaches, and not in the gated functions (above), so ordinary code keeps it.
+        let main = functions
+            .iter()
+            .find(|(f, _)| f.contains("velt_main"))
+            .map(|(f, _)| f.clone())
+            .expect("the caller");
         assert!(
-            plain.iter().any(|(_, body)| body.contains(&check)),
+            reachable(&functions, &main)
+                .iter()
+                .any(|(_, body)| body.contains(&check)),
             "{triple}: ordinary code keeps the check"
         );
         let caller = functions

@@ -1,0 +1,267 @@
+// velt:collections/btree/inline_key: `InlineKey`, the order-preserving bytes of a key that
+// `BTreeMap` keeps beside its keys, a few per key, to search nodes without reading the keys.
+//
+// A key's encoding is a byte string that orders as the keys do: for keys `a < b`, `a`'s bytes
+// are at most `b`'s in byte order. Numbers encode big-endian (signed ones with the sign bit
+// flipped), `bool` as one byte, and strings as their CESU-8 bytes, the order of `<` on
+// strings. Shorter encodings read as zero past their end. Other comparable types get the
+// blanket implementation, which has no encoding (`hasInlineKey()` is false): the map compares
+// their keys in full. A type with an order of its own implements `InlineKey` with an `extend`
+// block (or `implements InlineKey`) to get the fast search.
+
+import { isAscii, utf8ByteAt, utf8Length } from "velt:encoding";
+import { mask8x16, u8x16 } from "velt:simd";
+
+/** The bytes of a key that order as the keys do, for `BTreeMap`'s node search. */
+export interface InlineKey {
+  /** Whether the type has an encoding (the same for every value of it). */
+  hasInlineKey(): bool;
+  /**
+   * Bytes `offset .. offset + 8` of the encoding as a big-endian `u64`, zero past its end. For
+   * keys `a < b` sharing their first `offset` bytes, `a.inlineKey(offset) <= b.inlineKey(offset)`.
+   */
+  inlineKey(offset: usize): u64;
+  /** Bytes `offset .. offset + 2` of the encoding: the word a node keeps for the key. */
+  inlineWord(offset: usize): u16 {
+    return (this.inlineKey(offset) >> 48) as u16;
+  }
+  /**
+   * Whether nodes keep four bytes of each key's encoding instead of two: for keys that often
+   * share more than two bytes past what a node's keys all share (strings with common parts),
+   * where two bytes would tie and send the search to the keys themselves.
+   */
+  inlineWide(): bool {
+    return false;
+  }
+  /** Bytes `offset .. offset + 4` of the encoding: a wide word, both halves in one call. */
+  inlineQuad(offset: usize): u32 {
+    return (this.inlineKey(offset) >> 32) as u32;
+  }
+  /**
+   * The first 16 bytes of the encoding, `[inlineKey(0), inlineKey(8)]`: what an operation
+   * computes once and reads every node's word from.
+   */
+  inlineWindow(): [u64, u64] {
+    return [this.inlineKey(0), this.inlineKey(8)];
+  }
+}
+
+/** Every other comparable type: no encoding, so the map compares whole keys. */
+extend<T extends Comparable<T>> T implements InlineKey {
+  hasInlineKey(): bool {
+    return false;
+  }
+  inlineKey(offset: usize): u64 {
+    return 0;
+  }
+}
+
+// Bytes `offset ..` of an encoding held in the top bytes of `x`.
+function window(x: u64, offset: usize): u64 {
+  return offset >= 8 ? 0 : x << ((offset * 8) as u64);
+}
+
+extend u64 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window(this, offset);
+  }
+}
+
+extend usize implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window(this as u64, offset);
+  }
+}
+
+extend u32 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((this as u64) << 32, offset);
+  }
+}
+
+extend u16 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((this as u64) << 48, offset);
+  }
+}
+
+extend u8 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((this as u64) << 56, offset);
+  }
+}
+
+/** Signed integers: two's complement with the sign bit flipped orders as the numbers do. */
+extend i64 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((this as u64) ^ 9223372036854775808, offset);
+  }
+}
+
+extend isize implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((this as u64) ^ 9223372036854775808, offset);
+  }
+}
+
+extend i32 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((((this as u32) ^ 2147483648) as u64) << 32, offset);
+  }
+}
+
+extend i16 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((((this as u16) ^ 32768) as u64) << 48, offset);
+  }
+}
+
+extend i8 implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window((((this as u8) ^ 128) as u64) << 56, offset);
+  }
+}
+
+extend bool implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    return window(this ? 72057594037927936 : 0, offset);
+  }
+}
+
+/**
+ * Strings: their CESU-8 bytes (each UTF-16 code unit as UTF-8 would write it), whose byte order is
+ * the order of the code units, `<` on strings. A string keeps its text as WTF-8, the same bytes
+ * but for a character past U+FFFF (four bytes, from F0), which CESU-8 writes as its two
+ * surrogates; so up to the first such byte the encoding is read where the string keeps it, two
+ * ASCII characters to a word. Past one it is decoded (`cesuBytes`).
+ */
+extend string implements InlineKey {
+  hasInlineKey(): bool {
+    return true;
+  }
+  inlineWide(): bool {
+    return true;
+  }
+  inlineKey(offset: usize): u64 {
+    const n = utf8Length(this);
+    if (isAscii(this) || !fourByteBefore(this, n, offset + 8)) {
+      return bytesFrom(this, n, offset).asU64x2().reverseBytes().lane(0);
+    }
+    return cesuBytes(this, n, offset, 8);
+  }
+  inlineWord(offset: usize): u16 {
+    return (this.inlineQuad(offset) >> 16) as u16;
+  }
+  inlineWindow(): [u64, u64] {
+    const n = utf8Length(this);
+    // Bytes 0 .. 16 in one load when they are the bytes as kept (as `inlineQuad` decides).
+    if (isAscii(this) || !fourByteBefore(this, n, 16)) {
+      const w = bytesFrom(this, n, 0).asU64x2().reverseBytes();
+      return [w.lane(0), w.lane(1)];
+    }
+    return [cesuBytes(this, n, 0, 8), cesuBytes(this, n, 8, 8)];
+  }
+  inlineQuad(offset: usize): u32 {
+    const n = utf8Length(this);
+    // ASCII (as many UTF-16 units as bytes) or no four-byte character before: the bytes as kept.
+    if (isAscii(this) || !fourByteBefore(this, n, offset + 4)) {
+      return bytesFrom(this, n, offset).asU32x4().reverseBytes().lane(0);
+    }
+    return cesuBytes(this, n, offset, 4) as u32;
+  }
+}
+
+// The 16 bytes of `s` (`n` bytes) from `offset` as kept, 0 past its end: one load.
+function bytesFrom(s: string, n: usize, offset: usize): u8x16 {
+  return offset <= n ? u8x16.loadString(s, offset) : u8x16.splat(0);
+}
+
+// Whether one of the first `upto` bytes of `s` (`n` bytes) starts a four-byte character: a byte
+// from F0, sixteen bytes per compare.
+function fourByteBefore(s: string, n: usize, upto: usize): bool {
+  const end = upto < n ? upto : n;
+  const f0 = u8x16.splat(240);
+  for (let i: usize = 0; i < end; i += 16) {
+    const left = end - i;
+    const v = u8x16.loadString(s, i);
+    if (v.ge(f0).and(mask8x16.prefix(left)).any()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Bytes `offset .. offset + count` (at most 8) of the CESU-8 encoding of `s` (`n` WTF-8 bytes),
+// big-endian, zero past its end: the WTF-8 bytes, a four-byte character as the three-byte
+// encodings of its two surrogates.
+function cesuBytes(s: string, n: usize, offset: usize, count: usize): u64 {
+  let w: u64 = 0;
+  let got: usize = 0;
+  let out: usize = 0;
+  let i: usize = 0;
+  while (got < count && i < n) {
+    const b = utf8ByteAt(s, i) as u32;
+    if (b < 240) {
+      if (out >= offset) {
+        w = (w << 8) | (b as u64);
+        got++;
+      }
+      out++;
+      i++;
+      continue;
+    }
+    // A four-byte character: its code point, then its surrogates' three bytes each.
+    const cp =
+      ((b & 7) << 18) |
+      (((utf8ByteAt(s, i + 1) as u32) & 63) << 12) |
+      (((utf8ByteAt(s, i + 2) as u32) & 63) << 6) |
+      ((utf8ByteAt(s, i + 3) as u32) & 63);
+    const v = cp - 65536;
+    const units: u32[] = [55296 | (v >> 10), 56320 | (v & 1023)];
+    for (const u of units) {
+      const bytes: u32[] = [224 | (u >> 12), 128 | ((u >> 6) & 63), 128 | (u & 63)];
+      for (const x of bytes) {
+        if (got < count && out >= offset) {
+          w = (w << 8) | (x as u64);
+          got++;
+        }
+        out++;
+      }
+    }
+    i += 4;
+  }
+  return w << ((8 * (count - got)) as u64);
+}

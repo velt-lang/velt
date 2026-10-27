@@ -1,0 +1,10 @@
+export class Box {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+export let cur: Box | null = null;
+export function setCur(b: Box | null): void {
+  cur = b;
+}

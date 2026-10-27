@@ -45,6 +45,27 @@ const INVALID: u8 = 0xff;
 // `=`
 const PAD: u8 = 61;
 
+/**
+ * The number of bytes `s` keeps its text in: UTF-8, a lone surrogate as its three-byte form
+ * (`Buffer.byteLength(s)` for well-formed text). O(1).
+ */
+export function utf8Length(s: string): usize {
+  return __intrinsic_str_byte_len(s);
+}
+
+/** Byte `i` of `s`'s UTF-8 (as `utf8Length` counts them), read in place; a RangeError past it. */
+export function utf8ByteAt(s: string, i: usize): u8 {
+  if (i >= __intrinsic_str_byte_len(s)) {
+    panic(`RangeError: byte ${i} is past the end of a string of ${__intrinsic_str_byte_len(s)}`);
+  }
+  return __intrinsic_str_byte_at(s, i as u64);
+}
+
+/** Whether every character of `s` is ASCII (so its bytes are its UTF-16 code units). O(1). */
+export function isAscii(s: string): bool {
+  return __intrinsic_str_len(s) == __intrinsic_str_byte_len(s);
+}
+
 /** Thrown for malformed Base64, hex or UTF-8 input. */
 export class EncodingError extends Error {
   constructor(message: string) {

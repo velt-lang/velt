@@ -113,6 +113,25 @@ pub extern "C" fn velt_rt_math_clz32(x: i32) -> i32 {
     x.leading_zeros() as i32
 }
 
+/// `x.leadingZeros()` (std/prelude/bits.vlt): the leading zero bits of a 64-bit pattern (64 for
+/// 0). Backends emit it as one instruction, as the three below.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_clz64(x: u64) -> u64 {
+    x.leading_zeros() as u64
+}
+
+/// `x.trailingZeros()`: the trailing zero bits of a 64-bit pattern (64 for 0).
+#[no_mangle]
+pub extern "C" fn velt_rt_math_ctz64(x: u64) -> u64 {
+    x.trailing_zeros() as u64
+}
+
+/// `x.countOnes()`: the set bits of a 64-bit pattern.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_popcount64(x: u64) -> u64 {
+    x.count_ones() as u64
+}
+
 /// Wrapping integer power; a negative exponent yields 0, except `1 ** negative == 1`.
 #[no_mangle]
 pub extern "C" fn velt_rt_pow_i64(a: i64, b: i64) -> i64 {
@@ -179,6 +198,11 @@ mod tests {
         assert_eq!(velt_rt_math_add_int32(1, -1.5), 0);
         assert_eq!(velt_rt_math_add_int32(i32::MAX, 1.0), i32::MIN);
         assert_eq!(velt_rt_math_add_int32(5, f64::NAN), 0);
+        assert_eq!(velt_rt_math_clz64(0), 64);
+        assert_eq!(velt_rt_math_clz64(1), 63);
+        assert_eq!(velt_rt_math_ctz64(0), 64);
+        assert_eq!(velt_rt_math_ctz64(8), 3);
+        assert_eq!(velt_rt_math_popcount64(u64::MAX), 64);
         assert_eq!(velt_rt_math_clz32(0), 32);
         assert_eq!(velt_rt_math_clz32(-1), 0);
         assert_eq!(velt_rt_math_clz32(1), 31);

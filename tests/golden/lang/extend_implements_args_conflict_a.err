@@ -1,0 +1,2 @@
+conflicting implementations of `G<string>` and `G<i64>`: the block for `G<i64>` has bounds and takes precedence over the other for the types both fit
+a block with bounds must implement the interface with the same arguments as the blocks it takes precedence over

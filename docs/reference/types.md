@@ -90,8 +90,30 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
-  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and `compareTo` keep the
-  integer types they declare. A number passed to an integer parameter of a standard library
+  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and the methods JS has no
+  counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
+  types they declare, as do a program's and its packages' own functions and `extend` methods.
+- **Where an integer type is expected, the standard library's integers convert by
+  themselves**: such a `number` is an integer below 2^53, so it converts implicitly to an
+  integer type that holds every value it can have, as the integer itself (no conversion
+  happens at run time). A length or a size goes into `usize`, `u64`, `i64` or `isize`, and an
+  index that can be `-1` (`indexOf`) into `i64` or `isize`. That covers a declared local, a
+  parameter, a field, a return value or an explicit type argument, arithmetic, a shift or a
+  compound assignment next to such an integer, and arithmetic with a literal where such an
+  integer is expected (`at(xs, xs.length - 1)`). Otherwise it stays a number, as in
+  TypeScript, also next to a local declared without a type:
+  ```ts
+  function at(xs: string[], i: usize): string {
+    return xs[i];
+  }
+  const xs = ["a", "b", "c"];
+  const n: usize = xs.length; // 3
+  let depth: usize = 1;
+  depth += xs.length; // 4
+  console.log(n, depth, at(xs, xs.length - 1)); // 3 4 c
+  console.log(xs.length / 2); // 1.5: a number
+  ```
+  Narrower types still need `as` (`xs.length as u32`), and so does `usize` for `indexOf`. A number passed to an integer parameter of a standard library
   function converts like JS's `ToIntegerOrInfinity` (truncated; `NaN` is 0):
   `xs.slice(0, xs.length / 2)` takes the first half. A callback that the standard library
   expects to return a number, such as a `sort` comparator, may return an integer of any type:
@@ -794,15 +816,20 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
   be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too (also in the declaration: `let x: string
+  TypeScript (module variables: see below); assigning a non-null value narrows too (also in the declaration: `let x: string
   | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
   facts of the condition a branch started from unless it reassigned the variable, and what its
   own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
   null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
   `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
-  narrowed field is re-checked when read, so a call that set it to `null` in between panics
-  instead of reading `null` (`a narrowed field was set to null before this read`, `undefined`
-  for an optional field). An optional member of function type can be called once a check
+  narrowed field is re-checked where its payload is read (see the module variables below for
+  where that is), so a call that set it to `null` in between stops the program with
+  ``TypeError: `node.left` was checked, but it was set to null before this read``
+  (`undefined` for an optional field) instead of reading `null`. A field path of a local is
+  read as its payload wherever no type is expected (`const { n } = o.f`, `"n" in o.f`,
+  `const c = o.f`), and as it is in a log argument, a template, a `+` with a string and a
+  test. Node's message for the same mistake is different (`Cannot read properties of null
+  (reading 'x')`), and Node throws a `TypeError` a program can catch, where Velt stops. An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
   assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
@@ -834,6 +861,70 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   if (c instanceof Conn) {
     close();
     console.log(c.send("bye"));   // sent bye
+  }
+  ```
+- A module-level `let` (or a module `const` kept as [module state](variables.md#module-state)),
+  also an imported one, is narrowed by a null check in the function that makes it, as in
+  TypeScript (`if (handler) handler();`, `if (!ctx) return; ctx.onMounted(fn)`,
+  `if (app?.provides.has(k)) return app.provides.get(k)`), and so are its field paths
+  (`if (state.next) state.next.name`, `typeof state.v === "string"`). Any call may run code
+  that assigns it (a function of its module, a callback, a getter, another task across an
+  `await`, a generator's caller across a `yield`), so each narrowed read checks the value
+  again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
+  (`` `ctx` was checked, but it was set to null before this read ``). The variable (or field
+  path) is read as its payload only where that is needed: as a receiver (`ctx.m()`, `ctx.n =
+  1`), a callee, an operand of a numeric operator or a comparison (`n + 1`, `n > 2`, `-n`,
+  `s + 1`, `s + t` with both narrowed), a spread (`...xs`), where the expected type does not
+  take the value as it is (`use(ctx)` with `c: Ctx`, `return ctx` from a function returning
+  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`) or what a
+  destructuring takes apart (`const { name } = ctx`). Elsewhere it is read
+  as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, an element of an untyped array (unlike
+  TypeScript, `[x, y]` of two narrowed `Box | null` module variables, module fields or `r[k]`
+  is a `(Box | null)[]`, and holds `null` where a call cleared one), a template, a `+` with a string (`"a" +
+  s`, `s + "!"`, `s += x`, also a branch of a ternary there: `"a" + (c ? s : "z")`), `===`, and
+  where the expected type takes it (a parameter of type `Ctx | null | undefined`, or `Base |
+  null` for a `S1 | S2 | null` of subclasses, or `string | number` for a field `typeof`
+  narrowed to a `string`). So is the operand of a test, `?.` or
+  `??`, so `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An untyped
+  copy (`let c = ctx`, `const c = state.next`, `const s = st.v` after a `typeof` test, and a
+  copy of such a copy) holds what it read, `null` or a value of another member included, and
+  keeps the narrowing: its reads follow the same rule (`console.log(c)` prints `null`, `c.name`
+  stops with a `TypeError`), and assigning it back (`state.next = c`, `ctx = c`) narrows the
+  field or variable again, checked the same way. A write through a narrowed field path takes the object first, as
+  JavaScript does: `state.next.items[0] = f()` writes into the object `state.next` held before
+  `f()` ran, also when `f()` set `state.next` to `null`, and so do `state.next.ts[0][1] = f()`
+  (a tuple in an array), `state.next.p.x = f()` (a struct or object field) and `a.items[0] =
+  a.items[1] = f()`. A tuple right behind the narrowed field is a value, not an object, so
+  `state.t[0] = f()` stops with the `TypeError` when `f()` cleared `state.t`. An assignment in the function drops
+  the narrowing (and
+  narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
+  see the narrowing of the function they are made in (TypeScript keeps it in one made after
+  the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
+  a module variable itself, and `instanceof` does not narrow its field paths: copy the value
+  into a `const` and test that.
+- `r[k]` on a `Record<string, V>` with a key that is a `const` narrows like `r.name`: after
+  `if (!r[k]) r[k] = [];` it is a `V`, and so is `r[k]` in `for (const k in r)`. Assigning `r`
+  or `delete r[k]` drops the narrowing; a read is checked again where its payload is needed,
+  as a field's is, so a call that deleted the key gives `undefined` in `console.log(r[k])`.
+
+  ```ts
+  let current: { name: string } | null = null;
+
+  function group(words: string[]): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const w of words) {
+      const k = w.slice(0, 1);
+      if (!out[k]) out[k] = [];
+      out[k].push(w);
+    }
+    return out;
+  }
+
+  function main() {
+    current = { name: "ann" };
+    if (current) console.log(current.name);            // ann
+    const g = group(["ab", "ac", "b"]);
+    for (const k in g) console.log(k, g[k].length);    // a 2, then b 1
   }
   ```
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
@@ -956,7 +1047,8 @@ the nullable type; `void` cannot be a member.
 - A union alias may name itself behind an indirection: as an array's element, an index
   signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
   may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
-  Child[]`). Elsewhere
+  Child[]`). A generic one (`type Content<F> = string | F | Content<F>[]`) is a union of its
+  own at each type argument. Elsewhere
   (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
   give such a type a nominal member, such as an interface or a class.
 
@@ -1695,7 +1787,9 @@ the result is an ordinary object type, union or literal type.
   (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
   is `"true" | "false"`, and a hole of literal types each of them spelled out
   (`` `${boolean}x` `` is `"truex" | "falsex"`).
-- `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `string & K` with `K` a string literal
+- `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `Awaited<T>`, what `await` gives (the
+  value of a promise, of each member of a union, also over a type parameter; a thenable that
+  is not a `Promise` stays itself, as `await` takes only promises); `string & K` with `K` a string literal
   type is `K`; `keyof` of a union is the keys its members share.
 
 ```ts

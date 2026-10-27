@@ -480,12 +480,9 @@ impl FnLower<'_, '_> {
         let (cycle, fine) = (self.new_block(), self.new_block());
         self.branch(ok, fine, cycle);
         self.switch_to(cycle);
-        let msg = format!(
-            "JSON.stringify: converting circular structure to JSON (an object contains itself){}",
-            self.panic_suffix()
+        let a = self.panic_text(
+            "JSON.stringify: converting circular structure to JSON (an object contains itself)",
         );
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(super::STR_AGG));
         self.call_rt(Rt::Panic, vec![a], None);
         self.switch_to(fine);
     }

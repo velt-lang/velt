@@ -31,7 +31,10 @@ impl FnCx<'_, '_> {
         let r = self.in_place_receiver(object, recv);
         let h = self.member_of(r.recv, prop, Want::Borrow, span);
         let h = self.after_receiver(r.before, h);
-        let f = self.narrowed_field(object, prop, h, Want::Borrow, None);
+        let span_h = h.span;
+        let f = self.with_payload_at(span_h, |s| {
+            s.narrowed_field(object, prop, h, Want::Borrow, None)
+        });
         if self.cx.ty.opt_payload(f.ty).is_some() {
             let what = self.cx.ty.nothing_of(f.ty).map_or("null", |n| n.word());
             let callee = Span {

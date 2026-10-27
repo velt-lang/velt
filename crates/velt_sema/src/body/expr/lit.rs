@@ -551,7 +551,7 @@ impl FnCx<'_, '_> {
                 parts.push(self.str_lit(q, span));
             }
             if let Some(e) = exprs.get(i) {
-                let h = self.expr(e, None, Want::Borrow);
+                let h = self.printed_expr(e);
                 if self.reject_symbol_text(&h) {
                     parts.push(self.error_expr(h.span));
                     continue;

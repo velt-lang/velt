@@ -53,6 +53,31 @@ pub enum Intrinsic {
     /// length and the elements stay. Emitted for an array spread whose length is known only
     /// where it is pushed (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
     ArrayReserve,
+    /// std only (std/collections/btree): `(xs: borrow T[], i: usize)`, a hint that element `i`
+    /// is read soon, so the CPU starts loading its cache line. Not bounds-checked: a prefetch
+    /// never faults, and an index past the end only wastes the load. Lowered to the
+    /// `velt_simd_prefetch` extern of the element's address (rt_abi.md "SIMD"), which LLVM
+    /// emits as `llvm.prefetch` and Cranelift as nothing. Additive.
+    ArrayPrefetch,
+    /// std only (std/collections/btree): `(xs (modified), lo: usize, hi: usize)`, rotates the
+    /// elements `xs[lo..=hi]` one slot up: the element at `hi` moves to `lo` and the others
+    /// one slot up, by one `memmove` (`hi` bounds-checked; nothing when `lo >= hi`). A
+    /// permutation: every element stays owned once, so it moves elements of any type, where a
+    /// loop of moves would count or check each one. Additive.
+    ArrayRotateRight,
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
+    /// Additive.
+    ArrayRotateLeft,
+    /// std only (`xs.swapIn`, std/prelude/array_nested.vlt): `(xs: T[][] (modified), a: usize,
+    /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
+    /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
+    /// inner arrays, which one call may not otherwise change both of. Additive.
+    ArraySwapNested,
+    /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
+    /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
+    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
+    /// the program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
+    ParamOrdering,
     /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part

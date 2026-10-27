@@ -59,10 +59,7 @@ impl FnLower<'_, '_> {
             return self.drop_boxed(place, ty, |lw, v| lw.drop_inline(v, ty));
         }
         match self.cx.kind(ty) {
-            TyKind::Str => {
-                let a = self.addr(place.clone());
-                self.call_rt(Rt::StrDrop, vec![a], None);
-            }
+            TyKind::Str => self.str_drop(place.clone()),
             TyKind::Adt(d, _) if self.cx.is_class(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
                 let done = self.new_block();

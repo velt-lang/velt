@@ -313,7 +313,17 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   params follow the interface's params and the implementor (`Param(n + 1 + k)`).
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
-  Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+  On an interface value the call is `Callee::Dyn { slot, method_type_args }` (#943; empty for a
+  method that is not generic). The vtable slot of a generic method holds the address of the
+  slot's *instantiation table* (a read-only static): one entry (the borrow-ABI entry of the
+  implementing method at its owner args followed by the method args) per list of method type
+  arguments lowering reaches through `Dyn` calls of that slot of that interface instance,
+  numbered in the order lowering meets them, so every implementation's table has a list at the
+  same index. A call loads the table from the slot, then the entry at its list's index. Tables
+  grow while functions are lowered (the statics are emitted at the end). Sema rejects a generic
+  method that calls itself through an interface value with growing type arguments
+  (`instantiation_cycles`), and carries deferred types and record keys to the methods such a
+  call may run (every implementation, at each concrete type made for a generic one).
 - `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
   such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
   `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
@@ -889,6 +899,40 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   slots of `A`'s implementations; lowering loads it. Both `A` to `B` and `B` to `A` may be
   recorded: each table holds the other (lowering fills a table's targets in once the table is
   registered). Values of `A` are compared by identity when values of a target are.
+
+## `extend … implements` (issue #1546)
+- An `extend<T…> X implements I` block is an ordinary `ImplDef` (`ty` the target pattern, generic
+  when the block is; a blanket block's `ty` is `Param(0)`), listed in `Program::extension_impls`
+  (additive) with the bounds on its type parameters (`ImplBound`: parameter, interface, args in
+  the impl's params). Lowering's impl lookup for `iface<args>` and a concrete type: the first
+  impl that is not an extension impl, in `impls` order, that fits the type or else its nearest
+  base class (a type's own implementation comes first); else the most specific extension impl
+  that fits the type (its pattern matches and its bounds hold, each bound looked up the same
+  way), or else its nearest base class: A over B when A's `ty` is an instance of B's and not the
+  reverse, or the same pattern where only A has bounds. Sema refuses two extension impls that
+  can fit one type where neither is more specific (whatever their interface arguments), so the
+  choice is unique; the bounds of extension impls are interfaces, never `any`, `unknown`,
+  `object` or `Function`. A block's bound holds
+  when the type meets it at all (its own impl, or through a finite chain of extension impls,
+  the least answer): per level (the type, then each base class), through each extension impl
+  for the bound's interface and arguments that fits, except that an impl without bounds that
+  fits decides the level's answer (the most specific such impl: its arguments are the bound's
+  or the bound fails) and no base class is looked at. Sema refuses an extension impl with
+  bounds that takes precedence over another with other interface arguments (more specific
+  than it for a type both fit, or fitting a type the other fits a base class of), so this
+  answer is the arguments of the impl the lookup picks. An interface value `Dyn(D, args)`
+  meets a bound `iface<bargs>` listed for `D` in `Program::dyn_bounds` (additive; `D` and the
+  interfaces it extends without generic methods, args in `D`'s params) when the listed args
+  with `args` substituted are `bargs`. Converting an `any` to
+  `iface` uses the same lookup for the held value's type.
+- A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
+  `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
+  `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.
+- An ordering operator on `Comparable` values (`a < b`, `<=`, `>`, `>=`) is
+  `Binary { op, Call(Intrinsic::ParamOrdering, [Call(compareTo, [a, b])]), Lit::Int(0) }`. The
+  marker is the call's value; lowering compares a float `T` directly instead (NaN unordered, as
+  JS's `<`). A `compareTo` call the program writes is never marked, so `a.compareTo(b) < 0`
+  orders NaN last on every type.
 
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
