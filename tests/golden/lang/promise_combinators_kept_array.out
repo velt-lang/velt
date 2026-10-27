@@ -1,0 +1,10 @@
+blocking c2 2
+deferred c3 3
+plain 1
+race 2 2
+all [ 1, 2 ] 2
+any 1 2
+allSettled fulfilled,fulfilled 2
+caught boom 3
+allSettled fulfilled,fulfilled,rejected 3
+kept 1 2
