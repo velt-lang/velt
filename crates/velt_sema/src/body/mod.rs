@@ -52,6 +52,7 @@ mod for_await;
 pub(crate) mod for_in_proxy;
 mod for_iter;
 mod for_map;
+mod forward_consts;
 mod gated;
 mod generators;
 mod global_narrow;
@@ -601,6 +602,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub field_retag: bool,
     /// The expression being checked is the object of a member read (`body::expr::union_view`).
     pub view_receiver: bool,
+    /// The types of variables declared before their declaration, by name (`forward_consts`).
+    pub forward_tys: rustc_hash::FxHashMap<Span, TyId>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -636,6 +639,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             static_this: None,
             enclosing_locals: vec![],
             generic_arrow: false,
+            forward_tys: Default::default(),
             f: frame,
             outer: vec![],
             std_callback: None,
