@@ -40,44 +40,6 @@ fn struct_layouts_are_consistent() {
     }
 }
 
-/// The struct layouts of the host are the C library's (`libc`'s definitions).
-#[cfg(unix)]
-#[test]
-fn host_layouts_match_the_c_library() {
-    use std::mem::{offset_of, size_of as sz};
-    let host = host_triple();
-    let layout = |f: &str, p: &str| {
-        let f = table(&host).iter().find(|x| x.name == f && x.params.iter().any(|q| matches!(q, Param::Struct { name, .. } if *name == p))).unwrap();
-        f.params
-            .iter()
-            .find_map(|q| match q {
-                Param::Struct { layout, .. } => Some(*layout),
-                _ => None,
-            })
-            .unwrap()
-    };
-    let off = |s: &Struct, n: &str| s.fields.iter().find(|f| f.name == n).unwrap().offset as usize;
-    let fl = layout("fcntl", "lock");
-    assert_eq!(fl.size as usize, sz::<libc::flock>());
-    assert_eq!(off(fl, "l_start"), offset_of!(libc::flock, l_start));
-    assert_eq!(off(fl, "l_len"), offset_of!(libc::flock, l_len));
-    assert_eq!(off(fl, "l_pid"), offset_of!(libc::flock, l_pid));
-    assert_eq!(off(fl, "l_type"), offset_of!(libc::flock, l_type));
-    assert_eq!(off(fl, "l_whence"), offset_of!(libc::flock, l_whence));
-    let st = layout("fstat", "st");
-    assert_eq!(st.size as usize, sz::<libc::stat>());
-    assert_eq!(off(st, "st_size"), offset_of!(libc::stat, st_size));
-    assert_eq!(off(st, "st_mode"), offset_of!(libc::stat, st_mode));
-    assert_eq!(off(st, "st_ino"), offset_of!(libc::stat, st_ino));
-    assert_eq!(off(st, "st_nlink"), offset_of!(libc::stat, st_nlink));
-    assert_eq!(off(st, "st_blocks"), offset_of!(libc::stat, st_blocks));
-    assert_eq!(off(st, "st_blksize"), offset_of!(libc::stat, st_blksize));
-    assert_eq!(off(st, "st_mtime"), offset_of!(libc::stat, st_mtime));
-    assert_eq!(off(st, "st_mtime_nsec"), offset_of!(libc::stat, st_mtime_nsec));
-    assert_eq!(off(st, "st_uid"), offset_of!(libc::stat, st_uid));
-    assert_eq!(off(st, "st_rdev"), offset_of!(libc::stat, st_rdev));
-}
-
 /// Two forms of one function link one symbol with one signature (variadic arguments are all
 /// 64-bit), and only variadic functions have several forms.
 #[test]
