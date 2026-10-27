@@ -78,6 +78,9 @@ pub(crate) struct FnSites {
     /// The site the value being checked is stored into (an argument's parameter, a variable's
     /// or a field's type): what a closure created there throws goes into that site only.
     pub target: Option<Span>,
+    /// The argument (by its span) of the `push` being checked and the site of its array's
+    /// element type (`promise_sites`).
+    pub push: Option<(Span, Span)>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
@@ -346,7 +349,7 @@ impl Ctx<'_> {
 
     /// Record `t` as the type of the site at `span` (a user module's function type written
     /// without `throws`).
-    fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
+    pub(super) fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
         if !self.site_module(module) || span == Span::DUMMY {
             return;
         }

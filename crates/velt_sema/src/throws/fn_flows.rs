@@ -22,10 +22,11 @@ impl Ctx<'_> {
         }
     }
 
-    /// The site written within `range` (the outermost one) whose type is `t`'s function type.
+    /// The site written within `range` (the outermost one) whose type is `t`'s function type,
+    /// or its promise type (`promise_sites`).
     pub(crate) fn site_in(&self, range: Span, t: TyId) -> Option<Span> {
-        let t = self.ty.core(t).unwrap_or(t);
-        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. }) {
+        let t = self.site_core(t);
+        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Promise(..)) {
             return None;
         }
         let ids = self.fn_sites.by_file.get(&range.file)?;
@@ -58,7 +59,7 @@ impl Ctx<'_> {
     /// The site a value of type `to` being stored is stored into, if it is known.
     pub(crate) fn target_site(&self, to: TyId) -> Option<Span> {
         let s = self.fn_sites.target?;
-        let to = self.ty.core(to).unwrap_or(to);
+        let to = self.site_core(to);
         let typed = (self.fn_sites.by_file.get(&s.file).into_iter().flatten())
             .any(|&i| self.fn_sites.sites[i] == (s, to));
         typed.then_some(s)
@@ -190,10 +191,14 @@ impl crate::body::FnCx<'_, '_> {
 
     /// The site of the result type of the declared function whose body is being checked.
     pub(crate) fn return_site(&self, ret: TyId) -> Option<Span> {
-        if !self.outer.is_empty() || self.cx.fn_sites.by_file.is_empty() {
+        if self.cx.fn_sites.by_file.is_empty() {
             return None;
         }
-        let rs = self.cx.fn_info(self.body_def?).ret_span?;
+        // A closure's or nested function's own written result.
+        let rs = match self.outer.is_empty() {
+            true => self.cx.fn_info(self.body_def?).ret_span?,
+            false => self.f.ret_span?,
+        };
         self.cx.site_in(rs, ret)
     }
 
@@ -218,6 +223,16 @@ impl crate::body::FnCx<'_, '_> {
     pub(crate) fn flow_into(&mut self, h: &crate::hir::Expr, to: Option<Span>) {
         if let (Some(to), Some(from)) = (to, self.site_of_value(h)) {
             self.cx.site_flow(from, to);
+            // An array is shared: what is pushed through either name is in both (an array of
+            // promises, `promise_sites`).
+            if self
+                .cx
+                .ty
+                .array_elem(self.cx.ty.core(h.ty).unwrap_or(h.ty))
+                .is_some()
+            {
+                self.cx.site_flow(to, from);
+            }
         }
     }
 
@@ -238,6 +253,13 @@ impl crate::body::FnCx<'_, '_> {
     /// Make `site` the target of the value checked next, returning the previous target.
     pub(crate) fn set_target(&mut self, site: Option<Span>) -> Option<Span> {
         std::mem::replace(&mut self.cx.fn_sites.target, site)
+    }
+
+    /// The site the argument at `arg` for parameter `p` is stored into: the parameter's, or
+    /// for the value of a `push`, the site of its array's element type.
+    pub(crate) fn arg_site(&self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
+        let pushed = (self.cx.fn_sites.push).filter(|(a, _)| *a == arg);
+        self.param_site(p).or(pushed.map(|(_, s)| s))
     }
 
     /// The site of parameter `p` of a function being called.

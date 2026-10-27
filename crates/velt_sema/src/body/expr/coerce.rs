@@ -187,6 +187,11 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // Stored into a `Promise<T>` written without an error type: the program is checked
+        // again with this promise's errors written there (`throws::promise_sites`).
+        if self.cx.seed_promise_site(h.ty, exp) {
+            return Err(h);
+        }
         if let Some(widens) = self.cx.fn_throws_differ(h.ty, exp) {
             return match widens {
                 true => self.adapt_fn(h, exp),

@@ -727,7 +727,9 @@ shared between threads …`` where the `shared` or the server is made. Capture a
 ## Errors
 
 Errors are typed like everywhere else ([Errors](errors.md)). A promise's type carries what it
-can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
+can reject with: `Promise<T, E>`. A `Promise<T>` written without an error type rejects with
+what the promises stored into it reject with (see below), and never rejects when none of them
+can.
 
 - An async function's `throws` clause (`async function f(): Promise<T> throws E`, or the
   inferred one) is its promise's `E`. In a function type, `throws` after a `Promise` result is
@@ -783,6 +785,45 @@ async function main() {
   argument, a return value). An array literal without an expected type still takes its element
   type from its first element, so mixed arrays need a type:
   `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
+- As in TypeScript, a promise that rejects can be stored where a `Promise<T>` written without
+  an error type is expected: returned from a function declared `: Promise<T>` that is not
+  `async`, assigned to a variable or field of that type (also `Promise<T> | null`), passed for
+  such a parameter or pushed to a `Promise<T>[]`. Each such written type (each place it is
+  written) then rejects with what is stored into it, inferred over the whole program as for
+  [function types written without `throws`](errors.md#dynamic-calls), so awaiting a value read
+  from it throws those errors and a `try` around the `await` catches them, as in Node. A value
+  of that type stored into another such type takes its errors along. Where the compiler can't
+  tell which written type the promise is stored into (a `Map` value, an array spread), every
+  `Promise<T>` of the same `T` written without an error type gets its errors, which must then be
+  `Error` classes.
+
+  ```ts
+  class Timeout extends Error {}
+
+  async function fetchName(fail: boolean): Promise<string> {
+    if (fail) {
+      throw new Timeout("too slow");
+    }
+    return "ada";
+  }
+
+  function loadName(fail: boolean): Promise<string> {
+    return fetchName(fail);
+  }
+
+  async function main() {
+    const pending: Promise<string>[] = [];
+    pending.push(loadName(false));
+    pending.push(loadName(true));
+    for (const p of pending) {
+      try {
+        console.log(await p);
+      } catch (e) {
+        console.log("failed:", (e as Error).message);
+      }
+    }
+  }
+  ```
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being

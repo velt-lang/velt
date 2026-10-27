@@ -21,6 +21,7 @@ mod fn_types;
 mod groups;
 mod infer;
 mod inits;
+mod promise_sites;
 mod sets;
 mod vars;
 

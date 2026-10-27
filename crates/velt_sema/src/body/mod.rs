@@ -234,6 +234,8 @@ pub(crate) struct Frame {
     /// Declared/expected return type; `None` while it is inferred from the body's `return`s
     /// (recorded in `returns`).
     pub ret: Option<TyId>,
+    /// Where a closure's result type is written (not for an async one: its `Promise<T>`).
+    pub ret_span: Option<Span>,
     pub returns: returns::Returns,
     pub captures: Vec<CaptureCx>,
     pub escaping: bool,
@@ -412,6 +414,7 @@ impl Frame {
             loops: vec![],
             loop_count: 0,
             ret,
+            ret_span: None,
             returns: Default::default(),
             captures: vec![],
             escaping: false,
