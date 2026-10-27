@@ -138,7 +138,12 @@ Promises behave like JavaScript's, at Rust's cost:
   Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
   only when every holder dropped it without awaiting it. A promise that is never shared costs
   what it did before; a shared one costs a small side record and one share of the result per
-  `await`. A shared promise is driven on the task that shares it:
+  `await`. Every holder is the same promise for `===`, `Object.is`, `includes`, `indexOf` and
+  `Set` / `Map` keys, as in Node, also once it is passed where a `Promise<unknown>` (or a
+  promise with a wider error type) is expected: a `Set<Promise<unknown>>` counts a promise
+  once however often it is added, and awaiting it anywhere handles its rejection for the set
+  too ([#1682](https://github.com/velt-lang/velt/issues/1682)). `p.then(f)` is another promise.
+  A shared promise is driven on the task that shares it:
   - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
     using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
     it on both tasks.

@@ -137,6 +137,11 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
   `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
   wrapper is lazy; used as a value (not awaited or spawned right away), it starts `p`.
+- A `Promise<T>` used where a `Promise<unknown>` / `Promise<any>` (or a `Promise<undefined>`
+  where a `Promise<void>`) is expected is `Call { Intrinsic(PromiseSame), [q, p] }`, both
+  owned, typed as `q`: `q` is `p.then` converting the value (on a temporary holding `p`), and
+  `p` the temporary itself. `q` is `p` for identity and rejection reports (rt_abi_async.md
+  §1.3, #1682); used as a value, it starts `q`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
