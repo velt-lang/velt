@@ -60,7 +60,7 @@ async function main() {
   try {
     await r3.read();
   } catch (e) {
-    console.log("err", e.name, e.message);
+    console.log("err", (e as Error).name, (e as Error).message);
   }
   console.log(s3);
 
@@ -79,7 +79,7 @@ async function main() {
   try {
     await s4.cancel();
   } catch (e) {
-    console.log(e.name, e.message);
+    console.log((e as Error).name, (e as Error).message);
   }
   await r4.cancel("bye");
   const after = await r4.read();
@@ -87,7 +87,7 @@ async function main() {
   try {
     s4.getReader();
   } catch (e) {
-    console.log(e.name, e.message);
+    console.log((e as Error).name, (e as Error).message);
   }
 
   // Leaving a `for await` early cancels the stream and releases it.
@@ -114,7 +114,7 @@ async function main() {
   try {
     await s6.getReader().read();
   } catch (e) {
-    console.log("s6", e.name, e.message);
+    console.log("s6", (e as Error).name, (e as Error).message);
   }
 
   // ReadableStream.from an async generator.
@@ -129,12 +129,12 @@ async function main() {
       try {
         c.enqueue(1);
       } catch (e) {
-        console.log(e.name, e.message);
+        console.log((e as Error).name, (e as Error).message);
       }
       try {
         c.close();
       } catch (e) {
-        console.log(e.name, e.message);
+        console.log((e as Error).name, (e as Error).message);
       }
     },
   });
@@ -163,6 +163,6 @@ async function main() {
   try {
     await pending;
   } catch (e) {
-    console.log("s11", e.name, e.message);
+    console.log("s11", (e as Error).name, (e as Error).message);
   }
 }

@@ -64,6 +64,8 @@ compiler knows exactly what each function and each `try` block can throw.
 - A written clause bounds the body
   (``` `load` throws `Timeout`, which its `throws` clause does not allow ```; a subclass is
   allowed by its base class) and is the function's error type even when the body throws less.
+  `throws unknown` (or `any`, and `Promise<T, unknown>` for a promise) allows any thrown value,
+  as JavaScript does: `null`, a string, any class; a `catch` gets it as an `unknown` to narrow.
 - Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
   evaluates them, so it throws what they throw, including inherited ones, besides what the
   constructor throws. They run as part of the constructors
