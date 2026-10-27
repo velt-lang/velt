@@ -118,11 +118,13 @@ fn reads_loop_fields_once_and_keeps_behaviour() {
     assert_valid(&after);
     assert_eq!(run_main(&after, 7), expected);
     assert_eq!(run_main(&after, 0), 0);
-    // The bound is read once, on entry, across the call in the loop.
-    assert_eq!(reads_through(&after.funcs[1], Local(0)), (1, 1));
+    // The bound and the word read through `q` are read once, on entry, across the call in the
+    // loop (a frozen word does not change through a pointer either).
+    assert_eq!(reads_through(&after.funcs[1], Local(0)), (2, 2));
 }
 
-/// The field whose address is taken (an atomic's word) is never read once: only the bound is.
+/// A field whose address is taken keeps its address: `q = &(*p).1` still points at the field
+/// (an atomic operation given `q` must reach the word itself), whatever is read once.
 #[test]
 fn leaves_fields_whose_address_is_taken() {
     let mut p = program(FROZEN);
@@ -253,4 +255,82 @@ fn reads_once_what_inlined_callees_read() {
         .find(|f| f.symbol == "sum")
         .expect("sum is kept");
     assert_eq!(loop_reads(sum, AggId(1)), 0, "{sum:?}");
+}
+
+/// `sum2(p)`: `q = &(*p).0` (lowering passes an array field to a function by its address), then
+/// a loop bounded by `(*q).0` (the same word as `(*p).0`): the bound is read once, on entry,
+/// and `q` keeps pointing at the field.
+#[test]
+fn reads_through_a_field_pointer_once() {
+    let mut pb = ProgramBuilder::new();
+    let pair = pb.agg("pair", 16, 8, &[(Ty::U64, 0), (Ty::U64, 8)]);
+    let holder = pb.agg("holder", 16, 8, &[(Ty::Agg(pair), 0)]);
+    let mut fb = FuncBuilder::internal("sum2", &[Ty::Ptr], Ty::U64);
+    let p = fb.param(0);
+    let (q, i, c) = (fb.local(Ty::Ptr), fb.local(Ty::U64), fb.local(Ty::Bool));
+    let (entry, head, body, exit) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(
+        entry,
+        q,
+        Rvalue::AddrOf(Place {
+            local: p,
+            proj: vec![Proj::Deref(Ty::Agg(holder)), Proj::Field(0)],
+        }),
+    );
+    fb.assign(entry, i, Rvalue::Use(int(0, Ty::U64)));
+    fb.goto(entry, head);
+    fb.assign(
+        head,
+        c,
+        bin(BinOp::Lt, copy_local(i), copy_place(through(q, pair, 0))),
+    );
+    fb.branch(head, c, body, exit);
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, Ty::U64)));
+    fb.goto(body, head);
+    fb.ret(exit, copy_local(i));
+    let mut f = fb.finish();
+    f.param_attrs = vec![FROZEN];
+    pb.add(f);
+    let mut fb = FuncBuilder::export("main", &[Ty::U64], Ty::U64);
+    let n = fb.param(0);
+    let (h, ph, r) = (
+        fb.local(Ty::Agg(holder)),
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U64),
+    );
+    let b = fb.block();
+    fb.push(
+        b,
+        Stmt::Assign(
+            Place {
+                local: h,
+                proj: vec![Proj::Field(0), Proj::Field(0)],
+            },
+            Rvalue::Use(copy_local(n)),
+        ),
+    );
+    fb.assign(b, ph, Rvalue::AddrOf(Place::local(h)));
+    let b = fb.call(b, Callee::Func(FuncId(0)), vec![copy_local(ph)], Some(r));
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish());
+    let before = pb.finish();
+    let mut after = before.clone();
+    let aggs = after.aggs.clone();
+    assert!(run(&aggs, &mut after.funcs[0]));
+    assert_valid(&after);
+    assert_eq!(run_main(&after, 9), run_main(&before, 9));
+    let f = &after.funcs[0];
+    // Only the entry block reads through `p` or `q` now.
+    let reads_in_loop = f.blocks.iter().skip(1).flat_map(|b| &b.stmts).any(|s| {
+        let mut hit = false;
+        stmt_operands(s, &mut |op| {
+            hit |= matches!(op, Operand::Copy(pl) if !pl.proj.is_empty());
+        });
+        hit
+    });
+    assert!(!reads_in_loop, "{f:?}");
+    let still_addr = f.blocks.iter().flat_map(|b| &b.stmts).any(
+        |s| matches!(s, Stmt::Assign(_, Rvalue::AddrOf(pl)) if pl.local == p && pl.proj.len() == 2),
+    );
+    assert!(still_addr, "{f:?}");
 }
