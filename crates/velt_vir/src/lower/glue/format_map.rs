@@ -402,7 +402,15 @@ impl FnLower<'_, '_> {
                     let symbol = lw.cx.intern(TyKind::Symbol);
                     let types = (sym_ty, symbol, vt);
                     let start = Some(Operand::Copy(Place::local(shown)));
-                    lw.format_map_entries(buf, &sym_map, types, (Entries::Symbols, None), n, &child, start);
+                    lw.format_map_entries(
+                        buf,
+                        &sym_map,
+                        types,
+                        (Entries::Symbols, None),
+                        n,
+                        &child,
+                        start,
+                    );
                     lw.goto(after);
                     lw.switch_to(after);
                 }

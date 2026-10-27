@@ -5,6 +5,7 @@
 // describes a record's data properties and accessors.
 
 const TAG = Symbol("tag");
+
 function main() {
   const target: Record<string | symbol, number> = { a: 1 };
   target[TAG] = 7;
@@ -38,11 +39,23 @@ function main() {
   console.log(k2 in p, TAG in p, "a" in p);
   console.log(Reflect.ownKeys(p));
   console.log(delete p[k2], s2 in target, target[TAG]);
-  console.log(Reflect.getOwnPropertyDescriptor(target, TAG), Reflect.getOwnPropertyDescriptor(target, "a"));
-  console.log(Object.getOwnPropertyDescriptor(target, TAG), Object.getOwnPropertyDescriptor(target, "zz"));
+  console.log(
+    Reflect.getOwnPropertyDescriptor(target, TAG),
+    Reflect.getOwnPropertyDescriptor(target, "a"),
+  );
+  console.log(
+    Object.getOwnPropertyDescriptor(target, TAG),
+    Object.getOwnPropertyDescriptor(target, "zz"),
+  );
   Object.defineProperty(target, "g", { get: () => 5, configurable: true });
   const d = Object.getOwnPropertyDescriptor(target, "g");
-  console.log(d !== undefined && typeof d.get, d !== undefined && d.set, d !== undefined && d.enumerable, d !== undefined && d.configurable);
+  console.log(
+    d !== undefined && typeof d.get,
+    d !== undefined && d.set,
+    d !== undefined && d.enumerable,
+    d !== undefined && d.configurable,
+  );
   console.log(seen.join("\n"));
 }
+
 main();

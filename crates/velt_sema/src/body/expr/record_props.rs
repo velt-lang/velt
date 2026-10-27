@@ -138,7 +138,11 @@ impl FnCx<'_, '_> {
 
     /// `Object.getOwnPropertyDescriptor(r, k)` on a string-keyed record: its property `k` as
     /// Node describes it (std/record/reflect.vlt), or `undefined`.
-    pub(super) fn record_descriptor(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+    pub(super) fn record_descriptor(
+        &mut self,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
         let [r, k] = args else {
             return None;
         };

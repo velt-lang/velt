@@ -2,6 +2,7 @@
 // string keys as `Symbol(d): v`; a record literal takes well-known symbol keys too.
 
 const KEY: unique symbol = Symbol("key");
+
 function show() {
   const r: Record<string | symbol, number> = { a: 1 };
   r[KEY] = 2;
@@ -24,7 +25,11 @@ function show() {
 }
 
 function literal() {
-  const r: Record<string | symbol, number> = { a: 1, [Symbol.iterator]: 4, [Symbol.toStringTag]: 5 };
+  const r: Record<string | symbol, number> = {
+    a: 1,
+    [Symbol.iterator]: 4,
+    [Symbol.toStringTag]: 5,
+  };
   console.log(r[Symbol.iterator], Object.keys(r), Object.getOwnPropertySymbols(r));
   const q: Record<string, string> = { "[Symbol.foo]": "x" };
   console.log(q, Object.keys(q));

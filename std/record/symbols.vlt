@@ -32,8 +32,7 @@ extend<K, V> Record<K, V> {
     this.__deleteKeyed(key);
     const t = this.accessors;
     if (t == null) {
-      const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> =
-        new Map();
+      const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> = new Map();
       made.set(key, [get, set, configurable]);
       this.accessors = made;
     } else {

@@ -272,7 +272,6 @@ export class Record<K, V> {
   }
 }
 
-
 /**
  * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (JavaScript's
  * order: array-index keys first, ascending, then insertion order).
