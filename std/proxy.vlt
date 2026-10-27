@@ -107,14 +107,23 @@ function proxyGetterReceiverUnsupported(key: any): never {
 // property of a class instance (a method's value is a function, which a call runs with `this`
 // the proxy already).
 function classGetterValue(target: any, key: any, value: any): bool {
-  return (
-    typeof key === "string" &&
-    value !== undefined &&
-    typeof value !== "function" &&
-    !Array.isArray(target) &&
-    !(target instanceof Record) &&
-    !Object.hasOwn(target, key)
-  );
+  if (
+    typeof key !== "string" ||
+    value === undefined ||
+    typeof value === "function" ||
+    Array.isArray(target) ||
+    target instanceof Record ||
+    target instanceof Proxy
+  ) {
+    return false;
+  }
+  // `target` is no proxy, so no trap runs here: the `catch` only keeps the traps' errors out of
+  // what `Reflect.get` throws.
+  try {
+    return !Object.hasOwn(target, key);
+  } catch (e) {
+    return false;
+  }
 }
 
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
