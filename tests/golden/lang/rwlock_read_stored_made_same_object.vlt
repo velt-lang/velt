@@ -1,0 +1,43 @@
+// check: no leaks
+// An array a `read` callback made and still references, holding parts of the lock's value, is
+// stored into the caller's container as that same object, as in JavaScript (#1541): the
+// caller and the callback see one array, and only the parts it shares with the value are
+// copies. Also from a `read` nested in another, and for an object the array holds twice.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][][] = [];
+  const twice: number[][][][] = [];
+  a.read((x) => {
+    const c = x.items.slice();
+    out.push(c);
+    console.log(c.length, out[0] === c, out[0][0] === c[0]);
+    b.read((y) => {
+      const d = y.items.concat([[5]]);
+      out.push(d);
+      console.log(out[1] === d, d.length);
+    });
+    const e = x.items.slice(1);
+    const g = [e, e];
+    twice.push(g);
+    console.log(twice[0][0] === twice[0][1], g.length);
+  });
+  const same: boolean[] = [];
+  for (let i = 0; i < 20; i++) {
+    a.read((x) => {
+      const c = x.items.map((r) => r);
+      out.push(c);
+      same.push(out[out.length - 1] === c);
+    });
+  }
+  console.log(same.length, same.every((s) => s));
+  out[0].push([7]);
+  out[1].push([9]);
+  twice[0][0].push([4]);
+  console.log(JSON.stringify(out[0]), JSON.stringify(out[1]), out.length);
+  console.log(JSON.stringify(twice));
+}

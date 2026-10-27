@@ -34,8 +34,9 @@ impl FnLower<'_, '_> {
             }
             _ => 1,
         };
+        let share = self.share_dest(args.as_ptr() as usize);
         if levels == 1 || self.dead() {
-            return self.transfer_value(v, ty);
+            return self.share_stored(v, ty, share);
         }
         if self.cx.is_class(ty) && self.cx.lock_counted(ty) {
             self.stop_shared_made(v.clone());
@@ -43,10 +44,25 @@ impl FnLower<'_, '_> {
         let was = self.temp(Ty::U64);
         let to = vec![cint(i128::from(levels), Ty::U64)];
         self.call_rt(Rt::LkLeaveTo, to, Some(Place::local(was)));
-        let v = self.transfer_value(v, ty);
+        let v = self.share_stored(v, ty, share);
         let back = vec![Operand::Copy(Place::local(was))];
         let ignored = self.temp(Ty::U64);
         self.call_rt(Rt::LkLeaveTo, back, Some(Place::local(ignored)));
+        v
+    }
+
+    /// `transfer_value` of a value sema transferred into the caller's container (`share`, from
+    /// `share_dest`): in read mode what the reader made stays itself instead of becoming a copy
+    /// (velt_rt `velt_rt_xfer_share_begin`, glue/transfer.rs `share_made`). Into anything else
+    /// (a container the reader may have made) what it shares stays a copy and what it made
+    /// stays its own.
+    fn share_stored(&mut self, v: Operand, ty: TyId, share: bool) -> Operand {
+        if !share || self.dead() || !self.cx.transfers(ty) || !self.cx.reaches_lock_set(ty) {
+            return self.transfer_value(v, ty);
+        }
+        self.lk_split(|_| {}, |lw| lw.call_rt(Rt::XferShareBegin, vec![], None));
+        let v = self.transfer_value(v, ty);
+        self.lk_split(|_| {}, |lw| lw.call_rt(Rt::XferEnd, vec![], None));
         v
     }
 
@@ -229,6 +245,40 @@ impl FnLower<'_, '_> {
             .as_ref()
             .and_then(|m| m.get(&key).copied());
         levels.unwrap_or(OUTSIDE)
+    }
+
+    /// Does the store whose transfer's arguments start at `key` put the value only into
+    /// containers of the code outside every read: places rooted in variables this
+    /// `Work::ReadOwn` callback captured from that code (`caller_capture`)? Only then does what
+    /// the reader made stay itself (`share_stored`): a container it may have made itself (a
+    /// variable of its own, a parameter) counts what it holds by read mode's rules.
+    fn share_dest(&mut self, key: usize) -> bool {
+        if !self.own_captures {
+            return false;
+        }
+        if self.share_dests.is_none() {
+            let mut stores = Stores::default();
+            if let Some(hir::Def::Fn(f)) = self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+                stores.block(&f.body.block);
+            }
+            let captured: Vec<LocalId> = match self.cx.cur_def {
+                Some(d) => self.cx.fn_def(d).captures.iter().map(|c| c.inner).collect(),
+                None => vec![],
+            };
+            let mut found = FxHashMap::default();
+            for (keys, roots) in stores.found {
+                let callers = !roots.is_empty()
+                    && roots
+                        .iter()
+                        .all(|&(r, _)| captured.contains(&r) && self.caller_capture(r));
+                for k in keys {
+                    found.insert(k, callers);
+                }
+            }
+            self.share_dests = Some(found);
+        }
+        let dests = self.share_dests.as_ref();
+        dests.and_then(|m| m.get(&key).copied()).unwrap_or(false)
     }
 
     /// The parameter of this `read` callback naming the lock's value, if this is one.

@@ -25,6 +25,14 @@ use crate::hazard::{FREES_WAIT, READER};
 /// Set in the count word of a lock-set object made in read mode.
 pub const LOCAL: u64 = 1 << 62;
 
+/// Set, with [`LOCAL`], in the count word of an object a reader made and stored into a
+/// container of the code outside every read while still referencing it
+/// ([`velt_rt_lk_share_made`]): the caller's from then on, so a write through the readers'
+/// references stops the program ([`velt_rt_lk_write`]), while they keep counting them as their
+/// own until this thread's outermost read ends. It counts as part of the count, so the object
+/// is never unique meanwhile.
+pub const STORED: u64 = 1 << 61;
+
 // This thread's state is in `hazard::READER` (`read_depth`: the read callbacks it is in,
 // which `Reader::push` and `pop` count).
 
@@ -83,7 +91,7 @@ pub(crate) fn free_waiting() {
         // SAFETY: `velt_rt_lk_leave` took it with one more reference, its count word and its
         // drop glue, which releases that reference (outside read mode now).
         unsafe {
-            *c &= !LOCAL;
+            *c &= !(LOCAL | STORED);
             drop(&mut slot);
         }
     }
@@ -144,6 +152,9 @@ pub(crate) fn refuse_in_read(method: &str) {
 /// About to write the lock-set object whose count word is at `p`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
+    if in_read() && *p & STORED != 0 {
+        crate::panic::fatal("cannot change an object a `read` callback made after storing it outside the callback: it is the caller's from then on, as the same object (store it once it is complete, or change it through the caller's container after `read`)");
+    }
     if in_read() && *p & LOCAL == 0 {
         crate::panic::fatal(
             "cannot modify a value an `RwLock` holds inside its `read` callback (other readers read it at the same time): change it in `write`",
@@ -196,6 +207,29 @@ pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
     if (depth <= 1 || depth > LEAVE_TO.with(Cell::get)) && !leaving(p) {
         *p = 1;
     }
+}
+
+/// A value sema transferred out of a `read` callback (`velt_rt_xfer_share_begin`) holds the
+/// reader's own object `obj`, whose count word is at `p`, which the reader still references: it
+/// stays itself. Going to a frame still in read mode (an outer reader's variable) it stays that
+/// reader's own, counted. Going to code outside every read, at any depth, it is the caller's
+/// ([`STORED`]): a change through the readers' references stops the program, so nothing the
+/// readers hold uncounted can be put into it after it left, and they still count their
+/// references until this thread's outermost read ends, when it loses `LOCAL` and `STORED` and
+/// the one more reference it holds meanwhile, which `drop` (its drop glue) releases: its count
+/// is never 1 before then, so a transfer to another thread copies it. One a nested read's store
+/// already left the readers' own ([`leaving`]) stays so.
+///
+/// # Safety
+/// `p` is the count word of the counted object `obj`, and `drop` its drop glue.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_share_made(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+    let depth = READER.with(|r| r.depth()) as u64;
+    if depth > LEAVE_TO.with(Cell::get) || leaving(p) {
+        return;
+    }
+    *p |= STORED;
+    leave_after_reads(p, obj, drop);
 }
 
 /// Did a nested read's store leave the object whose count word is at `p` the reader's own
@@ -289,5 +323,30 @@ mod tests {
         assert_eq!(in_read() as u8, 0);
         let mut store = 1u64;
         unsafe { velt_rt_lk_write(&mut store) };
+    }
+
+    #[test]
+    fn a_shared_store_keeps_the_readers_counts_until_the_reads_end() {
+        let obj = std::ptr::null_mut();
+        let before = DROPS.with(Cell::get);
+        READER.with(|r| r.push());
+        // Stored outside every read while the reader holds it twice: the caller's, with one
+        // more reference until the reads end, and the reader's counts kept.
+        let mut made = 2 | LOCAL;
+        unsafe { velt_rt_lk_share_made(&mut made, obj, count_drop) };
+        assert_eq!(made, 3 | LOCAL | STORED);
+        // Going to an outer reader's variable (a nested read whose result stays the reader's).
+        READER.with(|r| r.push());
+        let mut kept = 2 | LOCAL;
+        unsafe { velt_rt_lk_share_made(&mut kept, obj, count_drop) };
+        assert_eq!(kept, 2 | LOCAL);
+        READER.with(|r| r.pop());
+        // The reader drops its two references (read mode counts its own objects).
+        made -= 2;
+        READER.with(|r| r.pop());
+        READER.with(|r| r.read_depth.set(0));
+        free_waiting();
+        assert_eq!(made, 1);
+        assert_eq!(DROPS.with(Cell::get), before + 1);
     }
 }

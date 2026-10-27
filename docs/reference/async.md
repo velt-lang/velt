@@ -605,17 +605,20 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   made (`g.push([out[0]])`) and as what a closure it made captures (`fs.push(() => out[0].v)`);
   anything else it did not make itself is a copy (an element of the value, what a function
   returns, a closure capturing a part of the value). An array or object the callback made that
-  holds objects of the value's types is the caller's once stored there: the callback can still
-  read it through its own variables, but a write through them stops the program, as for the
-  value's own (store it once it is complete). One a `read` nested in another stores there
+  holds objects of the value's types is the caller's once stored there, as that same object
+  (`const c = s.items.slice(); out.push(c)`: `out[0] === c`, also when stored twice); what it
+  shares with the value inside it becomes a copy. The callback can still read it through its
+  own variables, but a write through them stops the program (``cannot change an object a
+  `read` callback made after storing it outside the callback …``): store it once it is
+  complete. One a `read` nested in another stores there that the callbacks hold nowhere else
   stays the readers' own until the outermost `read` returns, so the callbacks around it can
-  still change it through their variables, also after moving it on into another of the
+  still change it through what they reach it by, also after moving it on into another of the
   caller's containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in
-  JavaScript. Sent on a channel before then, it is sent as a copy. This holds only while the
-  callbacks store no part of the value into it (`n.kids.push(x.items[0])`, before or after
-  the store): then a class object they still reference stops the program at the nested
-  store, and an array is stored as a copy, as in a single `read`, which the changes made
-  through their variables after the store don't reach.
+  JavaScript. Sent on a channel before then, it is sent as a copy. One they still reference
+  elsewhere (`const l = [[1]]; … top.push(l[0])`) is the caller's at the store, as in a single
+  `read`, when the callbacks store a part of the value into it (`l[0].push(x.items[0])`,
+  which then stops the program); a class object of that kind stops the program at the nested
+  store.
   One whose type the value cannot hold, and a
   function value, that the callback still uses after storing it is stored as a copy. So is a
   container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its

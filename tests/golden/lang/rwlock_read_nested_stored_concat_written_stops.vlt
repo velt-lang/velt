@@ -1,0 +1,23 @@
+// The same from a `read` nested in another: the array it made from both locks' values is the
+// caller's once stored into the caller's arrays (`out`, `out2`, the same object in both), and
+// a write through the callback's own variable afterwards stops the program (#1541).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][][] = [];
+  const out2: number[][][] = [];
+  a.read((x) => {
+    b.read((y) => {
+      const c = y.items.concat(x.items);
+      out.push(c);
+      out2.push(c);
+      console.log("stored", out[0] === out2[0], out[0] === c, c.length);
+      c.push([8]);
+    });
+  });
+  console.log(JSON.stringify(out));
+}

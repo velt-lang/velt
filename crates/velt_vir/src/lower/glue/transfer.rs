@@ -162,7 +162,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let one = self.unique_of(o.clone(), ty);
             self.branch(one, unique, shared);
             self.switch_to(shared);
-            self.keep_callers(o.clone(), ty, done, unique);
+            let keep = self.keep_callers(o.clone(), ty, done, unique);
             self.find_copy(o.clone(), ty, |lw, copy| {
                 lw.defer_release(o.clone(), ty);
                 lw.assign(Place::local(out), Rvalue::Use(copy));
@@ -172,6 +172,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.call_glue(Glue::ObjClone, ty, vec![v])
             });
             let new = self.settle_copy(new, ty);
+            let new = self.settle_shared(new, ty, keep);
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
@@ -232,7 +233,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let one = self.unique_of(p.clone(), ty);
         self.branch(one, unique, shared);
         self.switch_to(shared);
-        self.keep_callers(p.clone(), ty, done, unique);
+        let keep = self.keep_callers(p.clone(), ty, done, unique);
         self.find_copy(p.clone(), ty, |lw, copy| {
             lw.defer_release(p.clone(), ty);
             lw.assign(place.clone(), Rvalue::Use(copy));
@@ -243,6 +244,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c))
         });
         let new = self.settle_copy(new, ty);
+        let new = self.settle_shared(new, ty, keep);
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
@@ -321,9 +323,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// the reader's other references borrow it uncounted, as a store object; one it made that
     /// holds no lock-set object stays the reader's (counted, at `done`). Outside such a
     /// transfer it is copied as in any.
-    fn keep_callers(&mut self, o: Operand, ty: TyId, done: vir::BlockId, unique: vir::BlockId) {
+    fn keep_callers(
+        &mut self,
+        o: Operand,
+        ty: TyId,
+        done: vir::BlockId,
+        unique: vir::BlockId,
+    ) -> Option<vir::Local> {
         if !self.cx.lock_counted(ty) {
-            return;
+            return None;
         }
         let keep = self.temp(Ty::U8);
         self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
@@ -334,13 +342,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let k = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(
-                BinOp::Ne,
+                BinOp::Eq,
                 Operand::Copy(Place::local(keep)),
-                cint(0, Ty::U8),
+                cint(1, Ty::U8),
             ),
         );
-        let (keeping, go) = (self.new_block(), self.new_block());
-        self.branch(k, keeping, go);
+        let (keeping, other) = (self.new_block(), self.new_block());
+        self.branch(k, keeping, other);
+        self.switch_to(other);
+        let go = self.new_block();
+        self.share_made(o.clone(), ty, keep, [done, unique, go]);
         self.switch_to(keeping);
         let c = self.count_place(o.clone());
         let mine = self.is_local(&c);
@@ -361,6 +372,86 @@ impl<'c, 'h> FnLower<'c, 'h> {
             false => self.goto(done),
         }
         self.switch_to(go);
+        Some(keep)
+    }
+
+    /// In a transfer `velt_rt_xfer_share_begin` started (`keep` is 2: a value sema transferred
+    /// out of a `read` callback into its caller's containers), in read mode, the still-shared
+    /// object `o` the reader made stays itself, as in JavaScript: the caller's from then on, with
+    /// its parts transferred in turn (at `unique`), so what the reader shares with the value
+    /// inside it becomes a copy. A later change through the reader's references stops the
+    /// program instead of changing only a copy (velt_rt `velt_rt_lk_share_made`; going to an
+    /// outer reader's variable it stays that reader's own). Reached again in the same transfer it stays itself (the transfer map
+    /// maps it to itself). Anything else goes on at `go`, as outside such a transfer.
+    fn share_made(&mut self, o: Operand, ty: TyId, keep: vir::Local, to: [vir::BlockId; 3]) {
+        let [done, unique, go] = to;
+        let s = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(keep)),
+                cint(2, Ty::U8),
+            ),
+        );
+        let (sharing, made, first) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(s, sharing, go);
+        self.switch_to(sharing);
+        let c = self.count_place(o.clone());
+        let mine = self.is_local(&c);
+        self.branch(mine, made, go);
+        self.switch_to(made);
+        let found = self.temp(Ty::Ptr);
+        self.call_rt(Rt::XferFind, vec![o.clone()], Some(Place::local(found)));
+        let again = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(found)), o.clone()),
+        );
+        let seen = self.new_block();
+        self.branch(again, seen, first);
+        // A copy this transfer made (a part shared within it) or one it kept: no longer the
+        // reader's own where the value goes.
+        self.switch_to(seen);
+        self.leave_read(o.clone(), ty);
+        self.goto(done);
+        self.switch_to(first);
+        let c = self.count_addr(o.clone());
+        let glue = cfunc(self.cx.func(Work::Glue(Glue::Drop, ty)));
+        self.call_rt(Rt::LkShareMade, vec![c, o.clone(), glue], None);
+        self.call_rt(Rt::XferRecord, vec![o.clone(), o], None);
+        self.goto(unique);
+    }
+
+    /// The copy `new` of a `ty` object that a transfer `velt_rt_xfer_share_begin` started made in
+    /// read mode (`keep` is what `keep_callers` asked): made by the reader, so `LOCAL`, it is
+    /// transferred in turn, so it and its parts are no longer the reader's own where the value
+    /// goes (as a moved object is), and a later share of the same object (`share_made`) never
+    /// takes the caller's references for the reader's.
+    fn settle_shared(&mut self, new: Operand, ty: TyId, keep: Option<vir::Local>) -> Operand {
+        let Some(keep) = keep else {
+            return new;
+        };
+        let t = Place::local(self.copy_to_temp(new, Ty::Ptr));
+        let at = t.clone();
+        self.lk_split(
+            |_| {},
+            |lw| {
+                let s = lw.rvalue_temp(
+                    Ty::Bool,
+                    Rvalue::Binary(
+                        BinOp::Eq,
+                        Operand::Copy(Place::local(keep)),
+                        cint(2, Ty::U8),
+                    ),
+                );
+                let (settle, join) = (lw.new_block(), lw.new_block());
+                lw.branch(s, settle, join);
+                lw.switch_to(settle);
+                lw.transfer_in_place(at, ty);
+                lw.goto(join);
+                lw.switch_to(join);
+            },
+        );
+        Operand::Copy(t)
     }
 
     /// Can a part of a `ty` object (counted) refer to a lock-set object?

@@ -684,6 +684,9 @@ struct FnLower<'c, 'h> {
     /// The frames the stores of this `read` callback put what they transfer in, by the
     /// address of each transfer's arguments (leave_levels.rs), once asked.
     leave_levels: Option<FxHashMap<usize, u64>>,
+    /// Whether each transfer's store goes into a container of the code outside every read
+    /// (leave_levels.rs `share_dest`), once asked.
+    share_dests: Option<FxHashMap<usize, bool>>,
     /// The array literal lowered next gives each element to the caller's container on its own
     /// (caller_stores.rs `Held::Elems`).
     elems_to_caller: bool,

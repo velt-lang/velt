@@ -18,6 +18,8 @@ const COUNT: i128 = 8;
 /// The `LOCAL` bit of a lock-set object's count word (velt_rt `read_mode`), and its count
 /// without it.
 pub(super) const LOCAL: i128 = 1 << 62;
+/// The `STORED` bit (velt_rt `read_mode::STORED`): a reader's object stored outside every read.
+const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {
@@ -248,8 +250,20 @@ impl FnLower<'_, '_> {
             self.lk_split(
                 |_| {},
                 |lw| {
+                    // `LOCAL` without `STORED`: the reader's own, not stored outside since.
                     let c = lw.count_place(p.clone());
-                    let mine = lw.is_local(&c);
+                    let bits = lw.rvalue_temp(
+                        Ty::U64,
+                        Rvalue::Binary(
+                            BinOp::BitAnd,
+                            Operand::Copy(c),
+                            cint(LOCAL | STORED, Ty::U64),
+                        ),
+                    );
+                    let mine = lw.rvalue_temp(
+                        Ty::Bool,
+                        Rvalue::Binary(BinOp::Eq, bits, cint(LOCAL, Ty::U64)),
+                    );
                     let (ok, stop) = (lw.new_block(), lw.new_block());
                     lw.branch(mine, ok, stop);
                     lw.switch_to(stop);
