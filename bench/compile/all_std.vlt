@@ -108,6 +108,7 @@ import * as std_sqlite from "velt:sqlite";
 import * as std_stdin from "velt:stdin";
 import * as std_streams from "velt:streams";
 import * as std_symbol from "velt:symbol";
+import * as std_sync from "velt:sync";
 import * as std_task from "velt:task";
 import * as std_timers from "velt:timers";
 import * as std_typed_array from "velt:typed_array";
