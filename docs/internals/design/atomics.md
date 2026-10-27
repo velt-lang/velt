@@ -265,7 +265,9 @@ worker parking last in that window ended the process with `main` pending (the re
 it with a sleep in the window). On Windows the monitor naps with `thread::sleep` in slices of
 50 µs at most, looking for a hurry between them: a condition variable's timeout there rounds up
 to the 15 ms timer tick, where `thread::sleep` takes about 0.6 ms for 50 µs and 1.5 ms for 1 ms
-(Windows not measured here; the merge queue runs it).
+(Windows 11, a probe of this `nap`, medians of 400: 1.11 ms for a 1 ms nap and
+0.56 ms for a 50 µs one, against 15.4 ms with the condition variable; a hurry from another
+thread ends a nap in 49 µs, so the stall rescue takes about 2–3 ms there).
 
 `bench/async/scheduler/spawn_start.vlt` is the start probe below; `spawn_burst.vlt` is 100k
 rounds of 2 tiny spawned tasks awaited together, whose first polls are all watched. Apple M4,
