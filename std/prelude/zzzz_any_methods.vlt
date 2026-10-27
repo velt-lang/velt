@@ -163,6 +163,10 @@ export function __anyStr_charCodeAt(s: string, args: any[]): any {
   return s.charCodeAt(i) as number;
 }
 
+export function __anyStr_codePointAt(s: string, args: any[]): any {
+  return s.codePointAt(__anyIntArg(args, 0, 0));
+}
+
 export function __anyStr_at(s: string, args: any[]): any {
   return s.at(__anyIntArg(args, 0, 0));
 }
