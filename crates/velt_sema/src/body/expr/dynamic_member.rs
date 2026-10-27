@@ -429,7 +429,7 @@ impl FnCx<'_, '_> {
             let text = format!("{}.{}", self.callee_text(f), prop.name);
             let text = self.key_lit(&text, span);
             let mut all = vec![f.clone(), key, text];
-            all.extend(self.dynamic_args(args, any)?);
+            all.extend(self.dynamic_args(args, any, false)?);
             return Some(self.intrinsic(Intrinsic::AnyCall, all, any, span));
         }
         let (this, rest) = match args.split_first() {
@@ -499,7 +499,7 @@ impl FnCx<'_, '_> {
                 let key = self.key_lit(&prop.name, prop.span);
                 let text =
                     self.key_lit(&format!("{}.{}", self.callee_text(&held), prop.name), span);
-                let boxed = self.dynamic_args(given, any)?;
+                let boxed = self.dynamic_args(given, any, false)?;
                 let mut all = vec![held, key, text, t.clone()];
                 all.extend(boxed);
                 self.intrinsic(Intrinsic::AnyCall, all, any, span)
