@@ -42,6 +42,7 @@ const UNSUPPORTED: &[&str] = &[
     "process_lifetime_spawned_finally",
     // A shared promise settling resumes its waiters at the executor's next step (the order of
     // the log), and a converted promise's rejection is reported as its own (no views, #1682).
+    "promise_identity_bounded",
     "promise_identity_converted_rejects",
     "promise_identity_defer",
     "promise_identity_defer_rejects",

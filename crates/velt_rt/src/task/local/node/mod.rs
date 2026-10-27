@@ -296,13 +296,16 @@ pub(super) unsafe fn forget_alias(f: *mut VeltFut, fl: u32) {
 #[inline(never)]
 unsafe fn forget_alias_slow(f: *mut VeltFut, fl: u32) {
     crate::task::identity::forget(f);
-    // Finished, its result claimed or handled: no rejection of it is decided later, so its
-    // record goes now rather than when the node is freed.
+    // Finished, its result claimed or handled (or it cannot reject): no rejection of it is
+    // decided later, so its record goes now rather than when the node is freed, which may wait
+    // until the task yields (a woken node waits in its set's queue).
     let h = head(f);
     let settled = h.owner.get() & OWNER_DELIVERED != 0
         || h.flags.load(Ordering::Relaxed) & HANDLED != 0
         || crate::task::identity::handled_elsewhere(f).is_some();
-    if fl & DONE != 0 && settled {
+    // A promise that cannot reject has no rejection to decide at all.
+    let rejectable = h.flags.load(Ordering::Relaxed) & REJECTABLE != 0;
+    if !rejectable || fl & DONE != 0 && settled {
         crate::task::identity::release(f);
         h.flags.fetch_and(!ALIASED, Ordering::Relaxed);
     }
