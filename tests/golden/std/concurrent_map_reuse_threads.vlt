@@ -1,0 +1,96 @@
+// velt:collections/concurrent_map reusing emptied leaves while threads run: writers move windows
+// of keys forward (each sets a key and deletes the one `W` behind it; their keys interleave, so
+// they share leaves and a leaf empties once all have passed it), and a fixed capacity that only
+// reuse makes enough. Readers check that every key they find has its own value, and that keys
+// a writer's window held for the whole lookup are found: a lookup misled by a reused node would
+// miss them. At the end each writer's last window is present and every key before it is gone.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const WRITERS: u64 = 4;
+const N: u64 = 100000;
+const W: u64 = 500;
+
+function valueOf(k: u64): u64 {
+  return k * 0x9E3779B97F4A7C15 + 1;
+}
+
+/** How many keys each writer has set. */
+class Progress {
+  at: Atomic<u64>[] = [];
+}
+
+async function writer(m: shared<ConcurrentMap>, p: shared<Progress>, t: u64): Promise<u64> {
+  let wrong: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    const k = i * WRITERS + t;
+    m.set(k, valueOf(k));
+    p.at[t].store(i + 1, "release");
+    if (i >= W && !m.delete(k - W * WRITERS)) {
+      wrong++;
+    }
+    // Its own keys behind the window are gone; the last one set is there.
+    if (i % 64 == 0 && (m.get(k) != valueOf(k) || (i >= W && m.has(k - W * WRITERS)))) {
+      wrong++;
+    }
+  }
+  return wrong;
+}
+
+async function reader(m: shared<ConcurrentMap>, p: shared<Progress>, seed: u64): Promise<u64> {
+  let wrong: u64 = 0;
+  let x = seed;
+  for (let r: u64 = 0; r < 400000; r++) {
+    x = x * 6364136223846793005 + 1442695040888963407;
+    const t = (x >> 10) % WRITERS;
+    const before = p.at[t].load("acquire");
+    // A key of writer `t` from its window, or (one time in four) anywhere.
+    const i = (x & 3) == 0 || before == 0 ? (x >> 20) % N : before - 1 - (x >> 20) % W;
+    const k = i * WRITERS + t;
+    const v = m.get(k);
+    const after = p.at[t].load("acquire");
+    if (v != undefined && v != valueOf(k)) {
+      wrong++;
+    }
+    // Set before the lookup began, and not yet deleted when it ended.
+    if (v == undefined && i < before && i + W >= after) {
+      wrong++;
+    }
+  }
+  return wrong;
+}
+
+async function main() {
+  // About 2,000 keys present at once; 400k set in all.
+  const s = shared(ConcurrentMap.create(20000));
+  const progress = new Progress();
+  for (let t: u64 = 0; t < WRITERS; t++) {
+    progress.at.push(new Atomic<u64>(0));
+  }
+  const p = shared(progress);
+  const ws: Promise<u64>[] = [];
+  for (let t: u64 = 0; t < WRITERS; t++) {
+    ws.push(spawn(writer(s, p, t)));
+  }
+  const rs: Promise<u64>[] = [spawn(reader(s, p, 1)), spawn(reader(s, p, 2))];
+  let wrong: u64 = 0;
+  for (const w of await Promise.all(ws)) {
+    wrong += w;
+  }
+  for (const w of await Promise.all(rs)) {
+    wrong += w;
+  }
+  let present: u64 = 0;
+  let stale: u64 = 0;
+  for (let k: u64 = 0; k < N * WRITERS; k++) {
+    const v = s.get(k);
+    if (k >= (N - W) * WRITERS) {
+      if (v == valueOf(k)) {
+        present++;
+      }
+    } else if (v != undefined) {
+      stale++;
+    }
+  }
+  console.log("wrong", wrong, "present", present, "stale", stale);
+}
