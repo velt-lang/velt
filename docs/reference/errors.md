@@ -64,6 +64,8 @@ compiler knows exactly what each function and each `try` block can throw.
 - A written clause bounds the body
   (``` `load` throws `Timeout`, which its `throws` clause does not allow ```; a subclass is
   allowed by its base class) and is the function's error type even when the body throws less.
+  `throws unknown` (or `any`, and `Promise<T, unknown>` for a promise) allows any thrown value,
+  as JavaScript does: `null`, a string, any class; a `catch` gets it as an `unknown` to narrow.
 - Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
   evaluates them, so it throws what they throw, including inherited ones, besides what the
   constructor throws. They run as part of the constructors
@@ -114,11 +116,12 @@ what a function stored there may throw.
   passed through a function value, an element of a `Map`), every function type of the same
   shape gets the errors. When nothing stored into the type throws, it throws nothing
   and calls through it need no error check. For a type whose result is a `Promise`, the
-  inferred errors are the promise's rejection type. Only `Error` classes are inferred: a closure
-  stored there that throws another value (`throw "x"`, `throw null`) is reported, since the
-  inferred errors can reach other function types of the same shape (a callback stored as a
-  `Map` value gives its errors to every such type). Throw an `Error` instead
-  (`throw new Error("x")`), or write the error type (`() => void throws string`). The errors also come through other such types (a closure calling through one) and through
+  inferred errors are the promise's rejection type. As in JavaScript, any thrown
+  value is inferred: a closure that throws `null`, a string or an `Error | null` gives the type
+  those errors, and a `catch` around a call through it sees their union (`unknown` in
+  TypeScript terms; narrow it with `instanceof`, `typeof` or `=== null`). An object type made
+  for one check (`throw { code: 1 }`) still needs the error type written
+  (`() => void throws { code: number }`). The errors also come through other such types (a closure calling through one) and through
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
   such a type too. Function types of the standard library are not inferred this way: the
   timers (`setTimeout`, `setInterval`, `setImmediate`) and `queueMicrotask` take a callback

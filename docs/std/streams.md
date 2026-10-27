@@ -45,12 +45,14 @@ async function main() {
   whenever the queue is below `strategy.highWaterMark` (default 1; 0 pulls only for a waiting
   read), never two at once; `cancel(reason)` runs when a consumer cancels. Each may be `async`
   (the stream waits for its promise), and an error one throws errors the stream; a `start` that
-  throws at once makes the constructor throw. A `highWaterMark` that is negative or `NaN` is a
+  throws at once makes the constructor throw. As in JS, what they throw may be any value (TS
+  lib's `reason?: any`): the stream errors with it as it is, and a `catch` around a read or
+  the constructor gets an `unknown` (narrow it, or cast it: `(e as Error).message`). A `highWaterMark` that is negative or `NaN` is a
   `RangeError`. Once the stream is closed or errored it drops `pull` and `cancel` (it never
   keeps `start`), so a source whose callbacks hold the controller is freed with the stream.
 - **The controller**: `enqueue(chunk)` (a waiting read gets it, or it is queued), `close()`
   (reads get the queued chunks, then `done`), `error(e)` (queued chunks are dropped and reads
-  reject with `e`), and `desiredSize`. `enqueue` or `close` after `close` throws `TypeError:
+  reject with `e`, any value), and `desiredSize`. `enqueue` or `close` after `close` throws `TypeError:
   Invalid state: Controller is already closed`.
 - **Reading**: `stream.getReader()` locks the stream (`locked`; a second `getReader()` throws
   `TypeError: Invalid state: ReadableStream is locked`). `reader.read()` gives `{ value, done:

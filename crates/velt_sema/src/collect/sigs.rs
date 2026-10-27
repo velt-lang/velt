@@ -197,7 +197,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
-        Some(t) => (cx.resolve_type(t, &env), Some(t.span)),
+        Some(t) => (cx.resolve_async_aware(t, &env, sig.is_async), Some(t.span)),
         None if inferred => (cx.ty.error, None),
         None => (cx.ty.unit, None),
     };
@@ -534,7 +534,17 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
                 gp.name.span,
             );
         }
+        // No promise sites in a generic interface method's parameters: what a call stores there
+        // would not reach the implementations' own parameter types, which a generic method of
+        // an object literal does not compare (`throws::promise_sites`).
+        let off = !m.sig.generics.is_empty() || cx.fn_sites.async_ret;
+        let outer = std::mem::replace(&mut cx.fn_sites.async_ret, off);
         let ps = params(cx, &m.sig.params, &env);
+        cx.fn_sites.async_ret = outer;
+        // Where its result is written, for the site there (`throws::promise_sites`).
+        if let Some(t) = &m.sig.ret {
+            cx.note_written_type(name.span, t.span);
+        }
         let mut ret = match &m.sig.ret {
             Some(t) => cx.resolve_type(t, &env),
             None => cx.ty.unit,

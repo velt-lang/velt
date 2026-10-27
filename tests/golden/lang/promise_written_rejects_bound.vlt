@@ -1,0 +1,83 @@
+// Promises that reject, stored into `Promise<T>` types written without an error type at
+// places found from where they are written: a generic parameter, a closure's result for a
+// typed function, a field of an object type, a tuple element, a `Record` value, a class's
+// type argument, nested arrays, a union's promise member
+// (sigx: server-renderer serverfn-scope.ts), and `reject` with any value.
+
+class LoadError extends Error {}
+class UrlError extends Error {}
+
+async function fail(n: string): Promise<string> {
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
+  return n;
+}
+async function failN(n: string): Promise<number> {
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
+  return n.length;
+}
+function wrap<T>(p: Promise<T>): Promise<T> {
+  return p;
+}
+class Box<T> {
+  items: T[] = [];
+  add(x: T) {
+    this.items.push(x);
+  }
+}
+async function page(): Promise<string> {
+  throw new UrlError("bad url");
+}
+function runIt(fn: () => string | Promise<string>): string | Promise<string> {
+  return fn();
+}
+function make(k: number): Promise<number> {
+  return new Promise((res, rj) => {
+    if (k === 0) rj(null);
+    else if (k === 1) rj(undefined);
+    else if (k === 2) rj(7);
+    else res(k);
+  });
+}
+
+async function show(what: string, p: Promise<unknown>) {
+  try {
+    console.log(what, await p);
+  } catch (e) {
+    console.log(what, "caught", e instanceof Error ? e.message : e);
+  }
+}
+
+async function main() {
+  await show("wrap", wrap(fail("bad-wrap")));
+  const f: () => Promise<string> = () => fail("bad-f");
+  await show("f", f());
+  const box: { p: Promise<number> } = { p: Promise.resolve(1) };
+  box.p = failN("bad-box");
+  await show("box", box.p);
+  const t: [Promise<number>, number] = [failN("bad-tuple"), 1];
+  await show("tuple", t[0]);
+  const rec: Record<string, Promise<number>> = {};
+  rec["k"] = failN("bad-rec");
+  await show("rec", rec["k"]);
+  const b = new Box<Promise<string>>();
+  b.add(fail("bad-class"));
+  await show("class", b.items[0]);
+  const sets: Promise<string>[][] = [[]];
+  sets[0].push(fail("bad-nested"));
+  await show("nested", sets[0][0]);
+  try {
+    console.log(await runIt(page));
+  } catch (e) {
+    console.log("runIt fn caught", (e as Error).message);
+  }
+  try {
+    console.log(await runIt(() => page()));
+  } catch (e) {
+    console.log("runIt closure caught", (e as Error).message);
+  }
+  for (const k of [0, 1, 2, 3]) {
+    await show("make " + k, make(k));
+  }
+}
+
+main();

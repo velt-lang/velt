@@ -44,7 +44,9 @@ impl FnCx<'_, '_> {
             Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
         );
         let to_void = b == self.cx.ty.unit && a == self.cx.ty.undefined();
-        if a == b || e != f || !(dynamic || to_void) || self.cx.ty.is_bottom(a) {
+        // The `then` call keeps the rejections; its result widens to `f` when `f` allows them.
+        let widens = e == f || self.cx.error_outside(Some(f), Some(e)).is_none();
+        if a == b || !widens || !(dynamic || to_void) || self.cx.ty.is_bottom(a) {
             return Err(h);
         }
         // The `then` call converts nothing of its own; guard against meeting this again.

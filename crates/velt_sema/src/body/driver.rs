@@ -223,6 +223,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
     fcx.owner = owner;
+    // Where its type is written, for the sites in it (`throws::promise_sites`).
+    let written = ann.or(init_expr.and_then(crate::throws::written_init_type));
+    if let (Some(w), DefInfo::Global(g)) = (written, &fcx.cx.info[d.0 as usize]) {
+        let at = g.span;
+        fcx.cx.note_written_type(at, w.span);
+    }
     let ann = ann.map(|t| fcx.cx.resolve_type(t, &TyEnv::new(module, &[])));
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;

@@ -30,7 +30,7 @@ async function errored(): Promise<void> {
   try {
     await s.getReader().read();
   } catch (e) {
-    console.log("errored", e.message);
+    console.log("errored", (e as Error).message);
   }
 }
 

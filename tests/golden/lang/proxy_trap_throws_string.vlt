@@ -1,6 +1,5 @@
-// A proxy trap that throws a value other than an `Error` (#1174): Node lets the operation throw
-// it; Velt infers a trap's error type and keeps only `Error` classes, so it says what to throw
-// instead.
+// A proxy trap that throws a value other than an `Error` (#1174): as in Node, the operation throws
+// it, and a `catch` around it gets it (inferred error sets hold any thrown value).
 const p: any = new Proxy({ a: 1 }, {
   get(t, k, r) {
     if (k === "bad") {

@@ -15,22 +15,23 @@ it meanwhile. It is written in Velt on the public API alone: its nodes are 1 KB 
 [`loadOptimistic`](../simd.md). Its keys are kept in key ranges, but a leaf's keys are unsorted
 and leaves are not linked, so it has no ordered walk, iteration or `size` yet (#1688).
 
-On 10M random keys, on 1 to 8 threads (`bench/concurrent_map`, against bbtree):
+On 10M random keys, on 1 to 8 threads (`bench/concurrent_map`, against bbtree; the M4 column
+was measured on a slightly earlier version of the map, before its leaf splits got cheaper):
 
 | workload | Apple M4 | Intel i9-12900HK |
 |---|---|---|
-| insert | 19–23% faster | 6–30% faster |
-| lookup (half the keys present) | 6–19% faster | 7–19% faster |
-| batched lookup (`getManyInto`, 64 keys) | 30–40% faster | 27–56% faster |
-| update (`add`) | 6–9% slower | 1% slower to 16% faster |
-| 90% lookups, 10% updates | 3–12% faster | 4–14% faster |
+| insert | 19–23% faster | 32–48% faster |
+| lookup (half the keys present) | 6–19% faster | 24–77% faster |
+| batched lookup (`getManyInto`, 64 keys) | 30–40% faster | 56–94% faster |
+| update (`add`) | 6–9% slower | 13–58% faster |
+| 90% lookups, 10% updates | 3–12% faster | 27–67% faster |
 
 - `ConcurrentMap.create(capacity)`: an empty map with room for `capacity` entries, about 40
   bytes an entry, taken when it is created. A `set` past its room panics with a RangeError.
   Room is not given back: a deleted entry frees a slot in its own leaf only, and leaves are
-  never merged or reused (#1689). So keys that keep moving to new ranges (ids or timestamps that only
-  grow, old ones deleted) use up the capacity over the map's life, even with few entries present
-  at once. A `set` of a key the map holds can need room too, when its leaf is full and splits
+  never merged or reused (#1689). So keys that keep moving to new ranges (ids or timestamps
+  that only grow, old ones deleted) use up the capacity over the map's life, even with few
+  entries present at once. A `set` of a key the map holds can need room too, when its leaf is full and splits
   first.
 - `get(key): u64 | undefined`, `has(key)`.
 - `set(key, value)`: adds `key` or replaces its value. The key `2^64 - 1` cannot be held (a

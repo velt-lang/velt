@@ -195,9 +195,15 @@ impl FnCx<'_, '_> {
             self.throw_src(src);
             return ret;
         };
-        let e = crate::throws::srcs_now(self.cx, std::slice::from_ref(&src));
+        let mut srcs = vec![src];
+        // What its `Promise<T>` written without an error type is given (`throws::promise_sites`).
+        let never = self.cx.ty.never;
+        if let Some(w) = self.cx.ty.promise_error(ret).filter(|w| *w != never) {
+            srcs.push(ThrowSrc::Direct(w, span));
+        }
+        let e = crate::throws::srcs_now(self.cx, &srcs);
         self.cx.throw_checks.push(ThrowCheck {
-            srcs: vec![src],
+            srcs,
             observed: e,
             exact: true,
             span,

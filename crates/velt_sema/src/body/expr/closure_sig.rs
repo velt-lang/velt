@@ -234,7 +234,10 @@ impl FnCx<'_, '_> {
 
     /// The declared return type of an arrow (`Promise<T>` → `T` for async arrows).
     pub(super) fn closure_ret_annotation(&mut self, t: &ast::TypeExpr, is_async: bool) -> TyId {
+        // An async arrow's `Promise<T>` rejects with what it throws (`throws::promise_sites`).
+        let outer = std::mem::replace(&mut self.cx.fn_sites.async_ret, is_async);
         let r = self.resolve(t);
+        self.cx.fn_sites.async_ret = outer;
         if !is_async || self.cx.ty.is_bottom(r) {
             return r;
         }
