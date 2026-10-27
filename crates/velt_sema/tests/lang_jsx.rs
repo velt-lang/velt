@@ -722,16 +722,19 @@ fn local_generic_arrows_are_nested_generic_functions() {
 
 #[test]
 fn other_generic_arrows_are_reported() {
-    let r = err("function main() { const f = [<T,>(x: T): T => x]; console.log(1); }");
+    // Without a generic function type where it is used, a generic arrow needs typed parameters.
+    let r = err("function main() { const f = [<T,>(x) => x]; console.log(1); }");
     assert!(
-        r.contains("a generic arrow function must be the value of a `const`"),
+        r.contains("a generic arrow function needs typed parameters"),
         "{r}"
     );
     assert!(!r.contains("unknown type"), "{r}");
-    let r =
-        err("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
-    assert!(
-        r.contains("`k` cannot be captured by a generic arrow function"),
-        "{r}"
-    );
+}
+
+#[test]
+fn generic_arrows_are_generic_function_values() {
+    // With typed parameters, an element or a local arrow capturing a variable is a generic
+    // function value (#943).
+    ok("function main() { const f = [<T,>(x: T): T => x]; console.log(f[0](1)); }");
+    ok("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
 }

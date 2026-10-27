@@ -56,6 +56,7 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_fns;
 mod generic_override_sites;
 mod generic_spread;
 mod global_this;
@@ -440,6 +441,7 @@ fn check_timed(
         super_calls,
         cpu_targets,
         generic_called,
+        generic_fns,
         ..
     } = cx;
     let defs = defs
@@ -471,6 +473,7 @@ fn check_timed(
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
         generic_dyn_methods: generic_called.names().collect(),
+        fresh_closures: generic_fns.fresh.into_iter().collect(),
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
     };
@@ -541,6 +544,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     timings::pass("generic_override_sites::check", || {
         generic_override_sites::check(cx)
+    });
+    timings::pass("generic_fns::mark_shared_values", || {
+        generic_fns::mark_shared_values(cx)
     });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.

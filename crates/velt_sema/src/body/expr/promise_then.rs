@@ -257,6 +257,8 @@ impl FnCx<'_, '_> {
                     h
                 }
             };
+            // A generic function value: instantiated at what the callback gets.
+            let h = self.generic_callback(h, &params);
             if self.cx.ty.has_error(h.ty) {
                 self.check_args_loose(&args[i + 1..]);
                 return self.error_expr(span);

@@ -731,7 +731,8 @@ impl FnCx<'_, '_> {
                     span,
                 );
                 let arrow = undefined_after(arrow, undefined, span);
-                let w = self.closure(&arrow, Some(exp), false);
+                let mut w = self.closure(&arrow, Some(exp), false);
+                self.mark_converts(&mut w, self.local_ty(l), exp);
                 self.pop_scope();
                 return Ok(w);
             }
@@ -745,7 +746,8 @@ impl FnCx<'_, '_> {
             span,
         );
         let arrow = undefined_after(arrow, undefined, span);
-        let w = self.closure(&arrow, Some(exp), true);
+        let mut w = self.closure(&arrow, Some(exp), true);
+        self.mark_converts(&mut w, h.ty, exp);
         self.pop_scope();
         let mut h = h;
         self.force_move(&mut h);

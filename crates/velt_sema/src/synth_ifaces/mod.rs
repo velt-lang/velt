@@ -469,6 +469,11 @@ impl Ctx<'_> {
                 for (name, m) in self.iface_members(e, &eargs) {
                     if ours.iter().any(|(n, x)| *n == name && *x != m) {
                         let (a, b) = (self.display(i), self.display(other));
+                        if name == crate::generic_fns::CALL {
+                            return Some(format!(
+                                "the call signatures of `{a}` and `{b}` differ (overloads are not supported)"
+                            ));
+                        }
                         return Some(format!(
                             "member `{name}` differs between `{a}` and `{b}` (overloads are not supported)"
                         ));

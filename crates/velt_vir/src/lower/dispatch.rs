@@ -39,7 +39,15 @@ impl super::Cx<'_> {
         );
         let mut join: Option<Vec<PassMode>> = None;
         for m in methods {
-            let modes = method_modes(self.fn_def(m));
+            let f = self.fn_def(m);
+            let modes = match f.self_ty {
+                Some(_) => method_modes(f),
+                // A generic closure (glue/generic_slots.rs): the receiver is the boxed closure,
+                // then its declared params.
+                None => std::iter::once(PassMode::Borrow)
+                    .chain(f.params[f.captures.len()..].iter().map(|p| p.mode))
+                    .collect(),
+            };
             match &mut join {
                 None => join = Some(modes),
                 Some(j) => {

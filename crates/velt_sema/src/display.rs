@@ -155,11 +155,25 @@ impl Ctx<'_> {
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
+                // A brand over type parameters (`symbol & { __t?: T }`) with their names here.
+                DefInfo::Adt(_) if self.brands.contains_key(d) => {
+                    match self.brand_keys.iter().find(|(_, b)| *b == d) {
+                        Some(((base, tag), _)) => format!(
+                            "{} & {}",
+                            self.display_in(*base, names),
+                            self.display_in(*tag, names)
+                        ),
+                        None => with_args(self, self.adt(*d).map_or("", |a| &a.name), args),
+                    }
+                }
                 DefInfo::Adt(a) => with_args(self, &a.name, self.shown_args(*d, args)),
                 DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(..) if self.display_generic_fn(t, names).is_some() => {
+                self.display_generic_fn(t, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) if self.literal_ifaces.contains(d) => {
                 self.display_literal_iface(*d, args, names)
             }

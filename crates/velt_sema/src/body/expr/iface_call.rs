@@ -22,6 +22,9 @@ pub(crate) struct IfaceSlot {
     pub iface_args: Vec<TyId>,
     pub slot: u32,
     pub method: IfaceMethod,
+    /// The method's last parameter is a rest parameter (a generic function type's,
+    /// `crate::generic_fns`).
+    pub rest: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -124,7 +127,11 @@ impl FnCx<'_, '_> {
         let mut bounds = vec![vec![]; n + 1];
         bounds.extend(s.method.generics.bounds.iter().cloned());
         let c = Callable {
-            what: format!("method `{}`", s.method.name),
+            what: match s.method.name == crate::generic_fns::CALL {
+                // A generic function value's call (`crate::generic_fns`).
+                true => "this function".into(),
+                false => format!("method `{}`", s.method.name),
+            },
             params: s.method.params.clone(),
             ret: s.method.ret,
             slot_names,
@@ -133,7 +140,7 @@ impl FnCx<'_, '_> {
             js_numbers: false,
             positions: false,
             js_api: false,
-            rest: false,
+            rest: s.rest,
             defaults: vec![],
         };
         let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);

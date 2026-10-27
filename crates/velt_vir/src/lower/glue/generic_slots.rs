@@ -12,14 +12,16 @@ use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{DefId, TyId};
 
-use crate::lower::{Cx, FnLower};
+use crate::lower::{Cx, FnLower, ThunkKind, Work};
 use crate::vir::{Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// What the entries of an instantiation table call: method `.0` with its type arguments
-/// before the slot's own.
+/// before the slot's own, or the code of generic closure `.0` in the enclosing function's
+/// instance `.1` (its own type parameters follow).
 #[derive(Clone)]
 pub(in crate::lower) enum Entry {
     Method(DefId, Vec<TyId>),
+    Closure(DefId, Vec<TyId>),
 }
 
 /// The lists of type arguments of one generic slot of one interface instance, and the tables
@@ -36,7 +38,7 @@ pub(in crate::lower) type SlotKey = (DefId, Vec<TyId>, u32);
 
 impl Cx<'_> {
     /// The instantiation table of generic slot `key` in the table of `owner` (an impl and its
-    /// concrete type), whose entries call
+    /// concrete type, or a generic closure's impl and its instance), whose entries call
     /// `entry` (built once, then grown with the slot's lists).
     pub(in crate::lower) fn generic_slot_table(
         &mut self,
@@ -94,6 +96,10 @@ impl Cx<'_> {
             Entry::Method(m, targs) => {
                 let all = [targs.as_slice(), margs].concat();
                 self.self_entry(*m, all)
+            }
+            Entry::Closure(def, targs) => {
+                let all = [targs.as_slice(), margs].concat();
+                self.func(Work::Thunk(ThunkKind::BoxedClosure, *def, all))
             }
         };
         let data = &mut self.statics[id.0 as usize];

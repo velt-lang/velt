@@ -137,6 +137,11 @@ impl Ctx<'_> {
 
     /// The constraint (`T extends string`) of type parameter `n` of the function being checked.
     pub(crate) fn constraint_of(&self, n: u32) -> Option<TyId> {
+        // In a generic closure, whose own type parameters follow its function's
+        // (`body::expr::generic_values`).
+        if let Some(cs) = &self.closure_constraints {
+            return cs.get(n as usize).copied().flatten();
+        }
         let d = *self.checking.last()?;
         let f = self.try_fn(d)?;
         f.generics.constraints.get(n as usize).copied().flatten()

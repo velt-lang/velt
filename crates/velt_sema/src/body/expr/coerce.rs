@@ -59,6 +59,16 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.is_generic_fn(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) {
+            return self.generic_as_fn(h, exp);
+        }
+        let h = match self.cx.is_generic_fn(h.ty) && self.cx.is_generic_fn(exp) {
+            true => match self.generic_as_generic(h, exp) {
+                Ok(g) => return Ok(g),
+                Err(h) => h,
+            },
+            false => h,
+        };
         let h = match self.fn_bound_value(h) {
             Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
                 return self.try_coerce_value(f, exp)
@@ -572,7 +582,9 @@ impl FnCx<'_, '_> {
         if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
             d = d.with_note(self.unreadable_shared_note(found.ty));
         }
-        if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
+        if self.cx.is_generic_fn(expected) {
+            d = d.with_note(super::generic_conversions::fixed_note(&e, &f));
+        } else if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (
                 self.adapt_refusal(expected, found.ty),
                 self.extends_note(expected, found.ty),
@@ -617,45 +629,6 @@ impl FnCx<'_, '_> {
             );
         }
         self.cx.error(d);
-    }
-
-    /// For an interface value where an interface it extends is expected (`IterableIterator<T>`
-    /// for `Iterator<T>`): such values don't convert yet.
-    fn extends_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
-        let (TyKind::Dyn(want, _), TyKind::Dyn(have, _)) = (
-            self.cx.ty.kind(expected).clone(),
-            self.cx.ty.kind(found).clone(),
-        ) else {
-            return None;
-        };
-        let parents = self.cx.iface(have)?.parents.clone();
-        if !parents.iter().any(|p| p.iface == want) {
-            return None;
-        }
-        let (e, f) = (self.cx.display(expected), self.cx.display(found));
-        let fix = match Some(want) == self.cx.prelude_iface("Iterator") {
-            true => "; `x[Symbol.iterator]()` gives its `Iterator`".to_string(),
-            false => format!(": pass the value it was made from, or take a `{f}`"),
-        };
-        Some(format!(
-            "`{f}` extends `{e}`, but an interface value does not convert to the interfaces it extends yet{fix}"
-        ))
-    }
-
-    /// For a value implementing the expected interface with other type arguments (`string[]`
-    /// where an `Iterable<f64>` is expected): which ones.
-    fn other_args_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
-        let TyKind::Dyn(want, _) = self.cx.ty.kind(expected).clone() else {
-            return None;
-        };
-        let (_, args, _) = self.cx.find_impl(found, want)?;
-        let has = self.cx.ty.intern(TyKind::Dyn(want, args));
-        let (e, f, h) = (
-            self.cx.display(expected),
-            self.cx.display(found),
-            self.cx.display(has),
-        );
-        Some(format!("`{f}` is an `{h}`, not an `{e}`"))
     }
 
     /// For a class instance where a field-only interface's object type is expected: how to build

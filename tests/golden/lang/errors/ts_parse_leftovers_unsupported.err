@@ -1,4 +1,2 @@
-ts_parse_leftovers_unsupported.vlt:6:5: error: a generic arrow function must be the value of a `const` with typed parameters
-ts_parse_leftovers_unsupported.vlt:11:22: error: generic function types (`<T>(x: T) => R`) are not supported yet
-ts_parse_leftovers_unsupported.vlt:13:57: error: variadic tuple types (`[A, ...T]`) are not supported yet (#943)
-ts_parse_leftovers_unsupported.vlt:15:28: error: optional tuple elements (`[A, B?]`) are not supported yet (#938)
+ts_parse_leftovers_unsupported.vlt:3:57: error: variadic tuple types (`[A, ...T]`) are not supported yet (#943)
+ts_parse_leftovers_unsupported.vlt:5:28: error: optional tuple elements (`[A, B?]`) are not supported yet (#938)

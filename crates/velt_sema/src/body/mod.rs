@@ -309,6 +309,9 @@ pub(crate) struct Frame {
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
+    /// `const g: G = id`: the named generic function each such local holds, instantiated where
+    /// the local is used as a function of fixed types (`expr::generic_conversions`).
+    pub named_fns: rustc_hash::FxHashMap<LocalId, DefId>,
     /// The property writes after the declaration being checked, which a cast of a function to
     /// a callable object type there takes as members (`expr::callables`, #921).
     pub callable_writes: Option<expr::PendingWrites>,
@@ -438,6 +441,7 @@ impl Frame {
             readonly_cast_recv: false,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
+            named_fns: Default::default(),
             callable_writes: None,
             assign_targets: vec![],
             method_values: Default::default(),

@@ -28,6 +28,7 @@ mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_generic_fn;
 mod any_glue;
 mod any_has;
 mod any_iface;
@@ -72,6 +73,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod fresh_fns;
 mod frozen;
 mod glue;
 mod hooks;
@@ -193,7 +195,8 @@ pub(crate) fn lower_program(
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
                 eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
             }
-            let diags = cx.nothing_clash_diagnostics();
+            let mut diags = cx.nothing_clash_diagnostics();
+            diags.extend(cx.fresh_fn_diagnostics());
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -236,6 +239,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// First param is the data pointer of an interface value holding a closure (a generic
+    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
+    /// with the closure's env.
+    BoxedClosure,
     /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
     /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
     /// called on its own (without the proxy as `this`) it throws a `TypeError`.
@@ -559,6 +566,8 @@ struct FnLower<'c, 'h> {
     cx: &'c mut Cx<'h>,
     /// Type arguments substituted for `TyKind::Param` in the HIR being lowered.
     targs: Vec<TyId>,
+    /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
+    glue: bool,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.

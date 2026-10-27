@@ -408,7 +408,10 @@ impl FnCx<'_, '_> {
                     false => lit,
                 }
             }
-            DefInfo::Global(_) => match self.narrowed_global(d, exp, want, span) {
+            DefInfo::Global(_) => match self
+                .named_generic_instance(d, id, exp)
+                .or_else(|| self.narrowed_global(d, exp, want, span))
+            {
                 Some(h) => h,
                 None => self.global_read(d, want, span),
             },
@@ -528,6 +531,20 @@ impl FnCx<'_, '_> {
         }
         let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
+        // A generic function where a generic function value is expected, or where no function
+        // type to instantiate it at is: the value of its own generic function type (#943).
+        if !slots.is_empty() {
+            let want = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
+            // Without an expected type, an overloaded function is its implementation (and has
+            // no one generic type of its own).
+            let own = |s: &mut Self| match s.overloaded(d) {
+                true => None,
+                false => s.own_generic_type(d, exp, span),
+            };
+            if let Some(g) = want.or_else(|| own(self)) {
+                return self.generic_fn_value(d, id, g);
+            }
+        }
         if let Some(h) = self.generator_value(d, None, &slots, exp, span) {
             return h;
         }

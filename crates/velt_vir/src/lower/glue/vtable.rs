@@ -26,7 +26,19 @@ const SLOT_CLASS_ID: i128 = -7;
 pub(in crate::lower) enum VtableKey {
     Class(TyId),
     Impl(u32, TyId),
+    /// `Program::impls[i]` for a generic closure (its `ty` is the closure's type), with the
+    /// enclosing function's type arguments as a tuple type (glue/generic_slots.rs).
+    Closure(u32, TyId),
+    /// The `any` table of such a closure's value (lower/any.rs), per instance: the one of its
+    /// type, with the address of the closure's table and the id of the interface value type
+    /// it was made as (`SLOT_GENERIC_TABLE`, `SLOT_GENERIC_TYPE`), so `u as G` gets it back.
+    ClosureAny(u32, TyId),
 }
+
+/// Slots of a generic closure's `any` table (`VtableKey::ClosureAny`). Every `any` table of a
+/// function type is this long, the second slot 0 when it is no generic closure's.
+pub(in crate::lower) const SLOT_GENERIC_TABLE: i128 = 16;
+pub(in crate::lower) const SLOT_GENERIC_TYPE: i128 = 17;
 
 impl Cx<'_> {
     /// Type args of method `m` when called on an object of concrete class `cls`: the args of
@@ -55,6 +67,9 @@ impl Cx<'_> {
     pub(in crate::lower) fn vtable(&mut self, key: VtableKey) -> StaticId {
         if let Some(&s) = self.lay.vtables.get(&key) {
             return s;
+        }
+        if let VtableKey::ClosureAny(index, inst) = key {
+            return self.closure_any_table(index, inst);
         }
         // The tables of the interfaces an implementation's values convert to (lower/upcast.rs),
         // filled in once this table is registered: two interfaces may convert to each other.
@@ -91,6 +106,11 @@ impl Cx<'_> {
                 }
                 (entries, id)
             }
+            VtableKey::Closure(index, targs) => {
+                let ty = self.hir.impls[index as usize].ty;
+                (self.closure_entries(index, ty, targs), 0)
+            }
+            VtableKey::ClosureAny(..) => unreachable!("ICE: made by closure_any_table"),
         };
         let tag = match key {
             VtableKey::Impl(index, ty) if self.is_any_impl(index) => Some(self.any_tag(ty)),
@@ -102,6 +122,11 @@ impl Cx<'_> {
             .chain(targets.iter().map(|t| t.0));
         let n = slots.map(|s| s + HIDDEN + 1).max().unwrap_or(0);
         let n = match tag {
+            // A function's, in a program holding generic closures as `unknown`: as long as a
+            // generic closure's (`VtableKey::ClosureAny`).
+            Some(super::super::any::TAG_FUNCTION) if self.boxing.generic_any => {
+                n.max(SLOT_GENERIC_TYPE + HIDDEN + 1)
+            }
             Some(_) => n.max(super::super::any::SLOT_TAG + HIDDEN + 1),
             None => n,
         };
@@ -143,6 +168,15 @@ impl Cx<'_> {
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.vtables.insert(key, id);
+        // Its `any` table, made with its entries, points back at it.
+        if let VtableKey::Closure(index, inst) = key {
+            if let Some(&a) = self.lay.vtables.get(&VtableKey::ClosureAny(index, inst)) {
+                let at = (8 * (SLOT_GENERIC_TABLE + HIDDEN)) as u32;
+                self.statics[a.0 as usize]
+                    .relocs
+                    .push((at, Const::Static(id)));
+            }
+        }
         for (slot, target) in targets {
             let t = self.vtable(target);
             let at = (8 * (slot + HIDDEN)) as u32;
@@ -173,6 +207,74 @@ impl Cx<'_> {
             .collect();
         entries.push((SLOT_NAME, Const::Static(self.static_str_object(&name))));
         entries
+    }
+
+    /// The table of generic closure `ty` implementing a generic function type through impl
+    /// `index`, in the enclosing function's instance `targs` (a tuple type): the instantiation
+    /// table of its one method and the glue of the closure value the interface value boxes.
+    fn closure_entries(&mut self, index: u32, ty: TyId, inst: TyId) -> Vec<(i128, Const)> {
+        let TyKind::Tuple(targs) = self.kind(inst) else {
+            ice("closure table without its type arguments")
+        };
+        let imp = &self.hir.impls[index as usize];
+        let (iface, iargs, def) = (imp.iface, imp.iface_args.clone(), imp.methods[0]);
+        let iargs: Vec<TyId> = iargs.iter().map(|&a| self.subst(a, &targs)).collect();
+        let t = self.generic_slot_table(
+            (iface, iargs, 0),
+            (index, inst),
+            super::generic_slots::Entry::Closure(def, targs),
+        );
+        let mut entries = vec![(0, Const::Static(t))];
+        // Held as `unknown`, the boxed closure's `any` table of this instance (lower/any.rs):
+        // `typeof` is `"function"`, and `as` gets this table back.
+        if self.any_table_entry(index, ty).is_some() {
+            let t = self.vtable(VtableKey::ClosureAny(index, inst));
+            entries.push((SLOT_NAME, Const::Static(t)));
+        }
+        for (slot, g) in [
+            (SLOT_DROP, Glue::DynDrop),
+            (SLOT_CLONE, Glue::DynClone),
+            (SLOT_FORMAT, Glue::DynFormat),
+            (SLOT_SHARE, Glue::DynShare),
+            (SLOT_TRANSFER, Glue::DynTransfer),
+        ] {
+            entries.push((slot, Const::Func(self.func(Work::Glue(g, ty)))));
+        }
+        entries
+    }
+
+    /// `VtableKey::ClosureAny(index, inst)`: a copy of the `any` table of the closure's type
+    /// with the id of the interface value type in `SLOT_GENERIC_TYPE` (the closure's own table
+    /// goes into `SLOT_GENERIC_TABLE` once it is registered: `vtable`).
+    fn closure_any_table(&mut self, index: u32, inst: TyId) -> StaticId {
+        self.facts.generic_any = true;
+        let imp = &self.hir.impls[index as usize];
+        let (ty, iface, iargs) = (imp.ty, imp.iface, imp.iface_args.clone());
+        let any = self.hir.any_impl.unwrap_or(0);
+        let base = self.vtable(VtableKey::Impl(any, ty));
+        let mut data = self.statics[base.0 as usize].clone();
+        let TyKind::Tuple(targs) = self.kind(inst) else {
+            ice("closure table without its type arguments")
+        };
+        let iargs: Vec<TyId> = iargs.iter().map(|&a| self.subst(a, &targs)).collect();
+        let key = crate::lower::fresh_fns::FnKey::Generic(iface, iargs.clone());
+        self.facts.generic_any_keys.insert(key);
+        let dyn_ty = self.intern(TyKind::Dyn(iface, iargs));
+        let at = (8 * (SLOT_GENERIC_TYPE + HIDDEN)) as usize;
+        data.bytes.resize(data.bytes.len().max(at + 8), 0);
+        data.bytes[at..at + 8].copy_from_slice(&(dyn_ty.0 as u64 + 1).to_le_bytes());
+        self.statics.push(data);
+        let id = StaticId(self.statics.len() as u32 - 1);
+        self.lay
+            .vtables
+            .insert(VtableKey::ClosureAny(index, inst), id);
+        if let Some(&t) = self.lay.vtables.get(&VtableKey::Closure(index, inst)) {
+            let at = (8 * (SLOT_GENERIC_TABLE + HIDDEN)) as u32;
+            self.statics[id.0 as usize]
+                .relocs
+                .push((at, Const::Static(t)));
+        }
+        id
     }
 
     /// Does the program call generic method `slot` of impl `index`'s interface with type

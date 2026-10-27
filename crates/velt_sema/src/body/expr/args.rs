@@ -529,6 +529,7 @@ impl FnCx<'_, '_> {
                 self.add_literal_key(k, h.ty, slots);
             }
             self.cx.match_ty(p.ty, h.ty, slots);
+            self.infer_from_generic(p.ty, h.ty, slots);
             out[i] = Some(h);
         }
         out.into_iter()

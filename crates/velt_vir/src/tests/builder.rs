@@ -103,6 +103,7 @@ impl PB {
             cpu_targets: Default::default(),
             type_names: Default::default(),
             generic_dyn_methods: Default::default(),
+            fresh_closures: Default::default(),
         }
     }
 }

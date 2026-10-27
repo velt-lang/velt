@@ -310,6 +310,10 @@ impl FnLower<'_, '_> {
         let any_imp = self.cx.hir.any_impl.unwrap_or(0);
         let dest = self.deref_param(out, ty);
         for s in self.cx.iface_sources(ty) {
+            // A generic closure's table is per instance: `any_to_generic_fn` finds it.
+            if matches!(self.cx.kind(s.imp_ty), TyKind::Closure(_)) {
+                continue;
+            }
             let own = self.vtable_addr(VtableKey::Impl(any_imp, s.desc_ty));
             let d = Operand::Copy(Place::local(desc));
             let hit = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, d, own));

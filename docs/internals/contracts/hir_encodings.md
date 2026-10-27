@@ -340,6 +340,50 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   calls are `Callee::Def` on the static class. Sema rejects calls through a class that has a
   subclass overriding the generic method.
 
+## Generic function values (#943)
+A generic function type (`<T>(x: T) => R`, also a generic method signature in an object type) is
+an interface value type `Dyn(I, args)` of an interface sema makes once per shape (velt_sema
+`generic_fns.rs`): no fields, one generic method `#call` whose own type params are the
+function type's, `args` the type params in scope it mentions. A call of such a value is a
+`Callee::Dyn { slot: 0, method_type_args }` call. A value is made by `ToDyn` of a generic
+closure: `ExprKind::Closure(def)` typed `TyKind::Closure(def)`, whose `FnDef::generics` are
+the enclosing function's followed by its own, with an `ImplDef` whose `ty` is that
+`Closure(def)`, `generics` 0, `iface_args` in the enclosing function's terms and `methods:
+[def]`. Lowering boxes the closure value (its `code` is null: the closure is only called through
+the table), and its vtable is per closure and instance of the enclosing function, with the
+closure value's glue in the hidden slots and the instantiation table in slot 0, whose entries
+call the closure's code at the enclosing args followed by the call's with the closure's env
+(`ThunkKind::BoxedClosure`). Its parameter modes for `Dyn` calls are `Borrow` for the receiver
+followed by the closure's declared params' (its captures excluded). Two generic function values
+are the same value when the closures they box have one env (`===`, keys): a program that
+compares them gives every closure an env, as for function values. A module-level generic
+function used as a value of a generic function type without type parameters is a `Global` of
+the module state per function and type, whose initializer is the `ToDyn` of the generic closure
+calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
+a generic function declared in a function body, which captures nothing.
+
+`Program::fresh_closures` (additive) maps closures to a `FreshClosure` (`hir/fresh.rs`), for
+the comparison of function values:
+- `New(ty)`: each evaluation is a new function where JavaScript has one, with the function type
+  of its values: the wrappers sema makes for a generic value converted to another function type
+  and for a function asserted to a generic type, and a generic function's value at a type over
+  the caller's type parameters. Lowering reports one it makes when the program compares or
+  hashes function values of the same type as instantiated, without what it throws (also as a
+  member of a union, an option, a tuple, a result or a declared struct), or compares dynamic
+  values while one is held as one.
+- `Several(ty)`: a generic function's module constant at the generic function type `ty` when the
+  function is also a value at another type (or also instantiated at a function type of fixed
+  types). Its values are one value at `ty`, so comparing them is fine; lowering reports one only
+  when the program compares dynamic values while one is held as one, where it would meet the
+  function's other values.
+- `Converts { from, to }`: a closure sema makes to convert a function value of type `from` to
+  type `to`. A `New` value converted by one counts as compared where values of `to` are.
+
+A `const` holding a named generic function (`const g: G = id`, also through a chain of
+constants) is not one of these where a function type of fixed types is expected: sema gives the
+function itself there, instantiated (`FnRef`), so the values compare equal to each other and to
+`id`.
+
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a
   compiler-generated `Def::Enum` with `EnumDef::is_union = true`: one variant per member, in

@@ -911,15 +911,20 @@ async function main() {
   }
   ```
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
-  spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
-  with typed parameters; it is then a generic function. Without a return type it returns the
+  spelling `<T,>` works too, and JSX is allowed alongside). As the value of a `const` with
+  typed parameters it is a generic function. Without a return type it returns the
   type of its body or its `return`s, by the rules of [Return types](#return-types)
   (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
   level it is an ordinary generic function; in a function body it is a generic function nested
-  there, so each call instantiates it, and like any generic [nested function](#declarations) it
-  cannot use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
-  a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
-  anywhere else (an argument, a `let`) is an error:
+  there, so each call instantiates it, unless it uses the local variables around it or is used
+  as a value: then it is a [generic function value](#generic-function-values) (one using `this`
+  in a method is not supported yet). A generic function used as a value is instantiated where
+  a function type is expected (`const f: (x: i64) => i64 = id;`), and is a generic function
+  value elsewhere. A generic
+  arrow elsewhere (an argument, a `let`) is a generic function value where a generic function
+  type is expected, and is instantiated where a function type is (`apply(<T>(x: T): T => x)`
+  with `apply(f: (x: i64) => i64)` gives `T` the type `i64`); without either it needs typed
+  parameters:
 
   ```ts
   const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
@@ -1084,9 +1089,9 @@ async function main() {
   function converts to the instantiated type directly, a branded result such as
   `symbol & { __t?: T }` taking the value as it is. Like a local generic arrow, a local constant
   of such a type cannot use the local variables around it. A generic function type anywhere
-  else (a parameter, a field, a `let`, a constant with another initializer) is a value that
-  stays generic, which is not supported yet: using one is an error saying so, as are generic
-  construct signatures (`new <T>(x: T) => Box<T>`).
+  else (a parameter, a field, a `let`, a constant with another initializer) is a
+  [generic function value](#generic-function-values). Generic construct signatures
+  (`new <T>(x: T) => Box<T>`) are not supported yet.
 
   ```ts
   type Id = <T>(x: T) => T;
@@ -1110,6 +1115,99 @@ async function main() {
   cannot follow it (TypeScript's TS1016). A call through such a value may leave it out
   (`install(app)`), which passes `undefined`; so may a call of a parameter typed
   `T | undefined`, which TypeScript requires to be passed.
+
+### Generic function values
+
+A value of a generic function type (`<T>(x: T) => T[]`) stays generic: each call through it
+instantiates it, as in TypeScript (#943). It may be a parameter (also optional, `f?: Id` or
+`Id | undefined`), a field (also `static`), a variable, an element or a result, written as a
+function type with type parameters (also with optional and rest parameters, `<K extends
+string>(name: K, ...args: unknown[]) => void`), as a type alias of one, an interface with one
+generic call signature, or a generic method of an object type (`{ run<T>(fn: () => T): T }`).
+Such a value is:
+
+- a generic arrow (`<T>(x: T): T[] => [x]`), which may use the local variables around it;
+- an arrow without type parameters where the type is expected (`(x) => [x]`): its parameters
+  take the type's types, its type parameters included;
+- a generic method of an object literal (`{ run<T>(fn: () => T): T { … } }`);
+- a generic function (`apply(id)`), also where no function type is expected (`const f = id`,
+  `[id]`: the value of its own generic type), each call of the value calling it at the
+  instantiated types; a module-level one is one value per type, so `id === id`;
+- a generic method of an object (`apply(k.id)`), bound to it as other method values are;
+- another value of the same type, or of the same type written with other names (`<U>(y: U) => U`).
+
+A value is itself however it is copied, stored or converted between spellings of its type:
+`===`, `includes`, `Map` and `Set` keys compare generic function values by identity, as
+JavaScript does. A module-level generic function used as such a value is one value per type
+(`id === id`, also through `const asA: A = id`, and for a generic function declared in a function
+body). A `const` holding a named generic function (`const g: G = id`, also through a chain of
+constants, local or module-level) is that function wherever a function of fixed types is
+expected (`const p: N = g`, an argument, a return, an element, `as N`, `N | null`), so those
+values compare equal to each other and to `id` itself, as in JavaScript; a generic arrow
+constant used only there is lifted to a function, with the same effect.
+
+Some values are made anew at each use, where JavaScript keeps one function: a generic value
+converted to another function type (a parameter of type `G` as `(x: number) => number`, or as a
+generic type taking more optional parameters), a function asserted to a generic type, and a
+generic function used at a type that mentions the caller's type parameters (`P<U>` in
+`getP<U>`). A program that makes such a value and compares function values of its type (the
+same parameter and result types, or the same generic function type, also as a member of a
+union, an option or a struct key, or after a conversion to another function type; with `===`,
+`includes`, `indexOf`, a `Set` or `Map` key) is an error, rather than giving another answer than
+JavaScript, as is one that compares `unknown` or `any` values while one holds such a value;
+holding it as `unknown` alone is fine. A generic function used as a value at more than one
+generic type (or at one and also at a fixed type) has one value per type: comparing those of one
+type is fine, and comparing `unknown` or `any` values while one is held is the error. The
+program's build reports these, as it needs every instantiation: `velt check`, which only
+type-checks, does not. Where a function type of fixed
+types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
+value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
+(`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through
+`unknown` (`plus as unknown as Id` is an error), unless it takes the type's parameters at every
+type argument: `Symbol as unknown as <T>(d: string) => Token<T>` is the generic arrow calling
+`Symbol` (the type written out, or an alias of it declared in the module without type
+parameters), which is evaluated once (`f as unknown as …` keeps the function `f` held then; a
+function that doesn't take them at every type argument, `Symbol` as `<T>(d: string) =>
+Token<T>` with `Token<T>` an object type, is an error). Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
+with `===`, and `u as Id` gives it back; it can't be held as `any` or `Function` yet (an error),
+since a call through those would need its type arguments, and calling one through an `any`
+reached otherwise (`(u as any)(1)`) stops the program with a `TypeError` (#924). An
+overloaded generic function is its implementation as a value (as for any overloaded
+function): where a generic function type is expected it is called through its signatures.
+
+Velt compiles the value's code once per list of type arguments the program calls such values
+with, and a call picks its entry from a table, so nothing is boxed (no `any`). Without a
+`throws` clause the type throws what the values stored into it throw (a generic arrow throwing
+`NotFound` makes calls through the type throw it), found as for
+[dynamic calls](errors.md#dynamic-calls). Not supported yet: a function of fixed types adapted
+to a generic type (TypeScript accepts `(event: string) => void` as a `<K extends string>(event:
+K) => void`), overloaded generic call signatures (an interface with several), rest parameters
+typed by a type parameter or a conditional tuple type (`...args: A`), generic construct
+signatures, and `this` in a generic method of an object literal that implements an interface.
+Generic function values, like other function values, can't be printed.
+
+```ts
+type Wrap = <T>(x: T) => T[];
+
+function twice(n: number): Wrap {
+  let calls = 0;
+  return <T>(x: T): T[] => {
+    calls++;
+    const out: T[] = [];
+    for (let i = 0; i < n * calls; i++) out.push(x);
+    return out;
+  };
+}
+
+function show(f: Wrap): void {
+  console.log(f(1), f("a"));
+}
+
+function main() {
+  show(twice(1)); // [ 1 ] [ 'a', 'a' ]
+  show((x) => [x]); // [ 1 ] [ 'a' ]
+}
+```
 
 ### `this` parameters
 

@@ -342,7 +342,8 @@ impl FnCx<'_, '_> {
             if let Some(t) = &v.ty {
                 self.cx.note_written_type(name.span, t.span);
             }
-            return self.simple_decl(v, name, ann, span, out);
+            self.simple_decl(v, name, ann, span, out);
+            return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
             self.cx.err(
