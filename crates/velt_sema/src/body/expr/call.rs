@@ -479,6 +479,10 @@ impl FnCx<'_, '_> {
                 call
             });
         }
+        // `t.m(…)` on a narrowed `unknown`: the member read from the value held, called.
+        if let Some(f) = self.narrowed_dynamic_member(object, prop, Want::Borrow, span) {
+            return self.call_value(f, args, span);
+        }
         let recv = match &object.kind {
             ast::ExprKind::Super => return self.super_method_call(prop, args, exp, span),
             _ => {

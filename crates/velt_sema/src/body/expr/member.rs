@@ -207,6 +207,9 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
+        if let Some(h) = self.narrowed_dynamic_member(object, prop, want, span) {
+            return h;
+        }
         // A union local narrowed to one member is read as the union here, so that a view it may
         // hold is read through its getters (`union_view`).
         self.view_receiver = want != Want::BorrowMut && is_name(object);

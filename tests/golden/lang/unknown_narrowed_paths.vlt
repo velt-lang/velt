@@ -66,6 +66,17 @@ function mkNode(type: string | symbol | Function): { type: Function | string } {
   return { type: "none" };
 }
 
+// A member of a narrowed `unknown` is read from the value held, also when that is a function
+// with properties (sigx's renderer: `isComponent(vnode.type)`, then `vnode.type.__setup`).
+function nameOf(type: string | symbol | Function): string {
+  if (isComponent(type)) return "component " + type.__name + " " + typeof type.__setup;
+  return "-";
+}
+function setupOf(v: VNode): string {
+  if (isComponent(v.type)) return "setup " + (v.type.__setup as () => number)() + " " + v.type.__name;
+  return "-";
+}
+
 function v(x: number): unknown {
   return x === 0 ? null : x === 1 ? undefined : x === 2 ? "s" : { k: x };
 }
@@ -95,3 +106,36 @@ for (let i = 0; i < 4; i++) {
 }
 const comp = Object.assign(() => 1, { __setup: () => 2, __name: "C" });
 console.log(typeof mkNode(comp).type, mkNode("div").type, mkNode(Symbol("x")).type);
+console.log(nameOf(comp), nameOf("p"), setupOf({ type: comp, props: {} }), setupOf({ type: "p", props: {} }));
+
+// A method of a narrowed `unknown` called in place (`vnode.type.__setup(…)`).
+interface Comp {
+  __setup: () => string;
+  name2: string;
+}
+function isComp(x: unknown): x is Comp {
+  return typeof x === "function" && "__setup" in (x as object);
+}
+interface Obj {
+  run: () => string;
+  tag: string;
+}
+function isObj(x: unknown): x is Obj {
+  return typeof x === "object" && x !== null && "run" in x;
+}
+function mkComp(): any {
+  return Object.assign(() => "called", { __setup: () => "setup!", name2: "C1" });
+}
+function callLocal(t: unknown): string {
+  if (isComp(t)) return t.__setup() + " " + t.name2;
+  return "no";
+}
+function callPath(v: { type: string | symbol | Function }): string {
+  if (isComp(v.type)) return v.type.__setup();
+  return "no";
+}
+function callObj(h: { v: unknown }): string {
+  if (isObj(h.v)) return h.v.run() + h.v.tag;
+  return "no";
+}
+console.log(callLocal(mkComp()), callLocal(3), callPath({ type: mkComp() }), callObj({ v: { run: () => "R", tag: "T" } }));

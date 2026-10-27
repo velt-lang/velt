@@ -275,4 +275,56 @@ impl FnCx<'_, '_> {
             .find_map(|s| s.names.get(name).copied())?;
         self.cx.dynamic(self.local_ty(l)).map(|_| l)
     }
+
+    /// `x.prop` where `x`, a variable or field path of type `unknown`, is narrowed to an object
+    /// type `T` (a type predicate): the member read from the value held, as an `any` reads it,
+    /// converted to the type `T` gives it. The value itself is not converted to `T`, so a
+    /// function with properties held there (`isComponent(t)`, then `t.__setup`) reads too.
+    /// `None` for any other read.
+    pub(crate) fn narrowed_dynamic_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        // Most reads are in scopes no test narrowed to a type.
+        if want == Want::BorrowMut || self.f.scopes.iter().all(|s| s.classes.is_empty()) {
+            return None;
+        }
+        let (token, path) = match &object.kind {
+            ast::ExprKind::Ident(_) => (self.own_dynamic_local(object)?, false),
+            ast::ExprKind::Member { .. } => (self.existing_field_token(object)?, true),
+            _ => return None,
+        };
+        let target = self.narrowed_class(token)?;
+        let plain = self.cx.class_of(target).is_none() && self.cx.dynamic(target).is_none();
+        if !plain || !self.cx.is_object_type(target) {
+            return None;
+        }
+        if path {
+            // The field's own type, read as it is (`dynamic_raw`).
+            let saved = self.dynamic_raw.replace(object.span);
+            let declared = self.peek_ty(object);
+            self.dynamic_raw = saved;
+            declared.and_then(|t| self.cx.dynamic(t))?;
+        }
+        let fields = self.cx.public_fields(target);
+        let f = fields.into_iter().find(|f| f.name == prop.name)?;
+        let fty = match f.optional && self.cx.dynamic(f.ty).is_none() {
+            true => self.cx.ty.option_of(f.ty, hir::Nothing::Undefined),
+            false => f.ty,
+        };
+        let any = self.any_ty()?;
+        let saved = self.dynamic_raw.replace(object.span);
+        let obj = self.expr(object, None, Want::Borrow);
+        self.dynamic_raw = saved;
+        let boxed = match self.coerce_dynamic(obj, any, true) {
+            Ok(h) | Err(h) => h,
+        };
+        match self.dynamic_get(boxed, &prop.name, want, span) {
+            Ok(read) => Some(self.cast_dynamic(read, fty)),
+            Err(_) => Some(self.error_expr(span)),
+        }
+    }
 }
