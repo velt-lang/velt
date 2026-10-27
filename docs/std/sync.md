@@ -167,7 +167,8 @@ bit, a count of shared holders, and a version that only grows.
   then `isUnchanged(v)`: when it is `false`, a writer changed the node meanwhile and the reader
   starts over. Until then the values read may be torn (some from before a write, some from
   after): code that could fail on such a value, like indexing an array with an index read under
-  the latch, runs only after the check (or clamps the value first). A reader writes no shared memory, so readers on many cores never slow each other.
+  the latch, runs only after the check (or clamps the value first). A reader writes no shared
+  memory, so readers on many cores never slow each other.
 - **Exclusive:** `tryLockAt(v)` takes the node at the version the thread read, failing at once
   if anything changed it (then start over); `lockExclusive()` waits for it and returns the
   version; `tryLockExclusive()` takes it only if nothing holds it. `unlockExclusive(v)` lets go
