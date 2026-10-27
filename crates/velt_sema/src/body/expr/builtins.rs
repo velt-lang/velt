@@ -40,7 +40,15 @@ impl FnCx<'_, '_> {
                     ([], [a]) if exp.is_none() && super::member::untyped_int(a) => {
                         Some(self.cx.ty.intern(TyKind::Shared(self.cx.ty.i64)))
                     }
-                    _ => exp,
+                    // Where a `shared<T> | null` is expected, the value is a `shared<T>`.
+                    _ => exp.map(|t| match self.cx.ty.kind(t) {
+                        TyKind::Option(inner, _)
+                            if matches!(self.cx.ty.kind(*inner), TyKind::Shared(_)) =>
+                        {
+                            *inner
+                        }
+                        _ => t,
+                    }),
                 };
                 let e = self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span);
                 if let H::Call { args: a, .. } = &e.kind {

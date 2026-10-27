@@ -1,0 +1,13 @@
+// What an `Atomic` of a reference cannot do: arithmetic and bitwise methods (it holds a
+// `shared` value, not a number), and hold a class value or a plain object (only `shared`
+// values, which never change, can be read by one thread while another replaces them).
+class Node {
+  v: u64 = 0;
+}
+
+const r = new Atomic<shared<Node>>(shared(new Node()));
+r.add(r.load());
+r.or(r.load());
+const c = new Atomic<Node>(new Node());
+const o = new Atomic<{ v: u64 }>({ v: 1 });
+const ok: u64 = r.compareExchange(r.load(), shared(new Node()));

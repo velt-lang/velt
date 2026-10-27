@@ -187,8 +187,8 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
   per constant, so a swap keeps its value.
-- ``` `Atomic<T>` needs a number type or `bool`, found `string` ``` (a type parameter too: the
-  instruction depends on the type).
+- ``` `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string` ``` (a type
+  parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
@@ -482,6 +482,26 @@ from before the free holds an older version. Leaves are not merged, and the root
 
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
 and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two small arrays.
+
+## References (#1696 step 2b)
+
+`Atomic<shared<T>>` and `Atomic<shared<T> | null>`: the word is the pointer of one counted
+reference that the `Atomic` owns. It is its field, so the struct's drop glue releases it, and
+null is none. Lowering (velt_vir `lower/atomic_ref.rs`) uses the 64-bit `velt_atomic_*` externs
+on the pointer's bits, so backends see nothing new.
+- **`load`:** a load, then one count increment of what it read (a counted copy).
+- **`store(v)` and `exchange(v)`:** `v` moves in, by an atomic exchange. `exchange` gives the
+  caller a counted copy of the old reference.
+- **`compareExchange(expected, v)`:** a compare-and-swap of the pointers, so it compares
+  identity. It returns whether it swapped, as `bool` (sema types the call so; the declared
+  `T` is for numbers), and `v` is dropped when it did not. `expected` is only read: a place
+  argument is not shared first. Its owner keeps it alive, so its address cannot be reused
+  meanwhile (no ABA).
+- **Retiring:** the reference a store, an exchange or a successful compare-and-swap takes out of
+  the word is *retired*, not released. Another thread may have loaded the pointer and not
+  counted it yet; releasing it could free the box under that increment. Until reclamation
+  (`velt:sync/epoch`, step 2c/2d) retires into per-thread lists freed after a grace period, a
+  retired reference is kept forever: memory-safe, but it stays allocated.
 
 ## Not in this design
 
