@@ -54,54 +54,17 @@ export class Record<K, V> {
   // are not enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip
   // them, as in Node. Only a program that defines accessors reads this field: sema calls the
   // `Keyed` methods there for every key (`hir::Program::record_accessors`).
-  private accessors: Map<K | symbol, __RecordAccessor<V>> | null = null;
+  private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
+    null;
+  // The methods that read fields 2 and 3 are in std/prelude/global/record_symbols.vlt, which a
+  // program loads only when it mentions symbols or property definitions.
 
-  /** The accessor `key` names, if `Object.defineProperty` defined one. */
-  __accessor(key: K | symbol): __RecordAccessor<V> | undefined {
-    const t = this.accessors;
-    if (t == null) {
-      return undefined;
-    }
-    return t.get(key);
+  __get(key: K): V | undefined {
+    return this.entries.get(key);
   }
 
-  /**
-   * `Object.defineProperty(r, key, { get, set, configurable })`: the accessor replaces an entry
-   * with the key. Defining again a property that is not configurable is Node's `TypeError`.
-   */
-  __defineAccessor(
-    key: K | symbol,
-    get: (() => V) | null,
-    set: ((value: V) => void) | null,
-    configurable: bool,
-  ) {
-    const old = this.__accessor(key);
-    if (old != null && !old.configurable) {
-      panic(`TypeError: Cannot redefine property: ${__recordKeyText(key)}`);
-    }
-    this.__deleteKeyed(key);
-    const a = new __RecordAccessor<V>(get, set, configurable);
-    const t = this.accessors;
-    if (t == null) {
-      const made: Map<K | symbol, __RecordAccessor<V>> = new Map();
-      made.set(key, a);
-      this.accessors = made;
-    } else {
-      t.set(key, a);
-    }
-  }
-
-  /** `r[s]` with a symbol `s`: its entry in the symbol table. */
-  __getSym(key: symbol): V | undefined {
-    const t = this.symbols;
-    if (t == null) {
-      return undefined;
-    }
-    return t.get(key);
-  }
-
-  /** `r[s] = v` with a symbol `s`: the symbol table is made by the first write. */
-  __setSym(key: symbol, value: V) {
+  /** The symbol key `key` set to `value` (a spread's copy; the table made by the first). */
+  private __putSym(key: symbol, value: V) {
     const t = this.symbols;
     if (t == null) {
       const made: Map<symbol, V> = new Map();
@@ -110,155 +73,6 @@ export class Record<K, V> {
     } else {
       t.set(key, value);
     }
-  }
-
-  /** `delete r[s]` with a symbol `s`. */
-  __deleteSym(key: symbol): bool {
-    const t = this.symbols;
-    if (t != null) {
-      t.delete(key);
-    }
-    return true;
-  }
-
-  /** `s in r` / `Object.hasOwn(r, s)` with a symbol `s`. */
-  __hasSym(key: symbol): bool {
-    const t = this.symbols;
-    return t != null && t.has(key);
-  }
-
-  /** `r[k]` with a `string | symbol` key. */
-  __getKeyed(key: K | symbol): V | undefined {
-    if (this.accessors != null) {
-      const a = this.__accessor(key);
-      if (a != null) {
-        return a.read();
-      }
-    }
-    if (typeof key === "symbol") {
-      return this.__getSym(key as symbol);
-    }
-    return this.entries.get(key as K);
-  }
-
-  /** `r[k] = v` with a `string | symbol` key. */
-  __setKeyed(key: K | symbol, value: V) {
-    if (this.accessors != null) {
-      const a = this.__accessor(key);
-      if (a != null) {
-        a.write(key, value);
-        return;
-      }
-    }
-    if (typeof key === "symbol") {
-      this.__setSym(key as symbol, value);
-    } else {
-      this.__set(key as K, value);
-    }
-  }
-
-  /** `delete r[k]` with a `string | symbol` key. */
-  __deleteKeyed(key: K | symbol): bool {
-    const t = this.accessors;
-    if (t != null) {
-      const a = t.get(key);
-      if (a != null) {
-        // A property that is not configurable stays: `delete` is Node's `TypeError` (strict
-        // code).
-        if (!a.configurable) {
-          panic(`TypeError: Cannot delete property '${__recordKeyText(key)}' of #<Object>`);
-        }
-        t.delete(key);
-        return true;
-      }
-    }
-    if (typeof key === "symbol") {
-      return this.__deleteSym(key as symbol);
-    }
-    return this.__delete(key as K);
-  }
-
-  /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own entries only). */
-  __hasKeyed(key: K | symbol): bool {
-    if (this.accessors != null && this.__accessor(key) != null) {
-      return true;
-    }
-    if (typeof key === "symbol") {
-      return this.__hasSym(key as symbol);
-    }
-    return this.entries.has(key as K);
-  }
-
-  /** `Object.getOwnPropertySymbols(r)`: the symbol keys, in insertion order. */
-  __symbolKeys(): symbol[] {
-    const t = this.symbols;
-    if (t == null) {
-      return [];
-    }
-    return t.keys();
-  }
-
-  /** `Object.getOwnPropertySymbols(r)`: the symbol keys, accessors' too. */
-  __ownSymbols(): symbol[] {
-    const out = this.__symbolKeys();
-    const t = this.accessors;
-    if (t != null) {
-      for (const k of t.keys()) {
-        if (typeof k === "symbol") {
-          out.push(k as symbol);
-        }
-      }
-    }
-    return out;
-  }
-
-  /**
-   * `Reflect.ownKeys(r)`: the string keys in `Object.keys` order (array indices first,
-   * ascending, then insertion order), then the symbol keys in insertion order.
-   */
-  __ownKeys(): (string | symbol)[] {
-    const out: (string | symbol)[] = [];
-    for (const k of this.__keyNames()) {
-      out.push(k);
-    }
-    const t = this.accessors;
-    if (t != null) {
-      for (const k of t.keys()) {
-        if (typeof k !== "symbol") {
-          out.push(`${k as K}`);
-        }
-      }
-    }
-    for (const s of this.__symbolKeys()) {
-      out.push(s);
-    }
-    if (t != null) {
-      for (const k of t.keys()) {
-        if (typeof k === "symbol") {
-          out.push(k as symbol);
-        }
-      }
-    }
-    return out;
-  }
-
-  /** Does this record hold a symbol key (`console.log` and spreads list the symbol table)? */
-  __hasSymbols(): bool {
-    const t = this.symbols;
-    return t != null && t.size > 0;
-  }
-
-  /** The symbol-keyed entries, in insertion order. */
-  __symbolEntries(): [symbol, V][] {
-    const t = this.symbols;
-    if (t == null) {
-      return [];
-    }
-    return t.entries();
-  }
-
-  __get(key: K): V | undefined {
-    return this.entries.get(key);
   }
 
   /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
@@ -361,9 +175,10 @@ export class Record<K, V> {
       this.__set(k, v);
     }
     // A spread copies the symbol keys too, as in Node.
-    if (other.symbols != null) {
-      for (const [s, v] of other.__symbolEntries()) {
-        this.__setSym(s, v);
+    const t = other.symbols;
+    if (t != null) {
+      for (const [s, v] of t.entries()) {
+        this.__putSym(s, v);
       }
     }
   }
@@ -387,8 +202,11 @@ export class Record<K, V> {
       for (const [k, v] of other.__entries()) {
         this.__set(key(k), convert(v));
       }
-      for (const [s, v] of other.__symbolEntries()) {
-        this.__setSym(s, convert(v));
+      const t = other.symbols;
+      if (t != null) {
+        for (const [s, v] of t.entries()) {
+          this.__putSym(s, convert(v));
+        }
       }
     }
   }
@@ -454,43 +272,6 @@ export class Record<K, V> {
   }
 }
 
-/** An accessor property of a record (`Object.defineProperty` with `get` / `set`). */
-export class __RecordAccessor<V> {
-  getter: (() => V) | null;
-  setter: ((value: V) => void) | null;
-  configurable: bool;
-
-  constructor(getter: (() => V) | null, setter: ((value: V) => void) | null, configurable: bool) {
-    this.getter = getter;
-    this.setter = setter;
-    this.configurable = configurable;
-  }
-
-  /** A read: the getter's value, `undefined` without one. */
-  read(): V | undefined {
-    const g = this.getter;
-    if (g == null) {
-      return undefined;
-    }
-    return g();
-  }
-
-  /** A write: the setter, or Node's `TypeError` (strict code) without one. */
-  write<K>(key: K, value: V) {
-    const s = this.setter;
-    if (s == null) {
-      panic(
-        `TypeError: Cannot set property ${__recordKeyText(key)} of #<Object> which has only a getter`,
-      );
-    }
-    s(value);
-  }
-}
-
-/** A record key as Node's messages show it: a string as it is, a symbol as `Symbol(d)`. */
-function __recordKeyText<K>(key: K): string {
-  return String(key);
-}
 
 /**
  * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (JavaScript's
@@ -646,17 +427,6 @@ export function __objectPrototypeKey(key: string): bool {
     default:
       return false;
   }
-}
-
-/**
- * `k in r` with a `string | symbol` key (sema calls this): the record's own entry, or for a
- * string a member every object inherits from `Object.prototype`.
- */
-export function __recordInKeyed<V>(key: string | symbol, r: Record<string, V>): bool {
-  if (r.__hasKeyed(key)) {
-    return true;
-  }
-  return typeof key === "string" && !r.__isNullProto() && __objectPrototypeKey(key);
 }
 
 /**

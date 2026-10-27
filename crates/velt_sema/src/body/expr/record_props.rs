@@ -22,6 +22,9 @@ use crate::hir;
 impl FnCx<'_, '_> {
     /// Is `e` a string-keyed record (checked on trial)?
     fn string_record(&mut self, e: &ast::Expr) -> bool {
+        if !self.has_record_method("__ownKeys") {
+            return false;
+        }
         let str_ = self.cx.ty.str_;
         self.trial_type(e)
             .and_then(|t| self.record_args(t))

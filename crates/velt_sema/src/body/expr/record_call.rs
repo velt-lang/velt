@@ -144,7 +144,8 @@ impl FnCx<'_, '_> {
         let mut kty = self.cx.subst_known(kp.ty, &slots);
         // In a program that defines accessors, which a record may hold, every key.
         let keyed = keyed_method(method)
-            .filter(|_| self.cx.objects.record_accessors && kty == self.cx.ty.str_);
+            .filter(|_| self.cx.objects.record_accessors && kty == self.cx.ty.str_)
+            .filter(|m| self.resolve_method(obj.ty, m).is_some());
         let key = match keyed {
             Some(keyed) => {
                 (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
@@ -241,7 +242,9 @@ impl FnCx<'_, '_> {
         if k != self.cx.ty.str_ || plain {
             return Err(None);
         }
-        let keyed = keyed_method(method);
+        // The methods of std/prelude/global/record_symbols.vlt, which a program loads when it
+        // mentions symbols: without them, a symbol key is the type error it was.
+        let keyed = keyed_method(method).filter(|m| self.has_record_method(m));
         let h = self.payload_expr(e, None, want);
         let symbolic = self.symbolic_key_type(h.ty);
         match keyed {
@@ -401,4 +404,17 @@ fn well_known_symbol(id: &ast::Ident) -> Option<ast::Expr> {
         optional: false,
     };
     Some(synth(kind, id.span))
+}
+
+impl FnCx<'_, '_> {
+    /// Does the prelude's `Record` have the method `name` (std/prelude/global/record_symbols.vlt
+    /// adds the `Keyed` ones when the program loads it)?
+    pub(super) fn has_record_method(&mut self, name: &str) -> bool {
+        let Some(d) = self.cx.prelude_adt("Record") else {
+            return false;
+        };
+        let str_ = self.cx.ty.str_;
+        let rec = self.cx.ty.intern(hir::TyKind::Adt(d, vec![str_, str_]));
+        self.resolve_method(rec, name).is_some()
+    }
 }

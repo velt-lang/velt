@@ -307,7 +307,9 @@ impl FnCx<'_, '_> {
                                 span: lhs.span,
                             };
                             // A record's accessors too, in a program that defines them.
-                            let has = match self.cx.objects.record_accessors {
+                            let keyed = self.cx.objects.record_accessors
+                                && self.has_record_method("__hasKeyed");
+                            let has = match keyed {
                                 true => "__hasKeyed",
                                 false => "__has",
                             };

@@ -320,7 +320,7 @@ impl FnCx<'_, '_> {
         // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
         let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
-        if open && (symbolic || accessors) {
+        if open && (symbolic || accessors) && self.has_record_method("__hasKeyed") {
             let syn = Synth::new(span, self.f.locals.len());
             let test = syn.call(syn.name("__recordInKeyed"), vec![lhs.clone(), rhs.clone()]);
             return self.expr(&test, None, Want::Move);
