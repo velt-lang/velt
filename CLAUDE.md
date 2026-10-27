@@ -74,10 +74,11 @@ follow it. The essentials for agents:
   numbers is static data.
 - **`git stash` is shared by all worktrees.** Use a named stash and pop it by name, or copy the
   files aside, so you never pop another session's stash.
-- **A shared `CARGO_TARGET_DIR` across worktrees** saves disk, but the tests that link a
-  prebuilt runtime or std (playground, example apps, templates) then fail with undefined
-  symbols from the other branch. Use a build directory of your own (rule 0) when you need them
-  to pass locally.
+- **A shared `CARGO_TARGET_DIR` across worktrees** saves disk, but the `velt` binary finds
+  `std/` next to the target directory, so it compiles against the other worktree's std (set
+  `VELT_STD=$PWD/std`), and the tests that link a prebuilt runtime or std (playground, example
+  apps, templates) fail with undefined symbols from the other branch. Use a build directory of
+  your own (rule 0) when you need them to pass locally.
 - **Pull request text:** the hygiene check rejects review and stacking notes ("stacked on #N")
   in the description, which becomes the commit message; put them in a comment.
 - **Shell:** pass commit messages and PR bodies as files (`git commit -F`, `--body-file`):
