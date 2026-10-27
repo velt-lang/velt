@@ -690,6 +690,7 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         };
         self.any_subclass_dispatch(Glue::AnyCall, ty, d, &[data, key, argv, argc, out]);
+        self.any_class_call((data, key, argv, argc), (ty, d), &outp);
         let vp = self.any_value_place(data, ty);
         let fields = self.member_fields(d);
         for (i, name) in fields.iter().enumerate() {
