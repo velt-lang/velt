@@ -1,0 +1,62 @@
+// A leaf's slots: keys away from their home slot (two keys of one leaf share a home), deleted
+// keys whose words stay in their slots, holes filled again, and `add` on every key, in one leaf
+// and after the leaves split.
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function check(m: ConcurrentMap, n: u64, step: u64): u64 {
+  let wrong: u64 = 0;
+  for (let k: u64 = 1; k <= n; k++) {
+    const want = k % step == 0 ? undefined : k * 10;
+    if (m.get(k) != want || m.has(k) != (want != undefined)) {
+      wrong++;
+    }
+  }
+  return wrong;
+}
+
+function main() {
+  const m = ConcurrentMap.create(100000);
+  // 50 keys: one leaf (it holds 56), so many share a home slot.
+  for (let k: u64 = 1; k <= 50; k++) {
+    m.set(k, k);
+  }
+  let added: u64 = 0;
+  for (let k: u64 = 1; k <= 50; k++) {
+    added += m.add(k, k * 9) == k ? 1 : 0;
+  }
+  // Every third key deleted: its words stay in the slot, its tag is cleared.
+  let deleted: u64 = 0;
+  for (let k: u64 = 3; k <= 50; k += 3) {
+    deleted += m.delete(k) ? 1 : 0;
+  }
+  console.log("one leaf:", added, deleted, check(m, 50, 3), m.add(3, 1), m.delete(3));
+  // New keys fill the holes; the deleted ones stay absent.
+  for (let k: u64 = 1000; k < 1016; k++) {
+    m.set(k, k);
+  }
+  let refilled: u64 = 0;
+  for (let k: u64 = 1000; k < 1016; k++) {
+    refilled += m.get(k) == k ? 1 : 0;
+  }
+  console.log("refilled:", refilled, check(m, 50, 3));
+  for (let k: u64 = 1000; k < 1016; k++) {
+    m.delete(k);
+  }
+  // Thousands of keys: the leaves split and their keys move to new home slots.
+  for (let k: u64 = 51; k <= 20000; k++) {
+    m.set(k, k * 10);
+  }
+  for (let k: u64 = 3; k <= 20000; k += 3) {
+    m.delete(k);
+  }
+  let sum: u64 = 0;
+  for (let k: u64 = 1; k <= 20000; k++) {
+    sum += m.add(k, 1) ?? 0;
+  }
+  for (let k: u64 = 1; k <= 20000; k++) {
+    if (k % 3 != 0) {
+      m.add(k, 0 - 1);
+    }
+  }
+  console.log("split:", check(m, 20000, 3), sum);
+}
