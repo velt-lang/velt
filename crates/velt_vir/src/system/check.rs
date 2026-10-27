@@ -251,7 +251,7 @@ fn param_fits(p: &hir::Program, c: &Func, want: &Param, t: TyId, ro: bool) -> Re
     let no_pointer = "(system functions take no pointers: the array gives the address and the \
                       length)";
     match (want, &got) {
-        (Param::Int { ty, c: ct, .. }, Shape::Int(i)) if i == ty => Ok(()),
+        (Param::Int { ty, .. }, Shape::Int(i)) if i == ty => Ok(()),
         (Param::Int { ty, c: ct, .. }, _) => Err(format!(
             "`{name}` is a C `{ct}`: declare it `{}`, not {}",
             ty.velt(),
