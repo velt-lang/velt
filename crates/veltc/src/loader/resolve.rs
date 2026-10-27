@@ -43,7 +43,7 @@ pub fn resolve_module(
         Some(std) if in_std => Origin::Std(std.to_path_buf()),
         _ => Origin::Root(dir.to_path_buf()),
     };
-    let target = locate::target(module, importer, &origin, std_root, packages).ok()?;
+    let target = locate::target(module, importer, &origin, std_root, None, packages).ok()?;
     let names = DirNames::default();
     let (_, files) = first_existing(&target, |f| on_disk_exactly(&names, f, &target.base))?;
     let [file] = files.as_slice() else {

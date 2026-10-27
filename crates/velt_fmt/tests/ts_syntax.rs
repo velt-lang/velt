@@ -216,6 +216,10 @@ fn import_meta() {
 #[test]
 fn declare_global_and_module_blocks() {
     round_trips("declare global {\n  // the hook\n  interface W {\n    a: number;\n  }\n}\n");
+    // Host imports: functions without `declare`, a top-level one keeps it.
+    round_trips(
+        "declare module \"wasm:demo\" {\n  function add(a: f64, b: f64): f64;\n  export async function get(k: string): Promise<u32>;\n}\n\ndeclare function velt_rt_x(): u32;\n",
+    );
     round_trips(
         "declare module \"./m\" {\n  interface O {\n    b?: string;\n  }\n\n  export interface P {\n    c: number;\n  }\n}\n",
     );

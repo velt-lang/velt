@@ -145,6 +145,7 @@ impl ProgramLoader for CliLoader {
             root_source: None,
             overlay: Some(overlay),
             std_root_as_std: true,
+            host: None,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {

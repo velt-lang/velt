@@ -1,0 +1,68 @@
+// std/http/server_io: what the server side of std/http and std/fetch asks of the host about a
+// request it received, and how it hands back the response. Natively these are the runtime's
+// functions (hyper; rt_abi_async.md §7), declared here once and imported by std/http.vlt and
+// std/fetch's request, response and headers modules. A build for another host loads that
+// host's variant of this module instead (`server_io.workers.vlt` for `--host workers`), with the
+// same exports written in Velt over the host's imports
+// (docs/internals/design/cloudflare-workers.md §4).
+
+import { IoResult } from "velt:io";
+
+export declare function velt_rt_http_req_method(r: u64): string;
+export declare function velt_rt_http_req_url(r: u64): string;
+export declare function velt_rt_http_req_has_body(r: u64): bool;
+export declare async function velt_rt_http_req_text(r: u64): Promise<IoResult<string>>;
+export declare async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>>;
+export declare async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>>;
+export declare function velt_rt_http_req_headers(r: u64): string[];
+export declare function velt_rt_http_req_remote_host(r: u64): string;
+export declare function velt_rt_http_req_remote_port(r: u64): u32;
+export declare function velt_rt_http_req_drop(r: u64);
+export declare function velt_rt_http_req_upgrade(r: u64): u64;
+export declare function velt_rt_http_req_take_upgrade(r: u64): u64;
+
+declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
+
+/** The value of header `name` of request `r` (repeated fields joined with ", "), or null. */
+export function reqHeader(r: u64, name: string): string | null {
+  let out = "";
+  return velt_rt_http_req_header(r, name, out) ? out : null;
+}
+
+// The response a handler returns for server request `raw`, with no body or a text one (`kind`
+// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
+// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
+// (`headers`), and takes a bytes body (`kind` 2) too.
+export declare function velt_rt_http_req_respond(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  kind: u32,
+  text: string,
+  implied: u32,
+): u64;
+// A server response for a streamed body (std/http): the text body is taken (moved out, left
+// empty), the bytes copied.
+export declare function velt_rt_http_resp_build(
+  status: u32,
+  reason: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;
+export declare function velt_rt_http_req_respond_list(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;

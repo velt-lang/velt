@@ -50,6 +50,9 @@ pub(crate) struct Printer<'a> {
     /// Name offsets of the `readonly` abstract properties of the class being printed (getters
     /// without a setter, `decls::abstract_property`).
     readonly_properties: HashSet<u32>,
+    /// Printing a `declare module "wasm:…"` block, whose functions are written without
+    /// `declare` (they are host imports).
+    in_host_block: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -60,6 +63,7 @@ impl<'a> Printer<'a> {
             broken_jsx_bodies: HashSet::new(),
             var_ends: HashSet::new(),
             readonly_properties: HashSet::new(),
+            in_host_block: false,
         }
     }
 

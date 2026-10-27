@@ -1,0 +1,152 @@
+// std/http/server_io for `--host workers` (docs/internals/design/cloudflare-workers.md §4): the
+// same exports as server_io.vlt, written in Velt over the functions the Worker glue
+// (velt_worker.mjs) provides. A request `r` is the glue's handle for the JS `Request` (never 0).
+// The glue reads the body before the handler runs, so the body reads here are synchronous; the
+// handler's response goes to the glue in one `respond` call, and `fetch_done` (the runtime,
+// crates/velt_rt_wasm/src/workers.rs) tells the glue the handler finished.
+//
+// Headers cross as one string, `name\nvalue\n…` (a header name or value never holds a line
+// break).
+
+import { IoResult } from "velt:io";
+import { utf8DecodeLossy } from "velt:encoding";
+import { impliedType } from "velt:fetch/body";
+
+declare module "wasm:velt_workers" {
+  function req_method(r: u32): string;
+  function req_url(r: u32): string;
+  function req_has_header(r: u32, name: string): bool;
+  function req_header(r: u32, name: string): string;
+  function req_headers(r: u32): string;
+  function req_has_body(r: u32): bool;
+  function req_take_body(r: u32): u8[];
+  function req_drop(r: u32);
+  function respond(
+    r: u32,
+    status: u32,
+    reason: string,
+    headers: string,
+    kind: u32,
+    text: string,
+    bytes: u8[],
+  );
+}
+
+export function velt_rt_http_req_method(r: u64): string {
+  return req_method(r as u32);
+}
+
+export function velt_rt_http_req_url(r: u64): string {
+  return req_url(r as u32);
+}
+
+export function velt_rt_http_req_has_body(r: u64): bool {
+  return req_has_body(r as u32);
+}
+
+export async function velt_rt_http_req_text(r: u64): Promise<IoResult<string>> {
+  return IoResult { code: 0, message: "", value: utf8DecodeLossy(req_take_body(r as u32)) };
+}
+
+export async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>> {
+  return IoResult { code: 0, message: "", value: req_take_body(r as u32) };
+}
+
+// The whole body as the first chunk, then the empty chunk that ends it.
+export async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>> {
+  return IoResult { code: 0, message: "", value: req_take_body(r as u32) };
+}
+
+export function velt_rt_http_req_headers(r: u64): string[] {
+  const flat = req_headers(r as u32);
+  return flat == "" ? [] : flat.split("\n");
+}
+
+/** The value of header `name` of request `r` (repeated fields joined with ", "), or null. */
+export function reqHeader(r: u64, name: string): string | null {
+  return req_has_header(r as u32, name) ? req_header(r as u32, name) : null;
+}
+
+// The client's address: Cloudflare names it in `cf-connecting-ip`; the port is not known.
+export function velt_rt_http_req_remote_host(r: u64): string {
+  return reqHeader(r, "cf-connecting-ip") ?? "";
+}
+
+export function velt_rt_http_req_remote_port(r: u64): u32 {
+  return 0;
+}
+
+export function velt_rt_http_req_drop(r: u64) {
+  req_drop(r as u32);
+}
+
+// A Worker can't take over the connection (WebSockets on Workers go through their own API).
+export function velt_rt_http_req_upgrade(r: u64): u64 {
+  return 0;
+}
+
+export function velt_rt_http_req_take_upgrade(r: u64): u64 {
+  return 0;
+}
+
+// The flat header string for `respond`: the first header as given, the rest, and the
+// `content-type` the body implies.
+function headerText(name: string, value: string, rest: string[], implied: u32): string {
+  let out = "";
+  if (name != "") {
+    out = `${name}\n${value}`;
+  }
+  for (const part of rest) {
+    out = out == "" ? part : `${out}\n${part}`;
+  }
+  const type = impliedType(implied);
+  if (type != null) {
+    out = out == "" ? `content-type\n${type}` : `${out}\ncontent-type\n${type}`;
+  }
+  return out;
+}
+
+export function velt_rt_http_req_respond(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  kind: u32,
+  text: string,
+  implied: u32,
+): u64 {
+  respond(raw as u32, status, reason, headerText(name, value, [], implied), kind, text, []);
+  return 1;
+}
+
+// A streamed body needs the handler to keep running after it returned, which comes with tasks
+// that wait on the host (#1737): until then the request gets a 500.
+export function velt_rt_http_resp_build(
+  status: u32,
+  reason: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64 {
+  console.error("a streamed response body is not supported on Workers yet (#1737)");
+  return 0;
+}
+
+export function velt_rt_http_req_respond_list(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64 {
+  respond(raw as u32, status, reason, headerText(name, value, headers, implied), kind, text, bytes);
+  return 1;
+}

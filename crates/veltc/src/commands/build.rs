@@ -139,7 +139,9 @@ fn build_with_input(
 /// What a linked program needs beside it: the JavaScript glue of a WebAssembly module.
 fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), String> {
     match artifact {
-        Artifact::Executable(module) => super::wasm::write_glue(&opts.target(), module),
+        Artifact::Executable(module) => {
+            super::wasm::write_glue(&opts.target(), opts.host.as_deref(), module)
+        }
         _ => Ok(()),
     }
 }
@@ -260,6 +262,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         release: args.release,
         debug_info: args.debug_info,
         target: args.target.clone(),
+        host: args.host.clone(),
         emit: args.emit,
         backend,
         report_numbers: args.report_numbers,

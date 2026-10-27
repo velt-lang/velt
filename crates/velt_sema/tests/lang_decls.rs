@@ -263,3 +263,31 @@ fn untyped_let_takes_the_type_of_its_first_assignment() {
     let r = err_src("function main() { let x; x = []; x.push(1); }");
     assert!(r.contains("cannot infer the element type of `[]`"), "{r}");
 }
+
+#[test]
+fn host_imports_are_externs_with_their_import_module_in_the_symbol() {
+    let p = ok_src(
+        "declare module \"wasm:demo\" {
+           function add(a: f64, b: f64): f64;
+           export function name(): string;
+         }
+         function main() { console.log(add(1, 2), name()); }",
+    );
+    let symbols: Vec<&str> = p
+        .defs
+        .iter()
+        .filter_map(|d| match d {
+            Def::ExternFn(f) if f.name == "add" || f.name == "name" => Some(f.symbol.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(symbols, ["velt_host:demo:add", "velt_host:demo:name"]);
+    let errs = err_src(
+        "declare module \"wasm:no-dash\" { function f(): u32; }
+         function main() {}",
+    );
+    assert!(
+        errs.contains("`wasm:no-dash` is not a host import module"),
+        "{errs}"
+    );
+}

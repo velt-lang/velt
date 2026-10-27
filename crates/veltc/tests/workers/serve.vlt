@@ -1,0 +1,34 @@
+// A Worker (`velt build --host workers`), driven by drive.mjs through the glue: the request's
+// method, URL, headers and body, responses with text, JSON and bytes bodies and headers, and a
+// handler that throws (500).
+import { serve } from "velt:http";
+
+struct Greeting {
+  name: string;
+}
+
+async function main() {
+  console.log("main ran");
+  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    console.log(`${req.method} ${url.pathname}`);
+    if (url.pathname == "/json") {
+      return Response.json({ path: url.pathname, query: url.searchParams.get("q") });
+    }
+    if (url.pathname == "/greet" && req.method == "POST") {
+      const g = await req.json<Greeting>();
+      return new Response(`hello, ${g.name}`, {
+        status: 201,
+        headers: { "x-velt": "yes", "x-agent": req.headers.get("user-agent") ?? "none" },
+      });
+    }
+    if (url.pathname == "/bytes") {
+      const data: u8[] = [104, 105];
+      return new Response(data, { headers: { "content-type": "application/octet-stream" } });
+    }
+    if (url.pathname == "/fail") {
+      throw new Error("handler failed on purpose");
+    }
+    return new Response("not found", { status: 404 });
+  });
+}

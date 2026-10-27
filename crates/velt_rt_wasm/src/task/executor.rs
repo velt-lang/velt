@@ -747,6 +747,31 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     }
 }
 
+/// One turn for a host that calls back in (the Workers host, docs/internals/design/
+/// cloudflare-workers.md §5): run the microtasks and ready tasks, and the timers that are due,
+/// until none is left, then return to the host. Unlike [`velt_rt_block_on`] there is no root and
+/// no end: the tasks that still wait keep their state for the next turn.
+pub unsafe fn run_turn() {
+    with_exec(|e| e.running = true);
+    set_running_word(true);
+    loop {
+        fire_due_now();
+        let Some(id) = next_micro().or_else(|| {
+            if !resuming() {
+                super::local::flush_unhandled();
+            }
+            next_ready()
+        }) else {
+            break;
+        };
+        if id != ROOT {
+            run_task(id);
+        }
+    }
+    with_exec(|e| e.running = false);
+    set_running_word(false);
+}
+
 #[cfg(test)]
 #[path = "executor_tests.rs"]
 mod tests;

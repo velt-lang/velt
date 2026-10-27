@@ -17,12 +17,14 @@ import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
-declare function velt_rt_http_req_method(r: u64): string;
-declare function velt_rt_http_req_url(r: u64): string;
-declare function velt_rt_http_req_has_body(r: u64): bool;
-declare async function velt_rt_http_req_text(r: u64): Promise<IoResult<string>>;
-declare async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>>;
-declare async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>>;
+import {
+  velt_rt_http_req_bytes,
+  velt_rt_http_req_chunk,
+  velt_rt_http_req_has_body,
+  velt_rt_http_req_method,
+  velt_rt_http_req_text,
+  velt_rt_http_req_url,
+} from "velt:http/server_io";
 
 /** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";

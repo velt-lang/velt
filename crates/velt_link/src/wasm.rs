@@ -75,6 +75,20 @@ pub fn link(req: &LinkRequest, flavor: WasmFlavor) -> Result<(), String> {
     run_linker(cmd).map_err(explain_missing_symbols)
 }
 
+/// What the Worker glue (`velt_worker.mjs`) calls in a module that serves.
+const WORKER_EXPORTS: &[&str] = &[
+    "velt_fetch",
+    "velt_turn",
+    "velt_host_str_ptr",
+    "velt_host_str_len",
+    "velt_host_bytes_ptr",
+    "velt_host_bytes_len",
+    "velt_host_alloc",
+    "velt_host_free",
+    "velt_host_str_new",
+    "velt_host_bytes_new",
+];
+
 fn args(req: &LinkRequest, flavor: WasmFlavor) -> Result<Vec<OsString>, String> {
     let mut args: Vec<OsString> = vec!["-o".into(), req.output.into()];
     let libc = match flavor {
@@ -85,6 +99,13 @@ fn args(req: &LinkRequest, flavor: WasmFlavor) -> Result<Vec<OsString>, String> 
         }
         WasmFlavor::Browser => {
             args.extend(["--no-entry", "--export=velt_start"].map(OsString::from));
+            // The Workers host's entries (crates/velt_rt_wasm/src/workers.rs): linked in, and
+            // so exported, only with a program that serves (`serve()` pulls them in).
+            args.extend(
+                WORKER_EXPORTS
+                    .iter()
+                    .map(|name| OsString::from(format!("--export-if-defined={name}"))),
+            );
             None
         }
     };
@@ -277,13 +298,18 @@ mod tests {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
+        let exports: Vec<String> = WORKER_EXPORTS
+            .iter()
+            .map(|n| format!("--export-if-defined={n}"))
+            .collect();
         assert_eq!(
-            args,
+            args[..4],
+            ["-o", "p.wasm", "--no-entry", "--export=velt_start"]
+        );
+        assert_eq!(args[4..4 + exports.len()], exports[..]);
+        assert_eq!(
+            args[4 + exports.len()..],
             [
-                "-o",
-                "p.wasm",
-                "--no-entry",
-                "--export=velt_start",
                 "p.o",
                 "rt.a",
                 "-z",

@@ -25,6 +25,11 @@ import {
   impliedType,
 } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
+import {
+  velt_rt_http_req_respond,
+  velt_rt_http_req_respond_list,
+  velt_rt_http_resp_build,
+} from "velt:http/server_io";
 
 declare function velt_rt_http_fetch_resp_status(r: u64): u32;
 declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
@@ -36,42 +41,6 @@ declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u
 declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
 declare function velt_rt_http_fetch_resp_drop(r: u64);
 declare function velt_rt_http_resp_drop(r: u64);
-// A server response (std/http): the text body is taken (moved out, left empty), the bytes copied.
-declare function velt_rt_http_resp_build(
-  status: u32,
-  reason: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  implied: u32,
-): u64;
-// The response a handler returns for server request `raw`, with no body or a text one (`kind`
-// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
-// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
-// (`headers`), and takes a bytes body (`kind` 2) too.
-declare function velt_rt_http_req_respond(
-  raw: u64,
-  status: u32,
-  reason: string,
-  name: string,
-  value: string,
-  kind: u32,
-  text: string,
-  implied: u32,
-): u64;
-declare function velt_rt_http_req_respond_list(
-  raw: u64,
-  status: u32,
-  reason: string,
-  name: string,
-  value: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  implied: u32,
-): u64;
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {

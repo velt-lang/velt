@@ -74,6 +74,9 @@ pub struct LoadOptions<'a> {
     /// as `main`: the language server, for a std file opened in the editor, so it is checked like
     /// std code (runtime declarations, std's own types) instead of as a user program.
     pub std_root_as_std: bool,
+    /// The host a WebAssembly program runs in (`--host`): a std module `x` is loaded from
+    /// `x.<host>.vlt` when that file exists.
+    pub host: Option<String>,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -562,6 +565,7 @@ impl Loader<'_, '_> {
             &importer,
             &from,
             self.opts.std_root.as_deref(),
+            self.opts.host.as_deref(),
             self.opts.packages,
         ) {
             Ok(t) => t,

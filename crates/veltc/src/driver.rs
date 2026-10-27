@@ -15,6 +15,7 @@ use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
 mod cpu_check;
+mod host_imports;
 mod pipeline;
 mod recover;
 
@@ -37,6 +38,9 @@ pub struct BuildOptions {
     pub debug_info: bool,
     /// Target triple; `None` → host.
     pub target: Option<String>,
+    /// The host a WebAssembly program runs in (`--host workers`): std loads that host's variant
+    /// of a module where one exists (`<module>.<host>.vlt`), and host imports are allowed.
+    pub host: Option<String>,
     /// The CPU to build for (`--cpu`, `$VELT_CPU` or the package's `build.cpu`, resolved by
     /// `commands::cpu::resolve_cpu`); `None` → the target's default
     /// (`velt_codegen_cl::DEFAULT_X86_CPU` on x86_64).
@@ -248,6 +252,7 @@ fn load_modules(
         root_source: opts.root_source.clone(),
         overlay: None,
         std_root_as_std: false,
+        host: opts.host.clone(),
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,
@@ -426,6 +431,7 @@ fn build_on_current_thread(
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }
+    host_imports::check(&program, opts.host.as_deref())?;
     let cg = velt_codegen_cl::CodegenOptions {
         target: target.clone(),
         optimize: opts.release,

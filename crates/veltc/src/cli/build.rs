@@ -50,6 +50,10 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            // `velt dev --host` is the JIT host's own mode flag (cli/dev.rs takes it first).
+            "--host" if cmd != "dev" => {
+                b.host = Some(take_value(inline.as_deref(), &mut it, flag)?)
+            }
             "--cpu" => b.cpu = Some(take_cpu(inline.as_deref(), &mut it)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
                 "numbers" => b.report_numbers = true,
@@ -81,7 +85,30 @@ pub(super) fn parse_build(
             }
         }
     }
+    check_host(&mut b)?;
     Ok((b, prog_args))
+}
+
+/// The hosts `--host` names, and the target each implies.
+const HOSTS: &[(&str, &str)] = &[("workers", "wasm32-unknown-unknown")];
+
+/// `--host <name>`: a known host, which sets the target (another `--target` is an error).
+fn check_host(b: &mut BuildArgs) -> Result<(), String> {
+    let Some(host) = &b.host else {
+        return Ok(());
+    };
+    let Some(&(_, target)) = HOSTS.iter().find(|(h, _)| h == host) else {
+        return Err(format!("unknown --host `{host}` (expected workers)"));
+    };
+    match &b.target {
+        Some(t) if t != target => Err(format!(
+            "`--host {host}` builds for `{target}`: leave out `--target {t}`"
+        )),
+        _ => {
+            b.target = Some(target.to_string());
+            Ok(())
+        }
+    }
 }
 
 /// `velt run <file> ...`: the rest belongs to the program, without a leading `--`.
@@ -102,7 +129,7 @@ pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--cpu" | "--backend" | "--report") => i += 2,
+            Some("--target" | "--host" | "--cpu" | "--backend" | "--report") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }
@@ -246,6 +273,42 @@ mod tests {
             (b.emit, b.target.as_deref(), b.output),
             (Emit::Obj, Some("t"), Some(PathBuf::from("o")))
         );
+    }
+
+    #[test]
+    fn host_sets_the_target() {
+        let b = build(&["build", "--host", "workers", "a.vlt"]);
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("workers"), Some("wasm32-unknown-unknown"))
+        );
+        let b = build(&[
+            "build",
+            "--host=workers",
+            "--target",
+            "wasm32-unknown-unknown",
+            "a.vlt",
+        ]);
+        assert_eq!(b.target.as_deref(), Some("wasm32-unknown-unknown"));
+        let err = p(&[
+            "build",
+            "--host",
+            "workers",
+            "--target",
+            "wasm32-wasip1",
+            "a.vlt",
+        ])
+        .unwrap_err();
+        assert!(err.contains("leave out `--target wasm32-wasip1`"), "{err}");
+        let err = p(&["build", "--host", "deno", "a.vlt"]).unwrap_err();
+        assert!(err.contains("unknown --host `deno`"), "{err}");
+        match p(&["run", "--host", "workers", "a.vlt", "x"]).unwrap() {
+            Command::Run { build, args } => {
+                assert_eq!(build.input, Some(PathBuf::from("a.vlt")));
+                assert_eq!(args, ["x"]);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

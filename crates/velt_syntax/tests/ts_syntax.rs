@@ -378,6 +378,37 @@ fn declare_global_and_module_blocks() {
 }
 
 #[test]
+fn host_import_blocks_declare_functions() {
+    let m = parse_ok(
+        "declare module \"wasm:demo\" {\n  function add(a: f64, b: f64): f64;\n  export async function get(k: string): Promise<u32>\n}",
+    );
+    let ItemKind::Augment(a) = &m.items[0].kind else {
+        panic!("not an augmentation: {:?}", m.items[0]);
+    };
+    assert_eq!(
+        a.module.as_ref().map(|(s, _)| s.as_str()),
+        Some("wasm:demo")
+    );
+    let sigs: Vec<(&str, bool, bool)> = a
+        .items
+        .iter()
+        .map(|i| match &i.kind {
+            ItemKind::ExternFn(s) => (s.name.name.as_str(), s.is_async, i.exported),
+            other => panic!("not a host import: {other:?}"),
+        })
+        .collect();
+    assert_eq!(sigs, [("add", false, false), ("get", true, true)]);
+    assert_eq!(
+        errors("declare module \"wasm:demo\" {\n  interface I { a: number }\n}"),
+        vec!["only functions can be declared in a `declare module \"wasm:…\"` block: it lists the functions the WebAssembly host provides"]
+    );
+    assert_eq!(
+        errors("declare module \"wasm:demo\" {\n  function* g(): u32;\n}"),
+        vec!["a host import cannot be a generator"]
+    );
+}
+
+#[test]
 fn members_end_at_a_line_break() {
     // TypeScript's automatic semicolon insertion between interface and object type members.
     let none: Vec<String> = vec![];

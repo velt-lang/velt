@@ -43,6 +43,10 @@ const TARGET: (&str, &str) = (
     "--target <triple>",
     "target triple (default: the host); wasm32-wasip1 and wasm32-unknown-unknown build WebAssembly",
 );
+const HOST: (&str, &str) = (
+    "--host <name>",
+    "workers: build a Cloudflare Worker (WebAssembly; serve() answers the Worker's requests)",
+);
 const CPU: (&str, &str) = (
     "--cpu <name>",
     "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.vlt)",
@@ -112,7 +116,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
+        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--host <name>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
@@ -121,6 +125,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             RELEASE,
             DEBUG_INFO,
             TARGET,
+            HOST,
             CPU,
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
@@ -151,7 +156,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
+        options: &[RELEASE, DEBUG_INFO, TARGET, HOST, CPU, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),

@@ -115,6 +115,7 @@ pub fn target(
     importer: &Path,
     from: &Origin,
     std_root: Option<&Path>,
+    host: Option<&str>,
     packages: Option<&dyn PackageResolver>,
 ) -> Result<Target, LocateError> {
     match module {
@@ -140,7 +141,7 @@ pub fn target(
                 return Err((format!("cannot find module `velt:{rel}`"), vec![note]));
             };
             Ok(Target {
-                candidates: std_files(root, &rel),
+                candidates: std_files(root, &rel, host),
                 canonical: Some(format!("std/{rel}")),
                 origin: Origin::Std(root.to_path_buf()),
                 base: root.to_path_buf(),
@@ -169,12 +170,17 @@ pub fn target(
 }
 
 /// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt` (standard library modules
-/// are `.vlt` files).
-fn std_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
-    vec![
-        vec![dir.join(format!("{rel}.vlt"))],
-        vec![dir.join(rel).join("index.vlt")],
-    ]
+/// are `.vlt` files); for a build for `host`, `<dir>/<rel>.<host>.vlt` first, the module's
+/// variant for that host.
+fn std_files(dir: &Path, rel: &str, host: Option<&str>) -> Vec<Vec<PathBuf>> {
+    let variant = host.map(|h| vec![dir.join(format!("{rel}.{h}.vlt"))]);
+    variant
+        .into_iter()
+        .chain([
+            vec![dir.join(format!("{rel}.vlt"))],
+            vec![dir.join(rel).join("index.vlt")],
+        ])
+        .collect()
 }
 
 /// The files of module `rel` of a package (its `src/` is `src`): `rel.vlt`, `rel.ts` or
@@ -262,6 +268,35 @@ mod tests {
     }
 
     #[test]
+    fn a_host_variant_of_a_std_module_comes_first() {
+        let std = Path::new("/std");
+        let files = |host| {
+            let module = ModuleRef::Std {
+                rel: "http/server_io".into(),
+            };
+            let origin = Origin::Root(PathBuf::new());
+            let t = target(
+                module,
+                Path::new("main.vlt"),
+                &origin,
+                Some(std),
+                host,
+                None,
+            );
+            t.unwrap().candidates
+        };
+        assert_eq!(
+            files(Some("workers")),
+            [
+                vec![std.join("http/server_io.workers.vlt")],
+                vec![std.join("http/server_io.vlt")],
+                vec![std.join("http/server_io").join("index.vlt")],
+            ]
+        );
+        assert_eq!(files(None)[0], [std.join("http/server_io.vlt")]);
+    }
+
+    #[test]
     fn package_without_graph_is_not_a_dependency() {
         let module = ModuleRef::Package {
             name: "json".into(),
@@ -271,6 +306,7 @@ mod tests {
             module,
             Path::new("main.vlt"),
             &Origin::Root(PathBuf::new()),
+            None,
             None,
             None,
         )

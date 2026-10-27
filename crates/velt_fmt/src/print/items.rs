@@ -10,6 +10,7 @@ use super::script::{blank_before, Top};
 use super::Printer;
 use crate::doc::{cat, group, hardline, if_break, indent, join, line, text, Doc};
 use crate::source::{slice, string_literal};
+use velt_syntax::HOST_SCHEME;
 
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
 /// every other pair of top-level items is separated by a blank line.
@@ -53,7 +54,8 @@ impl<'a> Printer<'a> {
             ItemKind::ExternFn(sig) => {
                 let asyncness = if sig.is_async { "async " } else { "" };
                 let sig = self.fn_sig(sig, "function ", sig.span.hi);
-                cat!["declare ", asyncness, sig, ";"]
+                let declare = if self.in_host_block { "" } else { "declare " };
+                cat![declare, asyncness, sig, ";"]
             }
             ItemKind::Augment(a) => self.augment(a, item.span.hi),
             ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
@@ -73,7 +75,11 @@ impl<'a> Printer<'a> {
         if a.items.is_empty() {
             return cat![head, " {}"];
         }
-        self.block_items(head, &a.items, end)
+        let host = (a.module.as_ref()).is_some_and(|(spec, _)| spec.starts_with(HOST_SCHEME));
+        let outer = std::mem::replace(&mut self.in_host_block, host);
+        let doc = self.block_items(head, &a.items, end);
+        self.in_host_block = outer;
+        doc
     }
 
     /// `[declare] namespace N { … }` (the item ends at `end`).

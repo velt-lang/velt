@@ -41,11 +41,13 @@ declare function velt_rt_http_server_close(s: u64);
 declare async function velt_rt_http_server_shutdown(s: u64): Promise<void>;
 declare function velt_rt_http_server_detach(s: u64);
 
-declare function velt_rt_http_req_remote_host(r: u64): string;
-declare function velt_rt_http_req_remote_port(r: u64): u32;
-declare function velt_rt_http_req_drop(r: u64);
-declare function velt_rt_http_req_upgrade(r: u64): u64;
-declare function velt_rt_http_req_take_upgrade(r: u64): u64;
+import {
+  velt_rt_http_req_drop,
+  velt_rt_http_req_remote_host,
+  velt_rt_http_req_remote_port,
+  velt_rt_http_req_take_upgrade,
+  velt_rt_http_req_upgrade,
+} from "velt:http/server_io";
 
 // Loopback unless the caller asks for more (pass `host: "0.0.0.0"` to listen on all interfaces).
 const DEFAULT_HOST = "127.0.0.1";

@@ -90,5 +90,6 @@ pub mod transfer_map;
 pub mod view;
 #[path = "../../velt_rt/src/weak/mod.rs"]
 pub mod weak;
+pub mod workers;
 
 pub use crate::str::VeltStr;

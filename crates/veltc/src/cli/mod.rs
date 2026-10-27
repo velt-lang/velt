@@ -74,6 +74,8 @@ pub struct BuildArgs {
     pub debug_info: bool,
     /// `--target`.
     pub target: Option<String>,
+    /// `--host`: the host a WebAssembly program runs in (`workers`); implies the target.
+    pub host: Option<String>,
     /// `--cpu`.
     pub cpu: Option<String>,
     /// `--emit`.

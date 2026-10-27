@@ -1,0 +1,12 @@
+[1] main ran
+[1] GET /json
+200 content-type=application/json | {"path":"/json","query":"velt"}
+[1] POST /greet
+201 content-type=text/plain;charset=UTF-8 x-agent=drive x-velt=yes | hello, Workers
+[1] GET /bytes
+200 content-type=application/octet-stream | hi
+[1] GET /fail
+[2] request handler failed: Error { message: 'handler failed on purpose' }
+500 content-type=text/plain;charset=UTF-8 | Internal Server Error
+[1] GET /missing
+404 content-type=text/plain;charset=UTF-8 | not found
