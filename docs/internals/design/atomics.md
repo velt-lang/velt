@@ -251,9 +251,10 @@ atomics' words (vir.rs invariant 9's `frozen`, set where `readonly` would be, an
 value holding an `Atomic`, but never for a type whose values module state can reach: any callee
 could write the argument through a module variable or `static` field that holds it, which the
 call site cannot see; param_attrs.rs "Module state"). An atomic operation never reads or writes
-anything else, and no code reads an atomic's word as plain memory. So `velt_opt`'s `frozen` pass loads the scalar
-fields a function reads in a loop once, on entry: a node's array headers, its bounds, a pool's
-data pointer. The loop then keeps them in registers across acquires, fences and calls, and its
+anything else. An atomic's word itself changes, and is read as plain memory where a value is
+inspected (`console.log` of an `Atomic`), so no byte of an `Atomic` aggregate is promoted. So
+`velt_opt`'s `frozen` pass loads the other scalar fields a function reads in a loop once, on
+entry: a node's array headers, its bounds, a pool's data pointer. The loop then keeps them in registers across acquires, fences and calls, and its
 bounds checks become loop-invariant, which LLVM moves out.
 
 LLVM cannot find this itself: an acquire or a fence may let it see any memory another thread

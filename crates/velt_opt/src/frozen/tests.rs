@@ -425,3 +425,74 @@ fn a_copy_before_its_source_in_block_order_still_names_the_field() {
         });
     assert!(!reads_in_loop, "{f:?}");
 }
+
+/// An `Atomic`'s word is read as plain memory where it is inspected (`console.log(n.a)` reads
+/// `(*q as Atomic).0` through `q = &(*p).0`), and it changes while the function runs: the read
+/// stays in the loop, while the loop's bound (a plain field) is still read once.
+#[test]
+fn an_atomic_word_read_through_its_address_stays_in_the_loop() {
+    let mut pb = ProgramBuilder::new();
+    let atomic = pb.agg("Atomic", 8, 8, &[(Ty::U64, 0)]);
+    let node = pb.agg("node", 16, 8, &[(Ty::Agg(atomic), 0), (Ty::U64, 8)]);
+    let mut fb = FuncBuilder::internal("show", &[Ty::Ptr], Ty::U64);
+    let p = fb.param(0);
+    let (q, i, acc, c) = (
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U64),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+    );
+    let (entry, head, body, exit) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(
+        entry,
+        q,
+        Rvalue::AddrOf(Place {
+            local: p,
+            proj: vec![Proj::Deref(Ty::Agg(node)), Proj::Field(0)],
+        }),
+    );
+    fb.assign(entry, i, Rvalue::Use(int(0, Ty::U64)));
+    fb.assign(entry, acc, Rvalue::Use(int(0, Ty::U64)));
+    fb.goto(entry, head);
+    fb.assign(
+        head,
+        c,
+        bin(BinOp::Lt, copy_local(i), copy_place(through(p, node, 1))),
+    );
+    fb.branch(head, c, body, exit);
+    fb.assign(
+        body,
+        acc,
+        bin(
+            BinOp::Add,
+            copy_local(acc),
+            copy_place(through(q, atomic, 0)),
+        ),
+    );
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, Ty::U64)));
+    fb.goto(body, head);
+    fb.ret(exit, copy_local(acc));
+    let mut f = fb.finish();
+    f.param_attrs = vec![ParamAttrs {
+        dereferenceable: 16,
+        ..FROZEN
+    }];
+    pb.add(f);
+    let mut after = pb.finish();
+    let aggs = after.aggs.clone();
+    assert!(
+        run(&aggs, &mut after.funcs[0]),
+        "the bound is still read once"
+    );
+    assert_valid(&after);
+    let f = &after.funcs[0];
+    // The loop body (block 2) still reads the word through a pointer.
+    let atomic_in_loop = f.blocks[2].stmts.iter().any(|s| {
+        let mut hit = false;
+        stmt_operands(s, &mut |op| {
+            hit |= matches!(op, Operand::Copy(pl) if !pl.proj.is_empty());
+        });
+        hit
+    });
+    assert!(atomic_in_loop, "the atomic's word was promoted:\n{f:?}");
+}

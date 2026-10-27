@@ -1,8 +1,10 @@
 //! Fields of `frozen` pointees read once (vir.rs invariant 9; docs/internals/design/atomics.md).
 //!
 //! Nothing changes the pointee of a `frozen` param during the call but the words of its
-//! `Atomic`s, which are only accessed through `velt_atomic_*` calls, never read as plain memory:
-//! a borrowed object, also one holding atomics (a node with a latch, a pool of counters). So a
+//! `Atomic`s (vir.rs invariant 9): a borrowed object, also one holding atomics (a node with a
+//! latch, a pool of counters). An atomic's word changes through `velt_atomic_*` calls, and is also
+//! read as plain memory where a value is inspected (`console.log` of an `Atomic`), so no byte of
+//! an `Atomic` aggregate is ever promoted, whatever reads it. So a
 //! scalar field the function reads inside a loop is loaded once on entry into a new local, and
 //! every read uses the local. The param's `dereferenceable` makes the early load safe on every
 //! path, and nothing in between can change the field: no store, call, atomic operation or fence.
@@ -17,8 +19,9 @@
 //! A field is left alone when its bytes overlap a place the function writes (which `frozen`
 //! rules out; kept as a guard) and when it lies beyond the `dereferenceable` bytes, and the
 //! whole param is left alone when the function assigns it or takes its address. A field whose
-//! address is taken is still read once: `frozen` holds through every pointer, and an atomic's
-//! word, the one part that changes, is only reached through `velt_atomic_*` calls.
+//! address is taken is still read once: `frozen` holds through every pointer, and the one part
+//! that changes, an `Atomic`'s word, is never promoted (an aggregate named `Atomic`, as lowering
+//! names the prelude's; a user type of that name only loses the hoist).
 
 use velt_vir::vir::{
     AggLayout, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
@@ -249,6 +252,10 @@ fn scan(
                 whole = true;
                 return;
             };
+            // An `Atomic`'s word changes while the function runs: never read once.
+            if f.in_atomic {
+                return;
+            }
             let scalar = !matches!(f.ty, Ty::Agg(_));
             let through = f.used < pl.proj.len();
             if scalar
@@ -311,6 +318,13 @@ struct Walk {
     offset: u32,
     /// Projections walked (the deref and the fields).
     used: usize,
+    /// Whether the path enters an `Atomic` aggregate (or reaches one).
+    in_atomic: bool,
+}
+
+/// Whether aggregate `a` is an `Atomic` (lowering names the prelude's `Atomic<T>` so).
+fn is_atomic(aggs: &[AggLayout], a: velt_vir::vir::AggId) -> bool {
+    aggs.get(a.0 as usize).is_some_and(|l| l.name == "Atomic")
 }
 
 fn walk(aggs: &[AggLayout], pl: &Place) -> Option<Walk> {
@@ -318,22 +332,26 @@ fn walk(aggs: &[AggLayout], pl: &Place) -> Option<Walk> {
         return None;
     };
     let (mut ty, mut offset, mut path) = (*pointee, 0u32, vec![]);
+    let mut in_atomic = false;
     for x in &pl.proj[1..] {
         let (Proj::Field(n), Ty::Agg(a)) = (x, ty) else {
             break;
         };
+        in_atomic |= is_atomic(aggs, a);
         let &(t, o) = aggs.get(a.0 as usize)?.fields.get(*n as usize)?;
         ty = t;
         offset = offset.checked_add(o)?;
         path.push(*n);
     }
     let used = path.len() + 1;
+    in_atomic |= matches!(ty, Ty::Agg(a) if is_atomic(aggs, a));
     Some(Walk {
         pointee: *pointee,
         path,
         ty,
         offset,
         used,
+        in_atomic,
     })
 }
 

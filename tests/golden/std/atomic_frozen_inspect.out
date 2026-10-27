@@ -1,0 +1,8 @@
+Atomic { v: 1 }
+Atomic { v: 2 }
+Atomic { v: 3 }
+4 Atomic { v: 4 }
+5 Atomic { v: 5 }
+6 Atomic { v: 6 }
+Atomic { v: 6 }
+Atomic { v: 7 }
