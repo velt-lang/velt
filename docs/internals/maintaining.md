@@ -248,3 +248,67 @@ queued again if the queue dropped it.
 `/loop 30m /maintain` in Claude Code (every 30–60 minutes), or a scheduled agent with the same
 prompt. Each run reports only what changed since the previous one. Stop the loop when no batch is
 running and nothing is open.
+
+### Watching for events
+
+A loop every 30 minutes still leaves a reply waiting up to half an hour, and a missed author reply
+once left a pull request waiting eleven hours. `.claude/scripts/pr-watch.sh` prints a line when
+something happens: `NEW PR`, `PUSH`, `READY` (out of draft), `COMMENT`, `MERGED`, `QUEUE FAIL`.
+Run it as a Monitor in Claude Code (it ends after 29 minutes; start it again each time) and act on
+each line:
+
+- `NEW PR`: start a review (smallest first when several arrive).
+- `PUSH` then `COMMENT` from the author on a pull request at `CHANGES NEEDED`: the re-review is
+  due now. Check who wrote each comment: a comment from the author, not only a push, can answer a
+  review (a description-only change, or a question).
+- `QUEUE FAIL`: triage it (below) before anything else.
+- `MERGED`: queue the next pull request of a stack; remove the merged branch's worktree and build
+  directory once its agent has finished.
+
+### Reviewers and authors that keep their context
+
+A review agent that reviewed a pull request is resumed for each later round of it (in Claude Code,
+`SendMessage` to the same agent), not replaced by a new one: it still knows the code, its probes
+and what it asked for, so a re-review of the required items takes minutes, not a fresh review's
+hours. The same holds for the agent that wrote the pull request when it gets a review to fix.
+Brief a re-review with what changed (the head, the author's reply) and a time box.
+
+### What a review requires
+
+A required change is one of: wrong output (against Node and `tsc --strict`), a crash or an `ICE`
+on user input, unsoundness (memory, types, concurrency), a slowdown over 3% (the "±3%" rule
+above), or a missing or ineffective test for the change (a test that passes with the code broken
+on purpose counts as missing). Everything else (a pre-existing gap the review found, a design
+alternative, an older nit) is a follow-up: the review lists it, and the maintainer files it as an
+issue in the same step, so it neither blocks the pull request nor gets lost.
+
+When a decision is the maintainer's to make (accept a documented difference, a partial fix with
+the rest in an issue, which of two designs), decide with the recommendation, say on the pull
+request or issue what was decided and why, and continue. Ask the owner only for what changes the
+language or the project's direction.
+
+### Triaging a merge queue failure
+
+The queue runs with fail-fast, and each entry is tested merged with the entries ahead of it, so
+one failure can cancel and fail the runs behind it. For each `QUEUE FAIL`:
+
+1. Find the job that failed first: its annotation says "failed (see its failed step); cancelling
+   the rest of the run"; the other failed jobs are cancellations.
+2. Read its log (`gh run view <run> --job <job> --log`) and decide which pull request caused it:
+   - **This pull request** (a test, the file-size rule, a conflict with what merged meanwhile):
+     its author fixes it on the branch (merge `main`; split a file with headroom, not to exactly
+     800 lines), and queues it again once CI is green. A mechanical fix needs no new review.
+   - **A pull request ahead of it in the queue** (the failure is in code this one doesn't touch):
+     take the culprit out of the queue so it stops failing the others, and leave the rest queued.
+     A branch can't be pushed while it is queued, so dequeue it before its author pushes
+     (the id from `gh pr view <n> --json id`):
+
+     ```
+     gh api graphql -f query='mutation { dequeuePullRequest(input: {id: "<id>"})
+       { clientMutationId } }'
+     ```
+   - **A flaky test** (passes on its own, fails under load or timing): open an issue for the
+     cause ("Flaky tests are bugs" above) and queue the innocent pull request again; the fix is
+     the issue's, not a reason to hold the pull request.
+3. A failure that a run created before the culprit was dequeued can still arrive afterwards;
+   check the queue (`gh api graphql` on `mergeQueue`) before acting on it twice.
