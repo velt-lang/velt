@@ -52,7 +52,9 @@ export async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>> {
   return IoResult { code: 0, message: "", value: req_take_body(r as u32) };
 }
 
-// The whole body as the first chunk, then the empty chunk that ends it.
+/**
+ * The whole body as the first chunk, then the empty chunk that ends it.
+ */
 export async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>> {
   return IoResult { code: 0, message: "", value: req_take_body(r as u32) };
 }
@@ -67,7 +69,9 @@ export function reqHeader(r: u64, name: string): string | null {
   return req_has_header(r as u32, name) ? req_header(r as u32, name) : null;
 }
 
-// The client's address: Cloudflare names it in `cf-connecting-ip`; the port is not known.
+/**
+ * The client's address: Cloudflare names it in `cf-connecting-ip`; the port is not known.
+ */
 export function velt_rt_http_req_remote_host(r: u64): string {
   return reqHeader(r, "cf-connecting-ip") ?? "";
 }
@@ -80,7 +84,9 @@ export function velt_rt_http_req_drop(r: u64) {
   req_drop(r as u32);
 }
 
-// A Worker can't take over the connection (WebSockets on Workers go through their own API).
+/**
+ * A Worker can't take over the connection (WebSockets on Workers go through their own API).
+ */
 export function velt_rt_http_req_upgrade(r: u64): u64 {
   return 0;
 }
@@ -120,8 +126,10 @@ export function velt_rt_http_req_respond(
   return 1;
 }
 
-// A streamed body needs the handler to keep running after it returned, which comes with tasks
-// that wait on the host (#1737): until then the request gets a 500.
+/**
+ * A streamed body needs the handler to keep running after it returned, which comes with tasks
+ * that wait on the host (#1737): until then the request gets a 500.
+ */
 export function velt_rt_http_resp_build(
   status: u32,
   reason: string,

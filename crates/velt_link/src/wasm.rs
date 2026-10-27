@@ -99,8 +99,8 @@ fn args(req: &LinkRequest, flavor: WasmFlavor) -> Result<Vec<OsString>, String> 
         }
         WasmFlavor::Browser => {
             args.extend(["--no-entry", "--export=velt_start"].map(OsString::from));
-            // The Workers host's entries (crates/velt_rt_wasm/src/workers.rs): linked in, and
-            // so exported, only with a program that serves (`serve()` pulls them in).
+            // The Workers host's entries (crates/velt_rt_wasm/src/workers.rs), exported when the
+            // runtime's code that defines them is linked in.
             args.extend(
                 WORKER_EXPORTS
                     .iter()

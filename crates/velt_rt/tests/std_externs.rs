@@ -86,7 +86,8 @@ fn velt_class(ty: &str) -> String {
     }
 }
 
-/// `symbol -> (params, result)` of every `declare function` under `std/`.
+/// `symbol -> (params, result)` of every `declare function` under `std/` (not the host imports
+/// of `declare module "wasm:…"` blocks).
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
     let mut paths = vec![];
     files(&repo().join("std"), "vlt", &mut paths);
@@ -102,6 +103,13 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
                 continue;
             }
             let decl = &rest[i..];
+            // A `declare module "wasm:…"` block declares host imports, which the JS glue
+            // provides, not the runtime.
+            if decl.starts_with("declare module ") {
+                let end = decl.find("\n}").expect("block ends with `}`");
+                rest = &decl[end..];
+                continue;
+            }
             let end = decl.find(';').expect("declaration ends with `;`");
             rest = &decl[end..];
             let decl = &decl[..end];

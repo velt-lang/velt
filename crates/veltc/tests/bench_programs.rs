@@ -130,7 +130,10 @@ fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
                 std_modules(std, &path, out);
             }
         } else if let Some(module) = rel.strip_suffix(".vlt") {
-            out.push(module.to_string());
+            // `x.workers.vlt` is module `x` in a build for that host, not a module of its own.
+            if !module.rsplit('/').next().unwrap_or(module).contains('.') {
+                out.push(module.to_string());
+            }
         }
     }
 }

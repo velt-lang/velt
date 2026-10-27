@@ -29,10 +29,12 @@ export function reqHeader(r: u64, name: string): string | null {
   return velt_rt_http_req_header(r, name, out) ? out : null;
 }
 
-// The response a handler returns for server request `raw`, with no body or a text one (`kind`
-// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
-// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
-// (`headers`), and takes a bytes body (`kind` 2) too.
+/**
+ * The response a handler returns for server request `raw`, with no body or a text one (`kind`
+ * 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
+ * `value` are a first header as given ("" for none). `_list` adds the rest of the headers
+ * (`headers`), and takes a bytes body (`kind` 2) too.
+ */
 export declare function velt_rt_http_req_respond(
   raw: u64,
   status: u32,
@@ -43,8 +45,10 @@ export declare function velt_rt_http_req_respond(
   text: string,
   implied: u32,
 ): u64;
-// A server response for a streamed body (std/http): the text body is taken (moved out, left
-// empty), the bytes copied.
+/**
+ * A server response for a streamed body (std/http): the text body is taken (moved out, left
+ * empty), the bytes copied.
+ */
 export declare function velt_rt_http_resp_build(
   status: u32,
   reason: string,

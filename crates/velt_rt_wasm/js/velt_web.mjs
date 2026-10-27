@@ -5,6 +5,7 @@
 //   exit(code)               stop the program (thrown as VeltExit, caught by runVelt)
 //   now_ms()                 performance.now()
 //   date_ms()                Date.now()
+//   fetch_done(req, result)  the Workers host's (velt_worker.mjs); never called in a browser
 // and exports `velt_start()` (runs `main`, returns the exit code) and `memory`.
 //
 // Browser:  import { runVelt } from "./velt_web.mjs";
@@ -39,6 +40,8 @@ export async function runVelt(source, host = {}) {
       },
       now_ms: () => performance.now(),
       date_ms: () => Date.now(),
+      // The runtime's Workers entries link into every module; only a Worker calls them.
+      fetch_done() {},
     },
   };
   const { instance } = await instantiate(await source, imports);

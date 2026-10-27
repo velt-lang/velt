@@ -60,6 +60,7 @@ import * as std_http_server from "velt:http/server";
 import * as std_http_server_parse from "velt:http/server/parse";
 import * as std_http_server_request from "velt:http/server/request";
 import * as std_http_server_response from "velt:http/server/response";
+import * as std_http_server_io from "velt:http/server_io";
 import * as std_http_stream from "velt:http/stream";
 import * as std_import_meta from "velt:import_meta";
 import * as std_jsx from "velt:jsx";
