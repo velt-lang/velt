@@ -369,7 +369,7 @@ impl FnLower<'_, '_> {
                 out.push_back(self.freeze(i, index.ty));
             }
             K::Local(..) => {}
-            K::Global(d) if self.slot_of(*d).is_some() => {}
+            K::Global(d) if self.slot_of(*d).is_some() || self.is_static_atomic(*d) => {}
             // A root that is not a place (`get().v = r()`, `m.get(k)!.v = r()`) is evaluated
             // once, before the right-hand side; every later forming of the place reuses it.
             _ => {
@@ -390,6 +390,9 @@ impl FnLower<'_, '_> {
                 let slot = self.slot_of(*d).unwrap_or_default();
                 self.module_slot(slot)
             }
+            K::Global(d) if self.is_static_atomic(*d) => self
+                .static_atomic(*d)
+                .unwrap_or_else(|| ice("static atomic")),
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);

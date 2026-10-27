@@ -88,7 +88,7 @@ impl FnLower<'_, '_> {
 }
 
 /// The word of `bits` a literal of VIR type `vt` is (sema `thread_local` checked the shape).
-fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
+pub(super) fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
     let (neg, lit) = match &e.kind {
         K::Unary {
             op: UnOp::Neg,

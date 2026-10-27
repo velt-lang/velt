@@ -792,7 +792,7 @@ is not a `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoa
 `AtomicFence` and `AtomicSpinHint`. The receiver is the first argument, a `Borrow` place, which
 lowering reads and changes where it is, also inside a `shared` box (`SharedRead` roots go to the
 box, not a copy; a `Global` of a module state slot goes to the slot: a module `const` holding
-an `Atomic` always has one, "Module state"); every ordering is a `u8` literal (0 relaxed … 4 seqcst) that sema checked the
+an `Atomic` has one, "Module state", except a static atomic below); every ordering is a `u8` literal (0 relaxed … 4 seqcst) that sema checked the
 operation may have, with defaults placed (a compare-and-swap's failure ordering derived from the
 ordering when not written). No `Share` of an `Atomic<T>` value survives sema (`atomic_copies.rs`
 reports it), nor a share of a part of a `shared` value that holds one; lowering reports the deep
@@ -800,11 +800,18 @@ copies of frozen values holding one that sema cannot see, and an `Atomic` type t
 counted. The method bodies in the prelude (`seqcst` intrinsics) are reached only through a
 function value of a method, which sema rejects too.
 
+**Static atomics.** A module `const` (not a class's static field) whose initializer is
+`new Atomic<T>(literal)` (a number literal, negated or not, or `true`/`false`), in the program
+or in std, has no slot: it is a `GlobalDef` with `slot: None` and that `AdtLit` as `init`.
+Lowering gives it one writable 8-byte-or-smaller `StaticData` (`mutable: Some(id)`, `id` the
+`tls::stable_id` of its qualified name) starting as the literal, made once, and its `Global` is
+the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock.
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an
-initializer that is not a constant, a function from a call, a type holding an `Atomic`; #76,
-#802), is a `GlobalDef` with
+initializer that is not a constant, a function from a call, a type holding an `Atomic` other
+than a static atomic; #76, #802), is a `GlobalDef` with
 `slot: Some(i)`. `Program::module_state` lists the slots' globals in initialization order
 (Node's module evaluation order) and gives the state tuple `ty` (element `i` = slot `i`'s
 type); it is `None` when no global has a slot, and then nothing below is emitted.

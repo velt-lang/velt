@@ -39,6 +39,7 @@ impl<'h> Cx<'h> {
             extern_map: FxHashMap::default(),
             statics: vec![],
             module_desc: None,
+            static_atomics: FxHashMap::default(),
             reassigned_slots: None,
             prelude_error: None,
             tla_marks: None,
@@ -301,6 +302,7 @@ impl<'h> Cx<'h> {
             bytes: key.0.clone(),
             align,
             relocs: vec![],
+            mutable: None,
         });
         self.static_map.insert(key, id);
         id
@@ -324,6 +326,7 @@ impl<'h> Cx<'h> {
             bytes: object,
             align: 8,
             relocs: vec![(0, vir::Const::Static(text))],
+            mutable: None,
         });
         self.str_objects.insert(s.to_string(), id);
         id

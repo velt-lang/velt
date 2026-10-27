@@ -264,6 +264,9 @@ impl FnLower<'_, '_> {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
             return Operand::Copy(self.module_slot(slot));
         }
+        if let Some(p) = self.static_atomic(d) {
+            return Operand::Copy(p);
+        }
         let saved = std::mem::take(&mut self.targs);
         let v = self.consume(&g.init);
         self.targs = saved;

@@ -124,6 +124,9 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
                 args,
             } => self.shared_value(&args[0], BoxHold::IfReplaceable).0,
+            K::Global(d) if self.is_static_atomic(*d) => self
+                .static_atomic(*d)
+                .unwrap_or_else(|| ice("static atomic")),
             K::Global(d) if self.slot_of(*d).is_some() => {
                 let slot = self.slot_of(*d).unwrap_or_default();
                 self.module_slot(slot)

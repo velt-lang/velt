@@ -212,6 +212,9 @@ fn check_statics(p: &Program, errs: &mut Vec<String>) {
         if !s.align.is_power_of_two() {
             errs.push(format!("static#{i}: bad alignment {}", s.align));
         }
+        if s.mutable.is_some() && !s.relocs.is_empty() {
+            errs.push(format!("static#{i}: writable data with relocations"));
+        }
         let mut offsets: Vec<u32> = s.relocs.iter().map(|(off, _)| *off).collect();
         offsets.sort_unstable();
         if offsets.windows(2).any(|w| w[1] - w[0] < 8) {

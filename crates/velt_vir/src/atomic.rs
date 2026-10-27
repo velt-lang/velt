@@ -9,6 +9,12 @@
 
 use crate::vir::Ty;
 
+/// The symbol of a static atomic's word (`StaticData::mutable`) in a `velt dev` session, which
+/// owns one per constant `id` for all of its versions.
+pub fn static_symbol(id: u64) -> String {
+    format!("velt_static_atomic_{id}")
+}
+
 /// A memory ordering, as C++ and Rust define them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Order {
