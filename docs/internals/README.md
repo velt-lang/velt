@@ -33,13 +33,16 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), module state
-   lookups once per function call, and `numrep`.
+   lookups once per function call, borrowed string copies, and `numrep`.
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
    where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
    `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
    `module_state` (a function asks the runtime for the module state block once per call, not
-   at every access to a module-level `let`), `map_probe`, `numrep`, `divisions` and
+   at every access to a module-level `let`), `map_probe`, `borrowed_copies` (a string local that
+   only reads a copy of a string, such as `const src = this.src;`, holds the source's words
+   without a reference of its own when nothing can change the source while its text is read:
+   no `velt_rt_str_clone` / `velt_rt_str_drop` pair), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
    `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:

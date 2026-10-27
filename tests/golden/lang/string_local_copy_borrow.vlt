@@ -1,0 +1,110 @@
+// A local copy of a string field that is only read borrows the field (no reference count
+// change, #1670), and keeps its own reference whenever the field may change while the copy is
+// still read: then the copy must keep the old text, also after the old text's memory is
+// reused.
+import { utf8ByteAt } from "velt:encoding";
+
+class Scanner {
+  src: string;
+  pos: usize;
+  len: usize;
+  garbage: string[] = [];
+  constructor(src: string) {
+    this.src = src;
+    this.pos = 0;
+    this.len = src.length as usize;
+  }
+
+  // Only reads the copy: borrowed.
+  peekNonWs(): i32 {
+    const src = this.src;
+    let i = this.pos;
+    while (i < this.len) {
+      const b = utf8ByteAt(src, i) as i32;
+      if (b != 32 && b != 10) {
+        this.pos = i;
+        return b;
+      }
+      i++;
+    }
+    this.pos = i;
+    return -1;
+  }
+
+  // Strings of `len` bytes, so the allocator reuses the memory of one of that size just freed.
+  churn(len: number): void {
+    for (let k = 0; k < 1000; k++) {
+      this.garbage.push(["#".repeat(len - 4), `${k + 1000}`].join(""));
+    }
+    this.garbage = [];
+  }
+
+  // Replaces the field while the copy is still read: the copy keeps the old text.
+  swapThenSum(next: string): i32 {
+    const old = this.src;
+    this.src = next;
+    this.churn(old.length);
+    let n: i32 = 0;
+    for (let i: usize = 0; i < (old.length as usize); i++) {
+      n += utf8ByteAt(old, i) as i32;
+    }
+    return n;
+  }
+
+  // Replaces the field inside the loop that reads the copy.
+  sumWhileReplacing(): i32 {
+    const first = this.src;
+    let n: i32 = 0;
+    for (let k: usize = 0; k < (first.length as usize); k++) {
+      this.src = ["#".repeat(first.length - 4), `${k + 1000}`].join("");
+      n += utf8ByteAt(first, k) as i32;
+    }
+    return n;
+  }
+
+  // Replaces the field in only one branch, then reads the copy.
+  maybeReplace(replace: bool): i32 {
+    const s = this.src;
+    if (replace) {
+      this.src = "short";
+      this.churn(s.length);
+    }
+    return (utf8ByteAt(s, 0) as i32) + (utf8ByteAt(s, (s.length - 1) as usize) as i32);
+  }
+}
+
+function sum(s: string): i32 {
+  let n: i32 = 0;
+  for (let i: usize = 0; i < (s.length as usize); i++) {
+    n += utf8ByteAt(s, i) as i32;
+  }
+  return n;
+}
+
+const long = "    a long scanner input that does not fit inline in a string value";
+const sc = new Scanner(long);
+console.log(sc.peekNonWs(), sc.pos);
+
+const small = new Scanner("  \n z");
+console.log(small.peekNonWs(), small.pos);
+
+const empty = new Scanner("   ");
+console.log(empty.peekNonWs(), empty.pos);
+
+// Each scanner's text is its own (no other reference keeps it alive).
+const sw = new Scanner(["old text that lives on the heap", "and is long"].join(" "));
+console.log(sw.swapThenSum("qqqq"), sum("old text that lives on the heap and is long"));
+console.log(sw.src);
+
+const inl = new Scanner(["old", "txt"].join(" "));
+console.log(inl.swapThenSum("new"), sum("old txt"));
+console.log(inl.src);
+
+const rw = new Scanner(["the original heap text", "of this scanner"].join(" "));
+console.log(rw.sumWhileReplacing(), sum("the original heap text of this scanner"));
+console.log(rw.src);
+
+const mr = new Scanner(["kept when the branch", "replaces the field"].join(" "));
+console.log(mr.maybeReplace(false));
+console.log(mr.maybeReplace(true));
+console.log(mr.src);
