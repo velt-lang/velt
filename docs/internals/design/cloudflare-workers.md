@@ -23,7 +23,7 @@ async function main() {
 ```
 
 ```sh
-velt build --release --target cloudflare app.vlt   # target/velt/app-worker/: app.wasm, worker.mjs, wrangler.toml
+velt build --release --host workers app.vlt   # target/velt/app-worker/: app.wasm, worker.mjs, wrangler.toml
 npx wrangler deploy --config target/velt/app-worker/wrangler.toml
 ```
 
@@ -141,8 +141,10 @@ surface, so `velt check` lists the host modules a package imports.
 
 ## 2. Target, output and glue (#1736)
 
-`--target cloudflare` builds for `wasm32-unknown-unknown` with the Workers host and writes a
-directory instead of one file:
+`--host workers` builds for `wasm32-unknown-unknown` (it implies that target, and any other
+`--target` with it is an error) and writes a directory instead of one file. The host is named
+for the runtime, not the company: Deno Deploy, Fastly and others that run modules the same way
+can share the glue as further `--host` values.
 
 ```text
 target/velt/<stem>-worker/
@@ -166,8 +168,7 @@ export default {
 };
 ```
 
-The target name is an open question below. The CLI contract (`contracts/cli.md`) and
-`tooling/webassembly.md` gain the target either way.
+The CLI contract (`contracts/cli.md`) and `tooling/webassembly.md` gain `--host`.
 
 ## 3. Lifecycle: main, serve and each request
 
@@ -298,7 +299,7 @@ request (it is the same object for every request in an isolate). Outside a reque
 
 To measure first (#1739); these are the levers:
 
-- **Size**: release builds only (`--target cloudflare` without `--release` warns), LLVM `-Oz`
+- **Size**: release builds only (`--host workers` without `--release` warns), LLVM `-Oz`
   and `--gc-sections`, and no debug info. Std code a program doesn't reach is dropped by
   the linker; compiling std once (#1728) doesn't change the output size. Hello-world and a
   JSON API get size budgets, set after the first build at 1.5× what it measures. The
@@ -328,7 +329,7 @@ Each needs sign-off; the PR that implements a part changes its contract.
 - `contracts/rt_abi_async.md` §1 and §7: the server ABI on the Workers host, promise leaves
   over host promise ids, and the exports `velt_start`/`velt_fetch`/`velt_settle`/`velt_turn`/
   `velt_alloc`.
-- `contracts/cli.md`: the target and its output directory.
+- `contracts/cli.md`: `--host workers` and its output directory.
 - `tooling/webassembly.md`: the Workers host; the browser glue's new wake protocol.
 
 ## What is Rust and what is Velt
@@ -360,8 +361,6 @@ Each needs sign-off; the PR that implements a part changes its contract.
 
 ## Open questions
 
-- **Target name**: `--target cloudflare`, or `--target wasm32-unknown-unknown --host workers`
-  (the second leaves room for Deno Deploy, Fastly and others that share the glue).
 - **Host JS for packages**: a package that declares `wasm:` imports ships `host/<module>.mjs`,
   bundled into `worker.mjs`. Is that allowed for every package, shown by `velt check`, or
   restricted like native code?
