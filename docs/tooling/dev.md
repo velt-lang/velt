@@ -1,7 +1,7 @@
 # `velt dev`: hot reload
 
 ```
-velt dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
+velt dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 ```
 
 `velt dev` runs your program like `velt run`, then keeps it up to date while you edit. Save a
@@ -60,8 +60,8 @@ that `main` creates carries over a hot swap. [Module state](../reference/variabl
   operating system's first-launch checks of new binaries on macOS and Windows.
 - **`--exe`**: each version is a linked debug executable (`target/velt/dev/<name>-<n>`), so
   you can attach a debugger to it ([Debugging](debugging.md#velt-dev-and-the-debugger)). Edits
-  restart the program instead of hot-swapping. `--release`, `-g` and `--backend` are accepted
-  with `--exe`.
+  restart the program instead of hot-swapping. `--release`, `-g`, `--cpu` and `--backend` are
+  accepted with `--exe` only (the JIT compiles for this machine's CPU).
 
 `velt test --watch` reruns the tests on every change the same way ([Testing](../book/testing.md)).
 

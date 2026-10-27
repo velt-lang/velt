@@ -148,6 +148,13 @@ pub const PACKAGE: &[Field] = &[
               `[\"src/components\", \"src/models\"]`: `/`-separated paths relative to the \
               package root. `velt check --ts-compat` and the editor lint them.",
     },
+    Field {
+        key: "build",
+        kind: Kind::Object(BUILD),
+        ty: "Build",
+        required: false,
+        doc: "How the package's program is built. Only the root package's applies.",
+    },
 ];
 
 /// The object form of a dependency.
@@ -177,6 +184,18 @@ pub const JSX: &[Field] = &[Field {
     doc: "The module whose `jsx-runtime` compiles JSX: a dependency, `\"velt:jsx\"` (the \
           default), a `paths` alias, or `./dir` relative to the package root. A \
           `// @jsxImportSource` comment in a file wins.",
+}];
+
+/// `build`.
+pub const BUILD: &[Field] = &[Field {
+    key: "cpu",
+    kind: Kind::Str,
+    ty: "string",
+    required: false,
+    doc: "The CPU the program is built for, as `velt build --cpu`: `\"baseline\"`, \
+          `\"x86-64-v2\"` (the default on x86-64), `\"x86-64-v3\"`, `\"x86-64-v4\"`, \
+          `\"native\"` or an LLVM CPU name such as `\"znver4\"`. `--cpu` and `VELT_CPU` take \
+          precedence; a CPU of another architecture does not apply to a build for this one.",
 }];
 
 /// `native`.

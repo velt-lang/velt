@@ -55,7 +55,8 @@ pub(crate) fn compile(
         debug_info,
     } = *inputs;
     let start = Instant::now();
-    let isa = crate::isa::make_isa(&crate::host_triple(), false, true)?;
+    // JIT code runs on this machine: its own CPU features.
+    let isa = crate::isa::make_isa(&crate::host_triple(), Some("native"), false, true)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, address) in runtime.iter().chain(imports) {
         builder.symbol(name.clone(), *address as *const u8);

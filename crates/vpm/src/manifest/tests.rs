@@ -12,6 +12,7 @@ export const pkg: Package = {
   paths: { "@app/*": "src/*" },
   jsx: { importSource: "sigx" },
   native: { path: "rs", targets: ["x86_64-unknown-linux-gnu"] },
+  build: { cpu: "x86-64-v3" },
 };
 "#;
 
@@ -29,6 +30,7 @@ fn to_vlt_round_trips_and_is_formatted() {
     );
     assert_eq!(Manifest::parse(&text).unwrap(), m);
     assert_eq!(velt_fmt::format_source(&text).unwrap(), text);
+    assert_eq!(m.build.and_then(|b| b.cpu).as_deref(), Some("x86-64-v3"));
 
     // Defaults are left out.
     let minimal =
@@ -39,6 +41,19 @@ fn to_vlt_round_trips_and_is_formatted() {
         minimal,
         "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
     );
+}
+
+#[test]
+fn build_cpu_must_be_a_cpu_name() {
+    let parse = |build: &str| {
+        Manifest::parse(&format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", build: {build} }};"
+        ))
+    };
+    assert!(parse("{ cpu: \"znver4\" }").is_ok());
+    let err = parse("{ cpu: \"Zen 4\" }").unwrap_err();
+    assert!(err.contains("is not a CPU name"), "{err}");
+    assert!(parse("{ arch: \"x\" }").is_err());
 }
 
 #[test]
@@ -238,6 +253,7 @@ fn std_package_types_match_the_schema() {
         ("DependencySource", schema::DEPENDENCY),
         ("Jsx", schema::JSX),
         ("Native", schema::NATIVE),
+        ("Build", schema::BUILD),
     ] {
         assert_eq!(
             declared(name),

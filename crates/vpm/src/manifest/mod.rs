@@ -83,6 +83,19 @@ pub struct Manifest {
     /// another; checked to exist by the tools that lint them ([`read::missing_ts_compat_dirs`]).
     #[serde(default, rename = "tsCompat", skip_serializing_if = "Vec::is_empty")]
     pub ts_compat: Vec<String>,
+    /// `build`: how the package's program is built. Only the root package's applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildConfig>,
+}
+
+/// The `build` object.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildConfig {
+    /// `cpu = "x86-64-v3"`: the CPU the program is built for, as `velt build --cpu` (which, and
+    /// `$VELT_CPU`, take precedence). Checked here for its spelling, by the build for the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
 }
 
 /// The `jsx` object (docs/internals/contracts/jsx.md "Choosing the provider").
@@ -396,6 +409,18 @@ fn check_toolchain(requirement: &str) -> Result<(), String> {
 }
 
 /// The message names the value, not the table: callers prefix it.
+/// A `build.cpu` value: lowercase letters, digits, `.` and `-` (`x86-64-v3`, `znver4`).
+fn check_cpu(cpu: &str) -> Result<(), String> {
+    let ok = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.';
+    if !cpu.is_empty() && cpu.chars().all(ok) {
+        Ok(())
+    } else {
+        Err(format!(
+            "build.cpu `{cpu}` is not a CPU name (such as `x86-64-v3`, `native` or `znver4`)"
+        ))
+    }
+}
+
 fn check_import_source(source: &str) -> Result<(), String> {
     if source.is_empty() || source.ends_with('/') || source.contains('\\') {
         Err(format!("importSource `{source}` is not a module specifier"))

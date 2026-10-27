@@ -43,10 +43,12 @@ Every build command works on a single file or on a package:
 ## `velt build` and `velt run`
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings] [--report numbers]
-velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>]
+           [--backend cranelift|llvm] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v]
+           [--timings] [--report numbers]
+velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
+           [--backend cranelift|llvm] [--locked] [-v] [--timings] [--report numbers]
+           [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
@@ -65,6 +67,14 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
   silicon.
+- `--cpu <name>` chooses the CPU the program is built for: `baseline`, `x86-64-v2` (the default
+  on x86_64: every x86_64 CPU since about 2009), `x86-64-v3`, `x86-64-v4`, `native` (this
+  machine's CPU) or a CPU name clang knows for the target, such as `znver4` or `neoverse-n1`
+  (an unknown one is an error that names the closest). Without it,
+  `$VELT_CPU` and then the package's `build.cpu` decide; `velt run` and `velt test` without
+  `--release` build for this machine's CPU. A program built for x86-64-v2 or above checks the
+  CPU when it starts and names what is missing instead of crashing. Levels, defaults per
+  target and the check: [Platforms, CPU](platforms.md#cpu).
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
@@ -369,6 +379,8 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
 | `VELT_LLVM_OPT` | optimization level for release builds (clang, or `opt` for WebAssembly): `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_CPU` | the CPU builds are for when `--cpu` does not say ([CPU](platforms.md#cpu)); a CPU of another architecture does not apply |
+| `VELT_CPU_DISABLE` | read by programs: features (`popcnt,sse4.2`) the start-up CPU check treats as missing, to test the check ([CPU](platforms.md#cpu)) |
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
