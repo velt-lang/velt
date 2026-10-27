@@ -11,7 +11,8 @@ with a latch in every node. For ordinary shared state, a
 ## `Atomic<T>`
 
 `new Atomic<T>(v)` is a number or `bool` that threads read and change at once: `T` is an
-integer type (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) or `bool`. It is stored in place, as
+integer type (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`), `f64` (`number`), `f32` or `bool`
+(`new Atomic(0)` is an `Atomic<f64>`, as `0` is a number). It is stored in place, as
 a plain `T`, in the variable, object or array that holds it, and it is the one part of a
 [`shared<T>`](../reference/async.md#thread-safety) that changes: `s.hits.add(1)` changes the word
 inside the shared value that every thread reads. Each method is one CPU instruction (or a short
@@ -24,14 +25,40 @@ loop on a CPU without one), the same as Rust's `std::sync::atomic`.
 | `exchange(v, order?)` | makes `v` the value | the previous value |
 | `compareExchange(expected, v, order?, failure?)` | makes `v` the value if it is `expected` | the previous value (`== expected` when it swapped) |
 | `compareExchangeWeak(expected, v, order?, failure?)` | the same, but may fail although the value is `expected` (call it in a loop); cheaper on some CPUs | whether it swapped |
-| `add(v)`, `sub(v)` | adds or subtracts `v`, wrapping at the type's bounds | the previous value |
+| `add(v)`, `sub(v)` | adds or subtracts `v`, wrapping at an integer type's bounds | the previous value |
 | `and(v)`, `or(v)`, `xor(v)` | bitwise (logical for `bool`) | the previous value |
-| `max(v)`, `min(v)` | the larger or smaller of the value and `v` (signed for a signed `T`) | the previous value |
+| `max(v)`, `min(v)` | the larger or smaller of the value and `v` (signed for a signed `T`; `Math.max` and `Math.min` for a float) | the previous value |
 | `Atomic.fence(order?)` | a fence: orders this thread's reads and writes around it | |
 | `Atomic.spinHint()` | tells the CPU the thread is waiting in a loop (`pause`, `isb`) | |
 
 The names and results are those of JavaScript's `Atomics` (`Atomics.add` returns the previous
-value too). `add`, `sub`, `max` and `min` are for integers only.
+value too). `add`, `sub`, `max` and `min` are for numbers, `and`, `or` and `xor` for integers
+and `bool`.
+
+**Floats.** An `Atomic<f64>` or `Atomic<f32>` holds the float's bits in a word of its size.
+`load`, `store` and `exchange` are the word's instructions. `compareExchange` compares bits, not
+values: `-0` does not match `0`, and a NaN matches a NaN with the same bits (one read back from
+the atomic; NaNs made by different operations can differ). No CPU adds floats in memory, so
+`add`, `sub`, `max` and `min` are a loop: read the value, compute, and swap it in with
+`compareExchange` if no other thread changed it meanwhile, else again. Like Rust's atomic float
+crates, the swap that succeeds has the method's ordering. `max` and `min` follow `Math.max` and
+`Math.min`: a NaN on either side makes the value NaN, and `0` is larger than `-0`.
+
+```ts
+async function addTo(total: shared<Atomic<f64>>, x: f64) {
+  total.add(x, "relaxed");
+}
+
+async function main() {
+  const total = shared(new Atomic(0));
+  const ps: Promise<void>[] = [];
+  for (let i = 1; i <= 100; i++) {
+    ps.push(spawn(addTo(total, i / 2)));
+  }
+  await Promise.all(ps);
+  console.log(total.load()); // 2525
+}
+```
 
 **Orderings.** Every method takes a memory ordering, `"seqcst"` when left out, as `Atomics`
 always is. A weaker one is faster where it is enough:

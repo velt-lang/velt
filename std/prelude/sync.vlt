@@ -75,7 +75,8 @@ export struct RwLock<T> {
  * (docs/std/sync.md). It is stored in place, as a plain `T`, in the object or array that holds
  * it, and it is the one part of a `shared<T>` that changes: `s.hits.add(1)` changes the word in
  * the `shared` value every thread reads. Each method is one instruction (or a short loop where
- * the CPU has none). `T` is an integer type or `bool`.
+ * the CPU has none). `T` is an integer type, `f64`, `f32` or `bool`; a float's `add`, `sub`,
+ * `max` and `min` are compare-and-swap loops.
  *
  * Every method takes a memory ordering, `"seqcst"` when left out, as JavaScript's `Atomics`:
  * `"relaxed"` (only this word is atomic), `"acquire"` (later reads see what the thread that
@@ -129,12 +130,12 @@ export struct Atomic<T> {
     return __intrinsic_atomic_cas_weak(this, expected, v, 4, 4);
   }
 
-  /** Adds `v` (wrapping around at the type's bounds); returns the previous value. */
+  /** Adds `v` (wrapping around at an integer type's bounds); returns the previous value. */
   add(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
     return __intrinsic_atomic_rmw(this, v, 1, 4);
   }
 
-  /** Subtracts `v` (wrapping around at the type's bounds); returns the previous value. */
+  /** Subtracts `v` (wrapping around at an integer type's bounds); returns the previous value. */
   sub(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
     return __intrinsic_atomic_rmw(this, v, 2, 4);
   }
@@ -154,12 +155,18 @@ export struct Atomic<T> {
     return __intrinsic_atomic_rmw(this, v, 5, 4);
   }
 
-  /** Makes the value the larger of it and `v`; returns the previous value. Integers only. */
+  /**
+   * Makes the value the larger of it and `v` (`Math.max` for a float); returns the previous
+   * value. Numbers only.
+   */
   max(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
     return __intrinsic_atomic_rmw(this, v, 6, 4);
   }
 
-  /** Makes the value the smaller of it and `v`; returns the previous value. Integers only. */
+  /**
+   * Makes the value the smaller of it and `v` (`Math.min` for a float); returns the previous
+   * value. Numbers only.
+   */
   min(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
     return __intrinsic_atomic_rmw(this, v, 7, 4);
   }
