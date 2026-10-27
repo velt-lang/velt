@@ -161,6 +161,7 @@ mod lower;
 pub mod mangle;
 pub mod simd;
 pub mod tls;
+pub mod system;
 mod verify;
 
 #[cfg(test)]
@@ -191,6 +192,9 @@ pub struct LowerOptions<'a> {
     /// Describe source variables for debuggers (`Program::debug_types`, `LocalDecl::debug`;
     /// vir/debug.rs). Needs `source_map`. Off, the program is the same without them.
     pub debug_info: bool,
+    /// The target triple: system functions (`declare system function`, [`system`]) are bound
+    /// per target. `None`: the host's.
+    pub target: Option<&'a str>,
 }
 
 /// One native library to initialize before `main` runs.

@@ -9,6 +9,8 @@ velt_common.workspace = true
 velt_sema.workspace = true
 
 [dev-dependencies]
+# The system functions' struct layouts against the host C library's (system/tests.rs).
+libc = "0.2.189"
 # Native tests (tests/native.rs): compile lowered programs with Cranelift and link the real rt.
 velt_codegen_cl.workspace = true
 velt_link.workspace = true

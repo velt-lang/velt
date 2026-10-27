@@ -227,18 +227,24 @@ fn check_std_driver(p: &hir::Program, io: IoTypes, f: &hir::ExternFnDef, diags: 
 
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
-/// packages); see the module docs. Reports errors into `diags`.
+/// packages), and every `declare system function` against the table of system functions of
+/// `target` (system.rs); see the module docs. Reports errors into `diags`.
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
     std_root: Option<&Path>,
     graph: Option<&PackageGraph>,
     std_files: &HashSet<FileId>,
+    target: &str,
     diags: &mut Diagnostics,
 ) {
     let io = IoTypes::find(p, sm, std_root);
     for def in &p.defs {
         let Def::ExternFn(f) = def else { continue };
+        if f.system.is_some() {
+            system::check(p, f, target, diags);
+            continue;
+        }
         if std_files.contains(&f.span.file) {
             if f.symbol.starts_with(STD_DRIVER_PREFIX) {
                 check_std_driver(p, io, f, diags);
@@ -248,7 +254,11 @@ pub fn check_declares(
         let file = &sm.get(f.span.file).path;
         let pkg = graph.and_then(|g| g.package_of(file));
         let Some(lib) = pkg.and_then(|p| p.native.as_ref()) else {
-            diags.push(not_native(f, pkg.map(|p| p.name.as_str()), graph));
+            let mut d = not_native(f, pkg.map(|p| p.name.as_str()), graph);
+            if let Some(h) = system::hint(f) {
+                d = d.with_note(h);
+            }
+            diags.push(d);
             continue;
         };
         let what = format!("`{} {}`", lib.meta.package, lib.meta.version);
@@ -353,6 +363,8 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
         })
         .collect()
 }
+
+mod system;
 
 #[cfg(test)]
 mod tests;

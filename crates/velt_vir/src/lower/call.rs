@@ -27,6 +27,7 @@ impl FnLower<'_, '_> {
                     self.after_super_inits(*def);
                     v
                 }
+                hir::Def::ExternFn(x) if x.system.is_some() => self.system_call(*def, args),
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),
                 _ => ice("call of a non-function definition"),
             },

@@ -119,6 +119,7 @@ mod stmt;
 mod strbuf;
 mod strings;
 mod symbols;
+mod system;
 mod template;
 mod thread_local;
 mod track_caller;
@@ -172,6 +173,9 @@ pub(crate) fn lower_program(
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.target = opts
+            .target
+            .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
@@ -204,6 +208,7 @@ pub(crate) fn lower_program(
             diags.extend(cx.fresh_fn_diagnostics());
             diags.extend(cx.counted_atomic_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
+            diags.extend(cx.unavailable_diagnostics());
             cx.unfreeze_module_reach();
             let types_now = cx.types.clone();
             let program = cx.finish();
@@ -389,6 +394,12 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// The target triple, for system functions (`LowerOptions::target`).
+    target: String,
+    /// Calls of system functions the target lacks: (the declaration, the calling function).
+    unavailable: Vec<(DefId, Option<DefId>)>,
+    /// The aggregates of C structs (system.rs), by the table's struct.
+    system_aggs: FxHashMap<usize, vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
     /// nothing in it can make a task's await word non-0.
     no_await_steps: bool,

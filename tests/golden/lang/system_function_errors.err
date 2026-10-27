@@ -1,0 +1,19 @@
+error: `preed` is not a system function
+did you mean `pread`?
+error: `declare system function pread` does not match the C function `pread`
+`pread` writes into `buf`: declare it `u8[]`, not `readonly u8[]`
+C: `ssize_t pread(int fd, void *buf, size_t len, off_t offset)`; Velt: `declare system function pread(fd: i32, buf: u8[], offset: i64): isize;`
+`pwrite` only reads `buf`: declare it `readonly u8[]`
+`buf` is a buffer: declare it `u8[]`, not `u64` (system functions take no pointers: the array gives the address and the length)
+`fd` is a C `int`: declare it `i32`, not `i64`
+`close` returns `i32`: declare the result
+`path` is a C string: declare it `readonly u8[]` (its last byte must be 0), not `string`
+`path` is a C string: declare it `readonly u8[]` (its last byte must be 0), not `u8[]`
+`fsync` takes 1 parameter (fd), not 2
+`Bad.nope` is not a field of `struct flock`, which has
+`whence` is a C `int`: declare it `i32`, not a function
+`length` is a C `off_t`: declare it `i64`, not a floating-point number
+a range of the buffer `buf` is two `usize` parameters after it, `start` and `end`
+`st` is a `struct stat *`: declare it as a `struct` whose fields are fields of `struct stat`, not `Handle`
+`declare function fdatasync` is not allowed
+`fdatasync` is a system function: `declare system function fdatasync(...)` binds the C library's
