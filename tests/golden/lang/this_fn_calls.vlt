@@ -58,3 +58,7 @@ m.r = function (this: any, first: string, ...more: number[]) {
   return first + sum;
 };
 console.log(m.r("s", 1, 2, 3));
+
+// A method call on a union value, in a program with such functions, is the ordinary call.
+const sn: string | number = Math.random() < 2 ? "union" : 1;
+console.log(sn.toString());
