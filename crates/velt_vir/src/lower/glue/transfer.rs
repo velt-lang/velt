@@ -399,7 +399,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let c = self.count_place(o.clone());
         let mine = self.is_local(&c);
         self.branch(mine, made, go);
+        // Stored outside before in these reads (velt_rt `STORED`): the caller's already, its
+        // parts transferred then, and unchanged by the reader since.
         self.switch_to(made);
+        let c = self.count_place(o.clone());
+        let bits = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(
+                BinOp::BitAnd,
+                Operand::Copy(c),
+                cint(crate::lower::rc::STORED, Ty::U64),
+            ),
+        );
+        let stored = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bits, cint(0, Ty::U64)));
+        let fresh = self.new_block();
+        self.branch(stored, done, fresh);
+        self.switch_to(fresh);
         let found = self.temp(Ty::Ptr);
         self.call_rt(Rt::XferFind, vec![o.clone()], Some(Place::local(found)));
         let again = self.rvalue_temp(

@@ -19,7 +19,7 @@ const COUNT: i128 = 8;
 /// without it.
 pub(super) const LOCAL: i128 = 1 << 62;
 /// The `STORED` bit (velt_rt `read_mode::STORED`): a reader's object stored outside every read.
-const STORED: i128 = 1 << 61;
+pub(super) const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {

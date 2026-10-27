@@ -1,0 +1,35 @@
+// check: no leaks
+// Arrays `read` callbacks made, each stored twice into a container of the code outside the
+// read, in two spawned tasks reading one shared `RwLock`: both stores are the same object, as
+// in JavaScript, and each is freed once (#1541).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+async function reader(a: shared<RwLock<Box>>, n: number): Promise<number> {
+  const out: number[][][] = [];
+  for (let i = 0; i < n; i++) {
+    a.read((x) => {
+      const c = x.items.concat([[i]]);
+      out.push(c);
+      out.push(c);
+    });
+  }
+  let same = 0;
+  for (let i = 0; i < out.length; i += 2) {
+    if (out[i] === out[i + 1]) {
+      same++;
+    }
+  }
+  return same;
+}
+
+async function main() {
+  const a = shared(new RwLock<Box>(new Box()));
+  const t1 = spawn(reader(a, 50));
+  const t2 = spawn(reader(a, 50));
+  a.write((q) => {
+    q.items.push([9]);
+  });
+  console.log(await t1, await t2);
+}
