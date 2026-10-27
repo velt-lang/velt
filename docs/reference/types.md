@@ -3761,12 +3761,13 @@ target whose `get` trap answers every key). A method called through a typed prox
 `get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
 trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
 the target's method, which then runs with `this` the proxy. A class getter read through a typed
-proxy (`s.twice`) is the `get` trap's answer, checked as the getter's type, as for a field. A
-trap that forwards it with `Reflect.get(target, key)` runs the getter on the target, as Node does;
-one that forwards with `Reflect.get(target, key, receiver)` stops with a `TypeError` naming #823 (#1732),
-since Node would run the getter with `this` the proxy (its reads through the traps) and Velt
-doesn't yet. A
-typed proxy passed where an object
+proxy that is a class instance brand (`s.twice` of sigx's `signal(new C())`) is the `get` trap's
+answer, checked as the getter's type, as for a field: a trap that forwards it with
+`Reflect.get(target, key)` runs the getter on the target, as Node does, and one that forwards with
+`Reflect.get(target, key, receiver)` stops with a `TypeError` naming #823, since Node would run
+the getter with `this` the proxy (its reads through the traps). Without a brand, a class getter
+of a typed proxy runs on the target, which matches Node for a trap that forwards every key;
+running getters with `this` the receiver is #1732. A typed proxy passed where an object
 type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
 stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
 (Where a copy of a plain object could be told from the original, such a conversion is a compile

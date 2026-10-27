@@ -126,6 +126,19 @@ function classGetterValue(target: any, key: any, value: any): bool {
   }
 }
 
+/**
+ * The receiver a `get` trap sees for a class getter read on a class instance brand
+ * (`Proxy.__getGetter`): the proxy, marked so that `Reflect.get(target, key, receiver)` of a
+ * class getter can stop (#1732).
+ */
+export class __GetterReceiver {
+  proxy: any;
+
+  constructor(proxy: any) {
+    this.proxy = proxy;
+  }
+}
+
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
 function proxyKey(key: any): string | symbol {
   if (typeof key === "string") {
@@ -284,6 +297,18 @@ export class Proxy {
   }
 
   /**
+   * `p.twice` of a class getter on a class instance brand that is this proxy (velt_sema
+   * `proxy_getters.rs`): the `get` trap's answer. The trap's receiver is a `__GetterReceiver`,
+   * so a trap that forwards with `Reflect.get(target, key, receiver)` stops with a `TypeError`
+   * there (#1732): Node would run the getter with `this` the proxy, Velt runs it on the target.
+   */
+  __getGetter(key: any): any {
+    const me: any = this;
+    const recv: any = new __GetterReceiver(me);
+    return this.__get(key, recv);
+  }
+
+  /**
    * A view of `target` as an object type (velt_vir `lower/any_view.rs`): an `any` holding an
    * object of another type converted to an object type. It has no traps, so every read and
    * write reaches the target, and converting the view back to `any` gives the target itself:
@@ -343,12 +368,6 @@ export class Proxy {
   __get(key: any, receiver: any): any {
     const trap = this.#handler.get;
     if (trap == null) {
-      // A target that is no proxy reads as itself: Velt runs a class getter on the target, which
-      // without a `get` trap here reads the same fields Node's getter would through the
-      // receiver (a trap's own `Reflect.get(t, k, r)` of a getter stops instead, #1732).
-      if (!(this.#target instanceof Proxy)) {
-        return Reflect.get(this.#target, key);
-      }
       return Reflect.get(this.#target, key, receiver);
     }
     if (typeof key === "string") {
@@ -644,6 +663,19 @@ export class Proxy {
 export class Reflect {
   /** `target[key]`, with `receiver` (default: `target`) as the receiver a proxy target sees. */
   static get(target: any, key: any, receiver?: any): any {
+    if (receiver instanceof __GetterReceiver) {
+      // A brand's getter read (`Proxy.__getGetter`) forwarded with its receiver.
+      const proxy: any = (receiver as __GetterReceiver).proxy;
+      if (target instanceof Proxy) {
+        return target.__get(key, proxy);
+      }
+      const value = Reflect.get(target, key);
+      if (classGetterValue(target, key, value)) {
+        // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
+        proxyGetterReceiverUnsupported(key);
+      }
+      return value;
+    }
     if (receiver != null) {
       if (target instanceof Proxy) {
         return target.__get(key, receiver);
@@ -682,12 +714,7 @@ export class Reflect {
       }
       return target[plainKey(key)];
     }
-    const value = target[key];
-    if (receiver != null && receiver !== target && classGetterValue(target, key, value)) {
-      // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
-      proxyGetterReceiverUnsupported(key);
-    }
-    return value;
+    return target[key];
   }
 
   /** `target[key] = value`; whether it was written. */

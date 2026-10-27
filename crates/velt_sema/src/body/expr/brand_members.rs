@@ -120,10 +120,28 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        match self.dynamic_get(obj, name, want, span) {
-            Ok(h) => Ok(h),
-            Err(obj) => self.brand_tag_read(obj, name, want, span),
+        let obj = match self.dynamic_get(obj, name, want, span) {
+            Ok(h) => return Ok(h),
+            Err(obj) => match self.brand_tag_read(obj, name, want, span) {
+                Ok(h) => return Ok(h),
+                Err(obj) => obj,
+            },
+        };
+        // A class getter of a class instance brand that may hold a typed proxy
+        // (`proxy_getters.rs`).
+        if self.cx.brand_base(obj.ty).is_none() {
+            return Err(obj);
         }
+        let instance = self.unbrand_instance(obj.clone());
+        if instance.ty == obj.ty || want == Want::BorrowMut || !self.has_getter(instance.ty, name) {
+            return Err(obj);
+        }
+        let prop = ast::Ident {
+            name: name.to_string(),
+            span,
+        };
+        self.proxy_getter_read(instance, &prop, span)
+            .map_err(|_| obj)
     }
 
     /// `obj.name(args)` on a class instance brand, `name` a member of its object part only: a

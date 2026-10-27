@@ -304,11 +304,6 @@ impl FnCx<'_, '_> {
             return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
         self.abstract_in_ctor(&obj, &prop.name, false, prop.span);
-        // A typed proxy answers through its `get` trap (`proxy_getters.rs`).
-        let obj = match self.proxy_getter_read(obj, prop, span) {
-            Ok(h) => return Ok(h),
-            Err(obj) => obj,
-        };
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
     }
 
