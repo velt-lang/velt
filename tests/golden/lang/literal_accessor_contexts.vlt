@@ -139,3 +139,45 @@ console.log(String(JSON.stringify(same(lit2))));
 // A proxy makes this a program whose object types may hold views.
 const p = new Proxy({ x: 1 }, {});
 console.log(p.x);
+
+// A type parameter whose bound declares fields (`T extends { v: number }`): the literal's
+// getter fills the field, and its setter takes a write.
+function bound<T extends { v: number }>(x: T): number {
+  return x.v + x.v;
+}
+
+let reads2 = 0;
+console.log(
+  bound({
+    get v() {
+      reads2++;
+      return 5;
+    },
+  }),
+  reads2,
+);
+
+function bump<T extends { n: number }>(x: T): T {
+  x.n = x.n + 1;
+  return x;
+}
+
+let stored2 = 1;
+const bumped = bump({
+  get n(): number {
+    return stored2;
+  },
+  set n(v: number) {
+    stored2 = v * 10;
+  },
+});
+console.log(bumped.n, stored2);
+
+// A literal with accessors as text: `[object Object]`, as Node writes it.
+const asText = {
+  a: 1,
+  get g() {
+    return this.a;
+  },
+};
+console.log(`${asText}`, String(asText), asText + "", "x" + asText);
