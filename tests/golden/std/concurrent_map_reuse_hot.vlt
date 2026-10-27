@@ -14,15 +14,18 @@ const CYCLES: u64 = 30000;
 async function writer(m: shared<ConcurrentMap>, t: u64): Promise<u64> {
   let wrong: u64 = 0;
   for (let c: u64 = 0; c < CYCLES; c++) {
+    // Each cycle's burst moves, so leaf boundaries never settle: splits keep landing on nodes
+    // freed in other ranges.
+    const off = (c * 7) % 64;
     for (let j: u64 = 0; j < BURST; j++) {
-      const k = j * WRITERS + t + 1;
+      const k = (off + j) * WRITERS + t + 1;
       m.set(k, k + c);
       if (m.get(k) != k + c) {
         wrong++;
       }
     }
     for (let j: u64 = 0; j < BURST; j++) {
-      const k = j * WRITERS + t + 1;
+      const k = (off + j) * WRITERS + t + 1;
       if (m.add(k, 0) != k + c) {
         wrong++;
       }
@@ -35,8 +38,8 @@ async function writer(m: shared<ConcurrentMap>, t: u64): Promise<u64> {
 }
 
 async function main() {
-  // Room for a few times the 640 keys present at most: splits run on reused nodes.
-  const s = shared(ConcurrentMap.create(2000));
+  // Room for four times the 640 keys present at most: splits run on reused nodes.
+  const s = shared(ConcurrentMap.create((WRITERS * BURST * 4) as usize));
   const ws: Promise<u64>[] = [];
   for (let t: u64 = 0; t < WRITERS; t++) {
     ws.push(spawn(writer(s, t)));
@@ -46,7 +49,7 @@ async function main() {
     wrong += w;
   }
   let left: u64 = 0;
-  for (let k: u64 = 0; k <= BURST * WRITERS + 1; k++) {
+  for (let k: u64 = 0; k <= (64 + BURST) * WRITERS + 1; k++) {
     if (s.has(k)) {
       left++;
     }
