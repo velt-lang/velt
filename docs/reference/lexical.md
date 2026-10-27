@@ -127,10 +127,10 @@ interface let new null of readonly return shared static struct switch this throw
 type typeof void while yield
 ```
 
-Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
+Contextual keywords: `abstract`, `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
 Not part of the language: `var` outside the top level of a function body or a module
-([Variables](variables.md)), `any`, `unknown`, `abstract`, `protected` (as a
+([Variables](variables.md)), `any`, `unknown`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)),
 `export default`, `mut`, `match`. Writing most of

@@ -601,7 +601,19 @@ impl Ctx<'_> {
         if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
             // An interface value satisfies the interfaces its interface extends (#1368); a
             // generic method of the bound is called through its table's instantiations (#943).
-            if self.extends_iface(&Bound { iface: d, args }, b) {
+            if self.extends_iface(
+                &Bound {
+                    iface: d,
+                    args: args.clone(),
+                },
+                b,
+            ) {
+                return true;
+            }
+            // A literal with getters (its own interface) for a bound it has every member of,
+            // a getter filling a field (`T extends { v: number }`), as in TypeScript.
+            if self.literal_ifaces.contains(&d) && self.bound_upcast((d, &args), (b.iface, &b.args))
+            {
                 return true;
             }
         }

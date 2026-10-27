@@ -1097,6 +1097,21 @@ async function main() {
   }
   console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
   ```
+
+  An **abstract construct signature**, `abstract new () => Base` (TypeScript 4.2), also takes
+  [abstract classes](classes.md#classes): `.name` and `instanceof` work through such a value,
+  `new` through it is an error (``cannot create an instance through a value of type `abstract
+  new () => Base` ``), and an abstract class where a plain `new () => Base` is expected is an
+  error too.
+
+  ```ts
+  abstract class Base {}
+  class One extends Base {}
+  function nameOf(c: abstract new () => Base): string {
+    return c.name;
+  }
+  console.log(nameOf(Base), nameOf(One)); // Base One
+  ```
 - **Generic function types** (`<T>(x: T) => T`, a value each call instantiates, #943): a
   `const` of such a type is a generic function, as a generic arrow constant is, so each call
   instantiates it and nothing is boxed. The type may be written at the constant, named by a type

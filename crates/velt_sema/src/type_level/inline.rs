@@ -261,9 +261,11 @@ fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
                 names_in(a, out);
             }
         }
-        K::Array(e) | K::KeyOf(e) | K::TupleRest(e) | K::TupleOptional(e) | K::Construct(e) => {
-            add(e)
-        }
+        K::Array(e)
+        | K::KeyOf(e)
+        | K::TupleRest(e)
+        | K::TupleOptional(e)
+        | K::Construct { ty: e, .. } => add(e),
         K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().for_each(add),
         K::Indexed { object, key } => {
             add(object);

@@ -31,6 +31,10 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(o) = &object.kind else {
             return None;
         };
+        // `JSON.stringify` of a literal with accessors: of it as an `any` (literal_iface.rs).
+        if let Some(h) = self.json_literal_iface(callee, type_args, args, None, span) {
+            return Some(h);
+        }
         if prop.name != "stringify" || args.len() < 2 || o.name != "JSON" {
             return None;
         }

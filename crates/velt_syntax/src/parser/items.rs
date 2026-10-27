@@ -128,6 +128,7 @@ impl<'a> Parser<'a> {
             }
             Some(Kw::Struct) => ItemKind::Struct(self.parse_type_decl(false)?),
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
+            None if self.at_abstract_class() => ItemKind::Class(self.parse_abstract_class()?),
             Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
             Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => self.parse_type_alias_item()?,

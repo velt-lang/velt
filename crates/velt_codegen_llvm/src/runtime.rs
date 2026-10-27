@@ -130,6 +130,16 @@ const UMULH: &str = "define internal i64 @velt.umulh(i64 %a, i64 %b) alwaysinlin
   ret i64 %r
 }";
 
+/// `x.toBits()` / `f64.fromBits(b)` (`velt_rt_math_f64_bits`, `_bits_f64`): one bitcast.
+const F64_BITS: &str = "define internal i64 @velt.f64_bits(double %x) alwaysinline nounwind {
+  %r = bitcast double %x to i64
+  ret i64 %r
+}";
+const BITS_F64: &str = "define internal double @velt.bits_f64(i64 %b) alwaysinline nounwind {
+  %r = bitcast i64 %b to double
+  ret double %r
+}";
+
 /// A runtime function the backend calls through a helper defined in the module instead: the
 /// helper's name and its definition (with what it declares), for the signature
 /// `(params) -> ret`.
@@ -158,6 +168,8 @@ pub(crate) fn inline_helper(symbol: &str) -> Option<InlineHelper> {
             Ty::U64,
         ),
         "velt_rt_math_umulh" => ("@velt.umulh", &[UMULH], &[Ty::U64, Ty::U64], Ty::U64),
+        "velt_rt_math_f64_bits" => ("@velt.f64_bits", &[F64_BITS], &[Ty::F64], Ty::U64),
+        "velt_rt_math_bits_f64" => ("@velt.bits_f64", &[BITS_F64], &[Ty::U64], Ty::F64),
         _ => return None,
     })
 }
@@ -199,6 +211,8 @@ pub(crate) fn effects(symbol: &str) -> Effects {
         | "velt_rt_math_ctz64"
         | "velt_rt_math_popcount64"
         | "velt_rt_math_umulh"
+        | "velt_rt_math_f64_bits"
+        | "velt_rt_math_bits_f64"
         | "velt_rt_math_mul_int32"
         | "velt_rt_math_add_int32" => Effects::None,
         "velt_rt_str_cmp"

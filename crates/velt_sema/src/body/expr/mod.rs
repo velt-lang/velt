@@ -1,6 +1,7 @@
 //! Expression checking (bidirectional: `exp` is the type demanded by context, if any).
 //! One submodule per concern.
 
+mod abstract_ctor;
 mod access;
 mod accessor_rmw;
 mod any_prim;
@@ -55,6 +56,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
+mod static_call;
 pub(crate) use env_globals::NODE_GLOBALS;
 pub(crate) use primitive_statics::primitive_this;
 mod array_view_cast;

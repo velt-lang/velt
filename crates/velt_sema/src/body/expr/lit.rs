@@ -613,6 +613,8 @@ impl FnCx<'_, '_> {
         // an array as JS's `Array.prototype.toString` writes it (`1,2`), an object by its
         // `toString()`, not as `console.log` prints it. So is a list of them (`any[]`), each
         // element as `String(x)` writes it (`[[1, 2], {}]` is `1,2,[object Object]`).
+        // A literal with accessors too (`[object Object]`), through `any`.
+        let h = self.literal_iface_as_any(h);
         let dynamic = matches!(
             self.cx.dynamic(h.ty),
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)

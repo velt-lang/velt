@@ -246,7 +246,10 @@ impl FnCx<'_, '_> {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
         };
-        let mut ptys = self.closure_param_types(params, exp_params.as_deref());
+        let untyped = (self.any_callback == Some(span))
+            .then(|| self.any_ty())
+            .flatten();
+        let mut ptys = self.closure_param_types(params, exp_params.as_deref(), untyped);
         // Like TS, an arrow may take fewer parameters than the function type it is passed as
         // (`xs.map((x) => …)` where `map` passes `(x, i)`): the rest are unnamed and unused.
         let extra: Vec<TyId> = exp_params
@@ -370,7 +373,7 @@ impl FnCx<'_, '_> {
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
-            _ => self.closure_body(body, span),
+            _ => self.closure_body(body, span, ret.is_none()),
         };
         self.cx.fn_value_depth -= 1;
         block.stmts.splice(0..0, locals);
@@ -495,7 +498,13 @@ impl FnCx<'_, '_> {
         def
     }
 
-    fn closure_body(&mut self, body: &ast::ArrowBody, span: Span) -> hir::Block {
+    /// `from_context`: the arrow writes no result type.
+    fn closure_body(
+        &mut self,
+        body: &ast::ArrowBody,
+        span: Span,
+        from_context: bool,
+    ) -> hir::Block {
         match body {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
@@ -545,7 +554,7 @@ impl FnCx<'_, '_> {
                     Some(r) => r,
                     None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &mut block);
+                self.check_returns("closure", ret, span, &mut block, from_context);
                 self.wrap_adopted(&mut block);
                 block
             }

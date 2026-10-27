@@ -52,6 +52,7 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
     match &item.kind {
         ast::ItemKind::Function(f) => function(analysis, &f.sig),
         ast::ItemKind::ExternFn(sig) => format!("declare {}", function(analysis, sig)),
+        ast::ItemKind::Class(t) if t.is_abstract => type_decl(analysis, "abstract class", t),
         ast::ItemKind::Class(t) => type_decl(analysis, "class", t),
         ast::ItemKind::Struct(t) => type_decl(analysis, "struct", t),
         ast::ItemKind::Interface(i) => {

@@ -42,6 +42,10 @@
 //! - `map_probe`: once the rounds are done, a `Map` probe (`lookup`, the key's string hash)
 //!   that repeats an earlier one on the same map and an equal key reuses its result, so an
 //!   inlined `m.set(k, (m.get(k) ?? 0) + 1)` probes once (#563).
+//! - `borrowed_copies`: once the rounds are done, a string local that only reads a copy of a
+//!   string (`const src = this.src`) borrows it instead of sharing it, when nothing can change
+//!   the source while the copy's text is read: no `velt_rt_str_clone` / `velt_rt_str_drop`
+//!   pair (#1670).
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
@@ -69,6 +73,7 @@
 use velt_vir::vir;
 
 mod addr_forward;
+mod borrowed_copies;
 mod bounds;
 mod callgraph;
 mod const_fields;
@@ -203,6 +208,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             let allocator = heap_sroa::Allocator::find(program);
             let probes = map_probe::Probes::find(program);
             let lookups = module_state::Lookups::find(program);
+            let runtime = borrowed_copies::Runtime::find(program);
             let env = numrep::Env::of(
                 &program.externs,
                 &program.funcs,
@@ -214,6 +220,13 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
                 if t.time("map_probe", || map_probe::run(&program.aggs, &probes, func)) {
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                if t.time("borrowed_copies", || {
+                    borrowed_copies::run(&program.aggs, &runtime, func)
+                }) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));

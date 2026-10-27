@@ -188,14 +188,19 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
-            // `new (a: A) => R`: a construct signature.
+            // `new (a: A) => R`: a construct signature; `abstract new (a: A) => R` also takes
+            // abstract classes.
             Tok::Kw(Kw::New) if matches!(self.nth(1), Tok::LParen | Tok::Lt) => {
-                self.bump();
-                let ty = Box::new(self.parse_type_prim()?);
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Construct(ty),
-                    span: self.span_from(lo),
-                })
+                self.parse_construct_type(lo, false)
+            }
+            Tok::Ident
+                if self.at_word("abstract")
+                    && self.nth(1) == Tok::Kw(Kw::New)
+                    && matches!(self.nth(2), Tok::LParen | Tok::Lt)
+                    && !self.line_break_after(0) =>
+            {
+                self.bump(); // abstract
+                self.parse_construct_type(lo, true)
             }
             Tok::LBrace => self.parse_object_type(),
             _ if self.at_literal_type() => {
@@ -769,5 +774,18 @@ impl IndexSignature {
             value: Box::new(self.value),
             readonly: self.readonly,
         }
+    }
+}
+
+impl Parser<'_> {
+    /// At `new` of a construct signature type, `new (a: A) => R` (`abstract new …` when
+    /// `is_abstract`, its `abstract` consumed).
+    fn parse_construct_type(&mut self, lo: u32, is_abstract: bool) -> PResult<TypeExpr> {
+        self.bump(); // new
+        let ty = Box::new(self.parse_type_prim()?);
+        Ok(TypeExpr {
+            kind: TypeExprKind::Construct { ty, is_abstract },
+            span: self.span_from(lo),
+        })
     }
 }

@@ -310,7 +310,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "tsc -p ./ && node --test out/test/debugConfig.test.js",
+    "test": "tsc -p ./ && node --test out/test/debugConfig.test.js out/test/grammar.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {

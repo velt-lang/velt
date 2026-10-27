@@ -145,6 +145,19 @@ export class Set<T> implements Iterable<T> {
   }
 }
 
+/**
+ * `s.forEach(f)` through `any`: `f(value, value, whole)` per element, in insertion order;
+ * `whole` is `s` as an `any` of its own class (a class extending `Set`, with its own members).
+ */
+export function __anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
+  const f = __anyFnArg(args, 0);
+  s.forEach((x) => {
+    const value: any = x;
+    f(value, value, whole);
+  });
+  return undefined;
+}
+
 // The copy an interface adapter passes for a `Set<unknown>` parameter (std/prelude/zzz_adapt.vlt).
 
 /** A set of any type held by `v`, as a `Set<unknown>` of its elements. */

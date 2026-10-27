@@ -44,6 +44,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt:regex`](regex.md#string-methods-with-a-regex)) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
 | `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
+| `codePointAt(i = 0): number \| undefined` | the character at `i` when `i` is at the high half of a pair, otherwise the code unit there; `undefined` out of range, as in JS |
 | `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
 `<`, `>` and `sort()` order strings by code units, as JS. A position between the two halves of
@@ -53,7 +54,9 @@ half).
 
 Conversions: `String.fromCharCode(...codes)` (any number of code units, each taken modulo
 2^16 as in JS, with `NaN` and the infinities 0; a lone surrogate gives a lone surrogate, a
-surrogate pair its character),
+surrogate pair its character), `String.fromCodePoint(...codePoints)` (one or two code units
+each; a code point that is not an integer from 0 to 0x10FFFF panics with JS's RangeError,
+`Invalid code point 1114112`),
 `parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
 `Number(s)`, and `String(x)`, which writes any printable value as `` `${x}` `` does
 (`String(1e21)` is `"1e+21"`, `String(null)` is `"null"`, `String([[1], [2, 3]])` is `"1,2,3"`).
@@ -93,6 +96,20 @@ surrogate pair its character),
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Bit casts (not in JS): `x.toBits()` is the IEEE 754 bits of an `f64` as a `u64` (sign,
+  exponent, fraction), and `f64.fromBits(b)` the `f64` with the bits of a `u64` (Rust's
+  `to_bits` / `from_bits`); each is one move between registers. They keep every bit pattern,
+  NaN payloads and signalling NaNs included, so `f64.fromBits(b).toBits() == b` for every `b`.
+  The bits of a NaN made by arithmetic (`0 / 0`) or of the `NaN` constant are not specified:
+  they depend on the processor (`fff8000000000000` on x86-64, `7ff8000000000000` on AArch64), as
+  in Rust. `f32` has no bit casts yet.
+
+  ```ts
+  const x: f64 = -1.5;
+  console.log(x.toBits().toString(16)); // bff8000000000000
+  console.log(f64.fromBits(0x7ff0000000000000)); // Infinity
+  ```
+
 - Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
   over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
   one instruction each. They return a `usize`, in user code too, so the result indexes an array

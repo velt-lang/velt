@@ -384,6 +384,9 @@ impl Cx<'_> {
             self.note_capture(t);
             tys.push(match mode {
                 PassMode::Borrow | PassMode::BorrowMut => Ty::Ptr,
+                // A value of no size (a literal type, `K` at `"count"`): a byte nothing reads
+                // or writes, so the captures keep their field indexes.
+                _ if self.ty(t) == Ty::Unit => Ty::U8,
                 _ => self.ty(t),
             });
         }

@@ -11,6 +11,21 @@ use crate::hir::{DefId, ImplDef, PassMode, TyId, TyKind};
 use crate::iface_writes::SetterSrc;
 
 impl Ctx<'_> {
+    /// [`Self::iface_upcast`] for a type parameter's bound (`Ctx::satisfies`): the value keeps
+    /// its own type, so the conversion is recorded for the tables only, not for the writes.
+    pub(crate) fn bound_upcast(&mut self, have: (DefId, &[TyId]), want: (DefId, &[TyId])) -> bool {
+        let pair = (have.0, want.0);
+        let value = self.synth_ifaces.upcasts.contains(&pair)
+            && !self.synth_ifaces.bound_upcasts.contains(&pair);
+        if !self.iface_upcast(have, want) {
+            return false;
+        }
+        if !value && !self.synth_ifaces.bound_upcasts.contains(&pair) {
+            self.synth_ifaces.bound_upcasts.push(pair);
+        }
+        true
+    }
+
     /// May an interface value of `have<from>` be used as a `want<to>`: does it have every
     /// member of `want`, with the same type (module docs)? Records the conversion.
     pub(crate) fn iface_upcast(
@@ -45,6 +60,12 @@ impl Ctx<'_> {
                     }
             })
         });
+        if fits {
+            // A conversion of a value: writes through `want` are checked (`upcast_writes`).
+            self.synth_ifaces
+                .bound_upcasts
+                .retain(|p| *p != (have, want));
+        }
         if fits && !known {
             self.synth_ifaces.upcasts.push((have, want));
             // The dispatch groups link the two interfaces' slots (`throws/groups.rs`): built
@@ -332,7 +353,11 @@ impl Ctx<'_> {
     /// After every body is checked, before errors are reported: a value converted to an
     /// interface written through is written through its own (`Ctx::writes_through_upcasts`).
     pub(crate) fn upcast_writes(&mut self) {
-        let pairs = self.synth_ifaces.upcasts.clone();
+        let bound = self.synth_ifaces.bound_upcasts.clone();
+        let pairs: Vec<(DefId, DefId)> = (self.synth_ifaces.upcasts.iter())
+            .filter(|p| !bound.contains(p))
+            .copied()
+            .collect();
         self.writes_through_upcasts(&pairs);
     }
 

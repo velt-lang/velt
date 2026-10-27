@@ -1,0 +1,169 @@
+// An `object` or `unknown` narrowed by `instanceof` of a generic class or by `Array.isArray`
+// reads as an `any` (TypeScript types it `Map<any, any>`, `Set<any>`, `any[]`): an arrow passed
+// to its method takes `any` parameters there without annotations, and `forEach` of a `Map` or a
+// `Set` held runs through `any` with the arguments JavaScript passes (value, key, collection).
+function walk(raw: object, depth: number): void {
+  const pad = " ".repeat(depth * 2);
+  if (Array.isArray(raw)) {
+    raw.forEach((v, i) => console.log(pad + "array", i, v));
+  } else if (raw instanceof Map) {
+    raw.forEach((v, k, m) => {
+      console.log(pad + "map", k, v, m.size);
+      if (typeof v === "object" && v !== null) {
+        walk(v, depth + 1);
+      }
+    });
+  } else if (raw instanceof Set) {
+    raw.forEach((v, again, s) => console.log(pad + "set", v, again === v, s.size));
+  } else {
+    console.log(pad + "other", Object.keys(raw).join(","));
+  }
+}
+
+walk(
+  new Map<string, any>([
+    ["a", 1],
+    ["b", new Set([2, 3])],
+  ]),
+  0,
+);
+walk(new Set(["x"]), 0);
+walk([10, 20], 0);
+walk({ k: 1 }, 0);
+
+function count(u: unknown): number {
+  let n = 0;
+  if (u instanceof Map) {
+    u.forEach((v, k) => {
+      n += typeof k === "string" ? k.length : 0;
+      n += typeof v === "number" ? v : 0;
+    });
+  } else if (u instanceof Set) {
+    u.forEach((v) => {
+      n += typeof v === "number" ? 1 : 0;
+    });
+  }
+  return n;
+}
+
+console.log(count(new Map([["abc", 4]])), count(new Set([1, 2, 3])), count(5));
+
+// Entries added while it runs are visited, as in JavaScript.
+const grow: object = new Map<number, number>([[1, 1]]);
+if (grow instanceof Map) {
+  grow.forEach((v, k) => {
+    if (k < 3) {
+      grow.set(k + 1, v * 2);
+    }
+    console.log("grow", k, v);
+  });
+}
+
+// Captured, destructured, defaulted and nested callbacks take `any` parameters too.
+function more(u: unknown): void {
+  if (u instanceof Map) {
+    const f = () => {
+      u.forEach((v, k) => console.log("captured", k, v));
+    };
+    f();
+    u.forEach(([x, y]: any, k) => console.log("destructured", x, y, k));
+  }
+  if (Array.isArray(u)) {
+    const m = u.map((x, i) => String(x) + i);
+    console.log(m);
+    console.log(u.filter((x) => x !== 2).length, u.some((x) => x === 2));
+    u.forEach((x, i = 9) => console.log("default", x, i));
+  }
+}
+
+more(new Map([["a", [1, 2]]]));
+more([1, 2, 3]);
+
+function sets(o: object): void {
+  if (o instanceof Set) {
+    let total = 0;
+    o.forEach((v) => {
+      total += 1;
+    });
+    console.log("count", total);
+    o.forEach((v) => {
+      o.forEach((w) => console.log("nested", v, w));
+    });
+  }
+}
+
+sets(new Set([1, 2]));
+
+// A class extending `Map` or `Set`, held in an `any` or narrowed: `forEach` of the class it
+// extends.
+class MyMap extends Map<string, number> {}
+
+class MySet extends Set<string> {}
+
+const mm = new MyMap([
+  ["a", 1],
+  ["b", 2],
+]);
+const mmAny: any = mm;
+mmAny.forEach((v: any, k: any) => console.log("sub", k, v));
+
+function sub(o: object): void {
+  if (o instanceof Map) {
+    o.forEach((v, k) => console.log("narrowed sub", k, v));
+  } else if (o instanceof Set) {
+    o.forEach((v) => console.log("narrowed set sub", v));
+  }
+}
+
+sub(mm);
+sub(new MySet(["z"]));
+
+// Callbacks of methods chained on a narrowed array (TypeScript's `any[]` again).
+function chain(u: unknown): void {
+  if (Array.isArray(u)) {
+    console.log(u.filter((x) => x > 1).map((x) => x * 10));
+    console.log(u.slice().sort((a, b) => b - a));
+    console.log(
+      u
+        .concat([4])
+        .reverse()
+        .map((x, i) => x + i),
+    );
+  }
+}
+
+chain([1, 2, 3]);
+
+// The collection passed to the callback is the receiver itself, with its own class's members,
+// also for a generic subclass.
+class S1 extends Set<number> {
+  tag = "s1";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const s1: any = new S1([1]);
+s1.forEach((v: any, k: any, s: any) => console.log("S1", s === s1, s.tag, s.size, s.label()));
+
+class M2<V> extends Map<string, V> {
+  tag = "m2";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const m2: any = new M2<number>([["x", 1]]);
+m2.forEach((v: any, k: any, m: any) => console.log("M2", m === m2, m.tag, m.size, m.label()));
+
+class Bag<T> extends Set<T> {
+  tag = "bag";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const bag: any = new Bag<string>(["a", "b"]);
+bag.forEach(
+  (v: any, again: any, s: any) => console.log("Bag", v, s === bag, s.tag, s.size, s.label()),
+);

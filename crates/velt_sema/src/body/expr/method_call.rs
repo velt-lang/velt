@@ -88,6 +88,22 @@ impl FnCx<'_, '_> {
         if list_text && !getter && self.joins_dynamic(recv.ty) {
             return self.dynamic_list_join(recv, args, span);
         }
+        // A list of literals with accessors: through `any`, each element `[object Object]`.
+        if list_text
+            && !getter
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_))
+            && self.holds_literal_iface(recv.ty, 0)
+        {
+            let recv = self.share_if_place(recv);
+            let recv = self.literal_iface_as_any(recv);
+            if self.cx.dynamic(recv.ty).is_some() {
+                if let Ok(h) = self.dynamic_method_call(recv, prop, args, span) {
+                    return h;
+                }
+                return self.error_expr(span);
+            }
+            return self.method_call_at(recv, prop, type_args, args, exp, span, getter);
+        }
         let writes_list = matches!(prop.name.as_str(), "join" | "toString")
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
         if writes_list && self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span) {
