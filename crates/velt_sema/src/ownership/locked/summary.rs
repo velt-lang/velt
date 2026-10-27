@@ -241,6 +241,7 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::Clone
                     | Intrinsic::Spawn
                     | Intrinsic::PromiseWiden
+                    | Intrinsic::PromiseSame
                     | Intrinsic::MutexWith
                     | Intrinsic::LockRead
                     | Intrinsic::NeedsTransfer

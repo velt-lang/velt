@@ -1,0 +1,46 @@
+// Promises converted to `Promise<unknown>`, kept in sets, compared and awaited, with a rejecting
+// promise converted and handled in each of 400,000 iterations and no checkpoint inside the loop
+// (#1682): the identity and rejection bookkeeping must stay linear in work and bounded in memory.
+async function f(n: number): Promise<number> {
+  return n;
+}
+
+async function bad(n: number): Promise<number> {
+  throw new Error("x" + n);
+}
+
+function keep(p: Promise<unknown>): Promise<unknown> {
+  return p;
+}
+
+function keepE(p: Promise<unknown, Error>): Promise<unknown, Error> {
+  return p;
+}
+
+async function main() {
+  const N = 400000;
+  let sum = 0;
+  for (let round = 0; round < 4; round++) {
+    const s = new Set<Promise<unknown>>();
+    for (let i = 0; i < N / 4; i++) {
+      const p = f(i);
+      s.add(p);
+      const k = keep(keep(p));
+      if (s.has(k)) sum++;
+      if (i % 3 == 0) s.delete(p);
+      sum += await p;
+      const b = bad(i);
+      const se = new Set<Promise<unknown, Error>>();
+      se.add(keepE(b));
+      try {
+        await b;
+      } catch (e) {
+        sum++;
+      }
+    }
+    s.clear();
+  }
+  console.log("sum", sum);
+}
+
+main();

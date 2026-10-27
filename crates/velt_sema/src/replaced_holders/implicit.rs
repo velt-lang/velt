@@ -549,6 +549,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AtomicCasWeak
         | I::AtomicFence
         | I::AtomicSpinHint
+        | I::ThreadLocalGet
+        | I::ThreadLocalSet
         | I::ArrayRotateRight
         | I::ArrayRotateLeft
         | I::ArraySwapNested
@@ -593,6 +595,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ChanTryReceive
         | I::SourceLocation
         | I::PromiseWiden
+        | I::PromiseSame
         | I::PerfNow
         | I::ProxyArrayCall
         | I::ProxyArrayHole

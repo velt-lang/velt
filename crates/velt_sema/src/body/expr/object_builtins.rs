@@ -376,13 +376,17 @@ impl FnCx<'_, '_> {
         let (l, r) = self.nullable_operands(l, r);
         let (l, r) = self.union_operands(l, r);
         let (l, r) = self.identity_operands(l, r);
+        let b = self.cx.ty.bool_;
+        // Promises of two types: one promise is itself (#1682).
+        if self.two_promise_types(l.ty, r.ty) {
+            return self.intrinsic(Intrinsic::SameValue, vec![l, r], b, span);
+        }
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))
         } else {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
-        let b = self.cx.ty.bool_;
         if l.ty != r.ty {
             // Values of unrelated types are never the same value: both are evaluated, in order.
             let stmts = [l, r]

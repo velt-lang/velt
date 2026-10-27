@@ -17,6 +17,7 @@ pub mod channel;
 pub mod compiled;
 pub mod coop;
 pub mod group;
+pub mod identity;
 pub mod latch;
 pub mod leaf;
 pub mod local;

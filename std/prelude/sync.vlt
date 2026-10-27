@@ -188,3 +188,27 @@ export struct Atomic<T> {
     __intrinsic_atomic_spin_hint();
   }
 }
+
+/**
+ * One value per thread, a number or `bool`: `const depth = new ThreadLocal<u32>(0)` at module
+ * level (docs/std/sync.md). Each thread starts with the value given and changes its own with
+ * `set`; `get` reads this thread's. A task moves to another thread only at an `await`, so it reads
+ * its own writes until then. It is for code that keeps per-thread state, such as which reader
+ * slot is this thread's: a value a task needs after an `await` belongs in a variable.
+ *
+ * Only a module `const` can hold one, made with a literal: `get` and `set` are called on that
+ * constant.
+ */
+export struct ThreadLocal<T> {
+  private init: T;
+
+  /** This thread's value. */
+  get(): T {
+    return __intrinsic_thread_local_get(this);
+  }
+
+  /** Makes `v` this thread's value. */
+  set(v: T): void {
+    __intrinsic_thread_local_set(this, v);
+  }
+}

@@ -40,6 +40,9 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if Some(d) == self.cx.atomic_ty() => {
                 return Some(self.atomic_new(d, class, targs, args, exp, span));
             }
+            Some(Item::Def(d)) if Some(d) == self.cx.thread_local_ty() => {
+                return Some(self.thread_local_new(d, class, targs, args, exp, span));
+            }
             _ => return None,
         };
         let c = self.intrinsic_sig(new, span);

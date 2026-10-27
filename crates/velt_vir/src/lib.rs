@@ -143,6 +143,14 @@ pub const MAX_ARRAY_LEN: u64 = (1 << 52) - 1;
 pub const ARRAY_LEN_MESSAGE: &str =
     "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes";
 
+/// The name of the one-byte aggregate (`{ byte: U8 }`) that lowering reads a string's UTF-8
+/// bytes through (`(*p as string text).0`, `__intrinsic_str_byte_at` and `charCodeAt`'s ASCII
+/// path), which no user type can have: the LLVM backend tags those loads as array element
+/// reads for alias analysis (velt_codegen_llvm `tbaa.rs`, #1669). A string's text lives in its
+/// own buffer or inline in the string value, never in a class object's scalar field or an
+/// array header.
+pub const STR_TEXT_AGG_NAME: &str = "string text";
+
 /// The end of the name of every class object's aggregate (`<class> object`), which no other
 /// aggregate's name has: the LLVM backend tags the scalar fields of such objects for alias
 /// analysis (velt_codegen_llvm `tbaa.rs`).
@@ -152,6 +160,7 @@ pub mod atomic;
 mod lower;
 pub mod mangle;
 pub mod simd;
+pub mod tls;
 mod verify;
 
 #[cfg(test)]

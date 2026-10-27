@@ -7,6 +7,8 @@
 //! `Emitter`.
 
 mod atomic;
+mod tls;
+pub(crate) use tls::tls_globals;
 mod cast;
 mod ops;
 mod place;
@@ -91,6 +93,8 @@ struct Emitter<'a> {
     simd: crate::simd::Arch,
     /// The program's array header aggregate (tbaa.rs).
     array: Option<vir::AggId>,
+    /// The aggregate string bytes are read through (tbaa.rs).
+    text: Option<vir::AggId>,
     /// Per aggregate: a class object's (tbaa.rs).
     objects: Vec<bool>,
     /// Per local: it only ever points into an array's data buffer (`tbaa::element_pointers`).
@@ -131,6 +135,7 @@ pub(crate) fn emit_function(
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
         array,
+        text: crate::tbaa::text_agg(program),
         objects: crate::tbaa::object_aggs(program),
         element_pointers: crate::tbaa::element_pointers(program, function, array),
         uses_simd: program

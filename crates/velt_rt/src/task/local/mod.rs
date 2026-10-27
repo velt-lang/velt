@@ -473,6 +473,10 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
+    // Its identity stays on this task (task/identity.rs).
+    if node::is_lazy(f) || node::is_started(f) {
+        node::drop_alias(f);
+    }
     // Whatever its result needs, the promise is the other task's now (#1497).
     node::mark_handed_over(f);
     if crate::task::race::pass_transfer(f, transfer) {
@@ -493,6 +497,12 @@ pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
         return crate::task::shared::peek(f) as u8;
     }
     node::peek(f) as u8
+}
+
+/// Mark node `f` as standing for another promise (task/identity.rs); false when `f` is not a
+/// node (a runtime leaf), which then cannot.
+pub(crate) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
+    node::mark_aliased(f)
 }
 
 /// Is `f` a started promise (driven by its task's set)?
@@ -582,7 +592,12 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
     quiet_drop: Option<ResultDropFn>,
 ) {
     for i in 0..n as usize {
-        node::mark_handled(*futs.add(i), quiet_drop);
+        let f = *futs.add(i);
+        if node::is_started(f) && node::is_aliased(f) {
+            // A combinator handling a converted promise handles the promise it stands for.
+            node::alias_claimed(f);
+        }
+        node::mark_handled(f, quiet_drop);
         crate::task::spawn::mark_join_handled(*futs.add(i), quiet_drop);
     }
 }

@@ -177,6 +177,9 @@ pub(crate) struct Ctx<'m> {
     /// checked inside the module constant being checked: a read of the constant there runs
     /// later, once it is initialized (`body::driver::ensure_global`).
     pub fn_value_depth: u32,
+    /// The receivers of `ThreadLocal` `get`/`set` calls, checked once every module constant is
+    /// (`crate::thread_locals`): the constant's `DefId` when the receiver is one, and the span.
+    pub thread_local_uses: Vec<(Option<DefId>, velt_common::Span)>,
     /// Module constants whose initializer is being checked on trial for its type, while it
     /// reads the constant inside a function value (`body::driver::ensure_global`).
     pub typing_globals: Vec<DefId>,
@@ -497,6 +500,7 @@ impl<'m> Ctx<'m> {
             global_props: Default::default(),
             global_cycles: 0,
             fn_value_depth: 0,
+            thread_local_uses: Vec::new(),
             typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),

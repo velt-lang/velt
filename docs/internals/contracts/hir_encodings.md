@@ -137,6 +137,11 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
   `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
   wrapper is lazy; used as a value (not awaited or spawned right away), it starts `p`.
+- A `Promise<T>` used where a `Promise<unknown>` / `Promise<any>` (or a `Promise<undefined>`
+  where a `Promise<void>`) is expected is `Call { Intrinsic(PromiseSame), [q, p] }`, both
+  owned, typed as `q`: `q` is `p.then` converting the value (on a temporary holding `p`), and
+  `p` the temporary itself. `q` is `p` for identity and rejection reports (rt_abi_async.md
+  §1.3, #1682); used as a value, it starts `q`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
@@ -768,6 +773,15 @@ may give the variable `s` reads another handle itself.
 literal or named function `f` that modifies its parameter once modes are inferred
 (`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
 mode (rt_abi_async.md §9.1).
+
+## `ThreadLocal<T>` (docs/internals/design/atomics.md; additive)
+
+`new ThreadLocal<T>(x)` is the prelude struct's `AdtLit` (`{ init: x }`), `T` a number type or
+`bool` and `x` a literal (a `Lit`, or `Unary(Neg, Lit)`). `tl.get()` and `tl.set(v)` are
+`Call { Intrinsic(ThreadLocalGet), [tl] }` and `Call { Intrinsic(ThreadLocalSet), [tl, v] }`,
+whose receiver is always `Global(d)` of a module `const` initialized by such an `AdtLit` (sema
+`thread_locals` reports any other). Lowering never evaluates the receiver: `d` names the value
+(`velt_tls_*` externs, rt_abi.md "Thread-local values") and the literal is its starting value.
 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 

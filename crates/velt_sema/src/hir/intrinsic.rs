@@ -277,6 +277,11 @@ pub enum Intrinsic {
     /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
     /// the rejection.
     PromiseWiden,
+    /// Compiler-internal (no source syntax): `(q: Promise<U, E>, p: Promise<T, E>) ->
+    /// Promise<U, E>`, both owned: `q`, a `then` of `p` converting its value (a `Promise<T>`
+    /// used as a `Promise<unknown>`, `coerce_generic.rs`), is `p` in JS: it compares and hashes
+    /// as `p` (`===`, `Set` keys; #1682), and its rejection is `p`'s, reported through `p`.
+    PromiseSame,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`
@@ -325,6 +330,14 @@ pub enum Intrinsic {
     AtomicFence,
     /// `Atomic.spinHint()`: `()`. Additive.
     AtomicSpinHint,
+    /// `tl.get()` on a `ThreadLocal<T>` (T a number type or `bool`): `(tl: borrow ThreadLocal<T>)
+    /// -> T`, this thread's value. The receiver is always `Global(d)` of the module `const` whose
+    /// initializer is `new ThreadLocal<T>(literal)` (sema checks it); lowering never evaluates
+    /// it, but names the value by `d` and reads the starting value from that literal. Additive.
+    ThreadLocalGet,
+    /// `tl.set(v)`: `(tl: borrow ThreadLocal<T>, v: T)`, this thread's value becomes `v`; the
+    /// receiver as for `ThreadLocalGet`. Additive.
+    ThreadLocalSet,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`

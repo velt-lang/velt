@@ -5,8 +5,11 @@
 // (`loadOptimistic`), `Atomic.fence`, array `prefetch`.
 //
 // Every node is 128 words of one `Atomic<u64>[]` arena (allocated whole by `create`), addressed
-// by index, never moved or freed while the map lives, so a reader that holds a stale index
-// still reads a node and finds its version changed. Readers write nothing.
+// by index and never moved, so a reader that holds a stale index still reads a node and finds
+// its version changed. Readers write nothing. A delete that empties a leaf unlinks it, with any
+// inner nodes above it left with no other child, from the lowest ancestor that keeps a child,
+// and puts them on a free list (`spare`) that `alloc` takes from first. A node's version only
+// grows, through being freed and reused too, so a reader that read it before sees it changed.
 //
 // Node layout (words):
 //   0: latch (bit 0 exclusive, then shared holders, the version from bit 21: velt:sync's
@@ -48,10 +51,17 @@ const HIGHS: u64 = 0x8000800080008000;
 /** The one key a map cannot hold: unused key slots of inner nodes hold it. */
 const MAX_KEY: u64 = 18446744073709551615;
 const NONE: u64 = 18446744073709551615;
+/** `spare`: the top node's index + 1 (0 for none) in the low half, a count of changes above. */
+const SPARE_TAG: u64 = 4294967296;
 /** `tryAdd`'s answers: added (with the value before), the key is absent, or start over. */
 const ADD_DONE: u64 = 0;
 const ADD_ABSENT: u64 = 1;
 const ADD_RETRY: u64 = 2;
+/** `tryDelete`'s answers: the key is absent, removed, start over, or its leaf would empty. */
+const DEL_ABSENT: u64 = 0;
+const DEL_DONE: u64 = 1;
+const DEL_RETRY: u64 = 2;
+const DEL_LAST: u64 = 3;
 /** Nodes per entry of capacity: a split leaf keeps 28 entries, plus the inner nodes above. */
 const ENTRIES_PER_NODE: u64 = 27;
 
@@ -90,24 +100,31 @@ function rangeError(what: string): never {
  * shared memory, so readers on many cores never slow each other; writers take a latch per node.
  * A lookup waits (spins) while a writer holds its node, so it is not lock-free. Its keys are kept
  * in key ranges, but a leaf's are unsorted and leaves are not linked: there is no ordered walk,
- * iteration or size yet (#1688). Its room is fixed when it is created.
+ * iteration or size yet (#1688). Its room is fixed when it is created, and given back as
+ * leaves empty.
  */
 export class ConcurrentMap {
   private w: Atomic<u64>[] = [];
   private root: Atomic<u64> = new Atomic<u64>(0);
   private next: Atomic<u64> = new Atomic<u64>(1);
+  private spare: Atomic<u64> = new Atomic<u64>(0);
   private nodes: u64 = 0;
 
   /**
    * An empty map with room for at least `capacity` entries (its memory, about 40 bytes an
-   * entry, is taken now). A `set` that needs more room panics with a RangeError. Room is not
-   * given back: a deleted entry frees a slot in its own leaf only, and leaves are never merged
-   * or reused, so keys that keep moving to new ranges (ids or timestamps that only grow, old ones
-   * deleted) use up the capacity over the map's life even with few entries present at once. A
-   * `set` of a key the map holds can also need room, when its leaf is full and splits first.
+   * entry, is taken now). A `set` that needs more room panics with a RangeError. A deleted
+   * entry frees a slot in its leaf, and a leaf whose last entry is deleted is reused, so keys
+   * that keep moving to new ranges (ids or timestamps that only grow, old ones deleted) fit for
+   * as long as the entries present at once do. Leaves are not merged, though: entries spread
+   * thinly over many leaves (most of a large map's keys deleted at random) can hold a node each
+   * and need more room than their number. A `set` of a key the map holds can also need room,
+   * when its leaf is full and splits first. Panics with a RangeError above 10^11 entries.
    */
   static create(capacity: usize): ConcurrentMap {
     const m = new ConcurrentMap();
+    if ((capacity as u64) > 100000000000) {
+      rangeError("create: at most 10^11 entries");
+    }
     m.nodes = (capacity as u64) / ENTRIES_PER_NODE + 64;
     const words = m.nodes * NODE;
     m.w.reserve(words as usize);
@@ -215,9 +232,12 @@ export class ConcurrentMap {
       return false;
     }
     while (true) {
-      const r = this.tryDelete(key);
-      if (r != 2) {
-        return r == 1;
+      let r = this.tryDelete(key);
+      if (r == DEL_LAST) {
+        r = this.tryDeleteLast(key);
+      }
+      if (r != DEL_RETRY) {
+        return r == DEL_DONE;
       }
     }
   }
@@ -501,7 +521,33 @@ export class ConcurrentMap {
 
   // --- writes ----------------------------------------------------------------------------
 
+  /** A node for a split: a spare one (its tags cleared) if any, else one never used. */
   private alloc(): u64 {
+    while (true) {
+      const s = this.spare.load("acquire");
+      const top = s & LEN_MASK;
+      if (top == 0) {
+        break;
+      }
+      // The next spare, in the meta word; read stale if another thread took `top` meanwhile,
+      // and then the exchange fails, as the count of changes moved on.
+      const below = this.w[(top - 1) * NODE + 1].load("relaxed") & LEN_MASK;
+      if (
+        this.spare.compareExchange(
+          s,
+          ((s & ~LEN_MASK) + SPARE_TAG) | below,
+          "acquire",
+          "relaxed",
+        ) ==
+        s
+      ) {
+        const b = (top - 1) * NODE;
+        for (let w: u64 = 0; w < TAG_WORDS; w++) {
+          this.w[b + TAGS + w].store(0, "relaxed");
+        }
+        return top - 1;
+      }
+    }
     const n = this.next.add(1, "relaxed");
     if (n >= this.nodes) {
       rangeError("set: out of room (create the map with a larger capacity)");
@@ -684,41 +730,180 @@ export class ConcurrentMap {
     return [ADD_DONE, before];
   }
 
-  /** One descent of `delete`: 1 removed, 0 absent, 2 to start over. */
+  /**
+   * One descent of `delete`: `DEL_DONE`, `DEL_ABSENT`, `DEL_RETRY`, or `DEL_LAST` (nothing done)
+   * when the key's leaf holds one key and has a parent: then `tryDeleteLast` unlinks it.
+   */
   private tryDelete(k: u64): u64 {
     let n = this.root.load("acquire");
     let v = this.readVersion(n * NODE);
     if (this.root.load("acquire") != n) {
-      return 2;
+      return DEL_RETRY;
     }
+    let depth: u64 = 0;
     while (true) {
       const base = n * NODE;
       const meta = this.w[base + 1].load("relaxed");
       if ((meta & LEAF_BIT) == 0) {
         const next = this.descend(base, v, k);
         if (next == NONE) {
-          return 2;
+          return DEL_RETRY;
         }
         n = next;
         const vc = this.readVersion(n * NODE);
         if (!this.isUnchanged(base, v)) {
-          return 2;
+          return DEL_RETRY;
         }
         v = vc;
+        depth++;
         continue;
       }
-      if (!this.tryLockAt(base, v)) {
-        return 2;
+      if (depth > 0 && (meta & LEN_MASK) == 1) {
+        // Only for a key the leaf holds: `tryDeleteLast` takes the whole path and bumps every
+        // version, which an absent key needs not cost concurrent readers.
+        const i = this.findSlot(base, k);
+        if (!this.isUnchanged(base, v)) {
+          return DEL_RETRY;
+        }
+        return i < LEAF_CAP ? DEL_LAST : DEL_ABSENT;
       }
-      const i = this.findSlot(base, k);
-      if (i >= LEAF_CAP) {
-        this.unlock(base, v);
-        return 0;
-      }
-      this.clearTag(base, i);
-      this.w[base + 1].store(meta - 1, "relaxed");
+      return this.deleteIn(base, v, meta, k);
+    }
+  }
+
+  /** Deletes `k` from the leaf at `base`, taken at version `v` (its meta word read at it). */
+  private deleteIn(base: u64, v: u64, meta: u64, k: u64): u64 {
+    if (!this.tryLockAt(base, v)) {
+      return DEL_RETRY;
+    }
+    const i = this.findSlot(base, k);
+    if (i >= LEAF_CAP) {
       this.unlock(base, v);
-      return 1;
+      return DEL_ABSENT;
+    }
+    this.clearTag(base, i);
+    this.w[base + 1].store(meta - 1, "relaxed");
+    this.unlock(base, v);
+    return DEL_DONE;
+  }
+
+  /**
+   * One descent of `delete` for a key whose leaf holds only it: the leaf, and the inner nodes
+   * above it that have no other child, are unlinked from the lowest ancestor with another child
+   * and put on the free list. Every node from that ancestor down is taken at the version read on
+   * the way down, so none changed since. Without such an ancestor the leaf only empties.
+   */
+  private tryDeleteLast(k: u64): u64 {
+    // Node, version pairs from the root down.
+    const path: u64[] = [];
+    let n = this.root.load("acquire");
+    let v = this.readVersion(n * NODE);
+    if (this.root.load("acquire") != n) {
+      return DEL_RETRY;
+    }
+    // The lowest inner node seen with two children or more, as an index into `path`.
+    let top = NONE;
+    let meta: u64 = 0;
+    while (true) {
+      const base = n * NODE;
+      meta = this.w[base + 1].load("relaxed");
+      path.push(n);
+      path.push(v);
+      if ((meta & LEAF_BIT) != 0) {
+        break;
+      }
+      if ((meta & LEN_MASK) > 0) {
+        top = path.length as u64 - 2;
+      }
+      const next = this.descend(base, v, k);
+      if (next == NONE) {
+        return DEL_RETRY;
+      }
+      n = next;
+      const vc = this.readVersion(n * NODE);
+      if (!this.isUnchanged(base, v)) {
+        return DEL_RETRY;
+      }
+      v = vc;
+    }
+    const leaf = n * NODE;
+    if (top == NONE || (meta & LEN_MASK) != 1) {
+      return this.deleteIn(leaf, v, meta, k);
+    }
+    const end = path.length as u64;
+    for (let j = top; j < end; j += 2) {
+      if (!this.tryLockAt(path[j] * NODE, path[j + 1])) {
+        // Back out of those taken, in the order taken.
+        for (let u = top; u < j; u += 2) {
+          this.unlock(path[u] * NODE, path[u + 1]);
+        }
+        return DEL_RETRY;
+      }
+    }
+    const i = this.findSlot(leaf, k);
+    if (i < LEAF_CAP) {
+      this.clearTag(leaf, i);
+      this.w[leaf + 1].store(meta - 1, "relaxed");
+      this.removeChild(path[top], k);
+    }
+    // Every node is unlocked with its version bumped, the freed ones too, before `release`. A
+    // reused node is not locked or bumped again: its version is already newer than any a stale
+    // holder read before the free. That keeps writers out of reused nodes: a `set` that stopped
+    // at a freed leaf after validating its parent fails `tryLockAt` at the version it read, where
+    // it would otherwise put its key into a leaf of another range (or an unlinked one). Readers
+    // would be safe without it, since a freed node's range was empty.
+    for (let j = top; j < end; j += 2) {
+      this.unlock(path[j] * NODE, path[j + 1]);
+    }
+    if (i >= LEAF_CAP) {
+      return DEL_ABSENT;
+    }
+    // Unlocked first: a reader that still reaches one waits while it is held.
+    for (let j = top + 2; j < end; j += 2) {
+      this.release(path[j]);
+    }
+    return DEL_DONE;
+  }
+
+  /**
+   * Removes the child holding `k` from inner node `p` (held, with two children or more), and
+   * one key next to it, so a neighbour takes over its (empty) range.
+   */
+  private removeChild(p: u64, k: u64) {
+    const b = p * NODE;
+    const meta = this.w[b + 1].load("relaxed");
+    const len = meta & LEN_MASK;
+    const i = this.position(b, k);
+    // Child i lies between keys i - 1 and i: the first child goes with the key after it, any
+    // other with the key before it.
+    const key = i > 0 ? i - 1 : 0;
+    for (let j = key; j + 1 < len; j++) {
+      this.w[b + keyAt(j)].store(this.w[b + keyAt(j + 1)].load("relaxed"), "relaxed");
+    }
+    this.w[b + keyAt(len - 1)].store(MAX_KEY, "relaxed");
+    for (let j = i; j < len; j++) {
+      this.w[b + childAt(j)].store(this.w[b + childAt(j + 1)].load("relaxed"), "relaxed");
+    }
+    this.w[b + 1].store(meta - 1, "relaxed");
+    this.reindex(b, len - 1);
+  }
+
+  /** Pushes node `n`, unlinked and not held, on the free list. */
+  private release(n: u64) {
+    while (true) {
+      const s = this.spare.load("relaxed");
+      this.w[n * NODE + 1].store(s & LEN_MASK, "relaxed");
+      if (
+        this.spare.compareExchange(
+          s,
+          ((s & ~LEN_MASK) + SPARE_TAG) | (n + 1),
+          "release",
+          "relaxed",
+        ) ==
+        s
+      ) {
+        return;
+      }
     }
   }
 

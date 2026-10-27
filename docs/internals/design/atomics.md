@@ -214,11 +214,22 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
    → `u64`, bbtree's benchmark) in pure Velt: optimistic coupling through inner nodes, leaves
    latched, `Atomic<u64>` slots, the step-2 map's nodes and inline keys. Benchmarked against
    bbtree's `BBTreeMap` (sync) on 1–N threads.
-3. **Reclamation**: an atomic slot of `shared<T>` that can be replaced (`swap`, `compareExchange`)
-   with a protected `load()` (the hazard pointers of the `atom` branch's runtime, exposed per
-   slot). `Atom<T>` (#708) is then a Velt struct in std, and so are generic keys and values for
-   the concurrent map (a replaced key or value is retired, not freed, while a reader may hold
-   it).
+3. **Reclamation, in Velt** (approved on #1696, 2026-10-27; replaces the `atom` branch's runtime
+   hazard pointers: nothing of it is in Rust). Three language features, then std code on them:
+   - **`ThreadLocal<T>`** (implemented): a module constant with one value per thread, a number
+     or `bool`, emitted as the platform's thread-local storage by both backends (OS thread keys
+     where Cranelift has none: `velt dev`, arm64 Windows). Contracts: hir_encodings.md,
+     rt_abi.md "Thread-local values".
+   - **`Atomic<shared<T>>` and `Atomic<string>`**: a word owning one reference to an immutable
+     value. `store`/`exchange`/`compareExchange` move references; `load()` is a frozen borrow
+     (#36's rules) that counts nothing; a replaced value is retired, not released.
+   - **Read sections placed by the compiler**: opened at the first protected `load`, closed
+     before each `await`, `yield`, return and at loop back edges; a borrow live at a close is
+     counted there (one atomic increment). No new rule for users.
+   - **`velt:sync/epoch`**: epoch-based reclamation (one store and fence per section) on
+     `Atomic<u64>` and `ThreadLocal`, with per-thread retire lists. Then `Atom<T>` (#708's API)
+     as a std struct, and `ConcurrentMap<K, V>` with string keys (inline prefix and tag, keys
+     compared 16 bytes at a time in Velt, #1697) and retired values.
 
 ## Results of step 1
 
@@ -449,10 +460,22 @@ with one `or` and adds to the home pair before reading its key, and that took up
 slower to the numbers above. Second, putting home-slot checks into lookups made them slower: an
 unpredictable branch, and an extra line read for an absent key.
 
+Room comes back when a leaf empties (#1689). The delete of a leaf's last key takes every node
+from the lowest ancestor with another child down to the leaf, at the versions read on the way
+down. It removes that ancestor's child and a key next to it, so a neighbour covers the empty
+range, and pushes the leaf and the inner nodes in between (each left with one child) on a free
+list. The list is a stack of node indices in one `Atomic<u64>`, with a count of changes in its
+high half against ABA, linked through the free nodes' meta words. A node's version only grows,
+through being freed and reused too, so a reader holding a stale index fails its check as with
+a split. The bump on free is what keeps writers out of reused nodes: a `set` that stopped at a
+leaf after validating its parent takes it with `tryLockAt` at the version it read, and without
+the bump would put its key into a leaf of another range (readers would be safe without it, since
+a freed node's range was empty). A split's new node may be initialized without its latch: it is
+reachable only through its new parent, which is unlocked after, and anyone still holding it
+from before the free holds an older version. Leaves are not merged, and the root never shrinks.
+
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
-and unlinked), and giving room back (an emptied leaf is never reused, so keys moving to new
-ranges use up the capacity over the map's life). A leaf split sorts its 56 pairs with an
-insertion sort into two small arrays.
+and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two small arrays.
 
 ## Not in this design
 

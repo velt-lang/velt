@@ -138,7 +138,18 @@ Promises behave like JavaScript's, at Rust's cost:
   Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
   only when every holder dropped it without awaiting it. A promise that is never shared costs
   what it did before; a shared one costs a small side record and one share of the result per
-  `await`. A shared promise is driven on the task that shares it:
+  `await`. Every holder is the same promise for `===`, `Object.is`, `includes`, `indexOf` and
+  `Set` / `Map` keys, as in Node, also once it is passed where a `Promise<unknown>` (or a
+  promise with a wider error type) is expected: a `Set<Promise<unknown>>` counts a promise
+  once however often it is added, and awaiting it anywhere handles its rejection for the set
+  too, as handling any of its conversions does
+  ([#1682](https://github.com/velt-lang/velt/issues/1682)). `p.then(f)` is another promise.
+  Identity stays on the task that holds the promise: holders handed to another task (a `Set`
+  of promises passed to `spawn`) are other promises there, each its own, so a set moved to a
+  spawned task does not find its own elements; a promise converted for an argument of a
+  spawned call is not the promise it converts. On WebAssembly a converted promise reports its
+  rejection as its own (docs/tooling/webassembly.md).
+  A shared promise is driven on the task that shares it:
   - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
     using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
     it on both tasks.
@@ -567,7 +578,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   An `Atomic` is used where it is, never copied or shared, and binding a part of a `shared`
   value that holds one to a variable is an error. See [Atomics and velt:sync](../std/sync.md),
   which also has `Backoff` and `VersionLatch` (optimistic lock coupling) for lock-free data
-  structures.
+  structures, and `ThreadLocal<T>`, a module constant with one value per thread.
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
   runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
   runs it alone, exactly as `with` does (a writer that has waited a while holds new readers
