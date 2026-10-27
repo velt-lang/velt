@@ -180,6 +180,9 @@ Decisions and their rationale, including what is still planned:
   System.Text.Json (proposed, issue #1655).
 - [Building strings fast](design/string-building.md): builder appends compiled inline, a Velt
   `StringBuilder`, and byte views of strings (proposed, issue #1677).
+- [Velt on Cloudflare Workers](design/cloudflare-workers.md): host imports declared in Velt, the
+  Workers target and glue, async over host promises, and `velt:cloudflare`, with Rust kept to the
+  executor's wake entry (proposed, issue #1734).
 
 ## Testing
 
