@@ -1,0 +1,13 @@
+<home>
+render: LoadError cannot load bad-page
+refresh: step 2 failed
+<CHART> <CHART>
+lazy: cannot load bad-chart
+lazy: cannot load bad-chart
+loaded 3 of 3
+load: RangeError step 3 failed
+load: LoadError late chunk
+loaded 1 of 3
+0 <a>
+1 failed: cannot load bad-b
+collected: cannot load bad-x

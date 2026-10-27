@@ -344,7 +344,8 @@ impl FnCx<'_, '_> {
         }
         let ann = v.ty.as_ref().map(|t| self.resolve(t));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
-            if let Some(t) = &v.ty {
+            let init_ty = v.init.as_ref().and_then(crate::throws::written_init_type);
+            if let Some(t) = v.ty.as_ref().or(init_ty) {
                 self.cx.note_written_type(name.span, t.span);
             }
             self.simple_decl(v, name, ann, span, out);
@@ -491,7 +492,8 @@ impl FnCx<'_, '_> {
                 }
                 Some(t) => {
                     // Stored into the variable's site (`throws::fn_flows`).
-                    let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                    let site =
+                        (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
                 None => self.copy_init(e, name, Want::Move),

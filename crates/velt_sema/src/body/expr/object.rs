@@ -400,6 +400,7 @@ impl FnCx<'_, '_> {
             hs.push(h);
         }
         let (def, type_args) = self.anon_def(&fields);
+        self.note_anon_written(def, ps.iter().map(|(_, v)| *v));
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {
             def,

@@ -1,3 +1,0 @@
-proxy_trap_throws_string.vlt:7:7: error: this function throws `string`, but the function type it is used as does not allow throwing
-  = note: TypeScript lets a proxy trap throw any value; in Velt a trap may throw only `Error` classes
-  = note: throw an `Error` instead, such as `throw new Error(String(value))`

@@ -298,7 +298,11 @@ impl FnCx<'_, '_> {
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         self.weak_key_args = self.weak_method(def);
+        // A promise set into a `Map` (or pushed) whose type is a site (`throws::promise_sites`).
+        let stored = self.stored_arg_site(&recv, &name, args);
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, stored);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.cx.fn_sites.push = outer;
         self.note_async_args(def, &ck.args);
         let this_recv = self.this_recv(&recv);
         let recv = self.receiver(

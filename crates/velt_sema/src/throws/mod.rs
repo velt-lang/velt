@@ -21,6 +21,7 @@ mod fn_types;
 mod groups;
 mod infer;
 mod inits;
+mod promise_sites;
 mod sets;
 mod vars;
 
@@ -33,6 +34,7 @@ pub(crate) use fn_types::FnTypeSeeds;
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
+pub(crate) use promise_sites::written_init_type;
 
 use crate::ctx::Ctx;
 use crate::defs::ThrowSrc;

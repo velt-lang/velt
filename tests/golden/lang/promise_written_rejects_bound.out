@@ -1,0 +1,13 @@
+wrap caught no bad-wrap
+f caught no bad-f
+box caught no bad-box
+tuple caught no bad-tuple
+rec caught no bad-rec
+class caught no bad-class
+nested caught no bad-nested
+runIt fn caught bad url
+runIt closure caught bad url
+make 0 caught null
+make 1 caught undefined
+make 2 caught 7
+make 3 3

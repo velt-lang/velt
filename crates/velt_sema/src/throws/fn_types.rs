@@ -33,6 +33,17 @@ pub(crate) enum Portable {
     Option(Box<Portable>, Nothing),
 }
 
+impl Portable {
+    /// How many types it is made of.
+    fn size(&self) -> usize {
+        match self {
+            Portable::Leaf(_) => 1,
+            Portable::Def(_, _, args) => 1 + args.iter().map(Portable::size).sum::<usize>(),
+            Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
+        }
+    }
+}
+
 /// What each site throws, by the span of its written function type.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FnTypeSeeds {
@@ -78,6 +89,25 @@ pub(crate) struct FnSites {
     /// The site the value being checked is stored into (an argument's parameter, a variable's
     /// or a field's type): what a closure created there throws goes into that site only.
     pub target: Option<Span>,
+    /// The argument (by its span) of the `push` being checked and the site of its array's
+    /// element type (`promise_sites`).
+    pub push: Option<(Span, Span)>,
+    /// The result type of an async function is being resolved: its `Promise<T>` rejects with
+    /// what the body throws, so it is no site (`promise_sites`).
+    pub async_ret: bool,
+    /// The open error types of `new Promise` executors being checked and of
+    /// `Promise.withResolvers` calls, with the site of each (`promise_sites`).
+    pub rejects: Vec<(TyId, Span)>,
+    /// Where the type of a field of an object literal's anonymous type is written in its value
+    /// (`{ list: [] as Promise<T>[] }`), by def and field (the first literal of that shape).
+    pub anon_written: FxHashMap<(DefId, u32), Span>,
+    /// Async closures checked for a function type with a promise member in its result: the
+    /// argument's span and the closure's (`promise_sites`).
+    pub async_args: Vec<(Span, Span)>,
+    /// The closure (by its span) whose `return` without a site is being checked, and what the
+    /// promises returned there reject with that its type didn't allow (`promise_sites`).
+    pub closure_return: Option<Span>,
+    pub closure_rejects: Vec<(Span, TyId)>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
@@ -346,7 +376,7 @@ impl Ctx<'_> {
 
     /// Record `t` as the type of the site at `span` (a user module's function type written
     /// without `throws`).
-    fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
+    pub(super) fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
         if !self.site_module(module) || span == Span::DUMMY {
             return;
         }
@@ -362,16 +392,12 @@ impl Ctx<'_> {
 
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
-    /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
-    /// reach every function type of the same shape, and a value that is no `Error` (`null`)
-    /// would reach `catch` blocks and standard library callbacks that never see it.
+    /// `err` can't be kept (then the use is reported). Any thrown type another check can hold is
+    /// kept (`null`, a string, a class), as JavaScript may throw any value.
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
-            if !self.is_error_class(m) {
-                return false;
-            }
-            match self.port(m, 0) {
+            match self.port_thrown(m) {
                 Some(p) => members.push(p),
                 None => return false,
             }
@@ -554,6 +580,14 @@ impl Ctx<'_> {
         }
     }
 
+    /// `t` as a [`Portable`] type kept in an inferred error set: as in JavaScript any thrown
+    /// value (`null`, a string, a class, `Error | null`), but only a small type, since the sets
+    /// reach every call through their sites.
+    pub(super) fn port_thrown(&self, t: TyId) -> Option<Portable> {
+        let p = self.port(t, 0)?;
+        (p.size() <= 8).then_some(p)
+    }
+
     /// `t` as a [`Portable`] type, for the seeds of another check.
     pub(super) fn port_type(&self, t: TyId) -> Option<Portable> {
         self.port(t, 0)
@@ -577,6 +611,7 @@ impl Ctx<'_> {
             | TyKind::Str
             | TyKind::Unit
             | TyKind::Symbol
+            | TyKind::Never
             | TyKind::Literal(_) => Portable::Leaf(k.clone()),
             TyKind::Adt(d, args) if (d.0 as usize) < self.collected_defs => {
                 let span = *self.def_spans.get(d.0 as usize)?;
@@ -608,36 +643,6 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
-    }
-
-    /// Is a closure stored at `site` (when known) as a value of `used_as` a trap of std/proxy's
-    /// `ProxyHandler`: that site, or (an object literal's method) a trap of its shape?
-    pub(crate) fn is_trap_site(&self, site: Option<Span>, used_as: TyId) -> bool {
-        let in_proxy =
-            |s: &Span| (self.modules.iter()).any(|m| m.file == s.file && m.path == "std/proxy");
-        match site {
-            Some(s) => in_proxy(&s),
-            None => (self.fn_sites.sites.iter())
-                .any(|(s, g)| in_proxy(s) && self.site_matches(*g, used_as, 0)),
-        }
-    }
-
-    /// Is `t` the prelude's `Error` or a class extending it?
-    pub(super) fn is_error_class(&mut self, t: TyId) -> bool {
-        let Some(root) = self.prelude_adt("Error") else {
-            return false;
-        };
-        let mut cur = t;
-        for _ in 0..64 {
-            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
-                return true;
-            }
-            match self.base_of(cur) {
-                Some(b) => cur = b,
-                None => return false,
-            }
-        }
-        false
     }
 
     /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
