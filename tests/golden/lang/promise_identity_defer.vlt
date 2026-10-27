@@ -1,0 +1,49 @@
+// The shape of sigx's `Defer` collector (runtime-core/src/defer.ts, #1682): each load promise
+// is counted once however often it is added, and leaves the set when it settles.
+interface DeferCollector {
+  add(p: Promise<unknown>): void;
+}
+
+function makeDefer(log: string[]): { collector: DeferCollector; pending: () => number } {
+  const state = { pending: 0 };
+  const tracked = new Set<Promise<unknown>>();
+  const collector: DeferCollector = {
+    add(p) {
+      if (tracked.has(p)) return;
+      tracked.add(p);
+      queueMicrotask(() => {
+        state.pending++;
+        log.push(`+ ${state.pending}`);
+      });
+      void p.finally(() => {
+        tracked.delete(p);
+        state.pending--;
+        log.push(`- ${state.pending} ${tracked.size}`);
+      });
+    },
+  };
+  return { collector, pending: () => state.pending };
+}
+
+async function load(name: string): Promise<string> {
+  await Promise.resolve();
+  return name;
+}
+
+async function main() {
+  const log: string[] = [];
+  const d = makeDefer(log);
+  const a = load("a");
+  const b = load("b");
+  d.collector.add(a);
+  d.collector.add(a);
+  d.collector.add(b);
+  d.collector.add(a);
+  console.log("after add", d.pending());
+  console.log(await a, await b);
+  await new Promise<void>((r) => setTimeout(() => r(), 0));
+  console.log(log.join(", "));
+  console.log("left", d.pending());
+}
+
+main();

@@ -49,6 +49,12 @@ The language and the standard library as on native targets, single-threaded:
   there is no time zone;
 - panics print `panic: …` and exit with 101, like native programs.
 
+One difference from native targets and Node: a promise passed where a `Promise<unknown>` is
+expected and kept that way (in a `Set<Promise<unknown>>`, say) reports its rejection as its own
+when nothing awaits it there, even if the program handled the rejection through the original
+promise ([#1682](https://github.com/velt-lang/velt/issues/1682)). Await or `catch` the kept
+promise too.
+
 **Not available**: TCP, the HTTP server, child processes and the database drivers; the link
 fails with a note naming the missing runtime function. `fetch` links but rejects with
 `IoError` `ENOTSUP` (there is no network), so code that only builds `Response`s runs. Browser

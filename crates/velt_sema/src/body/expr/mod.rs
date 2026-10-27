@@ -145,6 +145,7 @@ mod per_use;
 mod primitive_statics;
 mod process;
 mod promise_new;
+mod promise_same;
 mod promise_then;
 mod promise_union;
 mod proxy;

@@ -1,0 +1,22 @@
+// A rejected promise kept in a `Set` and an array is one promise (#1682): awaiting it through
+// the array handles its rejection, and the set still finds it.
+async function bad(): Promise<string> {
+  throw new Error("boom");
+}
+
+async function main() {
+  const p = bad();
+  const s = new Set<typeof p>();
+  s.add(p);
+  s.add(p);
+  const arr = [p];
+  console.log(s.has(p), s.size, arr.includes(p), arr[0] === p);
+  try {
+    await arr[0];
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log("end", s.has(p));
+}
+
+main();

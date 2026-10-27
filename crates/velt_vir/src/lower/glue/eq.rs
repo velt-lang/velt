@@ -5,7 +5,7 @@
 //! prelude `Map` and `Record` classes compare by content in any key order (Node's
 //! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
 //! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
-//! instances, object types, arrays, interface and function values) hash their identity, a type
+//! instances, object types, arrays, interface and function values, promises) hash their identity, a type
 //! declared with `struct` its fields, the rest by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
 //! strings hash their bytes with `velt_rt_str_hash`.
 //!
@@ -105,6 +105,7 @@ impl FnLower<'_, '_> {
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
+            TyKind::Promise(..) => self.promise_identity(a, b),
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
@@ -141,6 +142,11 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
+            // Agreeing with `promise_identity`.
+            TyKind::Promise(..) => {
+                let id = self.promise_id(place);
+                self.fx_combine(cint(0, Ty::U64), id)
+            }
             // A `struct` key hashes its content, as `KeyEq` compares it (same.rs).
             _ if self.cx.content_key(ty) => {
                 let a = self.addr(place.clone());

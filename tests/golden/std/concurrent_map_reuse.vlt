@@ -1,0 +1,94 @@
+// velt:collections/concurrent_map gives room back: a leaf whose last key is deleted is unlinked
+// and reused, with inner nodes left without children, so a map of fixed capacity holds keys that
+// keep moving to new ranges (#1689). Checked against a `Map` as keys come and go in blocks.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+function window() {
+  // 1,000 keys present at a time, 1M set: without reuse this capacity runs out at about 12k.
+  const m = ConcurrentMap.create(10000);
+  const n: u64 = 1000000;
+  for (let i: u64 = 0; i < n; i++) {
+    m.set(i, i * 3);
+    if (i >= 1000) {
+      m.delete(i - 1000);
+    }
+  }
+  let present: u64 = 0;
+  let wrong: u64 = 0;
+  for (let i = n - 2000; i < n; i++) {
+    const v = m.get(i);
+    if (v != undefined) {
+      present++;
+      if (v != i * 3) {
+        wrong++;
+      }
+    }
+  }
+  console.log("window: present", present, "wrong", wrong);
+}
+
+function rounds() {
+  // Filled and emptied again: the emptied tree's leaves come back, down to the last one.
+  const m = ConcurrentMap.create(60000);
+  let ok = true;
+  for (let r: u64 = 0; r < 6; r++) {
+    for (let i: u64 = 0; i < 50000; i++) {
+      m.set(r % 2 == 0 ? i : mix(i) >> 1, i + r);
+    }
+    for (let i: u64 = 0; i < 50000; i++) {
+      const k = r % 2 == 0 ? i : mix(i) >> 1;
+      if (m.get(k) != i + r || !m.delete(k)) {
+        ok = false;
+      }
+    }
+    for (let i: u64 = 0; i < 50000; i += 97) {
+      if (m.has(r % 2 == 0 ? i : mix(i) >> 1)) {
+        ok = false;
+      }
+    }
+  }
+  console.log("rounds:", ok);
+}
+
+function blocks() {
+  // Blocks of 64 neighbouring keys set and deleted whole, so leaves anywhere in the tree empty.
+  const m = ConcurrentMap.create(40000);
+  const model = new Map<u64, u64>();
+  let wrong: u64 = 0;
+  for (let step: u64 = 0; step < 3000; step++) {
+    const r = mix(step);
+    const block = (r >> 8) % 400;
+    const add = (r & 3) != 0 || model.size == 0;
+    for (let j: u64 = 0; j < 64; j++) {
+      const k = block * 64 + j;
+      if (add) {
+        m.set(k, k + step);
+        model.set(k, k + step);
+      } else if (m.delete(k) != model.delete(k)) {
+        wrong++;
+      }
+    }
+    if (step % 500 == 499) {
+      for (let k: u64 = 0; k < 400 * 64; k++) {
+        if (m.get(k) != model.get(k)) {
+          wrong++;
+        }
+      }
+    }
+  }
+  console.log("blocks: size", model.size, "wrong", wrong);
+}
+
+function main() {
+  window();
+  rounds();
+  blocks();
+}

@@ -333,6 +333,7 @@ impl FnLower<'_, '_> {
                 | I::RwLockNew
                 | I::LockRead
                 | I::PromiseWiden
+                | I::PromiseSame
                 | I::ChanSend
                 | I::ChanReceive
                 | I::ChanTrySend

@@ -1,0 +1,49 @@
+// Reads of a string's bytes see the writes to the string field that holds them (#1669): an
+// inline string keeps its text inside the 24-byte value, so a store to the field changes the
+// text that a later byte read in the same loop returns, while the integer fields next to it
+// (whose stores the byte reads may be reordered with) do not.
+import { utf8ByteAt } from "velt:encoding";
+
+class Holder {
+  s: string = "a";
+  pos: usize = 0;
+  count: i32 = 0;
+
+  // Rewrites the inline field every iteration, then reads its first byte.
+  rewrite(words: string[]): string {
+    let out = "";
+    for (const w of words) {
+      this.s = w;
+      this.pos = 0;
+      out += String.fromCharCode(utf8ByteAt(this.s, this.pos) as number);
+      out += String.fromCharCode(this.s.charCodeAt(1));
+    }
+    return out;
+  }
+
+  // Counts bytes up to a quote, updating the integer fields as it goes.
+  scan(): i32 {
+    this.pos = 0;
+    this.count = 0;
+    while (this.pos < utf8Length(this.s)) {
+      this.count++;
+      const b = utf8ByteAt(this.s, this.pos);
+      if (b == 34) break;
+      this.pos++;
+    }
+    return this.count;
+  }
+}
+
+function utf8Length(s: string): usize {
+  return s.length as usize;
+}
+
+const h = new Holder();
+console.log(h.rewrite(["xy", "pq", "mn", "ab"]));
+h.s = 'abc"def';
+console.log(h.scan(), h.pos, h.count);
+h.s = ["a long string with a quote ", '" in the middle'].join("");
+console.log(h.scan(), h.pos, h.count);
+h.s = "no quote";
+console.log(h.scan(), h.pos, h.count);

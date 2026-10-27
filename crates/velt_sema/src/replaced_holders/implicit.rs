@@ -593,6 +593,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ChanTryReceive
         | I::SourceLocation
         | I::PromiseWiden
+        | I::PromiseSame
         | I::PerfNow
         | I::ProxyArrayCall
         | I::ProxyArrayHole

@@ -451,3 +451,25 @@ fn two_clones_meeting_in_one_local_through_a_shared_register_are_kept() {
     kit.pb.add(fb.finish());
     assert_eq!(borrow(kit.pb.finish()), (false, 3));
 }
+
+#[test]
+fn text_read_through_the_text_aggregate_is_a_byte_not_a_pointer() {
+    // The byte read `*(dp as u8)` as lowering writes it: `(*dp as string text).0`.
+    let mut p = program(Between::Nothing, true);
+    p.aggs.push(velt_vir::vir::AggLayout {
+        name: velt_vir::STR_TEXT_AGG_NAME.into(),
+        size: 1,
+        align: 1,
+        fields: vec![(Ty::U8, 0)],
+    });
+    let text = AggId(p.aggs.len() as u32 - 1);
+    let f = p.funcs.last_mut().expect("f");
+    for s in f.blocks.iter_mut().flat_map(|b| &mut b.stmts) {
+        if let Stmt::Assign(_, Rvalue::Use(Operand::Copy(pl))) = s {
+            if pl.proj == [Proj::Deref(Ty::U8)] {
+                pl.proj = vec![Proj::Deref(Ty::Agg(text)), Proj::Field(0)];
+            }
+        }
+    }
+    assert_eq!(borrow(p), (true, 0));
+}

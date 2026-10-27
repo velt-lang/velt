@@ -111,6 +111,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
 | `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
 | `velt_rt_fut_share` | `(VeltFut* f, u64 result_size, void (*share)(const void* src, void* dst), void (*result_drop)(void* slot)) -> VeltFut*` | another holder of promise `f` (§1.2): a new handle on `f`, which is now shared; null stays null. `share` writes another reference to a result into a slot (null: the bytes are copied), `result_drop` drops one (null: nothing to drop) (additive) |
+| `velt_rt_fut_id` | `(VeltFut* f) -> u64` | the identity of promise `f` (§1.3): what `===` and `Set` / `Map` keys compare and hash for a promise; the same for every holder of a shared promise and for a converted promise and the promise it converts; null gives 0 (additive) |
+| `velt_rt_fut_alias` | `(VeltFut* w, VeltFut* inner, void (*quiet_drop)(void* slot))` | converted promise `w` (from `velt_rt_fut_box`, not yet run) wraps or awaits `inner` (a holder, borrowed): `w` stands for the promise `inner` holds when that one is shared (§1.3); `quiet_drop` drops `w`'s result without a report (null: nothing to drop). No-op for anything else (additive) |
+| `velt_rt_fut_views` | `(u8 on)` | the holders `velt_rt_fut_share` makes until it is called with 0 are *views* (§1.3), through which a converted promise awaits the promise it stands for (additive) |
 | `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending (additive) |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
@@ -214,6 +217,32 @@ shares a promise never calls it, and its futures are unchanged.
 - A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
   hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
   the other finds it settled.
+
+### 1.3 Promise identity
+
+JS compares promises by reference (#1682). Each holder of a shared promise is a pointer of its
+own, so lowering compares and hashes promises with `velt_rt_fut_id`: the original future of a
+shared promise (it stays allocated while any holder lives), the future itself for an unshared
+one (the same pointer once it is shared, so a hash taken before stays valid).
+- A converted promise is a new future: a `Promise<T, E1>` as a `Promise<T, E2>`
+  (`Intrinsic::PromiseWiden`, a wrapper owning `inner`), or a `Promise<T>` as a
+  `Promise<unknown>` (`Intrinsic::PromiseSame`: a `then` converting the value, which awaits a
+  holder of the promise). Lowering marks it with `velt_rt_fut_alias` before it runs: when the
+  promise it converts is shared, it keeps a holder of that promise of its own until its owner
+  drops it, and its identity is that promise's.
+- Its rejection is that promise's, reported once. A `then` converting a value awaits the
+  promise through a view (`velt_rt_fut_views` around its creation), whose taking the result
+  handles nothing; when the converted promise's rejection is unclaimed at the microtask
+  checkpoint, it is reported only if no other holder of the promise took the result, and
+  dropped with `quiet_drop` otherwise. Taking a converted promise's result (its owner, a
+  holder of it, a combinator) counts as taking the promise's, so every other conversion of it
+  is quiet too.
+- Identity stays on the task: a converted promise handed to another task
+  (`velt_rt_fut_transfer`) or given up (`velt_rt_fut_detach`) gives up its holder and record
+  there, on its own task, and a lazy marked node is never started by `velt_rt_fut_start`. A
+  holder handed over is its proxy's promise on the other task.
+- WebAssembly keeps identities but has no views: a
+  converted promise's rejection is reported as its own there.
 
 ## 2. Tasks
 

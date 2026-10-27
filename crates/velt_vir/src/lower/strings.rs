@@ -174,6 +174,14 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Ptr, Rvalue::Cast(data, Ty::Ptr))
     }
 
+    /// The byte of a string's text at pointer `bp`: read through the text aggregate
+    /// (`STR_TEXT_AGG_NAME`), so the LLVM backend knows the load reads no object field or array
+    /// header (#1669).
+    fn text_byte(&mut self, bp: &Place) -> Place {
+        let text = self.cx.text_agg();
+        proj(&proj(bp, Proj::Deref(Ty::Agg(text))), Proj::Field(0))
+    }
+
     /// Byte `i` of the UTF-8 bytes of string `v` (a `u8`), unchecked (`StrByteAt`).
     pub(super) fn str_byte_at(&mut self, v: Operand, i: Operand) -> Operand {
         let p = self.operand_place(v, Ty::Agg(STR_AGG));
@@ -182,7 +190,7 @@ impl FnLower<'_, '_> {
         else {
             ice("rvalue_temp returns a place")
         };
-        let byte = Operand::Copy(proj(&bp, Proj::Deref(Ty::U8)));
+        let byte = Operand::Copy(self.text_byte(&bp));
         self.rvalue_temp(Ty::U8, Rvalue::Use(byte))
     }
 
@@ -308,7 +316,7 @@ impl FnLower<'_, '_> {
         ) else {
             ice("rvalue_temp returns a place")
         };
-        let byte = Operand::Copy(proj(&bp, Proj::Deref(Ty::U8)));
+        let byte = Operand::Copy(self.text_byte(&bp));
         self.assign(Place::local(out), Rvalue::Cast(byte, Ty::I64));
         self.goto(join);
         self.switch_to(call);
