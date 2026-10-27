@@ -1,4 +1,4 @@
-// A base class (Velt has no abstract classes) whose subclass holds a WeakRef, passed to spawn.
+// A plain base class (not an abstract one) whose subclass holds a WeakRef, passed to spawn.
 class V { n: number; constructor(n: number) { this.n = n; } }
 class Base { peek(): number { return 0; } }
 class H extends Base {
