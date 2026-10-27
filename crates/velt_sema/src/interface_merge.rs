@@ -19,10 +19,15 @@ use velt_syntax::ast;
 use crate::SourceModule;
 
 /// The modules with their interfaces merged and their augmentation blocks removed, or `None`
-/// when no module has either (the common case: nothing is copied); with the errors found.
-pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>) {
+/// when no module has either (the common case: nothing is copied); with the errors found, and
+/// the host imports (`declare module "wasm:<name>" { function … }`, hoisted into their module as
+/// `declare function`s) by signature span, each with its import module's name.
+pub(crate) fn rewrite(
+    modules: &[SourceModule],
+) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>, HostImports) {
+    let mut host = HostImports::default();
     if !modules.iter().any(needs_rewrite) {
-        return (None, vec![]);
+        return (None, vec![], host);
     }
     let mut out: Vec<SourceModule> = modules
         .iter()
@@ -59,6 +64,15 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
             .items
             .retain(|i| !matches!(i.kind, ast::ItemKind::Augment(_)));
         for block in blocks {
+            if let Some(name) = host_module(&block, &mut diags) {
+                for item in block.items {
+                    if let ast::ItemKind::ExternFn(sig) = &item.kind {
+                        host.insert(sig.span, name.clone());
+                        out[m].ast.items.push(item);
+                    }
+                }
+                continue;
+            }
             for item in block.items {
                 let decl = match item.kind {
                     ast::ItemKind::Interface(d) if d.call_sigs.is_empty() => d,
@@ -115,7 +129,27 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
             }
         }
     }
-    (Some(out), diags)
+    (Some(out), diags, host)
+}
+
+/// Host imports by signature span: the import module each was declared in.
+pub(crate) type HostImports = FxHashMap<Span, String>;
+
+/// The import module of a `declare module "wasm:<name>"` block (`None`: an augmentation, or a
+/// name that is not a plain identifier, which is reported).
+fn host_module(block: &ast::Augment, diags: &mut Vec<Diagnostic>) -> Option<String> {
+    let (spec, span) = block.module.as_ref()?;
+    let name = spec.strip_prefix(velt_syntax::HOST_SCHEME)?;
+    let ident = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !ident {
+        diags.push(Diagnostic::error(
+            format!("`{spec}` is not a host import module: the name after `wasm:` must be letters, digits and `_`, starting with a letter or `_`"),
+            *span,
+        ));
+        return None;
+    }
+    Some(name.to_string())
 }
 
 /// Does module `m` have an augmentation block or an interface declared twice?

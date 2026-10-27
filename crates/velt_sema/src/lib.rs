@@ -25,6 +25,7 @@
 //! Semantic decisions other stages rely on are documented on [`body`] and the modules above.
 
 pub mod hir;
+pub mod host_import;
 
 mod absent_fields;
 mod alias_expand;
@@ -291,7 +292,7 @@ fn check_timed(
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
-    let (merged, diags) = interface_merge::rewrite(modules);
+    let (merged, diags, host_imports) = interface_merge::rewrite(modules);
     merge_diags.extend(diags);
     let modules = merged.as_deref().unwrap_or(modules);
     let (callable, diags) = call_sigs::rewrite(modules);
@@ -338,6 +339,7 @@ fn check_timed(
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
+        cx.host_imports = host_imports.clone();
         cx.gen_throw = ts_protocol::calls_throw(modules);
         cx.alias_blocked = alias_blocked.clone();
         if let Some(l) = &lifted {

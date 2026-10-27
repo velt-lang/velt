@@ -53,7 +53,10 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
         let def = match &cx.info[i] {
             DefInfo::Fn(f) => Some(Def::ExternFn(ExternFnDef {
                 name: f.name.clone(),
-                symbol: f.name.clone(),
+                symbol: match cx.host_imports.get(&f.span) {
+                    Some(module) => crate::host_import::symbol(module, &f.name),
+                    None => f.name.clone(),
+                },
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,
                 is_async: f.is_async,

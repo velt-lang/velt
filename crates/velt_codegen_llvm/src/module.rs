@@ -242,8 +242,16 @@ fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
         (false, Effects::Cold) => COLD_ATTRS,
         (false, Effects::Any) => EXTERN_ATTRS,
     };
+    // A host import is the wasm import `(import "<module>" "<name>")` (the driver allows it only
+    // for a target whose host provides it).
+    let import = match velt_vir::host_import::parse(&e.symbol) {
+        Some((module, name)) => {
+            format!(" \"wasm-import-module\"=\"{module}\" \"wasm-import-name\"=\"{name}\"")
+        }
+        None => String::new(),
+    };
     Ok(format!(
-        "declare {} {}({params}) {attrs}\n",
+        "declare {} {}({params}) {attrs}{import}\n",
         abi_ret(e.ret)?,
         global_name(&e.symbol)
     ))

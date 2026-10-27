@@ -125,6 +125,7 @@
 //! `$.field[3]`-style path built only on the failure path.
 
 pub mod vir;
+pub use velt_sema::host_import;
 
 /// The name of the aggregate every array is (`{ data: Ptr, len: U64, cap: U64 }`), which no
 /// user type can have: optimizations may rely on an array's `len` (field 1) being an element

@@ -19,6 +19,10 @@ mod work;
 use rustc_hash::FxHashMap;
 
 pub use js_number::js_number;
+
+/// The specifier prefix of a host import module, `declare module "wasm:<name>" { … }`: the
+/// functions the WebAssembly host provides (docs/internals/design/cloudflare-workers.md §1).
+pub const HOST_SCHEME: &str = "wasm:";
 /// The names code reads without declaring them, scope-aware (sema checks the root file's early
 /// uses with these).
 pub use parser::script_names::{expr_free_uses, stmt_free_uses, FreeUse};

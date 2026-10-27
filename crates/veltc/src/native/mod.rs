@@ -239,6 +239,11 @@ pub fn check_declares(
     let io = IoTypes::find(p, sm, std_root);
     for def in &p.defs {
         let Def::ExternFn(f) = def else { continue };
+        // Host imports come from the wasm host, not a native library (the backend checks the
+        // target).
+        if velt_sema::host_import::parse(&f.symbol).is_some() {
+            continue;
+        }
         if std_files.contains(&f.span.file) {
             if f.symbol.starts_with(STD_DRIVER_PREFIX) {
                 check_std_driver(p, io, f, diags);

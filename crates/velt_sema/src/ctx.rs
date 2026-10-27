@@ -377,6 +377,8 @@ pub(crate) struct Ctx<'m> {
     pub held_borrows: bool,
     /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
     pub ns_private: Vec<crate::namespaces::Private>,
+    /// Host imports (`declare module "wasm:<name>"`) by signature span: their import module.
+    pub host_imports: crate::interface_merge::HostImports,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
     /// Module constants taken over, reported: (constant, start of the value taken) → index in
@@ -580,6 +582,7 @@ impl<'m> Ctx<'m> {
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
             ns_private: vec![],
+            host_imports: Default::default(),
             held_borrows_used: false,
             moved_consts: Default::default(),
             borrow_pass_errors: false,

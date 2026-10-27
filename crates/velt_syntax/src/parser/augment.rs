@@ -7,6 +7,7 @@
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
+use crate::HOST_SCHEME;
 use velt_common::Span;
 
 impl<'a> Parser<'a> {
@@ -45,6 +46,10 @@ impl<'a> Parser<'a> {
             return Err(Fail);
         }
         self.bump(); // {
+                     // `declare module "wasm:<name>"`: functions the wasm host provides, not an augmentation.
+        let host = module
+            .as_ref()
+            .is_some_and(|(spec, _)| spec.starts_with(HOST_SCHEME));
         let mut items = vec![];
         while !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
             if self.eat(Tok::Semi) {
@@ -68,7 +73,11 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
-            let Ok(kind) = self.parse_augment_member(item_lo, global) else {
+            let member = match host {
+                true => self.parse_host_member(item_lo),
+                false => self.parse_augment_member(item_lo, global),
+            };
+            let Ok(kind) = member else {
                 self.skip_to_block_end();
                 return Err(Fail);
             };
@@ -97,6 +106,21 @@ impl<'a> Parser<'a> {
                 return;
             }
         }
+    }
+
+    /// One declaration in a `declare module "wasm:…"` block: a host import.
+    fn parse_host_member(&mut self, lo: u32) -> PResult<ItemKind> {
+        if self.at_kw(Kw::Function)
+            || (self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function))
+        {
+            return Ok(ItemKind::ExternFn(self.parse_host_import(lo)?));
+        }
+        let span = Span::new(self.file, lo, self.cur_span().hi);
+        self.error(
+            "only functions can be declared in a `declare module \"wasm:…\"` block: it lists the functions the WebAssembly host provides",
+            span,
+        );
+        Err(Fail)
     }
 
     /// One declaration in an augmentation block: an interface (which merges), or in

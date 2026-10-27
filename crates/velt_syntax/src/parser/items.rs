@@ -182,6 +182,20 @@ impl<'a> Parser<'a> {
         Ok(sig)
     }
 
+    /// `[async] function name(...): R;` in a `declare module "wasm:…"` block: a function the
+    /// wasm host provides (a host import), declared like `declare function` without `declare`.
+    pub(super) fn parse_host_import(&mut self, lo: u32) -> PResult<FnSig> {
+        let is_async = self.eat_kw(Kw::Async);
+        let sig = self.parse_fn_sig(lo, is_async)?;
+        if sig.is_generator {
+            self.error("a host import cannot be a generator", sig.name.span);
+        }
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        Ok(sig)
+    }
+
     /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
     /// signature ending in `;` (or a line break: automatic semicolon insertion) is a
     /// TypeScript-form overload: the declarations of the same name that follow it, up to the one

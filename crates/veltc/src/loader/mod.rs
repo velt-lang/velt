@@ -448,10 +448,11 @@ impl Loader<'_, '_> {
                     Some((imp.from.clone(), imp.from_span))
                 }
                 // `declare module "spec" { … }` augments that module: it is loaded as an import.
+                // `declare module "wasm:<name>"` declares host imports and loads nothing.
                 ast::ItemKind::Augment(ast::Augment {
                     module: Some((spec, span)),
                     ..
-                }) => Some((spec.clone(), *span)),
+                }) if !spec.starts_with(velt_syntax::HOST_SCHEME) => Some((spec.clone(), *span)),
                 _ => None,
             })
             .collect();
