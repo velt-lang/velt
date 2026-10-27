@@ -130,9 +130,22 @@ impl FnCx<'_, '_> {
         if let Some((key, _)) = self.record_args(ot) {
             if key == self.cx.ty.str_ {
                 // A symbol or `string | symbol` key: the symbol table too.
-                let symbolic = self
-                    .trial_type(k)
-                    .is_some_and(|t| self.symbolic_key_type(t));
+                let kt = self.trial_type(k);
+                let symbolic = kt.is_some_and(|t| self.symbolic_key_type(t));
+                // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
+                let numbered = !symbolic && kt.is_some_and(|t| self.number_property_key(t));
+                if numbered && self.has_record_method("__hasKeyed") {
+                    // The record first, then the key, as JavaScript evaluates the arguments.
+                    let obj = self.expr(o, None, Want::Borrow);
+                    return self.with_temp("<record>", obj, o.span, span, |cx, r| {
+                        let kh = cx.expr(k, None, Want::Borrow);
+                        let kh = cx.property_key_of(kh);
+                        cx.with_temp("<key>", kh, k.span, span, |cx, key| {
+                            let obj = cx.expr(r, None, Want::Borrow);
+                            cx.record_call(obj, "__hasKeyed", std::slice::from_ref(key), span)
+                        })
+                    });
+                }
                 let keyed = (symbolic || self.cx.objects.record_accessors)
                     && self.has_record_method("__hasKeyed");
                 let method = if keyed { "__hasKeyed" } else { "__has" };

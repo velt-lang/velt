@@ -73,9 +73,12 @@ impl FnCx<'_, '_> {
                     // A symbol or `string | symbol` key stays one (the record's symbol table).
                     true => {
                         let kh = self.payload_expr(e, None, Want::Move);
-                        match self.symbolic_key_type(kh.ty) {
-                            true => kh,
-                            false => self.string_key_of(k, kh),
+                        if self.symbolic_key_type(kh.ty) {
+                            kh
+                        } else if self.number_property_key(kh.ty) {
+                            self.property_key_of(kh)
+                        } else {
+                            self.string_key_of(k, kh)
                         }
                     }
                     false => {

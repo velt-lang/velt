@@ -319,10 +319,21 @@ impl FnCx<'_, '_> {
         }
         // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
         let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
+        // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
+        let numbered = kind == KeyKind::Symbol && !symbolic && self.number_property_key(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
-        if open && (symbolic || accessors) && self.has_record_method("__inKeyed") {
+        if open && (symbolic || numbered || accessors) && self.has_record_method("__inKeyed") {
             // `r.__inKeyed(k)` (velt:record/symbols). The record is evaluated before the key,
             // which only a key and a record that both have effects could tell apart.
+            if numbered {
+                // The key first, as JavaScript evaluates it, then the record.
+                let kh = self.expr(lhs, None, Want::Borrow);
+                let kh = self.property_key_of(kh);
+                return self.with_temp("<key>", kh, lhs.span, span, |cx, k| {
+                    let obj = cx.expr(rhs, None, Want::Borrow);
+                    cx.record_call(obj, "__inKeyed", std::slice::from_ref(k), span)
+                });
+            }
             let obj = self.expr(rhs, None, Want::Borrow);
             return self.record_call(obj, "__inKeyed", std::slice::from_ref(lhs), span);
         }

@@ -245,8 +245,17 @@ impl FnCx<'_, '_> {
         // The methods of std/record/symbols.vlt, which a program loads when it
         // mentions symbols: without them, a symbol key is the type error it was.
         let keyed = keyed_method(method).filter(|m| self.has_record_method(m));
-        let h = self.payload_expr(e, None, want);
-        let symbolic = self.symbolic_key_type(h.ty);
+        let mut h = self.payload_expr(e, None, want);
+        let mut symbolic = self.symbolic_key_type(h.ty);
+        // `PropertyKey` (`string | number | symbol`): a number as its string.
+        if !symbolic
+            && keyed.is_some()
+            && !matches!(key, RecordKey::Computed(_))
+            && self.number_property_key(h.ty)
+        {
+            h = self.property_key_of(h);
+            symbolic = true;
+        }
         match keyed {
             // A run-time symbol as a computed key of a literal stays an error (`computed_key_of`).
             Some(m) if symbolic && matches!(key, RecordKey::Index(_) | RecordKey::Name(_)) => {

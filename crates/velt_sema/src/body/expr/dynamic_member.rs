@@ -111,6 +111,69 @@ impl FnCx<'_, '_> {
         matches!(self.cx.ty.kind(w), TyKind::Symbol) || self.string_or_symbol(t)
     }
 
+    /// Is `t` a union of strings, numbers and symbols with a number and a string or symbol
+    /// member (`PropertyKey`, `"a" | 1 | symbol`)? A record takes such a key as a
+    /// `string | symbol`, a number as its string ([`Self::property_key_of`]).
+    pub(crate) fn number_property_key(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        let (str_, f64_) = (self.cx.ty.str_, self.cx.ty.f64);
+        let (mut num, mut other) = (false, false);
+        for m in members {
+            let w = self.cx.widened(m);
+            if w == f64_ || self.cx.ty.is_numeric(w) {
+                num = true;
+            } else if w == str_ || matches!(self.cx.ty.kind(w), TyKind::Symbol) {
+                other = true;
+            } else {
+                return false;
+            }
+        }
+        num && other
+    }
+
+    /// The checked key `h` (a [`Self::number_property_key`]) as a `string | symbol`, as
+    /// JavaScript's `ToPropertyKey` makes it: `typeof k === "symbol" ? k : String(k)`, so a
+    /// number is its string (`rec[1]` is `rec["1"]`).
+    pub(crate) fn property_key_of(&mut self, h: hir::Expr) -> hir::Expr {
+        let span = h.span;
+        let members = self.cx.union_members(h.ty).unwrap_or_default();
+        let symbol = members.iter().any(|&m| {
+            let w = self.cx.widened(m);
+            matches!(self.cx.ty.kind(w), TyKind::Symbol)
+        });
+        self.with_temp("<key>", h, span, span, |cx, k| {
+            let syn = |kind| synth(kind, span);
+            let text = syn(ast::ExprKind::Call {
+                callee: Box::new(syn(ast::ExprKind::Ident(ast::Ident {
+                    name: "String".into(),
+                    span,
+                }))),
+                type_args: vec![],
+                args: vec![k.clone()],
+                optional: false,
+            });
+            if !symbol {
+                return cx.expr(&text, None, Want::Move);
+            }
+            let test = syn(ast::ExprKind::Binary {
+                op: ast::BinaryOp::StrictEq,
+                lhs: Box::new(syn(ast::ExprKind::Unary {
+                    op: ast::UnaryOp::TypeOf,
+                    expr: Box::new(k.clone()),
+                })),
+                rhs: Box::new(syn(ast::ExprKind::Lit(ast::Lit::Str("symbol".into())))),
+            });
+            let cond = syn(ast::ExprKind::Cond {
+                cond: Box::new(test),
+                then: Box::new(k.clone()),
+                els: Box::new(text),
+            });
+            cx.expr(&cond, None, Want::Move)
+        })
+    }
+
     /// Is `t` a union of strings and symbols (`string | symbol`, a proxy trap's key)? Such a
     /// key goes through `any`: a string names a member, and a symbol known only at run time
     /// stops the program with a `TypeError` (not supported yet), never a wrong member.
