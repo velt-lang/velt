@@ -148,6 +148,7 @@ pub const ARRAY_LEN_MESSAGE: &str =
 /// analysis (velt_codegen_llvm `tbaa.rs`).
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
+pub mod atomic;
 mod lower;
 pub mod mangle;
 pub mod simd;

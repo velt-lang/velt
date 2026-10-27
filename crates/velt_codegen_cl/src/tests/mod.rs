@@ -1,6 +1,7 @@
 //! Tests: hand-built VIR programs, executed via the JIT (same translation path) and emitted as
 //! objects for all supported targets.
 
+mod atomics;
 #[cfg(unix)]
 mod debug_info;
 mod entry;
