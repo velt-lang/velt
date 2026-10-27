@@ -318,8 +318,7 @@ impl FnCx<'_, '_> {
             return self.prelude_fn_call("__prototypeIn", vec![lhs.clone(), rhs.clone()], span);
         }
         // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
-        let symbolic = kind == KeyKind::Symbol
-            && self.symbolic_key_type(key_ty);
+        let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
         if open && (symbolic || accessors) {
             let syn = Synth::new(span, self.f.locals.len());

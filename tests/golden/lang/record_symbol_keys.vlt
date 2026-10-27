@@ -1,0 +1,63 @@
+// A string-keyed record holds symbol keys in a table of its own, as Node does (#1629):
+// `Record<string | symbol, V>` is that record. `Object.keys`, `Object.values`,
+// `Object.entries`, `for...in` and `JSON.stringify` skip the symbol keys;
+// `Object.getOwnPropertySymbols` lists them in insertion order, and `Reflect.ownKeys` lists the
+// string keys (array indices first) and then the symbols. Spreads copy them, as in Node.
+
+const KEY: unique symbol = Symbol("key");
+const ONE = Symbol("one");
+
+function make(): Record<string | symbol, number> {
+  const r: Record<string | symbol, number> = {};
+  r.b = 1;
+  r[ONE] = 10;
+  r["2"] = 2;
+  r[KEY] = 20;
+  r.a = 3;
+  return r;
+}
+
+function pick(flip: boolean): string | symbol {
+  return flip ? ONE : "b";
+}
+
+function main() {
+  const r = make();
+  const local = Symbol("local");
+  r[local] = 30;
+  console.log(Object.keys(r), Object.values(r), Object.entries(r), JSON.stringify(r));
+  console.log(r[ONE], r[KEY], r[local], r.b, r[Symbol("other")]);
+  console.log(ONE in r, KEY in r, local in r, Symbol("x") in r, "a" in r, "toString" in r);
+  console.log(Object.hasOwn(r, ONE), Object.hasOwn(r, Symbol("y")), Object.hasOwn(r, "a"));
+  console.log(Object.getOwnPropertySymbols(r), Reflect.ownKeys(r));
+  // A narrowed `string | symbol` key, read and written (#1633).
+  for (const flip of [false, true]) {
+    const k = pick(flip);
+    r[k] = (r[k] ?? 0) + 100;
+    console.log(r[k], k in r, Object.hasOwn(r, k));
+  }
+  console.log(delete r[ONE], ONE in r, r[ONE], Object.getOwnPropertySymbols(r));
+  console.log(delete r[ONE], delete r[pick(false)], Object.keys(r));
+  for (const x in r) {
+    console.log("for-in", x);
+  }
+  const copy: Record<string | symbol, number> = { ...r, c: 4 };
+  console.log(Object.keys(copy), copy[KEY], copy[local], Object.getOwnPropertySymbols(copy));
+  copy[KEY] = 21;
+  console.log(r[KEY], copy[KEY]);
+  // A record decoded from JSON takes symbol keys too.
+  const parsed: Record<string, number> = JSON.parse('{"x":1,"0":2}');
+  parsed[KEY] = 5;
+  console.log(Reflect.ownKeys(parsed), parsed[KEY], JSON.stringify(parsed));
+  const empty: Record<string, string> = {};
+  console.log(Object.getOwnPropertySymbols(empty), Reflect.ownKeys(empty), empty[KEY]);
+  // Symbol constants as keys of a record literal, and `??=` with a symbol key.
+  const lit: Record<string | symbol, number> = { a: 1, [ONE]: 2, [KEY]: 3 };
+  lit[ONE] ??= 9;
+  lit[pick(true)] ??= 8;
+  const fresh = Symbol("fresh");
+  lit[fresh] ??= 7;
+  console.log(Object.keys(lit), lit[ONE], lit[KEY], lit[fresh], Object.getOwnPropertySymbols(lit));
+}
+
+main();

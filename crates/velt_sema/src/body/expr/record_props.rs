@@ -53,14 +53,21 @@ impl FnCx<'_, '_> {
         for p in props {
             let (name, v) = match p {
                 ast::ObjectProp::KeyValue(n, v) => (n, v.clone()),
-                ast::ObjectProp::Shorthand(n) => (n, synth(ast::ExprKind::Ident(n.clone()), n.span)),
+                ast::ObjectProp::Shorthand(n) => {
+                    (n, synth(ast::ExprKind::Ident(n.clone()), n.span))
+                }
                 _ => {
-                    self.cx.err("this property descriptor is not supported yet", desc.span);
+                    self.cx
+                        .err("this property descriptor is not supported yet", desc.span);
                     self.check_args_loose(args);
                     return Some(self.error_expr(span));
                 }
             };
-            let flag = |s: &str| ["enumerable", "writable", "configurable"].iter().position(|f| *f == s);
+            let flag = |s: &str| {
+                ["enumerable", "writable", "configurable"]
+                    .iter()
+                    .position(|f| *f == s)
+            };
             match name.name.as_str() {
                 "get" => get = Some(v),
                 "set" => set = Some(v),

@@ -143,9 +143,8 @@ impl FnCx<'_, '_> {
         let mut kp = c.params.remove(0);
         let mut kty = self.cx.subst_known(kp.ty, &slots);
         // In a program that defines accessors, which a record may hold, every key.
-        let keyed = keyed_method(method).filter(|_| {
-            self.cx.objects.record_accessors && kty == self.cx.ty.str_
-        });
+        let keyed = keyed_method(method)
+            .filter(|_| self.cx.objects.record_accessors && kty == self.cx.ty.str_);
         let key = match keyed {
             Some(keyed) => {
                 (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
@@ -161,16 +160,16 @@ impl FnCx<'_, '_> {
                 self.coerce(h, kty)
             }
             None => match self.symbolic_key(kty, method, &key, want_of(kp.mode)) {
-            // A symbol or `string | symbol` key: the method that also reaches the symbol table.
-            Ok((h, keyed)) => {
-                (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
-                c = self.fn_callable(def, format!("method `{keyed}`"), span);
-                kp = c.params.remove(0);
-                kty = self.cx.subst_known(kp.ty, &slots);
-                self.coerce(h, kty)
-            }
-            Err(Some(h)) => self.string_key_of(kty, h),
-            Err(None) => self.record_key_arg(kty, &key, want_of(kp.mode)),
+                // A symbol or `string | symbol` key: the method that also reaches the symbol table.
+                Ok((h, keyed)) => {
+                    (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
+                    c = self.fn_callable(def, format!("method `{keyed}`"), span);
+                    kp = c.params.remove(0);
+                    kty = self.cx.subst_known(kp.ty, &slots);
+                    self.coerce(h, kty)
+                }
+                Err(Some(h)) => self.string_key_of(kty, h),
+                Err(None) => self.record_key_arg(kty, &key, want_of(kp.mode)),
             },
         };
         let vp = checked.as_ref().map(|_| c.params.remove(0));
@@ -246,7 +245,10 @@ impl FnCx<'_, '_> {
         let h = self.payload_expr(e, None, want);
         let symbolic = self.symbolic_key_type(h.ty);
         match keyed {
-            Some(m) if symbolic => Ok((h, m)),
+            // A run-time symbol as a computed key of a literal stays an error (`computed_key_of`).
+            Some(m) if symbolic && matches!(key, RecordKey::Index(_) | RecordKey::Name(_)) => {
+                Ok((h, m))
+            }
             _ if matches!(key, RecordKey::Computed(_)) => Err(Some(self.computed_key_of(k, h, e))),
             _ => Err(Some(h)),
         }
@@ -285,7 +287,7 @@ impl FnCx<'_, '_> {
 
     /// The checked key `h` of `r[e]` on a record keyed by `k` (`string`): a number converted to
     /// its string.
-    fn string_key_of(&mut self, k: TyId, h: hir::Expr) -> hir::Expr {
+    pub(super) fn string_key_of(&mut self, k: TyId, h: hir::Expr) -> hir::Expr {
         if self.cx.ty.is_numeric(h.ty) {
             let span = h.span;
             return self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, span);
@@ -383,6 +385,10 @@ pub(super) fn keyed_method(method: &str) -> Option<&'static str> {
 
 /// `Symbol.name` for the member name `[Symbol.name]` the parser gives `o[Symbol.name]`.
 fn well_known_symbol(id: &ast::Ident) -> Option<ast::Expr> {
+    // A quoted key (`"[Symbol.foo]"`, its span the text and the quotes) is a string.
+    if (id.span.hi - id.span.lo) as usize == id.name.len() + 2 {
+        return None;
+    }
     let name = id.name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
     let ident = |n: &str| ast::Ident {
         name: n.to_string(),

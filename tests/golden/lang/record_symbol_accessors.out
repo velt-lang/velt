@@ -1,0 +1,10 @@
+2 true true false
+number true true
+function true true
+number true true
+undefined false false
+3 [ 'has' ] {}
+[ 'has', 'size', Symbol(Symbol.iterator), Symbol(iterate) ] [ Symbol(Symbol.iterator), Symbol(iterate) ]
+true false
+{ a: 1, b: 2 } 10 true [ 'a', 'b', Symbol(iterate) ] { a: 1, b: 2 }
+true false undefined

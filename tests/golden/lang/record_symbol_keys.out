@@ -1,0 +1,16 @@
+[ '2', 'b', 'a' ] [ 2, 1, 3 ] [ [ '2', 2 ], [ 'b', 1 ], [ 'a', 3 ] ] {"2":2,"b":1,"a":3}
+10 20 30 1 undefined
+true true true false true true
+true false true
+[ Symbol(one), Symbol(key), Symbol(local) ] [ '2', 'b', 'a', Symbol(one), Symbol(key), Symbol(local) ]
+101 true true
+110 true true
+true false undefined [ Symbol(key), Symbol(local) ]
+true true [ '2', 'a' ]
+for-in 2
+for-in a
+[ '2', 'a', 'c' ] 20 30 [ Symbol(key), Symbol(local) ]
+20 21
+[ '0', 'x', Symbol(key) ] 5 {"0":2,"x":1}
+[] [] undefined
+[ 'a' ] 2 3 7 [ Symbol(one), Symbol(key), Symbol(fresh) ]

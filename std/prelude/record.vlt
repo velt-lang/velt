@@ -115,7 +115,10 @@ export class Record<K, V> {
   /** `delete r[s]` with a symbol `s`. */
   __deleteSym(key: symbol): bool {
     const t = this.symbols;
-    return t != null && t.delete(key);
+    if (t != null) {
+      t.delete(key);
+    }
+    return true;
   }
 
   /** `s in r` / `Object.hasOwn(r, s)` with a symbol `s`. */
@@ -165,13 +168,14 @@ export class Record<K, V> {
         if (!a.configurable) {
           panic(`TypeError: Cannot delete property '${__recordKeyText(key)}' of #<Object>`);
         }
-        return t.delete(key);
+        t.delete(key);
+        return true;
       }
     }
     if (typeof key === "symbol") {
       return this.__deleteSym(key as symbol);
     }
-    return this.entries.delete(key as K);
+    return this.__delete(key as K);
   }
 
   /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own entries only). */
@@ -333,8 +337,10 @@ export class Record<K, V> {
     return out;
   }
 
+  /** `delete r[k]`: `true`, as JavaScript's `delete` of an entry or of a missing key is. */
   __delete(key: K): bool {
-    return this.entries.delete(key);
+    this.entries.delete(key);
+    return true;
   }
 
   __has(key: K): bool {
