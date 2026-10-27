@@ -6,8 +6,10 @@
 #
 #   bench/json/escape/fuzz.sh [VELT]     (VELT defaults to `velt` on PATH)
 #
-# The wasm32 runs need the target's runtime (`cargo build -p velt_rt_wasm --target
-# wasm32-wasip1`) and wasmtime; they are skipped when wasmtime is missing.
+# The runtime is the one next to VELT: run it with a debug and with a release `velt` to check
+# both builds of the runtime. The wasm32 runs need the target's runtime (`cargo build -p
+# velt_rt_wasm --target wasm32-wasip1`, with `--release` for a release `velt`) and wasmtime;
+# they are skipped when wasmtime is missing.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VELT=${1:-velt}
