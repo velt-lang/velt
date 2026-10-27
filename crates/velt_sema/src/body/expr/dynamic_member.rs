@@ -402,6 +402,7 @@ impl FnCx<'_, '_> {
         };
         let mut stmts = vec![];
         let f = self.hoist_dynamic(f.clone(), &mut stmts);
+        let held = f.clone();
         let t = self.expr(this, Some(any), Want::Borrow);
         if self.cx.ty.is_bottom(t.ty) && t.ty != self.cx.ty.never {
             return Some(t);
@@ -415,14 +416,28 @@ impl FnCx<'_, '_> {
         };
         let null = self.dynamic_nothing(Nothing::Null, any, span);
         let b = self.cx.ty.bool_;
-        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t, null], b, span);
+        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t.clone(), null], b, span);
         let msg = format!(
             "TypeError: `{}` with a `this` other than `null` or `undefined` is not supported yet (#926): a function value has no `this`",
             prop.name
         );
         let msg = self.key_lit(&msg, span);
         let never = self.cx.ty.never;
-        let stop = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
+        let stop = match self.cx.prelude_adt("__ThisFn") {
+            // A program with function expressions taking `this` (std/this_fn.vlt): the member
+            // call `f.call(thisArg, ...)` through `any`, which such a function answers.
+            Some(_) => {
+                let key = self.key_lit(&prop.name, prop.span);
+                let text =
+                    self.key_lit(&format!("{}.{}", self.callee_text(&held), prop.name), span);
+                let (_, list) = args.split_first()?;
+                let boxed = self.dynamic_args(list, any)?;
+                let mut all = vec![held, key, text, t.clone()];
+                all.extend(boxed);
+                self.intrinsic(Intrinsic::AnyCall, all, any, span)
+            }
+            None => self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
+        };
         let kind = H::If {
             cond: Box::new(nullish),
             then: Box::new(call),
