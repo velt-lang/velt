@@ -121,8 +121,7 @@ pub(crate) enum Want {
 pub(crate) enum LocalKind {
     Let,
     Const,
-    /// `using` / `await using`: a `const` that stays in place until the end of its block (it
-    /// cannot be moved out; `crate::moves`).
+    /// `using` / `await using`: a `const` that stays in place to the end of its block (`moves`).
     Using,
     Param,
     This,
@@ -180,8 +179,7 @@ pub(crate) struct Scope {
     /// Union locals that hold the member they are narrowed to because it was assigned to them
     /// (never a view, `crate::union_views`).
     pub held: Vec<LocalId>,
-    /// Facts not assumed inside this scope: their locals are assigned by closures
-    /// (`closure_assigned`).
+    /// Facts not assumed inside this scope: closures assign their locals (`closure_assigned`).
     pub refused: Vec<(LocalId, closure_assigned::Refused)>,
     /// Source offset where the scope ends (its locals' visibility, for `crate::ide`).
     pub hi: u32,
@@ -260,8 +258,7 @@ pub(crate) struct Frame {
     pub top_level_outer: Vec<Span>,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
-    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
-    /// none).
+    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has none).
     pub next_ty: Option<TyId>,
     /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
     /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
@@ -388,8 +385,7 @@ pub(crate) struct Frame {
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: FxHashMap<LocalId, Span>,
     /// `let x: T;` without an initializer that a closure assigns (`closure_assigned`): held as
-    /// a `T | undefined` that starts `undefined`, and read through a check
-    /// ([`FnCx::late_let_read`]).
+    /// a `T | undefined` that starts `undefined`, read through a check ([`FnCx::late_let_read`]).
     pub late_lets: rustc_hash::FxHashSet<LocalId>,
     /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
     /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
@@ -525,9 +521,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
-    /// The arrow at this span is passed to a method of an `object` / `unknown` narrowed to an
-    /// instance of a generic class or an array (TypeScript's `Map<any, any>`, `any[]`): its
-    /// parameters without a type are `any` (`dynamic_member.rs`).
+    /// The arrow at this span, passed to a method of an `object` / `unknown` narrowed to a generic
+    /// class instance or an array (`Map<any, any>`, `any[]`), has `any` parameters when untyped.
     pub any_callback: Option<Span>,
     /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
     /// its own (`FnState::never_end`).

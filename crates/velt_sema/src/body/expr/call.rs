@@ -113,8 +113,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
-    /// #1144)?
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue #1144)?
     fn iteration_return_undefined(
         &mut self,
         object: &ast::Expr,
@@ -228,9 +227,8 @@ impl FnCx<'_, '_> {
         c
     }
 
-    /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take
-    /// their `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not
-    /// inferred.
+    /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take their
+    /// `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not inferred.
     pub(super) fn explicit_type_args(
         &mut self,
         slots: &mut [Option<TyId>],
@@ -683,10 +681,9 @@ impl FnCx<'_, '_> {
             .is_some_and(|x| x.is_static && x.def == m)
     }
 
-    /// The static method `name` of class `d`: its own (in the class, then in an `extend`
-    /// block), else the nearest base class's. With the number of generics of the class (or
-    /// block) declaring it and, when known, their type arguments. `Err(true)`: `name` is an
-    /// instance method.
+    /// The static method `name` of class `d`: its own (in the class, then in an `extend` block),
+    /// else the nearest base class's. With the number of generics of the class (or block) declaring
+    /// it and, when known, their type arguments. `Err(true)`: `name` is an instance method.
     pub(super) fn find_static(
         &mut self,
         d: DefId,

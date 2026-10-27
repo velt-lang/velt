@@ -53,9 +53,35 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `(x as Record<K, V>).name` read on an `any` `x` (`any_as_record_read`).
+    pub(super) fn any_as_record_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        optional: bool,
+        exp: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let key = AnyRecordKey::Name(prop);
+        self.any_as_record_read(object, key, optional, exp, want, span)
+    }
+
+    /// `(x as Record<K, V>)[k]` read on an `any` `x` (`any_as_record_read`).
+    pub(super) fn any_as_record_index(
+        &mut self,
+        object: &ast::Expr,
+        index: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        self.any_as_record_read(object, AnyRecordKey::Index(index), false, exp, want, span)
+    }
+
     /// `(x as Record<K, V>)[k]` / `.name` read on an `any` `x` (module docs); `None` for another
     /// receiver.
-    pub(super) fn any_as_record_read(
+    fn any_as_record_read(
         &mut self,
         object: &ast::Expr,
         key: AnyRecordKey<'_>,
@@ -101,7 +127,7 @@ impl FnCx<'_, '_> {
 }
 
 /// The key of [`FnCx::any_as_record_read`].
-pub(super) enum AnyRecordKey<'a> {
+enum AnyRecordKey<'a> {
     Index(&'a ast::Expr),
     Name(&'a ast::Ident),
 }
