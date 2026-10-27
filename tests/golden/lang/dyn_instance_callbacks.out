@@ -22,3 +22,11 @@ nested 1 1
 nested 1 2
 nested 2 1
 nested 2 2
+sub a 1
+sub b 2
+narrowed sub a 1
+narrowed sub b 2
+narrowed set sub z
+[ 20, 30 ]
+[ 3, 2, 1 ]
+[ 4, 4, 4, 4 ]
