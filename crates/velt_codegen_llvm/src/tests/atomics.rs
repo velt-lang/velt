@@ -164,3 +164,57 @@ fn atomic_with_wrong_signature_is_rejected() {
         "{err}"
     );
 }
+
+/// On x86-64, a read-modify-write that acquires (a lock's acquire) is followed by two `nop`s
+/// before anything else (`Emitter::after_acquiring_rmw`); a relaxed one, a release one, and
+/// other targets get none.
+#[test]
+fn acquiring_rmw_is_padded_on_x86() {
+    use Order::*;
+    let cas = |order, failure| AtomicCall::Cas {
+        bits: 32,
+        order,
+        failure,
+        weak: true,
+    };
+    let rmw = |order| AtomicCall::Rmw {
+        op: Rmw::Xchg,
+        bits: 32,
+        order,
+    };
+    let pad = "call void asm sideeffect \"nop\\0Anop\", \"\"() nounwind";
+    let after = |ir: &str, needle: &str| -> Vec<bool> {
+        let lines: Vec<&str> = ir.lines().collect();
+        (0..lines.len())
+            .filter(|&i| lines[i].contains(needle))
+            .map(|i| lines.get(i + 1).is_some_and(|l| l.trim() == pad))
+            .collect()
+    };
+    for (call, padded) in [
+        (cas(Acquire, Relaxed), true),
+        (cas(AcqRel, Acquire), true),
+        (cas(SeqCst, SeqCst), true),
+        (cas(Relaxed, Relaxed), false),
+        (cas(Release, Relaxed), false),
+        (rmw(Acquire), true),
+        (rmw(SeqCst), true),
+        (rmw(Relaxed), false),
+        (rmw(Release), false),
+    ] {
+        let ir = emit_ir(&program(&[call]), "x86_64-unknown-linux-gnu").unwrap();
+        let op = if matches!(call, AtomicCall::Cas { .. }) {
+            "= cmpxchg"
+        } else {
+            "= atomicrmw"
+        };
+        assert_eq!(after(&ir, op), vec![padded], "{call:?}:\n{ir}");
+        assert_eq!(ir.contains("asm sideeffect"), padded, "{call:?}:\n{ir}");
+        for target in ["aarch64-apple-darwin", "wasm32-wasip1"] {
+            let other = emit_ir(&program(&[call]), target).unwrap();
+            assert!(
+                !other.contains("asm sideeffect"),
+                "{target} {call:?}:\n{other}"
+            );
+        }
+    }
+}

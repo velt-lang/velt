@@ -132,7 +132,8 @@ copy a frozen read makes of a small value), and calls the extern.
 
 Cranelift's atomics are all sequentially consistent, which is correct for every ordering (only
 stronger), and fine for debug builds. LLVM gets the exact orderings, so on Apple arm64 and
-x86-64 release builds match Rust's code instruction for instruction: on aarch64 with LSE (every
+x86-64 release builds match Rust's code instruction for instruction (but for two `nop`s after an
+acquiring read-modify-write on x86-64, see "Frozen fields"): on aarch64 with LSE (every
 Apple target) a relaxed or acquire load is `ldr`/`ldapr`, a release store `stlr`, `add` `ldadd`,
 a compare-and-swap `casal`; on x86 loads and stores are `mov`, `add` is `lock xadd`. On arm64
 Linux (generic armv8-a) clang gets `-moutline-atomics`, as Rust's targets do: read-modify-writes
@@ -265,6 +266,44 @@ the memory never changes anywhere in the program, but Velt objects are written b
 frozen. With a write through one pointer and an invariant read through another, LLVM folds
 `p[0] - old` to 0 (tested with clang 21). The pass needs no such promise: it relies only on the
 call's own guarantee, so it is sound under any inlining.
+
+**A stall it uncovered on Intel, and the two `nop`s against it.** With the headers in
+registers, a spin lock's critical section shrank to the store it protects: bench/atomics'
+`spinlock_4t` became `lock cmpxchg; je` followed directly by `incq (%r14)` and the unlocking
+`movl`. That made each lock round trip slower on Intel cores although it does less: about 6 to 8
+cycles more per acquisition. Hardware counters on a Coffee Lake i9-8950HK (bare Linux, `lock1`
+probe: 20M uncontended round trips, per round trip):
+
+| | base (reloads) | frozen | frozen + `nop`s |
+|---|---:|---:|---:|
+| cycles | 24.5 | 29.3 | 24.6 |
+| instructions | 11.0 | 8.0 | 10.0 |
+| `cycle_activity.stalls_mem_any` | 11.9 | 18.5 | 14.6 |
+| `resource_stalls.any` | 11.7 | 17.7 | 11.9 |
+| uops dispatched on ports 0-7 minus `uops_executed.thread` | 5.0 | 8.0 | 4.6 |
+
+Machine clears, store-forwarding blocks, 4K aliasing, L1 misses, the loop stream detector and
+the decoders (all from the uop cache) are the same in the three, at zero or near it. The extra
+cost is uops dispatched again: when the critical section's first uop is allocated within one
+uop of the locked instruction's, the uops that depend on the locked load (the branch on its
+flags, the increment's store data) are dispatched before its value is there and dispatched again,
+and the lock's load waits longer. Any two uops in between avoid it (measured with hand-written
+loops: one `nop` or one load is not enough, two `nop`s, two loads, or two ALU instructions are),
+which is why a reload of the header, the base's code, hid it. So the LLVM backend puts two `nop`s
+after every acquiring (`acquire`, `acq_rel`, `seq_cst`) `cmpxchg` and `atomicrmw` on x86-64
+(`function/atomic.rs`, `after_acquiring_rmw`), between the locked instruction and its branch.
+A `nop` issues but needs no port; relaxed read-modify-writes (counters) and arm64 are unchanged.
+On the Apple M4 there is no such stall (`lock1` 23.8 ms frozen, 24.2 ms with a load added).
+
+Alder Lake i9-12900HK (WSL), medians of interleaved runs, ms:
+
+| | base | frozen | frozen + `nop`s |
+|---|---:|---:|---:|
+| `lock1` (20M round trips, 30 runs) | 139.7 | 174.8 | 138.4 |
+| `spinlock_4t` alone (30 runs) | 61.0 | 81.6 | 61.4 |
+| `cas_loop_1t` alone (30 runs) | 469.6 | 466.5 | 474.1 |
+| `latch_reads_4t` (bench/atomics, 16 runs) | 18.6 | 13.4 | 13.8 |
+| `latch_reads_quiet_4t` (bench/atomics, 16 runs) | 19.4 | 13.1 | 15.8 |
 
 ## Not in this design
 
