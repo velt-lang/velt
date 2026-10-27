@@ -94,11 +94,38 @@ The glue that VIR lowering generates for each type stays compiler-generated. It 
 Velt reader's methods, which it finds the way lowering already finds prelude items such as
 `Proxy.__view`, instead of `Rt::Json*` externs.
 
+### Compatibility contract, and how it is checked
+
+The engine is rewritten, so what it must keep is listed here. Each item is checked by a golden
+or by a Node-differential fuzz in `bench/json/fuzz/` (`run.sh` runs each program under Node and
+under Velt, debug with the checking allocator and release, and compares the bytes):
+
+| Behaviour (Node's) | Checked by |
+|---|---|
+| Strings escaped as `JSON.stringify` does: `"`, `\`, controls, lone surrogates as `\udxxx`; U+2028/2029 raw | fuzz `strings` (125,000 cases; from #1066) |
+| Numbers written as `Number.prototype.toString` does; `-0` as `0`; `NaN`, `±Infinity` as `null` | fuzz `numbers` (400,000 doubles, every binary exponent) |
+| Numbers read correctly rounded (`12345678901234567890123`, `1e400`, `-0`, `1e-400`, subnormals) | fuzz `to_number` (60,000 strings through `Number`, `parseFloat`, `JSON.parse`); golden `std/json_float_parse` |
+| Key order: index-like keys first, ascending; a repeated key keeps its last value in its first place | fuzz `values` (20,000 documents); goldens `json_duplicate_keys`, `record_json_index_order` |
+| `__proto__` is an ordinary own key when parsing | to add to fuzz `values` |
+| Syntax errors: Node 26's message and UTF-16 position | goldens `json_parse_syntax_node`, `json_error_paths` |
+| `toJSON(key)` runs before a replacer function; `undefined`, functions and symbols skipped in objects, `null` in arrays | goldens `json_to_json`, `any_json_undefined`, `void_field_any_json` (the replacer's order: with step 11's golden) |
+| An invalid `Date` writes `null` | to add (no golden covers it today) |
+| Getters of object literals run and are written; class prototype getters are not; symbol keys are skipped | goldens `any_literal_accessor_json_only`, `any_literal_getter_unions`, `any_json_stringify` |
+| Proxies go through `ownKeys`, `getOwnPropertyDescriptor`, `get` | golden `proxy_json` |
+| An `any` holding a `Map` or `Set` writes `{}` (a typed `Map` writes its entries, a documented difference) | golden `any_json_stringify` |
+
+Not changed by the rewrite, and not yet Node's: a cycle throws `TypeError: Converting circular
+structure to JSON` without Node's `--> starting at …` / `--- property … closes the circle` lines
+(the runtime's `cycle.rs` stays), and a `BigInt` has no JSON form (a compile error, not Node's
+run-time `TypeError`). The fuzz runner does not run wasm32 yet (#1066's did): it gets a wasm32
+mode when wasmtime is on the machine.
+
 ### 0. Move the reader, scanner and writer into Velt (no API change)
 
 Port `velt_text/src/json_scan.rs`, `velt_rt/src/json/reader.rs`, `json_escape.rs`, the JSON
-pushes of `strbuf.rs` and float printing (`ryu`, as a std port) to Velt in
-`std/prelude/json/`. Then switch the glue in `crates/velt_vir/src/lower/json/` from
+pushes of `strbuf.rs` and float printing (`ryu`, as a std port) to Velt, as internal std modules
+in `std/json/` (`velt:json/scan`, `velt:json/reader`, `velt:json/writer`, `velt:json/tape`),
+which the prelude imports. Then switch the glue in `crates/velt_vir/src/lower/json/` from
 `Rt::Json*` calls to calls of those Velt methods.
 
 Error messages and paths stay the same, and the golden tests do not change. Node's exact
@@ -106,8 +133,18 @@ syntax errors (`node_syntax.rs`) can stay a Rust slow path for now, as they run 
 failure. The database row readers and native packages keep their own Rust copy until each is
 ported. The Rust JSON code is deleted once nothing calls it.
 
-**Gate:** each JSON benchmark at most 3% slower than today's Rust engine. Every gap is
-measured, filed and fixed in the compiler before moving on.
+**Gate** (every step, against `main` at the step's merge base, so allowances cannot add up):
+- instructions retired, base against head on the same machine (cachegrind on Linux,
+  `/usr/bin/time -l` on macOS), at most 3% worse per row; `bench/json/run.sh` wall times are
+  the second view (`parse_value` varies 0.9-2.7 s from run to run on a loaded machine, so wall
+  clock cannot resolve 3%);
+- the JSON benchmarks, and `bench/compare_refs.sh` for the other programs on the path:
+  `json_to_json`, the web server, `bench/typical`;
+- debug builds too: the Velt engine is compiled into each program, so `velt run`, the goldens
+  and the JIT get an unoptimized engine. The gate adds JSON speed in a debug build, compile time
+  (`compile_speed`) and binary size; if debug speed regresses badly, std's JSON modules get
+  optimized in debug builds;
+- every gap found is filed and fixed in the compiler, not with a Rust fast path.
 
 ### 1. Matching a key to a field (no API change)
 
@@ -140,6 +177,11 @@ that arrives in declaration order costs one length compare and one or two word c
 `seen` bitmask becomes several words past 64 fields; today a class with more than 64 fields is
 an ICE (`object.rs`).
 
+A key with an escape (`"n\u0061me"`) is decoded first and compared decoded, so it matches
+`name` as in Node. The expected-field fast path still sets and checks the `seen` mask: a
+repeated key keeps the current rule (its last value, in the first one's place, every
+occurrence validated).
+
 **Cost.** The code per decoder grows by about one word compare per field, and there is no
 runtime cost. The PR reports the change in build time and IR size.
 
@@ -171,9 +213,18 @@ and the backends, not written in Rust:
   `json_escape.rs`'s `clean_run`.
 - **Whitespace.** A fast exit when the next byte is not whitespace (the common case in compact
   JSON), and a 16-byte skip for indented JSON.
-- **Numbers.** Eight digits are parsed at once with SWAR into the `u64` accumulator. The result
-  is exact up to 19 digits, and a mantissa and exponent that fit go through Clinger's fast path.
-  Only the rest falls back to `str::parse`.
+- **Reading numbers**, correctly rounded for every input as V8 is, in Velt (`velt:number`):
+  exact arithmetic when the mantissa is at most 2^53 and the power of ten at most 10^22
+  (Clinger), else Eisel-Lemire with its 128-bit power-of-five table. More than 19 significant
+  digits, or a rounding Eisel-Lemire cannot decide, still goes to the runtime's parser: a
+  temporary exception to the rule above, until a Velt big-decimal slow path (fast_float's
+  "digit comparison") replaces it. `Number()` and `parseFloat` use the same code.
+- **Integers.** A `u64` field reads its full 20-digit range (today it stops at `i64::MAX`, a
+  limit this design removes).
+- **Writing numbers** as `Number.prototype.toString` does (`1e+21`, `1e-7`, `0.000001`, `-0`
+  as `0`): Ryu's shortest digits, in Velt, laid out by JavaScript's rules. An `f32` field is
+  written as the `f64` it widens to (`0.10000000149011612` for `0.1`), as JavaScript writes
+  `Math.fround(0.1)`.
 
 
 ### 4. Arrays
@@ -185,23 +236,29 @@ scanning ahead.
 
 ### 5. A tape for `JsonValue`
 
-`JSON.parseValue` writes a **tape**, a Velt class in `velt:json`: one `u64[]` of entries. Each entry is a 4-bit kind, a
-28-bit length, and a 32-bit offset into the source or into the tape. The source string is kept
-alive by one reference. A container's entry holds the index of its end, so skipping a subtree is
-O(1). Strings without escapes are byte ranges of the source; strings with escapes are decoded
-into a side buffer when the tape is built. An object with more than 16 keys gets its key index
-built lazily, on the first lookup by key.
+`JSON.parseValue` writes a **tape**, a Velt class in `velt:json/tape`: two `u64` words per
+value in one array. The first word is the kind, a flag (escaped string, repeated keys), and
+from bit 32 a string's UTF-16 length or a container's member count; the second is a number's
+bits, a string's byte range in the source (`start | end << 32`) or its index among the decoded
+strings, or a container's first position in a second array that lists each container's members
+together (so `at(i)` is O(1)). Limits: 2^32 bytes of source and 2^32 members per container,
+both past V8's string limit (and Velt's 2 GiB one); there is no smaller bound to document.
 
-A `JsonValue` becomes `(tape: Tape, index: u32)`, a Velt struct:
-- `get(key)` and `at(i)` return a new handle into the same tape: no allocation, and no reference
-  count except for the tape's;
-- `asString()` copies a slice of the source;
-- edits turn the touched path into Velt nodes (copy-on-write) and leave the rest on the tape.
+**JavaScript order.** The tape keeps source order. An object whose keys are all in JavaScript
+order already (no index-like key, no repeated key, checked in place while parsing) uses it as
+it is. Any other object gets its member list in JavaScript order when it closes (index keys
+first, ascending, then the rest; a repeated key at its first place, with its last value), which
+`keys()`, `at(i)`, `len()` and `stringify()` read.
+
+**Representation.** A `JsonValue` is a class with two forms: a position on a tape (what parsing
+makes; children share the tape, `clone()` is O(1)), or a runtime tree (what `object()`,
+`set`, … make, and a driver's rows). An edit turns that one value into a tree first, so it never
+shows through the tape, a clone or a child: the value semantics stay as today.
 
 The Rust `JsonValue` (`velt_rt/src/json/value*.rs`) and its ABI in
-`docs/internals/contracts/rt_abi_async.md` §12 go away once nothing calls them; the methods
-users see do not change. This is STJ's split between `JsonDocument`/`JsonElement` (read-only, flat) and `JsonNode`
-(mutable), with Velt keeping one type in front of both.
+`docs/internals/contracts/rt_abi_async.md` §12 go away once nothing calls them (edits and rows
+still do). This is STJ's split between `JsonDocument`/`JsonElement` (read-only, flat) and
+`JsonNode` (mutable), with Velt keeping one type in front of both.
 
 ### 6. Parsing bytes
 
@@ -213,19 +270,26 @@ The scanner already works on bytes. It adds a UTF-8 check that runs inside the s
 (non-ASCII blocks only), and invalid UTF-8 is a `JsonError` that gives the byte offset. Changes
 in std:
 - `Request.json<T>()` and `Response.json<T>()` parse the body bytes, without making a `string`;
-- `velt:fs`'s `readFile` paired with `JSON.parse<T>` documents the pattern.
+- `velt:fs`'s `readFileBytes` paired with `JSON.parse<T>` documents the pattern.
 
 ```ts ignore
-const cfg = JSON.parse<Config>(await readFile("config.json")); // bytes in, no string made
+const cfg = JSON.parse<Config>(await readFileBytes("config.json")); // bytes in, no string made
 ```
+
+The overload is chosen by the static type only: a `JSON.parse(x)` where `x: any` holds a
+`Uint8Array` converts it to a string first, as Node does. Differences from Node's
+`JSON.parse(buf.toString())`, documented: invalid UTF-8 is a `JsonError` (Node decodes it as
+U+FFFD); a byte order mark is an error, as in Node's `JSON.parse`; error positions are byte
+offsets (there is no string to count UTF-16 units in).
 
 ### 7. Writing to a sink
 
 `JSON.stringifyTo(out, value)` writes into a byte sink without making a `string`. The sink is a
 `WritableStream<Uint8Array>`, a socket, a file, or a `velt:io` writer. The writer glue already
 appends to a `strbuf`; the sink's buffer drains whenever it passes 64 KiB, as STJ's
-`Utf8JsonWriter` does over a `PipeWriter`. `Response.json(data)` streams the same way when the
-body is large.
+`Utf8JsonWriter` does over a `PipeWriter`. `Response.json(data)` stays eager: in Node it throws
+for a cycle or a `BigInt` at the call, before the headers are sent, and runs `toJSON` and
+getters then, with a `Content-Length`. Streaming is for code that asks for it.
 
 ### 8. Streaming
 
@@ -315,13 +379,22 @@ decodes.
 
   STJ calls these `ReadCommentHandling` and `AllowTrailingCommas`. Both are flags in the reader,
   and cost one predictable branch when off.
-- **`JSON.parse(text, reviver)` and `JSON.stringify(x, replacerFn, space)` work as in
-  JavaScript, on the dynamic path.**
-  - The reviver form returns a `JsonValue`; the replacer function receives
-    `(key: string, value: Value)`. Typed parsing does not take a reviver, because a reviver can
-    change a value's type, which a static type cannot express. The diagnostic suggests a
-    converter.
-  - The replacer function replaces today's compile error.
+- **Replacer functions and revivers**, until `JSON.parse` into `any` exists (#924):
+  - `JSON.stringify(x, replacer, space)` takes a function of the prelude type
+    `JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined`. The value is
+    written by its typed glue first, so `toJSON` has already run, as in Node; the replacer is
+    then called as Node calls it (the value itself under the key `""` first, then the members of
+    each result; `undefined` drops a member and writes an array element as `null`). It gets no
+    `this` (the holder). A `BigInt`, function or `Map` cannot reach it: they have no JSON form
+    in Velt. `undefined` for the value itself writes `null`, since Velt's `JSON.stringify`
+    returns a string (Node returns `undefined`).
+  - `JSON.parse(text, reviver)` is `JSON.parseValue(text).revive(reviver)`, with the same
+    function type and Node's order (innermost first, array keys as strings, `undefined` deletes,
+    a deleted array element is `null`). Node 26's third `context` argument (`source`) is not
+    given yet.
+  - When #924 makes `JSON.parse(text): any` (backed by this design's tape), both take `any` as in
+    TypeScript (`(k, v) => typeof v === "bigint" ? v.toString() : v`, `this` as the holder), and
+    `JSON.parse(text, reviver)` works as written in TypeScript. The `JsonValue` forms stay.
 
 ### 12. Schema and the low-level API
 
@@ -347,7 +420,7 @@ decodes.
 | 7 | `JSON.stringifyTo`, streamed `Response.json` | New API | — |
 | 8 | `parseStream`, `parseLines` | New API | 6 |
 | 9 | Compile-time decorators | New syntax | contract sign-off |
-| 10 | `@json.*` | New API | 9, 12's `Reader`/`Writer` for converters |
+| 10 | `@json.*` | New API | 9; converters use the internal `Reader` and `Writer` of step 0 (step 12 makes them public) |
 | 11 | JSONC; reviver and replacer functions | New options | 5 |
 | 12 | `JSON.schema<T>()`, public `Reader`/`Writer` | New API | — |
 

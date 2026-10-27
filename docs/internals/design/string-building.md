@@ -1,27 +1,24 @@
 # Design: building strings fast, in compiled code and in Velt
 
-Status: proposed (#1677, part of the JSON engine, #1655). Step 1 is implemented for `JSON.stringify`'s glue (with the JSON engine's pull requests).
+Status: proposed (#1677, part of the JSON engine, #1655). Nothing here is in `main` yet.
 
 ## Problem
 
-Every string a program builds goes through the runtime's builder, `VeltStrBuf` (`velt_rt/src/
-strbuf.rs`). That includes template literals, chains of `+`, `s += x` in a loop, and the
+Every string a program builds goes through the runtime's builder, `VeltStrBuf`
+(`velt_rt/src/strbuf.rs`). That includes template literals, chains of `+`, `s += x` in a loop, and the
 `JSON.stringify` and `console.log` glue. The builder has the layout of a `VeltStr`, so `finish`
 is a move, which is good. But every append is a call into the runtime: `push_byte` for a `,`,
 `push_bytes` for `{"name":`, `push_u64` for a number, `push_str` for a string. The fast path
 inside each call is a handful of instructions: check the form, check room, check the count is 1,
 copy, add to `w1`.
 
-In `bench/json/stringify` with the Velt writer (#1668), those calls and the copies behind them
-are about two thirds of the time:
+With the JSON writer written in Velt (#1668, a later pull request), a profile of
+`bench/json/stringify` puts about two thirds of the time in those calls and the copies behind
+them; the pull request that implements step 1 commits the profile's numbers with the script that
+measures them.
 
-| | self time |
-|---|---:|
-| `push_bytes` + `push_byte` + `push_u64` + `push_bool` + `str_append` | ~33% |
-| `memmove` (growth, appended strings) | ~34% |
-| integer formatting (`itoa`) | ~7% |
-
-Velt code has no better way to build strings. `std/json/writer.vlt` passes the glue's builder
+Velt code has no better way to build strings. The Velt JSON writer (`std/json/writer.vlt`, in
+the engine's `std/json/` modules, json-engine.md §0) passes the glue's builder
 around as an opaque `string` and calls `velt_rt_strbuf_*` externs on it. That is a trap, as
 #1668 found: an argument after it that is a call makes the compiler copy the "string" first, so
 the append goes to the copy. It also needed a new primitive (`push_u8s`) to append an escaped
@@ -55,12 +52,12 @@ inline by both backends, #1619). A builder starts inline (≤ 23 bytes) and take
 until it moves to the heap, after which the appends stay inline.
 
 - **Cost:** about ten instructions per append site, instead of a call.
-- **Measured:** in `JSON.stringify`'s glue, `bench/json/stringify` is 14–17% faster for +10% IR
-  (+2.5% on `json_to_json`, +0.8% on the web server). That builder is private to the glue, so
-  the fast path has no count check. In template literals and `s += …`, which append onto
-  variables that may share their buffer and so need the acquire-load count check, it gained
-  1–4% for 18–23% more IR in template-heavy code, so they keep the call. A later try: one
-  module-level helper per byte count.
+- **Where:** in `JSON.stringify`'s glue, whose builder is private to it, so the fast path needs
+  no count check. Template literals and `s += …` append onto variables that may share their
+  buffer, so they would need the acquire-load count check at every site; in a first trial that
+  cost far more IR than it saved there, so they keep the call (a later try: one module-level
+  helper per byte count). The implementing pull request gives the measurements and the script
+  behind them.
 
 ### 2. `StringBuilder`: the builder as a type (std, Velt)
 
