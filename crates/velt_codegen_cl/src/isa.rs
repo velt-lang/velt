@@ -44,6 +44,12 @@ pub(crate) fn make_isa(
         cpu::check_cpu(target, c).map_err(|e| format!("codegen: {e}"))?;
     }
     cpu::configure(&mut isa_builder, cpu)?;
+    if jit && matches!(isa_builder.triple().architecture, Architecture::Aarch64(_)) {
+        // The host's flags sign return addresses on macOS (pointer authentication), and stack
+        // walks through JIT frames then stop on some Apple CPUs: JIT code keeps the host's
+        // instructions but plain return addresses, as before it used the host's flags.
+        set(&mut isa_builder, "sign_return_address", "false")?;
+    }
     let triple = isa_builder.triple().clone();
     check_supported(&triple)?;
 
@@ -88,7 +94,7 @@ fn with_macos_platform(mut triple: Triple) -> Triple {
     triple
 }
 
-fn set(flags: &mut settings::Builder, name: &str, value: &str) -> CodegenResult<()> {
+fn set(flags: &mut impl Configurable, name: &str, value: &str) -> CodegenResult<()> {
     flags
         .set(name, value)
         .map_err(|e| format!("codegen: cannot set `{name}={value}`: {e}"))

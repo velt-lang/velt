@@ -441,6 +441,27 @@ mod tests {
         );
     }
 
+    /// JIT code doesn't sign return addresses: the host's flags do on macOS, and backtraces then
+    /// stopped in JIT frames on the CI's Apple CPUs (`backtrace_walks_through_jit_frames`).
+    #[test]
+    fn jit_code_has_plain_return_addresses() {
+        let signs = |jit| {
+            let isa = crate::isa::make_isa(&crate::host_triple(), Some("native"), false, jit);
+            let isa = isa.unwrap();
+            let flags = isa.isa_flags();
+            flags
+                .iter()
+                .any(|f| f.name == "sign_return_address" && f.as_bool() == Some(true))
+        };
+        assert!(!signs(true));
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert!(
+                signs(false),
+                "the host's flags sign them in objects, as on main"
+            );
+        }
+    }
+
     #[test]
     fn names_are_checked_against_the_target() {
         let arm = "aarch64-unknown-linux-gnu";
