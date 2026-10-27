@@ -70,7 +70,9 @@ benches() {
     quotes49 url56 nl64 ascii200 twobyte198 quote4th200 nl76x3 korean200 korean_in_ascii207 \
     japanese198 emoji11 quote_every1_64 quote_every2_32 quote_every4_16 quote_every8_64 \
     ctrl_every1_64 ctrl_every2_16 ctrl_every4_32 ctrl_every8_64 tab_every3_48 hangul_spaces200 \
-    latin1_200 chinese200 lone_surrogates60 d7ff_d000_mixed60 mixed_json200; do
+    latin1_200 chinese200 lone_surrogates60 d7ff_d000_mixed60 mixed_json200 ascii16 ascii24 \
+    ascii40 p8_ctrl56 p8_d7ff52 p8_lone52 p8_quote_every2_56 p8_mixed_json200 p8_quote4th192 \
+    key_value60; do
     echo "json/escape $n|$b/json/escape/kinds.vlt|$n 20000"
   done
 }

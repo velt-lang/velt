@@ -44,6 +44,16 @@ function kinds(): string[] {
     "lone_surrogates60",
     "d7ff_d000_mixed60",
     "mixed_json200",
+    "ascii16",
+    "ascii24",
+    "ascii40",
+    "p8_ctrl56",
+    "p8_d7ff52",
+    "p8_lone52",
+    "p8_quote_every2_56",
+    "p8_mixed_json200",
+    "p8_quote4th192",
+    "key_value60",
   ];
 }
 
@@ -152,6 +162,37 @@ function sample(kind: string): string {
       "{\"name\": \"Zoë\", \"tags\": [\"a\tb\"], \"note\": \"line\nnext\", \"n\": 3} ",
       200,
     );
+  }
+  if (kind == "ascii16") {
+    return "sixteen chars ok";
+  }
+  if (kind == "ascii24") {
+    return "twenty-four characters!!";
+  }
+  if (kind == "ascii40") {
+    return cut("forty characters of plain text ", 40);
+  }
+  if (kind.startsWith("p8_")) {
+    // Eight plain bytes, then a string of another kind (the ones the review of #1066 measured).
+    const rest = kind.slice(3);
+    let tail = "";
+    if (rest == "ctrl56") {
+      tail = cut("\u0001", 56);
+    } else if (rest == "d7ff52") {
+      tail = cut("\uD7FFa\uD000", 52);
+    } else if (rest == "lone52") {
+      tail = cut(`ab${String.fromCharCode(0xD800)}cd${String.fromCharCode(0xDC00)}`, 52);
+    } else if (rest == "quote_every2_56") {
+      tail = cut("a\"", 56);
+    } else if (rest == "quote4th192") {
+      tail = cut("abc\"", 192);
+    } else {
+      tail = sample(rest);
+    }
+    return "abcdefgh" + tail;
+  }
+  if (kind == "key_value60") {
+    return "level=info msg=\"request done\" path=\"/api/users\" status=200";
   }
   return "?";
 }
