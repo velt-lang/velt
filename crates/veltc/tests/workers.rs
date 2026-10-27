@@ -4,6 +4,8 @@
 //! (`velt_worker.mjs`) as a Worker would run it, with the requests (and the fake upstream) of the
 //! file's `.mjs`; what it prints must match the file's `.out`.
 //!
+//! A release build must stay under [`SIZE_BUDGET`] gzipped.
+//!
 //! Needs what the browser goldens need (tests/wasm_goldens.rs): LLVM's `opt`/`llc`, the
 //! wasm32-unknown-unknown Rust target and node; skipped with a note when one is missing, and a
 //! failure instead with `VELT_RT_WASM_PREBUILT=1` (the runtime library is prebuilt there).
@@ -14,6 +16,19 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 
 const TRIPLE: &str = "wasm32-unknown-unknown";
+
+/// The most a release build of a test program may weigh, gzipped. Cloudflare allows 3 MB
+/// (compressed) on the Free plan; the programs here weigh 210–290 KB, so a jump in what a
+/// small Worker carries fails here long before a user hits the limit.
+const SIZE_BUDGET: usize = 512 * 1024;
+
+/// `bytes` gzipped, as Cloudflare measures a Worker.
+fn gzipped(bytes: &[u8]) -> usize {
+    use std::io::Write;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    gz.write_all(bytes).expect("gzip");
+    gz.finish().expect("gzip").len()
+}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -86,6 +101,15 @@ fn check(root: &Path, file: &Path, release: bool, out: &Path) -> Result<(), Stri
         ));
     }
     let wasm = module.with_extension("wasm");
+    if release {
+        let size = gzipped(&std::fs::read(&wasm).expect("read the module"));
+        if size > SIZE_BUDGET {
+            return Err(format!(
+                "{} [release]: {size} bytes gzipped, over the budget of {SIZE_BUDGET}",
+                file.display()
+            ));
+        }
+    }
     let run = no_window::command("node")
         .arg(root.join("crates/veltc/tests/workers/drive.mjs"))
         .arg(out)

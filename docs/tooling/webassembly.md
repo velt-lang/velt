@@ -101,8 +101,9 @@ npx wrangler deploy --config worker/wrangler.toml    # to your Cloudflare accoun
 
 The build writes the module (`app.wasm`), the glue (`velt_worker.mjs`), the Worker's entry
 (`worker.mjs`) and a `wrangler.toml` (kept once it exists, so add your settings there). A
-release build of a small server is about 200 KB compressed, well under the 3 MB the Free plan
-allows.
+release build of a small server is about 220 KB compressed, well under the 3 MB the Free plan
+allows, and a request takes tens of microseconds of CPU once the isolate has started (the Free
+plan allows 10 ms).
 
 How it runs: the module is instantiated on the first request of an isolate, `main` runs once,
 and its `serve()` registers the handler; each request then runs the handler as a task, as on the

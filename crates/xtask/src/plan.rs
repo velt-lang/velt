@@ -59,7 +59,8 @@ const TOOLING: &[(&str, &[&str])] = &[
     ),
     // A separate binary; its tests run the launcher against fake releases.
     ("velt_launcher", &[]),
-    ("velt_rt_wasm", &["wasm_goldens", "playground"]),
+    // The Worker glue (js/velt_worker.mjs) and runtime: veltc's Workers test drives both.
+    ("velt_rt_wasm", &["wasm_goldens", "playground", "workers"]),
 ];
 
 /// Packages that compile or read a crate's sources by path, which the dependency graph doesn't

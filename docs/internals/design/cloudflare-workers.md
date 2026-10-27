@@ -403,6 +403,14 @@ The first slice (host imports, the target and glue, `serve()`) differs from the 
   fetcher handle (`client_io`'s `sendVia`). Durable Objects written in Velt remain open.
   Checked against fakes under node (tests/workers/bindings.mjs) and by hand against workerd's
   local R2, D1 and KV (`wrangler dev`), with the same results.
+- **Section 7–8 as built**: crates/veltc/tests/workers.rs runs in the normal test run (the
+  toolchain file installs the wasm targets and llvm-tools, and CI runners have node; the gate
+  plan runs it when velt_rt_wasm changes), and fails a release build of a test program above
+  512 KiB gzipped. Measured October 2026 (release, under node, bench/workers/requests.mjs): the
+  test programs weigh 220–290 KB gzipped; the first request of an isolate takes about 40 ms
+  (compiling the module, which Cloudflare does at deploy, instantiating it and running `main`),
+  later ones about 30 µs, against the Free plan's 10 ms of CPU per request. workerd itself
+  runs in no CI job yet.
 - **The Rust added**: the stored handler, `velt_fetch` (a task per request, as the native
   server starts), `fetch_done`, `velt_turn`, the executor's `run_turn`, the string helpers
   above, and `velt_rt_http_serve`/`_server_*` on wasm (workers.rs, about 200 lines).
