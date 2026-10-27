@@ -211,7 +211,7 @@ impl crate::body::FnCx<'_, '_> {
         // A closure's or nested function's own written result.
         let rs = match self.outer.is_empty() {
             true => self.cx.fn_info(self.body_def?).ret_span?,
-            false => self.f.ret_span?,
+            false => self.f.return_site.ret_span?,
         };
         self.cx.site_in(rs, ret).or(Some(rs))
     }

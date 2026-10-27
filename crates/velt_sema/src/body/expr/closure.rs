@@ -289,8 +289,8 @@ impl FnCx<'_, '_> {
         frame.asserted_ret = ret.is_none() && self.asserted_fn == Some(e.span);
         frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
-        frame.ret_span = ret.filter(|_| !is_async).map(|t| t.span);
-        frame.closure_at = Some(span);
+        frame.return_site.ret_span = ret.filter(|_| !is_async).map(|t| t.span);
+        frame.return_site.closure_at = Some(span);
         for p in params.iter() {
             if let Some(t) = &p.ty {
                 self.cx.note_written_type(p.name.span, t.span);

@@ -19,6 +19,16 @@ use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId, TyKin
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
+/// Where a closure's returned values go when they reject or throw with errors its type doesn't
+/// say (`throws::promise_sites`, `throws::fn_flows`).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ReturnSite {
+    /// Where a closure's result type is written (not for an async one: its `Promise<T>`).
+    pub ret_span: Option<Span>,
+    /// A closure's span (its errors returned into no site go where it is stored).
+    pub closure_at: Option<Span>,
+}
+
 #[derive(Default, Clone)]
 pub(crate) struct Returns {
     values: Vec<Value>,
@@ -169,7 +179,10 @@ impl FnCx<'_, '_> {
         // Stored into the site of the written result type (`throws::fn_flows`); a closure's
         // without one goes where the closure is stored (`throws::promise_sites`).
         let site = self.return_site(ret);
-        let at = site.is_none().then_some(self.f.closure_at).flatten();
+        let at = site
+            .is_none()
+            .then_some(self.f.return_site.closure_at)
+            .flatten();
         let outer = std::mem::replace(&mut self.cx.fn_sites.closure_return, at);
         let h = self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move));
         self.cx.fn_sites.closure_return = outer;
