@@ -379,6 +379,10 @@ impl Ctx<'_> {
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
+            // A proxy trap throws only `Error` classes (`checks::clause_violation`).
+            if !self.is_error_class(m) && self.is_trap_site(site, used_as) {
+                return false;
+            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,

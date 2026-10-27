@@ -352,13 +352,13 @@ fn closures_and_function_values_carry_error_types() {
     );
     assert!(func(&p, "run").throws.is_some(), "through the field");
     assert!(func(&p, "other").throws.is_none(), "another site");
-    // Only `Error` classes are inferred: a thrown string is still reported.
-    let r = err_src(
+    // Any thrown value is inferred, as in JavaScript: a thrown string too.
+    let p = ok_src(
         "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
     );
     assert!(
-        r.contains("but the function type it is used as does not allow throwing"),
-        "{r}"
+        func(&p, "run").throws.is_some(),
+        "a call through `f` throws the string"
     );
     // The errors come through other function types and through untyped `let`s.
     let p = ok_src(

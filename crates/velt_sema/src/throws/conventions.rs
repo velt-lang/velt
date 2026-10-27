@@ -27,7 +27,7 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
         // A synchronous member whose body throws nothing returns its errors in the promise it
         // returns (a `Promise<T>` written without an error type, `promise_sites`).
         let generic_ret = cx.ty.promise_payload(ret).is_none();
-        if g.promise && !is_getter && !generic_ret && super::infer::own_final(cx, m).is_none() {
+        if g.promise && !is_getter && !generic_ret && returns_errors(cx, m, ret, e) {
             continue;
         }
         let diag = match g.promise {
@@ -161,4 +161,14 @@ fn failing_member(cx: &mut Ctx, g: &Group, d: DefId) -> Option<(Span, String)> {
         return Some((at, format!("`{name}` fails with `{en}` here")));
     }
     None
+}
+
+/// Does synchronous member `d`, whose result is `ret`, report the group's errors `e` through
+/// the promise it returns: its body throws nothing, and its result (a `Promise<T>` written
+/// without an error type, `promise_sites`) rejects with all of them.
+fn returns_errors(cx: &mut Ctx, d: DefId, ret: crate::hir::TyId, e: crate::hir::TyId) -> bool {
+    let Some(rejects) = cx.ty.promise_error(ret) else {
+        return false;
+    };
+    super::infer::own_final(cx, d).is_none() && cx.error_outside(Some(rejects), Some(e)).is_none()
 }
