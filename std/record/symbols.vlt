@@ -213,7 +213,7 @@ extend<K, V> Record<K, V> {
 /** A record key as Node's messages show it: a string as it is, a symbol as `Symbol(d)`. */
 function keyText<K>(key: K | symbol): string {
   if (typeof key === "symbol") {
-    return (key as symbol).toString();
+    return String(key as symbol);
   }
   return String(key as K);
 }
