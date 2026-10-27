@@ -738,6 +738,29 @@ impl FnCx<'_, '_> {
                 });
                 return;
             }
+            // A function declared to return `any`, or an arrow typed by its context to return
+            // `any` or `unknown` (sigx's `WatchCallback` returns `any`), returns `undefined` at
+            // its end, as in TypeScript; a function declared `unknown` must return (TS2355).
+            let dynamic = match self.cx.dynamic(ret) {
+                Some(crate::any::Dynamic::Any) => true,
+                Some(crate::any::Dynamic::Unknown) => self.f.kind == FnKind::Closure,
+                _ => false,
+            };
+            if dynamic {
+                let end = Span::new(block.span.file, block.span.hi, block.span.hi);
+                let undefined = ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+                    span: end,
+                };
+                let value = self.expr(&undefined, Some(ret), Want::Move);
+                let value = self.coerce(value, ret);
+                block.stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Return(Some(value)),
+                    span: end,
+                });
+                return;
+            }
             let rty = self.cx.display(ret);
             let short = name.rsplit("::").next().unwrap_or(name);
             self.cx.error(
