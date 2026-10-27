@@ -534,9 +534,11 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
                 gp.name.span,
             );
         }
-        // No promise sites in an interface method's parameters: what a call stores there would
-        // not reach the implementations' own parameter types (`throws::promise_sites`).
-        let outer = std::mem::replace(&mut cx.fn_sites.async_ret, true);
+        // No promise sites in a generic interface method's parameters: what a call stores there
+        // would not reach the implementations' own parameter types, which a generic method of
+        // an object literal does not compare (`throws::promise_sites`).
+        let generic = !m.sig.generics.is_empty();
+        let outer = std::mem::replace(&mut cx.fn_sites.async_ret, generic || cx.fn_sites.async_ret);
         let ps = params(cx, &m.sig.params, &env);
         cx.fn_sites.async_ret = outer;
         // Where its result is written, for the site there (`throws::promise_sites`).
