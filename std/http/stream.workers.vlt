@@ -1,7 +1,0 @@
-// std/http/stream for `--host workers`: streamed response bodies are not supported there yet
-// (#1737; std/http/server_io.workers.vlt answers them with a 500), so there is nothing to copy.
-
-import { BodyStream } from "velt:fetch/body";
-
-/** Streamed bodies don't reach this on Workers: `toServer` built no runtime response. */
-export function pump(r: u64, body: BodyStream) {}

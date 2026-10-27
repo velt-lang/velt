@@ -1,7 +1,8 @@
 //! Cloudflare Workers (`--host workers`, docs/internals/design/cloudflare-workers.md): each
 //! `tests/workers/*.vlt` is built with `velt build --host workers` (debug and `--release`) and
 //! driven by `tests/workers/drive.mjs` under node, through the Worker glue the build wrote
-//! (`velt_worker.mjs`) as a Worker would run it; what it prints must match the file's `.out`.
+//! (`velt_worker.mjs`) as a Worker would run it, with the requests (and the fake upstream) of the
+//! file's `.mjs`; what it prints must match the file's `.out`.
 //!
 //! Needs what the browser goldens need (tests/wasm_goldens.rs): LLVM's `opt`/`llc`, the
 //! wasm32-unknown-unknown Rust target and node; skipped with a note when one is missing, and a
@@ -89,6 +90,7 @@ fn check(root: &Path, file: &Path, release: bool, out: &Path) -> Result<(), Stri
         .arg(root.join("crates/veltc/tests/workers/drive.mjs"))
         .arg(out)
         .arg(wasm.file_name().expect("module file"))
+        .arg(file.with_extension("mjs"))
         .output()
         .expect("run node");
     let got = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");

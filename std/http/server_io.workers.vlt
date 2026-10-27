@@ -2,7 +2,8 @@
 // same exports as server_io.vlt, written in Velt over the functions the Worker glue
 // (velt_worker.mjs) provides. A request `r` is the glue's handle for the JS `Request` (never 0).
 // The glue reads the body before the handler runs, so the body reads here are synchronous; the
-// handler's response goes to the glue in one `respond` call, and `fetch_done` (the runtime,
+// handler's response goes to the glue in one `respond` call, or as a streamed response (a
+// handle above 1, written through `stream_*`), and `fetch_done` (the runtime,
 // crates/velt_rt_wasm/src/workers.rs) tells the glue the handler finished.
 //
 // Headers cross as one string, `name\nvalue\n…` (a header name or value never holds a line
@@ -30,6 +31,12 @@ declare module "wasm:velt_workers" {
     text: string,
     bytes: u8[],
   );
+  function resp_stream(status: u32, reason: string, headers: string): u32;
+  function stream_write(w: u32, data: u8[]): bool;
+  async function stream_ready(w: u32): Promise<u32>;
+  async function stream_close(w: u32): Promise<u32>;
+  function stream_abort(w: u32);
+  function stream_drop(w: u32);
 }
 
 export function velt_rt_http_req_method(r: u64): string {
@@ -127,8 +134,8 @@ export function velt_rt_http_req_respond(
 }
 
 /**
- * A streamed body needs the handler to keep running after it returned, which comes with tasks
- * that wait on the host (#1737): until then the request gets a 500.
+ * A response whose body is streamed (std/http/stream): the glue's handle for a JS `Response`
+ * over a `TransformStream` (above 1, so the handler's result tells it from "responded").
  */
 export function velt_rt_http_resp_build(
   status: u32,
@@ -139,8 +146,33 @@ export function velt_rt_http_resp_build(
   bytes: u8[],
   implied: u32,
 ): u64 {
-  console.error("a streamed response body is not supported on Workers yet (#1737)");
-  return 0;
+  return resp_stream(status, reason, headerText("", "", headers, implied)) as u64;
+}
+
+/** Releases a streamed response a handler built but didn't return. */
+export function velt_rt_http_resp_drop(r: u64) {
+  stream_drop(r as u32);
+}
+
+/** The writer of streamed response `r` is the response's own handle. */
+export function velt_rt_http_resp_stream_open(r: u64): u64 {
+  return r;
+}
+
+export function velt_rt_http_resp_stream_write_bytes(w: u64, data: u8[]): bool {
+  return stream_write(w as u32, data);
+}
+
+export async function velt_rt_http_resp_stream_flush(w: u64): Promise<bool> {
+  return (await stream_ready(w as u32)) == 1;
+}
+
+export async function velt_rt_http_resp_stream_close(w: u64): Promise<bool> {
+  return (await stream_close(w as u32)) == 1;
+}
+
+export function velt_rt_http_resp_stream_abort(w: u64) {
+  stream_abort(w as u32);
 }
 
 export function velt_rt_http_req_respond_list(

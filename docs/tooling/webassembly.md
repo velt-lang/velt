@@ -106,15 +106,17 @@ allows.
 
 How it runs: the module is instantiated on the first request of an isolate, `main` runs once,
 and its `serve()` registers the handler; each request then runs the handler as a task, as on the
-native server. Output goes to the Worker's log. A panic answers 500 and discards the instance;
-the next request starts a new one. `opts.port`, `host` and `tls` are ignored, `Server.close()`
-does nothing, and `remoteAddr` is the `cf-connecting-ip` header's address (port 0).
+native server, and requests that overlap interleave at their `await`s. A handler may `await`
+`sleep` and timers, `fetch` (the Worker's own, with streamed response bodies through
+`res.body`), and return a streamed body (`new Response(BodyStream.from(chunks))`), which is sent
+while the program writes it. Output goes to the Worker's log. A panic answers 500 and discards
+the instance; the next request starts a new one. `opts.port`, `host` and `tls` are ignored,
+`Server.close()` does nothing, and `remoteAddr` is the `cf-connecting-ip` header's address
+(port 0).
 
 **Not yet** ([#1734](https://github.com/velt-lang/velt/issues/1734)): the request body is
-read whole before the handler runs; a streamed response body (a `BodyStream`) answers 500;
-`sleep`, timers and `fetch` don't wait on the host yet
-([#1737](https://github.com/velt-lang/velt/issues/1737)); and R2, D1, KV and Durable Objects
-come with `velt:cloudflare` ([#1738](https://github.com/velt-lang/velt/issues/1738)).
+read whole before the handler runs; an `AbortSignal` doesn't cancel a `fetch`, and `ca` is
+ignored (Cloudflare checks certificates itself).
 
 ## The playground
 

@@ -1,0 +1,114 @@
+// std/fetch/client_io for `--host workers` (docs/internals/design/cloudflare-workers.md §5): the
+// global `fetch` over the Worker's own `fetch`, through the glue (velt_worker.mjs). A response is
+// the glue's handle for the JS `Response` (never 0). The asynchronous imports settle with a
+// number: `fetch_send` with the response's handle (`fetch_error` says whether it failed), and
+// `resp_read` with 1 when it holds bytes for `resp_take`, 0 at the end of the body and 2 when
+// reading failed.
+//
+// Not yet: an `AbortSignal` doesn't cancel a request here, and `ca` is ignored (the host
+// verifies certificates itself).
+
+import { IoResult } from "velt:io";
+import { utf8DecodeLossy } from "velt:encoding";
+
+declare module "wasm:velt_workers" {
+  async function fetch_send(
+    method: string,
+    url: string,
+    headers: string,
+    kind: u32,
+    text: string,
+    bytes: u8[],
+    redirect: u32,
+  ): Promise<u32>;
+  function fetch_error(h: u32): string;
+  function resp_status(h: u32): u32;
+  function resp_status_text(h: u32): string;
+  function resp_url(h: u32): string;
+  function resp_redirected(h: u32): bool;
+  function resp_headers(h: u32): string;
+  async function resp_read(h: u32, whole: bool): Promise<u32>;
+  function resp_take(h: u32): u8[];
+  function resp_drop(h: u32);
+}
+
+// What `fetch` calls a failure that has no code of its own (`EIO`-like).
+const FAILED: i32 = 99;
+
+/**
+ * Sends a request through the Worker's `fetch`; the result is the response once its head
+ * arrived. `headers` is the flat list `[name, value, …]`.
+ */
+export async function velt_rt_http_fetch_send(
+  method: string,
+  url: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  redirect: u32,
+  signal: u64,
+  ca: string,
+): Promise<IoResult<u64>> {
+  const h = await fetch_send(method, url, headers.join("\n"), kind, text, bytes, redirect);
+  const err = fetch_error(h);
+  if (err != "") {
+    resp_drop(h);
+    const none: u64 = 0;
+    return IoResult { code: FAILED, message: `fetch failed: ${err}`, value: none };
+  }
+  return IoResult { code: 0, message: "", value: h as u64 };
+}
+
+export function velt_rt_http_fetch_resp_status(r: u64): u32 {
+  return resp_status(r as u32);
+}
+
+export function velt_rt_http_fetch_resp_status_text(r: u64): string {
+  return resp_status_text(r as u32);
+}
+
+export function velt_rt_http_fetch_resp_url(r: u64): string {
+  return resp_url(r as u32);
+}
+
+export function velt_rt_http_fetch_resp_redirected(r: u64): bool {
+  return resp_redirected(r as u32);
+}
+
+export function velt_rt_http_fetch_resp_headers(r: u64): string[] {
+  const flat = resp_headers(r as u32);
+  return flat == "" ? [] : flat.split("\n");
+}
+
+// The rest of the body: the next chunk, or all of it (`whole`); empty at its end.
+async function read(r: u64, whole: bool): Promise<IoResult<u8[]>> {
+  const h = r as u32;
+  const got = await resp_read(h, whole);
+  const empty: u8[] = [];
+  if (got == 2) {
+    return IoResult {
+      code: FAILED,
+      message: `reading the response failed: ${fetch_error(h)}`,
+      value: empty,
+    };
+  }
+  return IoResult { code: 0, message: "", value: got == 1 ? resp_take(h) : empty };
+}
+
+export async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<string>> {
+  const body = await read(r, true);
+  return IoResult { code: body.code, message: body.message, value: utf8DecodeLossy(body.value) };
+}
+
+export async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>> {
+  return await read(r, true);
+}
+
+export async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>> {
+  return await read(r, false);
+}
+
+export function velt_rt_http_fetch_resp_drop(r: u64) {
+  resp_drop(r as u32);
+}

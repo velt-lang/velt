@@ -747,6 +747,15 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     }
 }
 
+/// The earliest pending timer's deadline (`platform::monotonic_ms` time), if any.
+pub fn next_deadline() -> Option<f64> {
+    let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
+    [sleep, super::order::first_expiry()]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+}
+
 /// One turn for a host that calls back in (the Workers host, docs/internals/design/
 /// cloudflare-workers.md §5): run the microtasks and ready tasks, and the timers that are due,
 /// until none is left, then return to the host. Unlike [`velt_rt_block_on`] there is no root and

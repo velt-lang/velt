@@ -22,7 +22,8 @@ mod imports {
     #[link(wasm_import_module = "velt")]
     extern "C" {
         /// The handler for request `req` finished with `result`: 1 when it responded through
-        /// the host (std/http/server_io.workers.vlt), 0 when it failed (the glue answers 500).
+        /// the host (std/http/server_io.workers.vlt), a streamed response's handle (above 1),
+        /// or 0 when it failed (the glue answers 500).
         pub fn fetch_done(req: u32, result: u32);
     }
 }
@@ -80,10 +81,10 @@ unsafe extern "C" fn req_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         return 0;
     }
     r.done = true;
-    // The handler's result: 1 when it responded through the host, 0 when it failed. A runtime
-    // response (a streamed body) is not built on this host.
+    // The handler's result: 1 when it responded through the host, a streamed response's
+    // handle, or 0 when it failed.
     let result = (r.state as *const u64).read();
-    imports::fetch_done(r.req, u32::from(result == 1));
+    imports::fetch_done(r.req, result as u32);
     READY
 }
 
@@ -139,10 +140,12 @@ pub unsafe extern "C" fn velt_turn() {
     turn();
 }
 
-/// A turn, then the output it wrote (stdout is buffered, and the host's log is per line).
-unsafe fn turn() {
+/// A turn, then the output it wrote (stdout is buffered, and the host's log is per line), and a
+/// wake-up for the next timer.
+pub(crate) unsafe fn turn() {
     executor::run_turn();
     crate::io::flush_stdout();
+    crate::host_promise::request_timer();
 }
 
 /// `serve(…)`: store the handler (the address is meaningless here). A second server is

@@ -11,11 +11,13 @@
 
 import { BodyStream } from "velt:fetch/body";
 
-declare function velt_rt_http_resp_stream_open(r: u64): u64;
-declare function velt_rt_http_resp_stream_write_bytes(w: u64, data: u8[]): bool;
-declare async function velt_rt_http_resp_stream_flush(w: u64): Promise<bool>;
-declare async function velt_rt_http_resp_stream_close(w: u64): Promise<bool>;
-declare function velt_rt_http_resp_stream_abort(w: u64);
+import {
+  velt_rt_http_resp_stream_abort,
+  velt_rt_http_resp_stream_close,
+  velt_rt_http_resp_stream_flush,
+  velt_rt_http_resp_stream_open,
+  velt_rt_http_resp_stream_write_bytes,
+} from "velt:http/server_io";
 
 // Copies `body` into the stream `w` (a runtime writer key) chunk by chunk, then ends it:
 // normally when `body` ends, with an abort (the client sees a cut-off response) when reading it

@@ -45,6 +45,7 @@ pub mod fs;
 pub mod handle;
 #[path = "../../velt_rt/src/hash.rs"]
 pub mod hash;
+pub mod host_promise;
 #[path = "../../velt_rt/src/html.rs"]
 pub mod html;
 #[path = "../../velt_rt/src/inspect.rs"]

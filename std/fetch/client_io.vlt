@@ -1,0 +1,34 @@
+// std/fetch/client_io: what the global `fetch` and a fetched `Response` ask of the host.
+// Natively these are the runtime's functions (rt_abi_async.md §7), declared here once and
+// imported by std/fetch.vlt and std/fetch/response.vlt. A build for another host loads that
+// host's variant instead (`client_io.workers.vlt` for `--host workers`), with the same exports
+// written in Velt over the host's imports (docs/internals/design/cloudflare-workers.md §5).
+
+import { IoResult } from "velt:io";
+
+/**
+ * Sends a request; the result is the response (its head arrived). The runtime takes `text` /
+ * `bytes` (moved: left empty) and copies the rest; `headers` is the flat list
+ * `[name, value, …]`.
+ */
+export declare async function velt_rt_http_fetch_send(
+  method: string,
+  url: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  redirect: u32,
+  signal: u64,
+  ca: string,
+): Promise<IoResult<u64>>;
+
+export declare function velt_rt_http_fetch_resp_status(r: u64): u32;
+export declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
+export declare function velt_rt_http_fetch_resp_url(r: u64): string;
+export declare function velt_rt_http_fetch_resp_redirected(r: u64): bool;
+export declare function velt_rt_http_fetch_resp_headers(r: u64): string[];
+export declare async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<string>>;
+export declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>>;
+export declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
+export declare function velt_rt_http_fetch_resp_drop(r: u64);

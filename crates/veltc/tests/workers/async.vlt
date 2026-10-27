@@ -1,0 +1,61 @@
+// A Worker whose handlers wait on the host: a timer (`sleep`), the program's own `fetch` (to the
+// upstream async.mjs fakes), and a streamed body written while it is sent.
+import { serve } from "velt:http";
+import { BodyStream } from "velt:fetch";
+import { utf8Encode } from "velt:encoding";
+
+struct Item {
+  id: number;
+  name: string;
+}
+
+async function* parts(n: i64): AsyncGenerator<u8[]> {
+  for (let i: i64 = 0; i < n; i++) {
+    await sleep(2);
+    yield utf8Encode(`part ${i};`);
+  }
+}
+
+async function main() {
+  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    if (url.pathname == "/sleep") {
+      const start = Date.now();
+      await sleep(20);
+      return new Response(`slept ${Date.now() - start >= 20}`);
+    }
+    if (url.pathname == "/proxy") {
+      const res = await fetch("https://upstream.example/items/7", {
+        headers: { "x-from": "velt" },
+      });
+      const item = await res.json<Item>();
+      return new Response(`${res.status} ${res.headers.get("x-upstream")} ${item.id} ${item.name}`);
+    }
+    if (url.pathname == "/post") {
+      const res = await fetch("https://upstream.example/echo", { method: "POST", body: "ping" });
+      return new Response(`echoed ${await res.text()}`);
+    }
+    if (url.pathname == "/chunks") {
+      const res = await fetch("https://upstream.example/chunks");
+      let n = 0;
+      let text = "";
+      for await (const chunk of res.body!) {
+        n += 1;
+        text += chunk.length.toString() + ",";
+      }
+      return new Response(`${n} chunks: ${text}`);
+    }
+    if (url.pathname == "/down") {
+      try {
+        await fetch("https://down.example/");
+        return new Response("unexpected");
+      } catch (e) {
+        return new Response(`caught: ${e}`, { status: 502 });
+      }
+    }
+    if (url.pathname == "/stream") {
+      return new Response(BodyStream.from(parts(3)), { headers: { "content-type": "text/plain" } });
+    }
+    return new Response("not found", { status: 404 });
+  });
+}

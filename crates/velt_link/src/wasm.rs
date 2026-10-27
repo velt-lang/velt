@@ -79,6 +79,8 @@ pub fn link(req: &LinkRequest, flavor: WasmFlavor) -> Result<(), String> {
 const WORKER_EXPORTS: &[&str] = &[
     "velt_fetch",
     "velt_turn",
+    "velt_host_promise",
+    "velt_settle",
     "velt_host_str_ptr",
     "velt_host_str_len",
     "velt_host_bytes_ptr",

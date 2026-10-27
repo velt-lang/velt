@@ -20,19 +20,7 @@ export { Headers, HeadersInit } from "velt:fetch/headers";
 export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 export { Response, ResponseInit } from "velt:fetch/response";
 
-// The runtime takes `text` / `bytes` (moved: left empty) and copies the rest; `headers` is the
-// flat list `[name, value, …]`.
-declare async function velt_rt_http_fetch_send(
-  method: string,
-  url: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  redirect: u32,
-  signal: u64,
-  ca: string,
-): Promise<IoResult<u64>>;
+import { velt_rt_http_fetch_send } from "velt:fetch/client_io";
 
 function redirectMode(r: RequestRedirect): u32 {
   if (r == "error") {

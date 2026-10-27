@@ -58,6 +58,18 @@ export declare function velt_rt_http_resp_build(
   bytes: u8[],
   implied: u32,
 ): u64;
+/** Makes server response `r`'s body a stream; the result is its writer (std/http/stream). */
+export declare function velt_rt_http_resp_stream_open(r: u64): u64;
+/** Queues a chunk; false once the client has gone away. */
+export declare function velt_rt_http_resp_stream_write_bytes(w: u64, data: u8[]): bool;
+/** Waits while the client is behind; false once it has gone away. */
+export declare async function velt_rt_http_resp_stream_flush(w: u64): Promise<bool>;
+/** Ends the body and releases the writer. */
+export declare async function velt_rt_http_resp_stream_close(w: u64): Promise<bool>;
+/** Cuts the body off (the client sees an incomplete response) and releases the writer. */
+export declare function velt_rt_http_resp_stream_abort(w: u64);
+/** Releases a server response a handler built but didn't return. */
+export declare function velt_rt_http_resp_drop(r: u64);
 export declare function velt_rt_http_req_respond_list(
   raw: u64,
   status: u32,

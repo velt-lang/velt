@@ -383,9 +383,18 @@ The first slice (host imports, the target and glue, `serve()`) differs from the 
   runtime calls are declared once in std/http/server_io.vlt; server_io.workers.vlt has the same
   exports in Velt over the `velt_workers` host imports, and stream.workers.vlt replaces `pump`.
   The frontend still doesn't know the target.
-- **Bodies are read before the handler runs** (`await request.arrayBuffer()` in the glue), so
-  every request read is a synchronous host call until section 5 lands. A streamed response body
-  answers 500 with a message.
+- **Request bodies are read before the handler runs** (`await request.arrayBuffer()` in the
+  glue), so a request read is a synchronous host call.
+- **Section 5 as built**: an asynchronous host import returns `Promise<u32>` only; the glue
+  makes its future with `velt_host_promise(id)` and settles it with `velt_settle(id, value)`
+  (crates/velt_rt_wasm/src/host_promise.rs), and the value is a handle or a status that Velt
+  code reads further with synchronous imports. After every turn the runtime asks for a timer
+  wake-up (`set_timer`) when a timer is pending, re-armed each turn because hosts round delays.
+  Outbound `fetch` is std/fetch/client_io.workers.vlt (the native declarations moved to
+  client_io.vlt); streamed responses use a `TransformStream` whose handle is the handler's
+  result (above 1), written through `stream_write`/`stream_ready`/`stream_close` (the stream
+  calls moved from std/http/stream.vlt to server_io.vlt). An `AbortSignal` doesn't cancel a
+  host `fetch` yet.
 - **The Rust added**: the stored handler, `velt_fetch` (a task per request, as the native
   server starts), `fetch_done`, `velt_turn`, the executor's `run_turn`, the string helpers
   above, and `velt_rt_http_serve`/`_server_*` on wasm (workers.rs, about 200 lines).

@@ -29,18 +29,20 @@ import {
   velt_rt_http_req_respond,
   velt_rt_http_req_respond_list,
   velt_rt_http_resp_build,
+  velt_rt_http_resp_drop,
 } from "velt:http/server_io";
 
-declare function velt_rt_http_fetch_resp_status(r: u64): u32;
-declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
-declare function velt_rt_http_fetch_resp_url(r: u64): string;
-declare function velt_rt_http_fetch_resp_redirected(r: u64): bool;
-declare function velt_rt_http_fetch_resp_headers(r: u64): string[];
-declare async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<string>>;
-declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>>;
-declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
-declare function velt_rt_http_fetch_resp_drop(r: u64);
-declare function velt_rt_http_resp_drop(r: u64);
+import {
+  velt_rt_http_fetch_resp_bytes,
+  velt_rt_http_fetch_resp_chunk,
+  velt_rt_http_fetch_resp_drop,
+  velt_rt_http_fetch_resp_headers,
+  velt_rt_http_fetch_resp_redirected,
+  velt_rt_http_fetch_resp_status,
+  velt_rt_http_fetch_resp_status_text,
+  velt_rt_http_fetch_resp_text,
+  velt_rt_http_fetch_resp_url,
+} from "velt:fetch/client_io";
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {

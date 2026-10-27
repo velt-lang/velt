@@ -8,9 +8,11 @@
 // `velt_workers` imports below (std/http/server_io.workers.vlt), and `fetch_done(id, result)`
 // says it finished. A panic or `exit()` discards the instance; the next request makes a new one.
 //
-// Imports from `velt`: write, exit, now_ms, date_ms (as in velt_web.mjs) and fetch_done. Strings
-// and byte arrays cross as pointers to the runtime's values, read and written through the
-// module's `velt_host_*` exports.
+// Imports from `velt`: write, exit, now_ms, date_ms (as in velt_web.mjs), fetch_done and
+// set_timer. Strings and byte arrays cross as pointers to the runtime's values, read and written
+// through the module's `velt_host_*` exports. An asynchronous import returns the future
+// `velt_host_promise(id)` makes, and the JS promise behind it settles it with
+// `velt_settle(id, value)` (crates/velt_rt_wasm/src/host_promise.rs).
 
 /** Thrown by the `exit` import to unwind out of the module. */
 class VeltExit extends Error {
@@ -23,31 +25,40 @@ class VeltExit extends Error {
 /**
  * A Worker's handlers for a compiled Velt module.
  * @param {WebAssembly.Module} module the program
- * @param {{ write?: (stream: number, bytes: Uint8Array) => void }} host output sink (default:
- *   console.log / console.error, a line at a time)
+ * @param {{
+ *   write?: (stream: number, bytes: Uint8Array) => void,
+ *   fetch?: typeof fetch,
+ * }} host output sink (default: console.log / console.error, a line at a time) and the `fetch`
+ *   the program's own requests go to (default: the global one)
  */
 export function createWorker(module, host = {}) {
   let rt = null;
   return {
     async fetch(request, env, ctx) {
       try {
-        rt ??= start(module, host.write ?? consoleWrite());
+        if (rt === null || rt.dead) {
+          rt = start(module, host.write ?? consoleWrite(), host.fetch ?? globalThis.fetch, env);
+        }
         return await rt.handle(request, env, ctx);
       } catch (e) {
-        rt = null; // a panic, an exit or a trap: start afresh on the next request
-        if (!(e instanceof VeltExit)) {
-          console.error(e instanceof WebAssembly.RuntimeError ? `wasm trap: ${e.message}` : e);
-        }
+        if (rt !== null) rt.fail(e);
         return new Response("Internal Server Error", { status: 500 });
       }
     },
   };
 }
 
-function start(module, write) {
+function start(module, write, outbound, env) {
   const requests = new Map();
-  let nextId = 1;
+  // Fetched responses and streamed responses, by handle (above 1: a handler's result of 1
+  // means "responded", 0 "failed").
+  const handles = new Map();
+  let nextRequest = 1;
+  let nextHandle = 2;
+  let nextPromise = 1;
+  let timer = null;
   let ex = null;
+  const state = { dead: false };
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const memory = () => new Uint8Array(ex.memory.buffer);
@@ -70,10 +81,58 @@ function start(module, write) {
   };
   const setStr = (out, s) => pass(out, encoder.encode(s), ex.velt_host_str_new);
   const setBytes = (out, b) => pass(out, b, ex.velt_host_bytes_new);
+  const flat = (headers) => {
+    const out = [];
+    for (const [name, value] of headers) out.push(name, value);
+    return out.join("\n");
+  };
+  const unflat = (text) => {
+    const fields = new Headers();
+    if (text !== "") {
+      const parts = text.split("\n");
+      for (let i = 0; i + 1 < parts.length; i += 2) fields.append(parts[i], parts[i + 1]);
+    }
+    return fields;
+  };
   const req = (id) => {
     const r = requests.get(id);
     if (r === undefined) throw new Error(`ICE: unknown request ${id}`);
     return r;
+  };
+  const handle = (h) => {
+    const v = handles.get(h);
+    if (v === undefined) throw new Error(`ICE: unknown handle ${h}`);
+    return v;
+  };
+  const message = (e) => String(e?.message ?? e);
+
+  // A panic, an exit or a trap: every request in flight fails and the instance is not used again.
+  const fail = (e) => {
+    if (state.dead) return;
+    state.dead = true;
+    if (timer !== null) clearTimeout(timer);
+    if (!(e instanceof VeltExit)) {
+      console.error(e instanceof WebAssembly.RuntimeError ? `wasm trap: ${e.message}` : e);
+    }
+    for (const r of requests.values()) r.done(0);
+    for (const h of handles.values()) h.writer?.abort(new Error("the program failed")).catch(() => {});
+  };
+  // Calls into the module from a callback (a settled promise, a timer).
+  const enter = (f) => {
+    if (state.dead) return;
+    try {
+      f();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  // An asynchronous import's result: the future the module waits on, settled by `p` (whose
+  // value is a u32; a rejection must be turned into a value by the caller).
+  const promise = (p) => {
+    const id = nextPromise++;
+    const fut = ex.velt_host_promise(id);
+    p.then((v) => enter(() => ex.velt_settle(id, v >>> 0)));
+    return fut;
   };
 
   const imports = {
@@ -87,19 +146,34 @@ function start(module, write) {
       now_ms: () => performance.now(),
       date_ms: () => Date.now(),
       fetch_done(id, result) {
-        req(id).done(result);
+        const r = req(id);
+        if (result > 1) {
+          // A streamed response: its handle stays until the program closes the stream.
+          r.response = handle(result).response;
+          r.done(1);
+        } else {
+          r.done(result);
+        }
+      },
+      set_timer(ms) {
+        if (timer !== null) clearTimeout(timer);
+        // Rounded up: hosts round a delay down to whole milliseconds.
+        timer = setTimeout(
+          () => {
+            timer = null;
+            enter(() => ex.velt_turn());
+          },
+          Math.ceil(ms),
+        );
       },
     },
     velt_workers: {
+      // The request a handler runs for (std/http/server_io.workers.vlt).
       req_method: (id, out) => setStr(out, req(id).request.method),
       req_url: (id, out) => setStr(out, req(id).request.url),
       req_has_header: (id, name) => (req(id).request.headers.has(str(name)) ? 1 : 0),
       req_header: (id, name, out) => setStr(out, req(id).request.headers.get(str(name)) ?? ""),
-      req_headers(id, out) {
-        const flat = [];
-        for (const [name, value] of req(id).request.headers) flat.push(name, value);
-        setStr(out, flat.join("\n"));
-      },
+      req_headers: (id, out) => setStr(out, flat(req(id).request.headers)),
       req_has_body: (id) => (req(id).body !== null ? 1 : 0),
       req_take_body(id, out) {
         const r = req(id);
@@ -112,19 +186,132 @@ function start(module, write) {
         r.body = null;
       },
       respond(id, status, reason, headers, kind, text, body) {
-        const fields = new Headers();
-        const flat = str(headers);
-        if (flat !== "") {
-          const parts = flat.split("\n");
-          for (let i = 0; i + 1 < parts.length; i += 2) fields.append(parts[i], parts[i + 1]);
-        }
         const content = kind === 1 ? str(text) : kind === 2 ? bytes(body) : null;
         const statusText = str(reason);
         req(id).response = new Response(content, {
           status,
-          headers: fields,
+          headers: unflat(str(headers)),
           ...(statusText === "" ? {} : { statusText }),
         });
+      },
+      // A response whose body the program writes while it is sent (std/http/stream.vlt).
+      resp_stream(status, reason, headers) {
+        const { readable, writable } = new TransformStream();
+        const statusText = str(reason);
+        const h = nextHandle++;
+        handles.set(h, {
+          response: new Response(readable, {
+            status,
+            headers: unflat(str(headers)),
+            ...(statusText === "" ? {} : { statusText }),
+          }),
+          writer: writable.getWriter(),
+          closed: false,
+        });
+        return h;
+      },
+      stream_write(w, data) {
+        const s = handle(w);
+        if (s.closed) return 0;
+        s.writer.write(bytes(data)).catch(() => (s.closed = true));
+        return 1;
+      },
+      stream_ready: (w) =>
+        promise(
+          handle(w).writer.ready.then(
+            () => 1,
+            () => 0,
+          ),
+        ),
+      stream_close(w) {
+        const s = handle(w);
+        handles.delete(w);
+        return promise(
+          s.writer.close().then(
+            () => 1,
+            () => 0,
+          ),
+        );
+      },
+      stream_abort(w) {
+        const s = handle(w);
+        handles.delete(w);
+        s.writer.abort(new Error("the response stream failed")).catch(() => {});
+      },
+      stream_drop(w) {
+        handles.delete(w);
+      },
+      // The program's own requests (std/fetch/client_io.workers.vlt).
+      fetch_send(method, url, headers, kind, text, body, redirect) {
+        const h = nextHandle++;
+        const r = { response: null, error: "", reader: null, chunk: null };
+        handles.set(h, r);
+        const init = {
+          method: str(method),
+          headers: unflat(str(headers)),
+          redirect: ["follow", "error", "manual"][redirect] ?? "follow",
+        };
+        if (kind === 1) init.body = str(text);
+        else if (kind === 2) init.body = bytes(body);
+        const target = str(url);
+        let sent;
+        try {
+          sent = outbound(target, init);
+        } catch (e) {
+          sent = Promise.reject(e);
+        }
+        return promise(
+          sent.then(
+            (res) => {
+              r.response = res;
+              return h;
+            },
+            (e) => {
+              r.error = message(e);
+              return h;
+            },
+          ),
+        );
+      },
+      fetch_error: (h, out) => setStr(out, handle(h).error),
+      resp_status: (h) => handle(h).response.status,
+      resp_status_text: (h, out) => setStr(out, handle(h).response.statusText),
+      resp_url: (h, out) => setStr(out, handle(h).response.url),
+      resp_redirected: (h) => (handle(h).response.redirected ? 1 : 0),
+      resp_headers: (h, out) => setStr(out, flat(handle(h).response.headers)),
+      resp_read(h, whole) {
+        const r = handle(h);
+        const failed = (e) => {
+          r.error = message(e);
+          return 2;
+        };
+        if (whole) {
+          return promise(
+            r.response.arrayBuffer().then((b) => {
+              r.chunk = new Uint8Array(b);
+              return 1;
+            }, failed),
+          );
+        }
+        if (r.response.body === null) return promise(Promise.resolve(0));
+        r.reader ??= r.response.body.getReader();
+        return promise(
+          r.reader.read().then(({ done, value }) => {
+            if (done) return 0;
+            r.chunk = value;
+            return 1;
+          }, failed),
+        );
+      },
+      resp_take(h, out) {
+        const r = handle(h);
+        setBytes(out, r.chunk ?? new Uint8Array(0));
+        r.chunk = null;
+      },
+      resp_drop(h) {
+        const r = handles.get(h);
+        handles.delete(h);
+        r?.reader?.cancel().catch(() => {});
       },
     },
   };
@@ -137,13 +324,17 @@ function start(module, write) {
   }
 
   return {
+    get dead() {
+      return state.dead;
+    },
+    fail,
     async handle(request) {
       if (typeof ex.velt_fetch !== "function") {
         return new Response("this program does not serve: main never calls serve()", {
           status: 500,
         });
       }
-      const id = nextId++;
+      const id = nextRequest++;
       const body = request.body === null ? null : new Uint8Array(await request.arrayBuffer());
       let done;
       const finished = new Promise((resolve) => (done = resolve));
