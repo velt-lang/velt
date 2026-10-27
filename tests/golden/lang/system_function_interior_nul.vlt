@@ -1,0 +1,15 @@
+// requires: unix
+// A path for a system function must hold exactly one 0 byte, its last: with another 0 before
+// it, C would see a shorter path than the one the program built ("a.txt\0../b\0" reaches C as
+// "a.txt"), so the call stops the program instead.
+declare system function unlink(path: readonly u8[]): i32;
+
+function main() {
+  const ok: u8[] = Buffer.alloc(2);
+  ok.write("x");
+  console.log(unlink(ok) == -1);
+  const bad: u8[] = Buffer.alloc(6);
+  bad.write("x");
+  bad[2] = 47;
+  console.log(unlink(bad));
+}

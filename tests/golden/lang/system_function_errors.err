@@ -7,8 +7,8 @@ C: `ssize_t pread(int fd, void *buf, size_t len, off_t offset)`; Velt: `declare 
 `buf` is a buffer: declare it `u8[]`, not `u64` (system functions take no pointers: the array gives the address and the length)
 `fd` is a C `int`: declare it `i32`, not `i64`
 `close` returns `i32`: declare the result
-`path` is a C string: declare it `readonly u8[]` (its last byte must be 0), not `string`
-`path` is a C string: declare it `readonly u8[]` (its last byte must be 0), not `u8[]`
+`path` is a C string: declare it `readonly u8[]` (with one 0 byte, its last), not `string`
+`path` is a C string: declare it `readonly u8[]` (with one 0 byte, its last), not `u8[]`
 `fsync` takes 1 parameter (fd), not 2
 `Bad.nope` is not a field of `struct flock`, which has
 `whence` is a C `int`: declare it `i32`, not a function

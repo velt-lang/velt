@@ -25,8 +25,8 @@ and `fstatSync` are Velt code over these declarations.
 | `void *buf, size_t len` that the function **writes** | one parameter `buf: u8[]` | the array's data and length |
 | `const void *buf, size_t len` that it only **reads** | one parameter `buf: readonly u8[]` | the array's data and length |
 | either, for part of an array | `buf: u8[], start: usize, end: usize` | bytes `start..end`; outside the array, the program stops |
-| `const char *path` | `path: readonly u8[]` | the array; unless its last byte is 0, the program stops |
-| `LPCWSTR` (Windows) | `name: readonly u16[]` | the array; unless its last element is 0, the program stops |
+| `const char *path` | `path: readonly u8[]` | the array; unless its only 0 byte is its last, the program stops |
+| `LPCWSTR` (Windows) | `name: readonly u16[]` | the array; unless its only 0 element is its last, the program stops |
 | `struct flock *`, `struct stat *`, `OVERLAPPED *` | a `struct` of integers whose fields are named after the C struct's | copied into the C layout of the target, and back after the call |
 | a pointer the declaration leaves out (`CreateFileW`'s `lpSecurityAttributes`) | nothing | `NULL` |
 | the result | the integer type the table names | |
@@ -97,7 +97,8 @@ error: system function `pread` is not available on wasm32-wasip1
 ## Checked at the call
 
 Some arguments change how the C function uses memory, so the call checks them and stops the
-program (a panic) when they are wrong: a path without its 0 byte, a range outside the array,
+program (a panic) when they are wrong: a path without its 0 byte or with a 0 before it (C would end the path there: `"a.txt\0../b\0"`
+would reach C as `a.txt`), a range outside the array,
 an `fcntl` command of the other form (a lock command with an `int` argument would make the kernel
 read a `struct flock` at that address), and `FILE_FLAG_OVERLAPPED` for `CreateFileW` (Windows
 would finish reads and writes after the call returned). On Windows, a `ReadFile`, `WriteFile`,

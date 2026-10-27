@@ -4,7 +4,7 @@
 declare system function unlink(path: readonly u8[]): i32;
 
 function main() {
-  const ok: u8[] = Buffer.alloc(4);
+  const ok: u8[] = Buffer.alloc(2);
   ok.write("x");
   console.log(unlink(ok) == -1);
   const bad: u8[] = Buffer.alloc(1);

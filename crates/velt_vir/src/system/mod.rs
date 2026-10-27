@@ -8,8 +8,8 @@
 //!   (it only reads it), and two C arguments, the pointer and the length, both taken from the
 //!   array ([`Param::Buf`]), so no call reaches past its end; a declaration may follow it with
 //!   `start: usize, end: usize` to pass the bytes `start..end` (checked: [`ranged`]);
-//! - a path is a `readonly u8[]` (`u16[]` on Windows) whose last element must be 0
-//!   ([`Param::CStr`], [`Param::WStr`]), checked at the call;
+//! - a path is a `readonly u8[]` (`u16[]` on Windows) with exactly one 0 element,
+//!   its last ([`Param::CStr`], [`Param::WStr`]), checked at the call;
 //! - a C struct is a Velt `struct` of integers whose fields name the C struct's fields
 //!   ([`Struct`]): lowering copies it into a temporary of the C layout the table states for the
 //!   target, passes its address and copies the fields back after the call;
@@ -101,9 +101,9 @@ pub enum Param {
         written: bool,
         len: Int,
     },
-    /// `const char *`: a `readonly u8[]` whose last byte is 0.
+    /// `const char *`: a `readonly u8[]` whose only 0 byte is its last.
     CStr { name: &'static str },
-    /// `LPCWSTR`: a `readonly u16[]` whose last element is 0.
+    /// `LPCWSTR`: a `readonly u16[]` whose only 0 element is its last.
     WStr { name: &'static str },
     /// A pointer to a C struct, from a Velt `struct` (read and written back).
     Struct {

@@ -113,7 +113,7 @@ it, starting with positioned I/O for the pager.
   end: usize` (checked at the call).
 - `fcntl`'s forms are overloads in the table, chosen by the declaration's types; `fcntl$lock`
   names a second form in one module (the `$suffix` is ignored). Each form checks its commands.
-- Paths are `readonly u8[]` ending in 0 (checked at the call), not `string`: no allocation or
+- Paths are `readonly u8[]` with exactly one 0, as the last byte (checked at the call), not `string`: no allocation or
   conversion is hidden in a call.
 - A target without a function accepts its declaration; calling it there is a compile error
   (`velt:fs`'s fd API on Windows and WebAssembly for now).

@@ -277,14 +277,14 @@ fn param_fits(p: &hir::Program, c: &Func, want: &Param, t: TyId, ro: bool) -> Re
         )),
         (Param::CStr { .. }, Shape::Bytes) if ro => Ok(()),
         (Param::CStr { .. }, _) => Err(format!(
-            "`{name}` is a C string: declare it `readonly u8[]` (its last byte must be 0), not {}{}",
+            "`{name}` is a C string: declare it `readonly u8[]` (with one 0 byte, its last), not {}{}",
             if matches!(got, Shape::Bytes) { "`u8[]`".to_string() } else { shown(&got) },
             if matches!(got, Shape::Int(_)) { format!(" {no_pointer}") } else { String::new() }
         )),
         (Param::WStr { .. }, Shape::Words) if ro => Ok(()),
         (Param::WStr { .. }, _) => Err(format!(
-            "`{name}` is a UTF-16 string: declare it `readonly u16[]` (its last element must \
-             be 0), not {}",
+            "`{name}` is a UTF-16 string: declare it `readonly u16[]` (with one 0 \
+             element, its last), not {}",
             if matches!(got, Shape::Words) { "`u16[]`".to_string() } else { shown(&got) }
         )),
         (Param::Struct { layout, .. }, Shape::Struct(d)) => struct_fits(p, *d, layout, name),

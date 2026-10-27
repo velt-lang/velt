@@ -249,34 +249,56 @@ impl FnLower<'_, '_> {
         )
     }
 
-    /// Stop the program unless the string at `ptr` (`n` elements) ends with a 0 element, so the
-    /// C function's search for the end stays inside the array.
+    /// Stop the program unless the string at `ptr` (`n` elements) has exactly one 0 element, its
+    /// last: the C function's search for the end then stays inside the array and finds the
+    /// path the Velt code built (`"a\0../b\0"` would reach C as `"a"`). One scan for the first
+    /// 0, which must be element `n - 1`.
     fn check_terminated(&mut self, func: &Func, name: &str, ptr: &Operand, n: Operand, wide: bool) {
-        let (ok, bad, test) = (self.new_block(), self.new_block(), self.new_block());
-        let empty = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, n.clone(), cint(0, Ty::U64)),
-        );
-        self.branch(empty, bad, test);
-        self.switch_to(test);
         let (stride, et) = if wide { (2, Ty::U16) } else { (1, Ty::U8) };
-        let last = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, n, cint(stride, Ty::U64)),
+        let i = Place::local(self.temp(Ty::U64));
+        self.assign(i.clone(), Rvalue::Use(cint(0, Ty::U64)));
+        let (head, body, next, found) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
         );
-        let last = self.rvalue_temp(
+        let (ok, interior, missing) = (self.new_block(), self.new_block(), self.new_block());
+        self.goto(head);
+        self.switch_to(head);
+        let at_i = Operand::Copy(i.clone());
+        let more = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, at_i.clone(), n.clone()));
+        self.branch(more, body, missing);
+        self.switch_to(body);
+        let off = self.rvalue_temp(
             Ty::U64,
-            Rvalue::Binary(BinOp::Sub, last, cint(stride, Ty::U64)),
+            Rvalue::Binary(BinOp::Mul, at_i.clone(), cint(stride, Ty::U64)),
         );
-        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, ptr.clone(), last));
+        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, ptr.clone(), off));
         let Operand::Copy(at) = at else {
             ice("pointer temp")
         };
         let e = self.rvalue_temp(et, Rvalue::Use(Operand::Copy(proj(&at, Proj::Deref(et)))));
         let zero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, e, cint(0, et)));
-        self.branch(zero, ok, bad);
-        self.switch_to(bad);
+        self.branch(zero, found, next);
+        self.switch_to(next);
+        self.assign(
+            i.clone(),
+            Rvalue::Binary(BinOp::Add, at_i.clone(), cint(1, Ty::U64)),
+        );
+        self.goto(head);
+        self.switch_to(found);
+        let after = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, at_i, cint(1, Ty::U64)));
+        let last = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, after, n));
+        self.branch(last, ok, interior);
         let what = if wide { "element" } else { "byte" };
+        self.switch_to(interior);
+        self.panic_msg(&format!(
+            "system function `{}`: `{name}` has a 0 {what} before its last, where C would end it",
+            func.name
+        ));
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(missing);
         self.panic_msg(&format!(
             "system function `{}`: `{name}` must end with a 0 {what}",
             func.name
