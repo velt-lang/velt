@@ -307,7 +307,9 @@ impl FnCx<'_, '_> {
         {
             return h;
         }
+        // A branded class instance is tested as that instance (`crate::brands`).
         let s = self.type_test_operand(e);
+        let s = self.unbrand(s);
         if self.is_promise_ctor(ty) {
             return self.promise_test(s, span);
         }

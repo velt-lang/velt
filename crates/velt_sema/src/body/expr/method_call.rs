@@ -26,7 +26,11 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(recv) => recv,
         };
-        // A branded value has its primitive's methods.
+        let recv = match self.brand_tag_call(recv, prop, args, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
+        // A branded value has its primitive's (or its class's) methods.
         let recv = self.unbrand(recv);
         // A `shared<T>` has `T`'s methods (#36): they read the value inside, and one that
         // modifies its receiver is an error (`frozen_write`).

@@ -18,6 +18,7 @@ mod bound_values;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
+mod brand_members;
 mod builtins;
 mod call;
 mod call_apply;

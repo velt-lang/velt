@@ -78,6 +78,40 @@ impl Ctx<'_> {
         )
     }
 
+    /// Can `t` be an intersection's branded part: a primitive, or a class instance
+    /// (`Map<K, V> & { $set(v: Map<K, V>): void }`, the type of sigx's `signal(new Map())`)? A
+    /// class instance brand is that instance, as `x as C & { … }` is in TypeScript: the class's
+    /// members are its own, and the object part's members are read from the object at run time
+    /// (`FnCx::brand_tag_member`). A `Record` is a dictionary, not such a part.
+    pub(crate) fn brand_operand(&self, t: TyId) -> bool {
+        if self.brandable(t) {
+            return true;
+        }
+        match self.class_of(t) {
+            Some((d, _)) => Some(d) != self.prelude_adt("Record") && !self.brands.contains_key(&d),
+            None => false,
+        }
+    }
+
+    /// Does the object part `tag` add nothing to `base`: no fields (`string & {}`, the
+    /// literal-union idiom `T | (string & {})`, holds every string, as in TypeScript), or, for a
+    /// class instance, only fields its class has with the same types (`C & { id: string }` is
+    /// `C` when `C` declares `id: string`)?
+    pub(crate) fn brand_adds_nothing(&mut self, base: TyId, tag: TyId) -> bool {
+        if !self.is_object_type(tag) {
+            return false;
+        }
+        let fields = self.public_fields(tag);
+        if fields.is_empty() || self.class_of(base).is_none() {
+            return fields.is_empty();
+        }
+        let have = self.public_fields(base);
+        fields.iter().all(|f| {
+            have.iter()
+                .any(|h| h.name == f.name && h.ty == f.ty && (f.optional || !h.optional))
+        })
+    }
+
     /// The brand of primitive `base` by object type `tag` (one per pair).
     pub(crate) fn brand_type(&mut self, base: TyId, tag: TyId, module: usize, span: Span) -> TyId {
         if let Some(&d) = self.brand_keys.get(&(base, tag)) {

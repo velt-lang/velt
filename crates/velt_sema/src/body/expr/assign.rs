@@ -58,7 +58,8 @@ impl FnCx<'_, '_> {
                 let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => return d.map(|d| AssignTarget::Dynamic(d, None)),
-                    Err(obj) => obj,
+                    // A branded class instance's fields are its class's (`crate::brands`).
+                    Err(obj) => self.unbrand(obj),
                 };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
@@ -100,7 +101,7 @@ impl FnCx<'_, '_> {
                         }
                         return d.map(|d| AssignTarget::Dynamic(d, None));
                     }
-                    Err(obj) => obj,
+                    Err(obj) => self.unbrand(obj),
                 };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));

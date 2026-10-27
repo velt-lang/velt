@@ -252,7 +252,7 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+        let obj = match self.dynamic_or_brand_get(obj, &prop.name, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
         };
