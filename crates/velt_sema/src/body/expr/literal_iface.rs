@@ -103,6 +103,11 @@ impl FnCx<'_, '_> {
             // A view reads the fields through getters.
             return None;
         }
+        if !param && props.iter().any(is_this_method) {
+            // A method using `this` called through `any` or a view would not get the object:
+            // the error where the method is checked stays.
+            return None;
+        }
         let h = self.own_iface_object(props, span);
         if param || self.cx.ty.has_error(h.ty) {
             return Some(h);
@@ -619,4 +624,9 @@ fn as_any(e: &ast::Expr) -> ast::Expr {
     };
     let expr = Box::new(e.clone());
     super::setters::synth(ast::ExprKind::Cast { expr, ty }, e.span)
+}
+
+/// Is `p` a method (not an accessor) that uses `this`?
+fn is_this_method(p: &ast::ObjectProp) -> bool {
+    matches!(p, ast::ObjectProp::KeyValue(_, v) if matches!(written(Some(v)), Written::Value(Some(v)) if takes_this(v)))
 }
