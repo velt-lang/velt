@@ -54,7 +54,9 @@ impl FnCx<'_, '_> {
 
     /// `obj.f = v` / `obj[k] = v` (`target`) on an `any` `obj`. With `as_value`, the
     /// expression is also the value assigned (returned `true`), as in JavaScript (never the
-    /// member read back, which might run a getter).
+    /// member read back, which might run a getter). A plain `=` checks the value as `value_ty`
+    /// first, when there is one (`(x as Record<K, V>)[k] = v`, any_record_cast.rs).
+    #[allow(clippy::too_many_arguments)] // target parts + assignment parts
     pub(crate) fn dynamic_assign(
         &mut self,
         obj: hir::Expr,
@@ -62,6 +64,7 @@ impl FnCx<'_, '_> {
         target: &ast::Expr,
         value: &ast::Expr,
         as_value: bool,
+        value_ty: Option<hir::TyId>,
         span: Span,
     ) -> (hir::Expr, bool) {
         let Some(any) = self.any_ty() else {
@@ -114,10 +117,14 @@ impl FnCx<'_, '_> {
                 as_value,
             );
         }
-        let v = self.expr(value, Some(any), Want::Move);
+        let v = self.expr(value, Some(value_ty.unwrap_or(any)), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
         }
+        let v = match value_ty {
+            Some(t) => self.coerce(v, t),
+            None => v,
+        };
         let v = self.coerce(v, any);
         if !as_value {
             return (self.dynamic_set(obj, key, v, span), false);

@@ -128,6 +128,10 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        let key = super::any_record_cast::AnyRecordKey::Name(prop);
+        if let Some(h) = self.any_as_record_read(object, key, optional, want, span) {
+            return h;
+        }
         if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
             // `this.NAME` / `this.f` in a static method: the class it was called on.
             if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
@@ -328,6 +332,10 @@ impl FnCx<'_, '_> {
             });
         }
         if let Some(h) = self.process_env_index(object, index, span) {
+            return h;
+        }
+        let key = super::any_record_cast::AnyRecordKey::Index(index);
+        if let Some(h) = self.any_as_record_read(object, key, false, want, span) {
             return h;
         }
         if let Some(h) = self.symbol_record_read(object, index, span) {

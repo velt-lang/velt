@@ -23,8 +23,9 @@ pub(super) enum AssignTarget {
     Record(hir::Expr),
     /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
     Indexer(hir::Expr),
-    /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver.
-    Dynamic(hir::Expr),
+    /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver, and the type a value
+    /// written is checked as first (`(x as Record<K, V>)[k]`, `any_record_cast.rs`).
+    Dynamic(hir::Expr, Option<TyId>),
     /// `x[k]` of a type parameter's value by a key known per instantiation (`key_index.rs`).
     Keyed(hir::Expr, hir::Expr),
 }
@@ -51,9 +52,12 @@ impl FnCx<'_, '_> {
                 if let Some(place) = self.static_field_target(object, prop) {
                     return place.map(AssignTarget::Place);
                 }
+                if let Some(t) = self.any_as_record_target(object) {
+                    return t;
+                }
                 let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
-                    Ok(d) => return d.map(AssignTarget::Dynamic),
+                    Ok(d) => return d.map(|d| AssignTarget::Dynamic(d, None)),
                     Err(obj) => obj,
                 };
                 if self.record_args(obj.ty).is_some() {
@@ -82,13 +86,19 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
+                if let Some(t) = self.any_as_record_target(object) {
+                    if t.is_none() {
+                        self.expr(index, None, Want::Borrow);
+                    }
+                    return t;
+                }
                 let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => {
                         if d.is_none() {
                             self.expr(index, None, Want::Borrow);
                         }
-                        return d.map(AssignTarget::Dynamic);
+                        return d.map(|d| AssignTarget::Dynamic(d, None));
                     }
                     Err(obj) => obj,
                 };
@@ -326,8 +336,8 @@ impl FnCx<'_, '_> {
                 let e = self.indexer_assign(obj, Some(op), target, value, as_value, span);
                 return (e, as_value);
             }
-            if let Some(AssignTarget::Dynamic(obj)) = checked {
-                return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
+            if let Some(AssignTarget::Dynamic(obj, vty)) = checked {
+                return self.dynamic_assign(obj, Some(op), target, value, as_value, vty, span);
             }
             // A record key has rules of its own (a key may be missing; `record_logical.rs`).
             if let Some(AssignTarget::Record(obj)) = checked {
@@ -364,8 +374,8 @@ impl FnCx<'_, '_> {
                 let (object, key) = super::record::record_parts(target);
                 self.record_assign(obj, object, key, op, target, value, span)
             }
-            Some(AssignTarget::Dynamic(obj)) => {
-                return self.dynamic_assign(obj, op, target, value, as_value, span);
+            Some(AssignTarget::Dynamic(obj, vty)) => {
+                return self.dynamic_assign(obj, op, target, value, as_value, vty, span);
             }
             Some(AssignTarget::Keyed(obj, key)) => self.key_write_of(obj, key, op, value, span),
             None => {
@@ -571,7 +581,7 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Indexer(obj)) => {
                 return self.indexer_update(obj, op, prefix, target, as_value, span)
             }
-            Some(AssignTarget::Dynamic(obj)) => {
+            Some(AssignTarget::Dynamic(obj, _)) => {
                 let rmw = DynRmw::Update(op, prefix);
                 return self.dynamic_member_rmw(obj, target, rmw, as_value, span);
             }
