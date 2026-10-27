@@ -101,6 +101,9 @@ impl FnLower<'_, '_> {
         let avt = self.cx.ty(any);
         let tys = self.cx.adt_field_tys(ty);
         let filling = std::mem::replace(&mut self.record_fill, true);
+        // The value is a record here, never a proxy: its reads route no trap's error (a
+        // conversion that throws nothing, proxy_throws.rs).
+        let routes = std::mem::replace(&mut self.proxy_routes, false);
         let mut ops = vec![];
         let mut flags = vec![];
         // Whether the record has each field's key (`record_fill_order`).
@@ -176,6 +179,7 @@ impl FnLower<'_, '_> {
             }
         }
         self.record_fill = filling;
+        self.proxy_routes = routes;
         self.record_fill_order(&data, rec, &names, &present);
         ops.extend(flags);
         self.drop_glue(p.clone(), from);
