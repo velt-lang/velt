@@ -554,6 +554,9 @@ impl FnCx<'_, '_> {
                 let d = self.companion_class(&id.name, item)?;
                 Some(self.static_call(d, prop, type_args, args, exp, span))
             }
+            None if crate::types::velt_only_type_name(&id.name) || id.name == "string" => {
+                self.primitive_static_call(id, prop, type_args, args, exp, span)
+            }
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))
             }

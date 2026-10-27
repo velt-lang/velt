@@ -1,0 +1,17 @@
+// Static methods of primitive types (issue #1679): an instance method or a missing static
+// called through the type's name, and the type's name used as a value, are errors.
+extend u64 {
+  static fromParts(hi: u64, lo: u64): u64 {
+    return (hi << 32) | lo;
+  }
+  double(): u64 {
+    return this * 2;
+  }
+}
+
+function main() {
+  console.log(u64.fromParts(1, 2));
+  console.log(u64.double(3));
+  console.log(i32.nothing());
+  const t = f64;
+}

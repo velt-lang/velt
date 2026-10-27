@@ -1,0 +1,4 @@
+// A program's own value named like a primitive type (#1074) wins over the type's statics
+// (issue #1679).
+const f64 = { half: (x: number): number => x / 2 };
+console.log(f64.half(5));
