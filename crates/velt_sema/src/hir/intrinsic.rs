@@ -302,6 +302,29 @@ pub enum Intrinsic {
     /// so readers run at once (in velt_rt's read mode); sema rejects a callback that modifies
     /// the value.
     LockRead,
+    /// `a.load(order)` on an `Atomic<T>` (docs/internals/design/atomics.md; T an integer or
+    /// `bool`): `(a: borrow Atomic<T>, order: u8) -> T`. Every ordering argument of the
+    /// `Atomic*` intrinsics is an integer literal: 0 relaxed, 1 acquire, 2 release, 3 acqrel,
+    /// 4 seqcst (sema checked that the operation may have it). The receiver is a place, read
+    /// and changed where it is (in a local, an object, an array or a `shared` box); nothing
+    /// else reads or writes an `Atomic`. Additive.
+    AtomicLoad,
+    /// `a.store(v, order)`: `(a: borrow Atomic<T>, v: T, order: u8)`. Additive.
+    AtomicStore,
+    /// A read-modify-write: `(a: borrow Atomic<T>, v: T, op: u8, order: u8) -> T`, the
+    /// previous value. `op` is an integer literal: 0 exchange, 1 add, 2 sub, 3 and, 4 or, 5 xor,
+    /// 6 max, 7 min (`max`/`min` compare as `T` does: signed for a signed `T`; integers only;
+    /// add and sub wrap). Additive.
+    AtomicRmw,
+    /// `a.compareExchange(expected, v, order, failure)`: `(a: borrow Atomic<T>, expected: T,
+    /// v: T, order: u8, failure: u8) -> T`, the previous value. Additive.
+    AtomicCas,
+    /// `a.compareExchangeWeak(…)`: as `AtomicCas`, `-> bool` (may fail spuriously). Additive.
+    AtomicCasWeak,
+    /// `Atomic.fence(order)`: `(order: u8)`, never relaxed. Additive.
+    AtomicFence,
+    /// `Atomic.spinHint()`: `()`. Additive.
+    AtomicSpinHint,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`

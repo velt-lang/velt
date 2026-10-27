@@ -405,7 +405,8 @@ inlined into a gated function.
 
 The atomic operations (docs/internals/design/atomics.md) are externs
 `velt_atomic_<op>_<bits>_<order>` on the address of a naturally aligned word, which lowering
-will call for `Atomic<T>` (#1620): `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
+calls for `Atomic<T>` (std/prelude/sync.vlt) and for `shared<int>`'s `add`, `get` and `set`
+(rt_abi_async.md §9): `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
 umin` (`max`/`min` compare signed, `umax`/`umin` unsigned; `add`/`sub` wrap), and
 `cas`/`casweak` with a failure ordering after the ordering (`velt_atomic_cas_64_acqrel_acq`),
 with `bits` 8, 16, 32 or 64 and the orderings `rlx acq rel acqrel seqcst` (a load or a failure

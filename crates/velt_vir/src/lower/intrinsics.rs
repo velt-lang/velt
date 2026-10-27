@@ -17,6 +17,16 @@ impl FnLower<'_, '_> {
         match (i, args) {
             (I::Yield, [a, rest @ ..]) => self.yield_value(a, rest.first(), ty),
             (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (
+                I::AtomicLoad
+                | I::AtomicStore
+                | I::AtomicRmw
+                | I::AtomicCas
+                | I::AtomicCasWeak
+                | I::AtomicFence
+                | I::AtomicSpinHint,
+                _,
+            ) => self.atomic_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
             (I::YieldDelegate, [g]) => self.yield_delegate(g),
@@ -263,7 +273,10 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 // Another reference to a frozen value would count it: a copy (frozen.rs).
                 let c = match self.frozen_root(a) {
-                    true => self.clone_value(v, t),
+                    true => {
+                        self.note_frozen_copy(a);
+                        self.clone_value(v, t)
+                    }
                     false => self.share_value(v, t),
                 };
                 self.own_value(c, t)

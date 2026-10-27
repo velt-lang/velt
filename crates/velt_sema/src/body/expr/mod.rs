@@ -12,6 +12,7 @@ mod assign;
 mod assign_checks;
 pub(crate) mod assign_paths;
 mod assign_pattern;
+mod atomic;
 mod bound_values;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;

@@ -134,6 +134,20 @@ impl FnCx<'_, '_> {
         if self.own_literal_iface(obj.ty) {
             return self.detached_literal_method(prop, span);
         }
+        // Each call of an `Atomic` method is the instruction its ordering names (atomic.rs).
+        if self.cx.atomic_value(obj.ty).is_some() {
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "`Atomic`'s method `{}` cannot be used as a function value",
+                        prop.name
+                    ),
+                    prop.span,
+                )
+                .with_note(format!("call it where it is used: `.{}(…)`", prop.name)),
+            );
+            return self.error_expr(span);
+        }
         // `this` and a `const`/`using` local name one object for as long as the value lives:
         // the arrow names it directly and captures it as an arrow would, with no block around
         // it (so a callback parameter keeps it off the heap, and a `using` value stays put).

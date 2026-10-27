@@ -1,0 +1,14 @@
+atomic_share.vlt:12:11: error: an `Atomic<u64>` cannot be copied or shared: it is used where it is
+  = note: read it with `.load()`, or pass or keep the object that holds it
+
+atomic_share.vlt:16:6: error: an `Atomic<u64>` cannot be copied or shared: it is used where it is
+  = note: read it with `.load()`, or pass or keep the object that holds it
+
+atomic_share.vlt:17:16: error: an `Atomic<u64>` cannot be copied or shared: it is used where it is
+  = note: read it with `.load()`, or pass or keep the object that holds it
+
+atomic_share.vlt:18:9: error: an `Atomic<u64>` cannot be copied or shared: it is used where it is
+  = note: read it with `.load()`, or pass or keep the object that holds it
+
+atomic_share.vlt:21:18: error: an `Atomic<u64>` cannot be copied or shared: it is used where it is
+  = note: create it inside the `shared`: `shared(new Atomic<u64>(…))`

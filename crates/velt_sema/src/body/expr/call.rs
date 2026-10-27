@@ -639,7 +639,10 @@ impl FnCx<'_, '_> {
             *slot = Some(a);
         }
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
-        let ck = self.check_call(&c, slots, args, exp, span);
+        let mut ck = self.check_call(&c, slots, args, exp, span);
+        if let Some(h) = self.atomic_call(def, &mut ck.args, ck.ret, span) {
+            return h;
+        }
         self.note_async_args(def, &ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {

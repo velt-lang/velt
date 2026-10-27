@@ -1,0 +1,45 @@
+// check: no leaks
+// An object holding an `Atomic` stays on its task: awaiting a call that changes it changes it in
+// place. Shared, its atomics are the ones every spawned task changes. A value whose last
+// reference goes to the task moves there.
+class Hits {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+}
+
+async function work(c: Hits, k: i64) {
+  for (let i = 0; i < k; i++) {
+    c.hits.add(1);
+  }
+}
+
+async function workShared(c: shared<Hits>, k: i64) {
+  for (let i = 0; i < k; i++) {
+    c.hits.add(1, "relaxed");
+  }
+}
+
+async function total(c: Hits, k: i64): Promise<u64> {
+  await work(c, k);
+  return c.hits.load();
+}
+
+async function main() {
+  const c = new Hits();
+  for (let t = 0; t < 3; t++) {
+    await work(c, 10);
+  }
+  console.log("awaited", c.hits.load());
+  const s = shared(new Hits());
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(workShared(s, 1000)));
+  }
+  for (let t = 0; t < 2; t++) {
+    ps.push(spawn((async () => {
+      s.hits.add(5);
+    })()));
+  }
+  await Promise.all(ps);
+  console.log("shared", s.hits.load());
+  console.log("moved", await spawn(total(new Hits(), 7)));
+}

@@ -130,6 +130,16 @@ impl FnLower<'_, '_> {
         prev
     }
 
+    /// `span` becomes the user code being lowered (`Cx::user_site`) when it is in a user file;
+    /// returns the previous one.
+    pub(super) fn enter_site(&mut self, span: Span) -> Span {
+        let prev = self.cx.user_site;
+        if span.hi > span.lo && self.cx.locs.as_ref().is_some_and(|m| !m.is_std(span)) {
+            self.cx.user_site = span;
+        }
+        prev
+    }
+
     pub(super) fn restore_loc(&mut self, prev: Option<SrcLoc>) {
         self.loc = prev;
     }

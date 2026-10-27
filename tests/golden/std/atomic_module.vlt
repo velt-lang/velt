@@ -1,0 +1,35 @@
+// check: no leaks
+// A module constant holding an `Atomic` is one word, made once (in the module state, as a
+// non-constant initializer is): every use changes the same atomic, also from other threads.
+interface Point {
+  a: Atomic<u64>;
+}
+
+const COUNTER = new Atomic<u64>(0);
+const PT: Point = { a: new Atomic<u64>(10) };
+const ARR: Atomic<u64>[] = [new Atomic<u64>(0), new Atomic<u64>(0)];
+const SPAWNED = new Atomic<u64>(0);
+
+async function work(k: i64) {
+  for (let i = 0; i < k; i++) {
+    SPAWNED.add(1, "relaxed");
+  }
+}
+
+async function main() {
+  COUNTER.add(1);
+  COUNTER.add(1);
+  console.log("counter", COUNTER.load());
+  PT.a.add(1);
+  PT.a.add(1);
+  console.log("struct", PT.a.load());
+  ARR[1].add(3);
+  ARR[1].add(4);
+  console.log("array", ARR[0].load(), ARR[1].load());
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(work(100000)));
+  }
+  await Promise.all(ps);
+  console.log("tasks", SPAWNED.load());
+}
