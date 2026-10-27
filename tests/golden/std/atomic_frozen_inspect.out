@@ -6,3 +6,5 @@ Atomic { v: 3 }
 6 Atomic { v: 6 }
 Atomic { v: 6 }
 Atomic { v: 7 }
+Atomic { v: 11 }
+Atomic { v: 12 }

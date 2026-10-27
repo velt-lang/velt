@@ -11,6 +11,10 @@ class Node {
   limit: u64 = 3;
 }
 
+class Tup {
+  t: [Atomic<u64>, u64] = [new Atomic<u64>(10), 2];
+}
+
 class Holder {
   st: St = { a: new Atomic<u64>(5), k: 2 };
 }
@@ -36,9 +40,17 @@ function inner(h: Holder): void {
   }
 }
 
+function tuple(x: Tup): void {
+  for (let i: u64 = 0; i < x.t[1]; i++) {
+    x.t[0].add(1, "relaxed");
+    console.log(x.t[0]);
+  }
+}
+
 function main() {
   const n = new Node();
   show(n);
   both(n);
   inner(new Holder());
+  tuple(new Tup());
 }
