@@ -1,0 +1,1350 @@
+-- grammar
+"12" +3p2 +3p2
+"12x" NaN +3p2
+"121" +121p0 +121p0
+"12." +3p2 +3p2
+"12e" NaN +3p2
+"12 2" NaN +3p2
+"12e5" +9375p7 +9375p7
+"12_" NaN +3p2
+"12abc" NaN +3p2
+"12Infinity" NaN +3p2
+"12\u0000" NaN +3p2
+"-12" -3p2 -3p2
+"-12x" NaN -3p2
+"-121" -121p0 -121p0
+"-12." -3p2 -3p2
+"-12e" NaN -3p2
+"-12 2" NaN -3p2
+"-12e5" -9375p7 -9375p7
+"-12_" NaN -3p2
+"-12abc" NaN -3p2
+"-12Infinity" NaN -3p2
+"-12\u0000" NaN -3p2
+"+12" +3p2 +3p2
+"+12x" NaN +3p2
+"+121" +121p0 +121p0
+"+12." +3p2 +3p2
+"+12e" NaN +3p2
+"+12 2" NaN +3p2
+"+12e5" +9375p7 +9375p7
+"+12_" NaN +3p2
+"+12abc" NaN +3p2
+"+12Infinity" NaN +3p2
+"+12\u0000" NaN +3p2
+"1.5" +3p-1 +3p-1
+"1.5x" NaN +3p-1
+"1.51" +6800435437329449p-52 +6800435437329449p-52
+"1.5." NaN +3p-1
+"1.5e" NaN +3p-1
+"1.5 2" NaN +3p-1
+"1.5e5" +9375p4 +9375p4
+"1.5_" NaN +3p-1
+"1.5abc" NaN +3p-1
+"1.5Infinity" NaN +3p-1
+"1.5\u0000" NaN +3p-1
+".5" +1p-1 +1p-1
+".5x" NaN +1p-1
+".51" +2296835809958953p-52 +2296835809958953p-52
+".5." NaN +1p-1
+".5e" NaN +1p-1
+".5 2" NaN +1p-1
+".5e5" +3125p4 +3125p4
+".5_" NaN +1p-1
+".5abc" NaN +1p-1
+".5Infinity" NaN +1p-1
+".5\u0000" NaN +1p-1
+"5." +5p0 +5p0
+"5.x" NaN +5p0
+"5.1" +2871044762448691p-49 +2871044762448691p-49
+"5.." NaN +5p0
+"5.e" NaN +5p0
+"5. 2" NaN +5p0
+"5.e5" +15625p5 +15625p5
+"5._" NaN +5p0
+"5.abc" NaN +5p0
+"5.Infinity" NaN +5p0
+"5.\u0000" NaN +5p0
+"-.5" -1p-1 -1p-1
+"-.5x" NaN -1p-1
+"-.51" -2296835809958953p-52 -2296835809958953p-52
+"-.5." NaN -1p-1
+"-.5e" NaN -1p-1
+"-.5 2" NaN -1p-1
+"-.5e5" -3125p4 -3125p4
+"-.5_" NaN -1p-1
+"-.5abc" NaN -1p-1
+"-.5Infinity" NaN -1p-1
+"-.5\u0000" NaN -1p-1
+"+.5e1" +5p0 +5p0
+"+.5e1x" NaN +5p0
+"+.5e11" +48828125p10 +48828125p10
+"+.5e1." NaN +5p0
+"+.5e1e" NaN +5p0
+"+.5e1 2" NaN +5p0
+"+.5e1e5" NaN +5p0
+"+.5e1_" NaN +5p0
+"+.5e1abc" NaN +5p0
+"+.5e1Infinity" NaN +5p0
+"+.5e1\u0000" NaN +5p0
+"0x1F" +31p0 +0p0
+"0x1Fx" NaN +0p0
+"0x1F1" +497p0 +0p0
+"0x1F." NaN +0p0
+"0x1Fe" +255p1 +0p0
+"0x1F 2" NaN +0p0
+"0x1Fe5" +8165p0 +0p0
+"0x1F_" NaN +0p0
+"0x1Fabc" +32431p2 +0p0
+"0x1FInfinity" NaN +0p0
+"0x1F\u0000" NaN +0p0
+"0X1f" +31p0 +0p0
+"0X1fx" NaN +0p0
+"0X1f1" +497p0 +0p0
+"0X1f." NaN +0p0
+"0X1fe" +255p1 +0p0
+"0X1f 2" NaN +0p0
+"0X1fe5" +8165p0 +0p0
+"0X1f_" NaN +0p0
+"0X1fabc" +32431p2 +0p0
+"0X1fInfinity" NaN +0p0
+"0X1f\u0000" NaN +0p0
+"0o17" +15p0 +0p0
+"0o17x" NaN +0p0
+"0o171" +121p0 +0p0
+"0o17." NaN +0p0
+"0o17e" NaN +0p0
+"0o17 2" NaN +0p0
+"0o17e5" NaN +0p0
+"0o17_" NaN +0p0
+"0o17abc" NaN +0p0
+"0o17Infinity" NaN +0p0
+"0o17\u0000" NaN +0p0
+"0O17" +15p0 +0p0
+"0O17x" NaN +0p0
+"0O171" +121p0 +0p0
+"0O17." NaN +0p0
+"0O17e" NaN +0p0
+"0O17 2" NaN +0p0
+"0O17e5" NaN +0p0
+"0O17_" NaN +0p0
+"0O17abc" NaN +0p0
+"0O17Infinity" NaN +0p0
+"0O17\u0000" NaN +0p0
+"0b101" +5p0 +0p0
+"0b101x" NaN +0p0
+"0b1011" +11p0 +0p0
+"0b101." NaN +0p0
+"0b101e" NaN +0p0
+"0b101 2" NaN +0p0
+"0b101e5" NaN +0p0
+"0b101_" NaN +0p0
+"0b101abc" NaN +0p0
+"0b101Infinity" NaN +0p0
+"0b101\u0000" NaN +0p0
+"0B101" +5p0 +0p0
+"0B101x" NaN +0p0
+"0B1011" +11p0 +0p0
+"0B101." NaN +0p0
+"0B101e" NaN +0p0
+"0B101 2" NaN +0p0
+"0B101e5" NaN +0p0
+"0B101_" NaN +0p0
+"0B101abc" NaN +0p0
+"0B101Infinity" NaN +0p0
+"0B101\u0000" NaN +0p0
+"Infinity" +Infinity +Infinity
+"Infinityx" NaN +Infinity
+"Infinity1" NaN +Infinity
+"Infinity." NaN +Infinity
+"Infinitye" NaN +Infinity
+"Infinity 2" NaN +Infinity
+"Infinitye5" NaN +Infinity
+"Infinity_" NaN +Infinity
+"Infinityabc" NaN +Infinity
+"InfinityInfinity" NaN +Infinity
+"Infinity\u0000" NaN +Infinity
+"-Infinity" -Infinity -Infinity
+"-Infinityx" NaN -Infinity
+"-Infinity1" NaN -Infinity
+"-Infinity." NaN -Infinity
+"-Infinitye" NaN -Infinity
+"-Infinity 2" NaN -Infinity
+"-Infinitye5" NaN -Infinity
+"-Infinity_" NaN -Infinity
+"-Infinityabc" NaN -Infinity
+"-InfinityInfinity" NaN -Infinity
+"-Infinity\u0000" NaN -Infinity
+"+Infinity" +Infinity +Infinity
+"+Infinityx" NaN +Infinity
+"+Infinity1" NaN +Infinity
+"+Infinity." NaN +Infinity
+"+Infinitye" NaN +Infinity
+"+Infinity 2" NaN +Infinity
+"+Infinitye5" NaN +Infinity
+"+Infinity_" NaN +Infinity
+"+Infinityabc" NaN +Infinity
+"+InfinityInfinity" NaN +Infinity
+"+Infinity\u0000" NaN +Infinity
+"1e5" +3125p5 +3125p5
+"1e5x" NaN +3125p5
+"1e51" +94039548065783p123 +94039548065783p123
+"1e5." NaN +3125p5
+"1e5e" NaN +3125p5
+"1e5 2" NaN +3125p5
+"1e5e5" NaN +3125p5
+"1e5_" NaN +3125p5
+"1e5abc" NaN +3125p5
+"1e5Infinity" NaN +3125p5
+"1e5\u0000" NaN +3125p5
+"12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+"12345678901234567890123x" NaN +2943439221676485p22
+"123456789012345678901231" +7358598054191213p24 +7358598054191213p24
+"12345678901234567890123." +2943439221676485p22 +2943439221676485p22
+"12345678901234567890123e" NaN +2943439221676485p22
+"12345678901234567890123 2" NaN +2943439221676485p22
+"12345678901234567890123e5" +8982663640370133p37 +8982663640370133p37
+"12345678901234567890123_" NaN +2943439221676485p22
+"12345678901234567890123abc" NaN +2943439221676485p22
+"12345678901234567890123Infinity" NaN +2943439221676485p22
+"12345678901234567890123\u0000" NaN +2943439221676485p22
+"1234567890123456789012345e-5" +6028163525993441p11 +6028163525993441p11
+"1234567890123456789012345e-5x" NaN +6028163525993441p11
+"1234567890123456789012345e-51" +3441472993491345p-141 +3441472993491345p-141
+"1234567890123456789012345e-5." NaN +6028163525993441p11
+"1234567890123456789012345e-5e" NaN +6028163525993441p11
+"1234567890123456789012345e-5 2" NaN +6028163525993441p11
+"1234567890123456789012345e-5e5" NaN +6028163525993441p11
+"1234567890123456789012345e-5_" NaN +6028163525993441p11
+"1234567890123456789012345e-5abc" NaN +6028163525993441p11
+"1234567890123456789012345e-5Infinity" NaN +6028163525993441p11
+"1234567890123456789012345e-5\u0000" NaN +6028163525993441p11
+"0.000001" +4722366482869645p-72 +4722366482869645p-72
+"0.000001x" NaN +4722366482869645p-72
+"0.0000011" +2597301565578305p-71 +2597301565578305p-71
+"0.000001." NaN +4722366482869645p-72
+"0.000001e" NaN +4722366482869645p-72
+"0.000001 2" NaN +4722366482869645p-72
+"0.000001e5" +3602879701896397p-55 +3602879701896397p-55
+"0.000001_" NaN +4722366482869645p-72
+"0.000001abc" NaN +4722366482869645p-72
+"0.000001Infinity" NaN +4722366482869645p-72
+"0.000001\u0000" NaN +4722366482869645p-72
+"-0" -0p0 -0p0
+"-0x" NaN -0p0
+"-01" -1p0 -1p0
+"-0." -0p0 -0p0
+"-0e" NaN -0p0
+"-0 2" NaN -0p0
+"-0e5" -0p0 -0p0
+"-0_" NaN -0p0
+"-0abc" NaN -0p0
+"-0Infinity" NaN -0p0
+"-0\u0000" NaN -0p0
+"0" +0p0 +0p0
+"0x" NaN +0p0
+"01" +1p0 +1p0
+"0." +0p0 +0p0
+"0e" NaN +0p0
+"0 2" NaN +0p0
+"0e5" +0p0 +0p0
+"0_" NaN +0p0
+"0abc" NaN +0p0
+"0Infinity" NaN +0p0
+"0\u0000" NaN +0p0
+"0x" NaN +0p0
+"0xx" NaN +0p0
+"0x1" +1p0 +0p0
+"0x." NaN +0p0
+"0xe" +7p1 +0p0
+"0x 2" NaN +0p0
+"0xe5" +229p0 +0p0
+"0x_" NaN +0p0
+"0xabc" +687p2 +0p0
+"0xInfinity" NaN +0p0
+"0x\u0000" NaN +0p0
+"0b" NaN +0p0
+"0bx" NaN +0p0
+"0b1" +1p0 +0p0
+"0b." NaN +0p0
+"0be" NaN +0p0
+"0b 2" NaN +0p0
+"0be5" NaN +0p0
+"0b_" NaN +0p0
+"0babc" NaN +0p0
+"0bInfinity" NaN +0p0
+"0b\u0000" NaN +0p0
+"0o" NaN +0p0
+"0ox" NaN +0p0
+"0o1" +1p0 +0p0
+"0o." NaN +0p0
+"0oe" NaN +0p0
+"0o 2" NaN +0p0
+"0oe5" NaN +0p0
+"0o_" NaN +0p0
+"0oabc" NaN +0p0
+"0oInfinity" NaN +0p0
+"0o\u0000" NaN +0p0
+"1_000" NaN +1p0
+"1_000x" NaN +1p0
+"1_0001" NaN +1p0
+"1_000." NaN +1p0
+"1_000e" NaN +1p0
+"1_000 2" NaN +1p0
+"1_000e5" NaN +1p0
+"1_000_" NaN +1p0
+"1_000abc" NaN +1p0
+"1_000Infinity" NaN +1p0
+"1_000\u0000" NaN +1p0
+"1__0" NaN +1p0
+"1__0x" NaN +1p0
+"1__01" NaN +1p0
+"1__0." NaN +1p0
+"1__0e" NaN +1p0
+"1__0 2" NaN +1p0
+"1__0e5" NaN +1p0
+"1__0_" NaN +1p0
+"1__0abc" NaN +1p0
+"1__0Infinity" NaN +1p0
+"1__0\u0000" NaN +1p0
+"_1" NaN NaN
+"_1x" NaN NaN
+"_11" NaN NaN
+"_1." NaN NaN
+"_1e" NaN NaN
+"_1 2" NaN NaN
+"_1e5" NaN NaN
+"_1_" NaN NaN
+"_1abc" NaN NaN
+"_1Infinity" NaN NaN
+"_1\u0000" NaN NaN
+"1_" NaN +1p0
+"1_x" NaN +1p0
+"1_1" NaN +1p0
+"1_." NaN +1p0
+"1_e" NaN +1p0
+"1_ 2" NaN +1p0
+"1_e5" NaN +1p0
+"1__" NaN +1p0
+"1_abc" NaN +1p0
+"1_Infinity" NaN +1p0
+"1_\u0000" NaN +1p0
+"0x1_0" NaN +0p0
+"0x1_0x" NaN +0p0
+"0x1_01" NaN +0p0
+"0x1_0." NaN +0p0
+"0x1_0e" NaN +0p0
+"0x1_0 2" NaN +0p0
+"0x1_0e5" NaN +0p0
+"0x1_0_" NaN +0p0
+"0x1_0abc" NaN +0p0
+"0x1_0Infinity" NaN +0p0
+"0x1_0\u0000" NaN +0p0
+"1e1_0" NaN +5p1
+"1e1_0x" NaN +5p1
+"1e1_01" NaN +5p1
+"1e1_0." NaN +5p1
+"1e1_0e" NaN +5p1
+"1e1_0 2" NaN +5p1
+"1e1_0e5" NaN +5p1
+"1e1_0_" NaN +5p1
+"1e1_0abc" NaN +5p1
+"1e1_0Infinity" NaN +5p1
+"1e1_0\u0000" NaN +5p1
+"1.2.3" NaN +5404319552844595p-52
+"1.2.3x" NaN +5404319552844595p-52
+"1.2.31" NaN +5404319552844595p-52
+"1.2.3." NaN +5404319552844595p-52
+"1.2.3e" NaN +5404319552844595p-52
+"1.2.3 2" NaN +5404319552844595p-52
+"1.2.3e5" NaN +5404319552844595p-52
+"1.2.3_" NaN +5404319552844595p-52
+"1.2.3abc" NaN +5404319552844595p-52
+"1.2.3Infinity" NaN +5404319552844595p-52
+"1.2.3\u0000" NaN +5404319552844595p-52
+"1e5.5" NaN +3125p5
+"1e5.5x" NaN +3125p5
+"1e5.51" NaN +3125p5
+"1e5.5." NaN +3125p5
+"1e5.5e" NaN +3125p5
+"1e5.5 2" NaN +3125p5
+"1e5.5e5" NaN +3125p5
+"1e5.5_" NaN +3125p5
+"1e5.5abc" NaN +3125p5
+"1e5.5Infinity" NaN +3125p5
+"1e5.5\u0000" NaN +3125p5
+"1e" NaN +1p0
+"1ex" NaN +1p0
+"1e1" +5p1 +5p1
+"1e." NaN +1p0
+"1ee" NaN +1p0
+"1e 2" NaN +1p0
+"1ee5" NaN +1p0
+"1e_" NaN +1p0
+"1eabc" NaN +1p0
+"1eInfinity" NaN +1p0
+"1e\u0000" NaN +1p0
+"1e+" NaN +1p0
+"1e+x" NaN +1p0
+"1e+1" +5p1 +5p1
+"1e+." NaN +1p0
+"1e+e" NaN +1p0
+"1e+ 2" NaN +1p0
+"1e+e5" NaN +1p0
+"1e+_" NaN +1p0
+"1e+abc" NaN +1p0
+"1e+Infinity" NaN +1p0
+"1e+\u0000" NaN +1p0
+"1e-" NaN +1p0
+"1e-x" NaN +1p0
+"1e-1" +3602879701896397p-55 +3602879701896397p-55
+"1e-." NaN +1p0
+"1e-e" NaN +1p0
+"1e- 2" NaN +1p0
+"1e-e5" NaN +1p0
+"1e-_" NaN +1p0
+"1e-abc" NaN +1p0
+"1e-Infinity" NaN +1p0
+"1e-\u0000" NaN +1p0
+"1E5" +3125p5 +3125p5
+"1E5x" NaN +3125p5
+"1E51" +94039548065783p123 +94039548065783p123
+"1E5." NaN +3125p5
+"1E5e" NaN +3125p5
+"1E5 2" NaN +3125p5
+"1E5e5" NaN +3125p5
+"1E5_" NaN +3125p5
+"1E5abc" NaN +3125p5
+"1E5Infinity" NaN +3125p5
+"1E5\u0000" NaN +3125p5
+"00012" +3p2 +3p2
+"00012x" NaN +3p2
+"000121" +121p0 +121p0
+"00012." +3p2 +3p2
+"00012e" NaN +3p2
+"00012 2" NaN +3p2
+"00012e5" +9375p7 +9375p7
+"00012_" NaN +3p2
+"00012abc" NaN +3p2
+"00012Infinity" NaN +3p2
+"00012\u0000" NaN +3p2
+"-00" -0p0 -0p0
+"-00x" NaN -0p0
+"-001" -1p0 -1p0
+"-00." -0p0 -0p0
+"-00e" NaN -0p0
+"-00 2" NaN -0p0
+"-00e5" -0p0 -0p0
+"-00_" NaN -0p0
+"-00abc" NaN -0p0
+"-00Infinity" NaN -0p0
+"-00\u0000" NaN -0p0
+"0.0e0" +0p0 +0p0
+"0.0e0x" NaN +0p0
+"0.0e01" +0p0 +0p0
+"0.0e0." NaN +0p0
+"0.0e0e" NaN +0p0
+"0.0e0 2" NaN +0p0
+"0.0e0e5" NaN +0p0
+"0.0e0_" NaN +0p0
+"0.0e0abc" NaN +0p0
+"0.0e0Infinity" NaN +0p0
+"0.0e0\u0000" NaN +0p0
+"e5" NaN NaN
+"e5x" NaN NaN
+"e51" NaN NaN
+"e5." NaN NaN
+"e5e" NaN NaN
+"e5 2" NaN NaN
+"e5e5" NaN NaN
+"e5_" NaN NaN
+"e5abc" NaN NaN
+"e5Infinity" NaN NaN
+"e5\u0000" NaN NaN
+"." NaN NaN
+".x" NaN NaN
+".1" +3602879701896397p-55 +3602879701896397p-55
+".." NaN NaN
+".e" NaN NaN
+". 2" NaN NaN
+".e5" NaN NaN
+"._" NaN NaN
+".abc" NaN NaN
+".Infinity" NaN NaN
+".\u0000" NaN NaN
+"+" NaN NaN
+"+x" NaN NaN
+"+1" +1p0 +1p0
+"+." NaN NaN
+"+e" NaN NaN
+"+ 2" NaN NaN
+"+e5" NaN NaN
+"+_" NaN NaN
+"+abc" NaN NaN
+"+Infinity" +Infinity +Infinity
+"+\u0000" NaN NaN
+"-" NaN NaN
+"-x" NaN NaN
+"-1" -1p0 -1p0
+"-." NaN NaN
+"-e" NaN NaN
+"- 2" NaN NaN
+"-e5" NaN NaN
+"-_" NaN NaN
+"-abc" NaN NaN
+"-Infinity" -Infinity -Infinity
+"-\u0000" NaN NaN
+"+-1" NaN NaN
+"+-1x" NaN NaN
+"+-11" NaN NaN
+"+-1." NaN NaN
+"+-1e" NaN NaN
+"+-1 2" NaN NaN
+"+-1e5" NaN NaN
+"+-1_" NaN NaN
+"+-1abc" NaN NaN
+"+-1Infinity" NaN NaN
+"+-1\u0000" NaN NaN
+"--1" NaN NaN
+"--1x" NaN NaN
+"--11" NaN NaN
+"--1." NaN NaN
+"--1e" NaN NaN
+"--1 2" NaN NaN
+"--1e5" NaN NaN
+"--1_" NaN NaN
+"--1abc" NaN NaN
+"--1Infinity" NaN NaN
+"--1\u0000" NaN NaN
+"-+1" NaN NaN
+"-+1x" NaN NaN
+"-+11" NaN NaN
+"-+1." NaN NaN
+"-+1e" NaN NaN
+"-+1 2" NaN NaN
+"-+1e5" NaN NaN
+"-+1_" NaN NaN
+"-+1abc" NaN NaN
+"-+1Infinity" NaN NaN
+"-+1\u0000" NaN NaN
+"1d" NaN +1p0
+"1dx" NaN +1p0
+"1d1" NaN +1p0
+"1d." NaN +1p0
+"1de" NaN +1p0
+"1d 2" NaN +1p0
+"1de5" NaN +1p0
+"1d_" NaN +1p0
+"1dabc" NaN +1p0
+"1dInfinity" NaN +1p0
+"1d\u0000" NaN +1p0
+"1f" NaN +1p0
+"1fx" NaN +1p0
+"1f1" NaN +1p0
+"1f." NaN +1p0
+"1fe" NaN +1p0
+"1f 2" NaN +1p0
+"1fe5" NaN +1p0
+"1f_" NaN +1p0
+"1fabc" NaN +1p0
+"1fInfinity" NaN +1p0
+"1f\u0000" NaN +1p0
+"1.0f" NaN +1p0
+"1.0fx" NaN +1p0
+"1.0f1" NaN +1p0
+"1.0f." NaN +1p0
+"1.0fe" NaN +1p0
+"1.0f 2" NaN +1p0
+"1.0fe5" NaN +1p0
+"1.0f_" NaN +1p0
+"1.0fabc" NaN +1p0
+"1.0fInfinity" NaN +1p0
+"1.0f\u0000" NaN +1p0
+"0x1p3" NaN +0p0
+"0x1p3x" NaN +0p0
+"0x1p31" NaN +0p0
+"0x1p3." NaN +0p0
+"0x1p3e" NaN +0p0
+"0x1p3 2" NaN +0p0
+"0x1p3e5" NaN +0p0
+"0x1p3_" NaN +0p0
+"0x1p3abc" NaN +0p0
+"0x1p3Infinity" NaN +0p0
+"0x1p3\u0000" NaN +0p0
+"0x-1" NaN +0p0
+"0x-1x" NaN +0p0
+"0x-11" NaN +0p0
+"0x-1." NaN +0p0
+"0x-1e" NaN +0p0
+"0x-1 2" NaN +0p0
+"0x-1e5" NaN +0p0
+"0x-1_" NaN +0p0
+"0x-1abc" NaN +0p0
+"0x-1Infinity" NaN +0p0
+"0x-1\u0000" NaN +0p0
+"-0x10" NaN -0p0
+"-0x10x" NaN -0p0
+"-0x101" NaN -0p0
+"-0x10." NaN -0p0
+"-0x10e" NaN -0p0
+"-0x10 2" NaN -0p0
+"-0x10e5" NaN -0p0
+"-0x10_" NaN -0p0
+"-0x10abc" NaN -0p0
+"-0x10Infinity" NaN -0p0
+"-0x10\u0000" NaN -0p0
+"+0x10" NaN +0p0
+"+0x10x" NaN +0p0
+"+0x101" NaN +0p0
+"+0x10." NaN +0p0
+"+0x10e" NaN +0p0
+"+0x10 2" NaN +0p0
+"+0x10e5" NaN +0p0
+"+0x10_" NaN +0p0
+"+0x10abc" NaN +0p0
+"+0x10Infinity" NaN +0p0
+"+0x10\u0000" NaN +0p0
+"0xg" NaN +0p0
+"0xgx" NaN +0p0
+"0xg1" NaN +0p0
+"0xg." NaN +0p0
+"0xge" NaN +0p0
+"0xg 2" NaN +0p0
+"0xge5" NaN +0p0
+"0xg_" NaN +0p0
+"0xgabc" NaN +0p0
+"0xgInfinity" NaN +0p0
+"0xg\u0000" NaN +0p0
+"0b2" NaN +0p0
+"0b2x" NaN +0p0
+"0b21" NaN +0p0
+"0b2." NaN +0p0
+"0b2e" NaN +0p0
+"0b2 2" NaN +0p0
+"0b2e5" NaN +0p0
+"0b2_" NaN +0p0
+"0b2abc" NaN +0p0
+"0b2Infinity" NaN +0p0
+"0b2\u0000" NaN +0p0
+"0o8" NaN +0p0
+"0o8x" NaN +0p0
+"0o81" NaN +0p0
+"0o8." NaN +0p0
+"0o8e" NaN +0p0
+"0o8 2" NaN +0p0
+"0o8e5" NaN +0p0
+"0o8_" NaN +0p0
+"0o8abc" NaN +0p0
+"0o8Infinity" NaN +0p0
+"0o8\u0000" NaN +0p0
+"0x1.8" NaN +0p0
+"0x1.8x" NaN +0p0
+"0x1.81" NaN +0p0
+"0x1.8." NaN +0p0
+"0x1.8e" NaN +0p0
+"0x1.8 2" NaN +0p0
+"0x1.8e5" NaN +0p0
+"0x1.8_" NaN +0p0
+"0x1.8abc" NaN +0p0
+"0x1.8Infinity" NaN +0p0
+"0x1.8\u0000" NaN +0p0
+"infinity" NaN NaN
+"infinityx" NaN NaN
+"infinity1" NaN NaN
+"infinity." NaN NaN
+"infinitye" NaN NaN
+"infinity 2" NaN NaN
+"infinitye5" NaN NaN
+"infinity_" NaN NaN
+"infinityabc" NaN NaN
+"infinityInfinity" NaN NaN
+"infinity\u0000" NaN NaN
+"INFINITY" NaN NaN
+"INFINITYx" NaN NaN
+"INFINITY1" NaN NaN
+"INFINITY." NaN NaN
+"INFINITYe" NaN NaN
+"INFINITY 2" NaN NaN
+"INFINITYe5" NaN NaN
+"INFINITY_" NaN NaN
+"INFINITYabc" NaN NaN
+"INFINITYInfinity" NaN NaN
+"INFINITY\u0000" NaN NaN
+"Infinit" NaN NaN
+"Infinitx" NaN NaN
+"Infinit1" NaN NaN
+"Infinit." NaN NaN
+"Infinite" NaN NaN
+"Infinit 2" NaN NaN
+"Infinite5" NaN NaN
+"Infinit_" NaN NaN
+"Infinitabc" NaN NaN
+"InfinitInfinity" NaN NaN
+"Infinit\u0000" NaN NaN
+"NaN" NaN NaN
+"NaNx" NaN NaN
+"NaN1" NaN NaN
+"NaN." NaN NaN
+"NaNe" NaN NaN
+"NaN 2" NaN NaN
+"NaNe5" NaN NaN
+"NaN_" NaN NaN
+"NaNabc" NaN NaN
+"NaNInfinity" NaN NaN
+"NaN\u0000" NaN NaN
+"-NaN" NaN NaN
+"-NaNx" NaN NaN
+"-NaN1" NaN NaN
+"-NaN." NaN NaN
+"-NaNe" NaN NaN
+"-NaN 2" NaN NaN
+"-NaNe5" NaN NaN
+"-NaN_" NaN NaN
+"-NaNabc" NaN NaN
+"-NaNInfinity" NaN NaN
+"-NaN\u0000" NaN NaN
+"nan" NaN NaN
+"nanx" NaN NaN
+"nan1" NaN NaN
+"nan." NaN NaN
+"nane" NaN NaN
+"nan 2" NaN NaN
+"nane5" NaN NaN
+"nan_" NaN NaN
+"nanabc" NaN NaN
+"nanInfinity" NaN NaN
+"nan\u0000" NaN NaN
+"１" NaN NaN
+"１x" NaN NaN
+"１1" NaN NaN
+"１." NaN NaN
+"１e" NaN NaN
+"１ 2" NaN NaN
+"１e5" NaN NaN
+"１_" NaN NaN
+"１abc" NaN NaN
+"１Infinity" NaN NaN
+"１\u0000" NaN NaN
+"1\u0000" NaN +1p0
+"1\u0000x" NaN +1p0
+"1\u00001" NaN +1p0
+"1\u0000." NaN +1p0
+"1\u0000e" NaN +1p0
+"1\u0000 2" NaN +1p0
+"1\u0000e5" NaN +1p0
+"1\u0000_" NaN +1p0
+"1\u0000abc" NaN +1p0
+"1\u0000Infinity" NaN +1p0
+"1\u0000\u0000" NaN +1p0
+-- whitespace
+ws0 +0p0 NaN
+ws0 x2 +0p0 NaN
+ws0 before "12" +3p2 +3p2
+ws0 after "12" +3p2 +3p2
+ws0 around "12" +3p2 +3p2
+ws0 before "-1.5e3" -375p2 -375p2
+ws0 after "-1.5e3" -375p2 -375p2
+ws0 around "-1.5e3" -375p2 -375p2
+ws0 before "0x1F" +31p0 +0p0
+ws0 after "0x1F" +31p0 +0p0
+ws0 around "0x1F" +31p0 +0p0
+ws0 before "Infinity" +Infinity +Infinity
+ws0 after "Infinity" +Infinity +Infinity
+ws0 around "Infinity" +Infinity +Infinity
+ws0 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws0 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws0 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws0 before "1e" NaN +1p0
+ws0 after "1e" NaN +1p0
+ws0 around "1e" NaN +1p0
+ws1 +0p0 NaN
+ws1 x2 +0p0 NaN
+ws1 before "12" +3p2 +3p2
+ws1 after "12" +3p2 +3p2
+ws1 around "12" +3p2 +3p2
+ws1 before "-1.5e3" -375p2 -375p2
+ws1 after "-1.5e3" -375p2 -375p2
+ws1 around "-1.5e3" -375p2 -375p2
+ws1 before "0x1F" +31p0 +0p0
+ws1 after "0x1F" +31p0 +0p0
+ws1 around "0x1F" +31p0 +0p0
+ws1 before "Infinity" +Infinity +Infinity
+ws1 after "Infinity" +Infinity +Infinity
+ws1 around "Infinity" +Infinity +Infinity
+ws1 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws1 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws1 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws1 before "1e" NaN +1p0
+ws1 after "1e" NaN +1p0
+ws1 around "1e" NaN +1p0
+ws2 +0p0 NaN
+ws2 x2 +0p0 NaN
+ws2 before "12" +3p2 +3p2
+ws2 after "12" +3p2 +3p2
+ws2 around "12" +3p2 +3p2
+ws2 before "-1.5e3" -375p2 -375p2
+ws2 after "-1.5e3" -375p2 -375p2
+ws2 around "-1.5e3" -375p2 -375p2
+ws2 before "0x1F" +31p0 +0p0
+ws2 after "0x1F" +31p0 +0p0
+ws2 around "0x1F" +31p0 +0p0
+ws2 before "Infinity" +Infinity +Infinity
+ws2 after "Infinity" +Infinity +Infinity
+ws2 around "Infinity" +Infinity +Infinity
+ws2 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws2 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws2 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws2 before "1e" NaN +1p0
+ws2 after "1e" NaN +1p0
+ws2 around "1e" NaN +1p0
+ws3 +0p0 NaN
+ws3 x2 +0p0 NaN
+ws3 before "12" +3p2 +3p2
+ws3 after "12" +3p2 +3p2
+ws3 around "12" +3p2 +3p2
+ws3 before "-1.5e3" -375p2 -375p2
+ws3 after "-1.5e3" -375p2 -375p2
+ws3 around "-1.5e3" -375p2 -375p2
+ws3 before "0x1F" +31p0 +0p0
+ws3 after "0x1F" +31p0 +0p0
+ws3 around "0x1F" +31p0 +0p0
+ws3 before "Infinity" +Infinity +Infinity
+ws3 after "Infinity" +Infinity +Infinity
+ws3 around "Infinity" +Infinity +Infinity
+ws3 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws3 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws3 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws3 before "1e" NaN +1p0
+ws3 after "1e" NaN +1p0
+ws3 around "1e" NaN +1p0
+ws4 +0p0 NaN
+ws4 x2 +0p0 NaN
+ws4 before "12" +3p2 +3p2
+ws4 after "12" +3p2 +3p2
+ws4 around "12" +3p2 +3p2
+ws4 before "-1.5e3" -375p2 -375p2
+ws4 after "-1.5e3" -375p2 -375p2
+ws4 around "-1.5e3" -375p2 -375p2
+ws4 before "0x1F" +31p0 +0p0
+ws4 after "0x1F" +31p0 +0p0
+ws4 around "0x1F" +31p0 +0p0
+ws4 before "Infinity" +Infinity +Infinity
+ws4 after "Infinity" +Infinity +Infinity
+ws4 around "Infinity" +Infinity +Infinity
+ws4 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws4 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws4 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws4 before "1e" NaN +1p0
+ws4 after "1e" NaN +1p0
+ws4 around "1e" NaN +1p0
+ws5 +0p0 NaN
+ws5 x2 +0p0 NaN
+ws5 before "12" +3p2 +3p2
+ws5 after "12" +3p2 +3p2
+ws5 around "12" +3p2 +3p2
+ws5 before "-1.5e3" -375p2 -375p2
+ws5 after "-1.5e3" -375p2 -375p2
+ws5 around "-1.5e3" -375p2 -375p2
+ws5 before "0x1F" +31p0 +0p0
+ws5 after "0x1F" +31p0 +0p0
+ws5 around "0x1F" +31p0 +0p0
+ws5 before "Infinity" +Infinity +Infinity
+ws5 after "Infinity" +Infinity +Infinity
+ws5 around "Infinity" +Infinity +Infinity
+ws5 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws5 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws5 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws5 before "1e" NaN +1p0
+ws5 after "1e" NaN +1p0
+ws5 around "1e" NaN +1p0
+ws6 +0p0 NaN
+ws6 x2 +0p0 NaN
+ws6 before "12" +3p2 +3p2
+ws6 after "12" +3p2 +3p2
+ws6 around "12" +3p2 +3p2
+ws6 before "-1.5e3" -375p2 -375p2
+ws6 after "-1.5e3" -375p2 -375p2
+ws6 around "-1.5e3" -375p2 -375p2
+ws6 before "0x1F" +31p0 +0p0
+ws6 after "0x1F" +31p0 +0p0
+ws6 around "0x1F" +31p0 +0p0
+ws6 before "Infinity" +Infinity +Infinity
+ws6 after "Infinity" +Infinity +Infinity
+ws6 around "Infinity" +Infinity +Infinity
+ws6 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws6 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws6 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws6 before "1e" NaN +1p0
+ws6 after "1e" NaN +1p0
+ws6 around "1e" NaN +1p0
+ws7 +0p0 NaN
+ws7 x2 +0p0 NaN
+ws7 before "12" +3p2 +3p2
+ws7 after "12" +3p2 +3p2
+ws7 around "12" +3p2 +3p2
+ws7 before "-1.5e3" -375p2 -375p2
+ws7 after "-1.5e3" -375p2 -375p2
+ws7 around "-1.5e3" -375p2 -375p2
+ws7 before "0x1F" +31p0 +0p0
+ws7 after "0x1F" +31p0 +0p0
+ws7 around "0x1F" +31p0 +0p0
+ws7 before "Infinity" +Infinity +Infinity
+ws7 after "Infinity" +Infinity +Infinity
+ws7 around "Infinity" +Infinity +Infinity
+ws7 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws7 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws7 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws7 before "1e" NaN +1p0
+ws7 after "1e" NaN +1p0
+ws7 around "1e" NaN +1p0
+ws8 +0p0 NaN
+ws8 x2 +0p0 NaN
+ws8 before "12" +3p2 +3p2
+ws8 after "12" +3p2 +3p2
+ws8 around "12" +3p2 +3p2
+ws8 before "-1.5e3" -375p2 -375p2
+ws8 after "-1.5e3" -375p2 -375p2
+ws8 around "-1.5e3" -375p2 -375p2
+ws8 before "0x1F" +31p0 +0p0
+ws8 after "0x1F" +31p0 +0p0
+ws8 around "0x1F" +31p0 +0p0
+ws8 before "Infinity" +Infinity +Infinity
+ws8 after "Infinity" +Infinity +Infinity
+ws8 around "Infinity" +Infinity +Infinity
+ws8 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws8 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws8 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws8 before "1e" NaN +1p0
+ws8 after "1e" NaN +1p0
+ws8 around "1e" NaN +1p0
+ws9 +0p0 NaN
+ws9 x2 +0p0 NaN
+ws9 before "12" +3p2 +3p2
+ws9 after "12" +3p2 +3p2
+ws9 around "12" +3p2 +3p2
+ws9 before "-1.5e3" -375p2 -375p2
+ws9 after "-1.5e3" -375p2 -375p2
+ws9 around "-1.5e3" -375p2 -375p2
+ws9 before "0x1F" +31p0 +0p0
+ws9 after "0x1F" +31p0 +0p0
+ws9 around "0x1F" +31p0 +0p0
+ws9 before "Infinity" +Infinity +Infinity
+ws9 after "Infinity" +Infinity +Infinity
+ws9 around "Infinity" +Infinity +Infinity
+ws9 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws9 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws9 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws9 before "1e" NaN +1p0
+ws9 after "1e" NaN +1p0
+ws9 around "1e" NaN +1p0
+ws10 +0p0 NaN
+ws10 x2 +0p0 NaN
+ws10 before "12" +3p2 +3p2
+ws10 after "12" +3p2 +3p2
+ws10 around "12" +3p2 +3p2
+ws10 before "-1.5e3" -375p2 -375p2
+ws10 after "-1.5e3" -375p2 -375p2
+ws10 around "-1.5e3" -375p2 -375p2
+ws10 before "0x1F" +31p0 +0p0
+ws10 after "0x1F" +31p0 +0p0
+ws10 around "0x1F" +31p0 +0p0
+ws10 before "Infinity" +Infinity +Infinity
+ws10 after "Infinity" +Infinity +Infinity
+ws10 around "Infinity" +Infinity +Infinity
+ws10 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws10 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws10 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws10 before "1e" NaN +1p0
+ws10 after "1e" NaN +1p0
+ws10 around "1e" NaN +1p0
+ws11 +0p0 NaN
+ws11 x2 +0p0 NaN
+ws11 before "12" +3p2 +3p2
+ws11 after "12" +3p2 +3p2
+ws11 around "12" +3p2 +3p2
+ws11 before "-1.5e3" -375p2 -375p2
+ws11 after "-1.5e3" -375p2 -375p2
+ws11 around "-1.5e3" -375p2 -375p2
+ws11 before "0x1F" +31p0 +0p0
+ws11 after "0x1F" +31p0 +0p0
+ws11 around "0x1F" +31p0 +0p0
+ws11 before "Infinity" +Infinity +Infinity
+ws11 after "Infinity" +Infinity +Infinity
+ws11 around "Infinity" +Infinity +Infinity
+ws11 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws11 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws11 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws11 before "1e" NaN +1p0
+ws11 after "1e" NaN +1p0
+ws11 around "1e" NaN +1p0
+ws12 +0p0 NaN
+ws12 x2 +0p0 NaN
+ws12 before "12" +3p2 +3p2
+ws12 after "12" +3p2 +3p2
+ws12 around "12" +3p2 +3p2
+ws12 before "-1.5e3" -375p2 -375p2
+ws12 after "-1.5e3" -375p2 -375p2
+ws12 around "-1.5e3" -375p2 -375p2
+ws12 before "0x1F" +31p0 +0p0
+ws12 after "0x1F" +31p0 +0p0
+ws12 around "0x1F" +31p0 +0p0
+ws12 before "Infinity" +Infinity +Infinity
+ws12 after "Infinity" +Infinity +Infinity
+ws12 around "Infinity" +Infinity +Infinity
+ws12 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws12 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws12 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws12 before "1e" NaN +1p0
+ws12 after "1e" NaN +1p0
+ws12 around "1e" NaN +1p0
+ws13 +0p0 NaN
+ws13 x2 +0p0 NaN
+ws13 before "12" +3p2 +3p2
+ws13 after "12" +3p2 +3p2
+ws13 around "12" +3p2 +3p2
+ws13 before "-1.5e3" -375p2 -375p2
+ws13 after "-1.5e3" -375p2 -375p2
+ws13 around "-1.5e3" -375p2 -375p2
+ws13 before "0x1F" +31p0 +0p0
+ws13 after "0x1F" +31p0 +0p0
+ws13 around "0x1F" +31p0 +0p0
+ws13 before "Infinity" +Infinity +Infinity
+ws13 after "Infinity" +Infinity +Infinity
+ws13 around "Infinity" +Infinity +Infinity
+ws13 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws13 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws13 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws13 before "1e" NaN +1p0
+ws13 after "1e" NaN +1p0
+ws13 around "1e" NaN +1p0
+ws14 +0p0 NaN
+ws14 x2 +0p0 NaN
+ws14 before "12" +3p2 +3p2
+ws14 after "12" +3p2 +3p2
+ws14 around "12" +3p2 +3p2
+ws14 before "-1.5e3" -375p2 -375p2
+ws14 after "-1.5e3" -375p2 -375p2
+ws14 around "-1.5e3" -375p2 -375p2
+ws14 before "0x1F" +31p0 +0p0
+ws14 after "0x1F" +31p0 +0p0
+ws14 around "0x1F" +31p0 +0p0
+ws14 before "Infinity" +Infinity +Infinity
+ws14 after "Infinity" +Infinity +Infinity
+ws14 around "Infinity" +Infinity +Infinity
+ws14 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws14 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws14 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws14 before "1e" NaN +1p0
+ws14 after "1e" NaN +1p0
+ws14 around "1e" NaN +1p0
+ws15 +0p0 NaN
+ws15 x2 +0p0 NaN
+ws15 before "12" +3p2 +3p2
+ws15 after "12" +3p2 +3p2
+ws15 around "12" +3p2 +3p2
+ws15 before "-1.5e3" -375p2 -375p2
+ws15 after "-1.5e3" -375p2 -375p2
+ws15 around "-1.5e3" -375p2 -375p2
+ws15 before "0x1F" +31p0 +0p0
+ws15 after "0x1F" +31p0 +0p0
+ws15 around "0x1F" +31p0 +0p0
+ws15 before "Infinity" +Infinity +Infinity
+ws15 after "Infinity" +Infinity +Infinity
+ws15 around "Infinity" +Infinity +Infinity
+ws15 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws15 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws15 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws15 before "1e" NaN +1p0
+ws15 after "1e" NaN +1p0
+ws15 around "1e" NaN +1p0
+ws16 NaN NaN
+ws16 x2 NaN NaN
+ws16 before "12" NaN NaN
+ws16 after "12" NaN +3p2
+ws16 around "12" NaN NaN
+ws16 before "-1.5e3" NaN NaN
+ws16 after "-1.5e3" NaN -375p2
+ws16 around "-1.5e3" NaN NaN
+ws16 before "0x1F" NaN NaN
+ws16 after "0x1F" NaN +0p0
+ws16 around "0x1F" NaN NaN
+ws16 before "Infinity" NaN NaN
+ws16 after "Infinity" NaN +Infinity
+ws16 around "Infinity" NaN NaN
+ws16 before "12345678901234567890123" NaN NaN
+ws16 after "12345678901234567890123" NaN +2943439221676485p22
+ws16 around "12345678901234567890123" NaN NaN
+ws16 before "1e" NaN NaN
+ws16 after "1e" NaN +1p0
+ws16 around "1e" NaN NaN
+ws17 NaN NaN
+ws17 x2 NaN NaN
+ws17 before "12" NaN NaN
+ws17 after "12" NaN +3p2
+ws17 around "12" NaN NaN
+ws17 before "-1.5e3" NaN NaN
+ws17 after "-1.5e3" NaN -375p2
+ws17 around "-1.5e3" NaN NaN
+ws17 before "0x1F" NaN NaN
+ws17 after "0x1F" NaN +0p0
+ws17 around "0x1F" NaN NaN
+ws17 before "Infinity" NaN NaN
+ws17 after "Infinity" NaN +Infinity
+ws17 around "Infinity" NaN NaN
+ws17 before "12345678901234567890123" NaN NaN
+ws17 after "12345678901234567890123" NaN +2943439221676485p22
+ws17 around "12345678901234567890123" NaN NaN
+ws17 before "1e" NaN NaN
+ws17 after "1e" NaN +1p0
+ws17 around "1e" NaN NaN
+ws18 NaN NaN
+ws18 x2 NaN NaN
+ws18 before "12" NaN NaN
+ws18 after "12" NaN +3p2
+ws18 around "12" NaN NaN
+ws18 before "-1.5e3" NaN NaN
+ws18 after "-1.5e3" NaN -375p2
+ws18 around "-1.5e3" NaN NaN
+ws18 before "0x1F" NaN NaN
+ws18 after "0x1F" NaN +0p0
+ws18 around "0x1F" NaN NaN
+ws18 before "Infinity" NaN NaN
+ws18 after "Infinity" NaN +Infinity
+ws18 around "Infinity" NaN NaN
+ws18 before "12345678901234567890123" NaN NaN
+ws18 after "12345678901234567890123" NaN +2943439221676485p22
+ws18 around "12345678901234567890123" NaN NaN
+ws18 before "1e" NaN NaN
+ws18 after "1e" NaN +1p0
+ws18 around "1e" NaN NaN
+ws19 NaN NaN
+ws19 x2 NaN NaN
+ws19 before "12" NaN NaN
+ws19 after "12" NaN +3p2
+ws19 around "12" NaN NaN
+ws19 before "-1.5e3" NaN NaN
+ws19 after "-1.5e3" NaN -375p2
+ws19 around "-1.5e3" NaN NaN
+ws19 before "0x1F" NaN NaN
+ws19 after "0x1F" NaN +0p0
+ws19 around "0x1F" NaN NaN
+ws19 before "Infinity" NaN NaN
+ws19 after "Infinity" NaN +Infinity
+ws19 around "Infinity" NaN NaN
+ws19 before "12345678901234567890123" NaN NaN
+ws19 after "12345678901234567890123" NaN +2943439221676485p22
+ws19 around "12345678901234567890123" NaN NaN
+ws19 before "1e" NaN NaN
+ws19 after "1e" NaN +1p0
+ws19 around "1e" NaN NaN
+ws20 +0p0 NaN
+ws20 x2 +0p0 NaN
+ws20 before "12" +3p2 +3p2
+ws20 after "12" +3p2 +3p2
+ws20 around "12" +3p2 +3p2
+ws20 before "-1.5e3" -375p2 -375p2
+ws20 after "-1.5e3" -375p2 -375p2
+ws20 around "-1.5e3" -375p2 -375p2
+ws20 before "0x1F" +31p0 +0p0
+ws20 after "0x1F" +31p0 +0p0
+ws20 around "0x1F" +31p0 +0p0
+ws20 before "Infinity" +Infinity +Infinity
+ws20 after "Infinity" +Infinity +Infinity
+ws20 around "Infinity" +Infinity +Infinity
+ws20 before "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws20 after "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws20 around "12345678901234567890123" +2943439221676485p22 +2943439221676485p22
+ws20 before "1e" NaN +1p0
+ws20 after "1e" NaN +1p0
+ws20 around "1e" NaN +1p0
+-- radix 2, 8 and 16
+"0xffffffffffffffffffffff"...(302) +Infinity +0p0
+"0x1000000000000000000000"...(259) +Infinity +0p0
+"0x1000000000000000000000"...(258) +1p1020 +0p0
+"0xffffffffffffffffffffff"...(258) +Infinity +0p0
+"0xffffffffffffffffffffff"...(258) +Infinity +0p0
+"0b111111111111111111111111111111111111111111111111111111" +1p54 +0p0
+"0b100000000000000000000000000000000000000000000000000001" +1p53 +0p0
+"0b1000000000000000000000000000000000000000000000000000011" +4503599627370497p2 +0p0
+"0x20000000000001" +1p53 +0p0
+"0x20000000000003" +2251799813685249p2 +0p0
+"0x20000000000002" +4503599627370497p1 +0p0
+"0x200000000000010000001" +4503599627370497p29 +0p0
+"0x20000000000001000000" +1p77 +0p0
+"0x2000000000000100000000000000000000000000001" +4503599627370497p117 +0p0
+"0o7777777777777777777777"...(402) +Infinity +0p0
+"0o1000000000000000001" +1p54 +0p0
+"0o4000000000000000001" +1p56 +0p0
+"0o400000000000000004" +2251799813685249p2 +0p0
+"0o4000000000000000040" +2251799813685249p5 +0p0
+"0o4000000000000000041" +2251799813685249p5 +0p0
+"0xFFFFFFFFFFFFF800" +9007199254740991p11 +0p0
+"0xFFFFFFFFFFFFFC00" +1p64 +0p0
+"0xFFFFFFFFFFFFFC01" +1p64 +0p0
+"0xFFFFFFFFFFFFFBFF" +9007199254740991p11 +0p0
+"0x1FFFFFFFFFFFFF" +9007199254740991p0 +0p0
+"0x3FFFFFFFFFFFFF" +1p54 +0p0
+"0x7FFFFFFFFFFFFE" +1p55 +0p0
+"0x1fffffffffffff80000000"...(257) +1p1017 +0p0
+"0x1fffffffffffffc0000000"...(257) +1p1017 +0p0
+"0x1fffffffffffffbff00000"...(257) +1p1017 +0p0
+-- rounding
+"2.2250738585072011e-308" +4503599627370495p-1074 +4503599627370495p-1074
+"2.2250738585072012e-308" +1p-1022 +1p-1022
+"2.2250738585072014e-308" +1p-1022 +1p-1022
+"2.2250738585072009e-308" +4503599627370495p-1074 +4503599627370495p-1074
+"2.2250738585072011360574"...(61) +4503599627370495p-1074 +4503599627370495p-1074
+"4.9406564584124654e-324" +1p-1074 +1p-1074
+"2.4703282292062328e-324" +1p-1074 +1p-1074
+"2.4703282292062327e-324" +0p0 +0p0
+"2.47032822920623272e-324" +0p0 +0p0
+"2.4703282292062327208828"...(80) +1p-1074 +1p-1074
+"1.7976931348623157e308" +9007199254740991p971 +9007199254740991p971
+"1.7976931348623158e308" +9007199254740991p971 +9007199254740991p971
+"1.7976931348623159e308" +Infinity +Infinity
+"1.797693134862315807e308" +9007199254740991p971 +9007199254740991p971
+"179769313486231580793728"...(332) +9007199254740991p971 +9007199254740991p971
+"9007199254740993" +1p53 +1p53
+"9007199254740992.5" +1p53 +1p53
+"9007199254740993.0000000000000000001" +4503599627370497p1 +4503599627370497p1
+"9007199254740995" +2251799813685249p2 +2251799813685249p2
+"9007199254740991" +9007199254740991p0 +9007199254740991p0
+"-9007199254740993" -1p53 -1p53
+"18446744073709551615" +1p64 +1p64
+"18446744073709551616" +1p64 +1p64
+"18446744073709551617" +1p64 +1p64
+"9999999999999999999" +19073486328125p19 +19073486328125p19
+"99999999999999999999" +95367431640625p20 +95367431640625p20
+"10000000000000000000" +19073486328125p19 +19073486328125p19
+"1e-342" +0p0 +0p0
+"1e-343" +0p0 +0p0
+"1e-324" +0p0 +0p0
+"3e-324" +1p-1074 +1p-1074
+"2e-324" +0p0 +0p0
+"1e308" +156575653125701p976 +156575653125701p976
+"1e309" +Infinity +Infinity
+"1e310" +Infinity +Infinity
+"-0.0e5" -0p0 -0p0
+"0.1000000000000000055511151231257827" +3602879701896397p-55 +3602879701896397p-55
+"7.038531e-26" +22841339p-108 +22841339p-108
+"1e23" +2980232238769531p25 +2980232238769531p25
+"8.98846567431158e307" +1p1023 +1p1023
+"4.4501477170144023e-308" +9007199254740991p-1074 +9007199254740991p-1074
+"1.448997445238699e-305" +1432032948988521p-1063 +1432032948988521p-1063
+"2.0000000000000004" +4503599627370497p-51 +4503599627370497p-51
+"1.0000000000000002" +4503599627370497p-52 +4503599627370497p-52
+"1.00000000000000011102230246251565404236316680908203125" +1p0 +1p0
+"1.00000000000000011102230246251565404236316680908203124" +1p0 +1p0
+"1.00000000000000011102230246251565404236316680908203126" +4503599627370497p-52 +4503599627370497p-52
+"7.2057594037927933e16" +1p56 +1p56
+"9223372036854775807" +1p63 +1p63
+"9223372036854775808" +1p63 +1p63
+"0.30000000000000004" +1351079888211149p-52 +1351079888211149p-52
+"123456789012345678e-20" +5693439477681745p-62 +5693439477681745p-62
+"5e-324" +1p-1074 +1p-1074
+"0e999999999999" +0p0 +0p0
+"1e-99999999999999999999" +0p0 +0p0
+"1e99999999999999999999" +Infinity +Infinity
+"-1e99999999999999999999" -Infinity -Infinity
+"00000000000000000000000000000001" +1p0 +1p0
+"0.0000000000000000000000000001e28" +1p0 +1p0
+"1.e1" +5p1 +5p1
+".1e1" +1p0 +1p0
+"3.0e-1" +5404319552844595p-54 +5404319552844595p-54
+"6.631236846766476e-316" +1p-1047 +1p-1047
+"3.2378839133029012e-319" +65535p-1074 +65535p-1074
+"6.953355807847677e-310" +549755813889p-1066 +549755813889p-1066
+"1.9156918820264798e-56" +4230918223472831p-237 +4230918223472831p-237
+"6.9294956446009195e15" +866186955575115p3 +866186955575115p3
+"5708990770823839524233143877797980545530986496" +1p152 +1p152
+"1.2345678901234567890123456789" +5559999489923579p-52 +5559999489923579p-52
+"4.9e-324" +1p-1074 +1p-1074
+"1.5e-323" +3p-1074 +3p-1074
+"2.5e-324" +1p-1074 +1p-1074
+"7.4e-324" +1p-1074 +1p-1074
+"7.5e-324" +1p-1073 +1p-1073
+"1e1000000000" +Infinity +Infinity
+"1e-1000000000" +0p0 +0p0
+"1e2147483648" +Infinity +Infinity
+"0.1e-2147483648" +0p0 +0p0
+"12345678901234567890e-1000000" +0p0 +0p0
+"1e0000000000000000000000"...(1003) +5p1 +5p1
+"1e-000000000000000000000"...(1004) +3602879701896397p-55 +3602879701896397p-55
+"9007199254740993e0" +1p53 +1p53
+"9007199254740995e0" +2251799813685249p2 +2251799813685249p2
+"18014398509481987e1" +5629499534213121p5 +5629499534213121p5
+"18014398509481985e-1" +3602879701896397p-1 +3602879701896397p-1
+"4503599627370496.5" +1p52 +1p52
+"4503599627370497.5" +2251799813685249p1 +2251799813685249p1
+"9007199254740989" +9007199254740989p0 +9007199254740989p0
+"18446744073709551612" +1p64 +1p64
+"9223372036854775804" +1p63 +1p63
+"9007199254740990" +4503599627370495p1 +4503599627370495p1
+"18446744073709551613" +1p64 +1p64
+"9223372036854775805" +1p63 +1p63
+"9007199254740991" +9007199254740991p0 +9007199254740991p0
+"18446744073709551614" +1p64 +1p64
+"9223372036854775806" +1p63 +1p63
+"9007199254740992" +1p53 +1p53
+"18446744073709551615" +1p64 +1p64
+"9223372036854775807" +1p63 +1p63
+"9007199254740992" +1p53 +1p53
+"18446744073709551616" +1p64 +1p64
+"9223372036854775808" +1p63 +1p63
+"9007199254740994" +4503599627370497p1 +4503599627370497p1
+"18446744073709551617" +1p64 +1p64
+"9223372036854775809" +1p63 +1p63
+"9007199254740996" +2251799813685249p2 +2251799813685249p2
+"18446744073709551618" +1p64 +1p64
+"92233720368547758010" +5p64 +5p64
+-- leading zeros against the exponent
+"0.00000000001e11" +1p0 +1p0
+"0.0000000000123456789e11" +5559999489367579p-52 +5559999489367579p-52
+"0.00000000001e10" +3602879701896397p-55 +3602879701896397p-55
+"00000000001.5" +3p-1 +3p-1
+"1.00000000001" +1125899906853883p-50 +1125899906853883p-50
+"1.0000000000" +1p0 +1p0
+"0.00000000000000000000000001e26" +1p0 +1p0
+"0.0000000000000000000000000123456789e26" +5559999489367579p-52 +5559999489367579p-52
+"0.00000000000000000000000001e25" +3602879701896397p-55 +3602879701896397p-55
+"00000000000000000000000001.5" +3p-1 +3p-1
+"1.00000000000000000000000001" +1p0 +1p0
+"1.0000000000000000000000000" +1p0 +1p0
+"0.0000000000000000000000"...(107) +1p0 +1p0
+"0.0000000000000000000000"...(115) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(107) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(103) +3p-1 +3p-1
+"1.0000000000000000000000"...(103) +1p0 +1p0
+"1.0000000000000000000000"...(102) +1p0 +1p0
+"0.0000000000000000000000"...(407) +1p0 +1p0
+"0.0000000000000000000000"...(415) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(407) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(403) +3p-1 +3p-1
+"1.0000000000000000000000"...(403) +1p0 +1p0
+"1.0000000000000000000000"...(402) +1p0 +1p0
+"0.0000000000000000000000"...(1008) +1p0 +1p0
+"0.0000000000000000000000"...(1016) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(1008) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(1003) +3p-1 +3p-1
+"1.0000000000000000000000"...(1003) +1p0 +1p0
+"1.0000000000000000000000"...(1002) +1p0 +1p0
+"0.0000000000000000000000"...(5008) +1p0 +1p0
+"0.0000000000000000000000"...(5016) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(5008) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(5003) +3p-1 +3p-1
+"1.0000000000000000000000"...(5003) +1p0 +1p0
+"1.0000000000000000000000"...(5002) +1p0 +1p0
+"0.0000000000000000000000"...(100010) +1p0 +1p0
+"0.0000000000000000000000"...(100018) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(100010) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(100003) +3p-1 +3p-1
+"1.0000000000000000000000"...(100003) +1p0 +1p0
+"1.0000000000000000000000"...(100002) +1p0 +1p0
+"0.0000000000000000000000"...(1000016) +1p0 +1p0
+"0.0000000000000000000000"...(1000024) +5559999489367579p-52 +5559999489367579p-52
+"0.0000000000000000000000"...(1000016) +3602879701896397p-55 +3602879701896397p-55
+"000000000000000000000000"...(1000008) +3p-1 +3p-1
+"1.0000000000000000000000"...(1000008) +1p0 +1p0
+"1.0000000000000000000000"...(1000007) +1p0 +1p0
+"0.0000000000000000000000"...(1000011) +1p0 +1p0
+"-0.000000000000000000000"...(1000023) -5902958103587057p-71 -5902958103587057p-71

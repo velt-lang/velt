@@ -10,6 +10,9 @@
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
+// `Number(s)` and `parseFloat(s)` are Velt code (#1658).
+import { toNumber, parseFloatOf } from "velt:number/parse";
+
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
 declare function velt_rt_str_last_index_of(s: string, needle: string, from: i64): i64;
@@ -30,8 +33,6 @@ declare function velt_rt_str_pad_start(s: string, target: i64, fill: string): st
 declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_rt_parse_int(s: string, radix: i64): f64;
-declare function velt_rt_parse_float(s: string): f64;
-declare function velt_rt_str_to_number(s: string): f64;
 declare function velt_rt_str_locale_compare(s: string, t: string): i64;
 
 // "Omitted" end / from positions, as the runtime expects them.
@@ -300,7 +301,7 @@ export function parseInt(s: string, radix: i64 = 0): f64 {
 
 /** Exact JS `parseFloat`: the longest decimal prefix (incl. "Infinity"), else NaN. */
 export function parseFloat(s: string): f64 {
-  return velt_rt_parse_float(s);
+  return parseFloatOf(s);
 }
 
 /**
@@ -308,5 +309,5 @@ export function parseFloat(s: string): f64 {
  * compiler converts a number or a boolean argument itself, as JS does.
  */
 export function Number(s: string): f64 {
-  return velt_rt_str_to_number(s);
+  return toNumber(s);
 }
