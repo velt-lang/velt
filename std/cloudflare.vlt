@@ -11,7 +11,8 @@
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { utf8DecodeLossy } from "velt:encoding";
-import { fetchVia, RequestInit } from "velt:fetch";
+import { fetchVia, Request, RequestInit, Response } from "velt:fetch";
+import { URL } from "velt:url";
 
 declare module "wasm:velt_cloudflare" {
   function binding(name: string): u32;
