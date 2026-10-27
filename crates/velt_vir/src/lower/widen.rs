@@ -18,6 +18,10 @@ impl FnLower<'_, '_> {
         if from == to || self.dead() {
             return v;
         }
+        // Into `E | null`: `null` stays `null`, a value is widened into the payload.
+        if let TyKind::Option(payload, _) = self.cx.kind(to) {
+            return self.widen_into_option(v, from, to, payload);
+        }
         if self.cx.is_union(to) {
             let k = self
                 .member_variant(to, from)
@@ -167,5 +171,38 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         self.terminate(crate::vir::Terminator::Unreachable);
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// [`FnLower::widen_error`] into the option type `to` (payload `tb`): an option `from` is
+    /// branched on (its `null` is `to`'s), any other value is widened into the payload.
+    fn widen_into_option(&mut self, v: Operand, from: TyId, to: TyId, tb: TyId) -> Operand {
+        let TyKind::Option(fa, _) = self.cx.kind(from) else {
+            let w = self.widen_error(v, from, tb);
+            return self.some_of(to, w);
+        };
+        let (ft, tt) = (self.cx.ty(from), self.cx.ty(to));
+        let src = self.copy_to_temp(v, ft);
+        let dst = self.temp(tt);
+        let is_some = self.option_is_some(&Place::local(src), from);
+        let (some, none, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_some, some, none);
+        self.switch_to(some);
+        if self.cx.is_never(fa) {
+            self.terminate(crate::vir::Terminator::Unreachable);
+        } else {
+            let p = self.some_payload(&Place::local(src), from);
+            let w = self.widen_error(Operand::Copy(p), fa, tb);
+            let w = self.some_of(to, w);
+            self.assign(Place::local(dst), Rvalue::Use(w));
+            self.goto(join);
+        }
+        self.switch_to(none);
+        let n = self.none_value(to);
+        self.assign(Place::local(dst), Rvalue::Use(n));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(Place::local(dst))
     }
 }

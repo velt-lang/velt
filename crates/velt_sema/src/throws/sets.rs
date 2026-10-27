@@ -104,7 +104,12 @@ impl Ctx<'_> {
 
     /// Can an error of type `m` be stored as a `b` (equal, or `b` is a base class of `m`)?
     fn error_fits(&mut self, m: TyId, b: TyId) -> bool {
-        if m == b || self.ty.is_bottom(b) {
+        // `unknown` (or `any`) holds any thrown value, boxed (vir `widen_error`).
+        let top = matches!(
+            self.dynamic(b),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        );
+        if m == b || self.ty.is_bottom(b) || top {
             return true;
         }
         let mut cur = m;
