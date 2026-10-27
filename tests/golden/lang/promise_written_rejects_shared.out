@@ -4,5 +4,5 @@ loaded
 holder: step bad-alias
 /x
 scope: TypeError
-true false 1
-tracked: no bad-tracked
+true
+tracked

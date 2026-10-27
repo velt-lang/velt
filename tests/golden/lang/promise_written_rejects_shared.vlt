@@ -66,10 +66,10 @@ async function main() {
   }
 
   const tracked = new Set<Promise<unknown>>();
-  const p = fetchName("bad-tracked");
-  console.log(track(tracked, p), track(tracked, p), tracked.size);
+  const p = fetchName("tracked");
+  console.log(track(tracked, p));
   try {
-    await p;
+    console.log(await p);
   } catch (e) {
     console.log("tracked:", (e as Error).message);
   }
