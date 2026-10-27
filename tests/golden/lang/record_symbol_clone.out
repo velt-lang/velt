@@ -1,0 +1,3 @@
+{ a: 1 } [ 'a' ] undefined false false
+{ a: 1, Symbol(s): 2 } 7 true
+{ '1': 1, x: 3, Symbol(s): 2 } [ '1', 'x', Symbol(s) ]

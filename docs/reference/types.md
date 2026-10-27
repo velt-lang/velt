@@ -438,8 +438,8 @@ until the program ends. A symbol brand added with `Object.defineProperty(o, KEY,
 optional symbol-keyed field of `o`'s type ([`Object` built-ins](#object-built-ins)).
 A record holds symbol keys made at run time too (see `Record<K, V>` in
 [Objects, arrays, tuples and maps](#objects-arrays-tuples-and-maps)).
-**Planned**: `PropertyKey` (`string | symbol`) for `Reflect` and proxies
-([#823](https://github.com/velt-lang/velt/issues/823)).
+`PropertyKey` is TypeScript's `string | number | symbol`; a proxy trap's key is a
+`string | symbol`.
 
 ## SIMD vectors
 

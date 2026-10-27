@@ -104,16 +104,16 @@ impl FnCx<'_, '_> {
         self.cx.error(diag);
     }
 
-    /// Is `t` a union of strings and symbols (`string | symbol`, a proxy trap's key)? Such a
-    /// key goes through `any`: a string names a member, and a symbol known only at run time
-    /// stops the program with a `TypeError` (not supported yet), never a wrong member.
     /// Is `t` a symbol (also a `unique symbol`) or `string | symbol`, a key that may name a
-    /// record's symbol table (std/prelude/record.vlt)?
+    /// record's symbol table (std/record/symbols.vlt)?
     pub(crate) fn symbolic_key_type(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);
         matches!(self.cx.ty.kind(w), TyKind::Symbol) || self.string_or_symbol(t)
     }
 
+    /// Is `t` a union of strings and symbols (`string | symbol`, a proxy trap's key)? Such a
+    /// key goes through `any`: a string names a member, and a symbol known only at run time
+    /// stops the program with a `TypeError` (not supported yet), never a wrong member.
     pub(crate) fn string_or_symbol(&mut self, t: TyId) -> bool {
         let Some(members) = self.cx.union_members(t) else {
             return false;
