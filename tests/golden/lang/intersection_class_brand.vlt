@@ -1,0 +1,78 @@
+// A class instance intersected with object types (`Map<K, V> & { $set(v): void }`, the type of
+// sigx's `signal(new Map())`) is that instance: the class's members, `instanceof`, iteration,
+// spreads, printing and identity are the instance's, as in TypeScript, where `t as S<T>` keeps
+// the object. A member only the object part declares (`$set`) is read from the object at run
+// time: here a proxy's `get` trap provides it.
+type S<T extends object> = T & { $set(v: T): void };
+
+function wrap<T extends object>(t: T): S<T> {
+  return t as S<T>;
+}
+
+class Counter {
+  n = 0;
+  inc(): number {
+    return ++this.n;
+  }
+  get twice(): number {
+    return this.n * 2;
+  }
+}
+
+function total(x: Map<string, number>): number {
+  let t = 0;
+  x.forEach((v) => {
+    t += v;
+  });
+  return t;
+}
+
+function sig<T extends object>(t: T): S<T> {
+  const p = new Proxy(t, {
+    get(target: any, key: string | symbol, recv: any) {
+      if (key === "$set") {
+        return (v: T) => {
+          console.log("replaced", JSON.stringify(v));
+        };
+      }
+      return Reflect.get(target, key, recv);
+    },
+  });
+  return p as S<T>;
+}
+
+const raw = new Map<string, number>([["a", 1]]);
+const m = wrap(raw);
+m.set("b", 2);
+const plain: Map<string, number> = m;
+console.log(plain === raw, m instanceof Map, m.size, typeof m);
+console.log(m);
+console.log([...m.keys()].join(","), JSON.stringify([...m]));
+for (const [k, v] of m) {
+  console.log(k, v);
+}
+console.log(total(m));
+
+const c = wrap(new Counter());
+c.inc();
+c.n += 5;
+c.n++;
+console.log(c.n, c.twice, c instanceof Counter);
+const weak = new WeakMap<object, number>();
+weak.set(c, 1);
+console.log(weak.get(c));
+
+const s = new Set<string>(["x"]) as Set<string> & { tag?: string };
+s.add("y");
+console.log(s.size, s.has("y"), [...s].join("|"));
+
+// The object part adds nothing to the class: the type is the class itself.
+const same: Counter & { n: number } = new Counter();
+console.log(same.inc());
+
+const box = sig(new Counter());
+box.n = 5;
+console.log(box.n, box.inc());
+box.$set(new Counter());
+const set = box.$set;
+set(new Counter());

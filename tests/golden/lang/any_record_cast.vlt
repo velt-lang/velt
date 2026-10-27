@@ -1,0 +1,29 @@
+// `(x as Record<K, V>)[k]` and `(x as Record<K, V>).k` on an `any` `x` read and write `x`
+// itself, as in TypeScript, where the assertion converts nothing; the value written is checked
+// as a `V`. sigx's `toSignals` fills `{} as ToSignals<T>` this way.
+type PropertySignal<T> = { value: T };
+type ToSignals<T extends object> = { [K in keyof T]: PropertySignal<T[K]> };
+
+const tracked = new Proxy({ hits: 0 }, {}); // views of objects need a program with proxies
+
+function toSignals<T extends object>(source: T): ToSignals<T> {
+  const result = {} as ToSignals<T>;
+  for (const key of Object.keys(source)) {
+    (result as Record<string, PropertySignal<unknown>>)[key] = {
+      value: (source as any)[key],
+    } as PropertySignal<unknown>;
+  }
+  return result;
+}
+
+const r = toSignals({ count: 1, name: "a" });
+console.log(r.count.value, r.name.value, tracked.hits);
+
+const o: any = {};
+(o as Record<string, number>)["a"] = 1;
+(o as Record<string, number>).b = 2;
+const k = "c";
+(o as Record<string, number>)[k] = (o as Record<string, number>)["a"]! + 2;
+console.log(JSON.stringify(o), (o as Record<string, number>).b, (o as Record<string, number>)["zz"]);
+const n: number | undefined = (o as Record<string, number>)[k];
+console.log(n, Object.keys(o).join(","));
