@@ -237,3 +237,44 @@ fn optional_call_and_index() {
     assert!(!optional);
     assert!(errors("function f() { a?.; }")[0].contains("after `?.`"));
 }
+
+#[test]
+fn abstract_class_and_members() {
+    let m = parse_ok(
+        "export abstract class Shape {
+           abstract area(): number
+           abstract get name(): string;
+           abstract override tag(): string;
+           describe(): string { return \"\"; }
+         }
+         class Square extends Shape {}",
+    );
+    let c = class(&m, 0);
+    assert!(c.is_abstract && m.items[0].exported);
+    let flags: Vec<(bool, bool, bool)> = (c.methods.iter())
+        .map(|m| (m.is_abstract, m.is_getter, m.is_override))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            (true, false, false),
+            (true, true, false),
+            (true, false, true),
+            (false, false, false)
+        ]
+    );
+    // The placeholder body: `return panic("…")`.
+    let StmtKind::Return(Some(e)) = &c.methods[0].decl.body.stmts[0].kind else {
+        panic!()
+    };
+    assert!(sx(e).starts_with("(call panic"));
+    assert!(!class(&m, 1).is_abstract);
+}
+
+#[test]
+fn abstract_is_still_a_name() {
+    let m = parse_ok("class C { abstract: i64 = 1; abstract(): i64 { return 1; } }");
+    let c = class(&m, 0);
+    assert_eq!(c.fields[0].name.name, "abstract");
+    assert!(!c.is_abstract && !c.methods[0].is_abstract);
+}

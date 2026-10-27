@@ -184,6 +184,10 @@ impl<'a> Printer<'a> {
                 if m.is_static {
                     mods.push_str("static ");
                 }
+                // TypeScript's order: `abstract override` (TS1029).
+                if m.is_abstract {
+                    mods.push_str("abstract ");
+                }
                 if m.is_override {
                     mods.push_str("override ");
                 }
@@ -192,6 +196,11 @@ impl<'a> Printer<'a> {
                 }
                 if m.is_setter {
                     mods.push_str("set ");
+                }
+                if m.is_abstract {
+                    // The body is the parser's placeholder: print the signature alone.
+                    let sig = self.fn_sig(&m.decl.sig, "", m.decl.sig.span.hi);
+                    return cat![mods, sig, ";"];
                 }
                 self.fn_decl_with(&m.decl, "", &mods)
             }

@@ -1,0 +1,68 @@
+// Abstract classes (issue #1568): `new` of an abstract class, a concrete subclass that leaves
+// abstract members unimplemented, and `super` calls of an abstract method are errors
+// (TypeScript's TS2511, TS2515 and TS2513).
+abstract class Shape {
+  abstract area(): number;
+  abstract get name(): string;
+  describe(): string {
+    return `${this.name}: ${this.area()}`;
+  }
+}
+
+class Square extends Shape {
+  get name(): string {
+    return "square";
+  }
+}
+
+class Bare extends Shape {}
+
+abstract class Half extends Shape {
+  area(): number {
+    return 1;
+  }
+}
+
+class Done extends Half {
+  get name(): string {
+    return "done";
+  }
+}
+
+class NoName extends Half {}
+
+class Calls extends Shape {
+  area(): number {
+    return super.area();
+  }
+  get name(): string {
+    return "calls";
+  }
+}
+
+class Wrong extends Shape {
+  area(): string {
+    return "";
+  }
+  get name(): string {
+    return "wrong";
+  }
+}
+
+class Plain {
+  tag(): string {
+    return "plain";
+  }
+}
+
+abstract class Fancy extends Plain {
+  abstract override tag(): string;
+}
+
+class Tin extends Fancy {}
+
+function main() {
+  const s = new Shape();
+  const p = new Half();
+  console.log(new Done().describe());
+}

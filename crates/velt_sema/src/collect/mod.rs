@@ -20,6 +20,7 @@
 //!
 //! [`lookup`] finds a class's methods (own, inherited, interface defaults) for all of the above.
 
+mod abstracts;
 mod classes;
 mod comparable;
 mod constants;

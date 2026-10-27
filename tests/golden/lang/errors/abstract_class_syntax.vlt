@@ -1,0 +1,23 @@
+// Abstract members (issue #1568): only in an abstract class, without a body, with a return type,
+// and not `static`, `private`, `async` or `override`; abstract properties are not supported yet.
+abstract class A {
+  abstract x: number;
+  abstract static s(): void;
+  private abstract p(): void;
+  abstract f(): number {
+    return 1;
+  }
+  abstract g();
+}
+
+class NotAbstract {
+  abstract h(): void;
+}
+
+struct S {
+  abstract k(): void;
+}
+
+interface I {
+  abstract m(): void;
+}

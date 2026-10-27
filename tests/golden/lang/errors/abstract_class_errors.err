@@ -1,0 +1,14 @@
+abstract_class_errors.vlt:12:7: error: class `Square` does not implement the abstract member `area` (from `Shape`) (TypeScript's TS2515)
+implement it in `Square`, or declare `abstract class Square`
+abstract_class_errors.vlt:18:7: error: class `Bare` does not implement the abstract members `area` (from `Shape`), `name` (from `Shape`) (TypeScript's TS2654)
+implement them in `Bare`, or declare `abstract class Bare`
+abstract_class_errors.vlt:32:7: error: class `NoName` does not implement the abstract member `name` (from `Shape`) (TypeScript's TS2515)
+implement it in `NoName`, or declare `abstract class NoName`
+abstract_class_errors.vlt:44:3: error: method `area` does not have the same signature as the base class method it overrides
+abstract_class_errors.vlt:62:7: error: class `Tin` does not implement the abstract member `tag` (from `Fancy`) (TypeScript's TS2515)
+implement it in `Tin`, or declare `abstract class Tin`
+abstract_class_errors.vlt:65:17: error: cannot create an instance of abstract class `Shape` (TypeScript's TS2511)
+create an instance of a subclass that implements its abstract members
+abstract_class_errors.vlt:66:17: error: cannot create an instance of abstract class `Half` (TypeScript's TS2511)
+create an instance of a subclass that implements its abstract members
+abstract_class_errors.vlt:36:18: error: abstract method `area` cannot be called through `super`: it has no implementation (TypeScript's TS2513)

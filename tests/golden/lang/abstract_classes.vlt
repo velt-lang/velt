@@ -1,0 +1,217 @@
+// Abstract classes and methods (issue #1568): an abstract method has no body and is implemented
+// by every concrete subclass, with or without `override`; calls through the base class dispatch
+// to the implementation.
+import { Counter } from "./_abstract_classes_lib";
+
+// The example from the issue.
+abstract class Shape {
+  abstract area(): number;
+  describe(): string {
+    return `area ${this.area()}`;
+  }
+}
+
+class Square extends Shape {
+  side: number;
+  constructor(side: number) {
+    super();
+    this.side = side;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+const shapes: Shape[] = [new Square(2), new Square(3)];
+for (const s of shapes) console.log(s.describe());
+
+// An abstract getter, an abstract subclass implementing some members and adding its own, and a
+// concrete class overriding an implementation of an abstract method.
+abstract class Expr {
+  abstract eval(): number;
+  abstract get label(): string;
+  show(): string {
+    return `${this.label} = ${this.eval()}`;
+  }
+}
+
+abstract class Binary extends Expr {
+  left: Expr;
+  right: Expr;
+  constructor(left: Expr, right: Expr) {
+    super();
+    this.left = left;
+    this.right = right;
+  }
+  get label(): string {
+    return `(${this.left.label} ${this.op()} ${this.right.label})`;
+  }
+  abstract op(): string;
+}
+
+class Num extends Expr {
+  v: number;
+  constructor(v: number) {
+    super();
+    this.v = v;
+  }
+  // `override` is allowed on an implementation, not required.
+  override eval(): number {
+    return this.v;
+  }
+  get label(): string {
+    return `${this.v}`;
+  }
+}
+
+class Add extends Binary {
+  eval(): number {
+    return this.left.eval() + this.right.eval();
+  }
+  op(): string {
+    return "+";
+  }
+}
+
+class Mul extends Binary {
+  eval(): number {
+    return this.left.eval() * this.right.eval();
+  }
+  op(): string {
+    return "*";
+  }
+}
+
+class LoudAdd extends Add {
+  override eval(): number {
+    console.log("adding");
+    return super.eval();
+  }
+}
+
+const e: Expr = new Mul(new Add(new Num(1), new Num(2)), new LoudAdd(new Num(3), new Num(4)));
+console.log(e.show());
+
+// A generic abstract class.
+abstract class Source<T> {
+  abstract next(): T;
+  take(n: number): T[] {
+    const out: T[] = [];
+    for (let i = 0; i < n; i++) out.push(this.next());
+    return out;
+  }
+}
+
+class Naturals extends Source<number> {
+  i: number = 0;
+  next(): number {
+    this.i++;
+    return this.i;
+  }
+}
+
+console.log(new Naturals().take(4).join(","));
+
+// An abstract class from another module; its constructor calls an abstract method.
+class Clicks extends Counter {
+  n: number = 0;
+  kind(): string {
+    return "clicks";
+  }
+  get count(): number {
+    return this.n;
+  }
+  set count(v: number) {
+    this.n = v;
+  }
+}
+
+const c: Counter = new Clicks();
+c.bump();
+c.bump();
+console.log(c.count, c instanceof Counter);
+
+// An abstract class extending a concrete one, and implementing an interface.
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  speak(): string {
+    return `${this.name} makes a sound`;
+  }
+}
+
+interface Owned {
+  owner(): string;
+}
+
+abstract class Pet extends Animal implements Owned {
+  abstract owner(): string;
+  override speak(): string {
+    return `${super.speak()} for ${this.owner()}`;
+  }
+}
+
+class Dog extends Pet {
+  owner(): string {
+    return "ann";
+  }
+}
+
+const rex: Animal = new Dog("rex");
+console.log(rex.speak());
+const owned: Owned = new Dog("fido");
+console.log(owned.owner());
+if (rex instanceof Pet) console.log("a pet of", rex.owner());
+
+// `abstract override`: a concrete method made abstract again; subclasses must implement it.
+class Plain {
+  tag(): string {
+    return "plain";
+  }
+}
+
+abstract class Fancy extends Plain {
+  abstract override tag(): string;
+}
+
+class Gold extends Fancy {
+  tag(): string {
+    return "gold";
+  }
+}
+
+const p: Plain = new Gold();
+console.log(p.tag());
+
+// An `extend` block (Velt's, not TypeScript's) adds methods to an abstract class, calling its
+// abstract ones.
+extend Shape {
+  doubled(): number {
+    return this.area() * 2;
+  }
+}
+console.log(shapes[1].doubled());
+
+// An abstract class without abstract members.
+abstract class Base {}
+class Leaf extends Base {}
+console.log(new Leaf() instanceof Base);
+
+// An abstract class declared in a function; `abstract` is still an ordinary name.
+function local(): string {
+  abstract class Step {
+    abstract run(): string;
+  }
+  class Hop extends Step {
+    run(): string {
+      return "hop";
+    }
+  }
+  const s: Step = new Hop();
+  return s.run();
+}
+console.log(local());
+const abstract = "just a name";
+console.log(abstract);

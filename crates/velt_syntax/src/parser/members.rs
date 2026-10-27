@@ -1,4 +1,5 @@
-//! Members of declaration bodies: modifiers (`private public readonly static async override`,
+//! Members of declaration bodies: modifiers (`private public readonly static async override
+//! abstract`,
 //! accessors `get` / `set`, `protected` on a constructor only), fields
 //! (including optional `name?: T`), methods and constructors of `struct`/`class`/`extend`, and the
 //! fields and (optionally defaulted) methods of `interface`.
@@ -23,6 +24,8 @@ pub(super) struct Modifiers {
     is_setter: bool,
     /// `declare name: T;` (a class field TypeScript emits no initializer for).
     is_declare: bool,
+    /// `abstract name(): T;`: a method without a body (in an `abstract class`).
+    is_abstract: bool,
 }
 
 impl Modifiers {
@@ -35,6 +38,7 @@ impl Modifiers {
             || self.is_getter
             || self.is_setter
             || self.is_declare
+            || self.is_abstract
     }
 
     fn ctor_visibility(&self) -> CtorVisibility {
@@ -92,6 +96,7 @@ impl<'a> Parser<'a> {
                 }
                 // `override` is contextual (not in the keyword list), so it arrives as an identifier.
                 None if self.at_word("override") => &mut m.is_override,
+                None if self.at_word("abstract") => &mut m.is_abstract,
                 None if self.at_word("private") && !m.is_public && !m.is_protected => {
                     &mut m.is_private
                 }
@@ -156,6 +161,9 @@ impl<'a> Parser<'a> {
             if let Some(s) = star {
                 self.error("`*` marks a generator method: expected `(`", s);
             }
+            if mods.is_abstract {
+                self.reject_abstract_field(&name);
+            }
             return Ok(Member::Field(self.parse_field_rest(lo, name, &mods)?));
         }
         if mods.readonly {
@@ -169,6 +177,9 @@ impl<'a> Parser<'a> {
         }
         let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         self.check_accessor(&sig, &mods);
+        if mods.is_abstract {
+            return self.abstract_method(sig, &mods);
+        }
         if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
         }
@@ -184,7 +195,117 @@ impl<'a> Parser<'a> {
             is_getter: mods.is_getter,
             is_setter: mods.is_setter,
             is_override: mods.is_override,
+            is_abstract: false,
         }))
+    }
+
+    /// `abstract name(): T;` after the signature: no body (one written is reported and
+    /// dropped). The method's body is a `panic` that never runs (`Method::is_abstract`).
+    fn abstract_method(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
+        let name = &sig.name;
+        let conflict = [
+            (mods.is_static, "static"),
+            (mods.is_private, "private"),
+            (sig.is_async, "async"),
+        ]
+        .into_iter()
+        .find_map(|(on, word)| on.then_some(word));
+        if let Some(word) = conflict {
+            self.error(
+                format!("`{word}` cannot be used with `abstract` (TypeScript's TS1243)"),
+                name.span,
+            );
+        }
+        if sig.is_generator {
+            self.error("an abstract method cannot be a generator", name.span);
+        }
+        if !sig.generics.is_empty() {
+            self.error(
+                "abstract methods cannot have type parameters yet: make the class generic instead",
+                name.span,
+            );
+        }
+        if sig.ret.is_none() && !mods.is_setter {
+            // TypeScript infers `any` (TS7010 under `noImplicitAny`); there is no body to infer from.
+            self.error(
+                format!(
+                    "abstract method `{}` must declare its return type (`{}(): void` if it returns nothing; TypeScript's TS7010)",
+                    name.name, name.name
+                ),
+                name.span,
+            );
+        }
+        if self.at(Tok::LBrace) {
+            let span = self.cur_span();
+            self.error(
+                format!(
+                    "abstract method `{}` cannot have an implementation (TypeScript's TS1245): remove `abstract`, or the body",
+                    name.name
+                ),
+                span,
+            );
+            self.parse_fn_body()?;
+        } else {
+            self.expect_member_end()?;
+        }
+        let body = self.abstract_body(&sig);
+        Ok(Member::Method(Method {
+            decl: FnDecl {
+                sig,
+                body,
+                overloads: vec![],
+            },
+            is_static: mods.is_static,
+            is_private: mods.is_private,
+            is_getter: mods.is_getter,
+            is_setter: mods.is_setter,
+            // `abstract override m()`: makes an inherited method abstract again.
+            is_override: mods.is_override,
+            is_abstract: true,
+        }))
+    }
+
+    /// The placeholder body of the abstract method `sig`: `return panic("…")`. Never run:
+    /// only instances of concrete subclasses exist, and those implement the method.
+    fn abstract_body(&mut self, sig: &FnSig) -> Block {
+        let span = sig.name.span;
+        let msg = format!("ICE: abstract method `{}` called", sig.name.name);
+        let msg = self.mk_expr(ExprKind::Lit(Lit::Str(msg)), span);
+        let callee = self.mk_expr(
+            ExprKind::Ident(Ident {
+                name: "panic".into(),
+                span,
+            }),
+            span,
+        );
+        let call = ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args: vec![msg],
+            optional: false,
+        };
+        let call = self.mk_expr(call, span);
+        Block {
+            stmts: vec![Stmt {
+                kind: StmtKind::Return(Some(call)),
+                span,
+            }],
+            span,
+        }
+    }
+
+    /// `abstract name: T;`: abstract properties are not supported yet.
+    fn reject_abstract_field(&mut self, name: &Ident) {
+        self.report(
+            velt_common::Diagnostic::error(
+                format!("abstract properties are not supported yet (`{}`)", name.name),
+                name.span,
+            )
+            .with_note(format!(
+                "declare an abstract getter, `abstract get {}(): T`, and implement it in each subclass (`get {}(): T {{ ... }}`)",
+                name.name, name.name
+            )),
+        );
     }
 
     /// After a method signature ending in `;` or a line break: a TypeScript-form overload, attached to the
@@ -468,9 +589,14 @@ impl<'a> Parser<'a> {
             decl.fields.push(field);
             return Ok(());
         }
-        if mods.readonly || mods.is_static || mods.is_override || mods.is_private {
+        if mods.readonly
+            || mods.is_static
+            || mods.is_override
+            || mods.is_private
+            || mods.is_abstract
+        {
             self.error(
-                "`readonly`, `static`, `override` and `private` are not allowed on interface methods",
+                "`readonly`, `static`, `override`, `private` and `abstract` are not allowed on interface methods",
                 name.span,
             );
         }

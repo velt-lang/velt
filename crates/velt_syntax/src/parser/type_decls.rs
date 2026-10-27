@@ -33,7 +33,20 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
         let name = self.parse_binding_ident()?;
-        self.parse_type_decl_rest(name, is_class)
+        self.parse_type_decl_rest(name, is_class, false)
+    }
+
+    /// At `abstract class` (no line break after `abstract`, as in TypeScript).
+    pub(super) fn at_abstract_class(&mut self) -> bool {
+        self.at_word("abstract") && self.nth(1) == Tok::Kw(Kw::Class) && !self.line_break_after(0)
+    }
+
+    /// `abstract class Name … { members }`
+    pub(super) fn parse_abstract_class(&mut self) -> PResult<TypeDecl> {
+        self.bump(); // abstract
+        self.bump(); // class
+        let name = self.parse_binding_ident()?;
+        self.parse_type_decl_rest(name, true, true)
     }
 
     /// At `const K = class` / `let K = class`: a class expression bound to a variable.
@@ -62,13 +75,18 @@ impl<'a> Parser<'a> {
                 );
             }
         }
-        let decl = self.parse_type_decl_rest(name, true)?;
+        let decl = self.parse_type_decl_rest(name, true, false)?;
         // The `;` after the class body may be left out, as after a declaration.
         self.eat(Tok::Semi);
         Ok(decl)
     }
 
-    fn parse_type_decl_rest(&mut self, name: Ident, is_class: bool) -> PResult<TypeDecl> {
+    fn parse_type_decl_rest(
+        &mut self,
+        name: Ident,
+        is_class: bool,
+        is_abstract: bool,
+    ) -> PResult<TypeDecl> {
         let generics = self.parse_generic_params()?;
         let extends = self.parse_class_extends(is_class)?;
         let mut implements = Vec::new();
@@ -84,11 +102,21 @@ impl<'a> Parser<'a> {
             constructor: None,
             ctor_visibility: CtorVisibility::Public,
             methods: vec![],
+            is_abstract,
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;
             if !is_class {
                 p.reject_private_name(member_name(&member));
+            }
+            if let Member::Method(m) = &member {
+                if m.is_abstract && !is_abstract {
+                    let msg = match is_class {
+                        true => "abstract methods can only appear in an abstract class (TypeScript's TS1244): declare `abstract class`",
+                        false => "only classes can have abstract methods",
+                    };
+                    p.error(msg, m.decl.sig.name.span);
+                }
             }
             p.add_type_member(&mut decl, member);
             Ok(())
@@ -301,6 +329,12 @@ impl<'a> Parser<'a> {
             let span = match p.parse_member()? {
                 Member::Method(m) => {
                     p.reject_private_name(&m.decl.sig.name);
+                    if m.is_abstract {
+                        p.error(
+                            "`extend` blocks cannot have abstract methods",
+                            m.decl.sig.name.span,
+                        );
+                    }
                     methods.push(m);
                     return Ok(());
                 }
