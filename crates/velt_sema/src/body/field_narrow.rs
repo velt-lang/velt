@@ -271,7 +271,8 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         want: Want,
     ) -> hir::Expr {
-        if want == Want::BorrowMut || self.raw_read == Some(h.span) {
+        let raw = Some(h.span);
+        if want == Want::BorrowMut || self.raw_read == raw || self.dynamic_raw == raw {
             return h;
         }
         let Some((root, path)) = self.member_path(object, prop, false) else {

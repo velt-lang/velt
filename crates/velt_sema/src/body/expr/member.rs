@@ -652,7 +652,6 @@ impl FnCx<'_, '_> {
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let inner = self.expr(expr, Some(target), want);
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
-        let inner = self.expr(expr, Some(target), want);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
                 return h;

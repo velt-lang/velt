@@ -49,6 +49,23 @@ function field(o: { t: unknown; n: unknown }): string {
   return out;
 }
 
+// A narrowed `string | symbol | Function` (an `unknown` here) cast to another type converts the
+// value it holds (sigx's `jsx`: `isComponent(type)`, then `type as Function`).
+interface ComponentLike {
+  __setup: Function;
+  __name?: string;
+}
+function isComponent(type: unknown): type is ComponentLike {
+  return typeof type === "function" && "__setup" in type;
+}
+function mkNode(type: string | symbol | Function): { type: Function | string } {
+  if (isComponent(type)) {
+    return { type: type as Function };
+  }
+  if (typeof type === "string") return { type: type as string };
+  return { type: "none" };
+}
+
 function v(x: number): unknown {
   return x === 0 ? null : x === 1 ? undefined : x === 2 ? "s" : { k: x };
 }
@@ -76,3 +93,5 @@ for (let i = 0; i < 4; i++) {
   const m = mk(i);
   console.log(m.value, m.get(), m.value === null, m.get() === undefined, typeof m.value, JSON.stringify({ a: m.value }));
 }
+const comp = Object.assign(() => 1, { __setup: () => 2, __name: "C" });
+console.log(typeof mkNode(comp).type, mkNode("div").type, mkNode(Symbol("x")).type);

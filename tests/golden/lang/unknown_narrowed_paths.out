@@ -6,3 +6,4 @@ null null true false object {"a":null}
 undefined undefined false true undefined {}
 s s false false string {"a":"s"}
 { k: 3 } { k: 3 } false false object {"a":{"k":3}}
+function div none

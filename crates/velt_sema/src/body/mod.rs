@@ -608,6 +608,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub view_receiver: bool,
     /// The arrow being checked as the operand of a type assertion (`callables`).
     pub asserted_fn: Option<Span>,
+    /// The operand of a type assertion: a narrowed `any` / `unknown` there reads as it is.
+    pub dynamic_raw: Option<Span>,
     /// The types of variables declared before their declaration, by name (`forward_consts`).
     pub forward_tys: rustc_hash::FxHashMap<Span, TyId>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
@@ -646,6 +648,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             enclosing_locals: vec![],
             generic_arrow: false,
             asserted_fn: None,
+            dynamic_raw: None,
             forward_tys: Default::default(),
             f: frame,
             outer: vec![],
