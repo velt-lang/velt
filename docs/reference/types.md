@@ -1626,9 +1626,12 @@ Differences from TypeScript, each a compile error with a note on what to write i
   `Signal<T>` at a `Map`, or `T & { … }` at a class `T`) is a brand of the instance, as a
   primitive's is ([branded types](#branded-types)): the value is the instance itself (`x as`
   such a type keeps the object, `===` holds), with the class's members, `instanceof`,
-  iteration, spreads and printing. It converts to the class; an instance converts to it only
-  with `as`, unless the object part adds nothing to the class (`C & { id: string }` where `C`
-  declares `id: string` is `C`). A member only the object part declares (`s.$set(v)`) is read
+  iteration, spreads, printing and the reflective operations (`Object.keys`, `for...in`, `in`,
+  `Object.hasOwn`, `Object.assign`, `{ ...x }`, `JSON.stringify` see the class's fields). It
+  converts to the class; an instance converts to it implicitly when every member of the object
+  part is optional or a field, method or getter of the class of that type (`C & { y?: number }`,
+  `C & { inc(): number }`), else only with `as`. When the object part adds nothing to the class
+  (`C & { id: string }` where `C` declares `id: string`) the type is `C` itself. A member only the object part declares (`s.$set(v)`) is read
   from the object at run time, as through `any`, and checked as the member's type then: a
   proxy's `get` trap can provide it, and an instance that lacks it stops with a `TypeError` at
   the read (Node reads `undefined`). Two classes (`A & B`) and structs are not parts (Velt
@@ -2319,7 +2322,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   On an `any` `x`, `(x as Record<K, V>)[k]` and `(x as Record<K, V>).k` read and write `x`
   itself, as the assertion converts nothing in TypeScript: a read is a `V | undefined` (a `V`
   where one is expected, a missing key then a `TypeError`), and a
-  value written is checked as a `V` (sigx's `toSignals` fills `{} as ToSignals<T>`, the record
+  value written is checked as a `V`, also by `??=`, `||=` and `&&=` (and `+=` on a number
+  member takes a number) (sigx's `toSignals` fills `{} as ToSignals<T>`, the record
   of `any` values a deferred `{} as D` is, this way).
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
@@ -3756,7 +3760,9 @@ target whose `get` trap answers every key). A method called through a typed prox
 `this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
 `get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
 trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
-the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+the target's method, which then runs with `this` the proxy. A class getter read through a typed
+proxy (`s.twice`) is the `get` trap's answer, checked as the getter's type, as for a field. A
+typed proxy passed where an object
 type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
 stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
 (Where a copy of a plain object could be told from the original, such a conversion is a compile
