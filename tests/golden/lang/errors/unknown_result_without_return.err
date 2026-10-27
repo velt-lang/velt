@@ -1,0 +1,2 @@
+unknown_result_without_return.vlt:4:11: error: function `closure` must return a value of type `unknown` on every path
+unknown_result_without_return.vlt:5:11: error: function `closure` must return a value of type `unknown` on every path
