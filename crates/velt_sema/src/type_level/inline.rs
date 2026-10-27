@@ -215,6 +215,10 @@ impl Ctx<'_> {
         }
         let o = self.resolve_type(object, env);
         let o = self.subst(o, &env.args);
+        // On an `any` (a proxy, say), each key is read through `any` (velt_vir key_any.rs).
+        if matches!(self.dynamic(o), Some(crate::any::Dynamic::Any)) {
+            return body;
+        }
         let fields = self.public_fields(o);
         let mut tys = vec![];
         for m in &members {

@@ -1,5 +1,7 @@
 1 a
 5
+count 5
+name a
 3
 1 a false
 count 2
@@ -9,6 +11,8 @@ name a
 any get count
 any get name
 any get count
+any get count
+any get name
 get count
 get name
 get on

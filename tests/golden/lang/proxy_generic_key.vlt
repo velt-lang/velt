@@ -31,6 +31,9 @@ const p = new Proxy({ count: 1, name: "a" }, {
 console.log(get(p, "count"), get(p, "name"));
 put(p, "count", 5);
 console.log(get(p, "count"));
+for (const k of ["count", "name"] as ("count" | "name")[]) {
+  console.log(k, get(p, k));
+}
 const empty = new Proxy({ n: 2 }, {});
 const n: number = get(empty, "n");
 console.log(n + 1);
