@@ -187,7 +187,10 @@ pub fn ty(t: &TypeExpr) -> String {
             let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
             format!("<{}>{}", names.join(", "), ty(t))
         }
-        TypeExprKind::Construct(t) => format!("new {}", ty(t)),
+        TypeExprKind::Construct { ty: t, is_abstract } => {
+            let kw = if *is_abstract { "abstract new" } else { "new" };
+            format!("{kw} {}", ty(t))
+        }
         TypeExprKind::TupleRest(t) => format!("...{}", ty(t)),
         TypeExprKind::TupleOptional(t) => format!("{}?", ty(t)),
         TypeExprKind::Predicate {

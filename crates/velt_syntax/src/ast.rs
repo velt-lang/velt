@@ -215,9 +215,13 @@ pub enum TypeExprKind {
         type_params: Vec<GenericParam>,
         ty: Box<TypeExpr>,
     },
-    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
-    /// function type, generic or not, after `new`).
-    Construct(Box<TypeExpr>),
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (`ty`: the
+    /// function type, generic or not, after `new`). `abstract new (a: A) => R` (`is_abstract`)
+    /// also takes abstract classes, and cannot be called with `new`.
+    Construct {
+        ty: Box<TypeExpr>,
+        is_abstract: bool,
+    },
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
     /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)

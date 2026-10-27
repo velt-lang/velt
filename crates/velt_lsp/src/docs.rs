@@ -265,7 +265,7 @@ impl FileDocs {
                 self.type_fields(ret);
             }
             ast::TypeExprKind::GenericFunction { ty, .. }
-            | ast::TypeExprKind::Construct(ty)
+            | ast::TypeExprKind::Construct { ty, .. }
             | ast::TypeExprKind::TupleRest(ty)
             | ast::TypeExprKind::TupleOptional(ty) => self.type_fields(ty),
             ast::TypeExprKind::Object(fields) => {

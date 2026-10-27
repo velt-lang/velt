@@ -109,7 +109,10 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            ast::TypeExprKind::Construct(inner) => self.resolve_construct(inner, t, env),
+            ast::TypeExprKind::Construct {
+                ty: inner,
+                is_abstract,
+            } => self.resolve_construct(inner, *is_abstract, t, env),
             ast::TypeExprKind::GenericFunction { type_params, ty } => {
                 self.resolve_generic_fn(type_params, ty, env, t.span)
             }
