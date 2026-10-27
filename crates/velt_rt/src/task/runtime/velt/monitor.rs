@@ -25,8 +25,7 @@
 use super::queue::RunQueue;
 use super::task::Task;
 use super::worker::{
-    lock, sleeping_helper, sleeping_helper_of, start_spare, started, wake, workers, Reactor,
-    Shared, WAKE,
+    lock, sleeping_helper_of, start_spare, started, wake, workers, Reactor, Shared, WAKE,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -314,10 +313,34 @@ pub(super) fn stalled(w: &Shared, now: u64) -> bool {
 /// inbox (the tasks that woke) and half of its queue to another worker, which becomes their
 /// home. Pinned tasks stay.
 pub(super) fn rescue(i: usize, now: u64) {
-    let ws = workers();
+    rescue_of(workers(), started(), i, now, start_spare);
+}
+
+/// [`rescue`] among the workers `ws`, of which the first `up` have started, with `spare` to
+/// start another. The tasks move only when a worker can take them: one asleep, one not stalled
+/// itself, or a spare that starts. With none (one worker and every spare started, or every
+/// other worker stalled too) they stay where they are: sent back to the same worker, or on to
+/// another stalled one, they would only be moved again at every tick, hundreds of thousands
+/// of them under the inbox lock the worker needs (#1673).
+pub(super) fn rescue_of(
+    ws: &[Shared],
+    up: usize,
+    i: usize,
+    now: u64,
+    spare: impl FnOnce() -> Option<usize>,
+) {
     let w = &ws[i];
     turn_for(w, i);
     lock(&w.timers).fire(Instant::now());
+    // Not waiting on the worker: one that holds its queue is running.
+    let waiting =
+        w.inbox_len.load(Ordering::Acquire) > 0 || w.queue.try_lock().is_ok_and(|q| q.len() > 0);
+    if !waiting {
+        return;
+    }
+    let Some(helper) = helper_for(&ws[..up], i, now).or_else(spare) else {
+        return;
+    };
     // The tasks taken below are in no queue until they reach one again: counted meanwhile, as
     // the worker may count as idle (woken, not yet running).
     let _moving = crate::task::quiet::Moving::new();
@@ -327,36 +350,28 @@ pub(super) fn rescue(i: usize, now: u64) {
         moved.extend(inbox.drain(..));
         w.inbox_len.store(0, Ordering::SeqCst);
     }
-    // Not waiting on the worker: one that holds its queue is running.
     if let Ok(mut queue) = w.queue.try_lock() {
         moved.extend(queue.take_half_up());
-    }
-    if moved.is_empty() {
-        return;
     }
     let (pinned, moved): (Vec<_>, Vec<_>) = moved.into_iter().partition(|t| t.pinned);
     // Back through the inbox with a wake: the worker may have parked since the drain above.
     if !pinned.is_empty() {
         send_back(w, pinned);
     }
-    let others = || (0..started()).filter(|&j| j != i);
-    let least_queued = |j: &usize| ws[*j].queued.load(Ordering::Relaxed);
-    let helper = sleeping_helper(i)
-        .or_else(|| {
-            others()
-                .filter(|&j| !stalled(&ws[j], now))
-                .min_by_key(least_queued)
-        })
-        .or_else(start_spare)
-        .or_else(|| others().min_by_key(least_queued));
-    let Some(helper) = helper else {
-        send_back(w, moved);
-        return;
-    };
-    if moved.is_empty() {
-        return;
+    if !moved.is_empty() {
+        hand_over(&ws[helper], helper, moved);
     }
-    hand_over(&ws[helper], helper, moved);
+}
+
+/// The worker among `ws` (those started) that takes the tasks of worker `i`, stalled at tick
+/// `now`: the sleeping one that did least, else the awake one not stalled with the shortest
+/// queue. None when every other worker is stalled too.
+fn helper_for(ws: &[Shared], i: usize, now: u64) -> Option<usize> {
+    sleeping_helper_of(ws, i).or_else(|| {
+        (0..ws.len())
+            .filter(|&j| j != i && !stalled(&ws[j], now))
+            .min_by_key(|&j| ws[j].queued.load(Ordering::Relaxed))
+    })
 }
 
 /// Makes worker `index` (`w`) the home of `tasks`, queues them in its inbox and wakes it.

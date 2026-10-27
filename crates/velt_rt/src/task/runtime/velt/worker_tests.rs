@@ -312,3 +312,86 @@ fn a_watch_hurries_the_monitor_only_while_it_naps_for_a_whole_tick() {
     // Not hurried: the nap lasts its time and says so.
     assert!(!monitor.nap(Duration::from_millis(1)));
 }
+
+/// `n` workers of their own (not the runtime's), all awake, with no poll started since tick 0.
+fn stalled_workers(n: usize) -> &'static [Shared] {
+    Box::leak(
+        (0..n)
+            .map(|_| new_shared())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    )
+}
+
+/// Queues `n` tasks (not pinned) on `w` and `k` more in its inbox: its queue's and inbox's
+/// lengths.
+fn fill(w: &Shared, n: usize, k: usize) -> (usize, usize) {
+    let task = || super::super::task::make(async {}, 0, false).0;
+    lock(&w.queue).extend_io((0..n).map(|_| task()));
+    send_back(w, (0..k).map(|_| task()).collect());
+    (lock(&w.queue).len(), w.inbox_len.load(Ordering::SeqCst))
+}
+
+/// A tick at which every worker of [`stalled_workers`] counts as stalled.
+const LATE: u64 = 10;
+
+#[test]
+fn a_rescue_with_no_worker_to_take_the_tasks_moves_nothing() {
+    // One worker running a long poll, every spare started: sending its tasks back to its own
+    // inbox at every tick only copied them under the lock it needs (#1673).
+    let ws = stalled_workers(1);
+    let before = fill(&ws[0], 1000, 10);
+    assert!(stalled(&ws[0], LATE));
+    rescue_of(ws, 1, 0, LATE, || None);
+    let after = (
+        lock(&ws[0].queue).len(),
+        ws[0].inbox_len.load(Ordering::SeqCst),
+    );
+    assert_eq!(after, before, "the queue or the inbox changed");
+    assert_eq!(lock(&ws[0].inbox).len(), 10);
+    assert_eq!(crate::task::quiet::moving_here(), 0);
+}
+
+#[test]
+fn a_rescue_moves_nothing_to_a_worker_stalled_too() {
+    let ws = stalled_workers(2);
+    let before = fill(&ws[0], 1000, 10);
+    rescue_of(ws, 2, 0, LATE, || None);
+    assert_eq!(
+        (
+            lock(&ws[0].queue).len(),
+            ws[0].inbox_len.load(Ordering::SeqCst)
+        ),
+        before
+    );
+    assert_eq!(
+        ws[1].inbox_len.load(Ordering::SeqCst),
+        0,
+        "moved to a stalled worker"
+    );
+}
+
+#[test]
+fn a_rescue_moves_the_inbox_and_half_the_queue_to_a_worker_that_can_take_them() {
+    // Another worker making progress takes them; with none, a spare that starts does.
+    for spare in [false, true] {
+        let ws = stalled_workers(2);
+        fill(&ws[0], 1000, 10);
+        let up = if spare {
+            1
+        } else {
+            ws[1].progress.store(LATE, Ordering::Relaxed);
+            2
+        };
+        let mut started = false;
+        rescue_of(ws, up, 0, LATE, || {
+            started = true;
+            Some(1)
+        });
+        assert_eq!(started, spare, "a spare started needlessly, or none did");
+        assert_eq!(lock(&ws[0].queue).len(), 500);
+        assert_eq!(ws[0].inbox_len.load(Ordering::SeqCst), 0);
+        assert_eq!(ws[1].inbox_len.load(Ordering::SeqCst), 510);
+        assert_eq!(crate::task::quiet::moving_here(), 0);
+    }
+}

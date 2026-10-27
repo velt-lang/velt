@@ -144,8 +144,8 @@ never wakes another thread.
   than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
   tasks go to another worker meanwhile, except tasks pinned to that worker. When no other worker
   can take them (one worker, or every other one computing too), a spare worker starts and does,
-  up to four in all; `workerCount()` counts each from then on. Tasks spawned together that
-  compute (`spawn` in a loop, then `await Promise.all(...)`) start on idle workers well under a
+  up to four in all; `workerCount()` counts each from then on. Past those, they wait for a worker
+  to finish its computation. Tasks spawned together that compute (`spawn` in a loop, then `await Promise.all(...)`) start on idle workers well under a
   millisecond apart: once the first has computed for 50 µs, the others, not started yet, go to
   sleeping workers, one each (on Windows, whose timers are coarser, within about a millisecond).
   After many spawned tasks that each finished at once, the first such group may take up to a
