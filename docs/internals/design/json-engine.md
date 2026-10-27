@@ -104,20 +104,21 @@ under Velt, debug with the checking allocator and release, and compares the byte
 |---|---|
 | Strings escaped as `JSON.stringify` does: `"`, `\`, controls, lone surrogates as `\udxxx`; U+2028/2029 raw | fuzz `strings` (125,000 cases; from #1066) |
 | Numbers written as `Number.prototype.toString` does; `-0` as `0`; `NaN`, `±Infinity` as `null` | fuzz `numbers` (400,000 doubles, every binary exponent) |
-| Numbers read correctly rounded (`12345678901234567890123`, `1e400`, `-0`, `1e-400`, subnormals) | fuzz `to_number` (60,000 strings through `Number`, `parseFloat`, `JSON.parse`); golden `std/json_float_parse` |
+| Numbers read correctly rounded (`12345678901234567890123`, `1e400`, `-0`, `1e-400`, subnormals) | fuzz `to_number` (60,000 strings through `Number`, `parseFloat`, `JSON.parse`); golden `std/json_float_parse` (with the stack's float parsing) |
 | Key order: index-like keys first, ascending; a repeated key keeps its last value in its first place | fuzz `values` (20,000 documents); goldens `json_duplicate_keys`, `record_json_index_order` |
 | `__proto__` is an ordinary own key when parsing | to add to fuzz `values` |
 | Syntax errors: Node 26's message and UTF-16 position | goldens `json_parse_syntax_node`, `json_error_paths` |
 | `toJSON(key)` runs before a replacer function; `undefined`, functions and symbols skipped in objects, `null` in arrays | goldens `json_to_json`, `any_json_undefined`, `void_field_any_json` (the replacer's order: with step 11's golden) |
 | An invalid `Date` writes `null` | to add (no golden covers it today) |
-| Getters of object literals run and are written; class prototype getters are not; symbol keys are skipped | goldens `any_literal_accessor_json_only`, `any_literal_getter_unions`, `any_json_stringify` |
+| Getters of object literals run and are written; class prototype getters are not; symbol keys are skipped | goldens `any_literal_accessor_json_only`, `any_literal_getter_unions`; `symbol_keys` |
 | Proxies go through `ownKeys`, `getOwnPropertyDescriptor`, `get` | golden `proxy_json` |
-| An `any` holding a `Map` or `Set` writes `{}` (a typed `Map` writes its entries, a documented difference) | golden `any_json_stringify` |
+| An `any` holding a `Map` or `Set` writes `{}` (a typed `Map` writes its entries, a documented difference) | to add (no golden covers it today) |
 
-Not changed by the rewrite, and not yet Node's: a cycle throws `TypeError: Converting circular
-structure to JSON` without Node's `--> starting at …` / `--- property … closes the circle` lines
-(the runtime's `cycle.rs` stays), and a `BigInt` has no JSON form (a compile error, not Node's
-run-time `TypeError`). The fuzz runner does not run wasm32 yet (#1066's did): it gets a wasm32
+Not Node's yet:
+- A cycle throws `TypeError: Converting circular structure to JSON` without Node's
+  `--> starting at …` / `--- property … closes the circle` lines. Step 0 owns the writer's path
+  tracking, so it gets them (#1701).
+- A `BigInt` has no JSON form: a compile error, not Node's run-time `TypeError`. The fuzz runner does not run wasm32 yet (#1066's did): it gets a wasm32
 mode when wasmtime is on the machine.
 
 ### 0. Move the reader, scanner and writer into Velt (no API change)
@@ -144,6 +145,8 @@ ported. The Rust JSON code is deleted once nothing calls it.
   and the JIT get an unoptimized engine. The gate adds JSON speed in a debug build, compile time
   (`compile_speed`) and binary size; if debug speed regresses badly, std's JSON modules get
   optimized in debug builds;
+- the Node-differential fuzz (`bench/json/fuzz/run.sh`) passes, and the escape kinds benchmark
+  (`bench/json/fuzz/escape_kinds.vlt`, #1066's `kinds.vlt`) is no slower per shape;
 - every gap found is filed and fixed in the compiler, not with a Rust fast path.
 
 ### 1. Matching a key to a field (no API change)
@@ -218,7 +221,9 @@ and the backends, not written in Rust:
   (Clinger), else Eisel-Lemire with its 128-bit power-of-five table. More than 19 significant
   digits, or a rounding Eisel-Lemire cannot decide, still goes to the runtime's parser: a
   temporary exception to the rule above, until a Velt big-decimal slow path (fast_float's
-  "digit comparison") replaces it. `Number()` and `parseFloat` use the same code.
+  "digit comparison", #1702) replaces it. Eisel-Lemire's 64×64→128-bit products use `umulh`
+  (the prelude's `Math.umulh`, one instruction in both backends), so it needs no compiler
+  change. `Number()` and `parseFloat` use the same code.
 - **Integers.** A `u64` field reads its full 20-digit range (today it stops at `i64::MAX`, a
   limit this design removes).
 - **Writing numbers** as `Number.prototype.toString` does (`1e+21`, `1e-7`, `0.000001`, `-0`
@@ -379,22 +384,29 @@ decodes.
 
   STJ calls these `ReadCommentHandling` and `AllowTrailingCommas`. Both are flags in the reader,
   and cost one predictable branch when off.
-- **Replacer functions and revivers**, until `JSON.parse` into `any` exists (#924):
-  - `JSON.stringify(x, replacer, space)` takes a function of the prelude type
-    `JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined`. The value is
-    written by its typed glue first, so `toJSON` has already run, as in Node; the replacer is
-    then called as Node calls it (the value itself under the key `""` first, then the members of
-    each result; `undefined` drops a member and writes an array element as `null`). It gets no
-    `this` (the holder). A `BigInt`, function or `Map` cannot reach it: they have no JSON form
-    in Velt. `undefined` for the value itself writes `null`, since Velt's `JSON.stringify`
-    returns a string (Node returns `undefined`).
-  - `JSON.parse(text, reviver)` is `JSON.parseValue(text).revive(reviver)`, with the same
-    function type and Node's order (innermost first, array keys as strings, `undefined` deletes,
-    a deleted array element is `null`). Node 26's third `context` argument (`source`) is not
-    given yet.
-  - When #924 makes `JSON.parse(text): any` (backed by this design's tape), both take `any` as in
-    TypeScript (`(k, v) => typeof v === "bigint" ? v.toString() : v`, `this` as the holder), and
-    `JSON.parse(text, reviver)` works as written in TypeScript. The `JsonValue` forms stay.
+- **Replacer functions and revivers**, until `JSON.parse` into `any` exists (#924). A callback
+  written as TypeScript (`(k, v) => typeof v === "number" ? v * 2 : v`) must not compile to
+  something that silently does less than in Node, so only the explicit `JsonValue` form is
+  accepted for now:
+  - `JSON.stringify(x, replacer, space)` takes a function whose value parameter is annotated
+    `JsonValue`: `(key: string, value: JsonValue) => JsonValue | undefined` (the prelude type
+    `JsonReplacer`). An unannotated `(k, v) => …` is a compile error that names #924 and says
+    to annotate `v: JsonValue`. The value is written by its typed glue first, so `toJSON` has
+    already run, as in Node; the replacer is then called as Node calls it (the value itself
+    under the key `""` first, then the members of each result; `undefined` drops a member and
+    writes an array element as `null`). It gets no `this` (the holder). A `BigInt`, function or
+    `Map` cannot reach it: they have no JSON form in Velt.
+  - `JSON.parseValue(text).revive(reviver)` takes the same function type, in Node's order
+    (innermost first, array keys as strings, `undefined` deletes a member, a deleted array
+    element is `null`). Node 26's third `context` argument (`source`) is not given yet.
+    `JSON.parse(text, reviver)` itself waits for #924, since its result is `any` in TypeScript.
+  - `undefined` for the root, where Node's `JSON.stringify` and `JSON.parse` return
+    `undefined`, throws a `TypeError` that says so (Velt's results are a `string` and a
+    `JsonValue`), rather than writing `"null"`.
+  - When #924 lands (its `any` backed by this design's tape), both take `any` as in TypeScript
+    (`typeof v === "bigint"`, `this` as the holder), the unannotated form compiles with Node's
+    meaning, and `JSON.parse(text, reviver)` works as written in TypeScript. The `JsonValue`
+    forms stay.
 
 ### 12. Schema and the low-level API
 
@@ -417,7 +429,7 @@ decodes.
 | 4 | Array capacity hints | None (faster) | — |
 | 5 | Tape `JsonValue` | None (faster) | 0, 2 |
 | 6 | Parse from bytes; `req.json` / `res.json` without a string | New overloads | 3 |
-| 7 | `JSON.stringifyTo`, streamed `Response.json` | New API | — |
+| 7 | `JSON.stringifyTo` | New API | — |
 | 8 | `parseStream`, `parseLines` | New API | 6 |
 | 9 | Compile-time decorators | New syntax | contract sign-off |
 | 10 | `@json.*` | New API | 9; converters use the internal `Reader` and `Writer` of step 0 (step 12 makes them public) |

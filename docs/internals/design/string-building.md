@@ -61,10 +61,10 @@ until it moves to the heap, after which the appends stay inline.
 
 ### 2. `StringBuilder`: the builder as a type (std, Velt)
 
-```ts
+```ts planned
 const b = new StringBuilder();
 b.append("key=");      // a string
-b.appendCode(0x3d);    // one UTF-16 code unit or code point
+b.appendCodePoint(0x3d); // a code point, as String.fromCodePoint
 b.appendInt(42);       // decimal digits, written in Velt
 const s = b.toString(); // the builder becomes the string: no copy (it has VeltStr's layout)
 ```
@@ -76,14 +76,25 @@ step 1, so a call to `append` inlines to the step-1 sequence. The JSON writer th
 Integer formatting moves to Velt (`bench/stdport` `int_to_string` is 1.82× `itoa` today: a call
 per value and a string result, where writing digits into the builder needs neither).
 
-`toString()` moves the value out. Using the builder after that is a compile error, as for any
-moved value (memory.md).
+`appendCodePoint(c)` takes a code point, as `String.fromCodePoint` does (a non-code-point is
+its `RangeError`). A lone surrogate is appended as one; a high surrogate followed by a low one
+joins into the four-byte form, as `"\ud83d" + "\ude00" === "😀"` and the runtime's append do.
+
+`toString()` hands the buffer over without a copy and leaves the builder empty, ready to build
+another string (`StringBuilder` is a class, so a second reference to it cannot be caught at
+compile time). Using it afterwards appends to a new, empty text.
 
 ### 3. Byte views of strings (reading)
 
 `s.utf8()`: a read-only view of a string's bytes, where it keeps them. It supports `[i]`,
 `length`, `subarray(a, b)`, `u8x16.load(view, i)`, and `b.appendBytes(view.subarray(a, b))` on a
-`StringBuilder` (one copy, inline `memcpy`). Std parsers (`velt:json`, `velt:url`, `velt:csv`)
+`StringBuilder` (one copy, inline `memcpy`). A range can cut a UTF-8 sequence, or the four-byte
+form of a surrogate pair, and a plain copy would break canonical WTF-8 and the UTF-16 count. So
+`appendBytes` checks the two ends inline (one byte each): a range that cuts a surrogate pair's
+four-byte form appends the cut half as a lone surrogate, as slicing the string between the two
+UTF-16 units does (`"😀".slice(0, 1)`); a range that cuts any other sequence is a `RangeError`
+panic (no position in a JavaScript string corresponds to it). The copy between stays one
+`memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt:json`, `velt:url`, `velt:csv`)
 then need neither `__intrinsic_str_byte_at` nor `utf8ByteAt`'s check at each byte: the view is
 bounds-checked once per loop where the compiler can prove the range, like an array.
 
