@@ -11,7 +11,12 @@ use crate::vir::{Operand, Place, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `object[key]` with `object` an `any`: the member the key names, read through `any`.
-    pub(super) fn key_read_any(&mut self, object: &hir::Expr, key: &hir::Expr, ty: TyId) -> Operand {
+    pub(super) fn key_read_any(
+        &mut self,
+        object: &hir::Expr,
+        key: &hir::Expr,
+        ty: TyId,
+    ) -> Operand {
         let fty = self.sub(ty);
         let (data, desc) = self.any_receiver(object);
         let ka = self.key_name_addr(key);

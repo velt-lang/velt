@@ -40,7 +40,10 @@ impl FnCx<'_, '_> {
         let shown = self.cx.display(this_ty);
         let any_this = matches!(self.cx.dynamic(this_ty), Some(crate::any::Dynamic::Any));
         let fn_expected = exp.is_some_and(|t| {
-            matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_))
+            matches!(
+                self.cx.ty.kind(t),
+                TyKind::FnPtr { .. } | TyKind::Closure(_)
+            )
         });
         let (Some(any_impl), Some(fd), true, false) = (
             self.cx.any_impl(),
@@ -191,10 +194,7 @@ impl FnCx<'_, '_> {
                     // `arguments[i] === undefined ? default : arguments[i]`, as JavaScript
                     // fills a left-out argument.
                     Some(def) => {
-                        let undef = synth(
-                            ast::ExprKind::Lit(ast::Lit::Undefined),
-                            p.span,
-                        );
+                        let undef = synth(ast::ExprKind::Lit(ast::Lit::Undefined), p.span);
                         let cond = synth(
                             ast::ExprKind::Binary {
                                 op: ast::BinaryOp::StrictEq,

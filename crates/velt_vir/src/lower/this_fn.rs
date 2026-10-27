@@ -100,7 +100,11 @@ impl FnLower<'_, '_> {
             let this = Place::local(self.temp(avt));
             let some = self.rvalue_temp(
                 Ty::Bool,
-                Rvalue::Binary(BinOp::Gt, Operand::Copy(Place::local(argc)), cint(0, Ty::U64)),
+                Rvalue::Binary(
+                    BinOp::Gt,
+                    Operand::Copy(Place::local(argc)),
+                    cint(0, Ty::U64),
+                ),
             );
             let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
             self.branch(some, yes, no);
