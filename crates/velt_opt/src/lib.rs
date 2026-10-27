@@ -61,6 +61,9 @@
 //!   uses inside a loop are kept in locals (loaded on entry, stored back at every suspension).
 //! - `dead_fills`: at the same point, the zero fill of a new object is dropped when every
 //!   field is written after it before anything can read the object.
+//! - `cold_calls`: last, the calls of a function to one callee that never returns (the
+//!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
+//!   small function with many checks stays cheap enough for LLVM to inline.
 //!
 //! Every pass keeps `Function::locs` aligned with the statements it edits (`srclocs`).
 //!
@@ -76,6 +79,7 @@ mod addr_forward;
 mod borrowed_copies;
 mod bounds;
 mod callgraph;
+mod cold_calls;
 mod const_fields;
 mod constfold;
 mod copyprop;
@@ -243,6 +247,12 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 });
             }
             promote_memory(program, t);
+            let no_return = cold_calls::NoReturn::find(program);
+            for func in &mut program.funcs {
+                if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+            }
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
