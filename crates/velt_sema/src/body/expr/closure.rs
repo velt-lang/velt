@@ -246,7 +246,10 @@ impl FnCx<'_, '_> {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
         };
-        let mut ptys = self.closure_param_types(params, exp_params.as_deref());
+        let untyped = (self.any_callback == Some(span))
+            .then(|| self.any_ty())
+            .flatten();
+        let mut ptys = self.closure_param_types(params, exp_params.as_deref(), untyped);
         // Like TS, an arrow may take fewer parameters than the function type it is passed as
         // (`xs.map((x) => …)` where `map` passes `(x, i)`): the rest are unnamed and unused.
         let extra: Vec<TyId> = exp_params

@@ -41,7 +41,9 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (i, d) in self.cx.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = d else { continue };
-            let std_fn = f.name.starts_with("std/prelude/") || f.name.starts_with("std/record/");
+            let std_fn = ["std/prelude/", "std/record/", "std/collections/"]
+                .iter()
+                .any(|r| f.name.starts_with(r));
             if !std_fn || f.params.len() != 2 {
                 continue;
             }
@@ -85,8 +87,6 @@ impl FnLower<'_, '_> {
             .filter(|n| !methods.iter().any(|(m, _)| m == n))
             .collect();
         let outp = self.any_out(out);
-        let any = self.cx.any_ty();
-        let rest = self.cx.intern(TyKind::Array(any));
         let targs = match self.cx.kind(ty) {
             TyKind::Array(e) => vec![e],
             _ => vec![],
@@ -104,29 +104,9 @@ impl FnLower<'_, '_> {
                     let from = self.cx.ty(ty);
                     self.cast_to(Operand::Copy(vp), from, Ty::F64)
                 }
-                // A method that keeps the value (passes it on as an `any`) takes a share of it.
-                _ if self.cx.fn_def(def).params[0].mode == PassMode::Owned => {
-                    let vp = self.any_value_place(data, ty);
-                    let v = self.share_value(Operand::Copy(vp), ty);
-                    let vt = self.cx.ty(ty);
-                    let p = Place::local(self.copy_to_temp(v, vt));
-                    self.take_temp(&p);
-                    match vt {
-                        Ty::Agg(_) => self.addr(p),
-                        _ => Operand::Copy(p),
-                    }
-                }
-                _ => self.any_this(data, ty),
+                _ => self.builtin_this(data, ty, def),
             };
-            let args = vec![self.any_rest_arg(argv, argc, 0, rest)];
-            let r = Ready {
-                def,
-                targs: targs.clone(),
-                ret: any,
-                throws: None,
-            };
-            self.any_invoke(&r, this, args, &outp);
-            self.ret_status(ST_OK);
+            self.call_builtin(def, &targs, this, (argv, argc), &outp);
             self.switch_to(next);
         }
         for name in missing {
@@ -185,6 +165,86 @@ impl FnLower<'_, '_> {
         }
         self.any_drop_args(argv, 0, argc);
         self.ret_status(ST_UNSUPPORTED);
+    }
+
+    /// `this` for the standard library's method `def` on the value of type `ty` that `data`
+    /// holds: a share when the method keeps it (passes it on as an `any`), else borrowed.
+    fn builtin_this(&mut self, data: vir::Local, ty: TyId, def: DefId) -> Operand {
+        if self.cx.fn_def(def).params[0].mode != PassMode::Owned {
+            return self.any_this(data, ty);
+        }
+        let vp = self.any_value_place(data, ty);
+        let v = self.share_value(Operand::Copy(vp), ty);
+        let vt = self.cx.ty(ty);
+        let p = Place::local(self.copy_to_temp(v, vt));
+        self.take_temp(&p);
+        match vt {
+            Ty::Agg(_) => self.addr(p),
+            _ => Operand::Copy(p),
+        }
+    }
+
+    /// Call `def(this, args)`, the arguments packed into an `any[]`; its `any` result is the
+    /// call's (`ST_OK`).
+    fn call_builtin(
+        &mut self,
+        def: DefId,
+        targs: &[TyId],
+        this: Operand,
+        (argv, argc): (vir::Local, vir::Local),
+        outp: &Place,
+    ) {
+        let any = self.cx.any_ty();
+        let rest = self.cx.intern(TyKind::Array(any));
+        let args = vec![self.any_rest_arg(argv, argc, 0, rest)];
+        let r = Ready {
+            def,
+            targs: targs.to_vec(),
+            ret: any,
+            throws: None,
+        };
+        self.any_invoke(&r, this, args, outp);
+        self.ret_status(ST_OK);
+    }
+
+    /// The methods of a standard library class `d` (a `Map` or `Set`, type `ty`) that glue
+    /// cannot call as declared (`forEach`, whose callback has a `throws` type parameter): the
+    /// standard library's `__any<Class>_<name>` taking the value and an `any[]`, instantiated
+    /// at the class's type arguments, for the names the program calls through `any`. Continues
+    /// in the block for other names.
+    pub(super) fn any_class_call(
+        &mut self,
+        (data, key, argv, argc): (vir::Local, vir::Local, vir::Local, vir::Local),
+        (ty, d): (TyId, DefId),
+        outp: &Place,
+    ) {
+        let keys = &self.cx.boxing.any_call_keys;
+        if keys.is_empty() {
+            return;
+        }
+        let hir::Def::Adt(a) = &self.cx.hir.defs[d.0 as usize] else {
+            return;
+        };
+        let (true, Some((_, class))) = (a.name.starts_with("std/"), a.name.rsplit_once("::"))
+        else {
+            return;
+        };
+        let prefix = format!("__any{class}_");
+        let methods: Vec<(String, DefId)> = (self.builtin_methods(&prefix).into_iter())
+            .filter(|(name, _)| keys.contains("") || keys.contains(name))
+            .collect();
+        let Some((_, targs)) = self.plain_adt(ty) else {
+            return;
+        };
+        for (name, def) in methods {
+            if self.cx.fn_def(def).generics as usize != targs.len() {
+                continue;
+            }
+            let next = self.on_key(key, &name);
+            let this = self.builtin_this(data, ty, def);
+            self.call_builtin(def, &targs, this, (argv, argc), outp);
+            self.switch_to(next);
+        }
     }
 }
 

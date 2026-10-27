@@ -1,0 +1,12 @@
+map a 1 2
+map b Set(2) { 2, 3 } 2
+  set 2 true 2
+  set 3 true 2
+set x true 1
+array 0 10
+array 1 20
+other k
+7 3 0
+grow 1 1
+grow 2 2
+grow 3 4

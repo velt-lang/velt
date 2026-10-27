@@ -1,0 +1,48 @@
+// An `object` or `unknown` narrowed by `instanceof` of a generic class or by `Array.isArray`
+// reads as an `any` (TypeScript types it `Map<any, any>`, `Set<any>`, `any[]`): an arrow passed
+// to its method takes `any` parameters there without annotations, and `forEach` of a `Map` or a
+// `Set` held runs through `any` with the arguments JavaScript passes (value, key, collection).
+function walk(raw: object, depth: number): void {
+  const pad = " ".repeat(depth * 2);
+  if (Array.isArray(raw)) {
+    raw.forEach((v, i) => console.log(pad + "array", i, v));
+  } else if (raw instanceof Map) {
+    raw.forEach((v, k, m) => {
+      console.log(pad + "map", k, v, m.size);
+      if (typeof v === "object" && v !== null) walk(v, depth + 1);
+    });
+  } else if (raw instanceof Set) {
+    raw.forEach((v, again, s) => console.log(pad + "set", v, again === v, s.size));
+  } else {
+    console.log(pad + "other", Object.keys(raw).join(","));
+  }
+}
+walk(new Map<string, any>([["a", 1], ["b", new Set([2, 3])]]), 0);
+walk(new Set(["x"]), 0);
+walk([10, 20], 0);
+walk({ k: 1 }, 0);
+
+function count(u: unknown): number {
+  let n = 0;
+  if (u instanceof Map) {
+    u.forEach((v, k) => {
+      n += typeof k === "string" ? k.length : 0;
+      n += typeof v === "number" ? v : 0;
+    });
+  } else if (u instanceof Set) {
+    u.forEach((v) => {
+      n += typeof v === "number" ? 1 : 0;
+    });
+  }
+  return n;
+}
+console.log(count(new Map([["abc", 4]])), count(new Set([1, 2, 3])), count(5));
+
+// Entries added while it runs are visited, as in JavaScript.
+const grow: object = new Map<number, number>([[1, 1]]);
+if (grow instanceof Map) {
+  grow.forEach((v, k) => {
+    if (k < 3) grow.set(k + 1, v * 2);
+    console.log("grow", k, v);
+  });
+}

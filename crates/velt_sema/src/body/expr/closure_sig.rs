@@ -258,6 +258,7 @@ impl FnCx<'_, '_> {
         &mut self,
         params: &[ast::ArrowParam],
         exp: Option<&[TyId]>,
+        untyped: Option<TyId>,
     ) -> Vec<TyId> {
         let mut out = vec![];
         for (i, p) in params.iter().enumerate() {
@@ -271,6 +272,7 @@ impl FnCx<'_, '_> {
                     let e = p.default.as_ref().expect("ICE: checked above");
                     crate::body::defaults::default_type(self.cx, self.module, e)
                 }
+                (None, None) if untyped.is_some() => untyped.expect("ICE: checked above"),
                 (None, None) => {
                     let what = match p.pattern {
                         Some(_) => "this parameter".to_string(),
