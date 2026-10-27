@@ -1,0 +1,13 @@
+[object Object] 1,2,3 null undefined
+<[object Object]> <1,2> <s> <1.5> <true>
+[object Object] <3> [object Object]
+2 <x> false <4,5>
+G(G(s))
+G([object Object]) G(7)
+(1, 2) <(1, 2)> (1, 2),(1, 2)
+<[object Object]> 1
+x[[object Object]][object Object] y[2]2 z[1,2]1,2
+[object Object]|[object Object] null|null s|s
+<[object Object]> <1,[object Object]> <[object Object],3>
+[object Object],[object Object] <1,2>
+<[object Object]> <null> <[object Object]>

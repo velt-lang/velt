@@ -1,0 +1,1 @@
+narrow_closure_checked.vlt:9:31: error: value of type `string | null` may be null

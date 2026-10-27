@@ -7,8 +7,12 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
 `AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
-`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
+`TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
+([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
+([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
+([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
+([Proxy and Reflect](../reference/types.md#proxy-and-reflect)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
@@ -30,7 +34,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 |---|---|
 | `length` | code units |
 | `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` (JS: `s[i]` past the end is `undefined`) |
-| `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
+| `at(i): string \| undefined` | like `charAt`; a negative `i` counts from the end, `undefined` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
 | `startsWith(s)`, `endsWith(s)` | |
@@ -75,12 +79,29 @@ surrogate pair its character),
   A digit count is truncated as in JS (`toExponential(2.7)` is `toExponential(2)`); one out of
   range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100) panics like JS's
   `RangeError`.
+- `x.toString(radix)` on any number writes it in base `radix` (2 to 36) with Node's digits,
+  fractions and the sign included; `NaN` and ±Infinity print as themselves. The radix is
+  truncated as in JS, and one out of range panics like JS's `RangeError`. On an integer type
+  (`i64`, `u64`, …) the digits are exact over the whole range:
+
+  ```ts
+  console.log((255).toString(16).padStart(6, "0"), (-0.5).toString(2), (3.75).toString(16)); // 0000ff -0.1 3.c
+  ```
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
+  over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
+  one instruction each. They return a `usize`, in user code too, so the result indexes an array
+  as it is:
+
+  ```ts
+  const bits: u64 = 40;
+  console.log(bits.leadingZeros(), bits.trailingZeros(), bits.countOnes()); // 58 3 2
+  ```
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -99,28 +120,49 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 
 | Method | Notes |
 |---|---|
-| `length`, `push(x)`, `pop(): T \| null` | built in |
-| `at(i): T \| null` | a negative `i` counts from the end |
+| `length`, `push(x)`, `pop(): T \| undefined` | built in; `undefined` when empty |
+| `at(i): T \| undefined` | a negative `i` counts from the end; `undefined` out of range |
 | `forEach`, `map`, `filter`, `reduce(f, init)` | callbacks get `(x, i)` (`reduce`: `(acc, x, i)`) and may take fewer |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | likewise |
-| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `NaN` is never found (JS's `includes` finds it) |
+| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `indexOf` never finds `NaN`; `includes` also finds the number `NaN`, as in JS (SameValueZero; tuples still compare part by part) |
 | `slice(start = 0, end?)`, `concat(other)` | |
-| `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. Any other use of the result (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
+| `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. On a temporary array, which nothing else holds, the result is that array, as in JS: `const keys = Object.keys(r).sort()`, `return [...xs].sort(cmp)`. Any other use of the result on a variable, field or element (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
-| `shift(): T \| null`, `unshift(...items): i64` | take the first element (`null` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `swap(i, j)`, `rotateLeft(start, end)`, `rotateRight(start, end)` | not in JS: exchange two elements, or move the elements of `[start, end)` one place down (the first to the end) or up (the last to the front), in place; each element's bits move, nothing is copied or dropped. A RangeError panic for an index or range outside the array |
+| `prefetch(i)`, `reserve(n)` | not in JS: a hint that element `i` is read soon, so the CPU starts loading it (it changes nothing; an index past the end does nothing); room for `n` more elements without growing again |
+| `xss.swapIn(a, i, b, j)` | not in JS, on `T[][]`: exchanges `xss[a][i]` and `xss[b][j]`, also between two inner arrays, which `[x, y] = [y, x]` does by copying (and counting) both elements. For data kept in chunks |
 | `xs.length = n`, `truncate(n)` | drop the elements from `n` on, as in JS (`xs.length = 0` empties the array; `xs.length -= k` works too). `n` is a `number`: one that is not a whole number from 0 to 2^32 - 1 (negative, fractional, `NaN`) panics with `RangeError: Invalid array length`, the error JS throws. Setting a larger `length` panics too: JS would add empty slots, which Velt has no value for (push the elements, or build the array with `new Array<T>(n).fill(v)`); `truncate(n)` leaves the array unchanged instead |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
 | `join(sep = ",")`, `toString()` | as JS: strings, numbers and booleans as `String(x)`, inner arrays joined with `","` at any depth, `null` elements as empty text, class instances through their `toString()` (a `Date` too), other objects as `[object Object]`, maps as `[object Map]` and sets as `[object Set]`; `toString()` is `join(",")`, what `${xs}` writes. Elements JS writes with a method Velt cannot call there (a struct's `toString()`, an `Error`, a `RegExp`) are a compile error: write `xs.map((x) => x.toString()).join(sep)` |
 | `sort()`, `sort(cmp)` | `sort()` on `i64`, `i32`, `u64`, `usize`, `f64` and `string` elements, ascending with `NaN` last (unstable, pdqsort); other element types need a comparator; `sort(cmp)` is stable on any element type; the comparator returns a `number` (an `i64` on arrays of declared integers), and an arrow comparator may return an integer of any type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
-| `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
+| `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation; the callback's first argument is always `undefined`, so it is named `_…` or left out with the index (`() => 0`) |
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
 `fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
 Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
+Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
+needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
+returns how many it wrote (Node's `buf.write`: only whole characters that fit, the array does
+not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.toString("utf8", start, end)`,
+an invalid sequence as U+FFFD), and `utf8Equals(s, start?, end?)` /
+`utf8EqualsIgnoreCase(s, start?, end?)` (Velt) tell whether a range holds the UTF-8 bytes of `s`,
+the second with ASCII letters in any case (a method, a path, a header name), without making a
+string. Their ranges are clamped as `toString` clamps them: a negative `start` is 0, an `end`
+past the array is its end (Node's `buf.utf8Slice` throws for both instead). `write` and the comparisons are Velt
+code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
+SIMD vectors, and are compiled into their caller.
+
+```ts
+const buf: u8[] = Buffer.alloc(16);
+const n = buf.write("GET /");
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
+```
+
 `Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
@@ -128,38 +170,55 @@ the decoded size for `base64`/`base64url` and `hex`.
 
 ## Map
 
-`Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances, interface and function values (compared by identity, as `==` compares them), and
-structs, object types, tuples, arrays, maps and records (compared by content, as `deepEqual`
-compares them).
+`Map<K, V>` is an insertion-ordered hash map. Keys compare as in JavaScript (SameValueZero):
+numbers, `bool` and strings by value, and objects (class instances, object types, arrays,
+maps, records, interface and function values) by identity, as `===` compares them. An
+object literal finds only itself: an equal object is another key, and changing an object after
+using it as a key keeps its entry where it is. A copy (`{ ...key }`, `key.clone()`) is another
+object, so it is another key.
 
-Float keys compare like JavaScript's (SameValueZero): `0` and `-0` are one key, and `NaN` is a
-key that finds itself (`m.get(NaN)`). Floats inside content keys (arrays, tuples, object types)
-compare the same way. `==` keeps IEEE comparison (`NaN == NaN` is `false`).
+A type declared with `struct` is a Velt value type: its keys compare and hash by content, field
+by field, so an equal struct finds the entry (`Map<Cell, number>` counts each cell once). Each
+field compares as a key does: numbers, strings and nested structs by value, objects (an array
+field, a class instance) by identity. `==` still compares structs by identity.
 
-One difference from JavaScript's keys:
+```ts
+struct Cell {
+  x: number;
+  y: number;
+}
 
-- **Content keys are hashed when they are inserted.** Changing an array, object, `Map` or
-  `Record` after using it as a key leaves its entry unreachable: `get` finds it neither by the
-  new content nor by the old (it still counts in `size` and shows up when iterating). Don't
-  change a key while it is in a map; insert a copy, or delete the entry and insert it again.
+const visits = new Map<Cell, number>();
+visits.set({ x: 1, y: 2 }, 1);
+visits.set({ x: 1, y: 2 }, 2);
+console.log(visits.size, visits.get({ x: 1, y: 2 })); // 1 2
+```
+
+Float keys compare like JavaScript's: `0` and `-0` are one key, and `NaN` is a key that finds
+itself (`m.get(NaN)`). `==` keeps IEEE comparison (`NaN == NaN` is `false`).
 
 ```ts
 const key: i64[] = [1];
 const m = new Map<i64[], string>();
 m.set(key, "one");
-console.log(m.get([1])); // one
 key.push(2);
-console.log(m.get(key), m.get([1]), m.size); // null null 1
+console.log(m.get(key), m.has([1]), m.has([1, 2]), m.size); // one false false 1
 ```
+
+One difference from JavaScript's keys:
+
+- **Tuples compare part by part**, as `===` compares them: `[1, "x"]` finds an entry set with
+  another `[1, "x"]` (in JavaScript a tuple is an array, another key). A tuple key is hashed
+  when it is inserted, so don't change one while it is in a map.
 
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`). Where the value type includes `null` (`Map<string, number \| null>`), an entry holding `null` also reads `null`: use `has` to tell it from a missing key |
+| `set(k, v)`, `get(k): V \| undefined`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `undefined` for a missing key. Where the value type includes `null` (`Map<string, number \| null>`), `get` is a `number \| null \| undefined`: an entry holding `null` reads `null`, a missing key `undefined`. A value type that includes `undefined` (`Map<string, number \| undefined>`) is not supported yet |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
+| `getUtf8(bytes: u8[])`, `hasUtf8(bytes)`, `setUtf8(bytes, v)` (`Map<string, V>` only, Velt) | `get`, `has` and `set` of the key whose UTF-8 bytes are `bytes`, without making the string: a server finds the keys it reads from the network as they came. The same entries as with the bytes decoded (`utf8DecodeLossy`: an invalid sequence reads as U+FFFD); `setUtf8` makes the key string only for a new entry |
 | `keys()`, `values()`, `entries()`, `forEach((v, k) => …)` | in insertion order; the first three return arrays (JS: iterators). `forEach` is live, as in JS: it visits entries its callback adds and skips the ones it deletes |
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call (JS's is a live view) |
 | `for (const [k, v] of map)` | live, as in JS: so is `for...of` over `map.keys()`, `map.values()` and `map.entries()` when `map` is a variable, `this`, a field, a getter, an array element or a call result (`ms[0]`, `obj.m`, `get()!`; a map expression with an optional chain, a spread or a function expression iterates the array of entries as of the loop's start). The loop walks the map object `map` named when it started, so assigning another map to `map` in the body does not change what it visits, as in JS |
@@ -173,11 +232,16 @@ callback deleted or added entries.
 
 `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` refer to objects without keeping them alive, as
 in JavaScript: when nothing else refers to a key, its entries go (their values are released),
-and a `WeakRef` to it returns `null` from then on. Keys, members and targets are objects: class
+and a `WeakRef` to it returns `undefined` from then on. Keys, members and targets are objects: class
 instances, object types and arrays, compared by identity (a primitive is an error, as in
 TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
-structs, function and interface values are not supported as keys yet). Like JavaScript's, the
-maps are not iterable and have no `size`.
+structs and function values are not supported as keys yet). An `object` key
+(`WeakMap<object, V>`, as reactive libraries write their caches) is the object it holds
+([object and Function](../reference/types.md#object-and-function)), and so is an interface
+value (`WeakMap<Instance, V>`): the class instance behind it, whichever interface or type it is
+used through; `deref()` of a `WeakRef<object>` returns `undefined` once the target was freed, as
+in JavaScript. Like
+JavaScript's, the maps are not iterable and have no `size`.
 
 ```ts
 class Node {
@@ -200,16 +264,18 @@ collector does ([memory](../reference/memory.md)).
 
 | Member | Notes |
 |---|---|
-| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `null` for a missing key (JS: `undefined`). `set` returns the map, so calls chain |
+| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| undefined`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `undefined` for a missing key. `set` returns the map, so calls chain |
 | `new WeakSet<T>()`; `add(x)`, `has(x)`, `delete(x): bool` | `add` returns the set, so calls chain |
-| `new WeakRef(target)`; `deref(): T \| null` | `null` once the target was freed (JS: `undefined`) |
+| `new WeakRef(target)`; `deref(): T \| undefined` | `undefined` once the target was freed |
 
 Differences from JavaScript:
 
 - **Freed at once.** Velt frees an object when its last reference goes (which can be the last
-  use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
+  use of the variable holding it), so a `WeakRef`'s `deref()` returns `undefined` right after, where
   Node keeps returning the object until a later garbage collection, and at least until the
-  current job ends.
+  current job ends. A variable passed as a key, a member or a target (`new WeakRef(k)`, also
+  `k!` of a nullable one, or through a function's parameter) stays alive to the end of its
+  scope, so a fresh `WeakRef` keeps its target while the variable lives.
 - **One task.** A weak collection belongs to the task that made it (it keeps working when an
   `await` resumes the task on another thread): it cannot be passed to a spawned task (in either
   branch of `spawn(c ? f(x) : g(y))`), be its result or the error it throws, sent on a
@@ -246,7 +312,9 @@ Differences from JavaScript:
 `Object.values(r)` and `Object.entries(r)` return arrays in JavaScript's key order: array-index
 keys such as `"2"` first, ascending, then the others in insertion order. `Object.keys` returns
 a `string[]` and, as in TypeScript, also lists the fields of any object, struct or class
-instance (except `#private` fields, as in JS).
+instance (except `#private` fields, as in JS). Of an `any`, `object` or `Function` it lists the
+keys of the value held, at run time
+([Reference](../reference/types.md#any-and-unknown)).
 
 ```ts
 class User {
@@ -268,8 +336,11 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 ```
 
 A key of a `Record<string, V>` may be missing, so counting needs a starting value:
-`r[k] += 1` is an error there, and `??` supplies it. `r[k] ||= v` and `r[k] &&= v` are errors
-too; `r[k] ??= v` sets the key only when it is missing.
+`r[k] += 1` is an error there, and `??` supplies it. The logical assignments are defined for a
+missing key, which reads as `undefined`: `r[k] ??= v` sets the key only when it is missing,
+`r[k] ||= v` also when its value is falsy (`""`, `0`, `false`, `NaN`), and `r[k] &&= v` only when
+it is present and truthy. As in JavaScript, the record and the key are evaluated once, `v` only
+when it is stored, and the expression's value is the value stored or kept.
 
 ```ts
 const seen: Record<string, i64> = {};
@@ -277,13 +348,21 @@ for (const w of ["a", "b", "a"]) {
   seen[w] = (seen[w] ?? 0) + 1;
 }
 console.log(seen); // { a: 2, b: 1 }
+
+const kebab: Record<string, string> = {};
+const prop = "backgroundColor";
+const css = (kebab[prop] ||= prop.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase());
+console.log(css, kebab); // background-color { backgroundColor: 'background-color' }
 ```
 
 ## Nullable values
 
-On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
-`map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
-copied).
+On any `T | null`, `T | undefined` and `T | null | undefined` (what `Map.get`, `find` and `pop`
+give): `isNull()` (either nothing), `unwrap()` (panics on either), `unwrapOr(fallback)`, and
+`map(f)` (`undefined` for either nothing on the last two). The value-extracting helpers return the payload itself (an object is shared, not
+copied). A variable narrowed to its `T` (`let x: string | null = "a"; x.unwrapOr("b")`) keeps
+the helpers `T` does not have; a method of `T` with the same name wins (`xs.map(f)` on a
+narrowed `number[] | null` maps the elements).
 
 ## Iteration
 
@@ -291,10 +370,10 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 
 | Declaration | Notes |
 |---|---|
-| `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| null`) |
+| `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| undefined`, `undefined` when done) |
 | `interface Iterator<T, E = never>` | `next(): IteratorResult<T> throws E`; `return(): IteratorResult<T>` (default: returns `{ done: true }`) runs when a loop leaves early |
 | `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
-| `class Generator<T, E = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
+| `class Generator<T, E = never, N = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `next(value)` (with `N`, TypeScript's `TNext`, given) resumes the paused `yield` with `value`; `throw(e: any)` throws `e` at the paused `yield`; `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
 | `interface AsyncIterator<T, E = never>` | `next(): Promise<IteratorResult<T>, E>`; `async return(): Promise<IteratorResult<T>>` (default: resolves to `{ done: true }`) |
 | `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; what [`for await`](../reference/control-flow.md#for-await) iterates |
 | `class AsyncGenerator<T, E = never>` | what calling an [async generator](../reference/functions.md#async-generators) (`async function*`) creates: `implements AsyncIterator<T, E>, AsyncIterable<T, E>`; `return()` and `[Symbol.asyncDispose]()` close it (awaiting its cleanup), `[Symbol.dispose]()` closes it without awaiting. Overlapping `next()` / `return()` calls are queued and served in call order, like JS. Only async generator calls create one |
@@ -317,7 +396,30 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
 
-- `class Error { message: string }`, the base class of thrown errors.
+- `class Error { message: string; name: string }`, the base class of thrown errors (`String(e)` is
+  `"<name>: <message>"`), and its subclasses `TypeError`, `RangeError`, `SyntaxError`,
+  `ReferenceError`, `EvalError` and `URIError` ([Errors](../reference/errors.md)).
+- `DOMException`, a global as in Node: the error web APIs throw (`btoa` and `atob` throw one
+  named `InvalidCharacterError`). `new DOMException(message = "", name = "Error")`; `e.name` is
+  the name, `e.code` the legacy code Node gives it (`5` for `InvalidCharacterError`, `20` for
+  `AbortError`, `25` for `DataCloneError`, …, 0 for a name without one), and the codes are also
+  static constants (`DOMException.ABORT_ERR`). It extends `Error`, so `String(e)` is
+  `"<name>: <message>"`; `console.log(e)` prints `DOMException [<name>]: <message>`, Node's
+  first line (Node adds the stack); `JSON.stringify(e)` writes `{"message":"…"}`, as for the
+  other errors (Node writes `{}`). Node's second form, `new DOMException(message, { name,
+  cause })`, is not supported: pass the name as a string.
+
+```ts
+try {
+  btoa("€");
+} catch (e) {
+  console.log(e instanceof DOMException, e.name, e.code, String(e));
+  // true InvalidCharacterError 5 InvalidCharacterError: Invalid character
+}
+const abort = new DOMException("This operation was aborted", "AbortError");
+console.log(abort.code == DOMException.ABORT_ERR); // true
+```
+
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
@@ -325,7 +427,8 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
   it returns normally.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
-  a deeply equal value, in any order (a key is matched as `get` matches it). Other class
+  a deeply equal value, in any order (a key is matched as `get` matches it, and an object key
+  that isn't a key of the other map pairs with a deeply equal key there). Other class
   instances compare by identity; `==` compares every object by identity. This is Node's
   `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
@@ -370,10 +473,12 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `sleep(ms)`, `yieldNow()`, `spawn(p, options?)` (options: `{ worker }`, see
 [velt:task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
-`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, `shared(x)`, `Mutex<T>`,
+`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
+`then`, `catch` and `finally` with `queueMicrotask(f)`
+([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
-functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
-handle ([velt:timers](timers.md)).
+functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
+`clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

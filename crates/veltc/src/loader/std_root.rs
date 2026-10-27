@@ -41,6 +41,12 @@ fn std_root_for_exe(exe: &Path) -> Option<PathBuf> {
     source_std.is_dir().then_some(source_std)
 }
 
+/// Whether `file` is inside the std root `std_root` (both resolved like the loader's file keys).
+pub fn in_std(file: &Path, std_root: &Path) -> bool {
+    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| vpm::relpath::absolute(p));
+    key(file).starts_with(key(std_root))
+}
+
 /// `std/prelude/*.vlt`, sorted by file name (empty if the directory is missing).
 pub fn prelude_files(std_root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(std_root.join("prelude")) else {

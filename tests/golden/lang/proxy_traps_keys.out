@@ -1,0 +1,17 @@
+[ 'x', 'y' ]
+ownKeys, describe x, describe hidden, describe y
+true false true false
+describe hidden, describe z
+{ x: 'X', y: 'Y', z: 1 }
+ownKeys, describe x, get x, describe hidden, describe y, get y
+[ 'X', 'Y' ] [ [ 'x', 'X' ], [ 'y', 'Y' ] ]
+ownKeys, describe x, get x, describe hidden, describe y, get y, ownKeys, describe x, get x, describe hidden, describe y, get y
+[ 'x', 'hidden', 'y' ] { value: 'Y', writable: false, enumerable: true, configurable: true }
+ownKeys, describe y
+[ 'a', 'b' ]
+ownKeys
+false [ 'b' ]
+delete a true, delete nope false
+[ '0', '1', 'length' ] { value: 2, writable: true, enumerable: true, configurable: true }
+undefined
+topic saved undefined true

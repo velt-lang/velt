@@ -1,0 +1,9 @@
+object_rest_private.vlt:53:18: error: `...rest` of a class instance with `private` fields (`Acct`) is not supported yet
+  = note: JavaScript copies `secret` into the rest, but TypeScript leaves it out of the rest's type, which Velt cannot express yet
+  = note: take the fields you need by name, or make them public
+object_rest_private.vlt:57:17: error: `...rest` of a class instance with `private` fields (`Q`) is not supported yet
+  = note: JavaScript copies `p` into the rest, but TypeScript leaves it out of the rest's type, which Velt cannot express yet
+  = note: take the fields you need by name, or make them public
+object_rest_private.vlt:26:19: error: `...rest` of a class instance with `private` fields (`Self`) is not supported yet
+  = note: JavaScript copies `b` into the rest, but TypeScript leaves it out of the rest's type, which Velt cannot express yet
+  = note: take the fields you need by name, or make them public

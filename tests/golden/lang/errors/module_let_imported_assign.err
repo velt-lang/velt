@@ -1,0 +1,3 @@
+module_let_imported_assign.vlt:4:3
+cannot assign to imported binding `value`
+export a function that assigns it

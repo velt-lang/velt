@@ -10,6 +10,9 @@ use crate::hir::{self, ExprKind as H, UseMode};
 /// (`xs.pop()`)? Then an address into an array computed before `e` may be stale after it.
 /// Conservative: anything else but reads, literals and arithmetic counts.
 pub fn may_change_memory(e: &hir::Expr) -> bool {
+    if let Some(wrap) = routed_wrap(e) {
+        return may_change_memory(wrap);
+    }
     match &e.kind {
         H::Lit(_) | H::Local(..) | H::Global(_) | H::FnRef(..) => false,
         H::Unary { expr: x, .. }
@@ -28,15 +31,54 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
             may_change_memory(cond) || may_change_memory(then) || may_change_memory(els)
         }
         H::Call {
-            callee: hir::Callee::Intrinsic(_),
+            callee: hir::Callee::Intrinsic(i),
             args,
-        } => args.iter().any(|a| may_change_memory(a) || writes_place(a)),
+        } => runs_user_code(*i) || args.iter().any(|a| may_change_memory(a) || writes_place(a)),
         _ => true,
     }
 }
 
+/// The plain wrap of `e` when `e` is a value of a type parameter wrapped into a union member or
+/// an option and routed by its value at a dynamic instantiation (sema `param_member.rs`):
+/// `HoldsDynamic(_) ? <routing> : <wrap>`. The routing only reads the value (and moves it where
+/// the wrap does), so what evaluating `e` can do is what the wrap can.
+pub fn routed_wrap(e: &hir::Expr) -> Option<&hir::Expr> {
+    let H::If { cond, els, .. } = &e.kind else {
+        return None;
+    };
+    let fixed = matches!(
+        cond.kind,
+        H::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamic),
+            ..
+        }
+    );
+    let wrap = matches!(els.kind, H::Variant { .. } | H::WrapSome(_));
+    (fixed && wrap).then_some(&**els)
+}
+
+/// Does intrinsic `i` run user code itself (a method, getter or function it finds at run
+/// time), which may change any memory whatever its arguments are? Every `any` member access
+/// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`, `o.s = v`
+/// with a setter. A new
+/// intrinsic that can run user code belongs here.
+pub fn runs_user_code(i: hir::Intrinsic) -> bool {
+    use hir::Intrinsic as I;
+    matches!(
+        i,
+        I::AnyGet
+            | I::AnyIndex
+            | I::AnyCall
+            | I::AnyApply
+            | I::AnySet
+            | I::AnySetIndex
+            | I::AnyHas
+            | I::AnyDelete
+    )
+}
+
 /// Is `a` a place passed to modify or move it (an intrinsic argument like `pop`'s receiver)?
-fn writes_place(a: &hir::Expr) -> bool {
+pub fn writes_place(a: &hir::Expr) -> bool {
     let mode = match &a.kind {
         H::Local(_, m) | H::Field { mode: m, .. } | H::Index { mode: m, .. } => *m,
         H::UnwrapSome(_, m) | H::UnwrapVariant { mode: m, .. } => *m,
@@ -115,6 +157,33 @@ mod tests {
         // An argument that runs code counts inside an intrinsic as well.
         let len = intrinsic(Intrinsic::ArrayLen, vec![getter]);
         assert!(may_change_memory(&len));
+    }
+
+    #[test]
+    fn a_member_access_through_any_changes_memory() {
+        // `o.grow()` / `o.g` / `o[0]` / `f()` on an `any` run whatever the value holds.
+        for i in [
+            Intrinsic::AnyGet,
+            Intrinsic::AnyIndex,
+            Intrinsic::AnyCall,
+            Intrinsic::AnyApply,
+            Intrinsic::AnySet,
+            Intrinsic::AnySetIndex,
+            // `key in p` runs a proxy's `has` trap.
+            Intrinsic::AnyHas,
+        ] {
+            assert!(may_change_memory(&intrinsic(
+                i,
+                vec![local(UseMode::Borrow)]
+            )));
+        }
+        // Reading what an `any` is runs nothing.
+        for i in [Intrinsic::AnyTypeof, Intrinsic::AnyIsArray] {
+            assert!(!may_change_memory(&intrinsic(
+                i,
+                vec![local(UseMode::Borrow)]
+            )));
+        }
     }
 
     #[test]

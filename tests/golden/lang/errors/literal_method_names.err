@@ -1,0 +1,6 @@
+literal_method_names.vlt:5:4: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier
+literal_method_names.vlt:8:8: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier
+literal_method_names.vlt:11:3: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier
+literal_method_names.vlt:17:4: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier
+literal_method_names.vlt:18:4: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier
+literal_method_names.vlt:21:14: error: a quoted or numeric name is supported for fields, not methods: name the method with an identifier

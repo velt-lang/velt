@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
             // `V` from the type arguments: where it includes null, the slot type `V | null` is
             // `V` itself, not an option of it.
             (TyKind::Array(k), TyKind::Array(slot)) => match (self.cx.kind(slot), &args[..]) {
-                (TyKind::Option(_), [_, v]) => Some((k, *v)),
+                (TyKind::Option(..), [_, v]) => Some((k, *v)),
                 _ => None,
             },
             _ => None,
@@ -80,7 +80,7 @@ impl FnLower<'_, '_> {
             crate::lower::ice("Map of a non-ADT type")
         };
         let def = self.class_method(d, "__liveAt");
-        let f = self.cx.func_for(def, targs);
+        let f = self.cx.func_for_direct(def, targs, self.mode);
         let live = self.temp(Ty::Bool);
         let args = vec![Operand::Copy(map.clone()), i];
         self.call(vir::Callee::Func(f), args, Some(Place::local(live)), false);
@@ -134,6 +134,41 @@ impl FnLower<'_, '_> {
         ty: TyId,
         depth: &Operand,
     ) -> bool {
+        // A subclass of `Map` or `Set`: its base's entries, then its own fields, under its own
+        // name (`M(1) [Map] { 'a' => 1, tag: 't' }`, `[M [Map]]` past the depth limit), as
+        // Node writes it.
+        if let Some((base, sub)) = self.collection_subclass(ty) {
+            let (kind, set) = match self.prelude_map(base) {
+                Some(_) => ("Map", false),
+                None => ("Set", true),
+            };
+            let (kt, vt) = match set {
+                false => self.prelude_map(base),
+                true => self.std_set(base),
+            }
+            .unwrap_or_else(|| crate::lower::ice("a collection base"));
+            let (map, map_ty, entries) = match set {
+                false => (obj.clone(), base, Entries::Map),
+                true => (
+                    self.field_place(obj, ty, 0),
+                    self.cx.adt_field_tys(base)[0],
+                    Entries::Set,
+                ),
+            };
+            let name = format!("{sub}(");
+            let tag = format!(") [{kind}] ");
+            let cut = format!("[{sub} [{kind}]]");
+            let parts = (map, map_ty, kt, vt, entries);
+            let TyKind::Adt(b, _) = self.cx.kind(base) else {
+                crate::lower::ice("a collection base")
+            };
+            let inherited = self.cx.adt_def(b).fields.len() as u32;
+            let mut own = self.shown_fields(ty);
+            own.retain(|(i, _, _)| *i >= inherited);
+            let texts = (name.as_str(), tag.as_str(), cut.as_str());
+            self.format_entries_named(buf, obj, ty, depth, parts, &own, texts);
+            return true;
+        }
         // (the `Map` holding the entries, its type, key and value types, how they print)
         let (map, map_ty, kt, vt, entries) = if let Some((kt, vt)) = self.prelude_map(ty) {
             (obj.clone(), ty, kt, vt, Entries::Map)
@@ -157,6 +192,157 @@ impl FnLower<'_, '_> {
             Entries::Record => (None, "[Object]"),
             Entries::Set => (Some("Set"), "[Set]"),
         };
+        let parts = (map, map_ty, kt, vt, entries);
+        if entries == Entries::Record && self.cx.hir.null_proto_records {
+            // A record made by `Object.create(null)` (its map is marked): Node's
+            // `[Object: null prototype] { ... }`, and `[Object: null prototype]` past the depth
+            // limit.
+            let np = self.null_proto_mark(&parts.0, map_ty);
+            let (np_bb, plain_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(np, np_bb, plain_bb);
+            self.switch_to(np_bb);
+            let prefix = "[Object: null prototype] ";
+            let np_cut = "[Object: null prototype]";
+            self.format_entries(buf, obj, ty, depth, parts.clone(), (name, prefix, np_cut));
+            self.goto(done);
+            self.switch_to(plain_bb);
+            self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+            self.goto(done);
+            self.switch_to(done);
+            return true;
+        }
+        self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+        true
+    }
+
+    /// `(base, name)` if `ty` is a user class extending the prelude `Map` or std's `Set`
+    /// (through other classes too): the base's type, with its arguments, and the class's short
+    /// name.
+    pub(in crate::lower) fn collection_subclass(&mut self, ty: TyId) -> Option<(TyId, String)> {
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return None;
+        };
+        if a.name.starts_with("std/") {
+            return None;
+        }
+        let mut base = self.cx.subst(a.base?, &args);
+        for _ in 0..16 {
+            if self.prelude_map(base).is_some() || self.std_set(base).is_some() {
+                return Some((base, self.cx.type_name(ty)));
+            }
+            let TyKind::Adt(b, bargs) = self.cx.kind(base) else {
+                return None;
+            };
+            let next = self.cx.adt_def(b).base?;
+            base = self.cx.subst(next, &bargs);
+        }
+        None
+    }
+
+    /// [`Self::format_entries`] under a subclass's name, then its `own` fields:
+    /// `{name}{size}{tag}{ … }`, `cut` past node's depth limit.
+    #[allow(clippy::too_many_arguments)] // `format_entries`' arguments, plus the fields
+    fn format_entries_named(
+        &mut self,
+        buf: &Operand,
+        obj: &Place,
+        ty: TyId,
+        depth: &Operand,
+        parts: (Place, TyId, TyId, TyId, Entries),
+        own: &[(u32, String, TyId)],
+        (name, tag, cut): (&str, &str, &str),
+    ) {
+        let (map, map_ty, kt, vt, entries) = parts;
+        let mtys = self.cx.adt_field_tys(map_ty);
+        let size_ty = mtys[SIZE as usize];
+        let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
+        let size_t = self.cx.ty(size_ty);
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, size.clone(), cint(0, size_t)),
+        );
+        let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        if own.is_empty() {
+            self.branch(empty.clone(), empty_bb, full_bb);
+            self.switch_to(empty_bb);
+            self.push_text(buf, &format!("{name}0{tag}{{}}"));
+            self.goto(done);
+        } else {
+            self.goto(full_bb);
+        }
+        self.switch_to(full_bb);
+        let p = Operand::Copy(obj.clone());
+        self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
+            lw.format_once(buf, p, |lw| {
+                lw.push_text(buf, name);
+                lw.push_scalar(buf, size.clone(), size_ty);
+                lw.push_text(buf, tag);
+                lw.push_text(buf, "{ ");
+                let types = (map_ty, kt, vt);
+                if own.is_empty() {
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                } else {
+                    // The entries, if any, then each field after a comma.
+                    let (some, none) = (lw.new_block(), lw.new_block());
+                    lw.branch(empty, none, some);
+                    lw.switch_to(some);
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                    lw.push_text(buf, ", ");
+                    lw.goto(none);
+                    lw.switch_to(none);
+                    for (i, (index, n, t)) in own.iter().enumerate() {
+                        let sep = if i > 0 { ", " } else { "" };
+                        lw.push_text(buf, &format!("{sep}{n}: "));
+                        let fp = lw.field_place(obj, ty, *index);
+                        lw.format_nested(buf, &fp, *t, &child);
+                    }
+                }
+                lw.push_text(buf, " }");
+            })
+        });
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
+    /// entries (the top bit of its `edits`, std/prelude/map.vlt `__markNullProto`)? A Bool
+    /// operand.
+    pub(in crate::lower) fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
+        let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {
+            crate::lower::ice("the prelude `Map` is a class");
+        };
+        let at = self
+            .cx
+            .adt_def(d)
+            .fields
+            .iter()
+            .position(|f| f.name == "edits");
+        let at = at.unwrap_or_else(|| crate::lower::ice("the prelude `Map` has `edits`")) as u32;
+        let edits = Operand::Copy(self.field_place(map, map_ty, at));
+        let bit = cint(0x8000_0000_0000_0000_i128, Ty::U64);
+        let marked = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, edits, bit));
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, marked, cint(0, Ty::U64)),
+        )
+    }
+
+    /// The entries of a collection (`parts`: its `Map`, the map's type, key and value types,
+    /// how they print) in braces, after `prefix` and the collection's `name`; `cut` past node's
+    /// depth limit.
+    fn format_entries(
+        &mut self,
+        buf: &Operand,
+        obj: &Place,
+        ty: TyId,
+        depth: &Operand,
+        parts: (Place, TyId, TyId, TyId, Entries),
+        (name, prefix, cut): (Option<&str>, &str, &str),
+    ) {
+        let (map, map_ty, kt, vt, entries) = parts;
         let mtys = self.cx.adt_field_tys(map_ty);
         let size_ty = mtys[SIZE as usize];
         let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
@@ -168,12 +354,16 @@ impl FnLower<'_, '_> {
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(empty, empty_bb, full_bb);
         self.switch_to(empty_bb);
-        self.push_text(buf, &name.map_or("{}".into(), |n| format!("{n}(0) {{}}")));
+        let shown = name.map_or("{}".into(), |n| format!("{n}(0) {{}}"));
+        self.push_text(buf, &format!("{prefix}{shown}"));
         self.goto(done);
         self.switch_to(full_bb);
         let p = Operand::Copy(obj.clone());
         self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
             lw.format_once(buf, p, |lw| {
+                if !prefix.is_empty() {
+                    lw.push_text(buf, prefix);
+                }
                 if let Some(n) = name {
                     lw.push_text(buf, &format!("{n}("));
                     lw.push_scalar(buf, size.clone(), size_ty);
@@ -192,7 +382,6 @@ impl FnLower<'_, '_> {
         });
         self.goto(done);
         self.switch_to(done);
-        true
     }
 
     /// A record key: a string at run time, or the text of a literal / string enum member.

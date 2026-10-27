@@ -7,7 +7,8 @@
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{self, DefId, IntTy, TyId, TyKind};
+use crate::hir::{self, AdtKind, DefId, IntTy, TyId, TyKind};
+use crate::type_reach::Look;
 
 /// The method of the prelude's `Comparable<T>`; `a < b` on a bounded `T` calls it.
 pub(crate) const COMPARE_TO: &str = "compareTo";
@@ -17,6 +18,10 @@ const SYNC_RESULTS: [&str; 4] = ["Iterator", "Iterable", "IterableIterator", "It
 
 /// The interfaces an async generator may be declared to return.
 const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterableIterator"];
+
+/// How many levels of fields, elements and payloads the searches for a resource look through: a
+/// generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end.
+const MAX_LEVELS: u32 = 32;
 
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
@@ -53,6 +58,14 @@ impl Ctx<'_> {
     }
 
     /// An ADT exported by the prelude under `name`.
+    /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
+    /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
+    /// keep their JSON form (written without it, as Node leaves out a `name` from the
+    /// prototype; decoded with its default).
+    pub(crate) fn plain_private(&self, private_to: Option<DefId>, name: &str) -> bool {
+        name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
+    }
+
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
@@ -190,7 +203,7 @@ impl Ctx<'_> {
     /// type parameter are looked into by the whole-program check of the values crossing
     /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
     pub fn holds_weak(&mut self, t: TyId) -> bool {
-        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, None, &mut rustc_hash::FxHashSet::default())
     }
 
     /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
@@ -198,16 +211,16 @@ impl Ctx<'_> {
     pub(crate) fn holds_weak_with(
         &mut self,
         t: TyId,
-        hiding: &std::collections::HashSet<DefId>,
+        hiding: &rustc_hash::FxHashSet<DefId>,
     ) -> bool {
-        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, Some(hiding), &mut rustc_hash::FxHashSet::default())
     }
 
     fn holds_weak_in(
         &mut self,
         t: TyId,
-        hiding: Option<&std::collections::HashSet<DefId>>,
-        seen: &mut std::collections::HashSet<TyId>,
+        hiding: Option<&rustc_hash::FxHashSet<DefId>>,
+        seen: &mut rustc_hash::FxHashSet<TyId>,
     ) -> bool {
         if !seen.insert(t) {
             return false;
@@ -239,13 +252,108 @@ impl Ctx<'_> {
             .any(|p| self.holds_weak_in(p, hiding, seen))
     }
 
+    /// Can a `shared<T>` of `t` be read like a `T` (#36, `Intrinsic::SharedRead`)? Not when
+    /// `t` holds what a reader could change or must not copy (a `Mutex`, a weak map or ref, a
+    /// promise), or what the compiler cannot see into (a function or interface value, a type
+    /// parameter, a class with subclasses, whose objects may have more fields), nor when it
+    /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
+    /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
+    /// counts atomically.
+    pub fn frozen_readable(&mut self, t: TyId) -> bool {
+        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return true;
+        }
+        // `any` / `unknown` may hold anything at run time.
+        if self.dynamic(t).is_some() {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Shared(_) => return true,
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
+                return false
+            }
+            TyKind::Adt(d, _)
+                if Some(d) == self.mutex_ty()
+                    || Some(d) == self.rwlock_ty()
+                    || self.is_weak_class(d) =>
+            {
+                return false
+            }
+            TyKind::Adt(d, _) if self.has_subclass(d) || self.own_clone(d).is_some() => {
+                return false
+            }
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
+    }
+
+    /// Does a value of type `t` reach a `Mutex` or `RwLock`, whose value is read only under
+    /// its lock (through a `shared`, a field, an element or a payload)? Interface and `any`
+    /// values are not looked into: what they hold was checked when it went in.
+    pub fn holds_lock(&mut self, t: TyId) -> bool {
+        self.holds_lock_in(t, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn holds_lock_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) || self.dynamic(t).is_some() {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_) => {
+                return false
+            }
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => {
+                return true
+            }
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_lock_in(p, seen))
+    }
+
+    /// Does some class extend class `d`?
+    fn has_subclass(&self, d: DefId) -> bool {
+        let is_class = |s: DefId| self.adt(s).is_some_and(|a| a.kind == AdtKind::Class);
+        is_class(d)
+            && (0..self.info.len() as u32)
+                .map(DefId)
+                .any(|s| s != d && is_class(s) && self.class_extends(s, d))
+    }
+
     /// Does a value of type `t` hold a function value (in a field, element or payload)?
     /// Interface and `shared` values are not looked into.
     pub fn holds_fn(&mut self, t: TyId) -> bool {
-        self.holds_fn_in(t, &mut std::collections::HashSet::new())
+        self.holds_fn_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_fn_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_fn_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -273,10 +381,10 @@ impl Ctx<'_> {
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.
     pub fn holds_generator(&mut self, t: TyId) -> bool {
-        self.holds_generator_in(t, &mut std::collections::HashSet::new())
+        self.holds_generator_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_generator_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_generator_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -305,7 +413,7 @@ impl Ctx<'_> {
         let Some((d, mut args)) = self.generator_result(t) else {
             return t;
         };
-        if args.len() != 2 {
+        if args.len() < 2 {
             return t;
         }
         args[1] = e;
@@ -315,11 +423,43 @@ impl Ctx<'_> {
         }
     }
 
-    /// `Generator<t, e>`.
-    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+    /// `Generator<t, e, n>`: `n` is the type of `next(value)`'s argument (`never`: none).
+    pub fn generator_ty_next(&mut self, t: TyId, e: TyId, n: TyId) -> TyId {
         match self.generator_class() {
-            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e, n])),
             None => self.ty.error,
+        }
+    }
+
+    /// The type arguments of class `d` as diagnostics show them: a `Generator<T, E, never>` is
+    /// `Generator<T, E>`.
+    pub(crate) fn shown_args<'a>(&self, d: DefId, args: &'a [TyId]) -> &'a [TyId] {
+        match args {
+            [_, _, n] if Some(d) == self.generator_class() && *n == self.ty.never => &args[..2],
+            _ => args,
+        }
+    }
+
+    /// Are `a` and `b` `Generator<T, E, N>` types that differ only in `N`, one of them `never`?
+    pub(crate) fn generator_next_differs(&self, a: TyId, b: TyId) -> bool {
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Adt(da, x), TyKind::Adt(db, y))
+                if da == db && Some(*da) == self.generator_class() && x.len() == 3 =>
+            {
+                x[..2] == y[..2] && (x[2] == self.ty.never || y[2] == self.ty.never)
+            }
+            _ => false,
+        }
+    }
+
+    /// The `next(value)` type `N` of a `Generator<T, E, N>` value type (`never`: none, also
+    /// for any other type).
+    pub fn generator_next_ty(&self, t: TyId) -> TyId {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() && args.len() == 3 => {
+                args[2]
+            }
+            _ => self.ty.never,
         }
     }
 
@@ -336,16 +476,33 @@ impl Ctx<'_> {
         self.prelude_adt("Mutex")
     }
 
-    /// `T` of a `Mutex<T>` or `shared<Mutex<T>>` receiver.
+    /// `struct RwLock<T> { lock: u64; value: T }` from the prelude.
+    pub fn rwlock_ty(&self) -> Option<DefId> {
+        self.prelude_adt("RwLock")
+    }
+
+    /// `T` of a `Mutex<T>` or `RwLock<T>` receiver, or a `shared` one: a lock word and a value,
+    /// reached only through the lock.
     pub fn mutex_value(&self, t: TyId) -> Option<TyId> {
         let m = match self.ty.kind(t) {
             TyKind::Shared(inner) => *inner,
             _ => t,
         };
         match self.ty.kind(m) {
-            TyKind::Adt(d, args) if Some(*d) == self.mutex_ty() => args.first().copied(),
+            TyKind::Adt(d, args) if Some(*d) == self.mutex_ty() || Some(*d) == self.rwlock_ty() => {
+                args.first().copied()
+            }
             _ => None,
         }
+    }
+
+    /// Is `t` an `RwLock<T>` or `shared<RwLock<T>>`?
+    pub fn is_rwlock(&self, t: TyId) -> bool {
+        let m = match self.ty.kind(t) {
+            TyKind::Shared(inner) => *inner,
+            _ => t,
+        };
+        matches!(self.ty.kind(m), TyKind::Adt(d, _) if Some(*d) == self.rwlock_ty())
     }
 
     /// The integer type of a `shared<int>` receiver whose atomics the runtime provides (64-bit).
@@ -364,37 +521,36 @@ impl Ctx<'_> {
     /// resource handle (or the pointer to a future, which runs and is freed once) instead of
     /// duplicating the resource, so it is not available for these types.
     pub fn owns_resource(&mut self, t: TyId) -> bool {
-        self.owns_resource_depth(t, 0)
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
+            // A shared value's clone only bumps the reference count.
+            TyKind::Shared(_) => Look::Stop,
+            TyKind::Promise(..) => Look::Found,
+            // A function value owns its captures, not its parameter or result types.
+            TyKind::FnPtr { .. } => Look::Stop,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
+            }
+            k => Look::Parts(cx.parts_of(k)),
+        };
+        self.find_within(t, MAX_LEVELS, &mut look).is_some()
     }
 
-    fn owns_resource_depth(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            // A shared value's clone only bumps the reference count.
-            TyKind::Shared(_) => return false,
-            TyKind::Promise(..) => return true,
-            // A function value owns its captures, not its parameter or result types.
-            TyKind::FnPtr { .. } => return false,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.has_dispose => return true,
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
-            }
-            k => crate::types::children(&k),
+    /// The field types of an object type of kind `k`, the payload types of an enum, the element
+    /// types of any other type.
+    fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
+        let TyKind::Adt(d, args) = k else {
+            return crate::types::children(&k);
         };
-        parts
-            .into_iter()
-            .any(|p| self.owns_resource_depth(p, depth + 1))
+        let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+            DefInfo::Enum(e) => e
+                .variants
+                .iter()
+                .flat_map(|v| v.payload.iter().copied())
+                .collect(),
+            _ => vec![],
+        };
+        tys.into_iter().map(|f| self.subst(f, &args)).collect()
     }
 
     /// Does a value of type `t` own a resource that no deep copy can duplicate: a value with a
@@ -410,50 +566,24 @@ impl Ctx<'_> {
     /// The part of `t` that makes it [`owns_uncopyable`](Self::owns_uncopyable): the resource
     /// type without `clone()`, or the promise type (`t` itself, or a field, element or payload).
     pub fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
-        self.uncopyable_part_depth(t, 0)
-    }
-
-    fn uncopyable_part_depth(&mut self, t: TyId, depth: u32) -> Option<TyId> {
-        if depth > 32 {
-            return None;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Shared(_) | TyKind::FnPtr { .. } => return None,
-            TyKind::Promise(..) => return Some(t),
-            TyKind::Adt(d, _) if self.own_clone(d).is_some() => return None,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.has_dispose => return Some(t),
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
+            // A promise is copied by sharing it (#212).
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Promise(..) => Look::Stop,
+            TyKind::Adt(d, _) if cx.own_clone(d).is_some() => Look::Stop,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
             }
-            k => crate::types::children(&k),
+            k => Look::Parts(cx.parts_of(k)),
         };
-        parts
-            .into_iter()
-            .find_map(|p| self.uncopyable_part_depth(p, depth + 1))
+        self.find_within(t, MAX_LEVELS, &mut look)
     }
 
     /// Why a `t` cannot be deep-copied, for a diagnostic: "`Conn` owns a resource
-    /// (`[Symbol.dispose]`) and has no `clone()`", "`Pair` holds a `Conn`, which …", or "…
-    /// holds a promise, which cannot be copied".
+    /// (`[Symbol.dispose]`) and has no `clone()`", or "`Pair` holds a `Conn`, which …".
     pub fn uncopyable_why(&mut self, t: TyId) -> String {
         let tn = self.display(t);
         let part = self.uncopyable_part(t).unwrap_or(t);
         let resource = "owns a resource (`[Symbol.dispose]`) and has no `clone()`";
-        if matches!(self.ty.kind(part), TyKind::Promise(..)) {
-            return match part == t {
-                true => "a promise cannot be copied".to_string(),
-                false => format!("`{tn}` holds a promise, which cannot be copied"),
-            };
-        }
         match part == t {
             true => format!("`{tn}` {resource}"),
             false => {

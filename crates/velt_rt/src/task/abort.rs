@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use super::leaf::new_leaf;
+use super::leaf::{new_inner_leaf, new_leaf};
 use super::VeltFut;
 use crate::array::VeltArray;
 use crate::handle::Handle;
@@ -41,7 +41,7 @@ pub struct Signal {
     /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
     sources: Mutex<Vec<Arc<Signal>>>,
     /// The timer task of an `AbortSignal.timeout` signal, aborted when the signal is dropped.
-    timer: std::sync::OnceLock<tokio::task::AbortHandle>,
+    timer: std::sync::OnceLock<super::runtime::AbortHandle>,
 }
 
 impl Drop for Signal {
@@ -77,6 +77,12 @@ impl Signal {
 
     fn is_aborted(&self) -> bool {
         self.aborted.load(Ordering::Acquire)
+    }
+
+    /// Will a timer abort it (an `AbortSignal.timeout`, or `AbortSignal.any` of one)?
+    fn timed(&self) -> bool {
+        !self.is_aborted()
+            && (self.timer.get().is_some() || lock(&self.sources).iter().any(|s| s.timed()))
     }
 
     fn reason(&self) -> Reason {
@@ -194,13 +200,17 @@ pub unsafe extern "C" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
 }
 
 /// A future (unit result) that completes once the signal is aborted (never, if it never is).
+/// Waiting for a signal a timer aborts keeps the process alive, like waiting for a timer
+/// (task/quiet.rs; Node unrefs that timer, but then nothing awaiting the signal would run); a
+/// signal only `abort()` can abort leaves that to whoever may call it.
 ///
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
     let s = h.clone_arc();
-    new_leaf(async move {
+    let timed = s.timed();
+    let wait = async move {
         loop {
             let aborted = s.notify.notified();
             if s.is_aborted() {
@@ -208,7 +218,12 @@ pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut 
             }
             aborted.await;
         }
-    })
+    };
+    if timed {
+        new_leaf(wait)
+    } else {
+        new_inner_leaf(wait)
+    }
 }
 
 /// `AbortSignal.timeout(ms)`: a new signal that a runtime timer aborts after `ms` milliseconds
@@ -229,7 +244,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
     let live = live_timers::Live::new();
     let task = super::runtime::spawn(async move {
         let _live = live;
-        tokio::time::sleep(delay).await;
+        super::runtime::time::sleep(delay).await;
         if let Some(s) = weak.upgrade() {
             s.abort(&reason);
         }
@@ -290,7 +305,7 @@ mod tests {
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -371,10 +386,11 @@ mod tests {
                 let wait = velt_rt_signal_wait(t);
                 // A waiter holds the signal too: freeing the handle keeps the timer.
                 velt_rt_signal_free(t);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx)) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
+                let done =
+                    std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
+                        READY => Poll::Ready(()),
+                        _ => Poll::Pending,
+                    });
                 let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
                 velt_rt_fut_drop(wait);
                 assert!(waited.is_ok(), "the timeout never fired");
@@ -396,10 +412,11 @@ mod tests {
                 // source alive. The limit only turns a hang (a source dropped too early) into a
                 // failure; it is not a timing window.
                 let wait = velt_rt_signal_wait(any);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx)) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
+                let done =
+                    std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
+                        READY => Poll::Ready(()),
+                        _ => Poll::Pending,
+                    });
                 let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
                 velt_rt_fut_drop(wait);
                 assert!(waited.is_ok(), "the timeout source never fired");

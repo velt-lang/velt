@@ -1,0 +1,54 @@
+// check: no leaks
+// A function value changing the store inside `write` (an array nothing aliases grows and is
+// replaced) while readers on other threads walk it: they see whole values only.
+class Item {
+  nums: i64[] = [1];
+}
+
+class St {
+  items: Item[] = [new Item()];
+}
+
+function change(rw: shared<RwLock<St>>, cb: (it: Item) => void) {
+  rw.write((s) => cb(s.items[0]));
+}
+
+async function reader(rw: shared<RwLock<St>>, rounds: i64): Promise<i64> {
+  let bad: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    bad += rw.read((s) => {
+      let b: i64 = 0;
+      for (const n of s.items[0].nums) {
+        if (n != 1) {
+          b += 1;
+        }
+      }
+      return b;
+    });
+    if (i % 64 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  return bad;
+}
+
+async function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const rs: Promise<i64>[] = [];
+  for (let i = 0; i < 7; i++) {
+    rs.push(spawn(reader(rw, 3000)));
+  }
+  for (let i = 0; i < 3000; i++) {
+    change(rw, (it) => {
+      it.nums.push(1);
+      if (it.nums.length > 50) {
+        it.nums = [1];
+      }
+    });
+    if (i % 64 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  const bads = await Promise.all(rs);
+  console.log("bad", bads.reduce((a, b) => a + b, 0));
+}

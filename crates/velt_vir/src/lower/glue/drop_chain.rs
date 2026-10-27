@@ -20,7 +20,7 @@
 //! hold a subclass, whose drop goes through its vtable); so do self references through arrays,
 //! maps and other types.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -46,24 +46,24 @@ impl Chain {
 impl Cx<'_> {
     /// Does a field of type `t` hold an object of the class `ty` (`ty` or `ty | null`)?
     fn holds_self(&mut self, t: TyId, ty: TyId) -> bool {
-        t == ty || matches!(self.kind(t), TyKind::Option(e) if e == ty)
+        t == ty || matches!(self.kind(t), TyKind::Option(e, _) if e == ty)
     }
 
     /// Is dropping a value of `t` unobservable: can it never run a `[Symbol.dispose]()` hook
     /// (only memory is freed, in whatever order)? Conservative: function values, interfaces,
     /// promises and `shared` values may hold anything.
     pub(super) fn drop_is_silent(&mut self, t: TyId) -> bool {
-        self.silent_in(t, &mut HashSet::new())
+        self.silent_in(t, &mut FxHashSet::default())
     }
 
-    fn silent_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn silent_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !self.needs_drop(t) || !seen.insert(t) {
             // A type reached again through itself is decided where it was first reached.
             return true;
         }
         match self.kind(t) {
             TyKind::Str => true,
-            TyKind::Array(e) | TyKind::Option(e) => self.silent_in(e, seen),
+            TyKind::Array(e) | TyKind::Option(e, _) => self.silent_in(e, seen),
             TyKind::Map(k, v) => self.silent_in(k, seen) && self.silent_in(v, seen),
             TyKind::Adt(d, _) => {
                 if self.dispose_of(d).is_some() || (self.is_class(t) && self.has_header(d)) {
@@ -142,6 +142,7 @@ impl FnLower<'_, '_> {
         self.object_free(Operand::Copy(cur.clone()), ty);
         let nn = self.non_null(next.clone());
         self.when(nn, done);
+        self.proxy_chain_split(&next, ty, done);
         self.take(next.clone(), ty, done);
         self.assign(cur.clone(), Rvalue::Use(next));
         self.call_dispose(Operand::Copy(cur.clone()), ty);
@@ -160,6 +161,7 @@ impl FnLower<'_, '_> {
         let nn = self.non_null(c.clone());
         self.when(nn, next);
         let shared = self.new_block();
+        self.proxy_chain_split(&c, ty, shared);
         self.take(c.clone(), ty, shared);
         let cp = self.operand_place(c.clone(), Ty::Ptr);
         let ctail = self.field_place(&cp, ty, tail);
@@ -173,6 +175,17 @@ impl FnLower<'_, '_> {
         self.switch_to(next);
     }
 
+    /// For a proxiable `ty` (#823): a node pointer `p` that is a typed proxy is not a node. Its
+    /// `Proxy` object is released (one reference) and the walk goes to `next` as for a node
+    /// shared elsewhere; a plain node continues here.
+    fn proxy_chain_split(&mut self, p: &Operand, ty: TyId, next: vir::BlockId) {
+        if !self.cx.proxiable(ty) {
+            return;
+        }
+        let place = Place::local(self.copy_to_temp(p.clone(), Ty::Ptr));
+        self.proxy_drop_split(&place, next);
+    }
+
     /// Take ownership of the non-null node `p` that a dropped node referred to: continue when
     /// this was its last reference (an uncounted class always is), else release that reference
     /// and go to `shared`.
@@ -180,11 +193,13 @@ impl FnLower<'_, '_> {
         if !self.cx.counted(ty) {
             return;
         }
-        if self.cx.weak_capable(ty) {
-            // A weakly held node is never unique by its count word (weak-refs.md): the
-            // three-way release decides, and its last reference continues the loop.
+        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) {
+            // A weakly held node is never unique by its count word (weak-refs.md), nor one an
+            // `RwLock`'s readers share (locks.rs): the release decides, and its last reference
+            // continues the loop.
             let own = self.new_block();
-            self.release_as(p, true, |lw| lw.goto(own));
+            let weak = self.cx.weak_capable(ty);
+            self.release_of(p, ty, weak, |lw| lw.goto(own));
             self.goto(shared);
             self.switch_to(own);
             return;

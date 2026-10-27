@@ -1,0 +1,94 @@
+// `RwLock` against `Mutex` under a mix of reads and writes: each task looks up a 1,000-entry
+// `Map` and either reads a route (`read` / `with`) or bumps its weight (`write` / `with`).
+//   lock_mix <mutex|rwlock> <tasks> <reads per 100 operations>   prints M operations/s
+class Route {
+  id: i64;
+  weight: i64;
+  constructor(id: i64) {
+    this.id = id;
+    this.weight = id;
+  }
+}
+
+class Table {
+  routes: Map<string, Route> = new Map<string, Route>();
+}
+
+const N: i64 = 5000000;
+
+function build(): Table {
+  const t = new Table();
+  for (let i: i64 = 0; i < 1000; i++) {
+    t.routes.set(`/r${i}`, new Route(i));
+  }
+  return t;
+}
+
+function keys(seed: i64): string[] {
+  const ks: string[] = [];
+  for (let i: i64 = 0; i < 64; i++) {
+    ks.push(`/r${(seed * 7919 + i * 104729) % 1000}`);
+  }
+  return ks;
+}
+
+function get(t: Table, k: string): i64 {
+  return t.routes.get(k)?.weight ?? 0;
+}
+
+function bump(t: Table, k: string) {
+  const r = t.routes.get(k);
+  if (r != null) {
+    r.weight += 1;
+  }
+}
+
+async function wm(m: shared<Mutex<Table>>, seed: i64, mix: i64): Promise<i64> {
+  const ks = keys(seed);
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < N; i++) {
+    const k = ks[(i % 64) as usize];
+    if (i % 100 < mix) {
+      t += m.with((v) => get(v, k));
+    } else {
+      m.with((v) => bump(v, k));
+    }
+  }
+  return t;
+}
+
+async function wr(rw: shared<RwLock<Table>>, seed: i64, mix: i64): Promise<i64> {
+  const ks = keys(seed);
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < N; i++) {
+    const k = ks[(i % 64) as usize];
+    if (i % 100 < mix) {
+      t += rw.read((v) => get(v, k));
+    } else {
+      rw.write((v) => bump(v, k));
+    }
+  }
+  return t;
+}
+
+async function main() {
+  const kind = process.argv[2];
+  const tasks = Number(process.argv[3]) as i64;
+  const mix = Number(process.argv[4]) as i64;
+  const ps: Promise<i64>[] = [];
+  const t0 = performance.now();
+  if (kind == "mutex") {
+    const m = shared(new Mutex<Table>(build()));
+    for (let k: i64 = 0; k < tasks; k++) {
+      ps.push(spawn(wm(m, k, mix)));
+    }
+  } else {
+    const rw = shared(new RwLock<Table>(build()));
+    for (let k: i64 = 0; k < tasks; k++) {
+      ps.push(spawn(wr(rw, k, mix)));
+    }
+  }
+  await Promise.all(ps);
+  const ms = performance.now() - t0;
+  console.log(kind, tasks, mix, Math.round(((tasks * N) as number) / ms / 1000));
+}

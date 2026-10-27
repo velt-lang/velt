@@ -230,3 +230,25 @@ impl FnCx<'_, '_> {
         Some(self.prelude_call("__processEnv", "process.env", &[], args, None, span))
     }
 }
+
+/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
+/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
+/// `env` (`super::process`); the rest is in `velt:process`.
+pub(super) fn process_note(name: &str) -> String {
+    match name {
+        "stdout" | "stderr" => format!(
+            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
+        ),
+        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
+                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
+                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
+            .to_string(),
+        "cwd" | "chdir" => {
+            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
+        }
+        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
+              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
+              `velt:process`"
+            .to_string(),
+    }
+}

@@ -6,6 +6,7 @@
 
 use velt_sema::hir::TyId;
 
+use super::array_view::ViewSync;
 use super::operand::proj;
 use super::FnLower;
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -14,12 +15,21 @@ impl FnLower<'_, '_> {
     /// The inline value of the value at `place` of concrete type `t`: the place itself, or for
     /// a boxed type what its pointer points to (retained while a stabilized borrow is lowered).
     pub(super) fn content(&mut self, place: &Place, t: TyId) -> Place {
+        self.content_with(place, t, ViewSync::All)
+    }
+
+    /// [`Self::content`], where a view (array_view.rs) needs only `sync` of its mirror.
+    pub(super) fn content_with(&mut self, place: &Place, t: TyId, sync: ViewSync) -> Place {
         if !self.cx.boxed(t) {
             return place.clone();
         }
         let payload = self.cx.payload_ty(t);
         let base = self.retained_hop(place, t);
-        proj(&base, Proj::Deref(payload))
+        let hdr = proj(&base, Proj::Deref(payload));
+        match self.cx.array_view(t) {
+            true => self.view_inline(hdr, t, sync),
+            false => hdr,
+        }
     }
 
     /// The value of type `t` made from the inline value `v` (owned): for a boxed type, a new
@@ -29,7 +39,7 @@ impl FnLower<'_, '_> {
             return v;
         }
         let payload = self.cx.payload_ty(t);
-        let p = self.counted_alloc(payload);
+        let p = self.counted_alloc_of(payload, t);
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         self.assign(proj(&pp, Proj::Deref(payload)), Rvalue::Use(v));
         p
@@ -52,7 +62,7 @@ impl FnLower<'_, '_> {
         let value = proj(&pp, Proj::Deref(payload));
         let q = p.clone();
         let weak = self.cx.weak_capable(t);
-        self.release_as(p, weak, |lw| {
+        self.release_of(p, t, weak, |lw| {
             inner(lw, &value);
             lw.counted_free(q, payload);
         });
@@ -77,12 +87,12 @@ impl FnLower<'_, '_> {
         self.when(nn, done);
         // During a transfer, a box referenced more than once is copied once.
         let found = self.cx.copied_across(t).then(|| {
-            self.find_copy(p.clone(), |lw, copy| {
+            self.find_copy(p.clone(), t, |lw, copy| {
                 lw.assign(dst.clone(), Rvalue::Use(copy));
                 lw.goto(done);
             })
         });
-        let new = self.counted_alloc(payload);
+        let new = self.counted_alloc_of(payload, t);
         if let Some(found) = found {
             self.record_copy(found, p.clone(), new.clone());
         }

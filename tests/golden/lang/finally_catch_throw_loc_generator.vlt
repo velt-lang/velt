@@ -1,0 +1,13 @@
+// A generator's `finally` that throws and catches keeps the location of the error passing
+// through it (#1404).
+function* gen(): Generator<number> {
+  yield 1;
+  try {
+    throw new RangeError("outer");
+  } finally {
+    try { throw new Error("in finally"); } catch (e) { console.log("swallowed"); }
+  }
+}
+for (const x of gen()) {
+  console.log(x);
+}

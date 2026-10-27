@@ -9,7 +9,7 @@
 //! result of a call through a function value, a pattern binding) are *unknown*: when one
 //! crosses, its type is a root of the type-based part (`super::types`).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 
@@ -19,6 +19,11 @@ use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind, Stmt,
     StmtKind as S, TyId,
 };
+
+/// A call through a function value: the callee's type, the argument nodes, the call's span,
+/// whether it is in the standard library, and the function whose closures alone the callee
+/// may be (a variable of `crate::defined_accessors`), if known.
+pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
@@ -65,6 +70,14 @@ pub(super) struct Why {
 }
 
 impl Why {
+    /// The order in which reasons are preferred: one in user code, the earliest, and between
+    /// two at one place the holder whose name sorts first, so that the choice never depends on
+    /// how types happen to be numbered.
+    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, String) {
+        let via = self.via.map(|t| cx.display(t)).unwrap_or_default();
+        (self.std, self.span.file.0, self.span.lo, via)
+    }
+
     /// `self`, seen from an argument passed at `site` (`(span, in std)`): a boundary inside the
     /// standard library is reported at the user's call into it.
     pub(super) fn through(self, site: Option<(Span, bool)>) -> Why {
@@ -89,7 +102,7 @@ pub(super) type Site = Option<(Span, bool)>;
 
 #[derive(Default)]
 pub(super) struct Graph {
-    pub ids: HashMap<Node, usize>,
+    pub ids: FxHashMap<Node, usize>,
     pub nodes: Vec<Node>,
     pub tys: Vec<TyId>,
     /// Per node: the nodes whose values flow into it, each with the call passing them (an
@@ -102,18 +115,18 @@ pub(super) struct Graph {
     pub inflows: Vec<Vec<(TyId, Site)>>,
     /// Calls through a function value: the callee's type, the argument nodes, and the call
     /// (span, in std). A closure whose parameter crosses makes the matching argument cross.
-    pub indirect: Vec<(TyId, Vec<usize>, Span, bool)>,
+    pub indirect: Vec<Indirect>,
     /// The function creating each closure literal.
-    pub parent: HashMap<DefId, DefId>,
+    pub parent: FxHashMap<DefId, DefId>,
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
-    pub insts: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
     /// Nodes whose values reach a flag's sink directly.
     pub seeds: Vec<(usize, u8, Option<Why>)>,
     /// Values of unknown origin that cross (or reach an unknown callee, for function values).
     pub roots: Vec<(TyId, Why)>,
     /// Per closure literal node: its capture locals' nodes.
-    pub captures: HashMap<usize, Vec<usize>>,
+    pub captures: FxHashMap<usize, Vec<usize>>,
 }
 
 impl Graph {
@@ -471,6 +484,21 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// Is `f` a read of a variable holding an accessor that `Object.defineProperty` replaces
+    /// (`crate::defined_accessors::is_accessor_cell`)?
+    fn accessor_cell(&self, mut f: &Expr) -> bool {
+        loop {
+            match &f.kind {
+                E::UnwrapSome(x, _) | E::Cast(x) | E::UnwrapVariant { expr: x, .. } => f = x,
+                E::Local(l, _) => {
+                    let name = &self.f.body.locals[l.0 as usize].name;
+                    return crate::defined_accessors::is_accessor_cell(name);
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr], to: To) {
         match callee {
             Callee::Def(g, targs) => {
@@ -489,16 +517,22 @@ impl Walk<'_, '_> {
             }
             Callee::Indirect(f) => {
                 self.value(f, To::Drop);
+                // A variable of `Object.defineProperty`'s rewrite holds only closures of this
+                // function, which keep nothing as a function value might.
+                let cell = self.accessor_cell(f);
                 let why = self.why(e.span, Boundary::FnValue);
                 let call = self.g.indirect.len() as u32;
                 let mut nodes = vec![];
                 for (i, a) in args.iter().enumerate() {
                     let n = self.g.node(Node::Arg(call, i as u32), a.ty);
                     self.value(a, To::Node(n, None));
-                    self.g.seeds.push((n, INDIRECT, why));
+                    if !cell {
+                        self.g.seeds.push((n, INDIRECT, why));
+                    }
                     nodes.push(n);
                 }
-                self.g.indirect.push((f.ty, nodes, e.span, self.std));
+                let only = cell.then_some(self.d);
+                self.g.indirect.push((f.ty, nodes, e.span, self.std, only));
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
@@ -537,7 +571,7 @@ impl Walk<'_, '_> {
             }
             Intrinsic::HttpHandler => Some(Boundary::Handler),
             Intrinsic::SharedNew => Some(Boundary::Shared),
-            Intrinsic::MutexNew => Some(Boundary::Mutex),
+            Intrinsic::MutexNew | Intrinsic::RwLockNew => Some(Boundary::Mutex),
             Intrinsic::ChanSend | Intrinsic::ChanTrySend => Some(Boundary::Channel),
             Intrinsic::Transfer => Some(Boundary::Settle),
             _ => None,

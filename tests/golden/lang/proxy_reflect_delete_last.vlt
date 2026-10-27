@@ -1,0 +1,7 @@
+// `Reflect.deleteProperty(a, i)` of an array's last element outside an array method on a proxy
+// (#823): Node leaves a hole and keeps the length, which Velt's arrays cannot have yet (sigx's
+// `deleteProperty` trap forwards `delete state.list[last]` this way).
+const arr: any = [1, 2, 3];
+console.log(Reflect.deleteProperty(arr, "7"), arr.length);
+console.log(Reflect.deleteProperty(arr, "2"), arr, arr.length);
+console.log("not reached");

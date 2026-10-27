@@ -223,12 +223,12 @@ fn a_token_range_ending_inside_a_name_keeps_the_whole_name() {
 
 #[test]
 fn fixes_apply_to_the_whole_file() {
-    let text = "function main() {\n  let a: string | null = undefined;\n  let b: string | null = undefined;\n  console.log(a, b);\n}\n";
+    let text = "function add(mut a: i64, mut b: i64): i64 {\n  return a + b;\n}\n\nfunction main() {\n  add(1, 2);\n}\n";
     let mut client = Client::start();
     let doc = uri("fix_all.vlt");
     client.open(&doc, text);
     let diags = client.diagnostics(&doc)["diagnostics"].clone();
-    let (line, character) = pos_of(text, "undefined", 0);
+    let (line, character) = pos_of(text, "mut", 0);
     let pos = json!({ "line": line, "character": character });
     let request = |client: &mut Client, only: Value| {
         let mut context = json!({ "diagnostics": diags });
@@ -253,13 +253,7 @@ fn fixes_apply_to_the_whole_file() {
         .iter()
         .map(|a| a["title"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        titles,
-        [
-            "Replace `undefined` with `null`",
-            "Fix all in file: Replace `undefined` with `null`",
-        ]
-    );
+    assert_eq!(titles, ["Remove `mut`", "Fix all in file: Remove `mut`",]);
     assert_eq!((edits_of(&offered[0]), edits_of(&offered[1])), (1, 2));
     // `source.fixAll` only when asked for.
     let source_only = request(&mut client, json!(["source.fixAll"]));

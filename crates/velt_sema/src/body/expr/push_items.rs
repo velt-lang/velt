@@ -118,7 +118,7 @@ impl FnCx<'_, '_> {
         copy: bool,
         stmts: &mut Vec<hir::Stmt>,
     ) -> Option<Item> {
-        let h = self.expr(inner, None, Want::Borrow);
+        let h = self.payload_expr(inner, None, Want::Borrow);
         let Some(et) = self.cx.ty.array_elem(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let t = self.cx.display(h.ty);
@@ -188,7 +188,6 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let (usize_, bool_, unit) = (self.cx.ty.usize, self.cx.ty.bool_, self.cx.ty.unit);
-        self.reject_promise_spread(types.0, span);
         let i = self.new_local("<i>", usize_, true, span, LocalKind::Temp);
         let zero = self.mk(H::Lit(hir::Lit::Int(0)), usize_, span);
         let one = self.mk(H::Lit(hir::Lit::Int(1)), usize_, span);

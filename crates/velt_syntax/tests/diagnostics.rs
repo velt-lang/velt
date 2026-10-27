@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 #[test]
 fn diagnostic_wording() {
-    let e = errors("function f() { let x = 1 }");
+    let e = errors("function f() { let x = 1 let y = 2 }");
     assert!(e[0].contains("expected `;`"), "{:?}", e);
     let e = errors("function f() { foo( }");
     assert!(e[0].contains("expected expression"), "{:?}", e);
@@ -19,19 +19,86 @@ fn diagnostic_wording() {
         "{:?}",
         e
     );
-    let e = errors("console.log(1);\nfunction main() {}");
-    assert!(
-        e[0].contains("cannot be combined with `function main()`"),
-        "{:?}",
-        e
-    );
     let e = errors("}");
     assert!(e[0].contains("unexpected `}`"), "{:?}", e);
 }
 
+/// A script that declares `main` itself (#1567): its statements go into a function named
+/// `SCRIPT_MAIN` (the entry point), and `main` stays an ordinary function.
+#[test]
+fn script_with_its_own_main() {
+    let m = parse_ok("function main(n: number) {}\nconsole.log(1);\nmain(2);");
+    let fns: Vec<_> = m
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Function(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fns.len(), 2);
+    assert_eq!(fns[0].sig.name.name, "main");
+    assert!(!velt_syntax::is_script_main(&fns[0].sig.name));
+    assert_eq!(fns[1].sig.name.name, velt_syntax::SCRIPT_MAIN);
+    assert!(velt_syntax::is_script_main(&fns[1].sig.name));
+    assert_eq!(fns[1].body.stmts.len(), 2);
+    let m = parse_ok("console.log(1);");
+    assert!(m.items.iter().any(
+        |i| matches!(&i.kind, ItemKind::Function(f) if f.sig.name.name == "main"
+            && velt_syntax::is_script_main(&f.sig.name))
+    ));
+}
+
+/// Any top-level binding named `main` makes the generated function `SCRIPT_MAIN` (#1567).
+#[test]
+fn script_with_another_binding_named_main() {
+    for src in [
+        "import { main } from \"./m\";\nmain();",
+        "import { run as main } from \"./m\";\nmain();",
+        "import * as main from \"./m\";\nmain.run();",
+        "export const main = (): void => {};\nmain();",
+        "const main = 1;\nfunction run() { return main; }\nrun();",
+        "class main { static run(): void {} }\nmain.run();",
+        "enum main { A }\nconsole.log(main.A);",
+    ] {
+        let m = parse_ok(src);
+        let generated: Vec<_> = m
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
+                    Some(f.sig.name.name.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(generated, [velt_syntax::SCRIPT_MAIN], "{src:?}");
+    }
+}
+
+/// A script's `function main` that nothing calls gets a warning: it would not run (#1567).
+#[test]
+fn script_with_an_uncalled_main_warns() {
+    let (_, d) = parse("function main() {}\nconsole.log(1);");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].severity, velt_common::Severity::Warning);
+    assert!(d[0].message.contains("`main` is never called"), "{d:?}");
+    for src in [
+        "function main() {}\nmain();",
+        "function main() {}\nsetTimeout(main, 0);",
+        "function main() {}\nfunction run() { main(); }\nrun();",
+        "export function main() {}\nconsole.log(1);",
+        "function main() {}\nexport { main };\nconsole.log(1);",
+        "function main() {}",
+    ] {
+        let (_, d) = parse(src);
+        assert!(d.is_empty(), "{src:?}: {d:?}");
+    }
+}
+
 #[test]
 fn expected_semicolon_points_at_offending_token() {
-    let src = "function f() {\n  let x = 1\n  let y = 2;\n}";
+    let src = "function f() {\n  let x = 1 let y = 2;\n}";
     let (_, d) = parse(src);
     assert_eq!(d.len(), 1, "{:?}", d);
     let lo = d[0].labels[0].span.lo as usize;

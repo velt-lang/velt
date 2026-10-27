@@ -1,20 +1,29 @@
 //! Build the final `hir::Def`s for type definitions, constants and externs (function bodies are
 //! already built by the body pass), and assemble the `hir::Program`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::collect::{self_type, DISPOSE};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{
-    self, AdtDef, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
+    self, AdtDef, AdtKind, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
     InterfaceMethodDef, VariantDef,
 };
 use crate::hooks;
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
-    let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
+    let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
     let assigned = crate::assigned_fields::assigned_objects(cx);
+    // An object literal's slot method returning a promise that never rejects, in a group whose
+    // promises may: async, so its promise has the group's layout.
+    for (d, ret) in std::mem::take(&mut cx.promise_forwarders) {
+        if cx.fn_info(d).throws.is_some() {
+            let span = cx.fn_info(d).span;
+            let never = cx.ty.never;
+            crate::collect::forwarders::await_forwarded(cx, d, ret, never, span);
+        }
+    }
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() {
@@ -59,6 +68,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                     ty: g.ty,
                     init,
                     span: g.span,
+                    slot: None,
                 })
             }),
         };
@@ -66,7 +76,8 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
     }
 }
 
-/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods).
+/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods, and
+/// setter slots after those when the program writes through `d`, `crate::iface_writes`).
 fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
     let n = cx.iface(d).map_or(0, |i| i.methods.len());
     // The dispatch group's flag, not the method's own return type: one implementation may
@@ -81,6 +92,11 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         .zip(&promise)
         .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
         .collect();
+    let hidden = cx.hidden_keys();
+    let setters = match cx.iface_written(d) {
+        true => cx.setter_fields(d),
+        false => vec![],
+    };
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -95,6 +111,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 optional: f.optional,
                 private: false,
                 presence: false,
+                hidden: hidden.contains(&f.name),
             })
             .collect(),
         methods: i
@@ -110,6 +127,12 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             })
             .chain(i.fields.iter().map(|f| InterfaceMethodDef {
                 name: format!("<{}>", f.name),
+                default: None,
+                promise: false,
+                throws: None,
+            }))
+            .chain(setters.iter().map(|&k| InterfaceMethodDef {
+                name: format!("<set {}>", i.fields[k].name),
                 default: None,
                 promise: false,
                 throws: None,
@@ -144,7 +167,7 @@ fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
 fn field_defaults(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
 ) -> Vec<Option<hir::Expr>> {
     if let Some(v) = memo.get(&d) {
         return v.clone();
@@ -173,20 +196,51 @@ fn field_defaults(
     out
 }
 
+/// `AdtDef::inherited_inits` of class `d`: its base classes' (with the base's type args), then
+/// its own (`AdtInfo::redefined`).
+fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (base, own) = (a.base, a.redefined.clone());
+    let (mut out, depth) = match base.and_then(|b| cx.class_of(b)) {
+        Some((bd, bargs)) => {
+            let (mut inits, depth) = inherited_inits(cx, bd);
+            for i in &mut inits {
+                crate::visit::map_expr_types(&mut i.init, &mut |t| cx.subst(t, &bargs));
+            }
+            (inits, depth + 1)
+        }
+        None => (vec![], 0),
+    };
+    out.extend(own.into_iter().filter_map(|r| {
+        Some(hir::FieldInit {
+            field: r.field as u32,
+            depth,
+            at: r.at as u32,
+            init: r.init?,
+        })
+    }));
+    (out, depth)
+}
+
 fn adt_def(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
+    let inherited_inits = inherited_inits(cx, d).0;
+    let hidden = cx.hidden_keys();
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
-    let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
-    let opaque = a
+    let private_fields = a
         .fields
         .iter()
-        .any(|f| f.private_to.is_some_and(|o| cx.declared_in_std(o)));
+        .any(|f| f.private_to.is_some() && !cx.plain_private(f.private_to, &f.name));
+    let opaque = a.fields.iter().any(|f| {
+        f.private_to.is_some_and(|o| cx.declared_in_std(o))
+            && !cx.plain_private(f.private_to, &f.name)
+    });
     let fields = a
         .fields
         .iter()
@@ -198,8 +252,10 @@ fn adt_def(
             optional: f.optional,
             private: f.private_to.is_some(),
             presence: crate::anon::has_presence(&cx.ty, a.kind, f),
+            hidden: hidden.contains(&f.name),
         })
         .collect();
+    let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some();
     let (name, kind, base, ctor, vtable, span) = (
         a.qual_name.clone(),
         a.kind,
@@ -223,10 +279,12 @@ fn adt_def(
         generics: n as u32,
         fields,
         is_copy: cx.is_copy(st),
+        declared_struct,
         private_fields,
         opaque,
         assigned,
         base,
+        inherited_inits,
         ctor,
         dispose,
         to_string,
@@ -237,12 +295,25 @@ fn adt_def(
     }
 }
 
+/// The definitions of union enums made after [`build_defs`]: `readonly::erase` solves the types
+/// of the program, and a union first written with an unsolved member (a field read narrowed to
+/// `number | (() => number)`, whose function type's errors were a variable) is interned there,
+/// before it erases the definitions.
+pub(crate) fn build_late_enums(cx: &mut Ctx) {
+    for i in 0..cx.info.len() {
+        if cx.defs[i].is_none() && matches!(cx.info[i], DefInfo::Enum(_)) {
+            let d = DefId(i as u32);
+            cx.defs[i] = Some(Def::Enum(enum_def(cx, d)));
+        }
+    }
+}
+
 fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
     let e = cx.enum_info(d).expect("ICE: enum");
     let n = e.generics.len();
     let (name, span) = (e.qual_name.clone(), e.span);
     let e_union = e.is_union;
-    let variants = e
+    let mut variants: Vec<VariantDef> = e
         .variants
         .iter()
         .map(|v| VariantDef {
@@ -252,6 +323,15 @@ fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
             str_value: v.str_value.clone(),
         })
         .collect();
+    // A union a view is made of holds it in one more variant (`crate::union_views`).
+    if let Some((v, iface)) = cx.union_view_variant(d) {
+        variants.push(VariantDef {
+            name: crate::union_views::VIEW_VARIANT.to_string(),
+            payload: vec![iface],
+            discriminant: v as i64,
+            str_value: None,
+        });
+    }
     let st = self_type(cx, d, n);
     EnumDef {
         name,

@@ -24,6 +24,15 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         let shown = self.shown_fields(ty);
+        let anon = matches!(self.cx.kind(ty),
+            TyKind::Adt(d, _) if self.cx.adt_def(d).kind == AdtKind::Anon);
+        let void = shown
+            .iter()
+            .find(|(_, _, t)| anon && matches!(self.cx.kind(*t), TyKind::Unit));
+        if let Some((_, n, _)) = void {
+            let n = n.clone();
+            self.void_field_panic(&n);
+        }
         if shown.is_empty() {
             let text = match &name {
                 Some(n) => format!("{n} {{}}"),
@@ -45,6 +54,18 @@ impl FnLower<'_, '_> {
         });
     }
 
+    /// Panic: the object (of an object type) has a field that is `void` after substitution
+    /// (velt_sema `void_fields`, #1411), which keeps no value, so what the program wrote to it
+    /// (`ref: null as any`) can't be shown as Node shows it. Printing or JSON-writing it through
+    /// a generic or an `any`, or reading the field through an `any`, stops here rather than
+    /// showing `undefined`.
+    pub(in crate::lower) fn void_field_panic(&mut self, name: &str) {
+        self.panic_msg(&format!(
+            "TypeError: the field `{name}` is `void` here and keeps no value, so it can't be read \
+             or shown through a generic or an `any` yet (#1411)"
+        ));
+    }
+
     /// For each of the `shown` fields: is it optional (`a?: T`), so that it shows only while
     /// present? Not in a class: Node shows a class's optional field, an own key from the start.
     fn optional_fields(&mut self, ty: TyId, shown: &[(u32, String, TyId)]) -> Vec<bool> {
@@ -62,15 +83,17 @@ impl FnLower<'_, '_> {
         shown
             .iter()
             .zip(flags)
-            .map(|((_, _, t), opt)| opt && matches!(self.cx.kind(*t), TyKind::Option(_)))
+            .map(|((_, _, t), opt)| {
+                opt && (matches!(self.cx.kind(*t), TyKind::Option(..)) || self.cx.is_dynamic(*t))
+            })
             .collect()
     }
 
     /// The fields an object prints: (index, name, type). ES private fields (`#x`) are hidden, as
     /// Node hides them, and so are private zero-sized fields (a marker such as std's
     /// `runtime: RuntimeHandle`); other private fields show, as Node shows a TypeScript
-    /// `private` field.
-    fn shown_fields(&mut self, ty: TyId) -> Vec<(u32, String, TyId)> {
+    /// `private` field. A hidden field (`FieldDef::hidden`, a non-enumerable property) is hidden.
+    pub(super) fn shown_fields(&mut self, ty: TyId) -> Vec<(u32, String, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
         };
@@ -79,17 +102,19 @@ impl FnLower<'_, '_> {
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| (f.name.clone(), f.private))
+            .map(|f| (f.name.clone(), f.private, f.hidden))
             .zip(self.cx.adt_field_tys(ty))
             .enumerate()
-            .map(|(i, ((n, private), t))| (i as u32, n, t, private))
+            .filter(|(_, ((_, _, hidden), _))| !hidden)
+            .map(|(i, ((n, private, _), t))| (i as u32, n, t, private))
             .collect();
+        // An object literal's accessor fields show as the property each stands for.
         let shown: Vec<(u32, String, TyId)> = all
             .into_iter()
             .filter(|(_, n, t, private)| {
                 !n.starts_with('#') && !(*private && self.is_empty_struct(*t))
             })
-            .map(|(i, n, t, _)| (i, n, t))
+            .filter_map(|(i, n, t, _)| self.field_prop(d, &n).map(|p| (i, p, t)))
             .collect();
         // JavaScript's order: array-index names (`'404'`) first, ascending (#756).
         let names: Vec<&str> = shown.iter().map(|(_, n, _)| n.as_str()).collect();
@@ -126,8 +151,13 @@ impl FnLower<'_, '_> {
             pending.push_str(&format!("{sep}{n}: "));
             self.push_text(buf, &pending);
             pending.clear();
-            let fp = self.field_place(place, ty, *index);
-            self.format_nested(buf, &fp, *t, child);
+            match self.accessor_label(ty, *index) {
+                Some(label) => self.push_text(buf, label),
+                None => {
+                    let fp = self.field_place(place, ty, *index);
+                    self.format_nested(buf, &fp, *t, child);
+                }
+            }
         }
         self.push_text(buf, " }");
     }
@@ -172,7 +202,10 @@ impl FnLower<'_, '_> {
             self.goto(join);
             self.switch_to(join);
             self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
-            self.format_nested(buf, &fp, *t, child);
+            match self.accessor_label(ty, *index) {
+                Some(label) => self.push_text(buf, label),
+                None => self.format_nested(buf, &fp, *t, child),
+            }
             self.goto(skip);
             self.switch_to(skip);
         }
@@ -192,7 +225,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Whether optional field `index` (at `fp`, of type `t`) of `ty` is present: its presence
-    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null`.
+    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null` (`undefined`
+    /// for an `a?: any`).
     fn field_present(&mut self, fp: &Place, ty: TyId, index: u32, t: TyId) -> Operand {
         match self.cx.presence_slot(ty, index) {
             Some(slot) => {
@@ -202,6 +236,8 @@ impl FnLower<'_, '_> {
                 }
                 Operand::Copy(f)
             }
+            // `a?: any`: present unless it holds `undefined`.
+            None if self.cx.is_dynamic(t) => self.any_defined(fp),
             None => self.option_is_some(fp, t),
         }
     }

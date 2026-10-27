@@ -1,0 +1,16 @@
+// A spread copies a present `undefined` from a `Partial<U>` patch into a field of `U` that can't
+// hold it: Node would make `name` undefined, which its type `string` can't hold, so Velt stops
+// with a `TypeError`. An absent key keeps the earlier value, and a present value (also a `null`
+// for a `T | null` field) replaces it (#930 phase 2).
+type U = { name: string; nick?: string; note: string | null };
+
+function main() {
+  const base: U = { name: "ann", nick: "a", note: "n" };
+  const keep: Partial<U> = { nick: "b" };
+  console.log({ ...base, ...keep });
+  const nulled: Partial<U> = { note: null };
+  console.log({ ...base, ...nulled });
+  const patch: Partial<U> = { name: undefined };
+  const r: U = { ...base, ...patch };
+  console.log(r);
+}

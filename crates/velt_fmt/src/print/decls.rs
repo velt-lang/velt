@@ -3,8 +3,8 @@
 
 use crate::source::has_modifier;
 use velt_syntax::ast::{
-    CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
-    TypeDecl, TypeExpr, Variant,
+    CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod,
+    Method, TypeDecl, TypeExpr, Variant,
 };
 
 use super::Printer;
@@ -16,6 +16,7 @@ enum Member<'d> {
     Constructor(&'d FnDecl, CtorVisibility),
     Method(&'d Method),
     InterfaceMethod(&'d InterfaceMethod),
+    CallSig(&'d CallSig),
 }
 
 impl Member<'_> {
@@ -31,6 +32,7 @@ impl Member<'_> {
                 let hi = m.body.as_ref().map_or(m.sig.span.hi, |b| b.span.hi);
                 (m.sig.span.lo, hi)
             }
+            Member::CallSig(s) => (s.span.lo, s.span.hi),
         }
     }
 }
@@ -63,6 +65,19 @@ impl<'a> Printer<'a> {
     pub(super) fn interface(&mut self, decl: &InterfaceDecl) -> Doc {
         let mut members: Vec<Member> = decl.fields.iter().map(Member::Field).collect();
         members.extend(decl.methods.iter().map(Member::InterfaceMethod));
+        members.extend(decl.call_sigs.iter().map(Member::CallSig));
+        // `type T = { get v(): number }`: the parser reads an alias of an object type with
+        // accessors as the interface it spells out; it is printed as written.
+        let before = self.src.get(..decl.name.span.lo as usize).unwrap_or("");
+        if before.trim_end().ends_with("type") {
+            let head = cat![
+                "type ",
+                decl.name.name.clone(),
+                self.generic_params(&decl.generics),
+                " = "
+            ];
+            return cat![head, self.members(members, decl.name.span.hi), ";"];
+        }
         let head = cat![
             "interface ",
             decl.name.name.clone(),
@@ -78,9 +93,11 @@ impl<'a> Printer<'a> {
             "extend",
             self.generic_params(&decl.generics),
             " ",
-            self.ty_no_union(&decl.target)
+            self.ty_no_union(&decl.target),
+            self.type_list(" implements ", &decl.implements)
         ];
-        cat![head, " ", self.members(members, decl.target.span.hi)]
+        let after = decl.implements.last().unwrap_or(&decl.target).span.hi;
+        cat![head, " ", self.members(members, after)]
     }
 
     pub(super) fn enum_decl(&mut self, decl: &EnumDecl) -> Doc {
@@ -178,6 +195,7 @@ impl<'a> Printer<'a> {
                 }
                 self.fn_decl_with(&m.decl, "", &mods)
             }
+            Member::CallSig(s) => cat![self.call_sig(s), ";"],
             Member::InterfaceMethod(m) => {
                 let mut mods = String::new();
                 if m.is_getter {
@@ -202,6 +220,9 @@ impl<'a> Printer<'a> {
     }
 
     fn field(&mut self, f: &Field) -> Doc {
+        if let Some(body) = static_block(f) {
+            return cat!["static ", self.block(body)];
+        }
         let private = if f.is_private && !f.name.is_private_name() {
             "private "
         } else {
@@ -270,4 +291,26 @@ fn closing_brace(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The body of a `static { … }` block, which the parser gives the form of a static field named
+/// `<static block N>` whose initializer calls an arrow with the block as its body.
+fn static_block(f: &Field) -> Option<&velt_syntax::ast::Block> {
+    use velt_syntax::ast::{ArrowBody, ExprKind};
+    if !f.is_static || !f.name.name.starts_with("<static block ") {
+        return None;
+    }
+    let ExprKind::Call { callee, .. } = &f.default.as_ref()?.kind else {
+        return None;
+    };
+    let ExprKind::Paren(arrow) = &callee.kind else {
+        return None;
+    };
+    match &arrow.kind {
+        ExprKind::Arrow {
+            body: ArrowBody::Block(b),
+            ..
+        } => Some(b),
+        _ => None,
+    }
 }

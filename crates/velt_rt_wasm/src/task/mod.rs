@@ -18,7 +18,9 @@ pub mod group;
 pub mod latch;
 pub mod leaf;
 pub mod local;
+pub mod order;
 pub mod race;
+pub mod shared;
 pub mod spawn;
 pub mod waiters;
 
@@ -68,17 +70,51 @@ impl VeltFut {
     }
 }
 
+/// What generated code gets as `cx` (rt_abi_async.md §1): the await word first (generated code
+/// reads it at every `await`: 0 = no other job could observe a microtask step), then the Rust
+/// `Context`. On the one thread the word is the executor's (executor.rs `await_word`).
+#[repr(C)]
+pub(crate) struct RawCx<'a, 'b> {
+    word: *const u32,
+    cx: *mut Context<'b>,
+    _life: std::marker::PhantomData<&'a mut Context<'b>>,
+}
+
+impl RawCx<'_, '_> {
+    /// The opaque pointer (valid while this value lives).
+    pub(crate) fn ptr(&self) -> *mut c_void {
+        self as *const Self as *mut c_void
+    }
+}
+
 /// Recover the Rust `Context` from the opaque `cx` pointer generated code passes through.
 ///
 /// # Safety
 /// `cx` must be the pointer the runtime passed into the enclosing poll call.
 pub(crate) unsafe fn context<'a>(cx: *mut c_void) -> &'a mut Context<'a> {
-    &mut *(cx as *mut Context<'a>)
+    &mut *((*(cx as *mut RawCx<'_, 'a>)).cx)
 }
 
-/// Opaque `cx` pointer for handing a Rust `Context` to generated code.
-pub(crate) fn raw_cx(cx: &mut Context<'_>) -> *mut c_void {
-    cx as *mut Context<'_> as *mut c_void
+/// `cx` for handing a Rust `Context` to generated code (`.ptr()` is the opaque pointer).
+pub(crate) fn raw_cx<'a, 'b>(cx: &'a mut Context<'b>) -> RawCx<'a, 'b> {
+    RawCx {
+        word: executor::await_word(),
+        cx,
+        _life: std::marker::PhantomData,
+    }
+}
+
+/// The step of an `await` (velt_rt local/micro.rs): 0 to go on, else a ticket to wait for with
+/// [`velt_rt_await_ready`].
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
+    executor::await_tick(context(cx))
+}
+
+/// Has the microtask queue reached `ticket`? 1 to go on, 0 while it waits.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u32 {
+    executor::await_ready(ticket, context(cx)) as u32
 }
 
 /// Poll a heap future: `(f->poll)(f, cx)`.
@@ -114,6 +150,14 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
         cx.waker().wake_by_ref();
         std::task::Poll::Pending
     })
+}
+
+/// `await` one microtask: completes (unit result) once the executor's microtask queue reached
+/// it, after the microtasks queued before it; at once outside `block_on`.
+#[no_mangle]
+pub extern "C" fn velt_rt_microtask() -> *mut VeltFut {
+    let mut slot = None;
+    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_microtask(&mut slot, cx))
 }
 
 /// `sleep(ms)`: a timer whose deadline is fixed now (negative = 0). Result: none.

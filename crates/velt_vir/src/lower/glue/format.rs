@@ -61,13 +61,13 @@ impl FnLower<'_, '_> {
                 self.push_str(buf, a);
             }
             TyKind::Literal(l) => self.push_literal(buf, &l, false),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -99,7 +99,28 @@ impl FnLower<'_, '_> {
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
-            _ => {
+            // A string held by an `any` prints as itself at the top level (lower/any.rs).
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
+                let (s_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+                let is_str = self.any_holds_str(place);
+                self.branch(is_str, s_bb, other_bb);
+                self.switch_to(s_bb);
+                let data = Operand::Copy(proj(place, Proj::Field(0)));
+                self.push_str(buf, data);
+                self.goto(done);
+                self.switch_to(other_bb);
+                self.format_top_inspect(buf, place, ty);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.format_top_inspect(buf, place, ty),
+        }
+    }
+
+    /// The top-level text of a value that may hold containers.
+    fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        {
+            {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
                 self.call_rt(Rt::StrbufInspectBegin, vec![], None);
@@ -121,6 +142,7 @@ impl FnLower<'_, '_> {
             | TyKind::Bool
             | TyKind::Str
             | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Literal(_)
@@ -156,6 +178,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
             }
             TyKind::Unit => self.push_text(buf, "undefined"),
+            TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
             TyKind::Never => {}
             TyKind::Literal(l) => self.push_literal(buf, &l, true),
             TyKind::Adt(d, _)
@@ -202,7 +225,26 @@ impl FnLower<'_, '_> {
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
+        if self.cx.is_array_method(ty) {
+            // An array method read through `Reflect.get`: the function it stands for, as Node
+            // prints it (`[Function: push]`).
+            self.push_text(&buf, "[Function: ");
+            let name = self.field_place(&place, ty, 0);
+            let a = self.addr(name);
+            self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), a], None);
+            self.push_text(&buf, "]");
+            return self.terminate(Terminator::Return(unit()));
+        }
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_format_split(&buf, &place, &depth, done);
+            done
+        });
         self.format_expand(&buf, &place, ty, &depth);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
@@ -221,7 +263,8 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.is_enum(ty) => self.format_variant(buf, place, ty, depth),
             TyKind::Adt(d, _) => {
-                let anon = self.cx.adt_def(d).kind == AdtKind::Anon;
+                // An object literal's struct (with accessors) prints as the literal it is.
+                let anon = self.cx.adt_def(d).kind == AdtKind::Anon || self.has_accessor_fields(d);
                 let name = (!anon).then(|| self.cx.type_name(ty));
                 // A recursive object is a box (its pointer is the value) and may be part of a
                 // cycle.
@@ -232,13 +275,13 @@ impl FnLower<'_, '_> {
                 self.format_object(buf, name, place, ty, p, depth);
             }
             TyKind::Tuple(tys) => self.format_tuple(buf, place, ty, &tys, depth),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -254,6 +297,9 @@ impl FnLower<'_, '_> {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
                 self.format_nested(buf, &inner, e, depth);
+            }
+            TyKind::FnPtr { .. } if self.class_object_tag(ty).is_some() => {
+                self.format_class_object(buf, place, ty)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
@@ -364,10 +410,20 @@ impl FnLower<'_, '_> {
             return;
         }
         let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
+        if self.is_proxy(ty) {
+            // Node prints a proxy as its target, without running traps (`showProxy: false`).
+            let any = self.cx.member_ty(ty, 0);
+            let target = self.field_place(&place, ty, 0);
+            self.format_expand(&buf, &target, any, &depth);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         if let Some(m) = self.hook(ty, Hook::Inspect) {
             self.format_inspect(&buf, p, ty, m, &depth);
         } else if !self.format_collection(&buf, &place, ty, &depth) {
-            let name = Some(self.cx.type_name(ty));
+            let literal =
+                matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.has_accessor_fields(d));
+            let name = (!literal).then(|| self.cx.type_name(ty));
             self.format_object(&buf, name, &place, ty, Some(p), &depth);
         }
         self.terminate(Terminator::Return(unit()));
@@ -378,22 +434,62 @@ impl FnLower<'_, '_> {
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
         let (res, rty) = self.call_hook(m, obj, ty, None);
-        // The string, or the name before the value, is kept as one piece when the value is
-        // broken across lines: node inserts a custom inspect's text as it is.
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-        let start = Operand::Copy(Place::local(start));
+        let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
-            let a = self.addr(res.clone());
-            self.push_str(buf, a);
-            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.push_inspect_text(buf, &res);
+        } else if self.is_native_inspect(rty) {
+            // What Node prints for one of its own objects (`ArrayBuffer`, `DataView`): the text,
+            // cut to `[ArrayBuffer]` past the depth limit, as Node cuts its objects.
+            let text = self.field_place(&res, rty, 0);
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                lw.push_inspect_text(buf, &text);
+            });
+        } else if let TyKind::Array(_) = self.cx.kind(rty) {
+            // An array: after the name and its length, as Node prints an array subclass or a
+            // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
+            // limit.
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                let start = lw.temp(Ty::U64);
+                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+                let start = Operand::Copy(Place::local(start));
+                let arr = lw.content(&res, rty);
+                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+                lw.push_text(buf, &format!("{name}("));
+                let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
+                lw.push_scalar(buf, len, u64_);
+                lw.push_text(buf, ") ");
+                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.format_nested(buf, &res, rty, depth);
+            });
         } else {
-            let name = self.cx.type_name(ty);
+            // The string, or the name before the value, is kept as one piece when the value is
+            // broken across lines: node inserts a custom inspect's text as it is.
+            let start = self.temp(Ty::U64);
+            self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+            let start = Operand::Copy(Place::local(start));
             self.push_text(buf, &format!("{name} "));
             self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
+    }
+
+    /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
+    /// broken across lines: node inserts a custom inspect's text as it is.
+    fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = Operand::Copy(Place::local(start));
+        let a = self.addr(text.clone());
+        self.push_str(buf, a);
+        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+    }
+
+    /// Is `ty` std's `NativeInspect` (std/typed_array/core.vlt), the result of an `__inspect()`
+    /// that prints one of Node's own objects?
+    fn is_native_inspect(&self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Adt(d, _)
+            if self.cx.adt_def(d).name == "std/typed_array/core::NativeInspect")
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an
@@ -424,5 +520,64 @@ impl FnLower<'_, '_> {
             self.format_nested(&buf, &p, ty, &depth);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
+    /// parameter is `__ClassMarker<T>[]`, `T` the tag (std/prelude/zzz_adapt_ctor.vlt).
+    fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
+        let TyKind::FnPtr {
+            params, rest: true, ..
+        } = self.cx.kind(ty)
+        else {
+            return None;
+        };
+        let TyKind::Array(m) = self.cx.kind(*params.last()?) else {
+            return None;
+        };
+        let TyKind::Adt(d, args) = self.cx.kind(m) else {
+            return None;
+        };
+        if !self.cx.adt_def(d).name.ends_with("::__ClassMarker") {
+            return None;
+        }
+        args.first().copied()
+    }
+
+    /// The class object at `place`, of type `ty`, as Node prints it: the `Number` kind's
+    /// `[Function: Number]`; one the prelude's `__classObject` made by the text it keeps (its
+    /// closure's first capture: `[class A]`, `[Function: Map]`); one `__classObjectStatics` made
+    /// stops, as its static fields are not supported yet.
+    fn format_class_object(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        let Some(tag) = self.class_object_tag(ty) else {
+            return;
+        };
+        match self.cx.kind(tag) {
+            TyKind::Float(_) => self.push_text(buf, "[Function: Number]"),
+            TyKind::Bool => self.panic_msg(
+                "TypeError: printing the object of a class with static fields or accessors is not supported yet (#926)",
+            ),
+            _ => {
+                let Some(def) = self.prelude_closure("__classObject") else {
+                    return self.push_text(buf, "[Function (anonymous)]");
+                };
+                let ea = self.cx.env_agg(def, &[]);
+                let env = proj(place, Proj::Field(1));
+                let printed = proj(&proj(&env, Proj::Deref(Ty::Agg(ea))), Proj::Field(3));
+                let a = self.addr(printed);
+                self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), a], None);
+            }
+        }
+    }
+
+    /// The closure the prelude function `f` returns (its only one).
+    fn prelude_closure(&self, f: &str) -> Option<DefId> {
+        let name = format!("::{f}::{{closure#0}}");
+        let at =
+            self.cx.hir.defs.iter().position(
+                |d| matches!(d, velt_sema::hir::Def::Fn(def) if def.name.ends_with(&name)),
+            )?;
+        Some(DefId(at as u32))
     }
 }

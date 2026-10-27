@@ -1,0 +1,27 @@
+// Call signatures: optional parameters are not supported yet, and a parameter initializer is
+// only allowed in an implementation (TypeScript's TS2371).
+interface F {
+  (x?: number): string;
+}
+type T = { (x = 1): void };
+
+// A callable interface can't be declared in `declare global` (it would not merge) or in a
+// block yet.
+declare global {
+  interface Cb {
+    (x: number): void;
+  }
+  interface Window {
+    (x: number): void;
+    foo: number;
+  }
+}
+
+function local(): void {
+  interface Local {
+    (x: number): number;
+  }
+}
+
+const f: F = (x) => "f";
+console.log(f(1));

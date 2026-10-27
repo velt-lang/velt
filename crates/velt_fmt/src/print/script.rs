@@ -2,7 +2,7 @@
 //! generated `main` whose name has an empty span. The file is printed as written, with the
 //! statements back at the top level among the declarations, in source order.
 
-use velt_syntax::ast::{Item, ItemKind, Module, Stmt};
+use velt_syntax::ast::{Item, ItemKind, Module, PatternKind, Stmt};
 
 use super::items::{blank_between, is_compact};
 
@@ -29,6 +29,12 @@ pub(super) fn entries(module: &Module) -> Vec<Top<'_>> {
             ItemKind::Function(f) if f.sig.name.span.lo == f.sig.name.span.hi => {
                 out.extend(f.body.stmts.iter().map(Top::Stmt));
             }
+            // The constant the parser adds for `import.meta` (not written in the source).
+            ItemKind::Var(v)
+                if matches!(&v.pattern.kind, PatternKind::Ident(n)
+                    if n.name == velt_syntax::ast::IMPORT_META) => {}
+            // And the import of its class.
+            ItemKind::Import(i) if velt_syntax::is_synthesized_import(i) => {}
             _ => out.push(Top::Item(item)),
         }
     }

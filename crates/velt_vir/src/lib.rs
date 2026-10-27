@@ -128,11 +128,30 @@ pub mod vir;
 
 /// The name of the aggregate every array is (`{ data: Ptr, len: U64, cap: U64 }`), which no
 /// user type can have: optimizations may rely on an array's `len` (field 1) being an element
-/// count, below 2^53.
+/// count, at most [`MAX_ARRAY_LEN`].
 pub const ARRAY_AGG_NAME: &str = "T[]";
 
+/// The most elements an array holds, and the most bytes its buffer holds: 2^52 - 1 (JS allows
+/// 2^32 - 1 elements; Velt goes further, rt_abi.md "Array length limit"). Generated code checks
+/// it where it chooses a length (`lower/array`), `velt_rt_realloc` where an array grows, and the
+/// runtime where it hands a Rust `Vec` over (`velt_rt` `bytes::MAX_ARRAY_LEN`), so `numrep` can
+/// rely on it: an index that runs to `len` inclusive stays below 2^53. Far beyond any memory:
+/// 2^52 bytes are 4 PiB.
+pub const MAX_ARRAY_LEN: u64 = (1 << 52) - 1;
+
+/// The panic message of an array that would pass [`MAX_ARRAY_LEN`] (elements or bytes).
+pub const ARRAY_LEN_MESSAGE: &str =
+    "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes";
+
+/// The end of the name of every class object's aggregate (`<class> object`), which no other
+/// aggregate's name has: the LLVM backend tags the scalar fields of such objects for alias
+/// analysis (velt_codegen_llvm `tbaa.rs`).
+pub const OBJECT_AGG_SUFFIX: &str = " object";
+
+pub mod atomic;
 mod lower;
 pub mod mangle;
+pub mod simd;
 mod verify;
 
 #[cfg(test)]
@@ -177,12 +196,31 @@ pub struct NativeInit {
 /// CONTRACT: lower a checked program. Infallible for any `Program` sema accepted
 /// (internal bugs may panic with a clear "ICE:" message).
 pub fn lower(program: &hir::Program) -> vir::Program {
-    lower::lower_program(program, &LowerOptions::default())
+    lower_with(program, &LowerOptions::default())
 }
 
-/// CONTRACT: [`lower`] with options (source locations for panics and debug info).
+/// CONTRACT: [`lower`] with options (source locations for panics and debug info). Panics
+/// (`ICE:`) where [`lower_checked`] reports an error.
 pub fn lower_with(program: &hir::Program, opts: &LowerOptions) -> vir::Program {
-    lower::lower_program(program, opts)
+    match lower_checked(program, opts) {
+        Ok(p) => p,
+        Err(diags) => panic!("ICE: {}", diags[0].message),
+    }
+}
+
+/// CONTRACT: [`lower_with`], reporting what a checked program can still ask for that lowering
+/// cannot represent yet: an instance that would hold both `null` and `undefined` in one value
+/// (issue #930; sema reports the cases it can see, `undefined_args.rs`).
+pub fn lower_checked(
+    program: &hir::Program,
+    opts: &LowerOptions,
+) -> Result<vir::Program, Vec<velt_common::Diagnostic>> {
+    let (p, diags) = lower::lower_program(program, opts);
+    if diags.is_empty() {
+        Ok(p)
+    } else {
+        Err(diags)
+    }
 }
 
 /// CONTRACT: check VIR invariants (see vir.rs header). Returns human-readable errors.

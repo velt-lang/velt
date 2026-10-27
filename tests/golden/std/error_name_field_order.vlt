@@ -1,0 +1,44 @@
+// A `name` initializer of an error class runs where it is declared among the class's
+// initializers, and every level's runs (side effects in order), as in Node.
+function log(s: string): string { console.log("init " + s); return s; }
+class A extends Error {
+  a: string = log("A.a");
+  constructor(m: string) {
+    console.log("A ctor before");
+    super(m);
+    console.log("A ctor after");
+  }
+}
+class B extends A {
+  b: string = log("B.b");
+  name: string = log("BName");
+  b2: string = log("B.b2");
+}
+class C extends B {
+  c: string = log("C.c");
+  name: string = log("CName");
+}
+const c = new C("msg");
+console.log(c.name, c.a, c.b, c.b2, c.c, c.message);
+console.log(String(c));
+const b = new B("m2");
+console.log(`${b}`);
+class B2 extends Error {
+  x: string = log("x");
+  name: string = log("BName");
+  y: string = log("y");
+}
+class C2 extends B2 {
+  constructor(m: string) {
+    console.log("C2 before");
+    super(m);
+    console.log("C2 after " + this.name);
+    this.name = "Changed";
+  }
+  z: string = log("z");
+}
+const c2 = new C2("q");
+console.log(`${c2}`, c2.x, c2.y, c2.z);
+class D2 extends C2 { name = "DD"; }
+const d2 = new D2("w");
+console.log(`${d2}`);

@@ -1,0 +1,108 @@
+// Classes as values through generic functions and in function bodies: one object per class
+// where JavaScript has one class object (`===`, `Set` and `Map` keys, `includes`).
+class A {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class B extends A {}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+// A class passed to a generic function's parameter: the type arguments the call infers.
+function same<T>(C: new (n: number) => T, D: new (n: number) => T): boolean {
+  return C === D;
+}
+
+function first<T>(C: new (n: number) => T): new (n: number) => T {
+  return C;
+}
+
+const registered = new Set<unknown>();
+
+function reg<T>(C: new (n: number) => T): void {
+  registered.add(C);
+}
+
+reg(A);
+reg(A);
+reg(B);
+console.log(same<A>(A, A), same(A, A), same(A, B), first(A) === first(A), registered.size);
+const made = first(B);
+const b = new made(4);
+console.log(b.n, b instanceof B, made.name);
+
+// A generic class, its type arguments fixed by the other arguments.
+const seen: unknown[] = [];
+
+function boxed<T>(C: new (v: T) => Box<T>, x: T): Box<T> {
+  seen.push(C);
+  return new C(x);
+}
+
+console.log(boxed(Box, 1).v, boxed(Box, 2).v, seen[0] === seen[1], boxed(Box, "three").v);
+const numberBox: new (v: number) => Box<number> = Box;
+console.log(numberBox === seen[0], new numberBox(5).v);
+
+const owners = new Map<unknown, string>();
+
+class Registry {
+  static add<T>(C: new (n: number) => T, s: string): void {
+    owners.set(C, s);
+  }
+}
+
+Registry.add(A, "a");
+Registry.add(A, "b");
+Registry.add(B, "c");
+const keyA: new (n: number) => A = A;
+console.log(owners.size, owners.get(keyA));
+
+async function later<T>(C: new (n: number) => T): Promise<boolean> {
+  await Promise.resolve(1);
+  const D: new (n: number) => T = C;
+  return C === D;
+}
+
+// Read at a signature type over the function's type parameters, in its body.
+function pair<T>(x: T): boolean {
+  const k1: new (v: T) => Box<T> = Box;
+  const k2: new (v: T) => Box<T> = Box;
+  const k3 = (): new (v: T) => Box<T> => Box;
+  return k1 === k2 && k3() === k1 && new k1(x).v === x;
+}
+
+console.log(pair(1), pair("s"));
+
+// A class declared in a function: a new class object each time its declaration runs.
+function make(): unknown {
+  class Local {
+    x = 1;
+  }
+  const p: new () => Local = Local;
+  const q: new () => Local = Local;
+  const r = (): new () => Local => Local;
+  console.log(p === q, r() === p, new p().x);
+  return p;
+}
+
+const m1 = make();
+const m2 = make();
+console.log(m1 === m2, m1 === m1);
+for (let i = 0; i < 2; i++) {
+  class Each {
+    y = 2;
+  }
+  const e1: new () => Each = Each;
+  const e2: new () => Each = Each;
+  console.log(e1 === e2, new e1().y);
+}
+
+later(A).then((ok) => console.log("later", ok));

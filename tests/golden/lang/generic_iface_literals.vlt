@@ -1,0 +1,38 @@
+// Object literals implementing interfaces with generic methods (#943): each such member is a
+// generic function value, which the implementation calls at the method's own type arguments.
+interface App {
+  use<P>(plugin: (opts: P) => void, opts: P): App;
+  name: string;
+}
+interface Ctx {
+  getData<T>(key: string, fallback: T): T;
+  setData<T>(key: string, v: T): void;
+}
+function makeApp(): App {
+  let count = 0;
+  const app: App = {
+    name: "app",
+    use<P>(plugin: (opts: P) => void, opts: P): App {
+      count++;
+      plugin(opts);
+      console.log("plugins", count);
+      return app;
+    },
+  };
+  return app;
+}
+function makeCtx(): Ctx {
+  const store = new Map<string, string>();
+  return {
+    getData(key, fallback) { return store.has(key) ? fallback : fallback; },
+    setData(key, v) { store.set(key, String(v)); console.log("set", key, store.get(key)); },
+  };
+}
+function main(): void {
+  const a = makeApp();
+  a.use((o: number) => console.log("num", o), 3).use((o: string) => console.log("str", o), "x");
+  const c = makeCtx();
+  c.setData("a", 1);
+  c.setData("b", [true]);
+  console.log(c.getData("a", 5), c.getData("z", "q"));
+}

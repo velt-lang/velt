@@ -17,7 +17,12 @@ pub fn import_edit(analysis: &Analysis, spec: &str, name: &str, is_type: bool) -
         .items
         .iter()
         .filter_map(|item| match &item.kind {
-            ast::ItemKind::Import(i) if !i.from.is_empty() => Some((item, i)),
+            // Not the import the parser adds for `import.meta`, which is not in the source.
+            ast::ItemKind::Import(i)
+                if !i.from.is_empty() && !velt_syntax::is_synthesized_import(i) =>
+            {
+                Some((item, i))
+            }
             _ => None,
         })
         .collect();

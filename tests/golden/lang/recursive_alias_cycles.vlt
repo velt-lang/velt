@@ -1,0 +1,36 @@
+// Recursive object type aliases checked as interfaces (#783): a part may be a field-only
+// interface; aliases naming each other are rewritten together, also through a named part and
+// an alias that only renames another; a field in two parts with the same type is one field.
+// The literals are written in the types' field order, which is the order objects print in
+// (#792).
+type Base = { value: number };
+
+interface IBase {
+  value: number;
+}
+type ITree = IBase & { kids: ITree[] };
+
+type A = { name: string; b: B | null };
+type B = { id: number; a: A[] };
+
+type Named = { value: number };
+type C = Named & { d: D | null };
+type D = { id: number; c: C[] };
+
+type Self = { me: Self2 | null };
+type Self2 = Self;
+
+type Same = Base & { value: number; kids: Same[] };
+
+function main() {
+  const i: ITree = { value: 1, kids: [{ value: 2, kids: [] }] };
+  console.log(JSON.stringify(i));
+  const a: A = { name: "a", b: { id: 1, a: [] } };
+  console.log(a.b?.id, JSON.stringify(a));
+  const d: D = { id: 1, c: [{ value: 3, d: null }] };
+  console.log(d.c[0].value, JSON.stringify(d));
+  const s: Self = { me: { me: null } };
+  console.log(s.me?.me === null);
+  const same: Same = { value: 1, kids: [] };
+  console.log(JSON.stringify(same));
+}

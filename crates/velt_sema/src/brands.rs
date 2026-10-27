@@ -23,11 +23,58 @@ impl Ctx<'_> {
         }
     }
 
-    /// Can `t` be branded (a string, number or boolean type)?
+    /// The object type that brands `t` (`{ __b?: true }` of `string & { __b?: true }`), if `t` is
+    /// a brand.
+    pub(crate) fn brand_tag(&self, t: TyId) -> Option<TyId> {
+        let TyKind::Adt(d, args) = self.ty.kind(t) else {
+            return None;
+        };
+        if !args.is_empty() || !self.brands.contains_key(d) {
+            return None;
+        }
+        self.brand_keys
+            .iter()
+            .find(|(_, v)| *v == d)
+            .map(|((_, tag), _)| *tag)
+    }
+
+    /// `t` with each brand whose object part mentions type parameters branded again by that
+    /// part substituted with `args` (`symbol & { __t?: T }` at `T = number`).
+    pub(crate) fn subst_brands(&mut self, t: TyId, args: &[Option<TyId>]) -> TyId {
+        let mut found = vec![];
+        self.ty.visit(t, &mut |k| {
+            if let TyKind::Adt(d, a) = k {
+                if a.is_empty() && !found.contains(d) {
+                    found.push(*d);
+                }
+            }
+        });
+        found.retain(|d| self.generic_brands.contains(d));
+        if found.is_empty() {
+            return t;
+        }
+        let mut to = rustc_hash::FxHashMap::default();
+        for d in found {
+            let from = self.ty.intern(TyKind::Adt(d, vec![]));
+            let (Some(base), Some(tag)) = (self.brand_base(from), self.brand_tag(from)) else {
+                continue;
+            };
+            let tag = self.subst_known(tag, args);
+            let module = self.adt(d).map_or(0, |a| a.module);
+            let span = self.adt(d).map_or(Span::DUMMY, |a| a.span);
+            to.insert(d, self.brand_type(base, tag, module, span));
+        }
+        self.ty.map(t, &mut |k| match k {
+            TyKind::Adt(d, a) if a.is_empty() => to.get(d).copied(),
+            _ => None,
+        })
+    }
+
+    /// Can `t` be branded (a string, number, boolean or symbol type)?
     pub(crate) fn brandable(&self, t: TyId) -> bool {
         matches!(
             self.ty.kind(t),
-            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Symbol
         )
     }
 
@@ -46,6 +93,7 @@ impl Ctx<'_> {
             generics: Generics::default(),
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: Default::default(),
             ctor: None,
@@ -60,6 +108,11 @@ impl Ctx<'_> {
         let d = self.alloc_def(span, DefInfo::Adt(Box::new(info)));
         self.brands.insert(d, base);
         self.brand_keys.insert((base, tag), d);
+        let mut params = vec![];
+        crate::types::collect_params(&self.ty, tag, &mut params);
+        if !params.is_empty() {
+            self.generic_brands.insert(d);
+        }
         self.ty.intern(TyKind::Adt(d, vec![]))
     }
 }

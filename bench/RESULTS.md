@@ -1268,3 +1268,111 @@ by generic TSX: [bench/jsx/README.md](jsx/README.md) (`bench/jsx/run.sh`, with
 `BASE=<ref>` for an A/B of std/jsx). macOS arm64, 100 000 renders, instructions retired:
 hand 2.48 G, precompiled TSX 2.67 G (#676: 3.34 G; origin/main's std: 4.02 G), generic TSX
 9.87 G.
+
+## Linux refresh (2026-10-23)
+
+The three suites again on `main` at 909c789a, to see where three weeks of correctness work left
+the speed. Machine: Intel i9-8950HK (6 cores, 12 threads), 30 GB, Omarchy Linux (kernel 7.2.8);
+clang 23.1.3 (LLVM backend), rustc 1.99.0 (`rustc -O`, the repository's toolchain), Node
+26.12.0. Another build ran on the machine throughout (load average 2–21, one-minute; 2–8 during
+`bench/run.sh` and `bench/typical/run.sh`), so each harness ran twice and each cell is the best
+of both runs. The compiler of the 2026-10-04 typical table (119b25df, the commit that added
+`bench/typical`) was built and run on the same machine, alternating with `main`, with its own
+copies of the programs: its columns are the same-machine "then". The old tables' columns are
+the numbers above (Windows i9-12900HK and Node 22.22 for `bench/*.vlt` and `bench/typical`, an
+Apple M4 and Node 24.11 for JSON). Ratios above 1 against Node are bold.
+
+`bench/run.sh 10` (the programs added since have no 119b25df row; `int32`'s old ratios are from
+"JS int32 operators"):
+
+| benchmark | Velt cranelift debug | Velt cranelift release | Velt LLVM release | Rust -O | Node | Velt / Rust | Velt / Node | 119b25df: Velt / Rust | Velt / Node | old table: Velt / Rust | Velt / Node |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| classes | 695 | 237 | 243 | 338 | 750 | 0.72 | 0.32 | 0.72 | 0.32 | 0.69 | 0.39 |
+| closures | 1111 | 658 | 341 | 321 | 1253 | 1.06 | 0.27 | 1.07 | 0.28 | 0.80 | 0.27 |
+| closures_borrowed | 161 | 80 | 82 | 219 | 77 | 0.37 | **1.06** |  |  |  |  |
+| closures_held | 158 | 46 | 21 | 14 | 83 | 1.50 | 0.25 |  |  |  |  |
+| closures_this | 320 | 129 | 82 | 352 | 113 | 0.23 | 0.73 |  |  |  |  |
+| fib | 54 | 55 | 26 | 30 | 153 | 0.87 | 0.17 | 0.80 | 0.16 | 1.00 | 0.22 |
+| floats | 83 | 74 | 67 | 64 | 114 | 1.05 | 0.59 | 1.01 | 0.57 | 1.11 | 0.49 |
+| hashmap | 275 | 194 | 136 | 237 | 520 | 0.57 | 0.26 | 0.62 | 0.27 | 0.63 | 0.38 |
+| int32 | 4514 | 1508 | 1703 | 1538 | 1524 | 1.11 | **1.12** |  |  | 1.35 | 0.51 |
+| loops | 2255 | 359 | 147 | 148 | 1344 | 0.99 | 0.11 | 1.00 | 0.11 | 0.91 | 0.13 |
+| nbody | 1863 | 612 | 218 | 220 | 2524 | 0.99 | 0.09 | 1.07 | 0.10 | 0.91 | 0.09 |
+| shapes | 146 | 121 | 67 | 74 | 553 | 0.91 | 0.12 | 0.90 | 0.12 |  |  |
+| sort | 217 | 173 | 73 | 74 | 694 | 0.99 | 0.11 | 1.01 | 0.10 | 1.23 | 0.12 |
+| strings | 261 | 222 | 117 | 232 | 636 | 0.50 | 0.18 | 0.53 | 0.22 | 0.99 | 0.53 |
+
+`bench/typical/run.sh 7` (`consume`, `dispatch`, `stats` and `trees` were added after 119b25df):
+
+| benchmark | Velt (LLVM release) | Rust -O | Node | Velt / Rust | Velt / Node | 119b25df: Velt / Rust | Velt / Node | old table: Velt / Rust | Velt / Node |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| consume | 685 | 195 | 722 | 3.51 | 0.95 |  |  |  |  |
+| record | 149 | 106 | 362 | 1.41 | 0.41 | 2.22 | 0.58 | 1.63 | 0.52 |
+| strings | 894 | 855 | 5942 | 1.05 | 0.15 | 1.15 | 0.17 | 0.76 | 0.17 |
+| vec2 | 51 | 50 | 491 | 1.02 | 0.10 | 3.33 | 0.33 | 3.67 | 0.40 |
+| numloop | 140 | 144 | 495 | 0.97 | 0.28 | 1.20 | 0.29 | 1.07 | 0.30 |
+| graph | 99 | 103 | 353 | 0.96 | 0.28 | 1.12 | 0.32 | 1.13 | 0.38 |
+| fib | 44 | 48 | 190 | 0.92 | 0.23 | 1.12 | 0.23 | 1.12 | 0.32 |
+| stats | 59 | 70 | 213 | 0.84 | 0.28 |  |  |  |  |
+| wordcount | 150 | 180 | 813 | 0.83 | 0.18 | 1.63 | 0.35 | 1.05 | 0.39 |
+| callbacks | 105 | 129 | 696 | 0.81 | 0.15 | 0.80 | 0.12 | 0.83 | 0.15 |
+| grid | 100 | 129 | 577 | 0.78 | 0.17 | 2.02 | 0.49 | 3.81 | 0.58 |
+| sortcmp | 159 | 211 | 954 | 0.75 | 0.17 | 3.21 | 0.63 | 2.32 | 0.39 |
+| tokenize | 108 | 145 | 261 | 0.74 | 0.41 | 3.38 | 1.87 | 2.59 | 1.78 |
+| objects | 168 | 229 | 915 | 0.73 | 0.18 | 0.80 | 0.18 | 0.56 | 0.18 |
+| trees | 28 | 43 | 165 | 0.65 | 0.17 |  |  |  |  |
+| dispatch | 49 | 80 | 188 | 0.61 | 0.26 |  |  |  |  |
+| keys | 96 | 189 | 419 | 0.51 | 0.23 | 0.49 | 0.25 | 0.43 | 0.31 |
+| chains | 274 | 614 | 1698 | 0.45 | 0.16 | 0.46 | 0.18 | 1.01 | 0.12 |
+| errors | 68 | 272 | 220 | 0.25 | 0.31 | 0.34 | 0.36 | 1.24 | 0.25 |
+
+`bench/json/run.sh 5`:
+
+| benchmark | Velt (LLVM release) | Rust serde_json | Node | Velt / Rust | Velt / Node | 119b25df: Velt / Rust | Velt / Node | old table: Velt / Rust | Velt / Node |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| edit | 23 | 1398 | 83 | 0.02 | 0.28 | 0.01 | 0.28 | 0.02 | 0.38 |
+| navigate | 472 | 737 | 289 | 0.64 | **1.63** | 0.69 | 2.11 | 0.67 | 2.19 |
+| parse_typed | 319 | 511 | 657 | 0.62 | 0.49 | 0.80 | 0.54 | 0.85 | 1.00 |
+| parse_union | 370 | 307 | 582 | 1.21 | 0.64 | 1.64 | 0.69 | 1.43 | 0.84 |
+| parse_value | 2748 | 1565 | 2170 | 1.76 | **1.27** | 0.63¹ | 1.20¹ | 0.88 | 1.55 |
+| stringify | 295 | 197 | 355 | 1.50 | 0.83 | 1.54 | 0.86 | 1.72 | 0.47 |
+
+¹ `parse_value` takes 0.9 s or 2.7 s from one run to the next on this machine, for Velt and Node
+alike (119b25df's first run: Velt 891 ms, Node 709 ms; every other run of either build
+2.7–2.9 s). The 119b25df cells are from interleaved runs of the built programs, best of 7, load
+average 21: `main` 2748 ms, 119b25df 2680 ms, Rust 4268 ms, Node 2238 ms.
+
+What changed:
+- **No regression against the same machine's 119b25df.** No row's Velt / Rust or Velt / Node is
+  more than 10% worse than at 119b25df, apart from noise that an interleaved re-run removed
+  (`callbacks`: `main` 300 ms, 119b25df 306 ms, best of 10; `parse_value` above). The rows that
+  moved more than 10% against the old tables moved with the machine or the Node version, not
+  with Velt: at 119b25df on this machine they have the new ratios too (`closures`, `floats`,
+  typical `strings`, `objects`, `keys`, `chains`, `errors`, JSON `stringify`).
+- **bench/typical's four large gaps are closed.** Against 119b25df: `grid` 2.02 → 0.78 × Rust
+  (#532), `vec2` 3.33 → 1.02 (#533), `tokenize` 3.38 → 0.74 (#531), `sortcmp` 3.21 → 0.75
+  (#530), and `wordcount` 1.63 → 0.83, `record` 2.22 → 1.41. Velt is under Rust on 15 of the 19
+  programs and within 5% on two more (`strings`, `vec2`), and under Node on all 19 (`tokenize`
+  went from 1.87× Node to 0.41×). Left: `record` (1.41× Rust) and `consume` (3.5× Rust, 0.95×
+  Node).
+- **`bench/*.vlt` is at Rust parity with LLVM**, as at 119b25df on this machine (`sort` 0.99×,
+  1.23× in the old Windows table). Cranelift release is 0.9–2.8× LLVM release.
+- **JSON** against 119b25df: `parse_typed` 0.80 → 0.62 × serde_json, `parse_union` 1.64 → 1.21,
+  `navigate` 2.11 → 1.63 × Node.
+- **Slower than Node:**
+  - `closures_borrowed` (1.06×; 1.02× in an interleaved best of 10): `%` on `number` values that
+    come back from a function is a `noinline` call, so the constant divisor becomes a 64-bit
+    `idiv` (#1470).
+  - `int32` (1.12× here; 0.96× and 0.95× in two interleaved runs, best of 5): Velt is at Rust's
+    speed (1.11×; it was 1.35×), and Node 26 is too (Node 22 was 2.7× Rust in the old run), so
+    the two are within noise of each other. Each half on its own (int32.vlt without one of its
+    `console.log` lines, best of 7 interleaved), Velt is ahead: `(y * k) | 0` 1429 ms against
+    Node's 1495, `Math.imul` 453 against 505.
+  - JSON `navigate` (1.63×) and `parse_value` (1.2–1.3×): slower than Node in the 2026-10-02
+    table too (2.19× and 1.55×), and closer now; survey #529 lists them.
+- Harness: `bench/run.sh` builds into and runs from cargo's target directory (it used
+  `<repo>/target` even with `CARGO_TARGET_DIR` set) and skips programs without Rust and Node
+  versions (`weakmap`, which only `bench/nightly.sh` counts); `bench/typical/run.sh` is
+  executable. `bench/nightly.sh` also runs each benchmark that has a Node version under `node`
+  (best of 3 interleaved, wall time) and marks the rows where Velt takes longer than Node in a
+  second table; wall time on a shared runner is a guide, so those rows don't fail the job.

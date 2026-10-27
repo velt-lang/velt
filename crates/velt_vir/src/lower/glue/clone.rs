@@ -9,19 +9,40 @@ use velt_sema::hir::{PassMode, TyId, TyKind};
 use super::{Glue, SLOT_CLONE};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, unit, FnLower};
+use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     pub(super) fn clone_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
         let s = self.deref_param(src, ty);
         let d = self.deref_param(dst, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            let at = d.clone();
+            self.proxy_glue_split(&s, done, |lw, up, pty| lw.clone_proxy(up, &at, pty));
+            done
+        });
         self.clone_expand(&s, &d, ty);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
+    /// A deep copy of the typed proxy whose `Proxy` object (untagged) is at `up`, stored
+    /// tagged at `d`: a copy of the object, its target and its handler, as for an `any`
+    /// holding it.
+    fn clone_proxy(&mut self, up: Place, d: &Place, pty: TyId) {
+        let out = Place::local(self.temp(Ty::Ptr));
+        self.clone_into(up, out.clone(), pty);
+        let t = self.proxy_tag(Operand::Copy(out));
+        self.assign(d.clone(), Rvalue::Use(t));
+    }
+
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
-        if !self.cx.is_class(ty) && self.cx.uncopyable_part(ty) == Some(ty) {
+        let promise = matches!(self.cx.kind(ty), TyKind::Promise(..));
+        if !self.cx.is_class(ty) && !promise && self.cx.uncopyable_part(ty) == Some(ty) {
             // A disposable struct or union (classes: `obj_clone_body`).
             self.panic_cannot_copy("a", ty);
         }
@@ -29,10 +50,7 @@ impl FnLower<'_, '_> {
             return self.clone_boxed(s, d, ty, |lw, sv, dv| lw.clone_inline(sv, dv, ty));
         }
         match self.cx.kind(ty) {
-            TyKind::Str => {
-                let (a, b) = (self.addr(s.clone()), self.addr(d.clone()));
-                self.call_rt(Rt::StrClone, vec![a, b], None);
-            }
+            TyKind::Str => self.str_share(s.clone(), d.clone()),
             TyKind::Adt(dd, _) if self.cx.is_class(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(s.clone())));
                 self.assign(d.clone(), Rvalue::Use(obj.clone()));
@@ -71,7 +89,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.clone_option(s, d, ty, e),
+            TyKind::Option(e, _) => self.clone_option(s, d, ty, e),
             TyKind::Array(e) => self.clone_array(s, d, e),
             TyKind::Shared(_) => {
                 self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
@@ -84,12 +102,10 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.clone_closure(s, d),
-            // Sema rejects copying promises; a generic instance that still reaches here (a
-            // `T` bound to a promise) must not duplicate the owning pointer.
+            // Another holder of the same promise (shared promises, #212).
             TyKind::Promise(..) => {
-                let msg = self.str_lit("a promise cannot be copied");
-                let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-                self.call_rt(Rt::Panic, vec![at], None);
+                let f = self.share_promise(Operand::Copy(s.clone()), ty);
+                self.assign(d.clone(), Rvalue::Use(f));
             }
             TyKind::Dyn(..) => self.clone_dyn(s, d),
             _ => self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone()))),
@@ -125,7 +141,15 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    fn clone_array(&mut self, s: &Place, d: &Place, e: TyId) {
+    pub(in crate::lower) fn clone_array(&mut self, s: &Place, d: &Place, e: TyId) {
+        // A view copies its mirror, brought up to date: a plain array (array_view.rs).
+        let s = &match self.cx.array_view_of(e) {
+            true => {
+                let t = self.cx.intern(velt_sema::hir::TyKind::Array(e));
+                self.view_inline(s.clone(), t, super::super::array_view::ViewSync::All)
+            }
+            false => s.clone(),
+        };
         let len = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
         let a = self.cx.array_agg();
         let empty = self.rvalue_temp(
@@ -172,6 +196,20 @@ impl FnLower<'_, '_> {
 
     fn clone_dyn(&mut self, s: &Place, d: &Place) {
         self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
+        if self.cx.has_proxies() {
+            let (sd, dd) = (proj(s, Proj::Field(0)), proj(d, Proj::Field(0)));
+            return self.proxy_dyn_data(
+                &sd,
+                |lw, up, pty| lw.clone_proxy(up, &dd, pty),
+                |lw| lw.clone_dyn_data(s, d),
+            );
+        }
+        self.clone_dyn_data(s, d);
+    }
+
+    /// The data of the interface value `s` (already copied bitwise into `d`), deep-copied by
+    /// its table's `SLOT_CLONE` entry.
+    fn clone_dyn_data(&mut self, s: &Place, d: &Place) {
         let vt = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
         let done = self.new_block();
         let nn = self.non_null(vt.clone());
@@ -211,7 +249,7 @@ impl FnLower<'_, '_> {
                 _ => this,
             };
             let targs = self.cx.method_targs(m, ty);
-            let f = self.cx.func_for(m, targs);
+            let f = self.cx.func_for_direct(m, targs, self.mode);
             let out = self.temp(Ty::Ptr);
             // User code runs outside a transfer under way (velt_rt `transfer_map`): its own
             // copies are not looked up in the transfer's map.
@@ -233,7 +271,7 @@ impl FnLower<'_, '_> {
         // During a transfer, an object referenced more than once is copied once.
         let src = Operand::Copy(Place::local(obj));
         let found = (self.cx.counted(ty) && self.cx.copied_across(ty)).then(|| {
-            self.find_copy(src.clone(), |lw, copy| {
+            self.find_copy(src.clone(), ty, |lw, copy| {
                 lw.terminate(Terminator::Return(copy));
             })
         });
@@ -251,6 +289,10 @@ impl FnLower<'_, '_> {
             let sp = self.field_place(&Place::local(obj), ty, i as u32);
             let dp = self.field_place(&np, ty, i as u32);
             self.clone_into(sp, dp, t);
+        }
+        // A copy of a view is the view of the copy of its object (any_view.rs).
+        if let TyKind::Adt(d, _) = self.cx.kind(ty) {
+            self.proxy_review(new.clone(), d);
         }
         self.terminate(Terminator::Return(new));
     }
@@ -271,5 +313,36 @@ impl FnLower<'_, '_> {
             self.clone_into(src, dst, ty);
         }
         self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `velt_rt_fut_share(f, ...)`: another holder of promise `f` of type `ty` (#212), with the
+    /// glue that shares and drops its result slot.
+    pub(in crate::lower) fn share_promise(&mut self, f: Operand, ty: TyId) -> Operand {
+        let slot = self.cx.promise_slot(ty);
+        let vt = self.cx.ty(slot);
+        let size = self.cx.size_align(vt).0;
+        let share = if self.cx.needs_drop(slot) {
+            cfunc(self.cx.func(Work::Glue(Glue::ShareSlot, slot)))
+        } else {
+            cint(0, Ty::Ptr)
+        };
+        let drop = self
+            .result_drop_fn(slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        let out = self.temp(Ty::Ptr);
+        let args = vec![f, cint(size as i128, Ty::U64), share, drop];
+        self.call_rt(Rt::FutShare, args, Some(Place::local(out)));
+        Operand::Copy(Place::local(out))
+    }
+
+    /// `Glue::ShareSlot`: another reference to the value at `src`, written to `dst`.
+    pub(super) fn share_slot_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
+        self.cx.note_share(ty);
+        let s = self.deref_param(src, ty);
+        let d = self.deref_param(dst, ty);
+        self.share_into(s, d, ty);
+        self.terminate(Terminator::Return(unit()));
     }
 }

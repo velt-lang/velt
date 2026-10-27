@@ -1,0 +1,49 @@
+// Operands read before a method call or getter through `any` are held: the call may grow or
+// replace what they were read from, as in Node.
+// check: no leaks
+class G {
+  ss: string[];
+  ns: number[];
+  constructor(ss: string[], ns: number[]) {
+    this.ss = ss;
+    this.ns = ns;
+  }
+  grow(): string {
+    for (let i = 0; i < 100; i++) {
+      this.ss.push("s" + i);
+      this.ns.push(i);
+    }
+    return "X";
+  }
+  get g(): string {
+    return this.grow();
+  }
+}
+class Holder {
+  x: any = null;
+}
+class D {
+  name: string;
+  h: Holder;
+  constructor(name: string, h: Holder) {
+    this.name = name;
+    this.h = h;
+  }
+  kill(): string {
+    this.h.x = null;
+    return this.name;
+  }
+}
+function main(): void {
+  const ss: string[] = ["a" + String(1)];
+  const ns: number[] = [5];
+  const o: any = new G(ss, ns);
+  console.log(ss[0], o.grow(), ss.length);
+  console.log(ss[0], o.g, ss.length);
+  ss[0] += o.grow() as string;
+  console.log(ss[0], ss.length);
+  console.log(ns[0] * (o.grow().length as number), ns.length);
+  const h = new Holder();
+  h.x = new D("d" + String(1), h);
+  console.log(h.x, h.x.kill());
+}

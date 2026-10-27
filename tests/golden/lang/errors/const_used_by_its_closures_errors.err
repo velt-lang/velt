@@ -1,0 +1,3 @@
+const_used_by_its_closures_errors.vlt:6:9: error: type annotation needed for `o`: a closure in its initializer uses it
+write its type, e.g. `const o: T = …`
+const_used_by_its_closures_errors.vlt:7:9: error: type annotation needed for `p`: a closure in its initializer uses it

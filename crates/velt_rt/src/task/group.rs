@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::Notify;
 
-use super::leaf::new_leaf;
+use super::leaf::new_inner_leaf;
 use super::VeltFut;
 use crate::registry::{Key, Registry};
 
@@ -65,7 +65,7 @@ pub extern "C" fn velt_rt_group_leave(g: Key<Group>) {
 #[no_mangle]
 pub extern "C" fn velt_rt_group_wait(g: Key<Group>) -> *mut VeltFut {
     let grp = GROUPS.get(g);
-    new_leaf(async move {
+    new_inner_leaf(async move {
         let Some(grp) = grp else { return };
         loop {
             let idle = grp.idle.notified();
@@ -95,7 +95,7 @@ mod tests {
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]

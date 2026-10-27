@@ -1,0 +1,12 @@
+// A getter every class of a union has (`.size` of `Map<any, any> | Set<any>`, as sigx's
+// `(obj as Set<any> | Map<any, any>).size`): read on the member the value holds. Node prints
+// the same.
+function sizeOf(c: Map<any, any> | Set<any>): number {
+  return c.size;
+}
+
+const s = new Set<any>([1, 2, 3]);
+const m = new Map<any, any>([["a", 1]]);
+console.log(sizeOf(s), sizeOf(m), (s as (Set<any> | Map<any, any>)).size);
+s.add(4);
+console.log(sizeOf(s));

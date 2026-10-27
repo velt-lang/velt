@@ -116,7 +116,8 @@ impl Kw {
         use Kw::*;
         matches!(
             self,
-            Case | Constructor
+            As | Case
+                | Constructor
                 | Declare
                 | Default
                 | From

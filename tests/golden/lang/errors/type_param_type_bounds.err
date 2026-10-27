@@ -1,0 +1,39 @@
+type_param_type_bounds.vlt:31:13: error: the type `T` does not satisfy the constraint `string | f64`
+  = note: required by `T extends string | f64` of function `id`
+
+type_param_type_bounds.vlt:46:8: error: the type `"c"` does not satisfy the constraint `"a" | "b"`
+  = note: required by `T extends "a" | "b"` of function `same`
+
+type_param_type_bounds.vlt:47:9: error: the type `{ a: string }` does not satisfy the constraint `Record<string, f64>`
+  = note: required by `T extends Record<string, f64>` of function `total`
+
+type_param_type_bounds.vlt:48:6: error: the type `boolean` does not satisfy the constraint `string | f64`
+  = note: required by `T extends string | f64` of function `id`
+
+type_param_type_bounds.vlt:49:6: error: the type `boolean` does not satisfy the constraint `string | f64`
+  = note: required by `T extends string | f64` of function `id`
+
+type_param_type_bounds.vlt:50:8: error: no overload of `pick` matches this call
+  = note: overload 1 of 2: the type `boolean` does not satisfy the constraint `string` (required by `T extends string` of function `pick`)
+  = note: overload 2 of 2: the type `boolean` does not satisfy the constraint `f64[]` (required by `T extends f64[]` of function `pick`)
+
+type_param_type_bounds.vlt:51:12: error: the type `"c"` does not satisfy the constraint `"a" | "b"`
+  = note: required by `T extends "a" | "b"` of function `optional`
+
+type_param_type_bounds.vlt:52:14: error: mismatched types
+  = note: expected "a" | "b", found "z"
+
+type_param_type_bounds.vlt:53:8: error: the type `f64` does not implement `object`
+  = note: required by `T extends object` of function `getA`
+
+type_param_type_bounds.vlt:54:8: error: the type `string` does not implement `object`
+  = note: required by `T extends object` of function `getA`
+
+type_param_type_bounds.vlt:55:8: error: the type `boolean` does not implement `object`
+  = note: required by `T extends object` of function `getA`
+
+type_param_type_bounds.vlt:56:9: error: the type `boolean` does not satisfy the constraint `string`
+  = note: required by `T extends string` of the constructor of `G`
+
+type_param_type_bounds.vlt:57:24: error: the type `boolean` does not satisfy the constraint `string | f64`
+  = note: required by `T extends string | f64` of function `id`

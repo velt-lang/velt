@@ -1,0 +1,13 @@
+Counts(2) [Map] { 'a' => 2, 'b' => 1 } [object Map]
+Tags(1) [Set] { 'x' } [object Set]
+Named(0) [Map] {} Deeper(1) [Map] { 'z' => 1 } [ Counts(2) [Map] { 'a' => 2, 'b' => 1 } ]
+{ inner: { deep: { more: [Counts [Map]] } } }
+MF(0) [Map] { tag: 't', n: 2 }
+MF(1) [Map] { 'z' => 3, tag: 't', n: 2 }
+SF(1) [Set] { 1, label: 's' } [ MF(1) [Map] { 'z' => 3, tag: 't', n: 2 } ] { deep: { deeper: { m: [MF [Map]] } } }
+[object Map] [object Set]
+Big(2) [Map] {
+  'key-one' => 'value number one',
+  'key-two' => 'value number two',
+  description: 'a fairly long description string here'
+}

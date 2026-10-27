@@ -1,0 +1,8 @@
+// `await null` and `await 7` among the top-level statements of a module (#1501).
+Promise.resolve().then(() => console.log("then"));
+console.log("a");
+await null;
+console.log("b");
+const k = await 7;
+console.log("c", k);
+export {};

@@ -1,0 +1,1 @@
+fn_bind_args.vlt:6:14: error: `bind` with arguments, or of a function with a `this` parameter, is not supported yet

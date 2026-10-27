@@ -2,12 +2,23 @@
 
 `import { isWebSocketRequest, upgradeWebSocket, connectWebSocket, WebSocket } from
 "velt:websocket"`. WebSockets (RFC 6455): accepted by a velt:http server through an HTTP/1.1
-upgrade, or opened as a client to `ws://` / `wss://` URLs.
+upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is written in Velt, on
+[`velt:net`](net.md) streams (`connect`, `connectTls`) and
+[`upgradeConnection`](http.md#upgradeconnectionreq-protocol-headers).
 
 - `isWebSocketRequest(req: Request): bool`.
 - `upgradeWebSocket(req: Request): WebSocketUpgrade { socket: WebSocket; response: Response }`:
   return `response` (a `101`) from the handler and use `socket` from a spawned task. Throws
   `IoError` "EINVAL" if `req` is not an upgrade request.
+- `acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null`: the same on a
+  [velt:http/server](http_server.md) server: answers the `101` itself and returns the socket
+  (with the frames the client sent along with the request). A request that is not a valid
+  handshake (RFC 6455 §4.2.1: `GET`, HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`,
+  `Sec-WebSocket-Version: 13`, a `Sec-WebSocket-Key` of 16 base64-encoded bytes) is answered
+  there, as RFC 6455 §4.2.2 allows: 426 with `Sec-WebSocket-Version: 13` when it is not an
+  upgrade or asks for another version, else 400 (the `ws` package answers 400 to another
+  version and 405 to another method); it then returns null. Throws `IoError`
+  "EINVAL" if a response was started.
 - `connectWebSocket(url, opts: WsConnectOptions { ca? } = {}): Promise<WebSocket>`.
 - `WebSocket` (a handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage
   | null>` (null once the peer closed), `close(code = 1000, reason = "")` (sends a close frame
@@ -95,9 +106,18 @@ arrived together, or a message sent to many sockets, cost one system call per so
 that leaves more than 1 MiB queued for the connection completes only once the writer has caught
 up, so a slow peer slows its sender down instead of filling memory. A connection that broke is reported by the next `send` or `receive`
 (`IoError`). `close` returns once everything sent before it is written; a peer that stops reading gets 30
-seconds to take what is queued after `close` (or after the handle is released), then the
-connection is shut down. An idle connection keeps
-no read buffer (about 3 KB of memory per open connection in total).
+seconds to take what is queued after `close`, then the connection is shut down. An idle
+connection keeps no read buffer, no write buffer and no task of its own (about 3.3 KB of
+memory per open connection in total). A reply (a `send` by the task that just received a message on
+the connection, with no more input waiting) is written at once: there is nothing to batch it
+with.
+
+On the server side the socket works once the handler has returned the `101`: a `send` before
+that is queued and goes out right after the response, in order, and a `receive` waits for it.
+A protocol error from the peer (an unmasked frame from a client, invalid UTF-8 in a text
+message, a message over 64 MiB, …) fails the connection: the peer gets a close frame with the
+matching code (1002, 1007, 1009), that `receive` throws `IoError` `EILSEQ`, and later ones
+return null.
 
 To send one message to many connections, `publish` to a topic they subscribed to. To send to a
 list you keep yourself, a plain loop is the fastest way

@@ -1,0 +1,32 @@
+// check: no leaks
+// Unhandled rejection of a shared promise: reported only when no holder awaited it. Here every
+// holder awaits, so nothing is reported; and a holder dropped without awaiting does not cancel.
+class Failed extends Error {}
+
+async function fail(n: number): Promise<number> {
+  await Promise.resolve();
+  console.log(`fail ${n} runs`);
+  throw new Failed(`no ${n}`);
+}
+
+async function main() {
+  const p = fail(1);
+  const q = p;
+  const results: string[] = [];
+  for (const x of [p, q]) {
+    try {
+      await x;
+    } catch (e) {
+      results.push((e as Error).message);
+    }
+  }
+  console.log(results.join(", "));
+  const kept = fail(2);
+  const other = kept;
+  try {
+    await other;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log("end");
+}

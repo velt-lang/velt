@@ -6,6 +6,8 @@
 //! written in place and never reallocated, so its length and capacity stay as they are.
 
 use crate::bytes::VeltBytes;
+use crate::result::{invalid_utf8, IoResult, VeltErr};
+use crate::str::VeltStr;
 
 /// The array's bytes, writable.
 ///
@@ -29,9 +31,28 @@ fn relative(i: i64, len: usize) -> usize {
 }
 
 /// A zeroed array of `n` bytes (`Buffer.alloc(n)`): calloc, so large arrays cost no memset.
+/// Past the array length limit it is the limit's `RangeError`; a size the target cannot
+/// allocate (on wasm32, any past 2^31 - 1, never truncated) stops the program as
+/// `velt_rt_alloc` does.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
-    out.write(VeltBytes::from_vec(vec![0; n as usize]));
+    if n > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let len = crate::mem::block_size(n, 1);
+    if len == 0 {
+        out.write(VeltBytes::from_vec(Vec::new()));
+        return;
+    }
+    let p = match std::alloc::Layout::array::<u8>(len) {
+        Ok(layout) => std::alloc::alloc_zeroed(layout),
+        Err(_) => std::ptr::null_mut(),
+    };
+    if p.is_null() {
+        crate::mem::out_of_memory(n, 1);
+    }
+    // SAFETY: `p` is a zeroed block of `len` bytes from the global allocator.
+    out.write(VeltBytes::from_vec(Vec::from_raw_parts(p, len, len)));
 }
 
 /// First position at or after `from` (relative) holding `byte`, or -1.
@@ -124,7 +145,9 @@ pub unsafe extern "C" fn velt_rt_bytes_slice(
     out.write(VeltBytes::from_vec(v));
 }
 
-/// `a` followed by `b`, as a new array (JS `concat`).
+/// `a` followed by `b`, as a new array (JS `concat`). Past the array length limit it is the
+/// limit's `RangeError`, and a size the target cannot allocate is out of memory, as in
+/// `velt_rt_bytes_zeroed`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_concat(
     a: *const VeltBytes,
@@ -132,41 +155,57 @@ pub unsafe extern "C" fn velt_rt_bytes_concat(
     out: *mut VeltBytes,
 ) {
     let (a, b) = ((*a).as_bytes(), (*b).as_bytes());
-    let mut v = Vec::with_capacity(a.len() + b.len());
+    let total = a.len() as u64 + b.len() as u64;
+    if total > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let mut v = Vec::new();
+    if v.try_reserve_exact(crate::mem::block_size(total, 1))
+        .is_err()
+    {
+        crate::mem::out_of_memory(total, 1);
+    }
     v.extend_from_slice(a);
     v.extend_from_slice(b);
     out.write(VeltBytes::from_vec(v));
 }
 
-/// Whether the array is well-formed UTF-8.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_utf8_valid(b: *const VeltBytes) -> u8 {
-    std::str::from_utf8((*b).as_bytes()).is_ok() as u8
+/// The bytes of `b` in `[start, end)` (relative indices).
+unsafe fn range<'a>(b: *const VeltBytes, start: i64, end: i64) -> &'a [u8] {
+    let s = (*b).as_bytes();
+    let (start, end) = (relative(start, s.len()), relative(end, s.len()));
+    &s[start..end.max(start)]
 }
 
-/// XORs `[start, end)` (relative indices) with the four bytes of `mask` (most significant first),
-/// repeating from `start`: WebSocket masking (RFC 6455 §5.3), its own inverse.
+/// The bytes in `[start, end)` (relative indices) as a new string, validating UTF-8
+/// (`INVALID_DATA` on failure): `velt_rt_bytes_to_str` of a slice, without making the slice.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_xor_mask(
+pub unsafe extern "C" fn velt_rt_bytes_range_to_str(
     b: *const VeltBytes,
-    mask: u32,
     start: i64,
     end: i64,
+    out: *mut IoResult<VeltStr>,
 ) {
-    let s = bytes_mut(b);
-    let (start, end) = (relative(start, s.len()), relative(end, s.len()));
-    if start >= end {
-        return;
-    }
-    let m = mask.to_be_bytes();
-    let wide = u64::from_ne_bytes([m[0], m[1], m[2], m[3], m[0], m[1], m[2], m[3]]);
-    let (chunks, rest) = s[start..end].as_chunks_mut::<8>();
-    for c in chunks {
-        *c = (u64::from_ne_bytes(*c) ^ wide).to_ne_bytes();
-    }
-    for (i, byte) in rest.iter_mut().enumerate() {
-        *byte ^= m[i & 3];
-    }
+    let bytes = range(b, start, end);
+    let r = match std::str::from_utf8(bytes) {
+        Ok(s) => IoResult::ok(VeltStr::from_bytes(s.as_bytes())),
+        Err(_) => IoResult::err(VeltErr::from_io(&invalid_utf8("byte buffer"))),
+    };
+    r.write_to(out);
+}
+
+/// The bytes in `[start, end)` (relative indices) as a new string, an invalid sequence as
+/// U+FFFD (one per maximal invalid subpart, as `TextDecoder`): Node's `buf.utf8Slice`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_range_to_str_lossy(
+    b: *const VeltBytes,
+    start: i64,
+    end: i64,
+    out: *mut VeltStr,
+) {
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy(range(b, start, end)).as_bytes(),
+    ));
 }
 
 #[cfg(test)]
@@ -236,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_concat_utf8_xor() {
+    fn slice_concat() {
         let b = arr(b"hello world");
         // SAFETY: valid owned buffers; `out` is written before it is read.
         unsafe {
@@ -249,21 +288,6 @@ mod tests {
             assert_eq!(out.assume_init_ref().as_bytes(), b"");
             velt_rt_bytes_concat(&arr(b"ab"), &arr(b"cd"), out.as_mut_ptr());
             assert_eq!(out.assume_init_ref().as_bytes(), b"abcd");
-            assert_eq!(velt_rt_bytes_utf8_valid(&arr("héllo ✓".as_bytes())), 1);
-            assert_eq!(velt_rt_bytes_utf8_valid(&arr(b"\xff\xfe")), 0);
-            // Every length around the 8-byte chunks, and an offset start.
-            for n in 0..20 {
-                let plain: Vec<u8> = (0..n as u8).collect();
-                let x = arr(&[&[9u8, 9][..], &plain].concat());
-                velt_rt_bytes_xor_mask(&x, 0x01020304, 2, i64::MAX);
-                let want: Vec<u8> = plain
-                    .iter()
-                    .enumerate()
-                    .map(|(i, b)| b ^ [1, 2, 3, 4][i % 4])
-                    .collect();
-                assert_eq!(&x.as_bytes()[2..], &want[..]);
-                assert_eq!(&x.as_bytes()[..2], &[9, 9]);
-            }
         }
     }
 }

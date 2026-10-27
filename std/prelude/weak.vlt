@@ -29,14 +29,14 @@ export class WeakMap<K, V> {
     this.#id = 0;
   }
 
-  /** The value stored for `key`, or `null` if it has none (JS: `undefined`). */
-  get(key: K): V | null {
+  /** The value stored for `key`, or `undefined` if it has none. */
+  get(key: K): V | undefined {
     if (this.#id == 0) {
-      return null;
+      return undefined;
     }
     const w = __intrinsic_weakmap_get(this.#id, key);
     if (w == 0 && !__intrinsic_weakmap_has(this.#id, key)) {
-      return null;
+      return undefined;
     }
     return __intrinsic_weakmap_value<V>(w);
   }
@@ -116,9 +116,9 @@ export class WeakRef<T> {
     this.#id = __intrinsic_weakref_new(target);
   }
 
-  /** The target, or `null` once it was freed (JS: `undefined`). */
-  deref(): T | null {
-    return __intrinsic_weakref_deref<T>(this.#id);
+  /** The target, or `undefined` once it was freed. */
+  deref(): T | undefined {
+    return __intrinsic_weakref_deref<T>(this.#id) ?? undefined;
   }
 
   /** Drop hook: releases the slot. */

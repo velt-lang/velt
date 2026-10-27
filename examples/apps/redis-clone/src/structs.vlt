@@ -246,7 +246,7 @@ export class Expires {
   }
 
   get(k: string): i64 | null {
-    return this.at.get(k);
+    return this.at.get(k) ?? null;
   }
 
   set(k: string, when: i64) {

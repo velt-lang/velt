@@ -1,0 +1,26 @@
+// Conversions that make views (#1485): `x as Item` of objects of another type, each view a
+// temporary of the read (100K objects, 5 rounds), and one object converted again and again
+// while a view of it lives (1M times). Each conversion asks the runtime's table of views
+// first (base makes a new view each time). bench/proxy/proxy_identity.sh runs it.
+type Item = { id: number; name: string };
+
+// A program with proxies: an `any` holding another type converts to `Item` as a view.
+const p = new Proxy({ id: -1, name: "proxy" }, {}) as Item;
+
+const objs: any[] = [];
+for (let i = 0; i < 100000; i++) {
+  objs.push({ id: i, name: "o", extra: i & 1 });
+}
+let total = 0;
+for (let round = 0; round < 5; round++) {
+  for (let i = 0; i < objs.length; i++) {
+    total += (objs[i] as Item).id;
+  }
+}
+const one: any = objs[7];
+const held = one as Item;
+let again = 0;
+for (let i = 0; i < 1000000; i++) {
+  again += (one as Item).id;
+}
+console.log(total, again, held.name, p.id);

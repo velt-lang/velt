@@ -1,0 +1,7 @@
+// Types without the symbol members literals elsewhere give them (symbol_keys_asserted_modules.vlt).
+export interface VNode {
+  type: string;
+  children: VNode[];
+}
+
+export type Cell = { value: number };

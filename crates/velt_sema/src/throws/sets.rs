@@ -35,6 +35,22 @@ impl Ctx<'_> {
     /// throws nothing: written as an error type it is reported where it is written (`throws
     /// void`, `Promise<T, void>`), and substituted for a type parameter it drops out.
     pub(crate) fn error_union(&mut self, members: &[TyId]) -> Option<TyId> {
+        // One error type, canonical already or canonicalized before (inference does it often).
+        if let [t] = members {
+            if let Some(&r) = self.canon_errors.get(t) {
+                return r;
+            }
+            let r = self.error_union_of(members);
+            self.canon_errors.insert(*t, r);
+            if let Some(r) = r {
+                self.canon_errors.insert(r, Some(r));
+            }
+            return r;
+        }
+        self.error_union_of(members)
+    }
+
+    fn error_union_of(&mut self, members: &[TyId]) -> Option<TyId> {
         let mut flat = vec![];
         for &m in members {
             for x in self.error_members(m) {
@@ -65,9 +81,14 @@ impl Ctx<'_> {
     pub(crate) fn error_outside(&mut self, bound: Option<TyId>, t: Option<TyId>) -> Option<TyId> {
         let allowed = bound.map(|b| self.error_members(b)).unwrap_or_default();
         let found = t.map(|t| self.error_members(t)).unwrap_or_default();
-        found
+        let out = found
             .into_iter()
-            .find(|m| !self.ty.is_bottom(*m) && !allowed.iter().any(|b| self.error_fits(*m, *b)))
+            .find(|m| !self.ty.is_bottom(*m) && !allowed.iter().any(|b| self.error_fits(*m, *b)));
+        // An error-set variable outside a bound (`throws::vars`).
+        if out.is_some_and(|m| self.err_var(m).is_some()) {
+            self.fn_sites.set_doubt();
+        }
+        out
     }
 
     /// Can an error of type `m` be stored as a `b` (equal, or `b` is a base class of `m`)?

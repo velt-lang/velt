@@ -4,9 +4,16 @@
 //! - trivial (cost ≤ `TRIVIAL_COST`) — always, it rarely grows code;
 //! - internal, called from exactly one site and not address-taken (it is deleted afterwards,
 //!   so there is no growth) — up to `ONCE_COST`;
-//! - small (cost ≤ `SMALL_COST`) — while the program-wide growth `Budget` lasts.
+//! - small (cost ≤ `SMALL_COST`) — while the program-wide growth `Budget` lasts;
+//! - called from a loop of the caller (cost ≤ `LOOP_COST`) — while the budget lasts: the hot
+//!   paths of a program are its loops, and a call per iteration costs the call and whatever the
+//!   callee keeps in memory across it. (The standard library's caller-tracking functions get an
+//!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
+//!   this rule gives every program's loops the same, its own modules' functions included.)
 //!
-//! Functions that never return (panic helpers) are never inlined: their calls are cold.
+//! Functions that never return (panic helpers) are never inlined: their calls are cold. A gated
+//! function (`Function::target`) is never inlined into a function of another target, or into an
+//! ordinary one; an ordinary function may be inlined into a gated one.
 //! Recursive functions (members of a cycle) are never inlined, neither within their cycle
 //! (that would not terminate) nor into outside callers (it only duplicates the entry of the
 //! recursion). Signatures stay scalar-only because
@@ -17,6 +24,8 @@ mod splice;
 use velt_vir::vir::{Callee, FuncId, Function, Program, Stmt, Terminator};
 
 use crate::callgraph::{direct_calls, CallGraph};
+use crate::scc::on_cycle;
+use crate::visit::successors;
 
 /// Callees at most this big are always inlined.
 const TRIVIAL_COST: u64 = 8;
@@ -24,6 +33,8 @@ const TRIVIAL_COST: u64 = 8;
 const SMALL_COST: u64 = 40;
 /// Single-call-site internal callees at most this big are inlined.
 const ONCE_COST: u64 = 2_000;
+/// Callees called from a loop at most this big are inlined while the growth budget lasts.
+const LOOP_COST: u64 = 1_000;
 /// Callers are not grown past this size (keeps compile time and register pressure sane).
 const CALLER_LIMIT: u64 = 10_000;
 /// Growth allowed on top of the program's size: the program may at most double, plus this.
@@ -133,6 +144,7 @@ fn decide(
     program: &Program,
     callee: FuncId,
     caller_cost: u64,
+    in_loop: bool,
     budget: &Budget,
 ) -> Option<Decision> {
     let ci = callee.0 as usize;
@@ -153,7 +165,8 @@ fn decide(
     if once && size <= ONCE_COST {
         return Some(Decision::Free);
     }
-    (size <= SMALL_COST && size <= budget.remaining).then_some(Decision::Charged(size))
+    let limit = if in_loop { LOOP_COST } else { SMALL_COST };
+    (size <= limit && size <= budget.remaining).then_some(Decision::Charged(size))
 }
 
 /// Whether no path through `func` returns (a panic helper such as the out-of-bounds report):
@@ -165,8 +178,9 @@ fn never_returns(func: &Function) -> bool {
         .any(|b| matches!(b.term, Terminator::Return(_)))
 }
 
-/// Inline eligible calls in `caller`'s original blocks (inlined bodies are not rescanned:
-/// their callees were already considered when the callee itself was processed).
+/// Inline eligible calls in `caller`'s original blocks. Inlined bodies are not rescanned
+/// (their callees were already considered when the callee itself was processed), except one
+/// inlined into a loop: its calls are in the loop now, which the callee did not know.
 fn inline_into(
     program: &mut Program,
     caller: FuncId,
@@ -174,15 +188,24 @@ fn inline_into(
     budget: &mut Budget,
 ) -> bool {
     let fi = caller.0 as usize;
-    let original_blocks = program.funcs[fi].blocks.len();
     let mut caller_cost = cost(&program.funcs[fi]);
+    // Per block: whether it is in a loop, and whether to scan it. Inlining appends the
+    // callee's blocks, so the blocks before them keep their numbers.
+    let mut in_loop = loop_blocks(&program.funcs[fi]);
+    let mut scan = vec![true; in_loop.len()];
     let mut changed = false;
-    for bi in 0..original_blocks {
+    let mut bi = 0;
+    while bi < program.funcs[fi].blocks.len() {
+        let here = bi;
+        bi += 1;
+        if !scan[here] {
+            continue;
+        }
         let Terminator::Call {
             callee: Callee::Func(callee),
             args,
             ..
-        } = &program.funcs[fi].blocks[bi].term
+        } = &program.funcs[fi].blocks[here].term
         else {
             continue;
         };
@@ -190,10 +213,16 @@ fn inline_into(
         let Some(target) = program.funcs.get(callee.0 as usize) else {
             continue;
         };
-        if !splice::arity_matches(args, target) {
+        // A gated function (`Function::target`, #1330) is compiled for its CPU extension and
+        // runs only where the CPU has it: its body must not move into a function compiled
+        // without (or for another) extension. An ordinary body may move into it: there it only
+        // runs where the CPU has the extension.
+        let gated_elsewhere = target.target.is_some() && target.target != program.funcs[fi].target;
+        if !splice::arity_matches(args, target) || gated_elsewhere {
             continue;
         }
-        let Some(decision) = decide(state, program, callee, caller_cost, budget) else {
+        let Some(decision) = decide(state, program, callee, caller_cost, in_loop[here], budget)
+        else {
             continue;
         };
         if let Decision::Charged(size) = decision {
@@ -206,11 +235,24 @@ fn inline_into(
                 *n += 1;
             }
         }
-        splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body);
+        splice::inline_call(&program.aggs, &mut program.funcs[fi], here, &body);
+        let grown = program.funcs[fi].blocks.len();
+        in_loop.resize(grown, in_loop[here]);
+        scan.resize(grown, in_loop[here]);
         caller_cost += cost(&body);
         changed = true;
     }
     changed
+}
+
+/// Per block of `func`: whether it lies on a cycle of the control-flow graph (in a loop).
+fn loop_blocks(func: &Function) -> Vec<bool> {
+    let edges: Vec<Vec<usize>> = func
+        .blocks
+        .iter()
+        .map(|b| successors(&b.term).iter().map(|s| s.0 as usize).collect())
+        .collect();
+    on_cycle(&edges)
 }
 
 #[cfg(test)]

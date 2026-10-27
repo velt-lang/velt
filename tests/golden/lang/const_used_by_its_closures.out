@@ -1,0 +1,5 @@
+plugin x
+again x 1
+true [ 'hook:h1', 'hook:h2' ]
+11 12 12
+tick 1 tick 2

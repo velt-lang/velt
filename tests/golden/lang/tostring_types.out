@@ -32,8 +32,8 @@ literal array: up,down
 literal array: [ 'up', 'down' ]
 value ok: 1
 value ok: 1
+value err: Error: bad input x
 value err: ParseError { message: 'bad input x' }
-value err: ParseError { message: 'bad input x' }
-optional union: { kind: 'circle', r: 0.5 }
+optional union: [object Object]
 optional union: { kind: 'circle', r: 0.5 }
 p=[object Object] c=5 m=FAST s=[object Object] d=down a=[object Object] n=[object Object]

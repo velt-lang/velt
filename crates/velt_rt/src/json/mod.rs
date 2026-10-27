@@ -10,6 +10,7 @@ pub mod cycle;
 pub mod error;
 pub mod escape;
 pub mod layout;
+pub mod node_syntax;
 pub mod object;
 pub mod reader;
 pub mod reader_abi;

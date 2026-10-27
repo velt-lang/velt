@@ -1,0 +1,147 @@
+// check: no leaks
+// A value read from a field, an element, a capture or a module variable and handed to
+// `Promise.reject`, `Promise.resolve`, `throw` or a `new Promise` callback stays alive in its
+// holder: awaiting the result twice reads it twice (#1140).
+class Failed extends Error {}
+
+class Holder {
+  stored: Error | null = new Failed("narrowed");
+  plain: Error = new Failed("plain");
+  either: Error | string = new Failed("member");
+  pair: { err: Error; n: number } = { err: new Failed("in object"), n: 1 };
+  byName: Map<string, Error> = new Map([["k", new Failed("in map")]]);
+  list: Error[] = [new Failed("in array")];
+
+  narrowed(): Promise<number, Error> {
+    const s = this.stored;
+    if (s != null) {
+      return Promise.reject(s);
+    }
+    return Promise.resolve(1);
+  }
+
+  direct(): Promise<number, Error> {
+    return Promise.reject(this.plain);
+  }
+
+  member(): Promise<number, Error> {
+    const s = this.either;
+    if (s instanceof Error) {
+      return Promise.reject(s);
+    }
+    return Promise.resolve(2);
+  }
+
+  inObject(): Promise<number, Error> {
+    const p = this.pair;
+    return Promise.reject(p.err);
+  }
+
+  fromMap(): Promise<number, Error> {
+    const e = this.byName.get("k");
+    if (e != null) {
+      return Promise.reject(e);
+    }
+    return Promise.resolve(3);
+  }
+
+  fromArray(): Promise<number, Error> {
+    const e = this.list[0];
+    return Promise.reject(e);
+  }
+
+  resolved(): Promise<Error> {
+    const s = this.stored;
+    if (s != null) {
+      return Promise.resolve(s);
+    }
+    return Promise.resolve(new Failed("none"));
+  }
+
+  thrown(): number {
+    const s = this.stored;
+    if (s != null) {
+      throw s;
+    }
+    return 4;
+  }
+
+  async thrownAsync(): Promise<number, Error> {
+    const s = this.stored;
+    if (s != null) {
+      throw s;
+    }
+    return 5;
+  }
+
+  async returned(): Promise<number, Error> {
+    const s = this.stored;
+    if (s != null) {
+      return await Promise.reject<number>(s);
+    }
+    return 6;
+  }
+
+  rejectedNew(): Promise<number, Error> {
+    const s = this.stored;
+    return new Promise<number, Error>((resolve, reject) => {
+      if (s != null) {
+        reject(s);
+      } else {
+        resolve(7);
+      }
+    });
+  }
+
+  resolvedNew(): Promise<Error> {
+    const s = this.stored;
+    return new Promise<Error>((resolve) => {
+      if (s != null) {
+        resolve(s);
+      } else {
+        resolve(new Failed("none"));
+      }
+    });
+  }
+}
+
+async function twice(name: string, f: () => Promise<number, Error>) {
+  for (let i = 1; i <= 2; i++) {
+    try {
+      console.log(name, i, await f());
+    } catch (e) {
+      console.log(name, i, (e as Error).message);
+    }
+  }
+}
+
+async function main() {
+  const h = new Holder();
+  await twice("narrowed", () => h.narrowed());
+  await twice("direct", () => h.direct());
+  await twice("member", () => h.member());
+  await twice("in object", () => h.inObject());
+  await twice("map", () => h.fromMap());
+  await twice("array", () => h.fromArray());
+  await twice("async throw", () => h.thrownAsync());
+  await twice("async return", () => h.returned());
+  await twice("new Promise reject", () => h.rejectedNew());
+  const captured: Error | null = new Failed("captured");
+  await twice("capture", () => {
+    const c = captured;
+    if (c != null) {
+      return Promise.reject(c);
+    }
+    return Promise.resolve(9);
+  });
+  for (let i = 1; i <= 2; i++) {
+    console.log("resolve", i, (await h.resolved()).message);
+    console.log("new Promise resolve", i, (await h.resolvedNew()).message);
+    try {
+      h.thrown();
+    } catch (e) {
+      console.log("throw", i, (e as Error).message);
+    }
+  }
+  console.log(h.stored?.message, h.plain.message, captured?.message);
+}

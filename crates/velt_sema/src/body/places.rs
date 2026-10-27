@@ -2,7 +2,9 @@
 //! after the consumer is known, and mutability of the place's root.
 
 use super::FnCx;
-use crate::hir::{self, ExprKind as H, LocalId, UseMode};
+use velt_common::Span;
+
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, LocalId, TyKind, UseMode};
 
 pub(crate) fn is_place(e: &hir::Expr) -> bool {
     matches!(
@@ -23,6 +25,19 @@ pub(crate) fn is_path(e: &hir::Expr) -> bool {
         H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } => is_path(base),
         _ => false,
+    }
+}
+
+/// Does pattern `p` bind `l`?
+pub(crate) fn binds(p: &hir::Pat, l: LocalId) -> bool {
+    use hir::PatKind as P;
+    match &p.kind {
+        P::Binding(b, _) => *b == l,
+        P::Array { elems: ps, rest } => *rest == Some(l) || ps.iter().any(|q| binds(q, l)),
+        P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => ps.iter().any(|q| binds(q, l)),
+        P::Adt { fields } => fields.iter().any(|(_, q)| binds(q, l)),
+        P::Some(q) => binds(q, l),
+        P::Wildcard | P::Lit(_) | P::None | P::InstanceOf(_) => false,
     }
 }
 
@@ -77,10 +92,24 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
-        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
-        // table can't be taken over, like `const v = K`.
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): taken over like
+        // `const v = K`, it is the one object the module state keeps; a table that can't be kept
+        // (`Cls.K`) can't be taken over.
         if let H::Global(d) = e.kind {
-            if crate::body::pure_init::is_table(self.cx, d) {
+            let stored = self.cx.global(d).is_some_and(|g| g.stored);
+            let table = crate::body::pure_init::is_table(self.cx, d);
+            let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
+            // Module state taken by value (`g!`, `g ?? d` binding the payload of a module `let`)
+            // is another reference to the value the slot keeps, as `global_read` makes for
+            // `const v = g`, not a move out of the slot. Without it the type may be stored
+            // inline, and the binding would be a copy.
+            let kept = object && crate::kept_consts::keep(self.cx, d);
+            if kept || (stored && m == UseMode::Move) {
+                let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
+                *e = self.intrinsic(Intrinsic::Share, vec![read], e.ty, e.span);
+                return;
+            }
+            if table && !kept {
                 let name = self
                     .cx
                     .global(d)
@@ -98,20 +127,95 @@ impl FnCx<'_, '_> {
     /// checks that its root may be mutated and marks the place `BorrowMut`.
     pub fn use_mutably(&mut self, e: &mut hir::Expr, what: &str) {
         if !is_place(e) {
+            if let H::Call { args, .. } = &e.kind {
+                if Self::is_frozen_view(e) {
+                    let (shared, span) = (args[0].clone(), e.span);
+                    self.frozen_write(&shared, span);
+                }
+            }
             return;
         }
-        self.require_mutable(e, what);
+        // An element of a read-only array may itself be changed (`j[0].push(x)` with
+        // `j: readonly T[][]`): only an assignment to the element is TS2542 (`require_mutable`).
+        self.require_root_mutable(e, what);
         set_place_mode(e, UseMode::BorrowMut);
     }
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        // Only replacing the element is TS2542; a write into it (`j[0].length = 1`, a setter, a
+        // closure changing it) is checked by the root and the element's own type.
+        if what == ELEMENT_WRITE {
+            self.readonly_element_write(e);
+        }
+        self.require_root_mutable(e, what)
+    }
+
+    /// [`Self::require_mutable`] without the check of a read-only element: may the root of
+    /// place `e` be modified? A part of what a match gives (`p!.v = 1`, `(p ?? q).v = 1`) is a
+    /// part of `p`'s payload, or of the other arm's place: those roots are checked and marked
+    /// (a module constant evaluated at each use can't be written that way either).
+    fn require_root_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        if let H::Match { scrutinee, arms } = &root_expr(e).kind {
+            // The write is to a part of the source, not to the source itself.
+            let what = match what {
+                "assign to" => "assign to a field of",
+                w => w,
+            };
+            let mut ok = true;
+            for arm in arms {
+                let source = match &arm.body.kind {
+                    H::Local(l, _) if binds(&arm.pat, *l) => &**scrutinee,
+                    _ if is_place(&arm.body) => &arm.body,
+                    _ => continue,
+                };
+                ok &= self.require_root_mutable(source, what);
+            }
+            return ok;
+        }
+        if let H::Call { args, .. } = &root_expr(e).kind {
+            if Self::is_frozen_view(root_expr(e)) {
+                let shared = args[0].clone();
+                self.frozen_write(&shared, e.span);
+                return false;
+            }
+        }
         if let H::Global(d) = root_expr(e).kind {
-            let name = self
+            let (name, stored, mutable, module) = self
                 .cx
                 .global(d)
-                .map(|g| g.name.clone())
+                .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
+            // Assigning a constant itself stays an error; what it holds may be modified, as in
+            // Node, once it is the one object the module state keeps.
+            let rebinds = matches!(e.kind, H::Global(_)) && what == "assign to";
+            if stored || (!rebinds && crate::kept_consts::keep(self.cx, d)) {
+                if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
+                    self.cx.err(
+                        format!("cannot assign to `{name}`, a module `const`"),
+                        e.span,
+                    );
+                    return false;
+                }
+                // An imported binding is read-only, as in ES modules: its contents are not.
+                if matches!(e.kind, H::Global(_))
+                    && module != self.module
+                    && what == "assign to"
+                    && !self.cx.global_props.is_slot(d)
+                {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            format!("cannot assign to imported binding `{name}`"),
+                            e.span,
+                        )
+                        .with_note(
+                            "an imported `let` is read-only where it is imported, as in JavaScript: export a function that assigns it",
+                        ),
+                    );
+                    return false;
+                }
+                return true;
+            }
             self.cx.err(
                 format!("cannot {what} module-level constant `{name}`"),
                 e.span,
@@ -131,7 +235,54 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn root_expr(e: &hir::Expr) -> &hir::Expr {
+impl FnCx<'_, '_> {
+    /// Does writing place `e` change an element of a tuple that is a temporary (`f()[1] = v`,
+    /// `m.get(k)![0] = v`, `(c ? a : b)[1] = v`)? Tuples are values, so the write would change
+    /// a copy the program never sees again, where JavaScript changes the array the call
+    /// returned: an error (reported at `span`) instead of a lost write.
+    pub(crate) fn temp_tuple_write(&mut self, e: &hir::Expr, span: Span) -> bool {
+        let (mut t, mut part) = (e, false);
+        loop {
+            match &t.kind {
+                H::Field { base, .. } | H::Index { base, .. }
+                    if matches!(self.cx.ty.kind(base.ty), TyKind::Tuple(_)) =>
+                {
+                    (t, part) = (base, true);
+                }
+                H::UnwrapSome(base, _)
+                | H::UnwrapVariant { expr: base, .. }
+                | H::Downcast(base)
+                    if part =>
+                {
+                    t = base;
+                }
+                _ => break,
+            }
+        }
+        // A receiver bound to a temporary for an assignment used as a value
+        // (`crate::body::expr::iface_nested`) stands for the expression it was bound from.
+        let temp = match &t.kind {
+            H::Local(l, _) => self.f.locals[l.0 as usize]
+                .name
+                .starts_with("<iface hoisted"),
+            _ => !is_place(t),
+        };
+        if part && temp {
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    "cannot write into an element of a tuple that is a temporary value: the write would change a copy",
+                    span,
+                )
+                .with_note(
+                    "tuples are values: read the tuple into a variable, change it there, and store it back where it came from",
+                ),
+            );
+        }
+        part && temp
+    }
+}
+
+pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         H::Field { base, .. }
         | H::Index { base, .. }
@@ -140,3 +291,56 @@ fn root_expr(e: &hir::Expr) -> &hir::Expr {
         _ => e,
     }
 }
+
+/// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?
+pub(crate) fn frozen_root(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Intrinsic(Intrinsic::SharedRead),
+            ..
+        } => true,
+        H::Field { base, .. }
+        | H::Index { base, .. }
+        | H::UnwrapSome(base, _)
+        | H::UnwrapVariant { expr: base, .. }
+        | H::Downcast(base) => frozen_root(base),
+        _ => false,
+    }
+}
+
+/// Is `e` a value read out of a `shared`, a part of one, or what a method of one returns (its
+/// elements may be the shared value's, as `slice()`'s are in JavaScript)?
+pub(crate) fn frozen_source(cx: &crate::ctx::Ctx, e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Call {
+            callee: Callee::Virtual { .. },
+            args,
+        } => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Upcast(x) | H::Downcast(x) => frozen_source(cx, x),
+        _ => frozen_root(e),
+    }
+}
+
+/// The local whose value `e`, a loop's source, is a part of, or what a method of one returns
+/// (whose elements may be that value's).
+pub(crate) fn source_root(cx: &crate::ctx::Ctx, e: &hir::Expr) -> Option<LocalId> {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => source_root(cx, args.first()?),
+        H::Call {
+            callee: Callee::Virtual { .. },
+            args,
+        } => source_root(cx, args.first()?),
+        H::Upcast(x) | H::Downcast(x) => source_root(cx, x),
+        _ => place_root(e),
+    }
+}
+
+/// What [`FnCx::require_mutable`] is told for an assignment that replaces an element.
+pub(crate) const ELEMENT_WRITE: &str = "assign to an element of";

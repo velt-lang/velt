@@ -291,17 +291,30 @@ impl FnCx<'_, '_> {
             .is_some_and(|r| self.is_getter(&r))
     }
 
-    /// `obj.name` where `name` is a getter: the getter's call; `Err` gives `obj` back otherwise.
+    /// `obj.name` where `name` is a getter (or a field of an interface value): the getter's call;
+    /// `Err` gives `obj` back otherwise.
     pub(crate) fn getter_read(
         &mut self,
         obj: hir::Expr,
         prop: &ast::Ident,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !self.has_getter(obj.ty, &prop.name) {
-            return Err(obj);
+        if !self.has_getter(obj.ty, &prop.name) && !self.union_getter(obj.ty, &prop.name) {
+            // A field read through an interface's getter slot (`iface_write`).
+            return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
+    }
+
+    /// Is `t` a union of classes that each have getter `name` (`(c as Set<T> | Map<K, V>).size`,
+    /// read on each member by `union_member_call`)?
+    fn union_getter(&mut self, t: TyId, name: &str) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        members
+            .iter()
+            .all(|&m| self.cx.class_of(m).is_some() && self.has_getter(m, name))
     }
 
     /// Assigning to a getter without a setter is an error.
@@ -413,6 +426,10 @@ impl FnCx<'_, '_> {
         }
         for i in self.unused_owner_slots(&tys, owner_generics) {
             slots[i].get_or_insert(self.cx.ty.unit);
+        }
+        // A generator with a dynamic default (`gen_value.rs`), named through the class.
+        if let Some(h) = self.generator_value(def, Some(this_class), &slots, exp, span) {
+            return Some(h);
         }
         Some(self.fn_ref_slots(def, &what, slots, exp, span))
     }

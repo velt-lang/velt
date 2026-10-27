@@ -9,7 +9,8 @@
 //!    [`iface_extends`] flattens interface inheritance.
 //! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules;
 //!    [`static_this`]: copies of the static methods using `this` per subclass.
-//! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
+//! 5. [`impls`]: `implements` checking and `Program::impls`; [`ext_impls`]: those of `extend …
+//!    implements` blocks; [`comparable`]: `extend` blocks
 //!    defining `compareTo` implement the builtin `Comparable<T>`; [`iterable`]: those defining
 //!    `[Symbol.iterator](): Iterator<T, E>` implement `Iterable<T, E>`.
 //!
@@ -23,13 +24,17 @@ mod classes;
 mod comparable;
 mod constants;
 mod declare;
-mod exports;
+pub(crate) mod exports;
+pub(crate) mod ext_impls;
+mod extend_shadow;
+pub(crate) mod extended_layouts;
 mod field_only;
-mod forwarders;
+pub(crate) mod fill_defaults;
+pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
-mod iface_extends;
-mod impls;
+pub(crate) mod iface_extends;
+pub(crate) mod impls;
 mod imports;
 mod iterable;
 mod lookup;
@@ -37,7 +42,7 @@ mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 pub(crate) mod sigs;
-mod static_this;
+pub(crate) mod static_this;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
@@ -56,6 +61,8 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    // Before any type is resolved: `any | null` is `any` (crate::unions).
+    crate::any::add_impl(cx);
     cx.name_symbol_keys();
     field_only::declare(cx);
     crate::type_defaults::check_all(cx);
@@ -64,10 +71,13 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     cx.check_deferred_ts_returns();
     sigs::resolve_sigs(cx, &items);
     iface_extends::flatten_all(cx);
+    cx.fill_synth_ifaces();
     field_only::fill(cx);
     classes::check_classes(cx);
+    extend_shadow::check(cx);
     static_this::copy_statics(cx);
     impls::build_impls(cx);
+    ext_impls::build(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
     cx.bodies_ok = true;

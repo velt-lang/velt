@@ -1,0 +1,7 @@
+// `String(f)` of a function through `any`: JavaScript writes its source text, which a compiled
+// function doesn't keep, so the program stops, reporting the line of the `String`.
+function main(): void {
+  const f: any = (x: number): number => x + 1;
+  console.log("before");
+  console.log(String(f));
+}

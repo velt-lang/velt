@@ -1,0 +1,29 @@
+// `u8[]` `indexOf` at one array length (a case from `cases.sh`): `search <length> <calls>
+// <hit>`, where `hit` is the position of the byte searched for, or -1 for a byte that is
+// absent (the whole array is read). Every call changes a byte first, so no call repeats the
+// one before.
+import { args } from "velt:process";
+
+function main() {
+  const a = args();
+  const n = parseInt(a[0]) as usize;
+  const calls = parseInt(a[1]) as usize;
+  const at = parseInt(a[2]) as i64;
+  const d = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    d[i] = (97 + i % 26) as u8;
+  }
+  if (at >= 0) {
+    d[at as usize] = 10;
+  }
+  let total: i64 = 0;
+  for (let round: usize = 0; round < calls; round++) {
+    // A byte before the hit (or anywhere when there is none) changes between two letters.
+    const limit = at >= 0 ? at as usize : n;
+    if (limit > 0) {
+      d[round % limit] = (97 + round % 2) as u8;
+    }
+    total += d.indexOf(10) as i64;
+  }
+  console.log(total);
+}

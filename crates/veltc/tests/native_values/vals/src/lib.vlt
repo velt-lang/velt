@@ -1,0 +1,41 @@
+import { IoResult } from "velt:io";
+
+export struct Row {
+  id: i64;
+  name: string;
+  tags: string[];
+}
+
+export struct Stats {
+  count: i64;
+  sum: f64;
+}
+
+declare function velt_vals__reverse(rows: Row[]): Row[];
+declare function velt_vals__stats(xs: f64[]): Stats;
+declare function velt_vals__count(groups: Row[][]): i64;
+declare async function velt_vals__later(n: i64, names: string[]): Promise<IoResult<Row[]>>;
+
+export function reverse(rows: Row[]): Row[] {
+  return velt_vals__reverse(rows);
+}
+
+export function stats(xs: f64[]): Stats {
+  return velt_vals__stats(xs);
+}
+
+/** How many rows the groups hold (arrays of arrays of a counted type cross as views). */
+export function count(groups: Row[][]): i64 {
+  return velt_vals__count(groups);
+}
+
+/** Awaited right away. */
+export async function later(n: i64, names: string[]): Promise<Row[]> {
+  const r = await velt_vals__later(n, names);
+  return r.value;
+}
+
+/** The extern's promise itself, for the caller to keep or combine. */
+export function laterRaw(n: i64, names: string[]): Promise<IoResult<Row[]>> {
+  return velt_vals__later(n, names);
+}

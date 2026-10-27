@@ -16,13 +16,17 @@
 //! - a field an object literal fills from something else that may be null (a spread of a
 //!   `b: T | null` field).
 //!
+//! A dynamic value (`any`, `unknown`) may hold `undefined`, so storing one in a `b?: any` field
+//! is a store; a typed value boxed into it is one only when the typed value may be null.
+//!
 //! A value of a type without null, a field left out and the same optional field copied from
 //! another object by a spread or a conversion (absent there, absent here) are not stores.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
+use crate::any::Dynamic;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, TyId, TyKind, UseMode};
@@ -35,7 +39,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     if tests.is_empty() {
         return;
     }
-    let names: HashSet<String> = tests.iter().map(|t| t.0.clone()).collect();
+    let names: FxHashSet<String> = tests.iter().map(|t| t.0.clone()).collect();
     let mut stores: Vec<(String, Span)> = literals
         .into_iter()
         .filter(|(n, _)| names.contains(n))
@@ -57,7 +61,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     // A literal's property may be found both while checking and by the walk: once each.
     stores.sort_by_key(|(_, s)| (s.file, s.lo, s.hi));
     stores.dedup_by(|a, b| a.0 == b.0 && (a.1.file, a.1.lo, a.1.hi) == (b.1.file, b.1.lo, b.1.hi));
-    let mut reported = HashSet::new();
+    let mut reported = FxHashSet::default();
     for (name, ty, at) in &tests {
         let mut of_name = stores.iter().filter(|(n, _)| n == name);
         let Some((_, store)) = of_name.next() else {
@@ -88,6 +92,24 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
 }
 
+/// May the value `h` an object literal gives a watched field be null (`Copies::null_literals`)?
+/// A typed value boxed into `any` is null only when the typed value may be; another dynamic
+/// value may hold `undefined`.
+pub(crate) fn literal_may_be_null(cx: &Ctx, h: &Expr) -> bool {
+    let v = match &h.kind {
+        E::ToDyn { expr, .. } => &**expr,
+        _ => h,
+    };
+    let given = match &v.kind {
+        E::WrapSome(inner) => inner.ty,
+        _ => v.ty,
+    };
+    matches!(v.kind, E::Lit(Lit::Null))
+        || cx.ty.opt_payload(given).is_some()
+        || matches!(cx.dynamic(given), Some(Dynamic::Any | Dynamic::Unknown))
+        || matches!(cx.ty.kind(given), TyKind::Param(_))
+}
+
 /// How the advice writes field `shown` of an object `o`: `o.b`, `o[KEY]` for a symbol key, and
 /// `o["a b"]` for a name that is not an identifier.
 fn place_of(shown: &str) -> String {
@@ -115,20 +137,20 @@ impl visit::VisitMut for Exprs<'_> {
 /// The stores of a possibly-null value into a field named in `names`, in one body.
 struct Walk<'a, 'm> {
     cx: &'a Ctx<'m>,
-    names: &'a HashSet<String>,
+    names: &'a FxHashSet<String>,
     stores: Vec<(String, Span)>,
     /// Places already judged where they are used (an assignment's target, the object of
     /// `o.b.c = v`): expressions visited later, by address.
-    judged: HashSet<*const Expr>,
+    judged: FxHashSet<*const Expr>,
 }
 
 impl<'a, 'm> Walk<'a, 'm> {
-    fn new(cx: &'a Ctx<'m>, names: &'a HashSet<String>) -> Self {
+    fn new(cx: &'a Ctx<'m>, names: &'a FxHashSet<String>) -> Self {
         Walk {
             cx,
             names,
             stores: vec![],
-            judged: HashSet::new(),
+            judged: FxHashSet::default(),
         }
     }
 
@@ -157,8 +179,13 @@ impl<'a, 'm> Walk<'a, 'm> {
                     let Some(name) = self.watched_field(*def, i as u32) else {
                         continue;
                     };
-                    // A field left out (a `null` the program wrote is `Copies::null_literals`).
-                    if !matches!(v.kind, E::Lit(Lit::Null)) && self.may_be_null(v, name, true) {
+                    // A field left out, also a `b?: any` one (the dynamic `undefined`); a
+                    // `null` the program wrote is `Copies::null_literals`.
+                    let left_out = match &v.kind {
+                        E::ToDyn { expr, .. } => matches!(expr.kind, E::Lit(Lit::Null)),
+                        k => matches!(k, E::Lit(Lit::Null)),
+                    };
+                    if !left_out && self.may_be_null(v, name, true) {
                         self.stores.push((name.to_string(), v.span));
                     }
                 }
@@ -209,6 +236,8 @@ impl<'a, 'm> Walk<'a, 'm> {
     fn may_be_null(&self, v: &Expr, name: &str, copies: bool) -> bool {
         match &v.kind {
             E::WrapSome(inner) => self.nullable(inner.ty),
+            // A typed value boxed into `any`: null only when it may be.
+            E::ToDyn { expr, .. } => self.may_be_null(expr, name, copies),
             E::Field { base, index, .. } if copies => self.watched(base.ty, *index) != Some(name),
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Share | Intrinsic::Clone),
@@ -226,9 +255,11 @@ impl<'a, 'm> Walk<'a, 'm> {
         }
     }
 
-    /// May a value of type `t` be null (a type parameter may stand for a nullable type)?
+    /// May a value of type `t` be null (a type parameter may stand for a nullable type, and a
+    /// dynamic value may hold `undefined`)?
     fn nullable(&self, t: TyId) -> bool {
         self.cx.ty.opt_payload(t).is_some()
+            || matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
             || matches!(self.cx.ty.kind(t), TyKind::Param(_) | TyKind::Error)
     }
 }

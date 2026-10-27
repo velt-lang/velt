@@ -3,8 +3,7 @@
 import { connect, TcpStream } from "velt:net";
 import { exit } from "velt:process";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { Db } from "./src/db";
-import { serve, start } from "./src/server";
+import { keyspace, serve, start } from "./src/server";
 
 function encode(argv: string[]): string {
   let s = `*${argv.length}\r\n`;
@@ -35,7 +34,7 @@ async function call(conn: TcpStream, lines: i64, ...argv: string[]) {
 
 async function main() {
   const listener = await start("127.0.0.1:0");
-  spawn(serve(listener, shared(new Mutex<Db>(new Db()))));
+  spawn(serve(listener, keyspace()));
   const conn = await connect(`127.0.0.1:${listener.port}`);
 
   await call(conn, 1, "PING");

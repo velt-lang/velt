@@ -36,7 +36,7 @@ mod callbacks;
 mod graph;
 mod types;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -53,8 +53,8 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
-    let mut seen = HashSet::new();
-    let mut fns: HashMap<TyId, Why> = HashMap::new();
+    let mut seen = FxHashSet::default();
+    let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
         p.run(cx, &g);
@@ -95,7 +95,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 .iter()
                 .filter(|(t, _)| matches(**t))
                 .map(|(_, w)| *w)
-                .min_by_key(|w| (w.std, w.span.file, w.span.lo));
+                .min_by_key(|w| w.rank(cx));
             if let Some(w) = why {
                 p.set(n, CROSSES, Some(w));
                 changed = true;
@@ -141,14 +141,19 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             };
             if p.flags[i] & CROSSES != 0 {
                 for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i][0]));
+                    found.push((ty, k, p.why[i][0], c));
                 }
             }
         }
     }
     let mut changed = false;
-    for (ty, k, why) in found {
-        for (callee, args, span, std) in &g.indirect {
+    for (ty, k, why, c) in found {
+        for (callee, args, span, std, only) in &g.indirect {
+            // A call through a variable holding only closures of one function
+            // (`crate::defined_accessors`) reaches no closure of another.
+            if only.is_some_and(|d| outermost(g, d) != outermost(g, c)) {
+                continue;
+            }
             if let Some(&a) = args.get(k) {
                 if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
                     p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *std)))));
@@ -158,6 +163,17 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
     }
     changed
+}
+
+/// The function that closure `c` is written in, outside every closure (`c` itself if it is no
+/// closure).
+fn outermost(g: &Graph, mut c: DefId) -> DefId {
+    let mut hops = 0;
+    while let (Some(&p), true) = (g.parent.get(&c), hops < 64) {
+        c = p;
+        hops += 1;
+    }
+    c
 }
 
 /// The types closure literal `c` (of type `ty`) has in the instantiations of the generic
@@ -215,8 +231,8 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
 /// A value read from the heap stands for every stored sync closure of its type. Only these are
 /// checked as sync handlers: a sync closure an async handler reaches otherwise (through an
 /// object or a collection the handler captured) is not a compile-time error, as on main.
-fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> HashMap<DefId, Option<Why>> {
-    let mut out = HashMap::new();
+fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> FxHashMap<DefId, Option<Why>> {
+    let mut out = FxHashMap::default();
     let mut work = vec![];
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
@@ -226,7 +242,7 @@ fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> HashMap<DefId, Option<
             }
         }
     }
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut heap_tys = vec![];
     while let Some((i, why)) = work.pop() {
         if !seen.insert(i) {
@@ -282,6 +298,36 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         return;
     }
     report_mutated(cx, c, why, "async closure");
+    report_generators(cx, c, why);
+}
+
+/// A non-local async closure copies what it captured for each call, and a generator's state
+/// cannot be copied: report each captured generator (a local one shares it, as in JS).
+fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return;
+    };
+    let caps: Vec<(TyId, String, velt_common::Span)> = f
+        .captures
+        .iter()
+        .map(|cap| &f.body.locals[cap.inner.0 as usize])
+        .map(|l| (l.ty, l.name.clone(), l.span))
+        .collect();
+    let gens: Vec<_> = caps
+        .into_iter()
+        .filter(|c| cx.holds_generator(c.0))
+        .collect();
+    for (_, name, at) in gens {
+        let mut d = Diagnostic::error(
+            format!("an async closure that may run on another thread cannot capture the generator `{name}`"),
+            at,
+        );
+        if let Some(w) = why {
+            let label = reaches(cx, &w);
+            d = d.with_label(w.span, label);
+        }
+        cx.error(d.with_note("such a closure copies what it captured for each call, and a generator's suspended state cannot be copied: create the generator inside the closure, or keep the closure on the task that created it"));
+    }
 }
 
 /// The label naming where a non-local closure leaves its task.

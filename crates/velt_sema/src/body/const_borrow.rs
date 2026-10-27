@@ -32,25 +32,9 @@ impl FnCx<'_, '_> {
         };
         let mut h = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.expr(e, None, Want::Borrow),
+            None => self.copy_init(e, name, Want::Borrow),
         };
         let ty = ann.unwrap_or(h.ty);
-        // A promise bound by reference to an element or a field would be awaited (moved out of
-        // the array or object) later, or shared with the place.
-        if self.binds_promise(ty) {
-            match h.kind {
-                H::Index { .. } => {
-                    self.promise_out_of_array(ty, e.span);
-                    h = self.error_expr(e.span);
-                }
-                // Through a class instance (shared): a value type's field moves out as before.
-                H::Field { ref base, .. } if self.cx.class_of(base.ty).is_some() => {
-                    self.promise_out_of_object(ty, e.span);
-                    h = self.error_expr(e.span);
-                }
-                _ => {}
-            }
-        }
         let pinned = is_place(&h)
             && !self.cx.is_copy(ty)
             && !self.cx.is_string_value(ty)
@@ -68,10 +52,13 @@ impl FnCx<'_, '_> {
                 } => self.force_move(&mut args[0]),
                 _ => self.force_move(&mut h),
             }
+            // `const t = K!.a`: a part of a module constant evaluated at each use.
+            self.per_use_taken(e, ty);
             return Err(Some(h));
         }
         let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);
         self.f.const_refs.insert(local);
+        self.note_checked_copy(local, ann.is_none(), Some(e));
         let pat = self.pat(P::Binding(local, UseMode::Borrow), ty, name.span);
         Self::push(out, S::LetPat { pat, init: h }, span);
         Ok(())

@@ -1,11 +1,14 @@
-//! Array intrinsics: `length`, `push` (amortized growth), `pop`, and the `std/` helpers
+//! Array intrinsics: `length`, `push` (amortized growth), `pop`, `reserve` (exact growth), and the `std/` helpers
 //! `__intrinsic_array_with_capacity/swap/remove/truncate/move/set_len`.
 
+use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
+use super::max_elems;
+use crate::lower::array_view::{ViewFlush, ViewSync};
 use crate::lower::operand::proj;
-use crate::lower::sequence::may_write;
-use crate::lower::{cint, ice, unit, FnLower, Work};
+use crate::lower::rt::Rt;
+use crate::lower::{cint, ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -34,19 +37,154 @@ impl FnLower<'_, '_> {
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
-        let av = match args[1..].iter().any(may_write) {
+        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
+            // Held inline in an object (caller_stores.rs).
+            self.owner_barrier(&args[0]);
+        }
+        let av = match args[1..].iter().any(|a| self.may_write(a)) {
             true => {
                 let outer = self.start_borrows();
                 let v = self.stable_borrow(&args[0], &args[1..]);
                 self.finish_borrows(outer);
                 v
             }
-            false => self.expr(&args[0]),
+            false => self.projection_base(&args[0], BoxHold::No),
         };
+        self.owner_write = false;
         let arr = self.place_of(av, aty);
+        let caller = self.mode != LkMode::Plain && self.caller_object(&args[0]);
+        if i != I::ArrayLen && self.cx.lock_counted(aty) && !caller {
+            // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
+            // the caller's, caller_stores.rs `caller_object`).
+            self.write_barrier(Operand::Copy(arr.clone()), aty);
+        }
+        if i == I::ArraySetLen {
+            self.view_unsupported(&arr, aty, "sorting with a comparison function");
+        }
+        if !caller && self.cx.array_view(aty) {
+            // Each operation on a view syncs and writes back what it needs (array_view_ops.rs).
+            return self.view_array_op(i, &args[1..], &arr, aty, ty);
+        }
+        let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
+        if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
+        {
+            // Reached through a call (`mk(out).kids`, `rw.read((s2) => s2.items)`): it may be
+            // an array the reader made, not the caller's.
+            return self.caller_or_own_op(i, &args[1..], ptr, &arr, aty, ty);
+        }
+        if caller {
+            return self.caller_array_op(i, &args[1..], &arr, aty, ty);
+        }
+        self.array_op(i, &args[1..], &arr, aty, ty)
+    }
+
+    /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it
+    /// counts by the counts outside read mode, what it takes out handed to the reader.
+    fn caller_array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let outer = self.mode;
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let v = self.keep_for_caller(x);
+            self.mode = LkMode::Deferred;
+            let elem = self.elem_ty(aty);
+            self.push_value(arr, elem, v);
+            self.mode = outer;
+            return unit();
+        }
+        self.mode = LkMode::Deferred;
+        let r = self.array_op(i, rest, arr, aty, ty);
+        self.mode = outer;
+        let rty = self.sub(ty);
+        if self.needs_drop(rty) {
+            self.hand_to_reader(&r, rty);
+        }
+        r
+    }
+
+    /// An array intrinsic on the array `ptr` (content `arr`) that a call on the caller's
+    /// container returned, in a `read` callback: `caller_array_op` when it is the caller's,
+    /// `array_op` by read mode's counts when the reader made it (`LOCAL`: a new object the
+    /// call built, a nested `read`'s copy). Arguments other than a pushed value are integers,
+    /// lowered in each branch.
+    fn caller_or_own_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        ptr: Operand,
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let c = self.count_place(ptr);
+        let mine = self.is_local(&c);
+        let (own, theirs, join) = (self.new_block(), self.new_block(), self.new_block());
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let held = self.held_of(x);
+            let xty = self.sub(x.ty);
+            let v = self.consume(x);
+            let elem = self.elem_ty(aty);
+            let vt = self.cx.ty(elem);
+            let v = match vt {
+                Ty::Unit => v,
+                _ => Operand::Copy(Place::local(self.copy_to_temp(v, vt))),
+            };
+            self.branch(mine, own, theirs);
+            self.switch_to(own);
+            self.push_value(arr, elem, v.clone());
+            self.goto(join);
+            self.switch_to(theirs);
+            let k = self.keep_value(v, held, xty);
+            let outer = std::mem::replace(&mut self.mode, LkMode::Deferred);
+            self.push_value(arr, elem, k);
+            self.mode = outer;
+            self.goto(join);
+            self.switch_to(join);
+            return unit();
+        }
+        let rty = self.sub(ty);
+        let rt = self.cx.ty(rty);
+        let res = (rt != Ty::Unit).then(|| self.temp(rt));
+        self.branch(mine, own, theirs);
+        for (bb, reader) in [(own, true), (theirs, false)] {
+            self.switch_to(bb);
+            let r = match reader {
+                true => self.array_op(i, rest, arr, aty, ty),
+                false => self.caller_array_op(i, rest, arr, aty, ty),
+            };
+            if let Some(res) = res {
+                if let Operand::Copy(q) = &r {
+                    self.take_temp(q);
+                }
+                self.assign(Place::local(res), Rvalue::Use(r));
+            }
+            self.goto(join);
+        }
+        self.switch_to(join);
+        match res {
+            Some(res) => self.owned_result(Some(res), rty),
+            None => unit(),
+        }
+    }
+
+    pub(in crate::lower) fn array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        use hir::Intrinsic as I;
+        let arr = arr.clone();
         let elem = self.elem_ty(aty);
-        match (i, &args[1..]) {
+        match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
             (I::ArrayPush, [x]) => self.push(&arr, elem, x),
             (I::ArrayPop, []) => self.pop(&arr, elem, ty),
@@ -54,13 +192,7 @@ impl FnLower<'_, '_> {
                 let (ia, ta) = (self.expr(a), self.vty(a.ty));
                 let ia = self.freeze(ia, a.ty);
                 let (ib, tb) = (self.expr(b), self.vty(b.ty));
-                let pa = self.elem_place_checked(&arr, aty, ia, ta);
-                let pb = self.elem_place_checked(&arr, aty, ib, tb);
-                let vt = self.cx.ty(elem);
-                let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
-                self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
-                self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
-                unit()
+                self.swap_elems(&arr, aty, (ia, ta), (ib, tb))
             }
             (I::ArrayRemove, [idx]) => self.remove(&arr, aty, idx),
             (I::ArrayTruncate, [n]) => {
@@ -75,11 +207,143 @@ impl FnLower<'_, '_> {
                 self.set_len(&arr, elem, nv);
                 unit()
             }
+            (I::ArrayRotateRight | I::ArrayRotateLeft, [lo, hi]) => {
+                let (lv, lt) = (self.expr(lo), self.vty(lo.ty));
+                let lv = self.freeze(lv, lo.ty);
+                let (hv, ht) = (self.expr(hi), self.vty(hi.ty));
+                let lv = self.cast_to(lv, lt, Ty::U64);
+                let lv = self.rvalue_temp(Ty::U64, Rvalue::Use(lv));
+                let hv = self.cast_to(hv, ht, Ty::U64);
+                let hv = self.rvalue_temp(Ty::U64, Rvalue::Use(hv));
+                self.rotate(&arr, aty, (lv, hv), i == I::ArrayRotateRight);
+                unit()
+            }
+            (I::ArraySwapNested, [a, i, b, j]) => self.swap_nested(&arr, aty, [a, i, b, j]),
+            (I::ArrayPrefetch, [n]) => {
+                let (nv, nt) = (self.expr(n), self.vty(n.ty));
+                let nv = self.cast_to(nv, nt, Ty::U64);
+                let addr = self.elem_addr(&arr, nv, elem);
+                self.simd_call("velt_simd_prefetch", vec![addr]);
+                unit()
+            }
+            (I::ArrayReserve, [n]) => {
+                let (nv, nt) = (self.expr(n), self.vty(n.ty));
+                let nv = self.cast_to(nv, nt, Ty::U64);
+                self.reserve(&arr, elem, nv);
+                unit()
+            }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
-                args.len()
+                rest.len() + 1
             )),
         }
+    }
+
+    /// `__intrinsic_array_rotate_right` (`right`) or `_left` of `xs[lo..=hi]` (U64 operands):
+    /// the end element is held aside, the rest moved one slot by one `memmove`, and the held
+    /// element stored at the other end. `hi` is bounds-checked, which covers the range.
+    fn rotate(&mut self, arr: &Place, aty: TyId, (lo, hi): (Operand, Operand), right: bool) {
+        let elem = self.elem_ty(aty);
+        let vt = self.cx.ty(elem);
+        let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, lo.clone(), hi.clone()));
+        let (go, join) = (self.new_block(), self.new_block());
+        self.branch(some, go, join);
+        self.switch_to(go);
+        let p_hi = self.elem_place_checked(arr, aty, hi.clone(), Ty::U64);
+        if vt == Ty::Unit {
+            self.goto(join);
+            self.switch_to(join);
+            return;
+        }
+        let p_lo = self.elem_place(arr, lo.clone(), elem);
+        let next = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Add, lo.clone(), cint(1, Ty::U64)),
+        );
+        let p_next = self.elem_place(arr, next, elem);
+        let (stride, _) = self.stride(elem);
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, hi, lo));
+        let bytes = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, n, cint(stride as i128, Ty::U64)),
+        );
+        let (held_at, store_at) = match right {
+            true => (p_hi.clone(), p_lo.clone()),
+            false => (p_lo.clone(), p_hi.clone()),
+        };
+        let held = self.copy_to_temp(Operand::Copy(held_at), vt);
+        let (a_lo, a_next) = (self.addr(p_lo), self.addr(p_next));
+        match right {
+            true => self.mem_copy_dyn(a_next, a_lo, bytes, true),
+            false => self.mem_copy_dyn(a_lo, a_next, bytes, true),
+        }
+        self.assign(store_at, Rvalue::Use(Operand::Copy(Place::local(held))));
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    /// `__intrinsic_array_swap` of the elements at the (evaluated) indices `a` and `b`.
+    pub(in crate::lower) fn swap_elems(
+        &mut self,
+        arr: &Place,
+        aty: TyId,
+        (ia, ta): (Operand, Ty),
+        (ib, tb): (Operand, Ty),
+    ) -> Operand {
+        let elem = self.elem_ty(aty);
+        let pa = self.elem_place_checked(arr, aty, ia, ta);
+        let pb = self.elem_place_checked(arr, aty, ib, tb);
+        let vt = self.cx.ty(elem);
+        if vt == Ty::Unit {
+            // Zero-sized elements (a single literal type): nothing to exchange.
+            return unit();
+        }
+        let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
+        self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
+        self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        unit()
+    }
+
+    /// `__intrinsic_array_swap_nested(xs, a, i, b, j)` on the content `arr` of `xs` (`aty` =
+    /// `T[][]`): exchanges `xs[a][i]` and `xs[b][j]`, every index bounds-checked. Each inner
+    /// array is reached as an element of `xs`; an inner array of a view type (array_view.rs)
+    /// syncs and writes back just the one element, as `swap` does.
+    fn swap_nested(&mut self, arr: &Place, aty: TyId, idx: [&hir::Expr; 4]) -> Operand {
+        let inner = self.elem_ty(aty);
+        let elem = self.elem_ty(inner);
+        let mut ops = vec![];
+        for e in idx {
+            let v = self.expr(e);
+            let v = self.freeze(v, e.ty);
+            ops.push((v, self.vty(e.ty)));
+        }
+        let [(a, ta), (i, ti), (b, tb), (j, tj)] = <[_; 4]>::try_from(ops).expect("four indices");
+        let pa = self.elem_place_checked(arr, aty, a, ta);
+        let pb = self.elem_place_checked(arr, aty, b, tb);
+        let view = self.cx.array_view(inner);
+        let (ui, uj) = (
+            self.view_index(i.clone(), ti),
+            self.view_index(j.clone(), tj),
+        );
+        let side = |lw: &mut Self, p: &Place, u: &Operand| match view {
+            true => lw.content_with(p, inner, ViewSync::Slots(vec![u.clone()])),
+            false => lw.content(p, inner),
+        };
+        let ca = side(self, &pa, &ui);
+        let cb = side(self, &pb, &uj);
+        let ea = self.elem_place_checked(&ca, inner, i, ti);
+        let eb = self.elem_place_checked(&cb, inner, j, tj);
+        let vt = self.cx.ty(elem);
+        if vt != Ty::Unit {
+            let t = self.copy_to_temp(Operand::Copy(ea.clone()), vt);
+            self.assign(ea, Rvalue::Use(Operand::Copy(eb.clone())));
+            self.assign(eb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        }
+        if view {
+            self.view_flush(Operand::Copy(pa), inner, ViewFlush::Slots(vec![ui]));
+            self.view_flush(Operand::Copy(pb), inner, ViewFlush::Slots(vec![uj]));
+        }
+        unit()
     }
 
     /// `__intrinsic_array_move(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
@@ -96,11 +360,19 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
+        self.view_unsupported(&darr, dty, "sorting with a comparison function");
+        if self.cx.lock_counted(dty) && !self.captured_root(dst) {
+            self.write_barrier(Operand::Copy(darr.clone()), dty);
+        }
         let darr = self.content(&darr, dty);
         let (id, td) = (self.expr(d), self.vty(d.ty));
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
+        self.view_unsupported(&sarr, sty, "sorting with a comparison function");
+        if self.cx.lock_counted(sty) {
+            self.write_barrier(Operand::Copy(sarr.clone()), sty);
+        }
         let sarr = self.content(&sarr, sty);
         let (is, ts) = (self.expr(s), self.vty(s.ty));
         let is = self.freeze(is, s.ty);
@@ -164,6 +436,10 @@ impl FnLower<'_, '_> {
         self.branch(fits, ok, grow);
         self.switch_to(grow);
         let (stride, align) = self.stride(elem);
+        if stride == 0 {
+            // No buffer to refuse: `velt_rt_realloc` never sees zero-sized elements.
+            self.check_len(n.clone(), 0);
+        }
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);
         let args = vec![
@@ -177,18 +453,82 @@ impl FnLower<'_, '_> {
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
     }
 
-    fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
+    /// Room for `n` more elements: when `len + n` exceeds the capacity, the buffer is
+    /// allocated or reallocated to exactly `len + n` (one move of the elements, no doubling).
+    fn reserve(&mut self, arr: &Place, elem: TyId, n: Operand) {
+        let len = Self::arr_field(arr, 1);
+        let need = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, len, n));
+        let cap = self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(arr, 2)));
+        let fits = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Le, need.clone(), cap.clone()),
+        );
+        let (grow, new_bb, re_bb, set, ok) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+        );
+        self.branch(fits, ok, grow);
+        self.switch_to(grow);
+        let (stride, align) = self.stride(elem);
+        self.check_len(need.clone(), stride);
+        let (stride, align) = (cint(stride as i128, Ty::U64), cint(align as i128, Ty::U64));
+        let data = self.temp(Ty::Ptr);
+        let size = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, need.clone(), stride.clone()),
+        );
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, cap.clone(), cint(0, Ty::U64)),
+        );
+        self.branch(empty, new_bb, re_bb);
+        self.switch_to(new_bb);
+        let args = vec![size.clone(), align.clone()];
+        self.call_rt(Rt::Alloc, args, Some(Place::local(data)));
+        self.goto(set);
+        self.switch_to(re_bb);
+        let old = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, cap, stride));
+        let args = vec![Self::arr_field(arr, 0), old, align, size];
+        self.call_rt(Rt::Realloc, args, Some(Place::local(data)));
+        self.goto(set);
+        self.switch_to(set);
+        let d = Rvalue::Use(Operand::Copy(Place::local(data)));
+        self.assign(proj(arr, Proj::Field(0)), d);
+        self.assign(proj(arr, Proj::Field(2)), Rvalue::Use(need));
+        self.goto(ok);
+        self.switch_to(ok);
+    }
+
+    pub(in crate::lower) fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let elem = self.elem_ty(ty);
         let data = self.temp(Ty::Ptr);
         self.assign(Place::local(data), Rvalue::Use(cint(0, Ty::Ptr)));
-        let nz = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, cap.clone(), cint(0, Ty::U64)),
+        // One unsigned compare tests both ends: `cap - 1 < limit` is `1 <= cap <= limit`. An
+        // empty capacity or one past the limit goes to the cold block that tells them apart.
+        let (stride, _) = self.stride(elem);
+        let limit = cint(i128::from(max_elems(stride)), Ty::U64);
+        let less = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Sub, cap.clone(), cint(1, Ty::U64)),
         );
-        let alloc_bb = self.new_block();
-        let join = self.new_block();
-        self.branch(nz, alloc_bb, join);
+        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, less, limit));
+        let (alloc_bb, other, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(fits, alloc_bb, other);
+        self.switch_to(other);
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, cap.clone(), cint(0, Ty::U64)),
+        );
+        let over = self.new_block();
+        self.branch(empty, join, over);
+        self.switch_to(over);
+        let f = self.cx.func(Work::ArrayTooLong);
+        self.call(vir::Callee::Func(f), vec![], None, false);
+        self.terminate(vir::Terminator::Unreachable);
         self.switch_to(alloc_bb);
         let p = self.alloc_elems(cap.clone(), elem);
         self.assign(Place::local(data), Rvalue::Use(p));
@@ -205,6 +545,18 @@ impl FnLower<'_, '_> {
 
     /// Append the owned value `v` to the array at `arr` (growing it when full).
     pub(in crate::lower) fn push_value(&mut self, arr: &Place, elem: TyId, v: Operand) {
+        self.push_value_full(arr, elem, v, |_, _| {});
+    }
+
+    /// [`Self::push_value`], where `full` runs first when the array is full, with the value
+    /// (it may push it elsewhere and leave; the grow follows in the block it ends in).
+    pub(in crate::lower) fn push_value_full(
+        &mut self,
+        arr: &Place,
+        elem: TyId,
+        v: Operand,
+        full_hook: impl FnOnce(&mut Self, Operand),
+    ) {
         let vt = self.cx.ty(elem);
         // Snapshot the value: it may live in the buffer that growing reallocates.
         let v = match v {
@@ -222,7 +574,14 @@ impl FnLower<'_, '_> {
         let join = self.new_block();
         self.branch(full, grow_bb, join);
         self.switch_to(grow_bb);
+        full_hook(self, v.clone());
         let (stride, align) = self.stride(elem);
+        if stride == 0 {
+            // No buffer to refuse: `velt_rt_realloc` never sees zero-sized elements.
+            let next = Rvalue::Binary(BinOp::Add, len.clone(), cint(1, Ty::U64));
+            let next = self.rvalue_temp(Ty::U64, next);
+            self.check_len(next, 0);
+        }
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);
         let args = vec![
@@ -315,7 +674,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop elements `n..len` and set `len = n` (when `n < len`).
-    fn truncate(&mut self, arr: &Place, elem: TyId, n: Operand) {
+    pub(in crate::lower) fn truncate(&mut self, arr: &Place, elem: TyId, n: Operand) {
         let len = self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(arr, 1)));
         let shorter = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, n.clone(), len.clone()));
         let (cut_bb, join) = (self.new_block(), self.new_block());

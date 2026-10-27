@@ -1,7 +1,8 @@
 //! Error values change type on their way to a handler: a callee's (or a `throw`'s) error type is
 //! one member, or a subset, of the union the handler (a `catch` variable, the function's own
 //! error type) holds (hir_encodings.md "Errors"). Widening is a move: tag the value with its
-//! member's variant, re-tag a narrower union member by member, or upcast a class (a no-op).
+//! member's variant, re-tag a narrower union member by member, upcast a class (a no-op), or box
+//! a value into `any`.
 //! Unions built by substituting into generic unions may nest; members are found recursively.
 
 use velt_sema::hir::{TyId, TyKind};
@@ -18,7 +19,10 @@ impl FnLower<'_, '_> {
             return v;
         }
         if self.cx.is_union(to) {
-            if let Some(k) = self.member_variant(to, from) {
+            let k = self
+                .member_variant(to, from)
+                .or_else(|| self.dynamic_member(to).filter(|_| !self.cx.is_union(from)));
+            if let Some(k) = k {
                 let payload_ty = self.cx.variant_tys(to, k)[0];
                 let p = self.widen_error(v, from, payload_ty);
                 return self.union_value(to, k, p, payload_ty);
@@ -30,6 +34,19 @@ impl FnLower<'_, '_> {
         if self.cx.is_class(from) && self.cx.is_class(to) {
             return v;
         }
+        // Into `any` (or `unknown`): boxed through the implementation every type has, as a
+        // conversion to `any` is (`throw(e: any)` of a generator, a `try` that throws an
+        // `AppErr` and an `any`).
+        if self.cx.is_dynamic(to) && !self.cx.is_dynamic(from) {
+            if let Some(i) = self.cx.hir.any_impl {
+                // Owned by the caller: not a temporary of the statement.
+                let w = self.value_to_dyn(v, from, to, i);
+                if let Operand::Copy(p) = &w {
+                    self.take_temp(p);
+                }
+                return w;
+            }
+        }
         ice(format_args!(
             "cannot convert error `{}` to `{}`",
             self.cx.type_name(from),
@@ -39,7 +56,7 @@ impl FnLower<'_, '_> {
 
     /// The variant of union `u` that can hold an error of type `m`: `m` itself, a union member
     /// containing it, or a base class of it.
-    fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
+    pub(super) fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
         let n = self.union_len(u);
         let members: Vec<TyId> = (0..n).map(|k| self.cx.variant_tys(u, k)[0]).collect();
         if let Some(k) = members.iter().position(|&p| p == m) {
@@ -61,6 +78,15 @@ impl FnLower<'_, '_> {
             .map(|k| k as u32)
     }
 
+    /// The variant of union `u` that holds `any` / `unknown`, if one does.
+    fn dynamic_member(&mut self, u: TyId) -> Option<u32> {
+        let n = self.union_len(u);
+        (0..n).find(|&k| {
+            let p = self.cx.variant_tys(u, k)[0];
+            self.cx.is_dynamic(p)
+        })
+    }
+
     fn union_len(&mut self, u: TyId) -> u32 {
         match self.cx.kind(u) {
             TyKind::Adt(d, _) => self.cx.enum_def(d).variants.len() as u32,
@@ -69,7 +95,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Union value of type `u` in variant `k` holding `payload` (of type `payload_ty`).
-    fn union_value(&mut self, u: TyId, k: u32, payload: Operand, payload_ty: TyId) -> Operand {
+    pub(super) fn union_value(
+        &mut self,
+        u: TyId,
+        k: u32,
+        payload: Operand,
+        payload_ty: TyId,
+    ) -> Operand {
         let base = self.cx.ty(u);
         let view = self.cx.view(u, k);
         let t = self.temp(base);

@@ -1,0 +1,7 @@
+// A tuple element written behind `!` whose field the right-hand side sets to null (#1352): the
+// program stops and names what happened, where Node writes into the array the field held before.
+const ht: { t: [number, string] | null } = { t: [1, "h"] };
+ht.t![0] = 2;
+console.log(ht.t);
+ht.t![0] = (() => { ht.t = null; return 5; })();
+console.log(ht.t);

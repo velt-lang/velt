@@ -12,8 +12,25 @@ use crate::hir::{self, ExprKind as H, PatKind as P, UseMode};
 impl FnCx<'_, '_> {
     /// The awaited value of `h`, or `Err(h)` when `h` is not a union with a promise member.
     pub(super) fn await_union(&mut self, h: hir::Expr, span: Span) -> Result<hir::Expr, hir::Expr> {
+        self.await_union_with(h, span, &mut |s, read, p| {
+            s.mk(H::Await(Box::new(read)), p, span)
+        })
+    }
+
+    /// [`await_union`](Self::await_union) where `on_promise` gives the value of an arm whose
+    /// member is a promise (`read`, settling with the payload type given): `Await(read)`, or
+    /// a never-typed expression for a promise an async function adopts (`tasks.rs`).
+    pub(super) fn await_union_with(
+        &mut self,
+        h: hir::Expr,
+        span: Span,
+        on_promise: &mut dyn FnMut(&mut Self, hir::Expr, hir::TyId) -> hir::Expr,
+    ) -> Result<hir::Expr, hir::Expr> {
         let sty = h.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        if self.is_three_state(sty) {
+            return Err(h);
+        }
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         // `Promise<T> | null` is an optional promise, not a union: one member, no variant.
         let (def, members) = match self.cx.union_def(inner) {
             Some((def, _)) => match self.cx.union_members(inner) {
@@ -34,9 +51,15 @@ impl FnCx<'_, '_> {
         let unit = self.cx.ty.unit;
         let never = self.cx.ty.never;
         let mut nullable = inner != sty;
+        // The result's nothing: `undefined` for an optional promise read as `undefined` (a
+        // `Record` or `Map` lookup) and for a `void` payload, as in Node.
+        let mut has_null = self.cx.ty.nothing_of(sty).is_some_and(|n| n.has_null());
         let mut values = vec![];
         for m in &members {
             let v = self.cx.ty.promise_payload(*m).unwrap_or(*m);
+            if self.cx.ty.nothing_of(v).is_some_and(|n| n.has_null()) {
+                has_null = true;
+            }
             if v == unit {
                 nullable = true;
             } else if v != never {
@@ -51,7 +74,13 @@ impl FnCx<'_, '_> {
         let ret = if values.is_empty() {
             unit
         } else {
-            self.cx.union_of(&values, nullable, span)
+            let t = self.cx.union_of(&values, nullable, span);
+            match *self.cx.ty.kind(t) {
+                hir::TyKind::Option(p, hir::Nothing::Null) if !has_null => {
+                    self.cx.ty.option_of(p, hir::Nothing::Undefined)
+                }
+                _ => t,
+            }
         };
         let unit_expr = |s: &mut Self| {
             let block = hir::Block {
@@ -99,7 +128,11 @@ impl FnCx<'_, '_> {
             }
             let read = self.mk(H::Local(b, mode), *m, span);
             let (value, vty) = match self.cx.ty.promise_payload(*m) {
-                Some(p) => (self.mk(H::Await(Box::new(read)), p, span), p),
+                Some(p) => {
+                    let value = on_promise(self, read, p);
+                    let vty = value.ty;
+                    (value, vty)
+                }
                 None => (read, *m),
             };
             let body = if ret == unit {

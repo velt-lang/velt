@@ -6,22 +6,65 @@
 // runtime copy. Decoders throw `EncodingError` on malformed input.
 
 import { IoResult } from "velt:io";
+import { HEX_VALUES, STD_DIGITS, STD_VALUES, URL_DIGITS, URL_VALUES } from "velt:encoding/tables";
+import { validPrefix } from "velt:encoding/utf8";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];
 // `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid.
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
-declare function velt_rt_bytes_utf8_valid(b: u8[]): bool;
 
-const BASE64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const BASE64_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const HEX_DIGITS = "0123456789abcdef";
+// The SIMD operations hex uses (`velt:simd`, std/simd/*.vlt, is the API; declared again here
+// so that this module does not load it). `load` and `store` do not check their range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_add(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_shr(v: u8x16, count: u32): u8x16;
+declare function velt_simd_u8x16_gt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_le(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_zip_low(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_zip_high(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
+declare function velt_simd_u16x8_splat(x: u16): u16x8;
+declare function velt_simd_u16x8_and(a: u16x8, b: u16x8): u16x8;
+declare function velt_simd_u16x8_or(a: u16x8, b: u16x8): u16x8;
+declare function velt_simd_u16x8_shl(v: u16x8, count: u32): u16x8;
+declare function velt_simd_u16x8_shr(v: u16x8, count: u32): u16x8;
+declare function velt_simd_u16x8_narrow(a: u16x8, b: u16x8): u8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
 
 // Marks a byte that is not a digit in the decode tables.
 const INVALID: u8 = 0xff;
 
 // `=`
 const PAD: u8 = 61;
+
+/**
+ * The number of bytes `s` keeps its text in: UTF-8, a lone surrogate as its three-byte form
+ * (`Buffer.byteLength(s)` for well-formed text). O(1).
+ */
+export function utf8Length(s: string): usize {
+  return __intrinsic_str_byte_len(s);
+}
+
+/** Byte `i` of `s`'s UTF-8 (as `utf8Length` counts them), read in place; a RangeError past it. */
+export function utf8ByteAt(s: string, i: usize): u8 {
+  if (i >= __intrinsic_str_byte_len(s)) {
+    panic(`RangeError: byte ${i} is past the end of a string of ${__intrinsic_str_byte_len(s)}`);
+  }
+  return __intrinsic_str_byte_at(s, i as u64);
+}
+
+/** Whether every character of `s` is ASCII (so its bytes are its UTF-16 code units). O(1). */
+export function isAscii(s: string): bool {
+  return __intrinsic_str_len(s) == __intrinsic_str_byte_len(s);
+}
 
 /** Thrown for malformed Base64, hex or UTF-8 input. */
 export class EncodingError extends Error {
@@ -34,7 +77,7 @@ export class EncodingError extends Error {
 
 /** Standard Base64 (`+/` alphabet) with `=` padding. */
 export function base64Encode(data: u8[]): string {
-  return encode64(data, BASE64_STD, true);
+  return encode64(data, false, true);
 }
 
 /**
@@ -47,7 +90,7 @@ export function base64Decode(s: string): u8[] {
 
 /** URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding. */
 export function base64UrlEncode(data: u8[]): string {
-  return encode64(data, BASE64_URL, false);
+  return encode64(data, true, false);
 }
 
 /** Decodes URL-safe Base64; padding is optional. Throws `EncodingError`. */
@@ -57,7 +100,7 @@ export function base64UrlDecode(s: string): u8[] {
 
 /** Base64 of the UTF-8 bytes of `s`. */
 export function base64EncodeString(s: string): string {
-  return encode64(velt_rt_bytes_from_str(s), BASE64_STD, true);
+  return encode64(velt_rt_bytes_from_str(s), false, true);
 }
 
 /** Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8. */
@@ -65,7 +108,7 @@ export function base64DecodeString(s: string): string {
   return utf8Decode(decode64(s, false));
 }
 
-function encode64(data: u8[], alphabet: string, pad: bool): string {
+function encode64(data: u8[], url: bool, pad: bool): string {
   const n = data.length;
   const rest = n % 3;
   const full = n - rest;
@@ -73,16 +116,15 @@ function encode64(data: u8[], alphabet: string, pad: bool): string {
   if (rest > 0) {
     size += pad ? 4 : rest + 1;
   }
-  const digits = velt_rt_bytes_from_str(alphabet);
   // Sized once and written by index: no growth check per character.
-  const out = Buffer.alloc(size);
+  const out = unfilled(size);
   let o: usize = 0;
   for (let i: usize = 0; i < full; i += 3) {
     const t = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
-    out[o] = digits[(t >> 18) as usize];
-    out[o + 1] = digits[((t >> 12) & 63) as usize];
-    out[o + 2] = digits[((t >> 6) & 63) as usize];
-    out[o + 3] = digits[(t & 63) as usize];
+    out[o] = digit(t >> 18, url);
+    out[o + 1] = digit((t >> 12) & 63, url);
+    out[o + 2] = digit((t >> 6) & 63, url);
+    out[o + 3] = digit(t & 63, url);
     o += 4;
   }
   if (rest > 0) {
@@ -90,10 +132,10 @@ function encode64(data: u8[], alphabet: string, pad: bool): string {
     if (rest == 2) {
       t = t | ((data[full + 1] as u32) << 8);
     }
-    out[o] = digits[(t >> 18) as usize];
-    out[o + 1] = digits[((t >> 12) & 63) as usize];
+    out[o] = digit(t >> 18, url);
+    out[o + 1] = digit((t >> 12) & 63, url);
     if (rest == 2) {
-      out[o + 2] = digits[((t >> 6) & 63) as usize];
+      out[o + 2] = digit((t >> 6) & 63, url);
       if (pad) {
         out[o + 3] = PAD;
       }
@@ -105,10 +147,10 @@ function encode64(data: u8[], alphabet: string, pad: bool): string {
   return validToString(out);
 }
 
-// Texts of at least this many digits (without their padding) are decoded through a table
-// (`valueTable`): a digit costs about half through it of what computing it costs, and from here
-// on that pays for building the table (in instructions, the two paths meet at 24 digits).
-const TABLE_FROM: i64 = 24;
+// Texts of at least this many digits (without their padding) are read from a copy of their
+// bytes, which makes a digit two loads; shorter ones are read where they stand, one `charCodeAt`
+// per digit, which saves the copy (in instructions, the two meet at about 20 digits).
+const COPY_FROM: i64 = 24;
 
 // Throws on characters outside the alphabet (`url`: the URL-safe one), on `=` anywhere but the
 // (at most two) final positions, and on a length that cannot come from whole bytes. Leftover
@@ -116,26 +158,26 @@ const TABLE_FROM: i64 = 24;
 // they agree up to the first character that is not ASCII, which is not a digit either way.
 function decode64(s: string, url: bool): u8[] {
   let n = s.length as i64;
+  if (n == 0) {
+    return [];
+  }
   let pads: i64 = 0;
   while (n > 0 && pads < 2 && s.charCodeAt(n - 1) == (PAD as i64)) {
     n--;
     pads++;
   }
   const tail = n % 4;
-  const out = Buffer.alloc((n / 4 * 3 + (tail == 3 ? 2 : tail == 2 ? 1 : 0)) as usize);
+  const out = unfilled((n / 4 * 3 + (tail == 3 ? 2 : tail == 2 ? 1 : 0)) as usize);
   let o: usize = 0;
   let i: i64 = 0;
-  if (n >= TABLE_FROM) {
-    // A long text pays for a table of the 256 byte values and a copy of its bytes, which make
-    // each digit two loads.
-    const table = valueTable(url);
+  if (n >= COPY_FROM) {
     const text = velt_rt_bytes_from_str(s);
     while (i + 4 <= n) {
       const at = i as usize;
-      const a = table[text[at] as usize] as i64;
-      const b = table[text[at + 1] as usize] as i64;
-      const c = table[text[at + 2] as usize] as i64;
-      const d = table[text[at + 3] as usize] as i64;
+      const a = value(text[at] as usize, url);
+      const b = value(text[at + 1] as usize, url);
+      const c = value(text[at + 2] as usize, url);
+      const d = value(text[at + 3] as usize, url);
       if ((a | b | c | d) < 0) {
         break;
       }
@@ -145,10 +187,10 @@ function decode64(s: string, url: bool): u8[] {
     }
   } else {
     while (i + 4 <= n) {
-      const a = value64(s.charCodeAt(i), url);
-      const b = value64(s.charCodeAt(i + 1), url);
-      const c = value64(s.charCodeAt(i + 2), url);
-      const d = value64(s.charCodeAt(i + 3), url);
+      const a = unitValue(s.charCodeAt(i), url);
+      const b = unitValue(s.charCodeAt(i + 1), url);
+      const c = unitValue(s.charCodeAt(i + 2), url);
+      const d = unitValue(s.charCodeAt(i + 3), url);
       if ((a | b | c | d) < 0) {
         break;
       }
@@ -161,7 +203,7 @@ function decode64(s: string, url: bool): u8[] {
   let acc: i64 = 0;
   let bits: i64 = 0;
   while (i < n) {
-    const v = value64(s.charCodeAt(i), url);
+    const v = unitValue(s.charCodeAt(i), url);
     if (v < 0) {
       throw new EncodingError(`Invalid base64 character at offset ${i}`);
     }
@@ -180,6 +222,14 @@ function decode64(s: string, url: bool): u8[] {
   return out;
 }
 
+// `n` bytes that are not set to anything: each caller writes every one of them before it returns
+// the array, and throws it away otherwise. Cheaper than `Buffer.alloc`, which zeroes them first.
+function unfilled(n: usize): u8[] {
+  const out: u8[] = __intrinsic_array_with_capacity(n);
+  __intrinsic_array_set_len(out, n);
+  return out;
+}
+
 // Writes the 24 bits of `t` as three bytes at `out[o]`.
 function put3(out: u8[], o: usize, t: i64) {
   out[o] = (t >> 16) as u8;
@@ -187,97 +237,116 @@ function put3(out: u8[], o: usize, t: i64) {
   out[o + 2] = (t & 0xff) as u8;
 }
 
-// The value of every byte as a digit, -1 for the others: what `value64` computes, laid out
-// with one pass of -1 and a store per digit. Signed, so that one sign test finds a byte that is
-// not a digit among four.
-function valueTable(url: bool): i8[] {
-  const table: i8[] = __intrinsic_array_with_capacity(256);
-  __intrinsic_array_set_len(table, 256);
-  for (let c: usize = 0; c < 256; c++) {
-    table[c] = -1;
-  }
-  for (let k: usize = 0; k < 26; k++) {
-    table[65 + k] = k as i8;
-    table[97 + k] = (26 + k) as i8;
-  }
-  for (let k: usize = 0; k < 10; k++) {
-    table[48 + k] = (52 + k) as i8;
-  }
-  table[url ? 45 : 43] = 62;
-  table[url ? 95 : 47] = 63;
-  return table;
+// The digit for 6-bit value `v`.
+function digit(v: u32, url: bool): u8 {
+  return url ? URL_DIGITS[v as usize] : STD_DIGITS[v as usize];
 }
 
-// The value of Base64 digit `c` (a character code), or -1 if it is not one. Computed, so a
-// decode of a few digits builds no table: letters and digits are ranges, and the two alphabets differ
-// only in the characters for 62 and 63.
-function value64(c: i64, url: bool): i64 {
-  if (c >= 97) {
-    return c <= 122 ? c - 71 : -1;
-  }
-  if (c >= 65) {
-    if (c <= 90) {
-      return c - 65;
-    }
-    return url && c == 95 ? 63 : -1;
-  }
-  if (c >= 48) {
-    return c <= 57 ? c + 4 : -1;
-  }
-  if (url) {
-    return c == 45 ? 62 : -1;
-  }
-  if (c == 43) {
-    return 62;
-  }
-  return c == 47 ? 63 : -1;
+// The value of UTF-16 code unit `c` as a digit, -1 if it is not one.
+function unitValue(c: i64, url: bool): i64 {
+  return c >= 0 && c < 256 ? value(c as usize, url) : -1;
+}
+
+// The value of byte `c` as a digit, -1 if it is not one.
+function value(c: usize, url: bool): i64 {
+  return (url ? URL_VALUES[c] : STD_VALUES[c]) as i64;
 }
 
 // ───────────────────────────── hex ─────────────────────────────
 
 /** Lowercase hex, two digits per byte. */
 export function hexEncode(data: u8[]): string {
-  const digits = velt_rt_bytes_from_str(HEX_DIGITS);
-  const out: u8[] = __intrinsic_array_with_capacity(data.length * 2);
-  for (let i: usize = 0; i < data.length; i++) {
-    const b = data[i];
-    out.push(digits[(b >> 4) as usize]);
-    out.push(digits[(b & 15) as usize]);
+  const n = data.length;
+  // Sized once and written by index: the SIMD stores and the loop after them write every byte.
+  const out = unfilled(n * 2);
+  let i: usize = 0;
+  // Sixteen bytes per step: each half byte becomes its digit (`0` + n, or `a` - 10 + n past 9),
+  // and the digits of the high and low halves are written in turn.
+  const nine = velt_simd_u8x16_splat(9);
+  const digit = velt_simd_u8x16_splat(48);
+  const letter = velt_simd_u8x16_splat(87);
+  while (i + 16 <= n) {
+    const v = velt_simd_u8x16_load(data, i as u64);
+    const high = hexDigits(velt_simd_u8x16_shr(v, 4), nine, digit, letter);
+    const low = hexDigits(velt_simd_u8x16_and(v, velt_simd_u8x16_splat(15)), nine, digit, letter);
+    velt_simd_u8x16_store(velt_simd_u8x16_zip_low(high, low), out, (i * 2) as u64);
+    velt_simd_u8x16_store(velt_simd_u8x16_zip_high(high, low), out, (i * 2 + 16) as u64);
+    i += 16;
+  }
+  while (i < n) {
+    const high = data[i] >> 4;
+    const low = data[i] & 15;
+    out[i * 2] = high + (high > 9 ? 87 : 48);
+    out[i * 2 + 1] = low + (low > 9 ? 87 : 48);
+    i++;
   }
   return validToString(out);
+}
+
+// The hex digits of sixteen values below 16.
+function hexDigits(v: u8x16, nine: u8x16, digit: u8x16, letter: u8x16): u8x16 {
+  return velt_simd_u8x16_add(v, velt_simd_u8x16_select(velt_simd_u8x16_gt(v, nine), letter, digit));
 }
 
 /**
  * Decodes hex digits (either case). Throws `EncodingError` on odd length or a non-hex character.
  */
 export function hexDecode(s: string): u8[] {
+  if (s.length == 0) {
+    return [];
+  }
   const text = velt_rt_bytes_from_str(s);
   if (text.length % 2 != 0) {
     throw new EncodingError("Invalid hex: odd length");
   }
-  const out: u8[] = __intrinsic_array_with_capacity(text.length / 2);
-  for (let i: usize = 0; i < text.length; i += 2) {
-    const hi = hexValue(text[i]);
-    const lo = hexValue(text[i + 1]);
+  const out = unfilled(text.length / 2);
+  let i: usize = 0;
+  // 32 digits per step. A vector with a character that is not a digit ends the steps: the
+  // loop below finds which one it is.
+  while (i + 32 <= text.length) {
+    const first = hexPairs(velt_simd_u8x16_load(text, i as u64));
+    const second = hexPairs(velt_simd_u8x16_load(text, (i + 16) as u64));
+    if (!(first.ok && second.ok)) {
+      break;
+    }
+    velt_simd_u8x16_store(velt_simd_u16x8_narrow(first.bytes, second.bytes), out, (i / 2) as u64);
+    i += 32;
+  }
+  while (i < text.length) {
+    const hi = HEX_VALUES[text[i] as usize];
+    const lo = HEX_VALUES[text[i + 1] as usize];
     if (hi == INVALID || lo == INVALID) {
       throw new EncodingError(`Invalid hex character at offset ${hi == INVALID ? i : i + 1}`);
     }
-    out.push((hi << 4) | lo);
+    out[i / 2] = (hi << 4) | lo;
+    i += 2;
   }
   return out;
 }
 
-function hexValue(c: u8): u8 {
-  if (c >= 48 && c <= 57) {
-    return c - 48;
-  }
-  if (c >= 97 && c <= 102) {
-    return c - 87;
-  }
-  if (c >= 65 && c <= 70) {
-    return c - 55;
-  }
-  return INVALID;
+// Sixteen hex digits as eight bytes, one per 16-bit lane, and whether all sixteen were digits.
+type HexPairs = { bytes: u16x8; ok: bool };
+
+function hexPairs(c: u8x16): HexPairs {
+  // `0`..`9` are 0..9 after subtracting `0`; a letter of either case is 0..5 after setting
+  // the lower-case bit and subtracting `a`. Anything else is past those ranges (wrapping).
+  const digit = velt_simd_u8x16_sub(c, velt_simd_u8x16_splat(48));
+  const isDigit = velt_simd_u8x16_le(digit, velt_simd_u8x16_splat(9));
+  const letter = velt_simd_u8x16_sub(
+    velt_simd_u8x16_or(c, velt_simd_u8x16_splat(0x20)),
+    velt_simd_u8x16_splat(97),
+  );
+  const isLetter = velt_simd_u8x16_le(letter, velt_simd_u8x16_splat(5));
+  const value = velt_simd_u8x16_select(
+    isDigit,
+    digit,
+    velt_simd_u8x16_add(letter, velt_simd_u8x16_splat(10)),
+  );
+  // A pair of values as one 16-bit lane has the first digit's in its low byte.
+  const pairs = velt_simd_u8x16_as_u16x8(value);
+  const low = velt_simd_u16x8_and(pairs, velt_simd_u16x8_splat(0xff));
+  const bytes = velt_simd_u16x8_or(velt_simd_u16x8_shl(low, 4), velt_simd_u16x8_shr(pairs, 8));
+  return { bytes, ok: velt_simd_mask8x16_all(velt_simd_mask8x16_or(isDigit, isLetter)) };
 }
 
 // ───────────────────────────── UTF-8 ─────────────────────────────
@@ -329,11 +398,11 @@ export function utf8DecodeLossy(data: u8[]): string {
 
 /** Whether `data` is valid UTF-8. */
 export function utf8Valid(data: u8[]): bool {
-  return velt_rt_bytes_utf8_valid(data);
+  return validPrefix(data, 0, data.length) == (data.length as i64);
 }
 
-// Offset of the first byte that starts an invalid sequence, or -1.
-function firstInvalid(data: u8[]): i64 {
+/** Offset of the first byte of `data` that starts an invalid UTF-8 sequence, or -1. */
+export function firstInvalid(data: u8[]): i64 {
   let i: usize = 0;
   const n = data.length;
   while (i < n) {
@@ -387,93 +456,11 @@ function sequenceAt(data: u8[], i: usize): i64 {
   return (need + 1) as i64;
 }
 
-// Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string.
-function validToString(bytes: u8[]): string {
+/** Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string. */
+export function validToString(bytes: u8[]): string {
   const r = velt_rt_bytes_to_str(bytes);
   if (r.code != 0) {
     panic("ICE: std/encoding produced invalid UTF-8");
   }
   return r.value;
-}
-
-// ──────────────────────── TextEncoder, TextDecoder ────────────────────────
-
-// Whether `label` names UTF-8 in the WHATWG Encoding standard (ASCII case-insensitive, with
-// surrounding whitespace ignored).
-function isUtf8Label(label: string): bool {
-  const l = label.trim().toLowerCase();
-  return (
-    l == "utf-8" ||
-    l == "utf8" ||
-    l == "unicode-1-1-utf-8" ||
-    l == "unicode11utf8" ||
-    l == "unicode20utf8" ||
-    l == "x-unicode20utf8"
-  );
-}
-
-/** `TextDecoder`'s options. */
-export struct TextDecoderOptions {
-  /** Throw `EncodingError` on invalid UTF-8 instead of writing U+FFFD (default false). */
-  fatal?: bool;
-  /** Keep a leading byte order mark instead of dropping it (default false). */
-  ignoreBOM?: bool;
-}
-
-/**
- * The WHATWG `TextEncoder` (a global, as in Node): strings to UTF-8 bytes. The bytes are a
- * `u8[]`, where JS has a `Uint8Array`.
- */
-export class TextEncoder {
-  /** Always `"utf-8"`. */
-  readonly encoding: string = "utf-8";
-
-  /** The UTF-8 bytes of `input` (a lone surrogate is written as U+FFFD, as in JS). */
-  encode(input: string = ""): u8[] {
-    return velt_rt_bytes_from_str(input);
-  }
-}
-
-/**
- * The WHATWG `TextDecoder` (a global, as in Node) for UTF-8, the only encoding it takes: a
- * leading byte order mark is dropped (unless `ignoreBOM`), and invalid input becomes U+FFFD
- * (or throws `EncodingError` with `fatal`). One `decode` call decodes one whole input.
- */
-export class TextDecoder {
-  /** Always `"utf-8"`. */
-  readonly encoding: string = "utf-8";
-  /** Whether invalid input throws. */
-  readonly fatal: bool;
-  /** Whether a leading byte order mark is kept. */
-  readonly ignoreBOM: bool;
-
-  /** Throws `EncodingError` for a `label` that does not name UTF-8, as Node's RangeError. */
-  constructor(label: string = "utf-8", options: TextDecoderOptions = {}) {
-    if (!isUtf8Label(label)) {
-      throw new EncodingError(`The "${label}" encoding is not supported`);
-    }
-    this.fatal = options.fatal ?? false;
-    this.ignoreBOM = options.ignoreBOM ?? false;
-  }
-
-  /** The text `input` encodes. */
-  decode(input: u8[] = []): string {
-    let data = input;
-    if (
-      !this.ignoreBOM &&
-      input.length >= 3 &&
-      input[0] == 0xef &&
-      input[1] == 0xbb &&
-      input[2] == 0xbf
-    ) {
-      data = input.slice(3);
-    }
-    if (!this.fatal) {
-      return utf8DecodeLossy(data);
-    }
-    if (firstInvalid(data) >= 0) {
-      throw new EncodingError("The encoded data was not valid for encoding utf-8");
-    }
-    return validToString(data);
-  }
 }

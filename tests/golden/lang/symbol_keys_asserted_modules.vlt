@@ -1,0 +1,31 @@
+// check: no leaks
+// `{ ..., [KEY]: v } as T` with `KEY` imported and `T` declared in a third module that doesn't
+// see `KEY` (#923): the member is an optional field of `T`, its key resolved where the literal
+// is written. Expected output from node.
+import { VNODE, CELL } from "./_symbol_keys_asserted/brand";
+import type { VNode, Cell } from "./_symbol_keys_asserted/types";
+
+function el(type: string, children: VNode[]): VNode {
+  return { type, children, [VNODE]: true } as VNode;
+}
+
+function cell(value: number): Cell {
+  return ({ value, [CELL]: 1 }) as Cell;
+}
+
+function describe(x: VNode | Cell | null | undefined): string {
+  if ((x as any)?.[VNODE] === true) return "vnode";
+  if (x && CELL in x) return "cell";
+  return "other";
+}
+
+function main() {
+  const tree = el("div", [el("span", []), { type: "raw", children: [] }]);
+  console.log(tree);
+  console.log(tree.children.map((c) => (c as any)[VNODE] === true));
+  console.log(describe(tree), describe(cell(2)), describe({ value: 3 }), describe(null));
+  const copy = { ...cell(4) };
+  console.log(copy, CELL in copy, JSON.stringify(copy), Object.keys(copy));
+  const arr: VNode[] = [el("a", [])];
+  for (const v of arr) console.log(VNODE in v);
+}

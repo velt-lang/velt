@@ -8,8 +8,8 @@ helper), and explain it in your final report.
 | Contract | File | Producer → Consumer |
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
-| AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
-| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
+| AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
+| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
@@ -23,9 +23,10 @@ helper), and explain it in your final report.
 ```
 velt build main.vlt
   └─ driver (veltc): load main.vlt, follow imports, SourceMap
-      ├─ velt_syntax::parse_file       per file      → ast::Module
+      ├─ velt_syntax::parse_with       per file      → ast::Module (+ ambient declarations;
+      │                                                 parse_file for std and the formatter)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
-      ├─ velt_vir::lower_with (+ verify)              → vir::Program (with source locations)
+      ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
       │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
@@ -40,7 +41,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
 - `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, native_inits })` fills them (the driver
-  calls it); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
+  calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
+  hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
   `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
@@ -56,6 +58,20 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   interface (Linux; macOS untested, LLDB needs `plugin.jit-loader.gdb.enable on`); on COFF no line
   tables, and internal functions become external symbols so the PDB names them.
 
+## Namespaces and call signatures (additive AST extension)
+- `ItemKind::Namespace(Namespace)` (`ast/blocks.rs`): `[declare] namespace N { … }` with its
+  items (type aliases, interfaces, nested namespaces; each `Item::exported` as written).
+  `namespace A.B { … }` is `A` holding the exported namespace `B`. `declare global { … }` (an
+  `ItemKind::Augment`) may hold namespaces too. Sema flattens them into items named `N.T`.
+- `CallSig { sig: FnSig, construct, span }` (`ast/type_parts.rs`): a call signature
+  `(x: T): R` / `<T>(x: T): R`, or with `construct` a construct signature `new (x: T): C`, in an
+  interface or object type, as written (`sig.name` is empty; parameters keep their names, `?`
+  and initializers). `InterfaceDecl::call_sigs` holds an interface's;
+  `TypeExprKind::Callable { sigs, members }` is an object type with signatures (`members`: the
+  `Object` or `IndexSig` of its other members). Sema gives them TypeScript's type: one
+  signature alone is that function type, otherwise the intersection of the signatures and the
+  members (and an interface's bases).
+
 ## Who owns what
 | Area | Crates / files |
 |---|---|
@@ -70,6 +86,13 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
+
+## SIMD (additive VIR and HIR extension)
+- `vir::Ty::V128`: a 128-bit vector, a scalar (registers, signatures) of 16 bytes aligned to 8
+  (`Ty::scalar_align`). Only moved, loaded and stored; its one constant is `Const::Int(0)`;
+  `Rvalue::Unary`, `Binary` and `Cast` on it are rejected by `verify`. Operations are calls of
+  `velt_simd_*` externs, which backends emit inline (`velt_vir::simd`, rt_abi.md "SIMD").
+- `hir::TyKind::Simd(SimdTy)`: the vector and mask types; Copy, no drop, not equatable.
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param

@@ -1,0 +1,31 @@
+// check: no leaks
+// `clone()` of a view (#1485) is a view of a copy of its object: writes to one leave the other,
+// and the copy, converted again, gives the cloned view. A copy of an array copies each element
+// on its own, as for any object.
+type Item = { name: string; price: number };
+
+const tracked = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+function main(): void {
+  const a: any = new Product();
+  const v = a as Item;
+  const c = v.clone();
+  c.price = 99;
+  const back: any = c;
+  console.log(v.price, c.price, back === a, (back as Item) === c, (a as Item) === v);
+  const both = [v, v, c];
+  const copies = both.clone();
+  copies[0].price = 5;
+  console.log(copies[0] === copies[1], copies[1].price, copies[2].price, v.price);
+  const junk: any[] = [];
+  for (let i = 0; i < 1000; i++) {
+    junk.push({ name: "x" + i, price: i });
+  }
+  console.log(c.name, v.name, tracked.name, junk.length);
+}

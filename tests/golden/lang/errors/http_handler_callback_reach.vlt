@@ -88,7 +88,7 @@ async function main() {
     f.fire();
     btn.click("x");
     const g = m.get("a");
-    if (g !== null) {
+    if (g !== undefined) {
       g("y");
     }
     bx.v(1, 2);

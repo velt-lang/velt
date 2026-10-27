@@ -6,13 +6,14 @@
 //! Reading a Copy value (`xs.length`, `xs[i]` of numbers, `p.x`) is not a use here: the value
 //! is copied out before the call starts, so it can't alias anything the callee sees.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Def, DefId, Expr, ExprKind as E, LocalDef, LocalId, PassMode, Stmt, UseMode,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, LocalId, PassMode, Stmt,
+    UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -62,7 +63,8 @@ pub(super) fn access_of(m: UseMode) -> Option<Access> {
 }
 
 /// A place used by an argument; `text` names it in diagnostics, `captured` says the use is a
-/// closure's capture (`span` is then the closure's).
+/// closure's capture (`span` is then the closure's), and `capture` which: the closure and the
+/// enclosing variable.
 #[derive(Clone, Debug)]
 pub(super) struct Use {
     pub place: Place,
@@ -70,12 +72,13 @@ pub(super) struct Use {
     pub span: Span,
     pub text: String,
     pub captured: bool,
+    pub capture: Option<(DefId, LocalId)>,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
 /// into the matched place: `aliases[binding]` is that place, so `f(xs, x)` (modifying `xs`) inside
 /// `for (const x of xs)` is seen as a use of `xs[..]`.
-pub(super) type Aliases = HashMap<LocalId, Place>;
+pub(super) type Aliases = FxHashMap<LocalId, Place>;
 
 pub(super) struct Collector<'a, 'm> {
     pub cx: &'a Ctx<'m>,
@@ -83,7 +86,7 @@ pub(super) struct Collector<'a, 'm> {
     pub aliases: &'a Aliases,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`): a call
     /// through one uses the variables it borrows, as a closure argument would.
-    pub held: &'a HashMap<LocalId, DefId>,
+    pub held: &'a FxHashMap<LocalId, DefId>,
 }
 
 impl Collector<'_, '_> {
@@ -108,6 +111,16 @@ impl Collector<'_, '_> {
             } => self.place_of(base).map(|(p, _)| (p, *mode)),
             // The same object, seen as a subclass.
             E::Downcast(base) => self.place_of(base),
+            // A `shared<T>` read in place borrows the box its handle points to: whatever gives
+            // the handle's place another value meanwhile (`s = shared(..)` in a closure the
+            // callee runs, in the body of a loop over it) would free what is read.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::SharedRead),
+                args,
+            } => {
+                let (p, _) = self.place_of(args.first()?)?;
+                Some((p, UseMode::Borrow))
+            }
             _ => None,
         }
     }
@@ -135,6 +148,7 @@ impl Collector<'_, '_> {
                     span: e.span,
                     text,
                     captured: false,
+                    capture: None,
                 });
             }
             return self.index_operands(e, nested);
@@ -174,7 +188,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         visit::expr(e, &mut v);
     }
@@ -184,7 +198,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         visit::block(b, &mut v);
     }
@@ -194,7 +208,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         for s in stmts {
             visit::stmt(s, &mut v);
@@ -235,6 +249,7 @@ impl Collector<'_, '_> {
                 span,
                 text: self.locals[cap.outer.0 as usize].name.clone(),
                 captured: true,
+                capture: Some((def, cap.outer)),
             });
         }
     }
@@ -245,7 +260,7 @@ impl Collector<'_, '_> {
 struct Nested<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     out: &'c mut Vec<Use>,
-    skip: HashSet<*const Expr>,
+    skip: FxHashSet<*const Expr>,
 }
 
 impl Nested<'_, '_, '_> {
@@ -268,6 +283,7 @@ impl Nested<'_, '_, '_> {
             span: e.span,
             text,
             captured: false,
+            capture: None,
         });
     }
 }

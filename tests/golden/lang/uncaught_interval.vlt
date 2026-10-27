@@ -1,0 +1,12 @@
+// An error a `setInterval` callback throws ends the process at the throw, as in Node: what the
+// callback queued before it and later timers don't run (#1154).
+setInterval(
+  () => {
+    console.log("iv");
+    queueMicrotask(() => console.log("after-throw micro"));
+    Promise.resolve().then(() => console.log("after-throw then"));
+    throw new RangeError("iv failed");
+  },
+  5,
+);
+setTimeout(() => console.log("t6"), 6);

@@ -79,6 +79,14 @@ const SHARED_SOURCES: &[(&str, &[&str])] = &[
 /// `vpm` resolves imports and packages for every program, so it runs the goldens too.
 const GOLDENS_TOO: &[&str] = &["vpm"];
 
+/// Files that build WebAssembly besides those with `wasm` in their path (crates/velt_rt_wasm,
+/// crates/velt_link/src/wasm.rs, the `wasm_goldens` test): a change to them runs the
+/// WebAssembly goldens ([`Plan::wasm`]).
+const WASM_TOO: &[&str] = &[
+    "crates/velt_codegen_llvm/src/target.rs",
+    "crates/velt_codegen_llvm/src/llc.rs",
+];
+
 /// Changes to these select everything.
 const EVERYTHING: &[&str] = &[
     "Cargo.toml",
@@ -172,6 +180,58 @@ pub enum Goldens {
     All,
 }
 
+/// How velt_syntax's robustness test (`prefixes_never_panic_*`, which parses what is before and
+/// after cuts through every golden) cuts the goldens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sweep {
+    /// At every character of the kitchen sink and of these goldens (paths relative to the
+    /// workspace root), and at a sample of positions in the others.
+    Sampled(BTreeSet<String>),
+    /// At every character of every golden (`VELT_ROBUSTNESS=full`): the parser changed.
+    Full,
+}
+
+/// Files outside the parser's crates that change what it compiles to: the toolchain, and the
+/// root manifest's profiles (`overflow-checks`, `debug-assertions` decide what panics).
+const PARSER_BUILD: &[&str] = &["rust-toolchain.toml", "Cargo.toml"];
+
+/// More changed goldens than this sweep every golden in full, which keeps the list of files out
+/// of a long environment variable.
+const MAX_SWEPT_GOLDENS: usize = 200;
+
+impl Sweep {
+    /// The sweep for a change touching `paths` (only comments changed in `comment_only`): full
+    /// when code of velt_syntax or of a crate it depends on changed, or how it is compiled
+    /// ([`PARSER_BUILD`]), every character of the
+    /// changed goldens otherwise.
+    fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Sweep {
+        let parser = BTreeSet::from(["velt_syntax".to_string()]);
+        let mut goldens = BTreeSet::new();
+        for path in paths.iter().filter(|p| !comment_only.contains(*p)) {
+            if PARSER_BUILD.contains(&path.as_str()) {
+                return Sweep::Full;
+            }
+            if let Some(rest) = path.strip_prefix("crates/") {
+                let dir = rest.split('/').next().unwrap_or(rest);
+                let affects_parser = graph.dirs.get(dir).is_some_and(|name| {
+                    graph
+                        .with_dependents(&BTreeSet::from([name.clone()]))
+                        .is_superset(&parser)
+                });
+                if affects_parser {
+                    return Sweep::Full;
+                }
+            } else if path.starts_with("tests/golden/") && path.ends_with(".vlt") {
+                goldens.insert(path.clone());
+            }
+        }
+        if goldens.len() > MAX_SWEPT_GOLDENS {
+            return Sweep::Full;
+        }
+        Sweep::Sampled(goldens)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// Everything runs; `reasons` says why.
@@ -195,6 +255,18 @@ pub struct Plan {
     /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
     /// (crates/xtask/src/os.rs).
     pub other_os: Option<String>,
+    /// Why the whole gate runs on Windows and macOS after the change lands on `main`; `None`:
+    /// the queue already ran it there (crates/xtask/src/os.rs, [`os::after_merge_reason`]).
+    pub after_merge: Option<String>,
+    /// How velt_syntax's robustness test cuts the goldens, if it runs.
+    pub sweep: Sweep,
+    /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
+    /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
+    /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
+    /// still runs on WebAssembly (its `veltc` tests are selected by name). The nightly run checks
+    /// them in full on every OS, as do the checks after merging when they run. `--full` runs them
+    /// unless `VELT_WASM_GOLDENS=skip`, which the merge queue sets from the change's plan.
+    pub wasm: bool,
 }
 
 impl Plan {
@@ -203,6 +275,9 @@ impl Plan {
         Plan {
             full: true,
             other_os: Some(reason.clone()),
+            // Without the changes (`--full`, or git can't tell them) nobody knows which OSes the
+            // queue checked: check them all again.
+            after_merge: Some(reason.clone()),
             reasons: vec![reason],
             rust: true,
             packages: BTreeSet::new(),
@@ -212,6 +287,19 @@ impl Plan {
             vlt_fmt: true,
             difftest: true,
             vscode: true,
+            // `--full` (the merge queue, nightly) knows no changes: the environment chooses
+            // (`VELT_ROBUSTNESS`, as `cargo xtask affected` sets it for the queue).
+            sweep: Sweep::Sampled(BTreeSet::new()),
+            wasm: true,
+        }
+    }
+
+    /// Everything, for a change that can't be told (no base revision, or git failed): the
+    /// robustness test sweeps in full too, since the change may be the parser's.
+    pub fn unknown_changes(reason: impl Into<String>) -> Plan {
+        Plan {
+            sweep: Sweep::Full,
+            ..Plan::everything(reason)
         }
     }
 
@@ -219,6 +307,7 @@ impl Plan {
         Plan {
             full: false,
             other_os: None,
+            after_merge: None,
             reasons: vec![],
             rust: false,
             packages: BTreeSet::new(),
@@ -228,6 +317,8 @@ impl Plan {
             vlt_fmt: false,
             difftest: false,
             vscode: false,
+            sweep: Sweep::Sampled(BTreeSet::new()),
+            wasm: false,
         }
     }
 
@@ -240,11 +331,24 @@ impl Plan {
     /// `comment_only`.
     pub fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Plan {
         let mut plan = Plan::nothing();
+        plan.sweep = Sweep::for_changes(graph, paths, comment_only);
+        plan.wasm = paths.iter().any(|p| is_wasm(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
         for path in paths {
             match classify(graph, path) {
-                Effect::Everything => return Plan::everything(format!("{path} changed")),
+                Effect::Everything => {
+                    let everything = Plan::everything(format!("{path} changed"));
+                    return Plan {
+                        sweep: plan.sweep,
+                        after_merge: os::after_merge_reason(paths, &everything.other_os),
+                        // The WebAssembly goldens stay with the nightly unless the change builds
+                        // WebAssembly or changes the toolchain: a lockfile, CI or script change
+                        // alone doesn't need them in the queue (about half the test time).
+                        wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
+                        ..everything
+                    };
+                }
                 Effect::Nothing => {}
                 Effect::Difftest => {
                     plan.reasons
@@ -296,6 +400,7 @@ impl Plan {
             .cloned()
             .collect();
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
+        plan.after_merge = os::after_merge_reason(paths, &plan.other_os);
         plan
     }
 
@@ -413,8 +518,12 @@ impl Plan {
 
     /// The nextest filterset of the tests to run (never the goldens, which run on their own).
     pub fn filterset(&self) -> Option<String> {
+        let mut excluded = "binary_id(veltc::golden)".to_string();
+        if self.veltc == Veltc::All && !self.wasm {
+            excluded.push_str(" - binary_id(veltc::wasm_goldens)");
+        }
         if self.all_tests {
-            return Some("all() - binary_id(veltc::golden)".into());
+            return Some(format!("all() - {excluded}"));
         }
         let mut parts: Vec<String> = self
             .packages
@@ -435,10 +544,16 @@ impl Plan {
         if parts.is_empty() {
             return None;
         }
-        Some(format!(
-            "({}) - binary_id(veltc::golden)",
-            parts.join(" | ")
-        ))
+        Some(format!("({}) - {excluded}", parts.join(" | ")))
+    }
+
+    /// Whether the WebAssembly goldens (`veltc::wasm_goldens`) run.
+    pub fn wasm_goldens(&self) -> bool {
+        match &self.veltc {
+            Veltc::All => self.wasm,
+            Veltc::Some(binaries) => binaries.contains("wasm_goldens"),
+            Veltc::None => false,
+        }
     }
 
     /// `VELT_GOLDEN` for the goldens (and the WebAssembly goldens): `None` for all of them.
@@ -448,6 +563,20 @@ impl Plan {
                 Some(filters.iter().cloned().collect::<Vec<_>>().join(","))
             }
             _ => None,
+        }
+    }
+
+    /// The environment variables that tell velt_syntax's robustness test how to cut the goldens
+    /// (crates/velt_syntax/tests/robustness.rs); none for its default, so a `VELT_ROBUSTNESS`
+    /// set by the caller (nightly, the merge queue) stays.
+    pub fn sweep_env(&self) -> Vec<(&'static str, String)> {
+        match &self.sweep {
+            Sweep::Full => vec![("VELT_ROBUSTNESS", "full".into())],
+            Sweep::Sampled(files) if files.is_empty() => vec![],
+            Sweep::Sampled(files) => {
+                let files: Vec<&str> = files.iter().map(String::as_str).collect();
+                vec![("VELT_ROBUSTNESS_FILES", files.join(","))]
+            }
         }
     }
 
@@ -474,6 +603,18 @@ impl Plan {
             }
         };
         out.push_str(&format!("  goldens: {goldens}\n"));
+        let wasm = match &self.veltc {
+            Veltc::All if !self.wasm => "no (nightly; no WebAssembly code changed)",
+            _ if self.wasm_goldens() => "yes",
+            _ => "no",
+        };
+        out.push_str(&format!("  WebAssembly goldens: {wasm}\n"));
+        let sweep = match &self.sweep {
+            Sweep::Full => "every character of every golden (VELT_ROBUSTNESS=full)".to_string(),
+            Sweep::Sampled(files) if files.is_empty() => "sampled".to_string(),
+            Sweep::Sampled(files) => format!("sampled, every character of: {}", join(files)),
+        };
+        out.push_str(&format!("  parser robustness sweep: {sweep}\n"));
         out.push_str(&format!(
             "  velt fmt --check std examples: {}\n",
             yes(self.vlt_fmt)
@@ -488,9 +629,14 @@ impl Plan {
         ));
         let os = match &self.other_os {
             Some(reason) => format!("Linux, Windows, macOS ({reason})"),
-            None => "Linux (Windows and macOS after merging, on main)".into(),
+            None => "Linux".into(),
         };
         out.push_str(&format!("  merge queue OSes: {os}\n"));
+        let after = match &self.after_merge {
+            Some(reason) => format!("Windows, macOS ({reason})"),
+            None => "none (the queue checked every OS)".into(),
+        };
+        out.push_str(&format!("  whole gate after merging, on main: {after}\n"));
         out
     }
 }
@@ -542,6 +688,17 @@ fn classify(graph: &Graph, path: &str) -> Effect {
         return Effect::Nothing;
     }
     Effect::Everything
+}
+
+/// Whether `path` changes the Rust toolchain or its configuration, which can break the
+/// WebAssembly build on its own.
+fn changes_toolchain(path: &str) -> bool {
+    path == "rust-toolchain.toml" || path.starts_with(".cargo/")
+}
+
+/// Whether `path` builds WebAssembly: `wasm` in its path, or [`WASM_TOO`].
+fn is_wasm(path: &str) -> bool {
+    path.to_ascii_lowercase().contains("wasm") || WASM_TOO.contains(&path)
 }
 
 /// The `VELT_GOLDEN` substring that selects the goldens a changed file belongs to.

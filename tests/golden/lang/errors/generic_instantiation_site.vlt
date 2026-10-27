@@ -1,0 +1,13 @@
+// An error at an instantiation of a generic function is reported in that function, where the
+// failing form is, with the call that instantiates it and the type arguments (#350); two
+// functions with the same type parameters each report their own.
+function patchA<T>(o: T): number {
+  const p: Partial<T> | null = null;
+  return p === null ? 1 : 0;
+}
+function patchB<T>(o: T): number {
+  const q: Required<T> | null = null;
+  return q === null ? 2 : 0;
+}
+console.log(patchA([1]));
+console.log(patchB(["s"]));

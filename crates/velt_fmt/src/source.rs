@@ -47,12 +47,6 @@ pub(crate) fn blank_line_before(src: &str, pos: u32) -> bool {
     before[gap.len()..].matches('\n').count() >= 2
 }
 
-/// The source spelling of `==`/`!=` between two operands: `===`/`!==` if written that way.
-pub(crate) fn strict_equality(src: &str, lhs_hi: u32, rhs_lo: u32) -> bool {
-    src.get(lhs_hi as usize..rhs_lo as usize)
-        .is_some_and(|gap| gap.contains("===") || gap.contains("!=="))
-}
-
 /// The literal tokens (numbers, strings, `true`/`false`/`null`) inside a pattern's span, in order.
 /// Pattern literals keep no spelling in the AST, so it is re-read from the source.
 pub(crate) fn literal_tokens(src: &str, span: Span) -> Vec<String> {
@@ -149,7 +143,19 @@ pub(crate) fn has_modifier(src: &str, lo: u32, name_lo: u32, word: &str) -> bool
 /// (the AST drops these names; they are kept for readability).
 pub(crate) fn fn_type_param_name(src: &str, type_lo: u32) -> Option<&str> {
     let before = src.get(..type_lo as usize)?.trim_end();
-    let before = before.strip_suffix(':')?.trim_end();
+    label_before(before.strip_suffix(':')?.trim_end())
+}
+
+/// The name of an optional parameter of a function type or an optional tuple element, `name?:`,
+/// before its type at `type_lo`.
+pub(crate) fn optional_label(src: &str, type_lo: u32) -> Option<&str> {
+    let before = src.get(..type_lo as usize)?.trim_end();
+    let before = before.strip_suffix(':')?.trim_end().strip_suffix('?')?;
+    label_before(before).filter(|l| !l.starts_with(['[', '{']))
+}
+
+/// The name (or destructuring pattern) that `before` ends with.
+fn label_before(before: &str) -> Option<&str> {
     if before.ends_with([']', '}']) {
         // A destructured parameter (`([a, b]: [A, B]) => R`): the balanced pattern.
         let mut depth = 0usize;

@@ -1,0 +1,13 @@
+// Objects parsed from text as the base may have the extension's fields too (#1383).
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+}
+function show(v: VNode): string {
+  return Object.keys(v).join(",") + " " + ("_ns" in v) + " " + JSON.stringify({ ...v });
+}
+const v = JSON.parse("{\"type\":\"a\",\"dom\":null,\"_ns\":true}") as VNode;
+console.log((v as IV)._ns, show(v));

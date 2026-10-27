@@ -1,0 +1,27 @@
+// Spread arguments in calls through `any` (#924): `f(...args)`, `o.m(a, ...xs)`.
+// check: no leaks
+function main(): void {
+  const fns: any[] = [
+    (a: number, b: number) => console.log("f", a + b),
+    (...xs: any[]) => console.log("g", xs.length, xs),
+  ];
+  const all = (...args: any[]) => {
+    for (const fn of fns) {
+      fn(...args);
+    }
+  };
+  all(1, 2);
+  const props: any = { onClick: (e: string, n: number) => console.log("click", e, n) };
+  const args: any[] = ["x", 3];
+  const h = props["onClick"];
+  if (h && typeof h === "function") {
+    h(...args);
+  }
+  props.onClick(...args);
+  props.onClick("y", ...[4]);
+  const words: string[] = ["a", "b"];
+  const join: any = { two: (a: string, b: string) => console.log("two", a, b) };
+  join.two(...words);
+  const f: Function = (a: string, b: string, c: string) => console.log(a + b + c);
+  f("p", ...words);
+}

@@ -1,0 +1,196 @@
+// `this` in the methods, getters and setters of an object literal with no expected type: the
+// object the method is called on, typed as the literal (#941).
+
+// Methods reading and writing `this`, a getter and setter pair, and chaining by returning `this`.
+const counter = {
+  count: 0,
+  step: 1,
+  label: "clicks",
+  inc() {
+    this.count += this.step;
+    return this;
+  },
+  reset() {
+    this.count = 0;
+  },
+  get double() {
+    return this.count * 2;
+  },
+  set double(v) {
+    this.count = v / 2;
+  },
+  describe() {
+    return `${this.label}: ${this.count} (double ${this.double})`;
+  },
+};
+counter.inc().inc().inc();
+console.log(counter.describe());
+counter.step = 10;
+counter.inc();
+console.log(counter.count, counter.double);
+counter.double = 8;
+console.log(counter.describe());
+counter.reset();
+console.log(counter.count);
+
+// Methods calling other methods through `this`, with a written result for recursion.
+const math = {
+  base: 3,
+  fact(n: number): number {
+    return n <= 1 ? 1 : n * this.fact(n - 1);
+  },
+  scaled(n: number) {
+    return this.fact(n) * this.base;
+  },
+  twice(n: number) {
+    return this.scaled(n) + this.scaled(n);
+  },
+};
+console.log(math.fact(5), math.scaled(4), math.twice(3));
+
+// A method that doesn't use `this` is a plain function-valued member, callable through `this`.
+const greeter = {
+  name: "Ada",
+  punct() {
+    return "!";
+  },
+  greet(greeting: string) {
+    return greeting + ", " + this.name + this.punct();
+  },
+};
+console.log(greeter.greet("Hello"));
+greeter.name = "Grace";
+console.log(greeter.greet("Hi"));
+
+// Nested literals: each method's `this` is its own object.
+const outer = {
+  v: 1,
+  inner: {
+    v: 2,
+    get tenfold() {
+      return this.v * 10;
+    },
+    m() {
+      return this.v + 100;
+    },
+  },
+  m() {
+    return this.inner.m() + this.inner.tenfold + this.v;
+  },
+};
+console.log(outer.m(), outer.inner.m(), outer.inner.tenfold);
+outer.inner.v = 5;
+console.log(outer.m());
+
+// Arrows inside a method see the method's `this`, also after the method returns.
+const box = {
+  items: [3, 1, 2],
+  factor: 10,
+  scaled() {
+    return this.items.map((x) => x * this.factor);
+  },
+  adder() {
+    return (n: number) => n + this.items.length;
+  },
+};
+console.log(box.scaled());
+const add = box.adder();
+box.items.push(4);
+console.log(add(1));
+
+// Defaults and optional parameters, and `this` stored and compared.
+const bag = {
+  items: [1],
+  add(x: number) {
+    this.items.push(x);
+    return this.items.length;
+  },
+  sum(from: number = 0, extra?: number) {
+    return this.items.slice(from).reduce((a, b) => a + b, 0) + (extra ?? 0);
+  },
+  me() {
+    return this;
+  },
+};
+console.log(bag.add(2), bag.add(3), bag.sum(), bag.sum(1), bag.sum(1, 100));
+console.log(bag.me() === bag, bag.me().me().items.length);
+
+// A `function` expression as a property's value takes `this` as a method does.
+const fn = {
+  k: 41,
+  next: function () {
+    return this.k + 1;
+  },
+};
+console.log(fn.next());
+
+// Generator and async methods.
+const series = {
+  from: 1,
+  to: 4,
+  *each(): Generator<number> {
+    for (let i = this.from; i <= this.to; i++) {
+      yield i * i;
+    }
+  },
+  async *slowly(): AsyncGenerator<string> {
+    for (const n of this.each()) {
+      yield `#${n}`;
+    }
+  },
+  async total() {
+    let sum = 0;
+    for await (const s of this.slowly()) {
+      sum += s.length;
+    }
+    return sum + this.to;
+  },
+};
+console.log([...series.each()]);
+series.to = 3;
+console.log([...series.each()]);
+
+// A literal made in a function, over its parameters (also generic).
+function cell<T>(initial: T) {
+  return {
+    value: initial,
+    writes: 0,
+    set(v: T) {
+      this.value = v;
+      this.writes++;
+    },
+    get current() {
+      return this.value;
+    },
+  };
+}
+const c = cell("a");
+c.set("b");
+c.set("c");
+const n = cell(1);
+n.set(2);
+console.log(c.current, c.writes, n.current, n.writes);
+
+// Getters without `this` read the variables around them, on every read.
+function useAction() {
+  const state = { st: "idle", data: 0 };
+  const action = {
+    get state() {
+      return state.st;
+    },
+    get loading() {
+      return state.st === "pending";
+    },
+    run() {
+      state.st = "pending";
+      state.data++;
+    },
+  };
+  return action;
+}
+const a = useAction();
+console.log(a.state, a.loading);
+a.run();
+console.log(a.state, a.loading);
+
+series.total().then((t) => console.log("total", t));

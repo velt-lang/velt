@@ -42,7 +42,19 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest: false,
                 } => sigs.push((params, ret, throws)),
+                TyKind::FnPtr { rest: true, .. } => {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            "calling a union of function types with a rest parameter is not supported yet",
+                            span,
+                        )
+                        .with_note("narrow the value to one function type first (`typeof`, a discriminant), or give the members the same parameters"),
+                    );
+                    self.check_args_loose(args);
+                    return Ok(self.error_expr(span));
+                }
                 _ => return Err(f),
             }
         }
@@ -93,12 +105,18 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: vec![],
             bounds: vec![],
+            constraints: vec![],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],
         };
         let mut ck = self.check_call(&c, vec![], args, None, span);
+        if ck.args.len() != longest.len() {
+            // The arguments were reported (a short call, a bad spread): no member is called.
+            return Ok(self.error_expr(span));
+        }
         // A member taking fewer parameters ignores the extra arguments, which JS evaluates
         // anyway, in order: when one is left out, every argument that is a value rather than
         // a variable or literal is evaluated into a temporary first, and so is every variable

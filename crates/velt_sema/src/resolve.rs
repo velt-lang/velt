@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use crate::anon::ShapeField;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{TyId, TyKind};
+use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
@@ -23,6 +23,14 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// Names a type binds, innermost last: a mapped type's key, what `infer X` found, the
+    /// member a distributive conditional type is at (`crate::type_level`).
+    pub locals: Vec<(String, TyId)>,
+    /// `infer X` names that found nothing (TypeScript's `unknown`).
+    pub unknowns: Vec<String>,
+    /// In a class's instance method (its signature and body): the class type, which the
+    /// polymorphic `this` type resolves to (`m(): this`).
+    pub this_ty: Option<TyId>,
 }
 
 impl TyEnv {
@@ -31,6 +39,9 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            locals: vec![],
+            unknowns: vec![],
+            this_ty: None,
         }
     }
 }
@@ -38,6 +49,18 @@ impl TyEnv {
 impl Ctx<'_> {
     /// Resolve a written type. Reports and returns `Error` for unknown / invalid types.
     pub fn resolve_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        use ast::TypeExprKind as K;
+        let form = matches!(
+            t.kind,
+            K::Indexed { .. } | K::KeyOf(_) | K::Conditional(_) | K::Mapped(_)
+        );
+        if form && self.inline_deferrable(env) {
+            return self.resolve_inline(t, env, |cx| cx.resolve_form(t, env));
+        }
+        self.resolve_form(t, env)
+    }
+
+    fn resolve_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
         match &t.kind {
             ast::TypeExprKind::Void => self.ty.unit,
             // `x is T` returns a `boolean`; `asserts x is T` returns nothing (it throws instead
@@ -64,14 +87,31 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
-                rest: false,
-            } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
-            ast::TypeExprKind::Function { rest: true, .. }
-            | ast::TypeExprKind::GenericFunction { .. }
-            | ast::TypeExprKind::Construct(_) => {
-                let (msg, note) = unsupported_fn_type(&t.kind);
-                self.error(velt_common::Diagnostic::error(msg, t.span).with_note(note));
+                rest,
+            } => self.resolve_fn_type(params, *rest, ret, throws.as_deref(), env, t.span),
+            ast::TypeExprKind::TupleRest(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "variadic tuple types (`[A, ...T]`) are not supported yet (#943)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; write them out (`[A, B, C]`), or use an array (`A[]`)"),
+                );
                 self.ty.error
+            }
+            ast::TypeExprKind::TupleOptional(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "optional tuple elements (`[A, B?]`) are not supported yet (#938)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; make the element `B | null` and pass `null`, or declare one tuple type per length"),
+                );
+                self.ty.error
+            }
+            ast::TypeExprKind::Construct(inner) => self.resolve_construct(inner, t, env),
+            ast::TypeExprKind::GenericFunction { type_params, ty } => {
+                self.resolve_generic_fn(type_params, ty, env, t.span)
             }
             ast::TypeExprKind::Union(parts) => self.resolve_union(t, parts, env),
             ast::TypeExprKind::Intersection(parts) => self.resolve_intersection(t, parts, env),
@@ -84,55 +124,44 @@ impl Ctx<'_> {
             ast::TypeExprKind::IndexSig {
                 fields, key, value, ..
             } => self.resolve_index_sig(fields, &key.ty, value, env),
+            ast::TypeExprKind::Callable { sigs, members } => {
+                let lowered = crate::call_sigs::lower(sigs, members, t.span);
+                self.resolve_type(&lowered, env)
+            }
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
-            ast::TypeExprKind::Null => {
-                self.err("`null` alone is not a type; write `T | null`", t.span);
-                self.ty.error
+            ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
+            ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
+            ast::TypeExprKind::TemplateLiteral { quasis, types } => {
+                self.resolve_template(t, quasis, types, env)
+            }
+            ast::TypeExprKind::Infer(n) => {
+                match env.locals.iter().rev().find(|(l, _)| *l == n.name) {
+                    Some((_, b)) => *b,
+                    None => {
+                        self.err(
+                            "`infer` declarations are only permitted in the `extends` clause of a conditional type",
+                            t.span,
+                        );
+                        self.ty.error
+                    }
+                }
+            }
+            ast::TypeExprKind::Null => self.ty.null_alone(),
+            ast::TypeExprKind::Undefined => {
+                self.writes_undefined = true;
+                self.ty.undefined()
             }
         }
     }
 
-    /// `(params) => ret [throws E]`. After a `Promise` result, `throws E` is the promise's
-    /// rejection type (calling an async function never throws; awaiting its promise does).
-    fn resolve_fn_type(
-        &mut self,
-        params: &[ast::TypeExpr],
-        ret: &ast::TypeExpr,
-        throws: Option<&ast::TypeExpr>,
-        env: &TyEnv,
-    ) -> TyId {
-        let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
-        let mut ret = self.resolve_type(ret, env);
-        let never = self.ty.never;
-        let err = throws.map(|t| {
-            let e = self.resolve_type(t, env);
-            self.no_void_error(e, t.span);
-            e
-        });
-        let err = self.canon_error(err).unwrap_or(never);
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, e) if err != never => {
-                let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
-                ret = self.ty.promise_rejecting(v, e);
-                never
-            }
-            _ => err,
-        };
-        self.ty.intern(TyKind::FnPtr {
-            params,
-            ret,
-            throws,
-        })
-    }
-
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
-    fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
+    pub(crate) fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            // The declared type: without the `| null` the parser adds for `name?: T`
-            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            // The declared type: without the `| undefined` the parser adds for `name?: T`
+            // (`velt_syntax` `or_undefined`), which the flag stands for.
             let written = if f.optional {
                 written_type(&f.ty)
             } else {
@@ -160,20 +189,33 @@ impl Ctx<'_> {
         }
         let t = self.anon_type_with(&out, env.module);
         self.declare_anon_fields(t, &spans);
+        let str_ = self.ty.str_;
+        for f in &out {
+            self.record_key_kind(t, &f.name, str_);
+        }
         t
     }
 
     /// `A | B | null` (canonicalized by `crate::unions`).
     fn resolve_union(&mut self, t: &ast::TypeExpr, parts: &[ast::TypeExpr], env: &TyEnv) -> TyId {
-        let mut nullable = false;
+        let mut nothing: Option<Nothing> = None;
         let mut members = vec![];
         for p in parts {
-            match p.kind {
-                ast::TypeExprKind::Null => nullable = true,
-                _ => members.push(self.resolve_type(p, env)),
-            }
+            let n = match p.kind {
+                ast::TypeExprKind::Null => Nothing::Null,
+                // `T | void` is `T | undefined` (`crate::unions`).
+                ast::TypeExprKind::Undefined | ast::TypeExprKind::Void => {
+                    self.writes_undefined |= !self.scopes[env.module].is_std;
+                    Nothing::Undefined
+                }
+                _ => {
+                    members.push(self.resolve_type(p, env));
+                    continue;
+                }
+            };
+            nothing = Some(nothing.map_or(n, |m| m.join(n)));
         }
-        self.union_of(&members, nullable, t.span)
+        self.union_with(&members, nothing, t.span)
     }
 
     fn resolve_named(
@@ -186,15 +228,62 @@ impl Ctx<'_> {
         if path.len() != 1 {
             let name: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
             let name = name.join(".");
-            let item = self.lookup_path_at(env.module, path, t.span);
+            let item = self.lookup_type_path_at(env.module, path, t.span);
             if let (Some(item), Some(last)) = (item, path.last()) {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
             }
-            self.err(format!("cannot find type `{name}` in this scope"), t.span);
+            // A member of a namespace import of a module the parser recovered may be a
+            // declaration it dropped (`Ctx::recovered`).
+            let recovered = self.scopes[env.module]
+                .namespaces
+                .get(&path[0].name)
+                .is_some_and(|&t| {
+                    let member = path.last().map_or("", |i| i.name.as_str());
+                    crate::collect::exports::maybe_dropped(self, t, member)
+                });
+            if recovered {
+                return self.ty.error;
+            }
+            // A namespace declaration's member that is missing or not exported (TS2694).
+            let (ns, member) = name.rsplit_once('.').unwrap_or_default();
+            let prefix = format!("{ns}.");
+            let is_namespace = !self.scopes[env.module].namespaces.contains_key(ns)
+                && self.scopes[env.module]
+                    .items
+                    .keys()
+                    .any(|k| k.starts_with(&prefix));
+            match is_namespace {
+                true => self.err(
+                    format!("namespace `{ns}` has no exported member `{member}`"),
+                    path.last().map_or(t.span, |i| i.span),
+                ),
+                false => self.err(format!("cannot find type `{name}` in this scope"), t.span),
+            }
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if let Some((_, b)) = env.locals.iter().rev().find(|(l, _)| l == name) {
+            if !args.is_empty() {
+                self.err(
+                    format!("type parameter `{name}` does not take type arguments"),
+                    t.span,
+                );
+            }
+            return *b;
+        }
+        if env.unknowns.iter().any(|u| u == name) {
+            self.err(
+                format!(
+                    "`{name}` is inferred as `unknown` here, which is not supported yet (#934)"
+                ),
+                t.span,
+            );
+            return self.ty.error;
+        }
+        if name == "this" {
+            return self.resolve_this_type(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -204,15 +293,26 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
+        // The SIMD type names (`u8x16`) are built in only for std: other modules import them
+        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        let simd_outside_std =
+            crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
         // program declares or imports shadows them, as TypeScript code may declare one (#1074).
         // A value of that name does not (a function `f64`). TypeScript's own (`number`,
         // `string`, …) cannot be declared.
         let shadowed = crate::types::velt_only_type_name(name)
             && self
-                .lookup_item_at(env.module, name, t.span)
+                .lookup_type_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
-        if let Some(p) = self.ty.primitive(name).filter(|_| !shadowed) {
+        // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
+        // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
+        let bigint = (name == "bigint").then(|| self.ty.bigint());
+        if let Some(p) = bigint.or_else(|| {
+            self.ty
+                .primitive(name)
+                .filter(|_| !simd_outside_std && !shadowed)
+        }) {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -222,7 +322,7 @@ impl Ctx<'_> {
             }
             return p;
         }
-        let item = self.lookup_item_at(env.module, name, t.span);
+        let item = self.lookup_type_item_at(env.module, name, t.span);
         self.rec_item(path[0].span, item);
         if item.is_none() {
             if let Some(b) = self.resolve_builtin(t, name, args, env) {
@@ -235,7 +335,39 @@ impl Ctx<'_> {
                 args.iter().for_each(|a| {
                     self.resolve_type(a, env);
                 });
-                self.err(format!("cannot find type `{name}` in this scope"), t.span);
+                self.not_found(
+                    format!("cannot find type `{name}` in this scope"),
+                    name,
+                    t.span,
+                );
+                self.ty.error
+            }
+        }
+    }
+
+    /// The polymorphic `this` type: the class of the instance method it is written in. A call
+    /// of a method returning `this` gives the receiver's own (sub)class type
+    /// (`body::expr::this_type`).
+    fn resolve_this_type(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
+        if !args.is_empty() {
+            self.err("type `this` does not take type arguments", t.span);
+            return self.ty.error;
+        }
+        match env.this_ty {
+            Some(ty) => ty,
+            None => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "a 'this' type is available only in a non-static member of a class or interface",
+                        t.span,
+                    )
+                    .with_note("TypeScript's TS2526; in an interface, Velt doesn't support it yet: write the interface's name"),
+                );
                 self.ty.error
             }
         }
@@ -256,6 +388,11 @@ impl Ctx<'_> {
                 None => self.ty.error,
             };
         }
+        if let (Item::Def(d), [buffer]) = (item, args) {
+            if self.is_typed_array(d) {
+                return self.typed_array_with_buffer(d, name, buffer, t, env);
+            }
+        }
         let protocol = match item {
             Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
             _ => None,
@@ -267,6 +404,31 @@ impl Ctx<'_> {
                 None => return self.ty.error,
             },
             None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
+        };
+        // Inside an alias expanded at known arguments, an alias used with the parameters gets
+        // the arguments themselves, so a conditional or mapped type in it can be evaluated
+        // (`type A<T> = B<T>`; `crate::type_level`).
+        let args = match item {
+            Item::Alias(_) if !env.args.is_empty() => {
+                let known: Vec<TyId> = args.iter().map(|a| self.subst(*a, &env.args)).collect();
+                match known.iter().any(|a| self.has_type_params(*a)) {
+                    true => args,
+                    false => known,
+                }
+            }
+            _ => args,
+        };
+        let args = match item {
+            Item::Alias(a) if !self.aliases[a as usize].outer.is_empty() => {
+                let Some(mut outer) = self.outer_alias_args(a, env) else {
+                    let n = &self.aliases[a as usize].outer[0];
+                    self.err(format!("cannot find type `{n}` in this scope"), t.span);
+                    return self.ty.error;
+                };
+                outer.extend(args);
+                outer
+            }
+            _ => args,
         };
         self.item_type_args(item, name, args, t)
     }
@@ -300,11 +462,28 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            "ReadonlyMap" => return Some(self.resolve_readonly_map(t, args, env)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
             }
+            n if crate::utility_types::OPERATORS.contains(&n) && self.inline_deferrable(env) => {
+                return Some(
+                    self.resolve_inline(t, env, |cx| cx.resolve_utility(t, name, args, env)),
+                )
+            }
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
+            }
+            // In generic code, deferred until the type parameter is known (`Awaited<R>`).
+            "Awaited" if self.inline_deferrable(env) => {
+                return Some(self.resolve_inline(t, env, |cx| {
+                    let r = cx.resolve_type_level_builtin(t, name, args, env);
+                    r.unwrap_or(cx.ty.error)
+                }))
+            }
+            "NonNullable" | "Awaited" | "Exclude" | "Extract" | "Uppercase" | "Lowercase"
+            | "Capitalize" | "Uncapitalize" => {
+                return self.resolve_type_level_builtin(t, name, args, env)
             }
             _ => return None,
         };
@@ -349,7 +528,7 @@ impl Ctx<'_> {
         self.ty.error
     }
 
-    fn arity_error(&mut self, name: &str, want: usize, got: usize, t: &ast::TypeExpr) {
+    pub(crate) fn arity_error(&mut self, name: &str, want: usize, got: usize, t: &ast::TypeExpr) {
         self.err(
             format!("type `{name}` takes {want} type argument(s) but {got} were supplied"),
             t.span,
@@ -388,7 +567,7 @@ impl Ctx<'_> {
                 i.decl.map(|x| (i.module, &x.generics[..])),
             ),
             _ => {
-                self.err(format!("`{name}` is not a type"), t.span);
+                self.value_as_type(name, t.span);
                 return self.ty.error;
             }
         };
@@ -402,8 +581,12 @@ impl Ctx<'_> {
         }
         // `Record<K, V>`: a concrete `K` must be a key here; a type parameter is checked per
         // instantiation (`crate::record_keys`).
-        if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
-            return self.ty.error;
+        let mut args = args;
+        if Some(d) == self.prelude_adt("Record") {
+            args[0] = self.number_key_as_string(args[0]);
+            if !self.check_record_key(args[0], t.span, None) {
+                return self.ty.error;
+            }
         }
         if let Some(&object) = self.field_only.get(&d) {
             // A field-only interface is an object type (`collect::field_only`).
@@ -415,37 +598,118 @@ impl Ctx<'_> {
         }
     }
 
-    fn expand_alias(&mut self, a: u32, args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
-        let info = &self.aliases[a as usize];
-        let (module, decl) = (info.module, info.decl);
-        if info.expanding {
-            let d = velt_common::Diagnostic::error(
-                format!("type alias `{}` refers to itself", decl.name.name),
-                t.span,
-            )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class");
-            self.error(d);
+    /// Is `d` a standard typed array class or `DataView`?
+    fn is_typed_array(&self, d: crate::hir::DefId) -> bool {
+        self.std_class(d, TYPED_ARRAYS)
+    }
+
+    /// Is `d` a class of the standard library named one of `names`?
+    fn std_class(&self, d: crate::hir::DefId, names: &[&str]) -> bool {
+        match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => self.scopes[a.module].is_std && names.contains(&a.name.as_str()),
+            _ => false,
+        }
+    }
+
+    /// Typed array or `DataView` class `d` written with a buffer type argument (TypeScript
+    /// 5.7's `Uint8Array<ArrayBuffer>`). Its buffer is always an `ArrayBuffer`, so the argument
+    /// says nothing more: `ArrayBuffer`, or `ArrayBufferLike` (TypeScript's default, which
+    /// without `SharedArrayBuffer` can only be an `ArrayBuffer`). Any other argument is an
+    /// error; one that did not resolve was reported already.
+    fn typed_array_with_buffer(
+        &mut self,
+        d: crate::hir::DefId,
+        name: &str,
+        buffer: &ast::TypeExpr,
+        t: &ast::TypeExpr,
+        env: &TyEnv,
+    ) -> TyId {
+        // A global name the program does not declare itself (`ArrayBufferLike`, and
+        // `SharedArrayBuffer`, which Velt does not have).
+        let global = match &buffer.kind {
+            ast::TypeExprKind::Named { path, args } => match path.as_slice() {
+                [p] if args.is_empty()
+                    && self
+                        .lookup_item_at(env.module, &p.name, buffer.span)
+                        .is_none() =>
+                {
+                    Some(p.name.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if global != Some("ArrayBufferLike") {
+            let shown = match global {
+                Some(n @ "SharedArrayBuffer") => n.to_string(),
+                _ => {
+                    let b = self.resolve_type(buffer, env);
+                    if b == self.ty.error {
+                        return self.ty.error;
+                    }
+                    let is_buffer = matches!(self.ty.kind(b), TyKind::Adt(bd, bargs)
+                        if bargs.is_empty() && self.std_class(*bd, &["ArrayBuffer"]));
+                    if is_buffer {
+                        return self.def_type(d, name, vec![], t);
+                    }
+                    self.display(b)
+                }
+            };
+            self.error(
+                velt_common::Diagnostic::error(
+                    "a typed array's buffer type argument must be `ArrayBuffer`",
+                    buffer.span,
+                )
+                .with_note(format!(
+                    "found `{shown}`; `{name}<ArrayBuffer>` and `{name}<ArrayBufferLike>` are `{name}`, whose buffer is always an `ArrayBuffer` (`SharedArrayBuffer` is not supported)"
+                )),
+            );
             return self.ty.error;
         }
-        let args = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
-        if args.len() != decl.generics.len() {
-            self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
-            return self.ty.error;
+        self.def_type(d, name, vec![], t)
+    }
+
+    /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
+    /// `P | undefined` of a parameter whose argument in `args` allows the other nothing? The
+    /// substitution would make an option of an option, which keeps the inner one only.
+    pub(crate) fn mixes_nothings(&self, body: TyId, args: &[TyId]) -> bool {
+        if !args.iter().any(|a| self.ty.nothing_of(*a).is_some()) {
+            return false;
         }
-        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        self.aliases[a as usize].used = true;
-        self.aliases[a as usize].expanding = true;
-        let mut env = TyEnv::new(module, &names);
-        env.args = args.clone();
-        let body = self.resolve_type(&decl.ty, &env);
-        self.aliases[a as usize].expanding = false;
-        if names.is_empty() && self.is_structural(body) {
-            // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
-            self.alias_names
-                .entry(body)
-                .or_insert_with(|| decl.name.name.clone());
+        let mut stack = vec![body];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let k = self.ty.kind(t);
+            if let TyKind::Option(p, n) = k {
+                // The parameter itself, or as a member of a union (`T | string | null`).
+                let members = match self.union_def(*p) {
+                    Some((_, members)) => members,
+                    None => vec![*p],
+                };
+                let direct = members.len() == 1;
+                for m in members {
+                    if let TyKind::Param(i) = self.ty.kind(m) {
+                        let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
+                        // `P | undefined` at `P = T | null` is `T | null | undefined`.
+                        let clash = |m: crate::hir::Nothing| {
+                            if direct {
+                                n.has_null() && m.has_undefined()
+                            } else {
+                                !m.within(*n)
+                            }
+                        };
+                        if arg.is_some_and(clash) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            stack.extend(crate::types::children(k));
         }
-        self.subst(body, &args)
+        false
     }
 
     /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`
@@ -462,7 +726,7 @@ impl Ctx<'_> {
     }
 
     /// A type without a name of its own (a union or an anonymous object type).
-    fn is_structural(&self, t: TyId) -> bool {
+    pub(crate) fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
             || self.brand_base(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
@@ -470,34 +734,16 @@ impl Ctx<'_> {
     }
 }
 
-/// Resolve every type alias that nothing expanded, so its errors are reported too
-/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
-/// were checked at their uses.
-pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
-    cx.checking_unused_aliases = true;
-    for a in 0..cx.aliases.len() {
-        if cx.aliases[a].used {
-            continue;
-        }
-        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
-        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        cx.aliases[a].used = true;
-        cx.aliases[a].expanding = true;
-        cx.resolve_type(&decl.ty, &TyEnv::new(module, &names));
-        cx.aliases[a].expanding = false;
-    }
-    cx.checking_unused_aliases = false;
-}
-
-/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
-/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
-/// that already admits `null` (`name?: T | null`) is kept as written.
+/// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
+/// adds (`velt_syntax` `or_undefined`; the added `undefined` is the zero-width one at the end).
+/// A written type that already admits `undefined` (`name?: T | undefined`) is kept as written.
 pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     let ast::TypeExprKind::Union(ms) = &ty.kind else {
         return ty.clone();
     };
-    let added =
-        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    let added = |m: &ast::TypeExpr| {
+        matches!(m.kind, ast::TypeExprKind::Undefined) && m.span.lo == m.span.hi
+    };
     match ms.last() {
         Some(last) if added(last) => {
             let rest = &ms[..ms.len() - 1];
@@ -513,20 +759,16 @@ pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     }
 }
 
-/// The function type forms Velt parses but doesn't support yet (#943): its error and a note.
-fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'static str) {
-    match kind {
-        ast::TypeExprKind::Construct(_) => (
-            "construct signatures (`new (...) => T`) are not supported yet",
-            "a class can't be passed as a value yet; pass a function that constructs it (`(buf: ArrayBuffer) => new Uint8Array(buf)`)",
-        ),
-        ast::TypeExprKind::GenericFunction { .. } => (
-            "generic function types (`<T>(x: T) => R`) are not supported yet",
-            "a function value has one type; declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)",
-        ),
-        _ => (
-            "rest parameters in function types (`(...xs: T[]) => R`) are not supported yet",
-            "take the array as an ordinary parameter (`(xs: T[]) => R`) and pass an array",
-        ),
-    }
-}
+/// The standard typed arrays and `DataView`, which take TypeScript's buffer type argument.
+const TYPED_ARRAYS: &[&str] = &[
+    "Uint8Array",
+    "Int8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "DataView",
+];

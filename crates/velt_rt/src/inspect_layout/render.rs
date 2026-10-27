@@ -26,7 +26,7 @@ impl Render<'_> {
     pub(super) fn entry(&self, segs: Range<usize>, indent: usize, w: &mut Work, out: &mut Vec<u8>) {
         for seg in &self.value.segs[segs] {
             match seg {
-                Seg::Text(t) => out.extend_from_slice(&self.src[t.clone()]),
+                Seg::Text(t) => text_at(&self.src[t.clone()], indent, out),
                 Seg::Str(q) => render_string(&self.src[q.clone()], indent, out),
                 Seg::Node(n) => self.container(&self.value.nodes[*n], indent, w, out),
             }
@@ -137,6 +137,23 @@ fn below_break_length(text: &[u8], ranges: &[Range<usize>], start: usize) -> boo
         }
     }
     true
+}
+
+/// Text printed as is at indentation `indent`. Only a custom inspect's string (an atom) can hold
+/// a line break: node indents the lines after the first by the value's indentation, as
+/// `formatValue` does for the string a custom inspect returns.
+fn text_at(text: &[u8], indent: usize, out: &mut Vec<u8>) {
+    if indent == 0 || !text.contains(&b'\n') {
+        out.extend_from_slice(text);
+        return;
+    }
+    for (i, line) in text.split(|&b| b == b'\n').enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+            out.resize(out.len() + indent, b' ');
+        }
+        out.extend_from_slice(line);
+    }
 }
 
 /// A quoted string printed at indentation `indent`: node's `formatPrimitive` splits a string

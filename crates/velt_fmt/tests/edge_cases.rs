@@ -49,6 +49,17 @@ function f(h: H) {
 }
 
 #[test]
+fn template_computed_keys() {
+    // A template key keeps its brackets: as a bare word `a-b` would not parse, and `0x10`
+    // would read the key \"16\".
+    holds(
+        "const o: any = { [`a-b`]: 1, [`0x10`]: 2 };
+const { [`a-b`]: t1, [`0x10`]: t4, [`x y`]: t8, [\"0x10\"]: q, [`z`]: z, [`\\u0041`]: u } = o;
+function f() { ({ [`a-b`]: t1, [`x`]: x } = o); }",
+    );
+}
+
+#[test]
 fn resource_management() {
     holds(
         "class R { [Symbol.dispose]() {} async   [Symbol.asyncDispose]() {} }
@@ -235,6 +246,28 @@ fn for_in_prints_as_written() {
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
 
+/// A `for...of` / `for...in` over a target declared elsewhere (a hidden loop variable assigned
+/// to the target first in the body) and holes in an array target print back as written.
+#[test]
+fn loop_targets_and_holes_print_as_written() {
+    let src = "function f(xs: number[], m: Map<string, number>) {
+  let x = 0;
+  let k = \"\";
+  for (x of xs) {
+    console.log(x);
+  }
+  for ([k, x] of m) {}
+  for (k in { a: 1 }) {}
+  for ({ a = 9 } of [{ a: 1 }]) {}
+  for ([, x] of [[\"a\", 1]]) {}
+  [x, , k] = [1, 2, \"s\"];
+  ({ x, k = \"d\" } = o);
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
 /// Overload signatures print before their implementation, with the comments between them.
 #[test]
 fn overloads_print_as_written() {
@@ -317,5 +350,59 @@ fn private_names() {
   set #v(n: i64) { this.#x = n; }
   has(o: A | null): boolean { return o != null && #x in o && o.#x > 0; }
 }",
+    );
+}
+
+#[test]
+fn an_optional_function_field_keeps_its_unparenthesized_form() {
+    // `get?: (t: any) => any` is valid TypeScript (lib.es2015.proxy.d.ts writes it so).
+    holds(
+        "type H = {
+  get?: (target: any, p: string, receiver: any) => any;
+  has?: (target: any, p: string) => boolean;
+  f?: (() => void) | null;
+};
+",
+    );
+    holds("function f(cb?: (x: i64) => void) {}\n");
+    let out = velt_fmt::format_source("type H = { g?: ((x: i64) => i64) };\n").unwrap();
+    assert_eq!(out, "type H = { g?: (x: i64) => i64 };\n");
+}
+
+/// `p?: T | null | undefined` and `p?: T | null` keep their written `null` (#930): without it the
+/// parameter would be a `T | undefined`.
+#[test]
+fn optional_parameters_with_both_nothings() {
+    holds(
+        "function f(p?: string | null | undefined, q?: number | undefined, r?: number | null) {}
+const g = (p?: string | null | undefined) => p;",
+    );
+}
+
+/// String and template escapes keep their spelling (#1265): `"\d"` is `"d"` once cooked, but the
+/// source still says `\d`, and a line continuation stays where it was written.
+#[test]
+fn string_escapes_keep_their_spelling() {
+    let src = r#"const a = "b(\d)\q\ \x41\u{42}";
+const b = 'it\'s \d';
+const c = `\d${a}\q\
+z`;
+const d = "one \
+two";
+"#;
+    let out = velt_fmt::format_source(src).unwrap();
+    assert_eq!(out, src.replace(r"'it\'s \d'", r#""it's \d""#));
+    holds(src);
+}
+
+/// A root file whose statement uses a declaration below it is valid syntax (the checker reports
+/// the early use, #1438): it formats like any other file.
+#[test]
+fn early_use_of_a_later_declaration_formats() {
+    let src = "console.log(  K );\nconst K = 1;\nnew  Box();\nclass Box {}\n";
+    let out = velt_fmt::format_source(src).unwrap();
+    assert_eq!(
+        out,
+        "console.log(K);\nconst K = 1;\nnew Box();\n\nclass Box {}\n"
     );
 }

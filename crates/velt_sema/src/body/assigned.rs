@@ -3,13 +3,13 @@
 //! that closures assign: a call may run such a closure between a check and a use, so those
 //! variables are never narrowed (`narrow.rs`, `closure_assigned`).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 /// Assigned names, each with the span of one assignment to it.
-pub(crate) type Assigned<'a> = HashMap<&'a str, Span>;
+pub(crate) type Assigned<'a> = FxHashMap<&'a str, Span>;
 
 /// Names assigned anywhere in `s`.
 pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
@@ -17,6 +17,7 @@ pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
         out,
         direct: true,
         fields: false,
+        paths: None,
     }
     .stmt(s);
 }
@@ -27,8 +28,22 @@ pub(crate) fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut Assigned<'a>) {
         out,
         direct: true,
         fields: false,
+        paths: None,
     }
     .expr(e);
+}
+
+/// The member and index targets `s` assigns or deletes outside closures (`o.v = 5`,
+/// `r[k] = x`, `delete r[k]`): a loop drops their narrowing (`field_narrow`).
+pub(crate) fn written_paths<'a>(s: &'a ast::Stmt, out: &mut Vec<&'a ast::Expr>) {
+    let mut names = Assigned::default();
+    Walk {
+        out: &mut names,
+        direct: true,
+        fields: false,
+        paths: Some(out),
+    }
+    .stmt(s);
 }
 
 /// Names that the closures (arrow functions, function expressions, object methods) created in
@@ -37,11 +52,12 @@ pub(crate) fn assigned_by_closures<'a>(
     stmts: &'a [ast::Stmt],
     exprs: impl IntoIterator<Item = &'a ast::Expr>,
 ) -> Assigned<'a> {
-    let mut out = Assigned::new();
+    let mut out = Assigned::default();
     let mut w = Walk {
         out: &mut out,
         direct: false,
         fields: false,
+        paths: None,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     exprs.into_iter().for_each(|e| w.expr(e));
@@ -51,11 +67,12 @@ pub(crate) fn assigned_by_closures<'a>(
 /// The fields of `this` that `stmts` assign (`this.x = …`) outside closures: a constructor's
 /// assignments (a closure cannot assign a `readonly` field).
 pub(crate) fn this_fields_assigned(stmts: &[ast::Stmt]) -> Assigned<'_> {
-    let mut out = Assigned::new();
+    let mut out = Assigned::default();
     let mut w = Walk {
         out: &mut out,
         direct: false,
         fields: true,
+        paths: None,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     out
@@ -73,6 +90,8 @@ struct Walk<'a, 'o> {
     direct: bool,
     /// Record the fields of `this` assigned outside closures, not variables.
     fields: bool,
+    /// Also collect the member and index targets written outside closures.
+    paths: Option<&'o mut Vec<&'a ast::Expr>>,
 }
 
 impl<'a> Walk<'a, '_> {
@@ -171,9 +190,27 @@ impl<'a> Walk<'a, '_> {
                     }
                 }
             }
+            E::Unary {
+                op: ast::UnaryOp::Delete,
+                expr,
+            } if self.paths.is_some() => {
+                if let Some(paths) = self.paths.as_deref_mut() {
+                    paths.push(expr);
+                }
+            }
             E::Assign { target, .. } | E::Update { target, .. } => {
-                if let (true, E::Ident(id)) = (self.direct, &target.kind) {
-                    self.out.entry(id.name.as_str()).or_insert(e.span);
+                if let (Some(paths), E::Member { .. } | E::Index { .. }) =
+                    (self.paths.as_deref_mut(), &target.kind)
+                {
+                    paths.push(target);
+                }
+                if self.direct {
+                    // Also every variable a destructuring target names (`[a, b] = [b, a]`).
+                    let mut names = vec![];
+                    target_names(target, &mut names);
+                    for id in names {
+                        self.out.entry(id.name.as_str()).or_insert(e.span);
+                    }
                 }
             }
             E::Arrow { params, body, .. } => {
@@ -214,8 +251,8 @@ impl<'a> Walk<'a, '_> {
     /// What a closure assigns, except its parameters and the locals its body declares (at its
     /// top level, before the assignment: an earlier one may name an enclosing variable).
     fn closure(&mut self, params: Vec<&'a str>, defaults: Vec<&'a ast::Expr>, body: Body<'a>) {
-        let mut own: HashSet<&'a str> = params.into_iter().collect();
-        let mut inner = Assigned::new();
+        let mut own: FxHashSet<&'a str> = params.into_iter().collect();
+        let mut inner = Assigned::default();
         defaults
             .into_iter()
             .for_each(|d| assigned_in_expr(d, &mut inner));
@@ -234,7 +271,7 @@ impl<'a> Walk<'a, '_> {
         self.add_free(inner, &own);
     }
 
-    fn add_free(&mut self, names: Assigned<'a>, own: &HashSet<&'a str>) {
+    fn add_free(&mut self, names: Assigned<'a>, own: &FxHashSet<&'a str>) {
         for (name, span) in names {
             if !own.contains(name) {
                 self.out.entry(name).or_insert(span);
@@ -252,7 +289,7 @@ fn param_names<'a>(
 ) {
     match pattern {
         Some(p) => {
-            let mut names = HashSet::new();
+            let mut names = FxHashSet::default();
             bound_names(p, &mut names);
             out.extend(names);
         }
@@ -260,7 +297,7 @@ fn param_names<'a>(
     }
 }
 
-fn bound_names<'a>(p: &'a ast::Pattern, out: &mut HashSet<&'a str>) {
+fn bound_names<'a>(p: &'a ast::Pattern, out: &mut FxHashSet<&'a str>) {
     use ast::PatternKind as P;
     match &p.kind {
         P::Ident(id) => {
@@ -281,3 +318,26 @@ fn bound_names<'a>(p: &'a ast::Pattern, out: &mut HashSet<&'a str>) {
 
 #[cfg(test)]
 mod tests;
+
+/// The variables assignment target `t` names, also in a destructuring target (`[a, { b }]`).
+pub(crate) fn target_names<'a>(t: &'a ast::Expr, out: &mut Vec<&'a ast::Ident>) {
+    use ast::ExprKind as E;
+    match &t.kind {
+        E::Ident(id) => out.push(id),
+        E::Paren(x) | E::Spread(x) => target_names(x, out),
+        E::Assign { target, .. } => target_names(target, out),
+        E::Array(items) => items.iter().for_each(|x| target_names(x, out)),
+        E::Object(props) => {
+            for p in props {
+                match p {
+                    ast::ObjectProp::KeyValue(_, x) | ast::ObjectProp::Spread(x) => {
+                        target_names(x, out)
+                    }
+                    ast::ObjectProp::Shorthand(id) => out.push(id),
+                    ast::ObjectProp::Method(_) => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}

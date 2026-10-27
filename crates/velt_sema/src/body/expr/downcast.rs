@@ -32,6 +32,11 @@ impl FnCx<'_, '_> {
             return Ok(Instance::Yes);
         }
         let n = self.cx.adt(class).map_or(0, |a| a.generics.len());
+        // `any` / `unknown` tested for a generic class: its type arguments are known only at
+        // run time, so the value stays dynamic (`dynamic_narrow`).
+        if let Some(any) = self.dynamic_generic_instance(t, n > 0) {
+            return Ok(Instance::Maybe(any));
+        }
         let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let own = self.cx.ty.intern(TyKind::Adt(class, params));
         let pattern = match self.cx.ty.kind(t).clone() {
@@ -167,7 +172,7 @@ impl FnCx<'_, '_> {
     /// "this `instanceof` test is always false".
     fn never_instance(&mut self, sty: TyId, class: DefId, span: Span) {
         let cn = self.class_def_name(class);
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let tn = self.cx.display(inner);
         let (msg, note) = if self.cx.union_def(inner).is_some() {
             (

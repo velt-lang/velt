@@ -134,7 +134,7 @@ impl FnLower<'_, '_> {
         };
         if self.cx.counted(ty) {
             let weak = self.cx.weak_capable(ty);
-            self.release_as(obj, weak, free);
+            self.release_of(obj, ty, weak, free);
         } else {
             free(self);
         }
@@ -217,19 +217,21 @@ impl FnLower<'_, '_> {
         if !self.cx.needs_drop(ty) {
             return;
         }
-        let a = self.addr(place);
-        match self.cx.kind(ty) {
-            TyKind::Str => self.call_rt(Rt::StrDrop, vec![a], None),
-            _ => {
-                let f = self.cx.func(Work::Glue(Glue::Drop, ty));
-                self.call(vir::Callee::Func(f), vec![a], None, false);
-            }
+        if self.cx.kind(ty) == TyKind::Str {
+            return self.str_drop(place);
         }
+        let a = self.addr(place);
+        let f = self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode);
+        self.call(vir::Callee::Func(f), vec![a], None, false);
     }
 
     /// Drop the fields of a struct/class value except those moved out (a class object is freed).
     pub(super) fn drop_fields_except(&mut self, place: Place, ty: TyId, moved: &[u32]) {
-        let fields = self.cx.adt_field_tys(ty);
+        // A tuple an element was moved out of (`const t1 = tup[1]`) drops its other elements.
+        let fields = match self.cx.kind(ty) {
+            TyKind::Tuple(ts) => ts,
+            _ => self.cx.adt_field_tys(ty),
+        };
         for (i, fty) in fields.into_iter().enumerate() {
             if !moved.contains(&(i as u32)) && self.cx.needs_drop(fty) {
                 let fp = self.field_place(&place, ty, i as u32);
@@ -295,9 +297,18 @@ impl FnLower<'_, '_> {
             self.drop_entry(&DropEntry::Local(id));
         } else if info.indirect {
             // Borrowed param written in place (`Mutex.with` callback): the caller's value is
-            // always initialized.
+            // always initialized. In read mode (a variable a `read` callback captured): the
+            // caller made that value, never the store (what a reader stores there is a copy),
+            // so it is released by the counts outside read mode, `LOCAL` or not, and freed after
+            // the reads (`LkMode::Deferred`).
             let p = self.local_place(id);
+            let mode = match self.mode {
+                super::LkMode::Plain => super::LkMode::Plain,
+                _ => super::LkMode::Deferred,
+            };
+            let mode = std::mem::replace(&mut self.mode, mode);
             self.drop_glue(p, ty);
+            self.mode = mode;
         }
     }
 
@@ -305,7 +316,7 @@ impl FnLower<'_, '_> {
     pub(super) fn object_alloc(&mut self, ty: TyId) -> Operand {
         let oa = Ty::Agg(self.cx.obj_agg(ty));
         if self.cx.counted(ty) {
-            self.counted_alloc(oa)
+            self.counted_alloc_of(oa, ty)
         } else {
             self.alloc(oa)
         }

@@ -5,7 +5,6 @@
 use velt_sema::hir::{self, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
-use super::sequence::{later_each, Later};
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{self, Const, Operand, Place, Rvalue, Ty};
 
@@ -15,11 +14,32 @@ impl FnLower<'_, '_> {
     pub(super) fn consume(&mut self, e: &hir::Expr) -> Operand {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
-            return self.consume(inner);
+            let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+            // An interface upcast builds a new interface value, and an object type as one with
+            // some of its fields a copy of them (`expr`, below).
+            if self.upcast_slot(from, to).is_none() && !self.part_copy(from, to) {
+                self.cx.note_proxy_cast(from, to);
+                return self.consume(inner);
+            }
         }
         if let K::Downcast(inner) = &e.kind {
             let v = self.consume(inner);
-            return self.downcast_value(v, inner.ty);
+            let owned = matches!(inner.kind, K::Local(_, hir::UseMode::Move));
+            return self.downcast_value(v, inner.ty, owned);
+        }
+        if let K::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
+            args,
+        } = &e.kind
+        {
+            return self.shared_read_owned(&args[0]);
+        }
+        // A frozen value or a part of one, consumed: other tasks still read it, so the consumer
+        // gets a deep copy, read in place (frozen.rs).
+        if self.frozen_root(e) {
+            let v = self.frozen_read(e);
+            let ty = self.sub(e.ty);
+            return self.clone_value(v, ty);
         }
         let v = self.expr(e);
         if self.dead() || !self.needs_drop(e.ty) {
@@ -39,9 +59,12 @@ impl FnLower<'_, '_> {
                 mode: UseMode::Move,
                 ..
             } => match &v {
-                Operand::Copy(p) => {
-                    self.take_temp(&p.clone());
-                    v
+                Operand::Copy(p) if self.take_temp(&p.clone()) => v,
+                // Out of a variable that only borrows its value (`const s = this.f`, narrowed):
+                // nothing was transferred, so the consumer gets another reference (#1140).
+                _ if self.borrowed_root(e) => {
+                    let ty = self.sub(e.ty);
+                    self.share_value(v, ty)
                 }
                 _ => v,
             },
@@ -56,6 +79,15 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Is the moved part `e` (`x.f`, `x!`, a narrowed member of `x`) rooted at a variable that
+    /// does not own its value (a binding by reference, or a borrowed parameter)?
+    fn borrowed_root(&self, e: &hir::Expr) -> bool {
+        super::place::part_root(e).is_some_and(|id| {
+            let info = &self.info[id.0 as usize];
+            !info.droppable && info.vir.is_some()
+        })
+    }
+
     /// Deep copy of a value of concrete type `ty` into a fresh (unregistered) temporary.
     pub(super) fn clone_value(&mut self, v: Operand, ty: TyId) -> Operand {
         if !self.cx.needs_drop(ty) {
@@ -68,7 +100,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             hir::TyKind::Str => self.call_rt(Rt::StrClone, vec![src, dst], None),
             _ => {
-                let f = self.cx.func(Work::Glue(Glue::Clone, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Clone, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![src, dst], None, false);
             }
         }
@@ -78,7 +110,7 @@ impl FnLower<'_, '_> {
     /// `consume` each of `es` in order, snapshotting a value that a later one may change
     /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
-        let later = later_each(es);
+        let later = self.later_each(es);
         let mut vals = Vec::with_capacity(es.len());
         for (e, later) in es.iter().zip(later) {
             let v = self.consume(e);
@@ -108,22 +140,45 @@ impl FnLower<'_, '_> {
                 if let Some(v) = self.float_param_ordering(*op, lhs, rhs, e.ty) {
                     return v;
                 }
-                let l = self.expr_held(lhs, Later::of(rhs));
+                let later = self.later_of(rhs);
+                let l = self.expr_held(lhs, later);
                 let r = self.expr(rhs);
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
             K::Logical { op, lhs, rhs } => self.logical(*op, lhs, rhs),
-            K::Assign { place, value } => self.assign_expr(place, value),
-            K::CompoundAssign { op, place, value } => self.compound_assign(*op, place, value),
+            K::Assign { place, value } => self.with_view_writes(|lw| lw.assign_expr(place, value)),
+            K::CompoundAssign { op, place, value } => {
+                self.with_view_writes(|lw| lw.compound_assign(*op, place, value))
+            }
             K::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
             } => self.source_location(e.span),
-            K::Call { callee, args } => self.call_value(callee, args, e.ty),
+            K::Call {
+                callee: hir::Callee::Def(d, _),
+                args,
+            } if self.is_tla_marker(*d) => {
+                self.tla_site = args.first().map(|a| a.span);
+                unit()
+            }
+            K::Call { callee, args } => {
+                // `super.m(args)` (`Program::super_calls`), taken by `call_def`.
+                let sup = self.cx.hir.super_calls.contains(&e.span);
+                let prev = std::mem::replace(&mut self.super_call, sup);
+                let v = self.call_value(callee, args, e.ty);
+                self.super_call = prev;
+                v
+            }
             K::Cast(inner) => {
                 let v = self.expr(inner);
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
                 self.cast_to(v, from, to)
+            }
+            // The text of a type parameter's value: the branch this instantiation takes, as
+            // if it were the expression (no join temporary).
+            K::If { cond, then, els } if super::template::is_holds_dynamic(cond) => {
+                let dynamic = self.const_cond(cond) == Some(true);
+                self.expr(if dynamic { then } else { els })
             }
             K::If { cond, then, els } => self.if_expr(cond, then, els, e.ty),
             K::Block(b) => self.block_expr(b, e.ty),
@@ -139,6 +194,11 @@ impl FnLower<'_, '_> {
             K::FnRef(d, targs) => self.fn_ref(*d, targs, e.ty),
             K::Field { base, index, mode } => self.field_expr(base, *index, *mode),
             K::Index { base, index, .. } => self.index_expr(base, index),
+            K::AdtLit {
+                fields,
+                converted: c @ (hir::Conversion::Copy | hir::Conversion::ProxyOnly),
+                ..
+            } => self.converted_lit(e.ty, fields, *c == hir::Conversion::ProxyOnly),
             K::AdtLit { fields, .. } => self.adt_lit(e.ty, fields),
             K::Variant { variant, args, .. } => self.variant(e.ty, *variant, args),
             K::ArrayLit(es) => self.array_lit(es, e.ty),
@@ -153,10 +213,24 @@ impl FnLower<'_, '_> {
                 mode,
             } => self.unwrap_variant(expr, *variant, *mode),
             K::New { args, .. } => self.new_object(e.ty, args),
-            K::Upcast(inner) => self.expr(inner),
+            K::Upcast(inner) => {
+                let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                // An object type as one with some of its fields (sema's `part_copy`, checked by
+                // `object_copies`): a new object of those fields.
+                // It is an owned temporary (`build_agg`), which `consume` takes over.
+                if self.part_copy(from, to) {
+                    return self.spread_object(std::slice::from_ref(&**inner), e.ty);
+                }
+                if let Some(slot) = self.upcast_slot(from, to) {
+                    let v = self.consume(inner);
+                    return self.upcast_value(v, from, to, slot);
+                }
+                self.cx.note_proxy_cast(from, to);
+                self.expr(inner)
+            }
             K::Downcast(inner) => {
                 let v = self.expr(inner);
-                self.downcast_value(v, inner.ty)
+                self.downcast_value(v, inner.ty, false)
             }
             K::ToDyn { expr, impl_index } => self.make_dyn(expr, *impl_index, e.ty),
             K::Throw(inner) => self.throw(inner),
@@ -182,6 +256,10 @@ impl FnLower<'_, '_> {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
         };
+        if let Some(slot) = g.slot {
+            // A module-level `let`: its slot, read in place (sema shares what it moves out).
+            return Operand::Copy(self.module_slot(slot));
+        }
         let saved = std::mem::take(&mut self.targs);
         let v = self.consume(&g.init);
         self.targs = saved;
@@ -202,28 +280,15 @@ impl FnLower<'_, '_> {
     /// code of those three reads, so nothing counts it.
     ///
     /// Only those three uses get it. Anywhere else (an argument, a receiver, a value that is
-    /// kept) the constant is evaluated like any other, to a new array. Sema rejects the uses
-    /// that could write to a table, those it can follow and those it can't (a function value),
+    /// kept) the constant is evaluated like any other, to a new array. Sema keeps a table that a
+    /// use could write to in the module state (a slot, never read from here) or rejects the use,
     /// but read-only data must never be reachable from code that writes, so this does not rely
     /// on it.
     ///
     /// `None`, for the initializer to be evaluated, also when the array is empty (nothing to
     /// store) or an element is not one `table_const` folds.
     pub(super) fn table_read(&mut self, e: &hir::Expr) -> Option<Place> {
-        let hir::ExprKind::Global(d) = e.kind else {
-            return None;
-        };
-        let (data, len) = match self.cx.tables.get(&d) {
-            Some(known) => (*known)?,
-            None => {
-                let hir::Def::Global(g) = self.cx.hir.def(d) else {
-                    return None;
-                };
-                let stored = self.store_table(g);
-                self.cx.tables.insert(d, stored);
-                stored?
-            }
-        };
+        let (data, len) = self.table_data(e)?;
         let a = self.cx.array_agg();
         let t = self.temp(Ty::Agg(a));
         self.assign(
@@ -238,6 +303,36 @@ impl FnLower<'_, '_> {
             ),
         );
         Some(Place::local(t))
+    }
+
+    /// Whether `e` names a table that lowering stores as read-only data (`table_read`).
+    pub(super) fn is_table(&mut self, e: &hir::Expr) -> bool {
+        self.table_data(e).is_some()
+    }
+
+    /// The read-only data of the table `e` names, and its length (stored on first use).
+    fn table_data(&mut self, e: &hir::Expr) -> Option<(vir::StaticId, usize)> {
+        let hir::ExprKind::Global(d) = e.kind else {
+            return None;
+        };
+        let (data, len) = match self.cx.tables.get(&d) {
+            Some(known) => (*known)?,
+            None => {
+                let hir::Def::Global(g) = self.cx.hir.def(d) else {
+                    return None;
+                };
+                // A module-level `let` (its slot holds the array, which code may replace or
+                // modify) is never read from the stored initializer.
+                if g.slot.is_some() {
+                    self.cx.tables.insert(d, None);
+                    return None;
+                }
+                let stored = self.store_table(g);
+                self.cx.tables.insert(d, stored);
+                stored?
+            }
+        };
+        Some((data, len))
     }
 
     /// The elements of table `g` as static data, with their number; `None` when `g` is not a
@@ -377,7 +472,31 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
-                Some(matches!(self.cx.kind(t), velt_sema::hir::TyKind::Option(_)))
+                Some(matches!(
+                    self.cx.kind(t),
+                    velt_sema::hir::TyKind::Option(..)
+                ))
+            }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(!self.cx.object_only(t))
+            }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamic),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(self.cx.holds_dynamic(t))
+            }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamicOrClass),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(self.cx.holds_dynamic_or_class(t))
             }
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,
@@ -394,6 +513,27 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The test `g(x)` of a condition `g(x) && MayHoldPrimitive(x)` whose `MayHoldPrimitive`
+    /// is `false` in this instantiation (sema `primitive_guard`).
+    pub(super) fn ruled_out_guard<'e>(&mut self, cond: &'e hir::Expr) -> Option<&'e hir::Expr> {
+        let hir::ExprKind::Logical {
+            op: hir::LogicOp::And,
+            lhs,
+            rhs,
+        } = &cond.kind
+        else {
+            return None;
+        };
+        let guard = matches!(
+            rhs.kind,
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
+                ..
+            }
+        );
+        (guard && self.const_cond(rhs) == Some(false)).then_some(&**lhs)
+    }
+
     /// Value-producing `if` (ternary): each branch stores its (owned) value into a join temp.
     fn if_expr(
         &mut self,
@@ -402,6 +542,19 @@ impl FnLower<'_, '_> {
         els: &hir::Expr,
         ty: TyId,
     ) -> Operand {
+        // A condition known per instantiation (`const_cond`): only the branch it takes.
+        if let Some(c) = self.const_cond(cond) {
+            let t = self.vty(ty);
+            let res = (t != Ty::Unit).then(|| self.temp(t));
+            self.push_scope(ScopeKind::Temps);
+            let v = self.consume(if c { then } else { els });
+            if let Some(r) = res {
+                self.assign(Place::local(r), Rvalue::Use(v));
+            }
+            self.pop_scope();
+            let ty = self.sub(ty);
+            return self.owned_result(res, ty);
+        }
         let c = self.expr(cond);
         let t = self.vty(ty);
         let res = (t != Ty::Unit).then(|| self.temp(t));
@@ -426,6 +579,9 @@ impl FnLower<'_, '_> {
 
     /// Block expression (`x++`/`++x` encodings, match arms): its value outlives its scope.
     fn block_expr(&mut self, b: &hir::Block, ty: TyId) -> Operand {
+        if let Some(v) = self.proxy_update_block(b) {
+            return v;
+        }
         self.note_scope_ends(b, false);
         self.push_scope(ScopeKind::Block);
         for s in &b.stmts {
@@ -513,5 +669,41 @@ fn float_to_int(v: f64, to: Ty) -> i128 {
         0
     } else {
         (v as i128).clamp(lo, hi)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is `e` an `Upcast` that copies an object type's fields into a new object of the
+    /// target type (`part_copy`): a fresh owned temporary, not a place rooted in its operand?
+    pub(super) fn part_copy_upcast(&mut self, e: &hir::Expr) -> bool {
+        let hir::ExprKind::Upcast(inner) = &e.kind else {
+            return false;
+        };
+        let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+        self.part_copy(from, to)
+    }
+
+    /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
+    /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
+    /// Two forms of one layout are the same value.
+    fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
+        let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
+            (self.cx.kind(from), self.cx.kind(to))
+        else {
+            return false;
+        };
+        if a == b || self.cx.is_class(from) || self.cx.is_class(to) {
+            return false;
+        }
+        let (hir::Def::Adt(da), hir::Def::Adt(db)) = (self.cx.hir.def(a), self.cx.hir.def(b))
+        else {
+            return false;
+        };
+        if da.fields.len() <= db.fields.len() {
+            return false;
+        }
+        db.fields
+            .iter()
+            .all(|f| da.fields.iter().any(|g| g.name == f.name))
     }
 }

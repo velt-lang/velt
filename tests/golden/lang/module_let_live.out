@@ -1,0 +1,4 @@
+init counter
+init a, value = 0
+0 a
+2

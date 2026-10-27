@@ -8,12 +8,19 @@ impl<'a> Parser<'a> {
     /// `{ stmts }`. A missing `}` at end of file is reported and the partial block is returned.
     pub(super) fn parse_block(&mut self) -> PResult<Block> {
         let lo = self.cur_lo();
+        let fn_body = std::mem::take(&mut self.fn_body_next);
         self.expect(Tok::LBrace)?;
         // A function body in a `for` head (`for (f = () => { … }; …)`) has its own `in`.
-        self.allow_in(|p| p.parse_block_in(lo))
+        self.allow_in(|p| p.parse_block_in(lo, fn_body))
     }
 
-    fn parse_block_in(&mut self, lo: u32) -> PResult<Block> {
+    /// The body of a function: a block in which `var` may be declared (`var_stmt`).
+    pub(super) fn parse_fn_body(&mut self) -> PResult<Block> {
+        self.fn_body_next = true;
+        self.parse_block()
+    }
+
+    fn parse_block_in(&mut self, lo: u32, fn_body: bool) -> PResult<Block> {
         let mut stmts = Vec::new();
         loop {
             match self.peek() {
@@ -27,6 +34,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {}
             }
+            self.var_ok = fn_body;
             self.parse_stmt_recovering(&mut stmts);
         }
         Ok(Block {
@@ -82,7 +90,10 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         self.guarded(|p| {
             let lo = p.cur_lo();
-            let kind = p.parse_stmt_kind()?;
+            let outer = p.begin_statement();
+            let kind = p.parse_stmt_kind();
+            p.end_statement(outer);
+            let kind = kind?;
             Ok(Stmt {
                 kind,
                 span: p.span_from(lo),
@@ -91,6 +102,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt_kind(&mut self) -> PResult<StmtKind> {
+        let var_ok = std::mem::take(&mut self.var_ok);
+        if self.at_var_decl() {
+            return self.var_stmt(var_ok);
+        }
         if self.at_using_decl() {
             let var = self.parse_using_decl()?;
             self.expect_semi()?;
@@ -129,6 +144,14 @@ impl<'a> Parser<'a> {
             Kw::Break | Kw::Continue => self.parse_break_continue(kw),
             Kw::Throw => {
                 self.bump();
+                if self.line_break_before() {
+                    // TS1142; parsed on, so the rest of the statement is still checked.
+                    let span = self.cur_span();
+                    self.error(
+                        "a line break is not permitted after `throw` (as in TypeScript): start the thrown value on the same line",
+                        span,
+                    );
+                }
                 let e = self.parse_expr()?;
                 self.expect_semi()?;
                 Ok(StmtKind::Throw(e))
@@ -142,17 +165,16 @@ impl<'a> Parser<'a> {
 
     /// Declarations allowed inside blocks (functions, types, ...).
     fn at_nested_item(&mut self) -> bool {
+        if self.at_decl_word_before_line_break() {
+            return false;
+        }
         match self.cur_kw() {
-            Some(
-                Kw::Function
-                | Kw::Struct
-                | Kw::Class
-                | Kw::Interface
-                | Kw::Enum
-                | Kw::Import
-                | Kw::Export,
-            ) => true,
-            Some(Kw::Async | Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
+            Some(Kw::Function | Kw::Struct | Kw::Class | Kw::Interface | Kw::Enum | Kw::Export) => {
+                true
+            }
+            Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
+            Some(Kw::Async) => self.at_async_function(),
+            Some(Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
             _ => false,
         }
@@ -235,13 +257,16 @@ impl<'a> Parser<'a> {
         let body = self.parse_body()?;
         self.expect_kw(Kw::While, "while")?;
         let cond = self.parse_paren_cond()?;
-        self.expect_semi()?;
+        // A `;` is inserted after a `do`-`while` even on the same line (ECMAScript 2015).
+        self.eat(Tok::Semi);
         Ok(StmtKind::DoWhile { body, cond })
     }
 
+    /// `return [value]`: a restricted production, so a line break right after `return` ends
+    /// the statement and the next line is not its value (as in JavaScript).
     fn parse_return(&mut self) -> PResult<StmtKind> {
         self.bump(); // return
-        let value = if self.at(Tok::Semi) {
+        let value = if self.at(Tok::Semi) || self.at_inserted_semi() {
             None
         } else {
             Some(self.parse_expr()?)
@@ -252,7 +277,8 @@ impl<'a> Parser<'a> {
 
     fn parse_break_continue(&mut self, kw: Kw) -> PResult<StmtKind> {
         self.bump();
-        let label = if self.at_ident_like() {
+        // The label must be on the same line (a restricted production).
+        let label = if self.at_ident_like() && !self.line_break_before() {
             Some(self.take_ident())
         } else {
             None
@@ -265,12 +291,31 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `catch (e: unknown)` / `catch (e: any)`: TypeScript allows only these annotations on the
+    /// catch binding (else TS1196). They are dropped: the binding has the caught value's type.
+    fn catch_annotation(&mut self) -> PResult<()> {
+        if !self.eat(Tok::Colon) {
+            return Ok(());
+        }
+        let ty = self.parse_type()?;
+        let ok = matches!(&ty.kind, TypeExprKind::Named { path, args }
+            if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "any" | "unknown"));
+        if !ok {
+            self.error(
+                "a catch clause variable's type annotation must be `any` or `unknown` if specified",
+                ty.span,
+            );
+        }
+        Ok(())
+    }
+
     fn parse_try(&mut self) -> PResult<StmtKind> {
         self.bump(); // try
         let body = self.parse_block()?;
         let catch = if self.eat_kw(Kw::Catch) {
             let binding = if self.eat(Tok::LParen) {
                 let p = self.parse_binding_pattern()?;
+                self.catch_annotation()?;
                 self.expect(Tok::RParen)?;
                 Some(p)
             } else {

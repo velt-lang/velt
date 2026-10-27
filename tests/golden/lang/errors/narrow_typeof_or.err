@@ -1,0 +1,3 @@
+narrow_typeof_or.vlt:7:23: error: mismatched types
+narrow_typeof_or.vlt:14:65: error: no field `type` on type `Child`
+narrow_typeof_or.vlt:19:92: error: no field `type` on type `Child`

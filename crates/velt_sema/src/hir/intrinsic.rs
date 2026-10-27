@@ -16,6 +16,8 @@ pub enum Intrinsic {
     StrConcat,
     /// `s.length` → usize (byte length in POC).
     StrLen,
+    /// `Buffer.byteLength(s)` → usize: the UTF-8 length, which a string stores (no call).
+    StrByteLen,
     /// `process.exit(code: i32)` → Never.
     Exit,
     /// `panic(msg: string)` → Never.
@@ -46,15 +48,58 @@ pub enum Intrinsic {
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
     /// any more must be cut off with it before the array is dropped.
     ArraySetLen,
-    /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
+    /// `(xs (modified), extra: usize)` make room for `extra` more elements: when the capacity
+    /// is under `len + extra`, the buffer is reallocated to exactly that (no doubling); the
+    /// length and the elements stay. Emitted for an array spread whose length is known only
+    /// where it is pushed (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
+    ArrayReserve,
+    /// std only (std/collections/btree): `(xs: borrow T[], i: usize)`, a hint that element `i`
+    /// is read soon, so the CPU starts loading its cache line. Not bounds-checked: a prefetch
+    /// never faults, and an index past the end only wastes the load. Lowered to the
+    /// `velt_simd_prefetch` extern of the element's address (rt_abi.md "SIMD"), which LLVM
+    /// emits as `llvm.prefetch` and Cranelift as nothing. Additive.
+    ArrayPrefetch,
+    /// std only (std/collections/btree): `(xs (modified), lo: usize, hi: usize)`, rotates the
+    /// elements `xs[lo..=hi]` one slot up: the element at `hi` moves to `lo` and the others
+    /// one slot up, by one `memmove` (`hi` bounds-checked; nothing when `lo >= hi`). A
+    /// permutation: every element stays owned once, so it moves elements of any type, where a
+    /// loop of moves would count or check each one. Additive.
+    ArrayRotateRight,
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
+    /// Additive.
+    ArrayRotateLeft,
+    /// std only (`xs.swapIn`, std/prelude/array_nested.vlt): `(xs: T[][] (modified), a: usize,
+    /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
+    /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
+    /// inner arrays, which one call may not otherwise change both of. Additive.
+    ArraySwapNested,
+    /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
+    /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
+    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
+    /// the program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
+    ParamOrdering,
+    /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
+    /// keys): numbers, bool and strings by value, objects by identity, unions, options and
+    /// tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`
-    /// keys, `deepEqual`, `assertEq`
+    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`,
+    /// `deepEqual`, `assertEq`
     Eq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
+    /// (`__intrinsic_key_eq`): `Same` with floats compared so that `NaN` equals itself and `0`
+    /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
+    KeyEq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
+    /// (`__intrinsic_includes_eq`): `Same`, except that a number `NaN` equals `NaN` (a number
+    /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
+    IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
     /// class instances, arrays, object types, interface and function values — by identity;
     /// `T | null`, unions and tuples part by part; strings and numbers by value
     Same,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Object.is` (SameValue): `Same`, except that
+    /// floats compare by value with `NaN` equal to itself and `0` unequal to `-0`
+    SameValue,
     /// `x.clone()` (user-visible, every type): deep copy
     Clone,
     /// `(x: borrow T) -> T`: another reference to the same value (JS reference copy; semantics
@@ -62,6 +107,20 @@ pub enum Intrinsic {
     /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
+    /// `(parts: borrow P0, P1, …) -> TyOp::Spread(P0, P1, …)`: an object literal with a spread
+    /// whose fields are known only per instantiation (#350). Each part is an object value: a
+    /// spread source (a place, borrowed) or a one-field object literal holding an explicit
+    /// property (owned). Lowering builds the reduced object type, each field shared from the
+    /// last part that has it (an optional field only while present, as JavaScript copies only
+    /// the keys an object has).
+    SpreadObject,
+    /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
+    /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
+    /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
+    KeyRead,
+    /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
+    /// generic body, as for `KeyRead`; lowering writes that field.
+    KeyWrite,
     /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
     /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
     FieldAbsent,
@@ -101,6 +160,35 @@ pub enum Intrinsic {
     /// per instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`,
     /// `0`, `-0`, `NaN` and `""` are falsy, a union by its member, objects always truthy.
     Truthy,
+    /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, `x === null` on a value
+    /// whose type is an option of a type parameter (`x?: T`, issue #930): whether it holds the
+    /// `null` of the type it is instantiated with (the inner nothing of a `X | null | undefined`,
+    /// the nothing of a `X | null`); `false` for a type without `null`.
+    IsNull,
+    /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
+    /// either nothing once instantiated.
+    IsNullish,
+    /// Compiler-internal: `(a: borrow T, b: borrow T) -> bool`, `a == b` of two values of one
+    /// type with a type parameter in it: lowered as `Same(a, b)` (`a === b`) where the
+    /// instantiated type holds no nothing, else both nothings are equal too (`null == undefined`),
+    /// as in JavaScript; `AnyLooseEq` at `T = any` / `unknown`.
+    LooseEq,
+    /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
+    /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
+    /// type, array, tuple, map or function type; `true` for anything else, unions and `any`
+    /// included)? The probe is not evaluated. Only as the right operand of `g(x) && _` in the
+    /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
+    /// (hir_encodings.md "Type predicates on a type parameter").
+    MayHoldPrimitive,
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
+    /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
+    /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
+    /// parameter").
+    HoldsDynamic,
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
+    /// class: the condition of the text of a `T` value in a string `+`, which asks a class
+    /// instance for its `valueOf()` first. The probe is not evaluated.
+    HoldsDynamicOrClass,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values
@@ -108,6 +196,16 @@ pub enum Intrinsic {
     /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
     /// where the function value is known (const_fields after specialization).
     FnCapturesNothing,
+    /// Inside a member of a recursive closure group (sema `nested_closures`): the closure
+    /// value of member `def` of the same group, made from the running closure's own
+    /// environment (`{ code of def, env }`, sharing it). The members capture the same
+    /// variables in the same order, so their environments have one layout. No args; the
+    /// result is owned.
+    ClosureSibling(super::DefId),
+    /// In the entry `main` only: evaluate the initializers of module state slots `from..to`
+    /// (`ModuleState::deferred` on) into their slots, in order, as the state's initializer does
+    /// for the slots before them. No args, `void`. Additive (#1438).
+    InitSlots(u32, u32),
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,
@@ -187,10 +285,23 @@ pub enum Intrinsic {
     SharedAdd,
     SharedGet,
     SharedSet,
+    /// Compiler-internal (no source syntax): `s: shared<T>` (no `Mutex`) used as the `T` it
+    /// holds, where the value is only read (#36): `s[i]`, `s.length`, a method's receiver, an
+    /// argument. Its one argument is borrowed and the result is borrowed out of the shared box:
+    /// a borrow of the `T` itself when no part of `T` is reference counted, else (and where the
+    /// value is consumed) a copy. Nothing ever writes through it.
+    SharedRead,
     /// `new Mutex<T>(x)` → `Mutex<T>` (an ADT-like builtin: lock word + value)
     MutexNew,
-    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result
+    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result.
+    /// Also `rw.write(f)` on an `RwLock<T>` (its exclusive lock).
     MutexWith,
+    /// `new RwLock<T>(x)` → `RwLock<T>` (lock word + value, like `Mutex<T>`)
+    RwLockNew,
+    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken shared,
+    /// so readers run at once (in velt_rt's read mode); sema rejects a callback that modifies
+    /// the value.
+    LockRead,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`
@@ -200,6 +311,30 @@ pub enum Intrinsic {
     /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
     /// `max_depth` 0 = no limit); throws `JsonError { message }`.
     JsonParse,
+    /// std only: `__intrinsic_json_parse_rows<T>(rows: borrow u8[], flags: i64, max_depth: i64): T`
+    /// — `JsonParse` over a driver's binary result rows (`velt_text::rows`) instead of JSON
+    /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
+    /// (native_abi.md "Rows").
+    JsonParseRows,
+    /// std only: `__intrinsic_json_parse_cursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
+    /// — `JsonParseRows` over a driver's live rows (the address of a
+    /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
+    /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
+    JsonParseCursor,
+    /// std only: `__intrinsic_db_bind<P>(sink: u64, params: borrow P): bool` — hands `params`
+    /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
+    /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
+    /// JSON text (native_abi.md "Parameter sinks").
+    DbBind,
+    /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
+    /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
+    /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
+    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
+    /// the rows as JSON.
+    ReadRows,
+    /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
+    /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
+    ReadRow,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
@@ -208,6 +343,15 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
+    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
+    /// range against `StrByteLen`). The bytes are read where the string keeps them.
+    StrByteAt,
+    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load`
+    /// of the string's bytes, no copy).
+    StrLoadU8x16,
+    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
+    /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
+    StrLoadPartialU8x16,
     /// std only: `__intrinsic_array_data_ptr(xs: borrow T[]) -> u64` — address of element 0.
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
@@ -216,7 +360,9 @@ pub enum Intrinsic {
 
     // Generators (hir_encodings.md "Generators")
     /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield
-    /// type) → unit. Suspends the generator with `v` in its value slot.
+    /// type) → unit. Suspends the generator with `v` in its value slot. In a `Generator<T, E,
+    /// N>` the call has type `N`: the value `next(value)` resumes it with, and its second
+    /// argument (owned, evaluated only then) is the value when `next()` passes none.
     Yield,
     /// std only: `__intrinsic_generator_resume<T, E>(g: Generator<T, E> (modified)): bool`,
     /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
@@ -229,6 +375,25 @@ pub enum Intrinsic {
     /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
     /// values as if the `yield` were a `return`; then it is done.
     GeneratorReturn,
+    /// std only: `__intrinsic_generator_resume_with<T, E, N>(g: Generator<T, E, N> (modified),
+    /// value: N (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the
+    /// paused `yield` evaluates to (a copy of) `value`; a generator that has not started
+    /// ignores it.
+    GeneratorResumeWith,
+    /// std only: `__intrinsic_generator_throw<T, E, N>(g: Generator<T, E, N> (modified), error:
+    /// any (borrowed)): u32`, throws `E` — `throw(error)`: resume the body with `error` thrown
+    /// at the paused `yield`. 1: the body caught it and yielded again (the value is in the
+    /// slot); 0: it caught it and finished; 3: nothing caught it (the generator is closed, as
+    /// by `return()`, or it had not started or was finished), and the caller throws it. An
+    /// error the body throws (after catching) is thrown here.
+    GeneratorThrow,
+    /// Compiler-internal: `(g: Generator<T, E, N> (modified)): bool`, throws `E` — one step of
+    /// `yield* g` in a generator that takes `next(value)` or may be thrown into (after a first
+    /// `GeneratorResume(g)` returned true): yield `g`'s value; then resume `g` the way this
+    /// generator is resumed (`next(value)` passes the value on, `throw(e)` throws `e` into `g`
+    /// and, if `g` did not catch it, at the `yield*`, closing closes `g`). True when `g` yielded
+    /// again.
+    YieldDelegate,
     /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
     /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
     /// the generator's state inline in that local instead of a heap object.
@@ -277,4 +442,96 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_weakref_deref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+
+    // The dynamic value `any` / `unknown` (issue #924; hir_encodings.md "any and unknown"). Its
+    // operand is a `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with
+    // `Program::any_impl`.
+    /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: a value of another
+    /// type stops the program with a `TypeError` naming the expected and the found type. `T` is
+    /// a concrete type, a class (an instance of it or of a subclass), `U | null` (`null` and
+    /// `undefined` give `null`) or `any` / `unknown` (the same value). An optional second
+    /// operand `text: string`, a string literal read while compiling, starts the `TypeError`
+    /// (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
+    AnyTo,
+    /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
+    AnyTypeof,
+    /// `(x: borrow any) -> bool`: JavaScript's truthiness of `x`.
+    AnyTruthy,
+    /// `(a: borrow any, b: borrow any) -> bool`: `a === b` (numbers by value, `NaN` unequal,
+    /// strings by content, objects and functions by identity).
+    AnyStrictEq,
+    /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
+    /// `null == undefined`, `"1" == 1`, `true == 1`).
+    AnyLooseEq,
+    /// `(x: borrow any, key: borrow string | any) -> any`: `x.key` / `x[key]` (a key of type
+    /// `any` holding a number reads like `AnyIndex`): the member of the value held, boxed;
+    /// `undefined` when the value's fixed shape has no such member; a `TypeError` for a
+    /// `null` / `undefined` receiver or a member not supported through `any` yet. Sets
+    /// `Program::dyn_members`.
+    AnyGet,
+    /// `(x: borrow any, i: f64) -> any`: `x[i]` with a number key (array elements).
+    AnyIndex,
+    /// `(x: borrow any, key: borrow string, text: string, args: owned any...) -> any`: the
+    /// method call `x.key(args)`; each argument is converted to the parameter's type as by
+    /// `AnyTo`. `text` names the callee in a `TypeError` (`x.key is not a function`).
+    AnyCall,
+    /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value
+    /// `f` holds (`text` as for `AnyCall`).
+    AnyApply,
+    /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` /
+    /// `x[key] = v` (a key of type `any` holding a number writes like `AnySetIndex`): `v`
+    /// converted to the member's type as by `AnyTo` and stored, or passed to its setter; a
+    /// `TypeError` for a `null` / `undefined` receiver, a member the value's fixed shape does not
+    /// have (a record takes any key), a getter without a setter, or a member not supported
+    /// through `any` yet. Sets `Program::dyn_members`.
+    AnySet,
+    /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an
+    /// element of an array, inside its length).
+    AnySetIndex,
+    /// `(x: borrow any, key: borrow string | any) -> bool`: `key in x` (a key of type `any`
+    /// holding a number names an element by its string): whether the value held has the
+    /// property (a proxy: its `has` trap); a `TypeError` for a `null` / `undefined` value or one
+    /// not supported yet. Sets `Program::dyn_members`.
+    AnyHas,
+    /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
+    /// is not a proxy (std/proxy.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// removed and an optional field made absent (`true`), a key the value does not have is
+    /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
+    AnyDelete,
+    /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
+    /// array `x` holds (velt:proxy/array; identified by its data pointer): `op` 1 starts it, -1
+    /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call
+    /// of it (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
+    ProxyArrayCall,
+    /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
+    /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
+    /// records it (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets
+    /// those from `index` on, 4 gives the first below `index` (or -1)
+    /// (`velt_rt_proxy_array_hole`).
+    ProxyArrayHole,
+    /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
+    /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
+    /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
+    IsTypedProxy,
+    /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
+    AnyIsArray,
+    /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the
+    /// value held in JavaScript's order (an array's or a string's indexes, a record's keys,
+    /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
+    /// supported yet. Sets `Program::dyn_members`.
+    AnyKeys,
+    /// `(x: borrow any) -> i64`: the `typeof` tag of the value held, as a number (0 `undefined`,
+    /// 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7 object), read from its
+    /// descriptor without a call. Additive (#924, operators through `any`).
+    AnyTag,
+    /// `(x: borrow any) -> f64`: JavaScript's `ToNumber` of a primitive held (`null` is 0,
+    /// `undefined` NaN, a string as `Number(s)`; a symbol stops with Node's `TypeError`), one
+    /// call through the descriptor. An object or a function held gives `NaN`: sema converts
+    /// those with `ToPrimitive` first. Additive (#924).
+    AnyToNumber,
+    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
+    /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
+    /// were integer literals in range (sema checks them), so they are part of the operation:
+    /// lowering calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).
+    SimdShuffle(super::SimdTy, [u8; 16]),
 }

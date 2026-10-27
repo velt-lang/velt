@@ -1,0 +1,168 @@
+// A module constant taken over through `??`, `!`, `||`, `as`, an optional chain, a
+// destructuring, a spread or a plain member read, in a module initializer or a function, or by
+// a call that keeps its argument, is the one object Node shares: a change through the taker
+// shows in the constant (#1406). `??`, `!` and optional chains in module initializers crashed
+// the compiler (#1398).
+
+interface P {
+  x: number;
+}
+
+export const q: P | undefined = { x: 0 } as (P | undefined);
+let d: P = { x: -1 };
+let p = q ?? d;
+p.x = 1;
+console.log(q!.x, p === q);
+export let r = q!;
+r.x = 2;
+console.log(q!.x, r === q);
+export const s = q || d;
+console.log(s === q);
+
+function f(): void {
+  const z = q ?? d;
+  z.x = 5;
+  console.log(q!.x);
+  const w = q!;
+  w.x = 6;
+  console.log(q!.x);
+}
+
+f();
+console.log(q!.x, p.x, r.x, s.x, d.x);
+
+// Through a `!` or `as` around `??`, and a part taken over through `!`, `??`, an optional
+// chain, a destructuring, a spread, or directly (`N.a`).
+interface J {
+  v: number;
+  a: { b: number };
+}
+
+export const K: J | null = { v: 1, a: { b: 1 } };
+export const N: J = { v: 1, a: { b: 1 } };
+let D: J = { v: 0, a: { b: 0 } };
+const t1 = (K ?? D)!;
+t1.v = 3;
+console.log(K!.v);
+const t2 = (K ?? D) as J;
+t2.v = 4;
+console.log(K!.v);
+const t3 = K!.a;
+t3.b = 3;
+console.log(K!.a.b);
+const t4 = (K ?? D).a;
+t4.b = 4;
+console.log(K!.a.b);
+const t5 = K?.a ?? D.a;
+t5.b = 5;
+console.log(K!.a.b);
+const { a } = K!;
+a.b = 6;
+console.log(K!.a.b);
+const { a: a2 } = K ?? D;
+a2.b = 7;
+console.log(K!.a.b);
+let t6 = N.a;
+t6.b = 3;
+console.log(N.a.b);
+const [n1] = [N.a];
+n1.b = 4;
+console.log(N.a.b);
+const sp = { ...K! };
+sp.a.b = 8;
+sp.v = 9;
+console.log(K!.a.b, K!.v);
+const sp2: J = { ...N, v: 2 };
+sp2.a.b = 5;
+console.log(N.a.b, N.v);
+
+function g(): number {
+  const t = K!.a;
+  t.b = 10;
+  const { a: u } = N;
+  u.b = 6;
+  return t.b + u.b;
+}
+
+console.log(K!.v, K!.a.b, N.a.b, g(), K!.a.b, N.a.b);
+
+// Taken over by a call that keeps its argument: a `Map` or `Set`, a constructor or a method
+// storing it in a field, `fill`, a weak key.
+class Box {
+  a: { b: number };
+  constructor(a: { b: number }) {
+    this.a = a;
+  }
+  put(a: { b: number }): void {
+    this.a = a;
+  }
+}
+
+export const M: J = { v: 1, a: { b: 1 } };
+export const L: J | null = { v: 1, a: { b: 1 } };
+export const S: J | null = { v: 1, a: { b: 1 } };
+export const Q: J = { v: 1, a: { b: 1 } };
+export const R: J = { v: 1, a: { b: 1 } };
+const m = new Map<string, { b: number }>();
+m.set("x", M.a);
+m.get("x")!.b = 3;
+console.log(M.a.b);
+m.set("y", L!.a);
+m.get("y")!.b = 3;
+console.log(L!.a.b);
+m.set("z", (L ?? D).a);
+m.get("z")!.b = 4;
+console.log(L!.a.b);
+m.set("w", S?.a ?? D.a);
+m.get("w")!.b = 5;
+console.log(S!.a.b, D.a.b);
+const mj = new Map<string, J>();
+mj.set("x", L!);
+mj.get("x")!.v = 6;
+console.log(L!.v);
+const st = new Set<{ b: number }>();
+st.add(Q.a);
+st.add(S?.a ?? D.a);
+for (const x of st) {
+  x.b += 10;
+}
+console.log(Q.a.b, S!.a.b, st.size);
+const b1 = new Box(R.a);
+b1.a.b = 2;
+console.log(R.a.b);
+const b2 = new Box(K!.a);
+b2.a.b = 20;
+console.log(K!.a.b);
+b2.put(N.a);
+b2.a.b = 30;
+console.log(N.a.b);
+export const T: J = { v: 1, a: { b: 1 } };
+const arr: { b: number }[] = [{ b: 0 }, { b: 0 }, { b: 0 }];
+arr.fill(T.a, 1);
+arr[1].b = 3;
+console.log(T.a.b, arr[0].b, arr[2].b, arr[1] === arr[2]);
+// A weak key (looked up, set, looked up again): the one object, found again.
+export const W: J = { v: 1, a: { b: 1 } };
+const wm = new WeakMap<{ b: number }, number>();
+console.log(wm.get(W.a) ?? -1, wm.has(W.a));
+wm.set(W.a, 1);
+console.log(wm.get(W.a) ?? -1, wm.has(W.a));
+const ws = new WeakSet<{ b: number }>();
+console.log(ws.has(K!.a));
+ws.add(K!.a);
+console.log(ws.has(K!.a));
+// A function handing its parameter to `fill`, and a `static readonly` field initialized with
+// `??`.
+export const U: J = { v: 1, a: { b: 1 } };
+function fillAll(xs: { b: number }[], v: { b: number }): void {
+  xs.fill(v);
+}
+const arr2 = [{ b: 0 }];
+fillAll(arr2, U.a);
+arr2[0].b = 3;
+console.log(U.a.b);
+class Cls {
+  static readonly X: P = q ?? d;
+}
+Cls.X.x = 40;
+console.log(q!.x, Cls.X === q);

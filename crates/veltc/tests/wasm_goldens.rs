@@ -8,7 +8,9 @@
 //! Needs the rustup targets (`rustup target add wasm32-wasip1 wasm32-unknown-unknown`), LLVM's
 //! `opt`/`llc` (`rustup component add llvm-tools`), wasmtime and node; each part is skipped with
 //! a note when its tools are missing. Filter with `VELT_GOLDEN=<substring>` (several separated
-//! by `,`).
+//! by `,`). With `VELT_RT_WASM_PREBUILT=1` (CI's shards, which run this test from an archive of
+//! another job's build: crates/xtask/src/golden_archive.rs) the runtime libraries are already
+//! built, and a missing tool fails the test instead of skipping it.
 //!
 //! The wasm32-wasip1 goldens are split into [`SHARDS`] test functions (every `SHARDS`-th file
 //! of the sorted list), so the test runner spreads them over its threads with everything else
@@ -20,8 +22,25 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`).
-const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server", "console_std_handles"];
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), a
+/// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
+/// next step instead of queueing them as microtasks (docs/reference/async.md), and the tasks a
+/// synchronous `main` spawns never run (its executor runs only under an `async main`).
+const UNSUPPORTED: &[&str] = &[
+    "tcp_echo",
+    "http_server",
+    "console_std_handles",
+    "await_order_resolve",
+    "promise_shared_inflight",
+    "promise_shared_orphan",
+    "promise_shared_orphan_task",
+    "promise_shared_sync_main",
+    "promise_shared_sync_main_module",
+    "process_lifetime_sync_main_tasks",
+    "process_lifetime_sync_main_rejection",
+    "process_lifetime_top_level_tasks",
+    "process_lifetime_spawned_finally",
+];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
@@ -54,22 +73,39 @@ fn runs(program: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Why this flavor cannot be tested here, if it cannot.
+/// Whether the runtime libraries are prebuilt (`VELT_RT_WASM_PREBUILT=1`).
+fn prebuilt() -> bool {
+    std::env::var_os("VELT_RT_WASM_PREBUILT").is_some_and(|v| v == "1")
+}
+
+/// Why this flavor cannot be tested here, if it cannot. A run with prebuilt runtimes exists to
+/// run these goldens: there a missing tool fails.
 fn missing_tools(triple: &str, runner: &str) -> Option<String> {
-    if velt_codegen_llvm::find_wasm_tools().is_none() {
-        return Some("LLVM's opt/llc (rustup component add llvm-tools)".into());
+    let missing = if velt_codegen_llvm::find_wasm_tools().is_none() {
+        Some("LLVM's opt/llc (rustup component add llvm-tools)".into())
+    } else if !has_rust_target(triple) {
+        Some(format!("the {triple} Rust target"))
+    } else {
+        (!runs(runner)).then(|| runner.to_string())
+    };
+    if let Some(missing) = &missing {
+        assert!(
+            !prebuilt(),
+            "VELT_RT_WASM_PREBUILT=1, but {missing} is not available"
+        );
     }
-    if !has_rust_target(triple) {
-        return Some(format!("the {triple} Rust target"));
-    }
-    (!runs(runner)).then(|| runner.to_string())
+    missing
 }
 
 /// Builds the runtime library the `velt run --target` builds link. Every shard calls this in a
 /// process of its own, at the same time: cargo locks the build directory, so the first call
 /// builds it and the others wait and then find it up to date; none returns before the library is
-/// complete.
+/// complete. Prebuilt (`VELT_RT_WASM_PREBUILT=1`), it is not built again: in a checkout that
+/// only unpacked the build, cargo would find every source newer than its record of the build.
 fn build_runtime(root: &Path, triple: &str) {
+    if prebuilt() {
+        return;
+    }
     let st = crate::no_window::command(env!("CARGO"))
         .args(["build", "-p", "velt_rt_wasm", "--target", triple])
         .current_dir(root)
@@ -100,7 +136,9 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
                 && {
-                    let name = p.to_string_lossy().replace('\\', "/");
+                    // The path in the checkout, as in tests/golden.rs.
+                    let rel = p.strip_prefix(root).unwrap_or(p);
+                    let name = rel.to_string_lossy().replace('\\', "/");
                     filters.iter().any(|f| name.contains(f))
                 }
         }));
@@ -179,8 +217,28 @@ fn run_all(
 /// How many test functions share the wasm32-wasip1 goldens.
 const SHARDS: usize = 8;
 
-/// The wasm32-wasip1 goldens: every file with an `.out` in these directories.
+/// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
+/// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
+/// and the std code written with them.
+const WASI_STD: &[&str] = &[
+    "bytes_search",
+    "simd_floats",
+    "simd_generic",
+    "simd_ints",
+    "simd_lane_range",
+    "simd_load_range",
+    "simd_names",
+    "simd_positions",
+    "simd_sha",
+    "simd_shuffle",
+    "simd_store_range",
+    "simd_values",
+    "typed_arrays_basic",
+    "typed_arrays_edges",
+    "utf8_prefix",
+    "utf8_valid",
+];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a
 /// mix of directories and about the same number of files.
@@ -201,7 +259,14 @@ fn wasi_shard(shard: usize) {
     }
     let root = root();
     build_runtime(&root, "wasm32-wasip1");
-    let files = shard_of(&programs(&root, WASI_DIRS, UNSUPPORTED), shard);
+    let mut files = programs(&root, WASI_DIRS, UNSUPPORTED);
+    let std_files = programs(&root, &["std"], &[]);
+    files.extend(std_files.into_iter().filter(|p| {
+        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+        WASI_STD.contains(&stem.as_ref())
+    }));
+    files.sort();
+    let files = shard_of(&files, shard);
     // A directory of this process's own: shards run at the same time, and a path that a
     // crashed earlier run may still hold is never reused.
     let work = work_dir::work_dir(&root, "golden-work-wasi")

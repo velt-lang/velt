@@ -1,0 +1,33 @@
+// Closures a `read` callback makes and stores into the caller's containers keep the caller's
+// variables they capture (the same objects); what they capture from the store is a copy.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(4)];
+  const fs: (() => i64)[] = [];
+  rw.read((s) => {
+    const n = s.items.length as i64;
+    fs.push(() => out[0].v + n);
+    const it = out[0];
+    fs.push(() => it.v * 2);
+    fs.push(() => s.items.length as i64);
+    const st = s.items[0];
+    fs.push(() => st.v);
+    return 0;
+  });
+  out[0].v = 6;
+  rw.write((s) => {
+    s.items[0].v = 77;
+    s.items = [];
+  });
+  console.log(fs.length, fs.map((f) => f()).join(" "));
+}

@@ -1,0 +1,118 @@
+// check: no leaks
+// An `any` holding an object of another type, converted to an object type in a program with
+// proxies, is a view of that object (#1485): reads and writes reach it, and back in an `any`
+// it is the object itself. sigx's `normalizeChildren(props.children)` in miniature.
+
+const VNODE = Symbol.for("sigx.vnode");
+const ComputedSymbol = Symbol.for("sigx.computed");
+
+type VNode = {
+  type: string;
+  props: Record<string, any>;
+  key: string | number | null;
+  children: VNode[];
+  text?: string | number;
+};
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+// The program makes proxies (sigx's signals do), so its object types can hold views.
+const state = new Proxy({ count: 1 }, {});
+
+function isComputed(value: unknown): boolean {
+  return value !== null && typeof value === "object" && ComputedSymbol in (value as object);
+}
+
+function describe(c: JSXChild): string {
+  if (c == null || c === false || c === true) {
+    return "empty";
+  }
+  if (isComputed(c)) {
+    return `computed ${(c as any).value}`;
+  }
+  if (typeof c === "string") {
+    return `text ${c}`;
+  }
+  if (typeof c === "number") {
+    return `number ${c}`;
+  }
+  if (Array.isArray(c)) {
+    return `array of ${c.length}`;
+  }
+  const v = c as VNode;
+  return `vnode ${v.type} with ${v.children.length} children, text ${v.text ?? "none"}`;
+}
+
+class Computed {
+  [ComputedSymbol] = true;
+  get value(): number {
+    return 42;
+  }
+}
+
+class Element {
+  type = "section";
+  props: Record<string, any>;
+  key: string | null = null;
+  children: VNode[] = [];
+  text = "hello";
+  extra = 1;
+  constructor() {
+    const p: Record<string, any> = {};
+    this.props = p;
+  }
+}
+
+function mk(type: string): VNode {
+  return { type, props: {}, key: null, children: [], [VNODE]: true } as VNode;
+}
+
+const props: Record<string, any> = {};
+props.children = mk("div");
+console.log(describe(props.children));
+props.children = new Computed();
+console.log(describe(props.children));
+const el = new Element();
+props.children = el;
+console.log(describe(props.children));
+props.children = { type: "p", props: {}, key: 7, children: [mk("b")], more: true };
+console.log(describe(props.children));
+
+// One object: writes through the view reach it, and the view reads its writes.
+props.children = el;
+const v1 = props.children as VNode;
+const v2 = props.children as VNode;
+v1.key = "k1";
+console.log(el.key, v2.key);
+el.text = "changed";
+console.log(v1.text);
+v2.children.push({ type: "i", props: {}, key: null, children: [] });
+console.log(el.children.length, v1.children.length);
+
+// Identity: two views of one object, the view back in an `any`, a weak map key.
+console.log(v1 === v2);
+const back: any = v1;
+console.log(back === el, back === props.children);
+const seen = new WeakMap<object, string>();
+seen.set(el, "found");
+console.log(seen.get(v1 as object));
+console.log(back instanceof Element);
+
+// Keys and `in` are the object's own.
+console.log(Object.keys(v1).join(","));
+console.log("extra" in v1, "missing" in v1);
+console.log(v1);
+
+// A view in an array and a function's result.
+function first(xs: any[]): VNode {
+  return xs[0] as VNode;
+}
+const list: VNode[] = [first([el]), mk("span")];
+console.log(list.map((n) => n.type).join(" "));
+
+// Through `T | null`: an object of another type is a view, `null` stays `null`.
+const maybe = props.children as VNode | null;
+console.log(maybe === null ? "null" : maybe.type);
+props.children = null;
+const none = props.children as VNode | null;
+console.log(none === null ? "null" : none.type);
+console.log(state.count);

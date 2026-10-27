@@ -7,7 +7,7 @@
 //! Generic parameters are not followed: where a generic function passes on a value of type
 //! `T`, the value came from a caller, where the graph follows it with its concrete type.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -19,7 +19,7 @@ use super::graph::Why;
 pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
     match cx.ty.kind(t) {
         TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
-        TyKind::Option(x) => matches!(cx.ty.kind(*x), TyKind::FnPtr { .. } | TyKind::Closure(_)),
+        TyKind::Option(x, _) => matches!(cx.ty.kind(*x), TyKind::FnPtr { .. } | TyKind::Closure(_)),
         _ => false,
     }
 }
@@ -29,22 +29,29 @@ pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
 pub(super) fn crossing_fns(
     cx: &mut Ctx,
     roots: &[(TyId, Why)],
-    seen: &mut HashSet<TyId>,
-    out: &mut HashMap<TyId, Why>,
+    seen: &mut FxHashSet<TyId>,
+    out: &mut FxHashMap<TyId, Why>,
 ) {
     for &(root, why) in roots {
         let mut work = vec![root];
         while let Some(t) = work.pop() {
+            if matches!(cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_)) {
+                // Reached from several roots: the preferred one (`Why::rank`), whatever the
+                // order the roots come in.
+                let w = Why {
+                    via: Some(root),
+                    ..why
+                };
+                if out.get(&t).is_none_or(|old| w.rank(cx) < old.rank(cx)) {
+                    out.insert(t, w);
+                }
+                continue;
+            }
             if !seen.insert(t) {
                 continue;
             }
             match cx.ty.kind(t).clone() {
-                TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                    out.entry(t).or_insert(Why {
-                        via: Some(root),
-                        ..why
-                    });
-                }
+                TyKind::FnPtr { .. } | TyKind::Closure(_) => {}
                 TyKind::Param(_) => {}
                 TyKind::Adt(d, args) => work.extend(adt_parts(cx, d, &args)),
                 TyKind::Dyn(iface, _) => {

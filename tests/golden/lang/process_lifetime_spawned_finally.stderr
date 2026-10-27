@@ -1,0 +1,2 @@
+Uncaught RangeError: outer at
+process_lifetime_spawned_finally.vlt:5:5

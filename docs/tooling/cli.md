@@ -128,6 +128,11 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold programs of
   their own: check them with `velt check <file>`.
 - `velt check <file>` checks that file and the files it imports, and nothing else.
+- A syntax error stops a build, but not `velt check`: it reports every file's syntax errors, and
+  then the type errors of the files without any, as `tsc` does. A file importing one with a
+  syntax error is still checked; a name it imports that the broken file mentions but doesn't
+  declare (the error may have cut the declaration short) reports nothing, and neither do its
+  uses.
 - `--json` prints one JSON document on stdout instead, for editors and other tools:
   `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
@@ -378,7 +383,8 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
-| `VELT_SCHEDULER` | `stealing` (idle workers take tasks from busy ones; the default unless the program uses task placement) or `per-core` (#211; selected automatically for a program that pins a task with `spawn(p, { worker })`: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
+| `MIMALLOC_*` | the allocator's options ([mimalloc](https://microsoft.github.io/mimalloc/environment.html)); Velt programs commit memory as they use it (`MIMALLOC_ARENA_EAGER_COMMIT=0`), which keeps a multi-threaded program's resident memory near what its data needs; `MIMALLOC_ARENA_EAGER_COMMIT=1` commits arenas up front again (on Linux with transparent huge pages, each worker then makes 2 MiB resident at once) |
+| `VELT_SCHEDULER` | Unset or `velt` (the default): the runtime's own scheduler. Work stays on the worker that made it, and another worker is taken on when a worker's input (tasks woken by sockets, timers or other threads) has waited 200 µs or more on average over 10 ms, or the worker was awake for 95 % of those 10 ms with input waiting; a task woken by another task runs next on the waker's worker; a worker that runs out of work runs input waiting on another awake one, and one that makes no progress for 2 ms (a long computation, or the OS took it off its core) has its sockets, timers and half of its queue served by another. TCP, the HTTP server, WebSockets, Postgres over TCP and timers run on it natively, the rest (files, processes, Redis, `fetch`, UDP, DNS) on a small tokio runtime beside it. `stealing`: tokio's work-stealing scheduler (idle workers take tasks from busy ones). `per-core` (#211): one tokio event loop per worker; a task never moves after its first poll, so a CPU-bound task delays everything on its worker. |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
 | `CLICOLOR_FORCE` | force colored output |

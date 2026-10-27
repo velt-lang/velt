@@ -14,7 +14,7 @@
 //! records (`Symbol.for`) are listed in a table the runtime's registry consults
 //! (`Intrinsic::SymbolRegistry`), so `Symbol.for(k)` at run time finds the same record.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -43,13 +43,13 @@ pub(crate) enum KnownSymbol {
 /// Key names given out so far: one per symbol, distinct for distinct symbols.
 #[derive(Default)]
 pub(crate) struct KeyNames {
-    names: HashMap<KnownSymbol, String>,
-    taken: HashMap<String, KnownSymbol>,
+    names: FxHashMap<KnownSymbol, String>,
+    taken: FxHashMap<String, KnownSymbol>,
     /// How the source first wrote each key name (`[VNODE]` for `[Symbol(sigx:vnode)]`), for
     /// diagnostics.
-    spelled: HashMap<String, String>,
+    spelled: FxHashMap<String, String>,
     /// The `SymbolStatic` ids of the registry's symbols, by key.
-    registered: HashMap<String, u128>,
+    registered: FxHashMap<String, u128>,
 }
 
 /// A string literal argument (`"d"`, or a template without substitutions).
@@ -93,7 +93,7 @@ impl Ctx<'_> {
         match (&callee.kind, args.as_slice()) {
             (ast::ExprKind::Ident(f), []) if f.name == "Symbol" => Some(KnownSymbol::Own(d, None)),
             (ast::ExprKind::Ident(f), [a]) if f.name == "Symbol" => {
-                Some(KnownSymbol::Own(d, Some(literal_text(a)?)))
+                Some(KnownSymbol::Own(d, Some(self.description(g.module, a)?)))
             }
             (ast::ExprKind::Member { object, prop, .. }, [a]) if prop.name == "for" => {
                 match &object.kind {
@@ -105,6 +105,19 @@ impl Ctx<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The text of a symbol's description `e` in `module`: a string literal, or a module
+    /// constant holding one (`Symbol(name)`).
+    fn description(&self, module: usize, e: &ast::Expr) -> Option<String> {
+        if let ast::ExprKind::Ident(x) = &e.kind {
+            let Some(Item::Def(c)) = self.lookup_item(module, &x.name) else {
+                return None;
+            };
+            let g = self.global(c).filter(|g| !g.mutable)?;
+            return literal_text(g.src.init?);
+        }
+        literal_text(e)
     }
 
     /// The initializer of module constant `d` when it is `Symbol()`, `Symbol("d")` or
@@ -205,6 +218,17 @@ impl Ctx<'_> {
             Some(inner) if is_computed_key(k) => inner,
             _ => return Ok(name.to_string()),
         };
+        // A key resolves where it is written: a member an asserted literal adds to a type of
+        // another module (`defined_props.rs`) keeps the literal's span.
+        let module = match self.modules.get(module) {
+            Some(m) if m.file != k.span.file && k.span != Span::DUMMY => (self.modules.iter())
+                .position(|m| m.file == k.span.file)
+                .unwrap_or(module),
+            _ => module,
+        };
+        if let Some(key) = self.enum_key(module, inner) {
+            return Ok(key);
+        }
         let d = match self.lookup_item(module, inner) {
             Some(Item::Def(d)) if matches!(self.info[d.0 as usize], DefInfo::Global(_)) => d,
             _ => return Err(inner.to_string()),
@@ -216,8 +240,11 @@ impl Ctx<'_> {
                 None => Err(inner.to_string()),
             };
         }
+        // A module `let` may hold another string by the time the key is read: never a fixed
+        // member.
         match self
             .global(d)
+            .filter(|g| !g.mutable)
             .and_then(|g| g.src.init)
             .and_then(literal_text)
         {
@@ -226,13 +253,13 @@ impl Ctx<'_> {
         }
     }
 
-    fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
+    pub(crate) fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
         self.error(
             Diagnostic::error(
-                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string"),
+                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string, or an enum member"),
                 span,
             )
-            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), or a module constant initialized with `Symbol(\"...\")`, `Symbol.for(\"...\")` or a string literal")
+            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), a module constant initialized with `Symbol(\"...\")` (or a string constant as the description), `Symbol.for(\"...\")` or a string literal, or an enum member (`[Flags.SKIP]`)")
             .with_note("for keys only known at run time, use a `Map` or a `Record<string, V>`"),
         );
         name.to_string()
@@ -405,7 +432,7 @@ fn is_private(name: &str) -> bool {
 /// method, a getter or a setter (key `set name`). Static methods are the class's, and a key
 /// never matches the table's internal spellings (`"set x"`) or a `#private` name.
 pub(crate) fn has_instance_method(
-    methods: &HashMap<String, crate::defs::MethodRef>,
+    methods: &FxHashMap<String, crate::defs::MethodRef>,
     name: &str,
 ) -> bool {
     !is_private(name)
@@ -418,7 +445,7 @@ pub(crate) fn has_instance_method(
 /// (`"name" in o`; [`has_instance_method`]), not counting base classes?
 pub(crate) fn has_instance_member(
     fields: &[crate::defs::FieldInfo],
-    methods: &HashMap<String, crate::defs::MethodRef>,
+    methods: &FxHashMap<String, crate::defs::MethodRef>,
     name: &str,
 ) -> bool {
     (!is_private(name) && fields.iter().any(|f| f.name == name))

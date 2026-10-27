@@ -1,0 +1,37 @@
+// check: no leaks
+// A `read` callback stores into the caller's variables and containers an array it made from
+// the value's elements (`map`, `filter`). The array is the caller's and its elements are
+// copies of the value's, so a later `write` that replaces them leaves the stored arrays as
+// they were, and each array is freed once (#1523). `map` takes a callback, so the program's
+// `number[][]` is a counted object here.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+class Holder {
+  rows: number[][] = [];
+}
+
+function main() {
+  const rw = new RwLock(new Box());
+  let mapped: number[][] = [];
+  let kept: number[][] = [];
+  let sizes: number[][] = [];
+  const out: number[][][] = [];
+  const h = new Holder();
+  const byName = new Map<string, number[][]>();
+  rw.read((c) => {
+    mapped = c.items.map((x) => x);
+    kept = c.items.filter((x) => x.length > 1);
+    sizes = c.items.map((x) => [x.length]);
+    out.push(c.items.map((x) => x));
+    h.rows = c.items.slice().map((x) => x);
+    byName.set("all", c.items.filter(() => true));
+  });
+  rw.write((c) => {
+    c.items = [];
+  });
+  sizes[0].push(9);
+  console.log(mapped, kept, sizes, out, h.rows, byName.get("all"));
+  rw.read((c) => console.log(c.items.length));
+}

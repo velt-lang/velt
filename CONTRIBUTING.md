@@ -35,21 +35,37 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | Command | What it runs |
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
-| `cargo test -p veltc --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
+| `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
+| `cargo xtask precheck` | the fast mechanical checks on the changed files only (below) |
+
+Run the end-to-end tests with `--workspace`, not `-p veltc`: `-p` resolves the crates' features
+differently from the gate's `--workspace` build (`velt_opt` loses `interp`), so switching between
+the two rebuilds `velt_opt` and everything above it. (`--workspace --test golden` also runs
+`velt_syntax`'s parser goldens, which take a second.)
 
 The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substrings),
 `VELT_GOLDEN_MODES=debug` or `release` (one build mode only), `VELT_GOLDEN_JOBS=<n>` (default
-half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
+one per core, at most 16), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
 (the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
 directory fail the run too). The debug runs use the runtime's checking allocator
 (`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free (a read through a dangling
 pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`, and a captured
 variable's cell used by two tasks (a closure assigning it reached another task or HTTP request
 without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects").
+
+velt_syntax's robustness test (`prefixes_never_panic_*`) cuts the goldens and parses what comes
+before and after each cut, which must never panic. It cuts the kitchen sink and the goldens in
+`VELT_ROBUSTNESS_FILES` at every character (comma-separated paths such as
+`tests/golden/lang/foo.vlt`; `cargo xtask check` sets it to the goldens you changed), and the
+other goldens where each token starts or ends plus a fixed sample of characters.
+`VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
+nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
+when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
+or when the changes can't be told.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
@@ -62,22 +78,46 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   it changes, and `npm ci` plus `npm test` (tsc and the unit tests) of the VS Code extension when
   `editors/vscode/` changes (skipped without npm, except in CI). A Rust file where only comments
   changed runs the tests and doctests of its crate (and of the crates compiling its sources),
-  clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. Changes to the
-  build, the toolchain, CI or the scripts select everything. `cargo xtask affected` prints the plan
-  and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes
-  release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+  clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. The WebAssembly
+  goldens (`wasm_goldens`, about half of the test time) run only for changes to WebAssembly code
+  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly run
+  checks them all on Linux, Windows and macOS. Changes to the build, the toolchain, CI or the
+  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
+  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
+  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated; `wasm` runs only the
+  WebAssembly goldens, which `test` includes).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
-  OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
-  only when you want that certainty before queueing. On Windows, `-Linux` also builds and tests
-  the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
-  script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
+  OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
+  only, so you need it locally only when you want that certainty before queueing. The queue
+  skips the WebAssembly goldens when the change doesn't touch WebAssembly code, and otherwise
+  runs them in parallel shards next to the goldens' (`--part wasm`, `VELT_WASM_SHARD=<i>/<n>`),
+  not in the lint-and-test job (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
+  WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the script with `--dir
+  /mnt/d/...` to keep it on the bigger disk, see below);
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
   PostgreSQL and Redis so the database tests run).
 
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
-binary at a time. Local runs keep incremental compilation on (CI turns it off).
+binary at a time (over ten minutes; the gate prints a warning). Local runs keep incremental
+compilation on (CI turns it off).
+
+**Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
+files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
+`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
+anything under `std/` or `examples/` changed or the formatter (`velt_fmt`) or a crate it depends on
+did, the file-size rule (below) on the changed Rust files, and clippy with
+`-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
+it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
+well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
+before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
+replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as
+`pre-push.orig`), and `git push --no-verify` skips it. The hook checks the **working tree**, not
+the commits being pushed: uncommitted and untracked files count, so commit or stash your work in
+progress first, or a scratch file can block an unrelated push and an uncommitted fix can hide a
+bad commit. (With a relative `core.hooksPath`, git looks for hooks in each worktree, so install
+them in each.)
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
@@ -176,11 +216,14 @@ velt/
 ```sh
 cd velt/main && git pull
 git worktree add ../branches/<task> -b <task> origin/main   # start a task
+cargo xtask install-hooks                                   # once per clone: precheck before each push
 # ... work, commit, push, open a pull request ...
 git worktree remove ../branches/<task> && git branch -d <task>   # after it merged
 ```
 
-Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout.
+Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout,
+and the `pre-push` hook from `cargo xtask install-hooks` covers all of them: each push runs
+`cargo xtask precheck` in the worktree it comes from.
 Never edit `main/` itself; it only ever fast-forwards. Give each worktree its own build
 directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLDEN_WORK` on a
 bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
@@ -200,24 +243,41 @@ its own.
 ## Commits and pull requests
 
 Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
-Reference the issue it resolves (`Closes #123`) and say which gate you ran.
+Reference the issue it resolves (`Closes #123`), and go through the self-check below before
+opening it.
 
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
   (below) is also linted (fmt, clippy) on Windows and macOS, so `cfg(windows)`-only findings
   show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
-  request is ready, add it to the **merge queue**: the queue runs the whole gate against the pull
+  request is approved, the maintainer who approves it adds it to the **merge queue** in the same
+  step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
   linking, `veltc`, `vpm`, the standard library, goldens; comment-only edits don't count;
   `cargo xtask affected` says which).
-  Every push to `main` then runs the whole gate on Windows and macOS and opens an issue when it
-  fails. A nightly run adds PostgreSQL and Redis so the database tests run too.
+  When the queue checked Linux only, the push to `main` then runs the whole gate on Windows and
+  macOS and opens an issue when it fails. A nightly run adds PostgreSQL and Redis so the
+  database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
   links or co-author trailers, in the description or in your commits.
+- The required check **`hygiene`** (`cargo xtask pr-lint`, `.github/workflows/hygiene.yml`)
+  enforces that on the title, the description and every commit. It fails on tool footers
+  (`Generated with …`) and trailers (`Co-authored-by:`), links to chat or agent sessions,
+  absolute machine paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`,
+  `/private/tmp/…`), review-process wording ("review round", "addressed the review", "Stacked on
+  #N": say these in a comment), and commits not by the pull request's author: GitHub must
+  attribute each commit to the author's account (any email verified there; the GitHub noreply
+  address `<id>+<login>@users.noreply.github.com` keeps it private), or its email must be in the
+  repository variable `PR_LINT_AUTHORS`. Merge commits, such as "Update branch", are not checked
+  for authorship. Text in code spans and blocks is exempt from the wording rules, but not from
+  the path rule or from whole session URLs.
+  Editing the description re-runs it. Before opening a pull request, check the description
+  locally: `cargo xtask pr-lint --title "<title>" --body-file <file>` (commits since
+  `origin/main` and `git config user.email` by default).
 - **Dependent changes** go in a stack of pull requests (the
   [gh-stack](https://github.com/github/gh-stack) extension: `gh extension install
   github/gh-stack`). Start one with `gh stack init`, `gh stack add` and `gh stack submit`, or join
@@ -225,8 +285,40 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   layers. Each layer gets its own CI and review, and when the bottom one merges the next is
   retargeted to `main`. Changes that don't depend on each other stay separate pull requests, so
   the merge queue can test them in parallel.
+- **Size**: keep a pull request under about **1,500 changed lines** (added plus deleted, tests
+  included); split larger work into a stack. Small pull requests get reviewed sooner and need
+  fewer change rounds. `hygiene` notes a larger one in the checks summary without failing.
+- **Reviews** end with a line `Verdict: APPROVE` or `Verdict: CHANGES NEEDED`. After `CHANGES
+  NEEDED`, push fixes for every required item and say in a comment which commit addresses which
+  item; the re-review looks at the new commits and those items, and an approval queues the pull
+  request at once.
 - Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
   language semantics need a maintainer's review (see `.github/CODEOWNERS`).
+
+### Before opening a pull request
+
+Most required changes in reviews are things the author could have checked. Before opening a pull
+request, run `cargo xtask precheck` (or let the pre-push hook run it) and `scripts/check.sh`, and
+go through this list:
+
+1. **Node**: every new or changed golden that is valid TypeScript was run with Node
+   (`node --experimental-strip-types <file>.ts`, a copy of the `.vlt` file) and prints the same
+   output; where Velt deliberately differs, the golden or the docs say why.
+2. **Docs**: user-visible changes are in the docs (the reference, `docs/`, the README), with
+   compiling `ts` examples; otherwise there is no user-visible change.
+3. **Tests**: each bug fix has a regression test that fails without the fix.
+4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `velt.json`,
+   command-line arguments, files, the network); `expect("ICE: …")` only for invariants.
+5. **Performance**: a change on a hot path (the runtime, generated code, the compiler's inner
+   loops) comes with benchmark numbers before and after (`bench/`), within ±3%.
+6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
+   sleeps or wall-clock limits.
+7. **Size**: under about 1,500 changed lines, or split into a stack.
+
+Post the result as the first comment on the pull request: each item with what you did (or "n/a"),
+and the gate you ran. Keep it out of the description: the description becomes the commit message
+and says what the change does and how it was tested, not the review process. A missing self-check
+comment is a required change in review.
 
 ## Releases
 

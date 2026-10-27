@@ -9,8 +9,9 @@ use velt_syntax::ast;
 
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
-use super::{FnCx, LoopCx, Want};
-use crate::hir::{self, ExprKind as H, StmtKind as S, TyId};
+use super::places::{frozen_source, source_root};
+use super::{FnCx, LoopCx};
+use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     fn true_lit(&self, span: Span) -> hir::Expr {
@@ -39,6 +40,8 @@ impl FnCx<'_, '_> {
             has_break: false,
             needs_label: false,
             synth_label: format!("<{kind}#{}>", self.f.loop_count),
+            depth: self.f.scopes.len(),
+            break_states: vec![],
         });
     }
 
@@ -84,20 +87,26 @@ impl FnCx<'_, '_> {
     ) {
         let span = s.span;
         self.unnarrow_assigned_in(s);
+        self.unnarrow_written_in(s);
         match &s.kind {
             ast::StmtKind::While { cond, body } => {
-                let (when_true, _) = self.narrowing(cond);
+                let (when_true, when_false) = self.narrowing(cond);
                 let c = self.cond(cond);
                 self.enter_loop(label, false);
                 let b = self.block_narrowed(body, &when_true);
-                let label = self.exit_loop().hir_label();
+                let lp = self.exit_loop();
                 let w = S::While {
-                    label,
+                    label: lp.hir_label(),
                     cond: c,
                     body: b,
                     step: None,
                 };
                 Self::push(out, w, span);
+                // Without a `break`, the loop ends only where its condition is false
+                // (`while (y === null) { y = next(); }` narrows `y` after it, #1227).
+                if !lp.has_break {
+                    when_false.iter().for_each(|f| self.narrow(f));
+                }
             }
             ast::StmtKind::DoWhile { body, cond } => self.do_while(body, cond, label, span, out),
             ast::StmtKind::For {
@@ -120,7 +129,26 @@ impl FnCx<'_, '_> {
                 iter,
                 body,
                 is_await,
+            } if super::pattern_defaults::has_default(pattern)
+                || super::object_rest::has_object_rest(pattern)
+                || super::index_keys::has_index_key(pattern) =>
+            {
+                // `for (const { a = 1, ...rest } of xs)`, `for (const { 0: k, 1: v } of
+                // pairs)`: each element bound to a hidden
+                // variable, then taken apart as a declaration does it.
+                let lp = item_loop(*kind, pattern, iter, body, *is_await, span);
+                self.loop_stmt(&lp, label, out);
+            }
+            ast::StmtKind::ForOf {
+                kind,
+                pattern,
+                iter,
+                body,
+                is_await,
             } => {
+                if !*is_await && self.for_in_proxy(*kind, pattern, iter, body, label, span, out) {
+                    return;
+                }
                 let tested = match is_await {
                     true => None,
                     false => self.for_in_presence_test(pattern, iter, body),
@@ -139,8 +167,16 @@ impl FnCx<'_, '_> {
                     true => self.for_await(iter, parts, out),
                     false => {
                         let it = self.for_of_source(iter);
+                        let (frozen, first) = (frozen_source(self.cx, &it), self.f.locals.len());
+                        let root = source_root(self.cx, &it);
                         if !self.for_of_map(iter, &it, parts, out) {
                             self.for_of(it, parts, out)
+                        }
+                        if frozen {
+                            self.frozen_elements(pattern.span, first);
+                        }
+                        if let Some(root) = root {
+                            self.loop_elements(pattern.span, first, root);
                         }
                     }
                 }
@@ -227,7 +263,19 @@ impl FnCx<'_, '_> {
         self.enter_loop(label, false);
         let b = self.block_narrowed(body, &when_true);
         let label = self.exit_loop().hir_label();
-        let step = update.map(|u| self.expr_stmt(u));
+        // The update runs after the body (or a `continue`), where the condition still holds
+        // for what the body does not assign: `for (c = head; c; c = c.next)`.
+        let step = update.map(|u| {
+            self.push_scope();
+            when_true.iter().for_each(|f| self.narrow(f));
+            for s in &body.stmts {
+                self.unnarrow_assigned_in(s);
+                self.unnarrow_written_in(s);
+            }
+            let step = self.expr_stmt(u);
+            self.pop_scope();
+            step
+        });
         self.pop_scope();
         let w = hir::Stmt {
             kind: S::While {
@@ -251,10 +299,35 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares (also
+    /// in a map's cursor loop and the iterator protocol's): elements of a value read out of a
+    /// `shared`.
+    /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares as
+    /// elements of local `root`'s value (`Ctx::loop_roots`).
+    fn loop_elements(&mut self, pattern: Span, first: usize, root: hir::LocalId) {
+        let elems = self.f.locals[first..].iter().map(|l| l.span);
+        let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
+        self.cx.loop_roots.extend(elems.map(|s| (s, root)));
+    }
+
+    fn frozen_elements(&mut self, pattern: Span, first: usize) {
+        let elems = self.f.locals[first..].iter().map(|l| l.span);
+        let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
+        self.cx.frozen_elems.extend(elems);
+    }
+
     /// The checked source of a `for...of` or `for await`: a record is an error (it is not
     /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
-        let it = self.expr(iter, None, Want::Borrow);
+        // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
+        // the body adds to the original.
+        let it = self.receiver_expr(iter);
+        // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
+        // (an array, a string, a `Map`, a `Set`, a typed array).
+        let it = match *self.cx.ty.kind(it.ty) {
+            TyKind::Shared(_) => self.frozen_view(it, None),
+            _ => it,
+        };
         if self.record_args(it.ty).is_none() {
             return it;
         }
@@ -264,12 +337,11 @@ impl FnCx<'_, '_> {
 
     /// `for (kind pattern of it) body` over the checked source `it`: an iterable
     /// (`for_iter.rs`), else an array (a `Map` or `entries()` class through `entries()`).
-    pub(super) fn for_of(
-        &mut self,
-        mut it: hir::Expr,
-        p: ForOfParts<'_>,
-        out: &mut Vec<hir::Stmt>,
-    ) {
+    pub(super) fn for_of(&mut self, it: hir::Expr, p: ForOfParts<'_>, out: &mut Vec<hir::Stmt>) {
+        if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
+            return self.for_of_any(it, p, out);
+        }
+        let mut it = self.array_bound_value(it).unwrap_or_else(|it| it);
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }
@@ -397,5 +469,63 @@ impl FnCx<'_, '_> {
             Some(e) => e,
             None => self.error_expr(span),
         }
+    }
+}
+
+/// The name of the element of a `for...of` whose pattern has defaults (no source can spell it).
+const ITEM: &str = "<for item>";
+
+/// `for (kind <item> of iter) { kind pattern = <item>; { body } }`: a pattern with defaults or
+/// an object rest, which declarations take apart (`pattern_defaults`, `object_rest`). The body
+/// stays a block of its own, so it may declare the pattern's names again, as in JavaScript.
+fn item_loop(
+    kind: ast::VarKind,
+    pattern: &ast::Pattern,
+    iter: &ast::Expr,
+    body: &ast::Block,
+    is_await: bool,
+    span: Span,
+) -> ast::Stmt {
+    let at = pattern.span;
+    let ident = ast::Ident {
+        name: ITEM.into(),
+        span: at,
+    };
+    let item = ast::Pattern {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::PatternKind::Ident(ident.clone()),
+        span: at,
+    };
+    let read = ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Ident(ident),
+        span: at,
+    };
+    let decl = ast::Stmt {
+        kind: ast::StmtKind::Var(ast::VarDecl {
+            kind,
+            pattern: pattern.clone(),
+            ty: None,
+            init: Some(read),
+            span: at,
+        }),
+        span: at,
+    };
+    let inner = ast::Stmt {
+        kind: ast::StmtKind::Block(body.clone()),
+        span: body.span,
+    };
+    ast::Stmt {
+        kind: ast::StmtKind::ForOf {
+            kind: ast::VarKind::Const,
+            pattern: item,
+            iter: iter.clone(),
+            body: ast::Block {
+                stmts: vec![decl, inner],
+                span: body.span,
+            },
+            is_await,
+        },
+        span,
     }
 }

@@ -21,13 +21,15 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `prelude/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`. |
 | `prelude/sync.vlt` | `Mutex<T>` layout for `new Mutex(x)` / `.with(f)` (compiler-implemented). |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
+| `mem.vlt` | `std/mem`: `needsDrop`, whether a type's values own memory (Rust's `std::mem::needs_drop`). |
 | `io.vlt` | `std/io`: `IoError`; std-internal `IoResult`/`IoStatus` plumbing over rt results. |
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
-| `net.vlt` | `std/net`: `listen`/`connect`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
+| `net.vlt` | `std/net`: `listen`/`connect`, `listenTls`/`connectTls`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
+| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`, `upgradeConnection`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
 | `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
-| `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`. |
+| `http/server.vlt` | `std/http/server`: `serve`, `HttpRequest`, `HttpResponse`, `HttpStream`, `EventStream`, `HttpServer`: an HTTP/1.1 server written in Velt on std/net (requests parsed in place, responses written per batch, streamed bodies both ways); internal: `http/server/parse.vlt` (request heads), `request.vlt` (`HttpRequest`, body reading), `response.vlt` (`HttpResponse`, streaming). |
+| `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`, topics. Written in Velt on std/net streams; internal: `websocket/frame.vlt` (framing), `reader.vlt` and `receive.vlt` (the receiving side), `queue.vlt` and `writer.vlt` (the send queue and its flusher), `handshake.vlt`, `topics.vlt`, `bytes.vlt` (byte helpers). |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
 | `path.vlt` | `std/path`: POSIX `join joinAll dirname basename extname normalize isAbsolute sep`. |
@@ -35,7 +37,11 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `collections/deque.vlt` | `std/collections/deque`: `Deque<T>`, ring-buffer double-ended queue. |
 | `collections/priority_queue.vlt` | `std/collections/priority_queue`: `PriorityQueue<T>`, binary heap ordered by a comparator. |
 | `collections/sorted_map.vlt` | `std/collections/sorted_map`: `SortedMap<K, V>`, key-ordered map (sorted arrays) with `floorKey ceilingKey range`. |
+| `collections/btree_map.vlt` | `std/collections/btree_map`: `BTreeMap<K, V>`, key-ordered B+tree map with `floorKey ceilingKey range` (internal: `collections/btree/pool.vlt` the node pools and inner search, `leaf.vlt` leaf entries, `insert.vlt` inserts, `remove.vlt` deletes, `edges.vlt` the smallest and largest key, `line.vlt` a node's 64-byte words and rank order, `inline_key.vlt` `InlineKey` and the built-in encodings, `check.vlt` the invariants for tests). |
 | `encoding.vlt` | `std/encoding`: Base64 (std + URL-safe), hex, UTF-8 encode/decode/validate; `EncodingError`. |
+| `encoding/utf8.vlt` | Internal: UTF-8 validation of a byte range with SIMD over ASCII runs, behind `utf8Valid` and the WebSocket reader's check of text that arrives in pieces. |
+| `encoding/binary_string.vlt` | `std/encoding/binary_string`: the globals `btoa atob` (Node's Base64 of binary strings, forgiving decoding). |
+| `dom_exception.vlt` | `std/dom_exception`: the global `DOMException` (`name`, legacy `code`) web APIs throw. |
 | `crypto.vlt` | `std/crypto`: `sha256 sha1 hmacSha256 hmacSha1 randomBytes randomInt timingSafeEqual`. |
 | `random.vlt` | `std/random`: `random randomInt` (fast, not for secrets). |
 | `uuid.vlt` | `std/uuid`: `uuidv4 uuidv7 uuidParse uuidStringify uuidValidate uuidVersion NIL_UUID`. |
@@ -47,6 +53,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
 | `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
+| `db.vlt` | `std/db`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
 | `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
 | `child_process.vlt` | `std/child_process`: `exec execSync execShell spawn`, `ChildProcess`, `ExecResult`. |
 | `stdin.vlt` | `std/stdin`: `readLine readAll` (+ `*Sync`). |
@@ -56,7 +63,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `sqlite.vlt` | `std/sqlite`: embedded SQLite (`open`, `Database`, `Statement`, `Transaction`, `SqliteError`), synchronous, better-sqlite3-like. |
 | `postgres.vlt` | `std/postgres`: PostgreSQL client (`connect`, `createPool`, `Client`, `Pool`, `Transaction`, `PgError`), async, node-postgres-like. |
 | `redis.vlt` | `std/redis`: Redis client (`connect`, `RedisClient`, pipelines, `subscribe`) (`redis/*.vlt`: internal). |
-| `timers.vlt` | `std/timers`: `setTimeout clearTimeout setInterval clearInterval` and `Timer` (re-exported from the prelude, where they are globals), `setImmediate delay`, `Ticker`. |
+| `timers.vlt` | `std/timers`: `setTimeout clearTimeout setInterval clearInterval setImmediate clearImmediate` and `Timer` (re-exported from the prelude, where they are globals), `delay`, `Ticker`. |
 
 ## Runtime bindings
 std binds `velt_rt_*` symbols (docs/internals/contracts/rt_abi_async.md) with `declare function` /

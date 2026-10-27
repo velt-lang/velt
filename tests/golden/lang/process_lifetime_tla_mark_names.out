@@ -1,0 +1,7 @@
+fn inside a function
+static method
+same name top
+fn in async
+method after await in async
+method after await 1
+fn end

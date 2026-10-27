@@ -90,6 +90,13 @@ impl FnLower<'_, '_> {
     }
 
     fn let_stmt(&mut self, local: LocalId, init: Option<&hir::Expr>) {
+        if self.init_local(local) {
+            self.declare_init_local(local, init);
+        }
+        // A member only ever called: never made (frame_envs.rs).
+        if self.self_env.is_some() && self.direct_siblings.contains_key(&local) {
+            return;
+        }
         if let Some(
             e @ hir::Expr {
                 kind:
@@ -108,6 +115,32 @@ impl FnLower<'_, '_> {
         let cell = self.info[local.0 as usize].cell;
         if cell && !self.dead() {
             self.new_cell(local);
+        }
+        if let (false, Some(e)) = (cell, init) {
+            let pat = hir::Pat {
+                kind: hir::PatKind::Binding(local, hir::UseMode::Move),
+                ty: e.ty,
+                span: e.span,
+            };
+            if self.frozen_map_entry(&pat, e) {
+                return;
+            }
+        }
+        let read = init
+            .filter(|_| !cell && self.map_hold(local))
+            .and_then(|e| self.frozen_share(e));
+        if let Some(read) = read {
+            // A map loop's hidden local holding a share of a frozen map only to keep it alive
+            // (sema for_map.rs): nothing changes a frozen value, so the local borrows it,
+            // frozen too, and has nothing to drop, where a share would be a copy. Its temps
+            // (the retained `shared` box, when the body may give the handle another box) belong
+            // to the loop's block, so the box lives as long as the loop reads it.
+            let v = self.frozen_read(read);
+            if let Some(l) = self.info[local.0 as usize].vir {
+                self.store(Place::local(l), v);
+            }
+            self.frozen.insert(local);
+            return;
         }
         if let Some(e) = init {
             self.push_scope(ScopeKind::Temps);
@@ -211,6 +244,36 @@ impl FnLower<'_, '_> {
             }
             return;
         }
+        if let Some(test) = self.ruled_out_guard(cond) {
+            // `g(x) && MayHoldPrimitive(x)` with `x` an object here (hir_encodings.md "Type
+            // predicates on a type parameter"): `g(x)` still runs, and only the `else` does.
+            self.push_scope(ScopeKind::Temps);
+            let c = self.expr(test);
+            self.pop_scope();
+            let fail = self.new_block();
+            let join = self.new_block();
+            self.branch(c, fail, join);
+            self.switch_to(fail);
+            let name = match &test.kind {
+                hir::ExprKind::Call {
+                    callee: hir::Callee::Def(d, _),
+                    ..
+                } => match self.cx.hir.def(*d) {
+                    hir::Def::Fn(f) => f.name.rsplit("::").next().unwrap_or("").to_string(),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            };
+            self.panic_msg(&format!(
+                "TypeError: the type predicate `{name}` returned true for an object, which its type rules out"
+            ));
+            self.goto(join);
+            self.switch_to(join);
+            if let Some(els) = els {
+                self.block(els);
+            }
+            return;
+        }
         self.push_scope(ScopeKind::Temps);
         let c = self.expr(cond);
         self.pop_scope();
@@ -240,6 +303,7 @@ impl FnLower<'_, '_> {
         body: &hir::Block,
         step: Option<&hir::Expr>,
     ) {
+        let first = self.loop_start();
         let cond_bb = self.new_block();
         let body_bb = self.new_block();
         let step_bb = if step.is_some() {
@@ -270,6 +334,7 @@ impl FnLower<'_, '_> {
             self.goto(cond_bb);
         }
         self.pop_scope();
+        self.note_loop(cond_bb, first);
         self.switch_to(exit);
     }
 

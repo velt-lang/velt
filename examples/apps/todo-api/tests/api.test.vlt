@@ -82,7 +82,7 @@ function checkErrors<S extends TodoRepository>(s: S) {
   seed(s);
   assertEq(
     call(s, "POST", "/todos", "{"),
-    `400 {"error":{"code":"bad_json","message":"invalid JSON at $: unexpected end of input (byte 1)"}}`,
+    `400 {"error":{"code":"bad_json","message":"Expected property name or '}' in JSON at position 1 (line 1 column 2)"}}`,
   );
   assertEq(
     call(s, "POST", "/todos", "{}"),

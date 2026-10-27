@@ -1,4 +1,4 @@
-//! Builtins: `console.log/error`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
+//! Builtins: `console.log/info/debug/error/warn`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
 //! constructors, the builtin array/`clone` methods, the M3 task builtins (`spawn`, `sleep`,
 //! `yieldNow`, `Promise.all/race/allSettled/any`, `performance.now`, `Date.now`; see `tasks.rs`), and
 //! `__intrinsic_*` (std modules only).
@@ -27,6 +27,7 @@ impl FnCx<'_, '_> {
             return self.intrinsic_call(id, rest, type_args, args, exp, span);
         }
         match name {
+            super::overload_arg::OVERLOAD_ARG => self.overload_arg(type_args, args, span),
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
             "shared" => {
                 // `shared<i64>(0)`: the written type argument types the value. Without one, an
@@ -64,11 +65,17 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             _ => {
+                // Calling another environment's global (`requestAnimationFrame(cb)`) throws
+                // Node's `ReferenceError` before the arguments are evaluated.
+                if let Some(h) = self.browser_global_read(id) {
+                    self.check_args_loose(args);
+                    return h;
+                }
                 if !self.unknown_namespace_member(name, id.span)
                     && !self.fn_expr_self_ref(name, id.span)
                 {
-                    self.cx
-                        .err(format!("cannot find `{name}` in this scope"), id.span);
+                    let msg = format!("cannot find `{name}` in this scope");
+                    self.cx.not_found(msg, name, id.span);
                 }
                 self.check_args_loose(args);
                 self.error_expr(span)
@@ -108,6 +115,12 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if rest == "target" {
+            return self.target_stmt(args, span);
+        }
+        if rest == "any_to_primitive" {
+            return self.primitive_dispatch(args, span);
+        }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
                 .err(format!("unknown intrinsic `{}`", id.name), id.span);
@@ -127,16 +140,30 @@ impl FnCx<'_, '_> {
             }
         }
         let ck = self.check_call(&c, slots, args, exp, span);
-        if i == Intrinsic::JsonParse {
+        if matches!(
+            i,
+            Intrinsic::JsonParse
+                | Intrinsic::JsonParseRows
+                | Intrinsic::JsonParseCursor
+                | Intrinsic::ReadRows
+                | Intrinsic::ReadRow
+        ) {
             self.json_parse_throws(span);
         }
-        if i == Intrinsic::GeneratorResume {
+        if matches!(
+            i,
+            Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
+        ) {
             // Resuming throws what the generator's body throws (its `E`).
             if let Some(&e) = ck.type_args.get(1) {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
-        self.intrinsic(i, ck.args, ck.ret, span)
+        let e = self.intrinsic(i, ck.args, ck.ret, span);
+        if i == Intrinsic::SpawnHandled {
+            self.spawned_promises(&e);
+        }
+        e
     }
 
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
@@ -182,8 +209,9 @@ impl FnCx<'_, '_> {
             return Some(self.array_from(args, exp, span));
         }
         let intr = match (ns.name.as_str(), prop.name.as_str()) {
-            ("console", "log") => Intrinsic::Print,
-            ("console", "error") => Intrinsic::PrintErr,
+            // Node writes `log`, `info` and `debug` to stdout, `error` and `warn` to stderr.
+            ("console", "log" | "info" | "debug") => Intrinsic::Print,
+            ("console", "error" | "warn") => Intrinsic::PrintErr,
             (n @ ("console" | "process" | "Promise" | "performance" | "Date"), p) => {
                 self.cx
                     .err(format!("no function `{p}` in `{n}`"), prop.span);
@@ -198,16 +226,42 @@ impl FnCx<'_, '_> {
     fn print(&mut self, intr: Intrinsic, args: &[ast::Expr], span: Span) -> hir::Expr {
         let mut out = vec![];
         for a in args {
-            let h = self.expr(a, None, Want::Borrow);
+            let h = self.printed_expr(a);
+            let h = self.read_shared(h);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
             let h = self.narrowed_for_print(h);
+            // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
+            // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
+            // nothing where TypeScript's returns the array.
+            let h = match h.ty == self.cx.ty.unit && matches!(h.kind, hir::ExprKind::Local(..)) {
+                true => {
+                    let at = h.span;
+                    let undefined =
+                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), at);
+                    let u = self.expr(&undefined, None, Want::Move);
+                    let ty = u.ty;
+                    let block = hir::Block {
+                        stmts: vec![hir::Stmt {
+                            kind: hir::StmtKind::Expr(h),
+                            span: at,
+                        }],
+                        value: Some(Box::new(u)),
+                        span: at,
+                    };
+                    self.mk(hir::ExprKind::Block(block), ty, at)
+                }
+                false => h,
+            };
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 let mut d =
                     Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
                 if let Some(note) = self.in_place_note(a, &h) {
                     d = d.with_note(note);
+                }
+                if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
+                    d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
                 }
                 self.cx.error(d);
             }
@@ -254,7 +308,9 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            constraints: vec![],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],
@@ -285,6 +341,9 @@ impl FnCx<'_, '_> {
         if b == BuiltinMethod::Push && many && self.cx.ty.array_elem(recv.ty).is_some() {
             return self.push_items(recv, args, span);
         }
+        if b == BuiltinMethod::ToString && !args.is_empty() && self.cx.ty.is_numeric(recv.ty) {
+            return self.number_to_string_radix(recv, args, exp, span);
+        }
         let (i, name) = match b {
             BuiltinMethod::Push => (Intrinsic::ArrayPush, "push"),
             BuiltinMethod::Pop => (Intrinsic::ArrayPop, "pop"),
@@ -293,7 +352,8 @@ impl FnCx<'_, '_> {
             BuiltinMethod::SharedAdd => (Intrinsic::SharedAdd, "add"),
             BuiltinMethod::SharedGet => (Intrinsic::SharedGet, "get"),
             BuiltinMethod::SharedSet => (Intrinsic::SharedSet, "set"),
-            BuiltinMethod::MutexWith => return self.mutex_with(recv, args, span),
+            BuiltinMethod::MutexWith => return self.mutex_with(recv, args, span, false),
+            BuiltinMethod::LockRead => return self.mutex_with(recv, args, span, true),
         };
         let mut c = self.intrinsic_sig(i, span);
         c.what = format!("method `{name}`");
@@ -313,22 +373,13 @@ impl FnCx<'_, '_> {
         {
             let t = recv.ty;
             self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
-        } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
-            self.cx.error(
-                Diagnostic::error("a promise cannot be copied", prop.span).with_note(
-                    "it runs once and has one owner; pass the promise itself on, or await it and copy the result",
-                ),
-            );
         } else if i == Intrinsic::Clone && self.cx.owns_uncopyable(recv.ty) {
             let why = self.cx.uncopyable_why(recv.ty);
             let part = self.cx.uncopyable_part(recv.ty).unwrap_or(recv.ty);
-            let note = match self.cx.ty.kind(part) {
-                TyKind::Promise(..) => "a promise runs once and has one owner; await it and copy the result".to_string(),
-                _ => format!(
-                    "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
-                    self.cx.display(part)
-                ),
-            };
+            let note = format!(
+                "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
+                self.cx.display(part)
+            );
             self.cx.error(
                 Diagnostic::error(
                     format!("{why}, so it has no automatic `clone()`"),
@@ -340,5 +391,46 @@ impl FnCx<'_, '_> {
         let mut all = vec![recv];
         all.extend(ck.args);
         self.intrinsic(i, all, ck.ret, span)
+    }
+    /// `n.toString(radix)` on a number: a call of the prelude's `__f64ToString`, `__i64ToString`
+    /// or `__u64ToString` (by the receiver's type), with the receiver converted to its parameter.
+    fn number_to_string_radix(
+        &mut self,
+        recv: hir::Expr,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let (name, to) = match self.cx.ty.kind(recv.ty) {
+            TyKind::Int(i) if i.is_signed() => ("__i64ToString", self.cx.ty.i64),
+            TyKind::Int(_) => ("__u64ToString", self.cx.ty.u64),
+            _ => ("__f64ToString", self.cx.ty.f64),
+        };
+        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get(name).copied() else {
+            self.cx
+                .err("`toString(radix)` needs the prelude (std/prelude)", span);
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        };
+        let mut c = self.fn_callable(d, "method `toString`".into(), span);
+        c.params.remove(0);
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        let recv_span = recv.span;
+        let recv = if recv.ty == to {
+            recv
+        } else {
+            self.mk(H::Cast(Box::new(recv)), to, recv_span)
+        };
+        let mut call_args = vec![recv];
+        call_args.extend(ck.args);
+        self.mk(
+            H::Call {
+                callee: hir::Callee::Def(d, vec![]),
+                args: call_args,
+            },
+            self.cx.ty.str_,
+            span,
+        )
     }
 }

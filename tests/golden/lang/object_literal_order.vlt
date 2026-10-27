@@ -1,0 +1,282 @@
+// check: no leaks
+// Object literals evaluate their properties in written order, as in JavaScript (#1458): a
+// literal of an object type written out of declaration order, a property before a spread whose
+// source has effects, one a later spread overrides (still evaluated), and properties after a
+// spread that land in an earlier field's place.
+function tr(s: string, v: number = 0): number {
+  console.log("eval " + s);
+  return v;
+}
+interface P {
+  x: number;
+  y: number;
+  z: number;
+}
+interface YZ {
+  y: number;
+  z: number;
+}
+function yz(s: string): YZ {
+  console.log("eval " + s);
+  return { y: 20, z: 30 };
+}
+function named(s: string): { name: string } {
+  console.log("eval " + s);
+  return { name: "n" };
+}
+class K {
+  n = 1;
+  bump(): number {
+    this.n++;
+    return this.n;
+  }
+}
+const base: YZ = { y: 2, z: 3 };
+
+console.log("-- typed, out of declaration order");
+const p: P = { z: tr("z", 3), x: tr("x", 1), y: tr("y", 2) };
+console.log(p.x, p.y, p.z);
+const q: P = { y: base.y, z: tr("z", 3), x: base.z };
+console.log(q.x, q.y, q.z);
+console.log("-- typed, in declaration order");
+const p2: P = { x: tr("x", 1), y: tr("y", 2), z: tr("z", 3) };
+console.log(p2.x, p2.y, p2.z);
+console.log("-- a property before a spread with effects");
+const a: P = { x: tr("x", 1), ...yz("spread") };
+console.log(a.x, a.y, a.z);
+const a2 = { x: tr("x", 1), ...named("spread"), w: tr("w", 4) };
+console.log(a2.x, a2.name, a2.w);
+console.log("-- a property a later spread overrides");
+const b: P = { x: 1, y: tr("y (overridden)", 9), ...base };
+console.log(b.x, b.y, b.z);
+console.log("-- after a spread, out of declaration order");
+const c: P = { x: 0, ...base, z: tr("z", 7), y: tr("y", 8) };
+console.log(c.x, c.y, c.z);
+const e = { y: tr("y", 1), ...base, z: tr("z", 5) };
+console.log(e.y, e.z);
+console.log("-- between two spreads");
+const f = { ...yz("s1"), m: tr("m", 1), ...yz("s2") };
+console.log(f.m, f.y, f.z);
+console.log("-- before an optional field's spread");
+const part: Partial<YZ> = { z: 99 };
+const g: YZ = { y: tr("y", 5), z: tr("z", 6), ...part };
+console.log(g.y, g.z);
+console.log("-- a class instance spread before a call that changes it");
+const k = new K();
+const h = { ...k, m: k.bump() };
+console.log(h.n, h.m, k.n);
+console.log("-- records");
+const r: Record<string, number> = { a: 1 };
+function rec(s: string): Record<string, number> {
+  console.log("eval " + s);
+  return r;
+}
+const r2: Record<string, number> = { k: tr("k", 1), ...rec("spread"), j: tr("j", 2) };
+console.log(JSON.stringify(r2));
+console.log("-- before optional fields, generic and maybe-missing sources");
+interface Opt {
+  a?: number | null;
+  b?: number;
+}
+function op(s: string, o: Opt): Opt {
+  console.log("eval " + s);
+  return o;
+}
+const x1 = { a: tr("a", 1), ...op("spread", { a: null }) };
+console.log(x1.a);
+const x2 = { a: tr("a", 1), b: tr("b", 2), ...op("spread", {}) };
+console.log(x2.a, x2.b);
+interface T2 {
+  a: number | null;
+  b: number;
+}
+const x3: T2 = { a: tr("a", 1), b: tr("b", 2), ...op("spread", { b: 5 }) };
+console.log(x3.a, x3.b);
+function withN<T extends object>(t: T, f: () => number) {
+  return { n: f(), ...t };
+}
+const x4 = withN({ k: 1 }, () => tr("n", 3));
+console.log(x4.n, x4.k);
+const maybe: { a: number } | undefined = Math.random() > 2 ? { a: 1 } : undefined;
+const x5 = { a: tr("a", 7), ...maybe };
+console.log(x5.a);
+console.log("-- a spread copies its source before a later property changes it");
+function mutate(o: { a: number; x: number; y: number }): number {
+  o.x = 100;
+  o.y = 200;
+  return 7;
+}
+const m1 = { a: 0, x: 1, y: 2 };
+const n1 = { ...m1, a: mutate(m1) };
+console.log(n1.a, n1.x, n1.y);
+interface A3 {
+  a: number;
+  x: number;
+  y: number;
+}
+function mutate2(o: { x: number; y: number; a: number }): number {
+  o.x = 100;
+  o.y = 200;
+  return 7;
+}
+const m2 = { x: 1, y: 2, a: 0 };
+const n2: A3 = { ...m2, a: mutate2(m2) };
+console.log(n2.a, n2.x, n2.y);
+class K2 {
+  a: number = 0;
+  x: number = 1;
+}
+function mk2(o: K2): number {
+  o.x = 100;
+  return 9;
+}
+const k2 = new K2();
+const n3 = { ...k2, a: mk2(k2) };
+console.log(n3.a, n3.x, k2.x);
+function setS(o: { a: string; s: string }): string {
+  o.s = "changed";
+  return "A";
+}
+const m4 = { a: "a", s: "s" };
+const n4 = { ...m4, a: setS(m4) };
+console.log(n4.a, n4.s, m4.s);
+interface OB {
+  a: number;
+  b?: number;
+}
+function setB(o: OB): number {
+  o.b = 7;
+  return 5;
+}
+const m5: OB = { a: 1, b: 2 };
+const n5 = { ...m5, a: setB(m5) };
+console.log(n5.a, n5.b);
+const m6: OB = { a: 1 };
+const n6 = { ...m6, a: setB(m6) };
+console.log(JSON.stringify(n6));
+const pz: Partial<YZ> = { z: 4 };
+const bz: YZ = { y: 2, z: 3 };
+function setZ(): number {
+  pz.z = 40;
+  bz.z = 30;
+  return 1;
+}
+const n7 = { ...bz, ...pz, y: setZ() };
+console.log(n7.y, n7.z);
+console.log("-- a variable read before a property that changes it");
+interface AB {
+  a: number;
+  b: number;
+}
+let kv = 1;
+function bumpk(): number {
+  kv = kv + 10;
+  return kv;
+}
+const ab = { a: 0, b: 0 };
+const n8: AB = { ...ab, b: kv, a: bumpk() };
+console.log(n8.a, n8.b);
+const n9 = { ...ab, b: kv, a: bumpk() };
+console.log(n9.a, n9.b);
+const aw = { a: 0, w: 0 };
+let w = 5;
+function bumpw(): number {
+  w = w + 1;
+  return 0;
+}
+const n10 = { ...aw, w, a: bumpw() };
+console.log(n10.a, n10.w);
+let mv = 1;
+function bumpm(): number {
+  mv = mv + 1;
+  return mv;
+}
+const n11: P = { y: mv, z: bumpm(), x: mv };
+console.log(n11.x, n11.y, n11.z);
+const n12: P = { z: mv, x: bumpm(), y: 0 };
+console.log(n12.x, n12.y, n12.z);
+const one = 1;
+const n13: P = { y: one + 1, z: 3, x: tr("x", 1) };
+console.log(n13.x, n13.y, n13.z);
+console.log("-- a spread whose source changes what is spread before it");
+let cv = 1;
+const co = { a: 1, b: 2 };
+function changeCo(): { c: number } {
+  cv = cv + 1;
+  co.b = 99;
+  return { c: 3 };
+}
+const n14 = { a: cv, ...changeCo() };
+console.log(n14.a, n14.c);
+const n15 = { ...co, ...changeCo() };
+console.log(n15.a, n15.b, n15.c);
+interface AB2 {
+  a: number;
+  b: number;
+}
+const mo: AB2 | undefined = Math.random() < 2 ? { a: 1, b: 2 } : undefined;
+function changeMo(m: AB2 | undefined): number {
+  if (m !== undefined) {
+    m.b = 50;
+  }
+  return 9;
+}
+const n16 = { ...mo, a: changeMo(mo) };
+console.log(n16.a, n16.b);
+const pz2: Partial<YZ> = { z: 1 };
+function changePz(): number {
+  pz2.z = 77;
+  return 4;
+}
+const n17 = { y: tr("y", 2), ...pz2, w: changePz() };
+console.log(n17.y, n17.z, n17.w);
+class P2 {
+  x = 1;
+  y = 2;
+}
+function changeP2(p: P2): number {
+  p.y = 20;
+  return 5;
+}
+interface XY {
+  x: number;
+  y: number;
+}
+const p3 = new P2();
+const n18: XY = { ...p3, x: changeP2(p3) };
+console.log(n18.x, n18.y);
+console.log("-- generic sources");
+function spreadThen<T extends { x: number }>(t: T, f: (t: T) => number) {
+  return { ...t, y: f(t) };
+}
+const n19 = spreadThen({ x: 1 }, (t) => {
+  t.x = 100;
+  return 2;
+});
+console.log(n19.x, n19.y);
+function spreadTwice<T extends { x: number }>(t: T, f: (t: T) => number) {
+  return { ...t, y: f(t), ...t };
+}
+const n20 = spreadTwice({ x: 1 }, (t) => {
+  t.x = 100;
+  return 2;
+});
+console.log(n20.x, n20.y);
+console.log("-- records and await");
+const rc2: Record<string, number> = { k: 1 };
+function changeRc(r: Record<string, number>): number {
+  r["k"] = 50;
+  return 3;
+}
+const n21: Record<string, number> = { ...rc2, j: changeRc(rc2) };
+console.log(JSON.stringify(n21));
+async function awaited(): Promise<void> {
+  const q = { a: 1, x: 2 };
+  async function changeQ(z: { a: number; x: number }): Promise<number> {
+    z.x = 20;
+    return 5;
+  }
+  const n22 = { ...q, a: await changeQ(q) };
+  console.log(n22.a, n22.x);
+}
+awaited();

@@ -1,0 +1,8 @@
+// `Object.hasOwn` of an `any` holding a record, in a program with no other dynamic member access
+// (#1283): the record's own keys only.
+function main(): void {
+  const r: Record<string, number> = { a: 1 };
+  const x: any = r;
+  console.log(Object.hasOwn(x, "a"), Object.hasOwn(x, "toString"));
+  console.log(Object.prototype.hasOwnProperty.call(x, "b"));
+}

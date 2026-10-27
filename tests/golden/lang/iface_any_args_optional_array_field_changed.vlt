@@ -1,0 +1,25 @@
+// An optional array field of interface values changed through the interface at `any`, behind
+// `!` or `?.`: the read may be a new array (an adapter's), so each is an error (#1185).
+interface Tree<T> {
+  value: T;
+  kids?: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids?: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n";
+  }
+}
+
+const t = new Node1<number>(1);
+const a = (t as unknown) as Tree<any>;
+a.kids!.push(new Node1<number>(3));
+a.kids?.push(new Node1<number>(3));
+const k = a.kids!;
+console.log(t.kids!.length, k.length);

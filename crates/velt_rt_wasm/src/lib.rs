@@ -65,6 +65,8 @@ pub mod panic;
 pub mod platform;
 pub mod prng;
 pub mod process;
+#[path = "../../velt_rt/src/proxy_array.rs"]
+pub mod proxy_array;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
 pub mod server_request;
@@ -80,8 +82,12 @@ pub mod strbuf;
 #[path = "../../velt_rt/src/symbol.rs"]
 pub mod symbol;
 pub mod task;
+#[path = "../../velt_rt/src/top_level_await.rs"]
+pub mod top_level_await;
 #[path = "../../velt_rt/src/transfer_map.rs"]
 pub mod transfer_map;
+#[path = "../../velt_rt/src/view.rs"]
+pub mod view;
 #[path = "../../velt_rt/src/weak/mod.rs"]
 pub mod weak;
 

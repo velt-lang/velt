@@ -3,13 +3,13 @@
 //! out-pointer for aggregate or `Result` returns, hidden env param for closures), allocates VIR
 //! locals for HIR locals and drop flags, then lowers the body.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::flags::FlagScan;
 use super::param_attrs::PtrParam;
-use super::{ice, Cx, FnLower, LInfo, LState, ScopeKind, Work};
+use super::{ice, Cx, FnLower, LInfo, LState, LkMode, ScopeKind, Work};
 use crate::vir::{BlockId, Const, Function, Operand, ParamAttrs, Place, Proj, Rvalue, SrcLoc, Ty};
 
 /// ABI shape of a function's result.
@@ -47,11 +47,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower {
             cx,
             targs,
+            glue: false,
             locals: vec![],
             blocks: vec![],
             block_locs: vec![],
             loc: None,
             caller_loc: None,
+            caller_arg: None,
             live: vec![],
             cur: BlockId(0),
             info: vec![],
@@ -60,8 +62,30 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ret_ty: None,
             throws: None,
             div_zero_bbs: vec![],
-            ref_bindings: HashSet::new(),
-            scope_ends: HashMap::new(),
+            ref_bindings: FxHashSet::default(),
+            frozen: FxHashSet::default(),
+            frozen_args: false,
+            proj_hold: None,
+            changed: None,
+            known_fns: FxHashMap::default(),
+            frozen_binds: false,
+            read_target: false,
+            owner_write: false,
+            view_writes: None,
+            mirror_drop: false,
+            any_context: None,
+            view_loops: Default::default(),
+            lk_mode: None,
+            rw_reader: None,
+            mode: LkMode::Plain,
+            own_captures: false,
+            args_to_caller: false,
+            kept_args: 0,
+            kept_handed: vec![],
+            kept_drops: vec![],
+            caller_aliases: None,
+            lock_callback: None,
+            scope_ends: FxHashMap::default(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
@@ -70,12 +94,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             stable_binds: false,
             transfer_args: false,
             transfer_call: false,
+            proxy_recv: None,
+            super_call: false,
+            tla_site: None,
             same_mode: false,
+            value_mode: false,
             key_mode: false,
+            init_locals: None,
             ctor_self: None,
             init_stack: vec![],
-            frame_closures: HashSet::new(),
+            frame_closures: FxHashSet::default(),
+            direct_siblings: FxHashMap::default(),
+            self_env: None,
+            in_reflect: false,
+            proxy_routes: false,
+            record_fill: false,
         };
+        lw.mode = lw.cx.cur_mode;
+        lw.own_captures = lw.cx.cur_own;
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
         lw
@@ -83,8 +119,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn build(cx: &'c mut Cx<'h>, work: &Work) -> Function {
         match work {
-            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None),
-            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at)),
+            // `Cx::build_now` builds the inner `Work` in checked mode.
+            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
+                Self::build(cx, w)
+            }
+            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0, &[]),
+            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0, &[]),
+            Work::Frozen(def, targs, mask, at, fns) => {
+                Self::lower_fn(cx, *def, targs, *at, *mask, fns)
+            }
             Work::Glue(g, t) => Self::build_glue(cx, *g, *t),
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
@@ -93,10 +136,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
+            Work::ArrayTooLong => Self::build_array_too_long(cx),
             Work::Main => Self::build_main(cx),
+            Work::SyncMainRoot => Self::build_sync_main_root(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
             Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
+            Work::GenThrow(def, targs) => Self::build_gen_throw(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -105,11 +151,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::RaceBoxDrop(t) => Self::build_race_box_drop(cx, *t),
             Work::WidenPoll(from, to) => Self::build_widen_poll(cx, *from, *to),
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
+            Work::AdoptPoll(p) => Self::build_adopt_poll(cx, *p),
+            Work::AdoptDrop(p) => Self::build_adopt_drop(cx, *p),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
+            Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
         }
     }
 
@@ -143,11 +192,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         def: DefId,
         targs: &[TyId],
         caller: Option<SrcLoc>,
+        frozen: u64,
+        fns: &[super::frozen::KnownFn],
     ) -> Function {
         let hir_prog = cx.hir;
         let hir::Def::Fn(f) = hir_prog.def(def) else {
             ice("function instance is not a Def::Fn")
         };
+        if frozen != 0 && (f.is_generator || f.is_async) {
+            ice("a frozen instance of an async function or generator");
+        }
         if f.is_generator {
             return Self::build_gen_fn(cx, def, targs);
         }
@@ -159,15 +213,37 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // no source location: a debugger stopping at a function's first located code finds its
         // params and captures bound. `lower_body` locates the code from there on.
         lw.loc = None;
-        lw.caller_loc = caller;
+        // A text helper writes its caller's site into its stops itself (track_caller.rs).
+        lw.caller_loc = caller.or_else(|| {
+            lw.cx
+                .reports_own_site(def)
+                .then_some(super::srcloc::UNKNOWN_LOC)
+        });
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
-        let scan = FlagScan::run(hir_prog, &f.body);
+        lw.in_reflect = f
+            .name
+            .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
+        let mut pick = |c: &hir::Expr| lw.const_cond(c) == Some(true);
+        let scan = FlagScan::run_picking(hir_prog, &f.body, Some(&mut pick));
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
-        lw.frame_closures = super::frame_envs::scan(hir_prog, f);
+        (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
+        // Bit `i`: `params[i]`, whose leading entries are the captures (bound to their inner
+        // locals).
+        lw.frozen = (0..f.params.len().min(64))
+            .filter(|i| frozen & (1 << i) != 0)
+            .map(|i| match f.captures.get(i) {
+                Some(c) => c.inner,
+                None => f.params[i].local,
+            })
+            .collect();
+        lw.known_fns = fns
+            .iter()
+            .filter_map(|k| Some((f.params.get(k.param as usize)?.local, k.clone())))
+            .collect();
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
             for p in &f.params {
@@ -178,12 +254,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.lower_body(f);
         lw.describe_locals(f, f.params.len());
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
-        if let Some(at) = caller {
+        match caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
-            symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col));
+            Some(super::srcloc::ARG_LOC) => symbol.push_str("_LA"),
+            Some(at) => symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col)),
+            None => {}
+        }
+        if frozen != 0 {
+            // `_Z` follows no mangled name, list or `_L` suffix either.
+            symbol.push_str(&format!("_Z{frozen:x}"));
+        }
+        for k in fns {
+            // `_K` neither: the param, the closure and its instance.
+            let c = lw.cx.instance_symbol("", &k.targs);
+            symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
+            hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
+            hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+        });
         func
     }
 
@@ -198,7 +289,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(ParamAttrs::default());
             self.new_local(Ty::Ptr, Some("env".into()))
         });
-        let captured: HashSet<_> = f.captures.iter().map(|c| c.inner).collect();
+        let captured: FxHashSet<_> = f.captures.iter().map(|c| c.inner).collect();
         let by_ref = self.cx.by_ref_params.contains(&(def, self.targs.clone()));
         for p in &f.params {
             if captured.contains(&p.local) {
@@ -234,6 +325,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);
             info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
         }
+        // An instance that takes its caller's location: the pointer to it (track_caller.rs).
+        if self.caller_loc == Some(super::srcloc::ARG_LOC) {
+            params.push(Ty::Ptr);
+            attrs.push(ParamAttrs::default());
+            self.caller_arg = Some(self.new_local(Ty::Ptr, Some("caller.at".into())));
+        }
         let abi = self
             .cx
             .ret_abi(self.ret_ty.unwrap_or_else(|| ice("ret")), self.throws);
@@ -243,6 +340,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(self.cx.out_ptr_attrs(out));
         }
         if let Some(env) = env {
+            self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
         }
         self.declare_body_locals(f, info);
@@ -297,6 +395,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
+        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/proxy::");
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

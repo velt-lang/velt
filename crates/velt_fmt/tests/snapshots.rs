@@ -345,11 +345,33 @@ fn parse_errors_are_refused() {
     assert!(format_source("function f( {").is_err());
 }
 
+/// The AST does not keep `this` parameters, so formatting would drop them.
+#[test]
+fn files_with_this_parameters_are_refused() {
+    for src in [
+        "function plain(this: void, x: number) { return x; }
+",
+        "const f = function (this: void, x: number) { return x; };
+",
+        "type Fn = (this: void, x: number) => number;
+",
+    ] {
+        let diags = format_source(src).expect_err(src);
+        assert_eq!(diags[0].message, velt_fmt::NO_THIS_PARAMS, "{src}");
+    }
+    // `this` elsewhere is formatted.
+    assert!(format_source(
+        "class C { m(): this { return this; } }
+"
+    )
+    .is_ok());
+}
+
 #[test]
 fn optional_params_and_object_type_fields_keep_their_spelling() {
     assert_fmt(
         "function f(a: i64, b?: string, c?: A | B | null) {}\ntype O = { x?: i64; y: string | null };\n",
-        "function f(a: i64, b?: string, c?: A | B) {}\n\ntype O = { x?: i64; y: string | null };\n",
+        "function f(a: i64, b?: string, c?: A | B | null) {}\n\ntype O = { x?: i64; y: string | null };\n",
     );
 }
 

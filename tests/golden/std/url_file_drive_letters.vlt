@@ -1,0 +1,28 @@
+// A `file:` URL keeps its base's Windows drive letter, as Node's URL does on every OS: a path
+// starting with `/` stays on the drive, `..` stops at it, `C|` is `C:`, and a path or host that
+// starts with a drive letter switches to it. Output compared with Node.
+import { URL } from "velt:url";
+
+const b = "file:///C:/p/m.ts";
+console.log(new URL("/abs/x.js", b).href);
+console.log(new URL("../../../../x", b).href);
+console.log(
+  new URL("./y", b).href,
+  new URL("/D:/z", b).href,
+  new URL("/abs", "file:///p/m.ts").href,
+);
+console.log(new URL("..", "file:///C:/").href, new URL("/q", "http://h/C:/a").href);
+// `C|` as the first segment is the drive letter `C:`.
+console.log(new URL("file:///C|/x").href, new URL("/C|/z", b).href, new URL("file:///a/C|/y").href);
+// A relative path starting with a drive letter takes none of the base's path.
+const d = "file:///D:/p/m.ts";
+console.log(new URL("C|/x", d).href, new URL("C|", d).href, new URL("c|/x", d).href, new URL("C|\\x", d).href);
+// A drive letter where the host would be starts the path.
+console.log(new URL("file://C:/x").href, new URL("file://C|/x").href);
+// The `pathname` setter.
+const u = new URL("file:///a/b");
+u.pathname = "/D|/y";
+const w = new URL("file:///a/b");
+w.pathname = "E|";
+console.log(u.href, w.href);
+

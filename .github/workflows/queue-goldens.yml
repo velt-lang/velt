@@ -1,0 +1,207 @@
+# The goldens on one OS, in parallel shards: called by ci.yml's `queue-golden` for each OS the
+# merge queue checks, and by the nightly's `wasm-goldens` for the WebAssembly goldens on Windows
+# and macOS. One job builds what the goldens run and packs it (`cargo xtask check --part golden
+# --pack`, crates/xtask/src/golden_archive.rs); then each shard downloads the archive and checks
+# every n-th golden (`--archive`, `VELT_GOLDEN_SHARD=<i>/<n>`), on its own runner, without
+# building. The shards per OS are in crates/xtask/src/os.rs (`GOLDEN_SHARDS`). Together the
+# shards check every golden once, in debug and release mode, and the bundled-linker goldens.
+#
+# With `wasm_shards` (the queue's plan gives them when a change touches WebAssembly code), the
+# same build also packs the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) and their
+# runtimes (`--part golden,wasm`), and the `wasm-shard` jobs run them (`--part wasm`,
+# `VELT_WASM_SHARD=<i>/<n>`, `WASM_SHARDS` in os.rs): on a 4-vCPU Windows runner they take about
+# 45 minutes in one job. `goldens: false` (the nightly) leaves the goldens out and runs only those.
+#
+# A test binary has the build's absolute paths compiled in, so a shard unpacks it into a
+# checkout at the same path: the workspace (or on Windows the Dev Drive copy) of every runner of
+# an OS is at the same path, and xtask stops with an error if it is not.
+#
+# It fails closed: the build job fails unless `shards` is exactly ["1/n", …, "n/n"] with n >= 1
+# (an OS without an entry in GOLDEN_SHARDS gets `null`, which would otherwise skip every shard),
+# and `wasm_shards` is `[]` or such a list, and the `goldens` job fails unless the build and every
+# shard it was given succeeded, so the caller's result is never a success with goldens skipped.
+name: queue-goldens
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: The runner (e.g. windows-latest).
+        type: string
+        required: true
+      shards:
+        description: >-
+          The golden shards, a JSON list of VELT_GOLDEN_SHARD values (e.g. ["1/2","2/2"]); ignored
+          with `goldens: false`.
+        type: string
+        default: "[]"
+      wasm_shards:
+        description: >-
+          The WebAssembly goldens' shards, a JSON list of VELT_WASM_SHARD values; `[]` runs none.
+        type: string
+        default: "[]"
+      goldens:
+        description: Run the goldens (false runs only the WebAssembly goldens).
+        type: boolean
+        default: true
+      fail-fast:
+        description: >-
+          A failed job cancels the caller's whole run (the merge queue; the nightly's jobs are
+          independent).
+        type: boolean
+        default: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.os }}
+    # Building the WebAssembly goldens too (their test and two runtimes) takes a few minutes more.
+    timeout-minutes: ${{ inputs.wasm_shards != '[]' && 60 || 45 }}
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - name: the shards cover every golden
+        id: parts
+        shell: bash
+        env:
+          SHARDS: ${{ inputs.goldens && inputs.shards || '' }}
+          WASM_SHARDS: ${{ inputs.wasm_shards }}
+        run: |
+          covers='type == "array" and length > 0 and
+              (length as $n | map(split("/") | map(tonumber)) == [range(1; $n + 1) | [., $n]])'
+          parts=
+          if [ -n "$SHARDS" ]; then
+            if ! jq -e "$covers" <<< "$SHARDS" > /dev/null 2>&1; then
+              echo "::error::no golden shards for ${{ inputs.os }} (got: $SHARDS); see GOLDEN_SHARDS in crates/xtask/src/os.rs"
+              exit 1
+            fi
+            parts=golden
+          fi
+          if [ "$WASM_SHARDS" != '[]' ]; then
+            if ! jq -e "$covers" <<< "$WASM_SHARDS" > /dev/null 2>&1; then
+              echo "::error::no WebAssembly golden shards for ${{ inputs.os }} (got: $WASM_SHARDS); see WASM_SHARDS in crates/xtask/src/os.rs"
+              exit 1
+            fi
+            parts=${parts:+$parts,}wasm
+          fi
+          [ -n "$parts" ] || { echo "::error::neither goldens nor WebAssembly goldens to run"; exit 1; }
+          echo "parts=$parts" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: cargo xtask check --full --part ${{ steps.parts.outputs.parts }} --pack golden.tar
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --full --part ${{ steps.parts.outputs.parts }} --pack golden.tar
+      # Binaries and debug info compress well, but deflate at higher levels costs more time than
+      # it saves in transfer.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goldens-${{ inputs.os }}
+          path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}/golden.tar
+          compression-level: 1
+          retention-days: 1
+          overwrite: true
+      - if: failure() && inputs.fail-fast
+        uses: ./.github/actions/fail-fast
+        with:
+          job: golden build (${{ inputs.os }})
+
+  shard:
+    needs: build
+    if: inputs.goldens
+    name: shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: goldens-${{ inputs.os }}
+          path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: cargo xtask check --full --part golden --archive golden.tar
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_GOLDEN_SHARD: ${{ matrix.shard }}
+        run: cargo xtask check --full --part golden --archive golden.tar
+      - if: failure() && inputs.fail-fast
+        uses: ./.github/actions/fail-fast
+        with:
+          job: golden shard ${{ matrix.shard }} (${{ inputs.os }})
+
+  wasm-shard:
+    needs: build
+    if: inputs.wasm_shards != '[]'
+    name: wasm shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJSON(inputs.wasm_shards) }}
+    runs-on: ${{ inputs.os }}
+    # About 12 minutes on Windows (two of the test's 8 parts of about 330 s, side by side), plus
+    # setup; macOS runs four parts per shard on 3 vCPUs.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      # wasmtime, node and (macOS) clang come with `tools`; LLVM's opt/llc and the WebAssembly
+      # targets with the toolchain (rust-toolchain.toml).
+      - uses: ./.github/actions/setup
+        with:
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: goldens-${{ inputs.os }}
+          path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: cargo xtask check --full --part wasm --archive golden.tar
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_WASM_SHARD: ${{ matrix.shard }}
+        run: cargo xtask check --full --part wasm --archive golden.tar
+      - if: failure() && inputs.fail-fast
+        uses: ./.github/actions/fail-fast
+        with:
+          job: wasm shard ${{ matrix.shard }} (${{ inputs.os }})
+
+  # The result the caller sees: success only when the build and every shard it was given
+  # succeeded (a skipped shard matrix that should have run is a failure, not a pass).
+  goldens:
+    needs: [build, shard, wasm-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: the build and every shard passed
+        env:
+          BUILD: ${{ needs.build.result }}
+          SHARDS: ${{ needs.shard.result }}
+          WASM_SHARDS: ${{ needs.wasm-shard.result }}
+          GOLDENS: ${{ inputs.goldens }}
+          WASM: ${{ inputs.wasm_shards != '[]' }}
+        run: |
+          echo "build: $BUILD, shards: $SHARDS, wasm shards: $WASM_SHARDS"
+          [ "$BUILD" = success ] || exit 1
+          [ "$GOLDENS" != true ] || [ "$SHARDS" = success ] || exit 1
+          [ "$WASM" != true ] || [ "$WASM_SHARDS" = success ] || exit 1

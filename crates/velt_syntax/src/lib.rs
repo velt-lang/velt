@@ -6,19 +6,72 @@
 //! statement/item-level error recovery.
 
 pub mod ast;
+mod ast_names;
+mod js_number;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;
 mod parser;
+pub mod scope;
 pub mod visit;
 mod work;
 
+use rustc_hash::FxHashMap;
+
+pub use js_number::js_number;
+/// The names code reads without declaring them, scope-aware (sema checks the root file's early
+/// uses with these).
+pub use parser::script_names::{expr_free_uses, stmt_free_uses, FreeUse};
+
+/// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
+/// prints as nothing and no source can name it. Only a destructuring assignment target takes
+/// one (`[a, , b] = xs`).
+pub const ARRAY_HOLE: &str = "";
+
+/// The name of the hidden loop variable of `for (target of xs)` (a target declared elsewhere),
+/// assigned to the target first thing in the body; no source can name it.
+pub const FOR_TARGET: &str = "#of";
+
+/// The name of the function the parser makes of a root file's top-level statements when the file
+/// declares a `main` of its own (`function main() { … }` then `main();`, as TypeScript programs
+/// end; #1567): the statements are the entry point, as in Node, and `main` is an ordinary
+/// function. Otherwise that function is named `main`; either way its name has an empty span
+/// ([`is_script_main`]).
+pub const SCRIPT_MAIN: &str = "#main";
+
+/// Is `name` the name of the function the parser made of a file's top-level statements (a
+/// generated `main`, or [`SCRIPT_MAIN`])?
+pub fn is_script_main(name: &ast::Ident) -> bool {
+    (name.name == "main" || name.name == SCRIPT_MAIN) && name.span.lo == name.span.hi
+}
+
+/// The key name of an object-pattern property whose computed key the parser reported (a key
+/// other than a name or a literal, `{ [f()]: v }`): its binding is checked as an error.
+pub const REPORTED_KEY: &str = "#reported-key";
+
+/// The variable a computed key `[NAME]` of an object pattern or literal names (the parser's
+/// `[NAME]` key, whose span is `NAME` alone), or `None` for any other key (a quoted `"[NAME]"`
+/// spans its quotes too; `[Symbol.iterator]` names a well-known symbol).
+pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
+    let inner = key.name.strip_prefix('[')?.strip_suffix(']')?;
+    let len = key.span.hi.checked_sub(key.span.lo)? as usize;
+    (!key.name.starts_with("[Symbol.") && len == inner.len()).then_some(inner)
+}
+
 use velt_common::{Diagnostics, FileId};
+
+/// Is `import` the one the parser adds for `import.meta` (its class, [`ast::IMPORT_META_CLASS`]),
+/// not one written in the source? Tools that list or place imports skip it.
+pub fn is_synthesized_import(import: &ast::Import) -> bool {
+    import.from == ast::IMPORT_META_MODULE
+        && matches!(import.names.as_slice(), [n]
+            if n.alias.as_ref().is_some_and(|a| a.name == ast::IMPORT_META_CLASS))
+}
 
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level
 /// (bounded by its depth limit); a dedicated thread keeps deeply nested input from overflowing the
 /// caller's stack (1 MB main thread on Windows). The memory is reserved, not committed, until used.
-const PARSER_STACK_BYTES: usize = 64 << 20;
+pub const PARSER_STACK_BYTES: usize = 64 << 20;
 
 /// CONTRACT: parse one source file. Always returns a (possibly partial) module; parse errors go
 /// into the diagnostics. The parser must recover and keep going where reasonable.
@@ -34,13 +87,132 @@ pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
     (module, diags)
 }
 
-/// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
+/// What [`parse_with`] reads besides the source.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParseOptions<'a> {
+    /// A plain `.ts` file (as [`parse_ts_file`]).
+    pub plain_ts: bool,
+    /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
+    /// expression of one of these names that nothing in its scope declares parses as the
+    /// literal ([`scope::free_values`]).
+    pub defines: Option<&'a std::collections::HashMap<String, ast::Lit>>,
+}
+
+/// An ambient variable declaration: `declare const NAME: T;`, or `var NAME: T;` in
+/// `declare global { … }`.
+#[derive(Clone, Debug)]
+pub struct Ambient {
+    pub name: ast::Ident,
+    /// The declared type (`None`: none written).
+    pub ty: Option<ast::TypeExpr>,
+    pub span: velt_common::Span,
+    /// Declared in `declare global { … }`.
+    pub global: bool,
+    /// Declared with `var` (not `let` or `const`): in `declare global`, a property of
+    /// `globalThis`, as in TypeScript.
+    pub is_var: bool,
+}
+
+/// [`parse_with`]'s result.
+pub struct Parsed {
+    pub module: ast::Module,
+    pub diags: Diagnostics,
+    /// The ambient variable declarations, in source order; they are not items of `module`.
+    pub ambient: Vec<Ambient>,
+    /// The source has `import` or `export` at its top level: it is a module, whose ambient
+    /// declarations outside `declare global` are its own, not global (as in TypeScript).
+    pub is_module: bool,
+}
+
+/// Parse a module as the compiler loads it: with `opts`, and with ambient declarations
+/// (`declare const`, `declare global`) returned in [`Parsed::ambient`] instead of being
+/// errors.
+pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
+    let parse = |define_at: &FxHashMap<u32, ast::Lit>| {
+        on_parser_thread(|| {
+            let mut parser = parser::Parser::new(file, src);
+            parser.plain_ts = opts.plain_ts;
+            parser.define_at = Some(define_at);
+            parser.ambient = Some(vec![]);
+            let module = parser.parse_module();
+            let ambient = parser.ambient.take().unwrap_or_default();
+            let is_module = parser.saw_module_syntax;
+            let (mut diags, _) = parser.finish();
+            diags.sort_by_key(|d| d.labels.first().map_or(0, |l| l.span.lo));
+            Parsed {
+                module,
+                diags,
+                ambient,
+                is_module,
+            }
+        })
+    };
+    let none = FxHashMap::default();
+    let parsed = parse(&none);
+    let Some(defines) = opts.defines.filter(|d| !d.is_empty()) else {
+        return parsed;
+    };
+    // The references to replace are known once the module's scopes are: parse again,
+    // replacing them (rare: only modules that name a constant pay for it).
+    let define_at: FxHashMap<u32, ast::Lit> =
+        scope::free_values(&parsed.module, &|n| defines.contains_key(n))
+            .into_iter()
+            .map(|id| (id.span.lo, defines[id.name.as_str()].clone()))
+            .collect();
+    if define_at.is_empty() {
+        return parsed;
+    }
+    parse(&define_at)
+}
+
+thread_local! {
+    /// Set on a thread [`on_parser_thread`] spawned: parsing there needs no thread of its own.
+    static ON_PARSER_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` on a thread with the parser's stack, where the parse functions run directly instead
+/// of each spawning a thread of its own: for callers that parse many sources in a row (the
+/// parser's robustness sweep parses millions). Parses inside `f` get only the stack `f` has left,
+/// so `f` must not recurse deeply before parsing. Hidden: only that test uses it.
+#[doc(hidden)]
+pub fn with_parser_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
+    on_parser_thread(f)
+}
+
+/// Runs `f` on this thread, which was spawned with a stack of `stack_bytes`: when that is at
+/// least the parser's, the parses in `f` run directly instead of each spawning a thread of its
+/// own (the compiler's pipeline thread parses every module of a program). As with
+/// [`with_parser_stack`], `f` must not recurse deeply before parsing.
+pub fn with_stack_of<T>(stack_bytes: usize, f: impl FnOnce() -> T) -> T {
+    if stack_bytes < PARSER_STACK_BYTES || ON_PARSER_STACK.get() {
+        return f();
+    }
+    /// Clears the flag when `f` returns or unwinds.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ON_PARSER_STACK.set(false);
+        }
+    }
+    ON_PARSER_STACK.set(true);
+    let _reset = Reset;
+    f()
+}
+
+/// Runs `f` on a thread with the parser's stack (on this thread if it is one, or if none can be
+/// spawned).
 fn on_parser_thread<T: Send>(f: impl Fn() -> T + Sync) -> T {
+    if ON_PARSER_STACK.get() {
+        return f();
+    }
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .name("velt-parse".into())
             .stack_size(PARSER_STACK_BYTES)
-            .spawn_scoped(s, &f);
+            .spawn_scoped(s, || {
+                ON_PARSER_STACK.set(true);
+                f()
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
@@ -79,6 +251,27 @@ fn parse_source(
 /// Where JSX starts is decided by the parser, so this parses the file.
 pub fn comment_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
     on_parser_thread(|| parse_with_comments(FileId(0), src).2)
+}
+
+/// Byte ranges of the tokens of `src`, in source order, lexing it as code throughout: where JSX
+/// starts is decided by the parser, so inside JSX they are approximate. For tests that cut a file
+/// where a token starts or ends (the parser's robustness sweep).
+#[doc(hidden)]
+pub fn token_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
+    let mut lexer = lexer::Lexer::new(FileId(0), src);
+    lexer.fill(usize::MAX);
+    lexer.toks.iter().map(|t| t.lo..t.hi).collect()
+}
+
+/// The first `this: T` parameter of `src` (`function f(this: T, x: A)`, `(this: void) => R`),
+/// if any. The AST does not keep them, so tools that print the AST back (`velt fmt`) must not
+/// rewrite such a file.
+pub fn first_this_param(src: &str) -> Option<std::ops::Range<u32>> {
+    on_parser_thread(|| {
+        let mut parser = parser::Parser::new(FileId(0), src);
+        let _ = parser.parse_module();
+        parser.first_this_param.clone()
+    })
 }
 
 /// Debug dump of a module for snapshot tests.

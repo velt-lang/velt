@@ -4,12 +4,13 @@
 //! to the earliest sleep deadline. Heap futures live in interpreter memory (header 16 bytes,
 //! result/state at +16) so leak checks cover them; their behavior is kept in `futs`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{Interp, FUNC_BASE};
 
-/// Opaque `cx` passed to poll functions (never dereferenced).
-pub(super) const CX: u64 = 0xC0DE;
+/// `cx` passed to poll functions: the address of a pointer to the await word (rt_abi_async.md
+/// §1), which stays 0 (`Interp::new` lays them out in the reserved start of the heap).
+pub(super) const CX: u64 = 8;
 const MAX_ROUNDS: u32 = 1_000_000;
 
 /// What a heap future does when polled.
@@ -75,7 +76,7 @@ struct Task {
 
 #[derive(Default)]
 pub(super) struct Exec {
-    pub futs: HashMap<u64, Fut>,
+    pub futs: FxHashMap<u64, Fut>,
     tasks: Vec<Task>,
     /// Inside `block_on`: promises are started only while tasks run (local.rs).
     pub running: bool,
@@ -121,13 +122,16 @@ impl Interp<'_> {
                 self.write_bytes(f + 16, &b);
                 f
             }
-            "velt_rt_fut_start" => return Some(self.fut_start(a[0], a[1])),
+            "velt_rt_fut_start" | "velt_rt_fut_start_rejecting" => {
+                return Some(self.fut_start(a[0], a[1]))
+            }
             "velt_rt_fut_detach" => return Some(self.fut_detach(a[0], a[1]).map(|_| 0)),
             // One thread: a result never crosses to another one.
             "velt_rt_fut_transfer" => 0,
             // Transfers copy as if each object were reached once (velt_rt's transfer_map is not
             // emulated): `find` answers "no transfer under way", `defer` "release it now".
             "velt_rt_xfer_begin" | "velt_rt_xfer_end" | "velt_rt_xfer_record" => 0,
+            "velt_rt_xfer_keep_begin" | "velt_rt_xfer_keeps" => 0,
             "velt_rt_xfer_suspend" | "velt_rt_xfer_resume" => 0,
             "velt_rt_xfer_find" => 1,
             "velt_rt_xfer_defer" => 0,
@@ -191,7 +195,7 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &0u64.to_le_bytes());
                 0
             }
-            "velt_rt_mutex_lock" => {
+            "velt_rt_mutex_lock" | "velt_rt_mutex_lock_checked" => {
                 assert_eq!(self.read_u64(a[0]), 0, "interp: mutex already locked");
                 self.write_bytes(a[0], &1u64.to_le_bytes());
                 0

@@ -368,11 +368,20 @@ fn generic_functions_infer_and_check_bounds() {
 
 #[test]
 fn generic_equality_uses_the_same_intrinsic() {
-    // `==` is JS `===` (objects by identity, semantics stage 2): `Intrinsic::Same`.
-    let p = ok_src("function same<T>(a: T, b: T): bool { return a == b; } function main() { console.log(same(1, 2)); }");
+    // `===` is identity for objects (semantics stage 2): `Intrinsic::Same`. `==` is the same
+    // test where the instantiation holds no nothing, else also `null == undefined`:
+    // `Intrinsic::LooseEq`, lowered per instantiation.
+    let p = ok_src(
+        "function same<T>(a: T, b: T): bool { return a === b; }
+         function loose<T>(a: T, b: T): bool { return a == b; }
+         function main() { console.log(same(1, 2), loose(1, 2)); }",
+    );
     assert!(calls(func(&p, "same"))
         .iter()
         .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
+    assert!(calls(func(&p, "loose"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::LooseEq))));
 }
 
 #[test]
@@ -450,7 +459,7 @@ fn interface_values_and_default_methods() {
     assert_eq!(adt(&p, "A").vtable, vec![def_id(&p, "A.greet")]);
     assert!(calls(func(&p, "all"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 0 })));
+        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 0, .. })));
     // `new A()` has no impl of its own: upcast to U, then ToDyn with U's impl.
     assert!(exprs(main)
         .iter()
@@ -501,46 +510,45 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    // A pure call may initialize a module constant (#383); one with effects may not.
+    // A pure call may initialize a module constant (#383); one with effects makes it module
+    // state, evaluated once (#802), and so does an array that is not a table.
     ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    let r = err_src(
-        "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
-    );
-    assert!(
-        r.contains("`f` cannot initialize module constant `X`"),
-        "{r}"
-    );
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() { console.log(X); }");
     // An array of number or boolean literals is a table (read-only data).
     ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
-    let r = err_src("const X: string[] = [\"a\"]; function main() {}");
-    assert!(r.contains("only arrays of numbers or booleans"), "{r}");
-    // Only as the whole initializer: an array inside a struct constant is not a table.
-    let r = err_src(
+    ok_src("const X: string[] = [\"a\"]; function main() { X.push(\"b\"); }");
+    ok_src(
         "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
     );
-    assert!(r.contains("constant expressions or pure calls"), "{r}");
-    let r = err_src("const X: i64[] = [1 + 1]; function main() {}");
-    assert!(r.contains("is not a literal"), "{r}");
-    let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
-    assert!(r.contains("module-level constant `X`"), "{r}");
-    let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
-    assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
-    // What the compiler can't follow could write to it: a function value, a binding through `!`.
-    let r = err_src(
-        "const X: u8[] = [1]; function main() { const f = (xs: u8[]) => xs.fill(0); f(X); }",
+    ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
+    // An initializer that may throw makes the constant module state; one whose type is an
+    // error reports only that error.
+    ok_src("function f(n: i64): i64 { if (n < 0) { throw new Error(\"x\"); } return n; } const D = f(1); function main() { console.log(D); }");
+    let r = err_src("const BAD = JSON.parse(\"{bad\"); function main() { console.log(BAD); }");
+    assert!(r.contains("cannot infer type parameter"), "{r}");
+    assert!(!r.contains("may throw"), "{r}");
+    // A module-level `let` is module state; an imported one is read-only where imported.
+    ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
+    // A table the program modifies, takes over or passes to a function value is module state
+    // instead, the one array Node evaluates once (#1383).
+    let slots = |src: &str| ok_src(src).module_state.map_or(0, |m| m.slots.len());
+    for main in [
+        "X.push(2);",
+        "X.fill(0);",
+        "const f = (xs: u8[]) => xs.fill(0); f(X);",
+        "const v = X!; v.push(2);",
+    ] {
+        let src = format!("const X: u8[] = [1]; function main() {{ {main} console.log(X); }}");
+        assert_eq!(slots(&src), 1, "{main}");
+    }
+    assert_eq!(
+        slots("const X: u8[] = [1]; function main() { console.log(X[0], X.length); }"),
+        0
     );
-    assert!(
-        r.contains("cannot pass module constant `X` to a function value"),
-        "{r}"
-    );
-    let r = err_src("const X: u8[] = [1]; function main() { const v = X!; v.push(2); }");
-    assert!(r.contains("cannot move out of module constant `X`"), "{r}");
-    let r = err_src(
-        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
-    );
-    assert!(
-        r.contains("cannot move out of module constant `C.X`"),
-        "{r}"
+    // So is a `static readonly` field (Node evaluates it once, with its class).
+    assert_eq!(
+        slots("class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); console.log(C.X); }"),
+        1
     );
 }
 
@@ -618,7 +626,7 @@ fn interface_fields_through_values_and_generics() {
     );
     assert!(calls(func(&p, "viaDyn"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 1 })));
+        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 1, .. })));
     assert!(calls(func(&p, "viaGeneric"))
         .iter()
         .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
@@ -640,11 +648,19 @@ fn interface_fields_through_values_and_generics() {
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
          function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4i64 })); }",
     );
+    // A writable field is written through the setter slot after the getters (#1112).
+    let p = ok_src(
+        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; }
+         function main() { const x = { age: 2i64 }; f(x); console.log(x.age); }",
+    );
+    assert!(calls(func(&p, "f"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
     let r = err_src(
-        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
+        "interface Aged { readonly age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
     );
     assert!(
-        r.contains("cannot modify `age` through an interface or generic value"),
+        r.contains("cannot assign to `age`: it is a readonly field"),
         "{r}"
     );
 }

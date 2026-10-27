@@ -69,10 +69,20 @@ fn narrowing_applies_to_captures() {
 
 #[test]
 fn variables_closures_assign_are_not_narrowed() {
+    // A null check narrows until the next assignment in the same function (#1199); the read
+    // checks the value again, as `clear()` may have run the closure.
+    ok_src(
+        "function f(u: string | null): number {
+           const clear = () => { u = null; };
+           if (u != null) { clear(); return u.length; } return 0; }
+         function main() { console.log(f(\"a\")); }",
+    );
+    // Not in a closure that captures it: the closure may run after the other one did.
     let r = err_src(
         "function f(u: string | null): usize {
            const clear = () => { u = null; };
-           if (u != null) { clear(); return u.length; } return 0; }
+           if (u != null) { const len = (): usize => u.length; clear(); return len(); }
+           return 0; }
          function main() { console.log(f(\"a\")); }",
     );
     assert!(
@@ -148,4 +158,72 @@ fn instanceof_downcasts_test_the_class_and_read_as_the_subclass() {
          function main() { console.log(f(new B())); }",
     );
     assert!(r.contains("no field `x` on type `A`"), "{r}");
+}
+
+#[test]
+fn nullable_unions_narrow_to_some_members() {
+    ok_src(
+        "interface V { t: string }
+         function f(x: V | string | number | null): V | string | null {
+           if (typeof x === \"number\") { return null; } return x; }
+         function g(x: string | null | undefined): string | null { const y = x ?? null; return y; }
+         function main() { console.log(f(1), g(undefined)); }",
+    );
+    // What the test leaves must fit: `string` is still possible here.
+    let r = err_src(
+        "interface V { t: string }
+         function f(x: V | string | number | null): V | null {
+           if (typeof x === \"number\") { return null; } return x; }
+         function main() { console.log(f(1)); }",
+    );
+    assert!(r.contains("mismatched types"), "{r}");
+}
+
+#[test]
+fn union_fields_narrow_to_some_members_and_call_their_function() {
+    ok_src(
+        "interface P { f?: string | number | (() => string) }
+         function f(p: P): string {
+           if (typeof p.f === \"function\") { return p.f(); }
+           const r: string | number | undefined = p.f;
+           return `${r}`;
+         }
+         function main() { console.log(f({ f: () => \"a\" })); }",
+    );
+    let r = err_src(
+        "interface P { f: string | (() => string) }
+         function f(p: P): string { return p.f(); }
+         function main() { console.log(f({ f: \"a\" })); }",
+    );
+    assert!(r.contains("cannot call `f` of type"), "{r}");
+}
+
+#[test]
+fn any_converts_to_a_union_with_one_interface_member() {
+    ok_src(
+        "interface V { t: string }
+         function f(a: any): V | string | number { return a; }
+         function main() { console.log(f(\"s\")); }",
+    );
+    // Two interfaces cannot be told apart at run time.
+    let r = err_src(
+        "interface V { t: string } interface W { w: number }
+         function f(a: any): V | W | string { return a; }
+         function main() { console.log(f(\"s\")); }",
+    );
+    assert!(r.contains("no run-time test for"), "{r}");
+}
+
+#[test]
+fn a_field_narrowed_to_a_function_and_another_member_reads_without_an_expected_type() {
+    // The union `f64 | () => f64` is complete once the function type's errors are solved.
+    ok_src(
+        "interface I { v: string | number | (() => number) }
+         function g(b: I): string {
+           if (typeof b.v === \"string\") { return \"str\"; }
+           const r = b.v;
+           return `${typeof r}`;
+         }
+         function main() { console.log(g({ v: 3 })); }",
+    );
 }

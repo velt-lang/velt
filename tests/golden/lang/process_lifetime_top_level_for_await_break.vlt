@@ -1,0 +1,20 @@
+// Leaving a top-level `for await` early closes the generator, and the top level waits for its
+// cleanup: when that never settles, Node's warning names the loop and the exit code is 13
+// (#1366).
+async function* gen(): AsyncGenerator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log("cleanup");
+    await new Promise<void>((resolve) => {});
+  }
+}
+
+for await (const x of gen()) {
+  console.log("x", x);
+  if (x === 1) {
+    break;
+  }
+}
+console.log("after");

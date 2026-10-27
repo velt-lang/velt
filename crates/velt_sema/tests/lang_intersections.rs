@@ -16,7 +16,7 @@ fn show(p: &Program, t: TyId) -> String {
         TyKind::Float(_) => "f64".into(),
         TyKind::Int(_) => "int".into(),
         TyKind::Bool => "boolean".into(),
-        TyKind::Option(x) => format!("{} | null", show(p, *x)),
+        TyKind::Option(x, _) => format!("{} | null", show(p, *x)),
         TyKind::Literal(v) => format!("{v:?}"),
         TyKind::Adt(d, _) => match p.def(*d) {
             Def::Adt(a) => {
@@ -130,21 +130,29 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
         ),
         ("type A = f64[] & { y: f64 };", "is an array"),
         (
-            "type A = (() => void) & (() => void);",
+            "type A = ((x: string) => void) & ((x: f64) => void);",
             "function types (overloads)",
         ),
         (
-            "interface S { show(): string } type A = S & { y: f64 };",
-            "interface with methods",
+            "interface S { show(): string } interface R { show(): f64 } type A = S & R;",
+            "overloads are not supported",
         ),
         (
-            "function g<T>(x: T & { y: f64 }) {}",
-            "`T` is a type parameter",
+            "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
+            "`K` is a class",
         ),
     ] {
         let e = err_src(&format!("{src} function main() {{}}"));
         assert!(e.contains(needle), "{src}: {e}");
     }
+}
+
+#[test]
+fn an_interface_with_methods_and_an_object_type_make_an_interface() {
+    ok_src(
+        "interface S { show(): string } type A = S & { y: f64 };
+         function main() { const a: A = { show: () => \"s\", y: 1 }; const s: S = a; console.log(s.show(), a.y); }",
+    );
 }
 
 #[test]
@@ -192,7 +200,7 @@ fn identity_through_a_union_tells_the_copy_apart() {
     // `===` on unions with no conversion anywhere, or on a union of other object types only.
     ok_src(&format!(
         "{src} function main() {{ const a: A = {{ a: 1 }}; const x: A | null = a;
-           const y: A | null = null; const u: A | string = a; const v: A | string = \"s\";
+           const y: A | null = null; const u = a as A | string; const v = \"s\" as A | string;
            console.log(x === a, a === x, x === y, u === v, [x, y].includes(a), [x, y].indexOf(null)); }}"
     ));
     ok_src(&format!(
@@ -234,7 +242,7 @@ fn spreading_the_copy_tells_it_apart() {
         "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
            const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
     ));
-    assert!(e.contains("spreads a `A`"), "{e}");
+    assert!(e.contains("spreads an `A`"), "{e}");
     // Spreading the source keeps all its fields, as in Node.
     ok_src(&format!(
         "{src} function g(a: A): f64 {{ return a.a; }}
@@ -287,12 +295,18 @@ fn a_plain_primitive_or_another_brand_is_not_a_brand() {
 }
 
 #[test]
-fn interfaces_do_not_merge_and_the_note_says_so() {
-    let e = err_src("interface X { a: f64 } interface X { b: f64 } function main() {}");
-    assert!(
-        e.contains("Velt does not merge interface declarations"),
-        "{e}"
-    );
+fn an_interface_does_not_merge_with_a_class_and_the_note_says_so() {
+    // Either order: TypeScript merges an interface with a class of the same name.
+    for src in [
+        "interface X { a: f64 } class X { b = 1 } function main() {}",
+        "class X { b = 1 } interface X { a: f64 } function main() {}",
+    ] {
+        let e = err_src(src);
+        assert!(
+            e.contains("Velt merges an interface only with other interface declarations"),
+            "{e}"
+        );
+    }
 }
 
 #[test]
@@ -327,9 +341,74 @@ fn an_alias_may_refer_to_itself_through_written_object_types() {
             .count(),
         1
     );
-    // Parts that are not written out, or that share a field, still can't.
-    let e = err_src("type A = { v: f64 }; type T = A & { kids: T[] }; function main() {}");
+    // A part may name an alias of an object type in the same module (#783).
+    let p = ok_src(
+        "type A = { v: f64 }; type T = A & { kids: T[] }; function f(x: T): f64 { return x.v; }
+         function main() { console.log(f({ v: 1, kids: [] })); }",
+    );
+    assert!(show(&p, func(&p, "f").params[0].ty).starts_with("{ v: f64; kids: "));
+    // Parts that are not object types, or that share a field, still can't.
+    let e = err_src("type A = string[]; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
-    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
-    assert!(e.contains("an alias may refer to itself when"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: number }; function main() {}");
+    assert!(e.contains("field `kids` has another type"), "{e}");
+}
+
+#[test]
+fn a_type_parameter_part_is_reduced_where_its_argument_is_known() {
+    // #350: callers see the merged object type; the type argument is inferred from the fields
+    // the object part names, else from the whole argument.
+    ok_src(
+        "type Signal<T> = T & { $set: (v: T) => void };
+         function relay<T extends object>(s: Signal<T>): Signal<T> { return s; }
+         function stamp<T>(x: T & { id: string }): T & { id: string } { return x; }
+         function main() {
+           const s: Signal<{ n: number }> = { n: 1, $set: (v) => { console.log(v.n); } };
+           const r = relay(s);
+           r.$set({ n: r.n + 1 });
+           const t = stamp({ a: 1, id: \"x\" });
+           console.log(t.a, t.id);
+         }",
+    );
+    // `any`, `unknown` and `object` parts, as TypeScript intersects them.
+    let p = param("function f(x: unknown & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+    let p = param("function f(x: object & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+}
+
+#[test]
+fn members_of_a_deferred_intersections_object_parts_are_available_in_generic_code() {
+    ok_src("function f<T>(x: T & { id: string }): string { x.id = x.id + \"!\"; return x.id; } function main() { console.log(f({ a: 1, id: \"k\" })); }");
+    let e = err_src(
+        "function f<T>(x: T & { id: string }): string { return x.name; } function main() {}",
+    );
+    assert!(
+        e.contains("has only the members of its object parts"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_declared_intersection_infers_its_other_parts() {
+    // tsc: `T = A` for an argument declared `A & { id: string }` against `T & { id: string }`.
+    ok_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.a);
+         }",
+    );
+    let e = err_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.id);
+         }",
+    );
+    assert!(e.contains("no field `id`"), "{e}");
 }

@@ -1,6 +1,7 @@
 // The keyspace: one map per value type (strings, the hot path, need no tag check), expiry
 // times in an index of their own (src/structs.vlt), checked on access and swept in the
 // background.
+import { utf8DecodeLossy } from "velt:encoding";
 import { Deque } from "velt:collections/deque";
 import { Expires, MemberSet, ZSet } from "./structs";
 
@@ -111,7 +112,30 @@ export class Db {
     if (v == null && this.kind(key) !== "none") {
       throw wrongType();
     }
-    return v;
+    return v ?? null;
+  }
+
+  /// Only strings and no expiry: a key is a string key or nothing, so the string map alone
+  /// answers (the hot path of GET and SET, which then needs no key string).
+  private onlyStrings(): bool {
+    return this.expires.size === 0 && this.size() === (this.strings.size as i64);
+  }
+
+  /// `getString` of the key whose UTF-8 bytes are `key` (`text` decodes them the same way).
+  getStringUtf8(key: u8[]): u8[] | null {
+    if (!this.onlyStrings()) {
+      return this.getString(utf8DecodeLossy(key));
+    }
+    return this.strings.getUtf8(key) ?? null;
+  }
+
+  /// `setString(text(key), value, false)` for a plain SET.
+  setStringUtf8(key: u8[], value: u8[]) {
+    if (!this.onlyStrings()) {
+      this.setString(utf8DecodeLossy(key), value, false);
+      return;
+    }
+    this.strings.setUtf8(key, value);
   }
 
   /// SET: replaces whatever `key` held; `keepTtl` keeps its expiry.

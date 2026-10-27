@@ -23,12 +23,14 @@ pub(crate) struct Lens {
     throw_checks: usize,
     fresh_checks: usize,
     object_copies: [usize; 5],
-    jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
     closures: usize,
     reported: usize,
     completed: usize,
+    globals_done: usize,
+    kept: usize,
+    class_values: usize,
     ide: Option<[usize; 4]>,
 }
 
@@ -39,12 +41,14 @@ impl Lens {
             throw_checks: cx.throw_checks.len(),
             fresh_checks: cx.fresh_checks.len(),
             object_copies: cx.object_copies.mark(),
-            jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
             closures: cx.closure_defs.len(),
             reported: cx.rec.reported.len(),
             completed: cx.rec.completed.len(),
+            globals_done: cx.rec.globals_done.len(),
+            kept: cx.kept_consts.len(),
+            class_values: cx.objects.class_values.len(),
             ide: cx
                 .ide
                 .as_ref()
@@ -138,7 +142,6 @@ impl Mark {
         cx.throw_checks.truncate(m.throw_checks);
         cx.fresh_checks.truncate(m.fresh_checks);
         cx.object_copies.rollback(m.object_copies);
-        cx.jsx_adapters.truncate(m.jsx_adapters);
         cx.fn_values.truncate(m.fn_values);
         for d in cx.fn_defs.split_off(m.fn_defs) {
             drop_orphan(cx, d);
@@ -150,6 +153,11 @@ impl Mark {
             cx.callback_wrappers.remove(&c);
         }
         cx.rec.reported.truncate(m.reported);
+        let kept = cx.kept_consts.split_off(m.kept.min(cx.kept_consts.len()));
+        crate::kept_consts::unkeep(cx, kept);
+        let values = &mut cx.objects.class_values;
+        let values = values.split_off(m.class_values.min(values.len()));
+        cx.drop_class_values(values);
         if let (Some(r), Some([refs, types, scopes, params])) = (&mut cx.ide, m.ide) {
             r.refs.truncate(refs);
             r.types.truncate(types);
@@ -163,6 +171,14 @@ impl Mark {
             f.state = BodyState::Unchecked;
             if inferred && error {
                 f.ret_source = RetSource::Body;
+            }
+        }
+        // So are the module constants checked since the mark (a first read inside a trial,
+        // #1475): the closures their initializers created are gone with the trial.
+        for g in cx.rec.globals_done.split_off(m.globals_done) {
+            if let crate::defs::DefInfo::Global(g) = &mut cx.info[g.0 as usize] {
+                g.state = BodyState::Unchecked;
+                g.init = None;
             }
         }
         // Bodies checked since the mark are unchecked again; those checked before it keep
@@ -219,11 +235,6 @@ impl Mark {
             start[4],
             &ranges(|l| l.object_copies[4]),
         );
-        keep_ranges(
-            &mut cx.jsx_adapters,
-            m.jsx_adapters,
-            &ranges(|l| l.jsx_adapters),
-        );
         keep_ranges(&mut cx.fn_values, m.fn_values, &ranges(|l| l.fn_values));
         let own_fns = keep_ranges(&mut cx.fn_defs, m.fn_defs, &ranges(|l| l.fn_defs));
         let own_closures = keep_ranges(&mut cx.closure_defs, m.closures, &ranges(|l| l.closures));
@@ -232,6 +243,11 @@ impl Mark {
         }
         keep_ranges(&mut cx.rec.reported, m.reported, &ranges(|l| l.reported));
         keep_ranges(&mut cx.rec.completed, m.completed, &ranges(|l| l.completed));
+        let kept = keep_ranges(&mut cx.kept_consts, m.kept, &ranges(|l| l.kept));
+        crate::kept_consts::unkeep(cx, kept);
+        let values = &mut cx.objects.class_values;
+        let values = keep_ranges(values, m.class_values, &ranges(|l| l.class_values));
+        cx.drop_class_values(values);
         if let (Some(r), Some(start)) = (&mut cx.ide, m.ide) {
             let ide = |k: usize| -> Vec<(usize, usize)> {
                 segments
@@ -306,12 +322,14 @@ mod tests {
             throw_checks: 0,
             fresh_checks: 0,
             object_copies: [0; 5],
-            jsx_adapters: 0,
             fn_values: 0,
             fn_defs: 0,
             closures: 0,
             reported: 0,
             completed,
+            globals_done: 0,
+            kept: 0,
+            class_values: 0,
             ide: None,
         }
     }

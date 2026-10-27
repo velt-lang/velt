@@ -37,7 +37,7 @@ struct Sig {
 
 impl FnCx<'_, '_> {
     /// Is `obj.name` a method (not a field or getter) of `obj`'s type?
-    pub(super) fn is_method_value(&mut self, t: TyId, name: &str) -> bool {
+    pub(crate) fn is_method_value(&mut self, t: TyId, name: &str) -> bool {
         if self.record_args(t).is_some() || self.field_of(t, name).is_some() {
             return false;
         }
@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type `e` (a variable, `this` or a path of fields) has, without checking it.
-    pub(super) fn peek_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+    pub(crate) fn peek_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
         if !is_path(e) {
             return None;
         }
@@ -131,6 +131,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.own_literal_iface(obj.ty) {
+            return self.detached_literal_method(prop, span);
+        }
         // `this` and a `const`/`using` local name one object for as long as the value lives:
         // the arrow names it directly and captures it as an arrow would, with no block around
         // it (so a callback parameter keeps it off the heap, and a `using` value stays put).
@@ -146,13 +149,23 @@ impl FnCx<'_, '_> {
                 obj.span,
             )
         };
-        let Some((arrow, fn_ty)) = self.bound_parts(obj.ty, recv, prop, exp, span) else {
+        // Where a generic function type is expected, a generic closure calling the method at
+        // each call's type arguments (`generic_values.rs`).
+        let generic = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
+        let parts = match generic.and_then(|g| self.cx.generic_sig(g)) {
+            Some(g) => {
+                let arrow = bound_arrow(recv, prop, g.method.params.len(), &[], false, span);
+                Some((arrow, generic.unwrap_or(self.cx.ty.error)))
+            }
+            None => self.bound_parts(obj.ty, recv, prop, exp, span),
+        };
+        let Some((arrow, fn_ty)) = parts else {
             let d = Diagnostic::error(
                 format!("method `{}` cannot be used as a function value", prop.name),
                 prop.span,
             )
             .with_note(
-                "a generic method, or one with a rest parameter, has no single function type",
+                "a generic method, or one with a rest parameter, has no single function type: use it where a generic function type (`<T>(x: T) => R`) is expected, or",
             )
             .with_note(format!(
                 "wrap it in an arrow function: `{}`",
@@ -162,7 +175,10 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         if direct {
-            return self.bound_closure(&arrow, fn_ty, None);
+            return match generic {
+                Some(g) => self.generic_closure(&arrow, Some(g)),
+                None => self.bound_closure(&arrow, fn_ty, None),
+            };
         }
         self.push_scope();
         set_place_mode(&mut obj, UseMode::Move);
@@ -177,7 +193,10 @@ impl FnCx<'_, '_> {
             },
             span: at,
         }];
-        let value = self.bound_closure(&arrow, fn_ty, None);
+        let value = match generic {
+            Some(g) => self.generic_closure(&arrow, Some(g)),
+            None => self.bound_closure(&arrow, fn_ty, None),
+        };
         self.pop_scope();
         let ty = value.ty;
         let block = hir::Block {
@@ -229,6 +248,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(t)
             || !self.direct_receiver(object, t)
             || !self.is_method_value(t, &prop.name)
+            || self.own_literal_iface(t)
         {
             return None;
         }
@@ -313,15 +333,31 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws: error,
+            rest: false,
         });
         let arrow = bound_arrow(recv, prop, n, &defaults, discard, span);
         Some((arrow, fn_ty))
     }
 
+    /// [`method_sig`](Self::method_sig)'s parameter types and result.
+    pub(super) fn method_param_tys(
+        &mut self,
+        t: TyId,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<(Vec<TyId>, TyId)> {
+        self.method_sig(t, prop, span).map(|s| (s.params, s.ret))
+    }
+
     /// The parameter types and result of method `prop` on values of type `t`, when it has one
     /// function type (not generic, no rest parameter).
     fn method_sig(&mut self, t: TyId, prop: &ast::Ident, span: Span) -> Option<Sig> {
-        match self.resolve_method(t, &prop.name)? {
+        let r = self.resolve_method(t, &prop.name)?;
+        let fill = match &r {
+            Resolved::Virtual { def, slot, .. } => self.fill_slot(t, *def, *slot, None),
+            _ => None,
+        };
+        match r {
             Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
                 let slots: Option<Vec<TyId>> = slots.into_iter().collect();
                 let slots = slots?;
@@ -330,12 +366,34 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let params = c.params.iter().map(|p| self.cx.subst(p.ty, &slots));
-                let params = params.collect();
+                let params: Vec<TyId> = params.collect();
                 let ret = self.cx.subst(c.ret, &slots);
-                let defaults = match self.cx.fn_info(def).source {
+                let mut defaults = match self.cx.fn_info(def).source {
                     Some(src) => literal_defaults(&crate::body::defaults::fn_sig_ast(src).params),
                     None => c.params.iter().map(|_| None).collect(),
                 };
+                let mut params: Vec<TyId> = params;
+                if let Some(f) = fill {
+                    // An override's default may run: the value takes those parameters as
+                    // `T | undefined` and leaves the default to the method that runs.
+                    let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+                    for k in 0..params.len() {
+                        if !f.positions.contains(&k) {
+                            if k >= defaults.len() {
+                                break;
+                            }
+                            continue;
+                        }
+                        params[k] = self.cx.ty.option_of(params[k], hir::Nothing::Undefined);
+                        if k < defaults.len() {
+                            defaults[k] = Some(undefined());
+                        } else if k == defaults.len() {
+                            defaults.push(Some(undefined()));
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 Some(Sig {
                     params,
                     defaults,
@@ -353,12 +411,22 @@ impl FnCx<'_, '_> {
                     .iter()
                     .map(|p| self.cx.subst(p.ty, &iface_args));
                 let params: Vec<TyId> = params.collect();
+                // A type parameter left after substituting the interface's arguments is one of
+                // the enclosing generic definition's (`options: RendererOptions<N>` in
+                // `createRenderer<N>`), in scope for the arrow too.
                 let ret = self.cx.subst(method.ret, &iface_args);
-                let generic = |s: &Self, t: TyId| s.cx.mentions_params(t);
-                if params.iter().any(|p| generic(self, *p)) || generic(self, ret) {
-                    return None;
-                }
-                let defaults = params.iter().map(|_| None).collect();
+                // An interface method's only defaults are the `undefined` of its optional
+                // parameters (`anchor?: N | null`), which the function value takes too, as a
+                // class method's (the parser gives `x?: T` the default `undefined`, #930).
+                let defaults = method
+                    .params
+                    .iter()
+                    .map(|p| {
+                        p.default
+                            .as_ref()
+                            .map(|_| synth(ast::ExprKind::Lit(ast::Lit::Undefined), span))
+                    })
+                    .collect();
                 Some(Sig {
                     params,
                     defaults,
@@ -371,7 +439,10 @@ impl FnCx<'_, '_> {
 
     /// `(x) => recv.prop(x)` with the parameter names of `object`'s method, for notes.
     fn arrow_fix(&mut self, object: &ast::Expr, recv: &ast::Expr, prop: &ast::Ident) -> String {
-        let recv = path_text(recv).unwrap_or_else(|| "obj".into());
+        // A hidden temporary (`#d1`, a destructured value) has no name the source knows.
+        let recv = path_text(recv)
+            .filter(|t| !t.starts_with('#'))
+            .unwrap_or_else(|| "obj".into());
         let names = self.param_names(object, prop).join(", ");
         format!("({names}) => {recv}.{}({names})", prop.name)
     }
@@ -557,7 +628,7 @@ pub(super) fn is_path(e: &ast::Expr) -> bool {
 }
 
 /// `a.b.c` for a path (`None` for other expressions).
-fn path_text(e: &ast::Expr) -> Option<String> {
+pub(super) fn path_text(e: &ast::Expr) -> Option<String> {
     match &strip_parens(e).kind {
         ast::ExprKind::Ident(x) => Some(x.name.clone()),
         ast::ExprKind::This => Some("this".into()),

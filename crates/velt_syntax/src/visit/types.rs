@@ -21,7 +21,7 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_generics(type_params, v);
             walk_type(ty, v);
         }
-        T::Construct(ty) => walk_type(ty, v),
+        T::Construct(ty) | T::TupleRest(ty) | T::TupleOptional(ty) => walk_type(ty, v),
         T::Function {
             params,
             ret,
@@ -42,13 +42,32 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_type(&key.ty, v);
             walk_type(value, v);
         }
+        T::Callable { sigs, members } => {
+            sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
+            walk_type(members, v);
+        }
         T::KeyOf(inner) => walk_type(inner, v),
+        T::Conditional(c) => {
+            walk_type(&c.check, v);
+            walk_type(&c.extends, v);
+            walk_type(&c.then, v);
+            walk_type(&c.else_, v);
+        }
+        T::Mapped(m) => {
+            walk_type(&m.source, v);
+            if let Some(n) = &m.name {
+                walk_type(n, v);
+            }
+            walk_type(&m.value, v);
+        }
+        T::TemplateLiteral { types, .. } => types.iter().for_each(|t| walk_type(t, v)),
+        T::Infer(_) => {}
         T::Predicate { ty, .. } => {
             if let Some(t) = ty {
                 walk_type(t, v);
             }
         }
-        T::Literal(_) | T::Null | T::Void | T::Query(_) => {}
+        T::Literal(_) | T::Null | T::Undefined | T::Void | T::Query(_) => {}
     }
 }
 

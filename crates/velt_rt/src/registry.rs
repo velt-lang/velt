@@ -1,5 +1,5 @@
 //! Handle tables for the runtime objects `std` exposes: TCP listeners and streams, UDP sockets,
-//! child processes, file readers and writers, WebSockets, HTTP servers, requests and responses
+//! child processes, file readers and writers, HTTP servers, requests and responses
 //! (rt_abi_async.md §3.2).
 //!
 //! Velt code copies those structs freely, so after `close()` through one copy another copy (in
@@ -206,6 +206,12 @@ impl<T> Registry<T> {
 /// The error of an operation on a closed handle (`IoError` code `EBADF`).
 pub fn closed_error() -> VeltErr {
     VeltErr::new(code::BAD_HANDLE, "handle is closed")
+}
+
+/// [`closed_error`] as an `io::Error` (its code is kept: `EBADF`), for an operation whose handle
+/// was closed while it waited.
+pub(crate) fn closed_io_error() -> std::io::Error {
+    std::io::Error::other(closed_error())
 }
 
 /// A failed `IoResult<T>` for a closed handle.

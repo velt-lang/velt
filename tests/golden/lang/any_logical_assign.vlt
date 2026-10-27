@@ -1,0 +1,39 @@
+// `??=`, `||=` and `&&=` on members of an `any` (#924): the member is read once, and the
+// check: no leaks
+// right-hand side is evaluated and written only when the operator calls for it. (Velt's
+// objects have a fixed shape, so the members are declared.)
+function log(tag: string, v: number): number {
+  console.log("eval", tag);
+  return v;
+}
+
+function main(): void {
+  const ctx: any = {
+    n: 0,
+    s: "",
+    t: 2,
+    z: null,
+    w: undefined as (number | undefined),
+    _keys: undefined as (Set<string> | undefined),
+  };
+  const seen: Set<string> = (ctx._keys ??= new Set<string>());
+  seen.add("k");
+  console.log((ctx._keys ??= new Set<string>()) === seen, ctx._keys.size);
+  ctx.n ||= log("n", 5);
+  ctx.t ||= log("t", 9);
+  ctx.s &&= "never";
+  ctx.t &&= log("t2", 7);
+  ctx.z ??= log("z", 1);
+  ctx["w"] ??= 4;
+  const k = "t";
+  const r = (ctx[k] ??= log("k", 0));
+  console.log(ctx.n, ctx.t, ctx.s === "", ctx.z, ctx.w, r);
+  const xs: any = [1, 0];
+  xs[1] ||= 8;
+  xs[0] &&= 6;
+  console.log(xs);
+  const rec: any = {} as Record<string, number>;
+  rec.count ??= 1;
+  rec.count ??= 2;
+  console.log(rec);
+}

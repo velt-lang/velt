@@ -68,6 +68,39 @@ fn object_literal_methods() {
 }
 
 #[test]
+fn object_literal_accessors() {
+    round_trips(
+        "const o = {\n  get size(): number {\n    return 1;\n  },\n  set size(v: number) {\n    log(v);\n  },\n  get(key) {\n    return key;\n  },\n};\n",
+    );
+}
+
+#[test]
+fn object_literal_methods_using_this() {
+    // The parser gives these a leading `this` parameter, which is not written.
+    round_trips(
+        "const o = {
+  n: 1,
+  inc(by: number) {
+    this.n += by;
+  },
+  get double() {
+    return this.n * 2;
+  },
+  set double(v) {
+    this.n = v / 2;
+  },
+  *each(): Generator<number> {
+    yield this.n;
+  },
+  f: function () {
+    return this.n;
+  },
+};
+",
+    );
+}
+
+#[test]
 fn symbol_keys() {
     round_trips("const KEY: unique symbol = Symbol(\"k\");\n");
     round_trips(
@@ -167,4 +200,241 @@ fn array_pattern_holes_stay_holes() {
 }
 ",
     );
+}
+
+#[test]
+fn computed_keys() {
+    round_trips("const r = { a: 1, [o.tag]: 2, [k + \"!\"]: 3 };\n");
+    round_trips("function f(t: string) {\n  return { [t]: 1, ...rest };\n}\n");
+}
+
+#[test]
+fn import_meta() {
+    round_trips("const u = import.meta.url;\nconsole.log(import.meta.dirname);\n");
+}
+
+#[test]
+fn declare_global_and_module_blocks() {
+    round_trips("declare global {\n  // the hook\n  interface W {\n    a: number;\n  }\n}\n");
+    round_trips(
+        "declare module \"./m\" {\n  interface O {\n    b?: string;\n  }\n\n  export interface P {\n    c: number;\n  }\n}\n",
+    );
+}
+
+#[test]
+fn namespaces() {
+    round_trips(
+        "export namespace Define {
+  // a prop
+  export type Prop<T> = { value: T };
+
+  interface Hidden {
+    a: number;
+  }
+}
+",
+    );
+    round_trips(
+        "declare namespace A {
+  namespace B {
+    type X = number;
+  }
+}
+",
+    );
+}
+
+#[test]
+fn bracketed_and_numeric_keys_keep_their_spelling() {
+    // `[7]: 5` once printed as `7: 5`: brackets stay, and numeric names print as written.
+    round_trips("const r = { a: 1, [7]: 5, [\"lit\"]: 3, 8: 4, 0x10: 6 };\n");
+    round_trips("const s = { [\"q\"]: { [0]: 1 } };\n");
+}
+
+#[test]
+fn members_without_semicolons_parse() {
+    // A line break ends an interface or object type member, as in TypeScript.
+    let src =
+        "interface I {\n  a: number\n  m(): string\n}\ntype O = {\n  b: string\n  c?: number\n};\n";
+    let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
+    round_trips(&got);
+}
+
+#[test]
+fn call_and_construct_signatures_keep_their_form() {
+    // Interfaces stay interfaces (they merge, and `extends` / `implements` name them), members
+    // keep their order, and parameters their names, `?` and initializers.
+    round_trips(
+        "interface F {
+  // c
+  (x: number, y: string): string;
+}
+",
+    );
+    round_trips(
+        "interface H {
+  (x: number): string;
+  stop(): void;
+  n: number;
+}
+",
+    );
+    round_trips("interface E extends F {\n  (z: boolean): void;\n}\n");
+    round_trips("interface P {\n  new (x: number): P;\n  <T>(y: T): T;\n}\n");
+    round_trips("interface I {\n  (x: number): string;\n  [key: string]: number;\n}\n");
+    round_trips("type Q = { (x?: number): void };\n");
+    round_trips("type D = { (x = 1): void };\n");
+    round_trips("type G = { <T>(x: T): T; z: string };\n");
+    round_trips("type U = { new (x: number): Foo } | null;\n");
+    round_trips("type S = { (): void; (x: number): number };\n");
+    round_trips("let f: { (x: number): string } = g;\n");
+}
+
+#[test]
+fn construct_and_generic_function_types_in_unions_keep_their_parentheses() {
+    // `new (x: number) => Foo | null` would return `Foo | null`.
+    round_trips("type U = (new (x: number) => Foo) | null;\n");
+    round_trips("type A = (new () => Foo)[];\n");
+    round_trips("type B = (<T>(x: T) => T) | null;\n");
+    round_trips("type C = (new () => Foo) & { n: number };\n");
+}
+
+#[test]
+fn call_signatures_are_formatted() {
+    let got = format_source(
+        "interface F { (x:number):string; n:number }\ntype T = {(x:number):string}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "interface F {\n  (x: number): string;\n  n: number;\n}\n\ntype T = { (x: number): string };\n"
+    );
+    if let Err(msg) = common::check(&got) {
+        panic!("{msg}");
+    }
+}
+
+#[test]
+fn a_type_alias_may_end_at_the_closing_brace() {
+    let got = format_source(
+        "namespace N { type U = string }\ndeclare global {\n  namespace G { type V = number }\n}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "namespace N {\n  type U = string;\n}\n\ndeclare global {\n  namespace G {\n    type V = number;\n  }\n}\n"
+    );
+}
+
+#[test]
+fn var_declarations_keep_var() {
+    round_trips("function f(n: number) {\n  var hi = n / 16;\n  var lo = n % 16;\n  let s = 1;\n  return hi + lo + s;\n}\n");
+    let got = format_source(
+        "function f() {\n  var a = 1, b = 2;\n  let c = 3, d = 4;\n  return a + b + c + d;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(got, "function f() {\n  var a = 1;\n  var b = 2;\n  let c = 3;\n  let d = 4;\n  return a + b + c + d;\n}\n");
+}
+
+#[test]
+fn async_generic_object_literal_methods() {
+    round_trips(
+        "const o = {
+  async go<T>(x: T): Promise<T> {
+    return x;
+  },
+};
+console.log(o);
+",
+    );
+}
+
+#[test]
+fn let_after_var_stays_let() {
+    // A `for (let …)` after a `var` statement (its declaration starts at the name).
+    round_trips(
+        "function f(): void {\n  var x = 1;\n  for (let i = 0; i < 1; i++) {}\n  for (let i = 0, j = 1; i < j; i++) {}\n  console.log(x);\n}\n",
+    );
+    let got =
+        format_source("function f(): void {\n  var x = 1;\n  let y = 2, z = 3;\n}\n").unwrap();
+    assert_eq!(
+        got,
+        "function f(): void {\n  var x = 1;\n  let y = 2;\n  let z = 3;\n}\n"
+    );
+}
+
+#[test]
+fn var_keeps_var_across_nested_declarations() {
+    // The first initializer contains declarations; the next declarator is still a `var`.
+    let got = format_source(
+        "function f() {\n  var a = () => { let x = 1; return x; }, b = 2;\n  var c = { m() { const q = 1; return q; } }, d = 3;\n  let e = () => { var y = 1; return y; }, g = 4;\n  return b + d + g;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        got,
+        "function f() {\n  var a = () => {\n    let x = 1;\n    return x;\n  };\n  var b = 2;\n  var c = {\n    m() {\n      const q = 1;\n      return q;\n    },\n  };\n  var d = 3;\n  let e = () => {\n    var y = 1;\n    return y;\n  };\n  let g = 4;\n  return b + d + g;\n}\n"
+    );
+    round_trips(&got);
+}
+
+#[test]
+fn optional_parameters_in_function_types() {
+    round_trips("type F = (app: App, options?: Options) => void;\n");
+    round_trips("type F = (x?: string | null) => string;\n");
+}
+
+#[test]
+fn optional_and_rest_tuple_elements() {
+    round_trips("type A = [x?: number, ...rest: string[]];\n");
+    round_trips("type B = [string, number?];\n");
+    round_trips("type C = readonly [Ref, ...A];\n");
+}
+
+#[test]
+fn generic_method_signatures_in_object_types() {
+    round_trips("type S = { run<T>(fn: () => T): T | undefined; stop(): void };\n");
+    round_trips("interface I {\n  wrap?<A>(a: A): A;\n  name: string;\n}\n");
+}
+
+#[test]
+fn catch_binding_annotations() {
+    round_trips("try {\n  f();\n} catch (e: unknown) {\n  g(e);\n}\n");
+    round_trips("try {\n  f();\n} catch (err: any) {\n  g(err);\n}\n");
+}
+
+#[test]
+fn literal_and_number_member_names_keep_their_form() {
+    round_trips(
+        "interface I {\n  [\"x-y\"]: number;\n  [2]: string;\n  1.5: string;\n  [-1]: string;\n  [Flags.SKIP]?: boolean;\n}\n",
+    );
+    round_trips("class C {\n  [\"size\"] = 3;\n  1.5 = \"a\";\n  [-2] = \"m\";\n}\n");
+    round_trips("type O = { 1.5: string; [\"a b\"]: number };\n");
+    round_trips(
+        "const o = { 1.50: \"y\", [-1]: \"n\", [\"p\"]: 2 };\nconst { 1.5: a, [-1]: b } = o;\n",
+    );
+}
+
+#[test]
+fn static_blocks() {
+    round_trips(
+        "class S {\n  static n: number = 1;\n  static {\n    S.n += 1;\n  }\n  static {}\n}\n",
+    );
+}
+
+#[test]
+fn accessors_in_object_types() {
+    round_trips("type T = {\n  get v(): number;\n  set v(x: number);\n  label: string;\n};\n");
+    round_trips("type G<X> = {\n  get item(): X;\n};\n\ninterface I {\n  get v(): number;\n}\n");
+    round_trips("function f(x: { get size(): number }): number {\n  return x.size;\n}\n");
+    round_trips("let a: { get n(): number; set n(v: number) };\nlet b: { set m(x: string) };\n");
+    // Each accessor is kept as written: the setter first, a setter of its own type.
+    round_trips("let y: { set b(val: number); get b(): number };\n");
+    round_trips("let z: { get w(): string; set w(input: string | number) };\n");
+    // Members named `get` and `set` stay fields and methods.
+    round_trips("let c: { get: () => number; set(x: number): void };\n");
+}
+
+#[test]
+fn as_as_a_name() {
+    round_trips("function as(x: any): any {\n  return x;\n}\n\nconst v = as(as(1)) as number;\n");
 }

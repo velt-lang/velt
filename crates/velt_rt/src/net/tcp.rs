@@ -4,10 +4,11 @@
 //! future holds its own `Arc`, so generated code may close a handle at any time without
 //! dangling futures (the socket is released once the last in-flight operation finishes or is
 //! dropped), and using a closed handle through any copy of the Velt struct fails with `EBADF`.
-//! Reads and writes go through `&TcpStream` readiness APIs, so one task can read while another
-//! writes.
+//! One task can read while another writes. The object behind a stream handle is in `stream.rs`:
+//! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
-use super::utf8::Utf8Decoder;
+use super::stream::{Ready, StreamObj, Writing};
+use super::sys::{TcpListener, TcpStream};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -15,16 +16,52 @@ use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
-use std::sync::Mutex;
-use tokio::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use tokio::sync::Notify;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.
 pub const DEFAULT_READ: u64 = 64 * 1024;
 
-/// A connected stream plus the undecoded tail of a UTF-8 sequence split across `readString`s.
-pub struct StreamObj {
-    stream: TcpStream,
-    utf8: Mutex<Utf8Decoder>,
+/// How long a TLS handshake may take.
+const TLS_HANDSHAKE: Duration = Duration::from_secs(10);
+
+/// A listening socket; with `tls`, accepted connections are TLS streams.
+pub struct ListenerObj {
+    listener: TcpListener,
+    tls: Option<TlsAcceptor>,
+    /// Set by `close()`, which also wakes the accepts waiting then: they fail with `EBADF`
+    /// instead of waiting for a connection that keeps the socket bound and the process alive.
+    closed: AtomicBool,
+    closing: Notify,
+}
+
+impl ListenerObj {
+    fn new(listener: TcpListener, tls: Option<TlsAcceptor>) -> ListenerObj {
+        ListenerObj {
+            listener,
+            tls,
+            closed: AtomicBool::new(false),
+            closing: Notify::new(),
+        }
+    }
+
+    /// The next connection, or `None` once the listener is closed.
+    async fn accept(&self) -> Option<io::Result<(TcpStream, std::net::SocketAddr)>> {
+        let closing = self.closing.notified();
+        let mut closing = std::pin::pin!(closing);
+        // Registered before the check: a close in between still wakes it.
+        closing.as_mut().enable();
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let accept = std::pin::pin!(self.listener.accept());
+        match futures_util::future::select(closing, accept).await {
+            futures_util::future::Either::Left(_) => None,
+            futures_util::future::Either::Right((r, _)) => Some(r),
+        }
+    }
 }
 
 /// An accepted connection on its way to the task that serves it. With the per-core scheduler a
@@ -58,12 +95,12 @@ impl Handoff {
 }
 
 /// Opaque listener handle.
-pub type ListenerHandle = Key<TcpListener>;
+pub type ListenerHandle = Key<ListenerObj>;
 /// Opaque stream handle.
 pub type StreamHandle = Key<StreamObj>;
 
-static LISTENERS: Registry<TcpListener> = Registry::new();
-static STREAMS: Registry<StreamObj> = Registry::new();
+static LISTENERS: Registry<ListenerObj> = Registry::new();
+pub(crate) static STREAMS: Registry<StreamObj> = Registry::new();
 
 /// Owned text of a string argument (copied: async operations outlive the call).
 pub(crate) unsafe fn text_arg(s: *const VeltStr) -> String {
@@ -72,12 +109,7 @@ pub(crate) unsafe fn text_arg(s: *const VeltStr) -> String {
 
 fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
     let r = r.and_then(|s| s.set_nodelay(true).map(|()| s));
-    IoResult::from_io(r, |stream| {
-        STREAMS.insert(StreamObj {
-            stream,
-            utf8: Mutex::new(Utf8Decoder::default()),
-        })
-    })
+    IoResult::from_io(r, |stream| STREAMS.insert(StreamObj::tcp(stream)))
 }
 
 /// `listen("host:port")` → result slot `IoResult<ListenerHandle>`. Port 0 picks a free port.
@@ -86,7 +118,52 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
     let addr = text_arg(addr);
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |l| LISTENERS.insert(l))
+        IoResult::from_io(r, |listener| {
+            LISTENERS.insert(ListenerObj::new(listener, None))
+        })
+    })
+}
+
+fn invalid<T: Send + 'static>(message: &str) -> *mut VeltFut {
+    let e = VeltErr::new(crate::result::code::INVALID_INPUT, message);
+    new_leaf(async move { IoResult::<T>::err(e) })
+}
+
+/// The ALPN protocols in a comma-separated list ("" = none).
+unsafe fn alpn_arg(alpn: *const VeltStr) -> Vec<Vec<u8>> {
+    (*alpn)
+        .text_lossy()
+        .split(',')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.as_bytes().to_vec())
+        .collect()
+}
+
+/// `listenTls("host:port", { cert, key, alpn })` → `IoResult<ListenerHandle>`: a listener whose
+/// accepted streams are TLS (PEM certificate chain and private key; `alpn` = the protocols to
+/// offer, comma-separated, "" for none). Bad PEM fails with `EINVAL`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_listen_tls(
+    addr: *const VeltStr,
+    cert_pem: *const VeltStr,
+    key_pem: *const VeltStr,
+    alpn: *const VeltStr,
+) -> *mut VeltFut {
+    let config = crate::tls::server_config_alpn(
+        (*cert_pem).text_lossy().as_bytes(),
+        (*key_pem).text_lossy().as_bytes(),
+        alpn_arg(alpn),
+    );
+    let acceptor = match config {
+        Ok(c) => TlsAcceptor::from(c),
+        Err(msg) => return invalid::<ListenerHandle>(&msg),
+    };
+    let addr = text_arg(addr);
+    new_leaf(async move {
+        let r = crate::dev::bind(addr.as_str()).await;
+        IoResult::from_io(r, |listener| {
+            LISTENERS.insert(ListenerObj::new(listener, Some(acceptor)))
+        })
     })
 }
 
@@ -96,44 +173,98 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
 pub unsafe extern "C" fn velt_rt_tcp_listener_port(l: ListenerHandle) -> u32 {
     LISTENERS
         .get(l)
-        .and_then(|o| o.local_addr().ok())
+        .and_then(|o| o.listener.local_addr().ok())
         .map_or(0, |a| a.port() as u32)
 }
 
 /// Release a listener handle (closing it again is a no-op).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
-    LISTENERS.remove(l);
+    if let Some(obj) = LISTENERS.remove(l) {
+        obj.closed.store(true, Ordering::Release);
+        obj.closing.notify_waiters();
+    }
 }
 
-/// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
+/// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled). On a TLS listener the handshake
+/// is the stream's setup (its first operation runs it, and reports its failure), so a slow or
+/// silent client does not hold up the next `accept`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
-    LISTENERS.op::<StreamHandle>(l, |listener| {
-        new_leaf(async move { stream_result(listener.accept().await.map(|(s, _)| s)) })
+    LISTENERS.op::<StreamHandle>(l, |obj| {
+        new_leaf(async move {
+            let Some(accepted) = obj.accept().await else {
+                return IoResult::err(closed_error());
+            };
+            let Some(acceptor) = obj.tls.clone() else {
+                return stream_result(accepted.map(|(s, _)| s));
+            };
+            let r = accepted.and_then(|(s, peer)| s.set_nodelay(true).map(|()| (s, peer)));
+            IoResult::from_io(r, |(stream, peer)| {
+                STREAMS.insert(StreamObj::lazy(Box::pin(async move {
+                    let tls = tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream))
+                        .await
+                        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
+                    Ok(Ready::other(Box::new(tls), Some(peer)))
+                })))
+            })
+        })
     })
 }
 
 /// `connect("host:port")` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltFut {
+    // A hand-off: the server (often in this program) may accept on another worker at once.
+    crate::io::publish_before_handoff();
     let addr = text_arg(addr);
     new_leaf(async move { stream_result(TcpStream::connect(addr.as_str()).await) })
 }
 
-/// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
-async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
-    loop {
-        // The buffer is allocated once there is something to read, so a connection waiting
-        // for data holds none (a server's idle connections would otherwise each keep `max`).
-        stream.readable().await?;
-        let mut buf = Vec::with_capacity(max.clamp(1, 16 << 20) as usize);
-        match stream.try_read_buf(&mut buf) {
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-            Ok(_) => return Ok(buf),
+/// The host of a "host:port" address (without the brackets of an IPv6 literal).
+fn host_of(addr: &str) -> &str {
+    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
+    host.trim_start_matches('[').trim_end_matches(']')
+}
+
+/// `connectTls("host:port", { serverName, ca, alpn })` → `IoResult<StreamHandle>` once the TLS
+/// handshake is done. `server_name` "" = the host of `addr`; `ca_pem` = extra trusted PEM CA
+/// certificates ("" = the built-in roots only); `alpn` as for `velt_rt_tcp_listen_tls`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
+    addr: *const VeltStr,
+    server_name: *const VeltStr,
+    ca_pem: *const VeltStr,
+    alpn: *const VeltStr,
+) -> *mut VeltFut {
+    crate::io::publish_before_handoff();
+    let addr = text_arg(addr);
+    let name = match text_arg(server_name) {
+        n if n.is_empty() => host_of(&addr).to_string(),
+        n => n,
+    };
+    let config = crate::tls::client_config_alpn((*ca_pem).text_lossy().as_bytes(), alpn_arg(alpn));
+    let config = match config {
+        Ok(c) => c,
+        Err(msg) => return invalid::<StreamHandle>(&msg),
+    };
+    let Ok(name) = rustls::pki_types::ServerName::try_from(name) else {
+        return invalid::<StreamHandle>("invalid TLS server name");
+    };
+    new_leaf(async move {
+        let r = async {
+            let tcp = TcpStream::connect(addr.as_str()).await?;
+            tcp.set_nodelay(true)?;
+            let peer = tcp.peer_addr().ok();
+            let connect = TlsConnector::from(config).connect(name, tcp);
+            let tls = tokio::time::timeout(TLS_HANDSHAKE, connect)
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
+            Ok(Ready::other(Box::new(tls), peer))
         }
-    }
+        .await;
+        IoResult::from_io(r, |ready| STREAMS.insert(StreamObj::ready(ready)))
+    })
 }
 
 fn chunk_size(max: u64) -> u64 {
@@ -149,16 +280,28 @@ fn chunk_size(max: u64) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_read(s: StreamHandle, max: u64) -> *mut VeltFut {
     let max = chunk_size(max);
+    // A leaf per kind of stream: a raw socket's pending read stays as small as it was.
     STREAMS.op::<VeltBytes>(s, |obj| {
-        new_leaf(async move {
-            IoResult::from_io(read_chunk(&obj.stream, max).await, VeltBytes::from_vec)
-        })
+        if obj.plain().is_some() {
+            return new_leaf(async move {
+                let r = match obj.plain() {
+                    Some(stream) => obj.read_raw(stream, max).await,
+                    None => read_any(&obj, max).await,
+                };
+                IoResult::from_io(r, VeltBytes::from_vec)
+            });
+        }
+        new_leaf(async move { IoResult::from_io(read_any(&obj, max).await, VeltBytes::from_vec) })
     })
+}
+
+async fn read_any(obj: &StreamObj, max: u64) -> io::Result<Vec<u8>> {
+    obj.read(max).await
 }
 
 async fn read_text(obj: &StreamObj, max: u64) -> io::Result<String> {
     loop {
-        let chunk = read_chunk(&obj.stream, max).await?;
+        let chunk = read_any(obj, max).await?;
         let mut dec = obj.utf8.lock().unwrap_or_else(|e| e.into_inner());
         let text = dec.decode(&chunk, chunk.is_empty());
         // A chunk holding only part of a character decodes to nothing: read on.
@@ -183,18 +326,6 @@ pub unsafe extern "C" fn velt_rt_tcp_read_string(s: StreamHandle, max: u64) -> *
     })
 }
 
-async fn write_all(stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
-    while !data.is_empty() {
-        stream.writable().await?;
-        match stream.try_write(data) {
-            Ok(n) => data = &data[n..],
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-}
-
 /// `write(data)` (a string, copied; one U+FFFD per lone surrogate) → `IoResult<()>` once
 /// everything is written.
 #[no_mangle]
@@ -211,25 +342,103 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
     write_copy(s, (*data).as_bytes())
 }
 
-fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
-    let data = data.to_vec();
+pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+    // A hand-off: the peer (often a task of this program) may read these bytes on another
+    // worker before this task's poll ends, so what it printed before the write goes first.
+    crate::io::publish_before_handoff();
     STREAMS.op::<()>(s, |obj| {
-        new_leaf(async move { IoResult::from_io(write_all(&obj.stream, &data).await, |()| ()) })
+        // Bytes deferred with `writeLater` go first: these join their queue.
+        if obj.later.active() {
+            let data = data.to_vec();
+            return new_leaf(
+                async move { IoResult::from_io(obj.write_queued(&data).await, |()| ()) },
+            );
+        }
+        // Counted from the call, so a write made after this one waits for it.
+        let (w, first) = Writing::begin(obj);
+        // A raw socket usually takes everything at once: written here, from the caller's
+        // buffer, there is nothing to copy and nothing to wait for. Not while an earlier write
+        // is still going on: these bytes go after its. In the socket's turn, which the rest
+        // keeps, so no other thread's write gets between the two parts.
+        let mut rest = data;
+        let mut turn = None;
+        if let Some((stream, t)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) {
+            while !rest.is_empty() {
+                match stream.try_write(rest) {
+                    Ok(n) => rest = &rest[n..],
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => {
+                        return new_leaf(std::future::ready(IoResult::<()>::from_io(
+                            Err(e),
+                            |()| (),
+                        )))
+                    }
+                }
+            }
+            if rest.is_empty() {
+                return new_leaf(std::future::ready(IoResult::ok(())));
+            }
+            turn = Some(t);
+        }
+        let data = rest.to_vec();
+        new_leaf(async move { IoResult::from_io(w.0.write_in_turn(&data, turn).await, |()| ()) })
     })
+}
+
+/// `tryWrite(data)`: writes what a raw socket takes right now, without waiting, and returns the
+/// number of bytes written. 0 when nothing can be written now, also for a closed handle, a
+/// stream that is not a raw socket (TLS) or not set up yet, and after an error (the next
+/// `write` reports it).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    try_write_now(s, (*data).as_bytes())
+}
+
+/// What `velt_rt_tcp_try_write` writes of `data`.
+pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
+    crate::io::publish_before_handoff();
+    let Some(obj) = STREAMS.get(s) else { return 0 };
+    if obj.later.active() {
+        return 0;
+    }
+    // Nothing while another write goes on (these bytes go after its), in the socket's turn.
+    let (w, first) = Writing::begin(obj);
+    let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
+        return 0;
+    };
+    let mut done = 0;
+    while done < data.len() {
+        match stream.try_write(&data[done..]) {
+            Ok(n) => done += n,
+            Err(_) => break,
+        }
+    }
+    done as u64
 }
 
 /// Shut down the write half (the peer reads end of stream). `out` receives the status.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr) {
+    // The peer reads the end of the stream: a hand-off like a write.
+    crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else {
         return out.write(closed_error());
     };
-    // tokio only offers shutdown through `AsyncWrite` (needs `&mut`); go to the socket directly.
-    let e = match socket2::SockRef::from(&obj.stream).shutdown(std::net::Shutdown::Write) {
+    let e = match obj.shutdown() {
         Ok(()) => VeltErr::ok(),
         Err(e) => VeltErr::from_io(&e),
     };
     out.write(e);
+}
+
+/// `abort()`: fails the operations in flight on the stream, and every later one (a raw socket
+/// is shut down in both directions). The handle stays open until `velt_rt_tcp_close`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_abort(s: StreamHandle) {
+    crate::io::publish_before_handoff();
+    if let Some(obj) = STREAMS.get(s) {
+        obj.abort();
+    }
 }
 
 /// Remote address as `ip:port` (empty string if unavailable or closed).
@@ -237,15 +446,22 @@ pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr
 pub unsafe extern "C" fn velt_rt_tcp_peer_addr(s: StreamHandle, out: *mut VeltStr) {
     let a = STREAMS
         .get(s)
-        .and_then(|o| o.stream.peer_addr().ok())
+        .and_then(|o| o.peer_addr())
         .map(|a| a.to_string())
         .unwrap_or_default();
     out.write(VeltStr::from_bytes(a.as_bytes()));
 }
 
-/// `close()`: release a stream handle (the socket closes when no operation is in flight);
-/// closing it again, through any copy, is a no-op.
+/// `close()`: release a stream handle (the socket closes when no operation is in flight; one
+/// that waits for input then ends with `EBADF`, a write in flight goes on); closing it again,
+/// through any copy, is a no-op.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_close(s: StreamHandle) {
-    STREAMS.remove(s);
+    crate::io::publish_before_handoff();
+    if let Some(obj) = STREAMS.remove(s) {
+        // An operation still in flight holds the stream too: its waits for input end now.
+        if std::sync::Arc::strong_count(&obj) > 1 {
+            obj.close_reads();
+        }
+    }
 }

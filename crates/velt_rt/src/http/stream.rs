@@ -159,6 +159,8 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_write_bytes(
     w: WriterHandle,
     data: *const VeltBytes,
 ) -> u8 {
+    // A hand-off: the body may reach the client (often a task of this program) at once.
+    crate::io::publish_before_handoff();
     WRITERS
         .get(w)
         .is_some_and(|obj| obj.write((*data).as_bytes())) as u8
@@ -168,6 +170,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_write_bytes(
 /// is behind); false once the stream ended or the client went away.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_flush(w: WriterHandle) -> *mut VeltFut {
+    crate::io::publish_before_handoff();
     let obj = WRITERS.get(w);
     new_leaf(async move {
         match obj {
@@ -181,6 +184,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_flush(w: WriterHandle) -> *mut
 /// the client went away first or the writer was already closed.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_close(w: WriterHandle) -> *mut VeltFut {
+    crate::io::publish_before_handoff();
     let obj = WRITERS.remove(w);
     new_leaf(async move {
         match obj {
@@ -194,6 +198,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_close(w: WriterHandle) -> *mut
 /// the handle. No-op on a closed writer.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_abort(w: WriterHandle) {
+    crate::io::publish_before_handoff();
     if let Some(obj) = WRITERS.remove(w) {
         obj.abort();
     }

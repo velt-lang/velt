@@ -30,6 +30,68 @@ velt add textkit                    # the latest version, into package.vlt and v
 import { slugify } from "textkit";
 ```
 
+## npm packages
+
+Velt compiles TypeScript packages from npm, and the packages of pnpm, npm and Yarn workspaces,
+from their sources, without a `paths` alias for each import. A bare import that no `paths`
+alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivity/internals`,
+`sigx`) names an npm package:
+
+1. **Finding it**, as Node does: `node_modules/<name>` in the importing file's directory or one
+   above it (at its real path when it is a symlink, as Node loads it, so pnpm's
+   `node_modules/.pnpm` layout finds the package's own dependencies), then the package the importing
+   file belongs to when it has that name, then the packages of the workspace around it
+   (`packages:` globs in `pnpm-workspace.yaml`, or `workspaces` in the root `package.json`), so
+   a workspace compiles before `pnpm install` has linked anything. A `**` glob does not enter
+   symlinked directories, and the search lists at most 10,000 directories: past that, an
+   import it did not find says which pattern to narrow.
+2. **The file**, from its `package.json`: `exports` when it has one (a subpath it doesn't list
+   is an error, as in Node), else `types`, `main`, then `index`. Conditions are matched in the
+   order the package writes them, as in Node, with those of a server build as Vite's SSR build
+   picks them: `node`, `import`, `module` and `default`. `browser`, `require`, `development`
+   and `production` never match (Velt has no development or production mode), so a package that
+   maps `browser` and `node` to different files is compiled from its `node` one. As in Node,
+   only the first matching condition counts: with `{ "node": "./dist/server.js", "default":
+   "./dist/client.js" }`, Velt compiles the source of `dist/server.js` or reports that it has
+   none, never the client build. Besides it, the targets of `types` and `velt` (a package can
+   point Velt at a file of its own) are tried as hints to the source.
+3. **Back to the source.** The file `exports` names is usually build output
+   (`./dist/index.js`, `./dist/index.d.ts`). Velt drops the extension and looks for the
+   TypeScript file it was built from, as TypeScript's project references do: below `rootDir`
+   where the package's `tsconfig.json` puts `outDir` (or `declarationDir`), then with `dist/`,
+   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place (`.ts`, `.tsx`,
+   `/index.ts`, `/index.tsx`). A `velt` target is tried first, then the target Node loads, then
+   the `types` target, wherever each is written: with `{ "types": "./dist/index.d.ts", "node":
+   "./dist/index.node.js" }`, Velt compiles `src/index.node.ts`, as Node runs its build, and
+   `"types"` still finds `src/index.ts` when the JavaScript bundle has another name.
+4. **The root's fallback.** When none of the targets of the package's root (`import "sigx"`,
+   not a subpath such as `sigx/internals`) has a source, Velt compiles `src/index.ts` (or
+   `src/index.tsx`). Packages built with Rollup need it, Vue's among them: `main` and Node's
+   `default` name a CommonJS shim (`index.js`, `module.exports = require("./dist/…")`), and
+   `types` a declaration file rolled up from all of `src/` and named after the package
+   (`dist/runtime-dom.d.ts`), none of which says where the source is. It applies only when no
+   target of the root under any condition has a source, those Velt never matches included
+   (`browser`, `require`, `default` after `node`): with `{ "node": "./dist/server.js",
+   "default": "./dist/client.js" }` and a `src/client.ts`, the package has a source per
+   environment, and `src/index.ts` may be the client's entry, so a missing `src/server.ts` stays
+   an error. A subpath is mapped only as step 3 says. A package without TypeScript sources is an error that names the file Node
+   loads and says what was looked for.
+
+The package's modules then compile like the program's own, and their `env.d.ts` constants come
+from [`define`](manifest.md#define). A Velt dependency of the same name wins over an npm
+package, so a Velt package named `sigx` and the npm `sigx` can live side by side.
+
+**A package that brings the browser along.** When a package has no server condition and its
+entry re-exports DOM code (sigx's `sigx` re-exports `@sigx/runtime-dom`), alias it for the
+server build with `paths`, which win over npm packages:
+
+```ts ignore
+paths: {
+  "sigx": "server/sigx",                     // export * from "@sigx/reactivity" and "@sigx/runtime-core"
+  "sigx/internals": "server/sigx-internals", // the same two packages' "/internals"
+},
+```
+
 ## Registries
 
 - **Local** (the default): a directory, `$VELT_REGISTRY` or `~/.velt/registry/<name>/<version>/`.

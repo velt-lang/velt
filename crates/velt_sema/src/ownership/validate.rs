@@ -3,7 +3,7 @@
 //! and captured variables (each with a `.clone()` hint), and functions used as values whose
 //! parameters are owned (a function value's ABI borrows).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -11,8 +11,7 @@ use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, TyId,
-    UseMode,
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, UseMode,
 };
 use crate::visit;
 
@@ -31,15 +30,16 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         };
         let mut errors = vec![];
         let mut copied_captures = vec![];
-        let mut deep_copies = vec![];
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
-        let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
+        let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        keep_moved_constants(cx, &mut f.body.block, &soft);
         let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
+            d,
             f: &f,
             kinds: &kinds,
             copy: &copy,
@@ -63,24 +63,17 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 if !invalid.is_empty() {
                     match super::fn_values::borrowed_fn_copy(
                         v.cx,
+                        d,
                         v.f,
                         v.kinds,
                         v.keeps_fn_params,
                         e,
                     ) {
                         Some(err) => errors.push(err),
-                        // An async closure that may run on several threads at once (an
-                        // http handler) copies what it captured: counts are not atomic. (An
-                        // async generator and a local async closure stay on their task and
-                        // share, like JS.)
-                        None if v.f.is_async
-                            && !v.f.is_generator
-                            && !v.f.shares_captures
-                            && v.captured(e) =>
-                        {
-                            deep_copies.push((e.span, e.ty));
-                            soft::make_deep_copy(e)
-                        }
+                        // Anything else is shared, a capture of an async closure that may
+                        // run on another thread too: each call's state owns a copy of what the
+                        // closure captured (velt_vir async_fn/ctor.rs), so two reads of a
+                        // capture in one call are one object, as in JS (#1504).
                         None => soft::make_share(e),
                     }
                     return;
@@ -95,44 +88,57 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
             v.check(e, &mut errors)
         });
         cx.diags.extend(errors);
-        share_uncopyable(cx, &mut block, &deep_copies);
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for (c, pinned) in copied_captures {
             super::shares::share_captures(cx, c, &pinned);
         }
     }
-    fn_values(cx);
 }
 
-/// Of the captures an async closure deep-copies (`deep_copies`: the copy's span and type),
-/// those owning a resource without `clone()` are shared instead (#122): a copy would release
-/// the resource twice, and the call runs on the task that owns the closure. (An http handler
-/// clones what its body consumes per request, and that copy panics on such a resource.)
-fn share_uncopyable(cx: &mut Ctx, b: &mut crate::hir::Block, deep_copies: &[(Span, TyId)]) {
-    let spans: HashSet<Span> = deep_copies
-        .iter()
-        .filter(|(_, t)| cx.owns_uncopyable(*t))
-        .map(|(s, _)| *s)
-        .collect();
-    if spans.is_empty() {
-        return;
-    }
+/// A part moved out of a module constant (`return K.inner`, `const a = K.inner`): the constant is
+/// the one object the module state keeps (`crate::kept_consts::keep`), and lowering shares the
+/// part from it, as Node refers to it. A soft move shares a part of a new evaluation of the
+/// constant otherwise, which only shows for a part with identity (an object, an array).
+fn keep_moved_constants(cx: &mut Ctx, b: &mut crate::hir::Block, soft: &FxHashSet<Span>) {
+    let mut roots = vec![];
     visit::exprs_mut(b, &mut |e: &mut Expr| {
-        if let E::Call {
-            callee: c @ Callee::Intrinsic(Intrinsic::Clone),
+        if soft.contains(&e.span) && !crate::body::pure_init::mutable_identity(cx, e.ty) {
+            return;
+        }
+        let (E::Field {
+            base,
+            mode: UseMode::Move,
             ..
-        } = &mut e.kind
-        {
-            if spans.contains(&e.span) {
-                *c = Callee::Intrinsic(Intrinsic::Share);
+        }
+        | E::UnwrapSome(base, UseMode::Move)
+        | E::UnwrapVariant {
+            expr: base,
+            mode: UseMode::Move,
+            ..
+        }) = &e.kind
+        else {
+            return;
+        };
+        let mut cur: &Expr = base;
+        loop {
+            match &cur.kind {
+                E::Field { base, .. }
+                | E::UnwrapSome(base, _)
+                | E::UnwrapVariant { expr: base, .. }
+                | E::Downcast(base) => cur = base,
+                E::Global(d) => return roots.push(*d),
+                _ => return,
             }
         }
     });
+    for d in roots {
+        crate::kept_consts::keep(cx, d);
+    }
 }
 
 /// The shared captures (`super::shares::shared_captures`) of every closure created in `b`.
-fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId, Vec<LocalId>> {
+fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> FxHashMap<DefId, Vec<LocalId>> {
     let mut closures = vec![];
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         if let E::Closure(c) = e.kind {
@@ -147,10 +153,11 @@ fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId,
 
 struct Validator<'a, 'c, 'm> {
     cx: &'c Ctx<'m>,
+    d: DefId,
     f: &'a FnDef,
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
-    shared: &'a HashMap<DefId, Vec<LocalId>>,
+    shared: &'a FxHashMap<DefId, Vec<LocalId>>,
     /// Per local: is its type copyable?
     copy: &'a [bool],
     fixed: bool,
@@ -184,6 +191,7 @@ impl Validator<'_, '_, '_> {
                 if let [a] = args.as_slice() {
                     errors.extend(super::fn_values::borrowed_fn_copy(
                         self.cx,
+                        self.d,
                         self.f,
                         self.kinds,
                         self.keeps_fn_params,
@@ -208,6 +216,7 @@ impl Validator<'_, '_, '_> {
                             .then(|| {
                                 super::fn_values::borrowed_fn_copy(
                                     self.cx,
+                                    self.d,
                                     self.f,
                                     self.kinds,
                                     self.keeps_fn_params,
@@ -236,16 +245,7 @@ impl Validator<'_, '_, '_> {
         let mut cur = base;
         loop {
             if self.cx.class_of(cur.ty).is_some() {
-                let promise = matches!(self.cx.ty.kind(e.ty), crate::hir::TyKind::Promise(..));
-                let note = if promise {
-                    format!(
-                        "{}: await the promise before storing it in the object, or keep it \
-                         outside the object (in an array, taken out with `pop()`)",
-                        crate::promise_copies::WHY
-                    )
-                } else {
-                    "use `.clone()` to copy the field's value".to_string()
-                };
+                let note = "use `.clone()` to copy the field's value";
                 return errors.push(
                     Diagnostic::error("cannot move a field out of a class instance", e.span)
                         .with_note(note),
@@ -261,6 +261,8 @@ impl Validator<'_, '_, '_> {
                 | E::UnwrapSome(base, _)
                 | E::UnwrapVariant { expr: base, .. }
                 | E::Downcast(base) => cur = base,
+                // A part of a module-level `let`: lowering shares it, as the state keeps it.
+                E::Global(d) if self.cx.global(*d).is_some_and(|g| g.stored) => return,
                 E::Global(_) => {
                     return errors.push(
                         Diagnostic::error("cannot move out of a module constant", e.span)
@@ -284,12 +286,6 @@ impl Validator<'_, '_, '_> {
                 !invalid.is_empty()
             })
             .collect()
-    }
-
-    /// Is the place `e` rooted at a captured variable?
-    fn captured(&self, e: &Expr) -> bool {
-        crate::body::places::place_root(e)
-            .is_some_and(|l| matches!(self.kinds.get(l.0 as usize), Some(LocalKind::Capture)))
     }
 
     fn param_mode(&self, l: LocalId) -> Option<PassMode> {
@@ -362,6 +358,11 @@ pub(super) fn place_text(cx: &Ctx, locals: &[LocalDef], e: &Expr) -> String {
             let field = field.unwrap_or_else(|| index.to_string());
             format!("{}.{field}", place_text(cx, locals, base))
         }
+        // A `shared<T>` read in place: named by its handle.
+        E::Call {
+            callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::SharedRead),
+            args,
+        } if !args.is_empty() => place_text(cx, locals, &args[0]),
         _ => "the value".into(),
     }
 }
@@ -372,48 +373,4 @@ fn array_move(span: Span) -> Diagnostic {
         span,
     )
     .with_note("elements stay owned by the array; `xs[i].clone()` makes an owned copy")
-}
-
-/// Function values borrow their arguments; the value's thunk takes another reference to the
-/// ones a function owns (#224), which a value holding a promise (one owner) cannot give. A
-/// generic function is checked at its type arguments; a parameter type that still mentions a
-/// type parameter (a value taken inside a generic function) may hold a promise, so it is
-/// rejected.
-fn fn_values(cx: &mut Ctx) {
-    let values = cx.fn_values.clone();
-    for (d, args, span) in values {
-        let params: Vec<(String, TyId)> = cx
-            .fn_info(d)
-            .params
-            .iter()
-            .filter(|p| p.mode == PassMode::Owned)
-            .map(|p| (p.name.clone(), p.ty))
-            .collect();
-        let mut found = None;
-        for (pname, t) in params {
-            let t = cx.subst(t, &args);
-            if cx.mentions_params(t) {
-                found = Some((
-                    pname,
-                    "its type depends on a type parameter, which may be a promise",
-                ));
-                break;
-            }
-            if !cx.is_copy(t) && !cx.is_shared_value(t) {
-                found = Some((pname, "a promise has one owner"));
-                break;
-            }
-        }
-        let Some((pname, why)) = found else {
-            continue;
-        };
-        let fname = cx.fn_info(d).name.clone();
-        cx.error(
-            Diagnostic::error(
-                format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
-                span,
-            )
-            .with_note(format!("function values borrow their arguments, and {why}; call the function directly")),
-        );
-    }
 }

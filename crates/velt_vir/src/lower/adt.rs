@@ -45,7 +45,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Aggregate value of concrete type `ty` from owned field operands (registered as a temp).
-    fn build_agg(&mut self, ty: TyId, ops: Vec<Operand>) -> Operand {
+    pub(super) fn build_agg(&mut self, ty: TyId, ops: Vec<Operand>) -> Operand {
         let Ty::Agg(a) = (match self.cx.boxed(ty) {
             true => self.cx.payload_ty(ty),
             false => self.cx.ty(ty),
@@ -121,16 +121,13 @@ impl FnLower<'_, '_> {
         };
         let obj = self.alloc_object_raw(ty);
         self.own_half_built(obj.clone(), ty);
-        let from = match self.cx.adt_def(d).ctor {
-            Some(ctor) => {
-                let cargs = self.cx.ctor_type_args(ctor, ty);
-                self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
-                self.ctor_fields(ctor)
-            }
-            None => 0,
-        };
+        let ctor = self.cx.adt_def(d).ctor;
+        if let Some(ctor) = ctor {
+            let cargs = self.cx.ctor_type_args(ctor, ty);
+            self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+        }
         if !self.dead() {
-            self.new_inits(&obj, ty, from);
+            self.new_inits(&obj, ty, ctor);
         }
         self.own_built(&obj);
         Operand::Copy(obj)
@@ -141,7 +138,18 @@ impl FnLower<'_, '_> {
         let variant = match self.variant_at(hir_ty, variant, ty) {
             super::types::VariantAt::Index(v) => v,
             // The union collapsed to this member (`A | B` at `A = B`): the value itself.
-            super::types::VariantAt::Whole => return self.consume(&args[0]),
+            // Owned by a temporary, as a built union is: consumed, the consumer takes it; read
+            // in place, it is dropped after the statement.
+            super::types::VariantAt::Whole => {
+                let v = self.consume(&args[0]);
+                if self.dead() || !self.cx.needs_drop(ty) {
+                    return v;
+                }
+                let vt = self.cx.ty(ty);
+                let t = self.copy_to_temp(v, vt);
+                self.own_temp(t, ty);
+                return Operand::Copy(Place::local(t));
+            }
         };
         let tag_ty = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
@@ -177,9 +185,15 @@ impl FnLower<'_, '_> {
     pub(super) fn wrap_some(&mut self, inner: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let v = self.consume(inner);
-        // A generic `U` into `U | null` at a nullable `U`: the value already is the option.
+        // A generic `U` into `U | null` at a nullable `U`: the value already is the option. It
+        // is owned here (consumed above), so it goes into an owned temporary, which a consumer
+        // takes over; returned as the inner place, a consumer would share it and the moved
+        // value would never be released (#1228).
         if self.sub(inner.ty) == ty {
-            return v;
+            if self.dead() {
+                return v;
+            }
+            return self.own_value(v, ty);
         }
         match self.cx.ty(ty) {
             Ty::Ptr => self.own_value(v, ty),
@@ -193,10 +207,71 @@ impl FnLower<'_, '_> {
     pub(super) fn make_dyn(&mut self, e: &hir::Expr, impl_index: u32, ty: TyId) -> Operand {
         let cty = self.sub(e.ty);
         let ty = self.sub(ty);
+        if self.cx.is_narrow_dynamic(ty) {
+            // `object` / `Function` key collections by identity (issue #926).
+            self.cx.note_identity(ty);
+        }
+        if self.is_object_ty(ty) {
+            // What may be a weak `object` key (boxing/weak.rs): unpacked options and unions
+            // note their members (`object_leaf`).
+            match self.cx.kind(cty) {
+                TyKind::Dyn(..) => self.cx.note_to_object(None),
+                _ if !self.object_unpacks(cty) => self.cx.note_to_object(Some(cty)),
+                _ => {}
+            }
+        }
         self.cx.note_dyn_identity(ty, cty);
+        // A type parameter (or a deferred `T[K]`) converted to `any` / `unknown` (issue #1241)
+        // instantiated with a type sema would have unpacked (an option, a union, a literal type).
+        let unpack = self.cx.is_any_impl(impl_index)
+            && !self.is_object_ty(ty)
+            && matches!(
+                self.cx.kind(e.ty),
+                hir::TyKind::Param(_)
+                    | hir::TyKind::Op(hir::TyOp::Inline(_) | hir::TyOp::Alias(_), _)
+            )
+            && self.any_unpacks(cty);
         let v = self.consume(e);
         if self.dead() {
             return unit();
+        }
+        if unpack {
+            return self.any_unpack(v, cty, ty);
+        }
+        self.value_to_dyn(v, cty, ty, impl_index)
+    }
+
+    /// The owned value `v` of type `cty` as interface value `ty` through implementation
+    /// `impl_index` ([`make_dyn`](Self::make_dyn) after the operand is evaluated).
+    pub(super) fn value_to_dyn(
+        &mut self,
+        v: Operand,
+        cty: TyId,
+        ty: TyId,
+        impl_index: u32,
+    ) -> Operand {
+        // A type parameter bound by `object` / `Function` (issue #926) instantiated with a
+        // dynamic type: the same value, never a box in a box. It is returned as an owned
+        // temporary: a moved parameter's place would read as borrowed to `consume`, which
+        // would share it and leave the parameter undropped.
+        // `x as object` of an unbounded `T` (issue #926): an option or a union is unpacked, a
+        // primitive is a `TypeError`.
+        // A weak key's `any` (sema's `weak_key_coerce`, written `any`) enters unchecked.
+        if self.cx.is_any_impl(impl_index)
+            && self.is_object_ty(ty)
+            && !self.cx.is_dynamic(cty)
+            && self.object_unpacks(cty)
+        {
+            return self.object_unpack(v, cty, ty);
+        }
+        if self.cx.is_any_impl(impl_index) && self.cx.is_dynamic(cty) {
+            return self.own_value(v, ty);
+        }
+        if self.cx.is_any_impl(impl_index)
+            && matches!(self.cx.kind(cty), TyKind::Dyn(..))
+            && !self.cx.is_dynamic(cty)
+        {
+            return self.make_dyn_any(v, cty, ty);
         }
         let data = if self.cx.is_class(cty) || self.cx.boxed(cty) {
             v
@@ -207,7 +282,26 @@ impl FnLower<'_, '_> {
             self.store(proj(&bp, Proj::Deref(vt)), v);
             b
         };
-        let vtable = self.vtable_addr(VtableKey::Impl(impl_index, cty));
+        if self.cx.is_any_impl(impl_index) && self.is_proxy(cty) {
+            self.cx.note_proxy_new();
+        }
+        let key = match self.cx.kind(cty) {
+            // A generic closure (glue/generic_slots.rs): its table is per instance.
+            TyKind::Closure(_) => {
+                let targs = self.cx.intern(TyKind::Tuple(self.targs.clone()));
+                VtableKey::Closure(impl_index, targs)
+            }
+            _ => VtableKey::Impl(impl_index, cty),
+        };
+        let vtable = self.vtable_addr(key);
+        let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.proxiable(cty) {
+            true => self.proxy_any_parts(data, vtable),
+            false => (data, vtable),
+        };
+        let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.array_view(cty) {
+            true => self.view_any_parts(data, vtable, cty),
+            false => (data, vtable),
+        };
         self.build_agg(ty, vec![data, vtable])
     }
 

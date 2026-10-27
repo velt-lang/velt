@@ -18,11 +18,44 @@ last.
 
 `await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
-`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
+missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
+`await m.get(k)`) is a `number | undefined`, and so is `await x` with
+`x: number | Promise<void>`. `await` on a value that is no promise at all (`await null`,
+`await 5`, `await obj`) takes one step, as an awaited settled promise does, and gives the value
+itself; `await null;` is a common way to let queued callbacks run first. A value of type `any`
+or with a `then` method (a thenable) cannot be awaited this way yet.
+
+An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
+that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
+promise settles as the returned one does. The steps are Node's: the promise is adopted after the
+function has left every scope it returns from (`finally` blocks run, `using` values are disposed
+and the iterator of a `for…of` is closed first, and an enclosing `catch` does not see the
+rejection), and one microtask later than `return await` would settle. A `return` that a
+`finally` block cancels (with `continue`, `break` or another `return`) adopts nothing. A plain
+value of a `T | Promise<T>` is returned at once. Without a written result type the function's result is the promise's value type, as in
+TypeScript: `const f = async (n: number) => load(n)` with `load(n): Promise<number>` is a
+`(n: number) => Promise<number>`.
+
+```ts
+async function load(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function viaLoad(n: number): Promise<number> {
+  return load(n);
+}
+
+async function main() {
+  console.log(await viaLoad(21));
+}
+```
 
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
-TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+TypeScript: its body returns `View`. The same holds for such an arrow as the value of a
+module-level constant or a field initializer (`const load: () => number | Promise<number> = async
+() => 1;`). Such a result is told apart with `r instanceof Promise`
 ([unions](types.md#union-types)):
 
 ```ts
@@ -48,40 +81,80 @@ Promises behave like JavaScript's, at Rust's cost:
 |---|---|---|
 | `await f()` | `f` runs in place | nothing: no task, no allocation |
 | `const p = f()` … `await p` | `f` starts now, like JS: it runs until its first `await`, then concurrently with the caller | one small allocation |
-| `f();` | compile error (floating promise): write `await f()` or `spawn(f())` | — |
+| `f();` | compile error (floating promise): write `await f()` or `spawn(f())`; among the [top-level statements](modules.md) of the file a program starts from, it starts `f` as in Node, and the program waits for it before exiting | — |
 | `Promise.all` / `race` / `allSettled` / `any` | concurrent | one allocation per promise |
 
 - A started promise runs on its creator's task, never at the same time as the creator or the
   task's other promises (JavaScript's single-threaded model), so no thread-safety rules apply to
-  it. When it finishes, whoever awaits it resumes at once, like a JS microtask, so output order
-  matches Node. Only `spawn` puts work on another core.
+  it. Only `spawn` puts work on another core.
+- `await` takes Node's steps: the code after it runs one microtask after the promise settles
+  (one microtask later when it already has), behind the callbacks and other `await`s queued before it, so
+  promises started side by side interleave as in Node (`const a = f(); const b = g();` runs `f`
+  and `g` up to their first `await`, then the caller's next line, then their continuations in
+  turn). Awaiting an async call takes its step when the call returns. A program that never
+  starts a promise, chains a callback or settles one with a stored `resolve` can't tell the
+  steps apart, and its `await`s cost what a plain call does.
 - Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
   So the started promises (and the task itself) waiting for timers that are due together resume
   in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
   already due when it is first waited for (`sleep(0)`, or a `sleep` awaited after its delay
   passed) also waits for its turn: the code after it never runs before the synchronous code
-  that started it, nor before timers due earlier. Timers of different tasks have no order
-  between them, since the tasks run in parallel.
+  that started it, nor before timers due earlier. `sleep`s of different tasks have no order
+  between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
+  callbacks do, whichever task created them: they run in Node's order, one list per delay
+  ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
-  completion (its result is dropped), and the program waits for it before exiting, like Node
-  waits for pending work. A promise created outside async code (for example in a synchronous
+  completion (its result is dropped), and the program waits for it before exiting while it can
+  still make progress, like Node waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
+  on a task like an `async main`, so they run as in Node: up to their first `await` when
+  created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
-- After `main` returns, the process also waits for *handles*, as in Node: a listening
-  [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
-  `setInterval`) unless it is `unref()`ed. A spawned task is not a handle: tasks still running
-  when nothing else keeps the process alive end with it. `process.exit()` and an uncaught error
-  end the process at once.
+- After `main` returns (a synchronous one, an `async` one, or the top level), the process runs
+  while something can still happen, as in Node: a listening [server](../std/http.md), a pending
+  [timer](../std/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
+  and promises that run or wait for a timer or I/O (`sleep`, a socket, a file, a child
+  process). Spawned tasks are waited for like that too. What waits only for other promises or
+  tasks that can never settle it (a `resolve` nobody calls any more, a channel nobody sends on)
+  does not keep the process alive: once nothing else is left, the program ends with exit code
+  0, also when `async main` itself waits for such a promise. When the top level waits at such
+  an `await`, the program ends as Node's does: `Warning: Detected unsettled top-level await at
+  <file>:<line>` on stderr (without Node's copy of the source line) and exit code 13. That
+  includes the cleanup of an async generator a top-level `for await` left early, which is
+  awaited at the loop: Velt's warning always names the loop's line. Node's names the statement
+  that leaves the loop when that statement is not under an `if` (a `break`, `continue` or
+  `throw` directly in the body, also inside a plain block, with a label, or after an `if`
+  statement), and the loop when it is (`if (x) break;`, a `break` in an `else`,
+  `if (x) throw e;`) or when a call in the body throws; Velt differs in the first case
+  ([#1437](https://github.com/velt-lang/velt/issues/1437)). `process.exit()` and an uncaught error end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
-  outlive the caller's frame. A promise has one owner: using a promise variable after handing
-  it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
-  In a collection, a promise is replaced in place (`arr[i] = p`) and taken out with `pop()` or
-  `splice(i, 1)`, or awaited with the others by `Promise.all(arr)`. TypeScript lets several
-  places hold the same promise; Velt doesn't, so reading a promise element (`arr[i]`) and the
-  methods that copy values out (`m.get(k)`, `m.values()`, `arr.at(i)`, `arr.slice()`, …) are
-  compile-time errors for promises and for values that copy one (a struct with a promise
-  field); a class instance holding a promise is shared, so reading it out works. Shared
-  promises, which would make these reads work as in TypeScript, are planned (#212).
+  outlive the caller's frame.
+- **A promise is a shared value**, as in JavaScript: `const q = p`, storing a promise in a
+  `Map`, an array or a field and reading it out (`m.get(k)`, `arr[i]`, `entry.p`), and handing
+  it to `then` while keeping it, all give other holders of the same promise. Every holder may
+  await it, and each gets the result: an object result is the same object for every awaiter
+  (`(await p) === (await q)`), a string or a number is copied. A rejection reaches every
+  awaiter. The awaiters of a pending promise resume in the order they started waiting, as in
+  Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
+  only when every holder dropped it without awaiting it. A promise that is never shared costs
+  what it did before; a shared one costs a small side record and one share of the result per
+  `await`. A shared promise is driven on the task that shares it:
+  - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
+    using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
+    it on both tasks.
+  - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
+    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
+    capturing it, which runs as a task of its own, a `Promise.all` or `Promise.race` over it) is
+    awaited there through a copy. So is one inside a value that goes there while it is still
+    used here (an object, an array or a closure passed to a spawned call or sent over a
+    channel): the task gets a copy of the value, whose promises are other holders. The promise
+    still runs on its own task, and the other task gets the result transferred like a `spawn`
+    argument (moved, or copied while the first task still uses it), so `(await p) === (await q)`
+    holds only on one task. On the other task the holder is a promise of that task: it may be
+    shared again there, and handed on to a third task in turn.
+  - The holders of a pending promise are queued when it settles, in the order they started
+    waiting, as Node queues a promise's reactions: a `Promise.race` over a holder takes it before
+    a promise that settles later.
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited
@@ -92,7 +165,9 @@ Promises behave like JavaScript's, at Rust's cost:
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
   structured clone), so threads never share reference counts. As with a structured clone, an
   object the value reaches more than once is copied once (`p.x === p.y` still holds in the
-  task) and a cycle is copied as a cycle. That includes the receiver of
+  task) and a cycle is copied as a cycle. A view of an object (an `any` converted to an object
+  type, [Types](types.md)) is copied with its object: the task writes to its copy, and the
+  object here, converted again, is a view of this thread's object. That includes the receiver of
   `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
   closure or interface value passed to the task reaches. A closure the caller still uses
   afterwards is copied too, with what it captures (also a variable it assigns), so the task and
@@ -139,7 +214,10 @@ Promises behave like JavaScript's, at Rust's cost:
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
   is a `Promise<void>`; a promise passed in is returned as it is, as in JS). `T` comes from the
-  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type.
+  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type. A union with
+  promise members (`R | Promise<R>`, a sync-or-async callback's result) gives its promise
+  itself or a promise of its value; promises of another payload type than the others' are not
+  supported yet.
 - `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
   the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
 
@@ -171,6 +249,88 @@ on later, when that happens. So a loop of combinators that settle at once finish
 as it goes, like Node. A combinator
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
+
+## `then`, `catch` and `finally`
+
+Promises have JavaScript's callback methods. Each returns a new promise, which starts at once
+like any stored promise:
+
+- `p.then(f)`: `f(value)` once `p` fulfills; a rejection passes through to the new promise.
+- `p.then(f, g)`: `g(reason)` when `p` rejects. As in TypeScript, the new promise gives
+  what either callback gives (`Promise<A | B>`; a `g` that returns nothing adds `undefined`,
+  one that only throws, `(e) => { throw e; }`, adds nothing) and rejects with what either
+  throws. Two `async` callbacks give the same type (**Planned**: a union there too).
+  `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
+  `p.then(f)`, as in JS.
+- `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
+  promise's value type (a handler that only throws, `(e) => { throw e; }`, keeps it; on a
+  promise that never fulfills, `Promise.reject(e)`, the new promise gives what `g` gives), or
+  nothing: `p.catch(() => {})` (or an `async` handler) is a
+  `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
+  `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
+  type otherwise, `T | U`).
+- `p.finally(h)`: `h()` either way, then the value or the reason passes through.
+
+A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a
+promise of what `load` resolves to, settled in as many steps as in Node (one to adopt the
+returned promise, one after it settles). The new promise rejects with what `p` rejects with (unless
+it is handled) and with what the callback throws; a callback may throw a different error type
+only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept as a statement
+(`p.then(f);`) is not a floating promise: it runs to completion, and a rejection nobody handles
+is reported as uncaught, like a dropped promise, once the microtask queue is empty (as in
+Node). `queueMicrotask(f)` runs `f` as such a callback, but an error `f` throws ends the
+process at the throw, as in Node, like one a timer's callback throws
+([timers](../std/timers.md)). Both need async code around them:
+in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
+starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
+statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
+
+A promise may have several consumers, as in JavaScript: `p.then(f); p.then(g); await p` runs
+`f`, then `g`, then the code after the `await`, each with the value (see [Promises](#promises)).
+
+Callbacks run in Node's order: after the code that is running, in the order they were queued
+(each task has a microtask queue), and before timers and I/O: a `setTimeout` callback never
+runs before the callbacks queued by the task that scheduled it. `finally` passes the value or
+the reason on two steps after its callback, as in Node, and `Promise.allSettled` and
+`Promise.any` settle in the step Node's do. Chains interleave as in Node
+(`a.then(f1).then(f2)` next to `b.then(g1).then(g2)` runs `f1 g1 f2 g2`). Code after an `await`
+goes through the same queue, so `p.then(f); await q;` runs `f` first, as in Node. A `resolve` or
+`reject` called later (kept from `Promise.withResolvers()` or a `new Promise` executor) queues
+the callbacks and `await`s waiting for that promise right away, as Node does.
+
+Where the order still differs from Node's: `Promise.all` and `Promise.race` settle in fewer
+steps (they keep `await` on them fast), which matters only for callbacks and `await`s running
+next to them. Async generators take Node's steps (a `yield` awaits its value, `return()` awaits
+before it closes the body), except for calls queued behind a running one: such a call starts one
+step later than in Node, and the code after an `await` of an earlier call can run after it
+rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
+task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
+`resolve` called later resumes its waiters at the executor's next step, and so does a shared promise
+that settles (its other awaiters can run after callbacks queued later than in Node).
+
+```ts
+class Failed extends Error {}
+
+async function load(id: number): Promise<string, Failed> {
+  if (id < 0) {
+    throw new Failed(`no item ${id}`);
+  }
+  return `item ${id}`;
+}
+
+async function main() {
+  load(-1)
+    .catch((e) => e.message)
+    .then((m) => console.log(m));
+  const shown = load(1)
+    .then((item) => item.toUpperCase())
+    .finally(() => console.log("loaded"));
+  queueMicrotask(() => console.log("queued"));
+  console.log("first");
+  console.log(await shown);
+  // first, queued, no item -1, loaded, ITEM 1
+}
+```
 
 ## Async iteration
 
@@ -273,9 +433,8 @@ use one object (also on single-threaded WebAssembly, where tasks share the one t
 `spawn(p, { worker: i })` pins the task to worker `i` (`0` to `workerCount() - 1`, from
 [`velt:task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
 call or a task body (not a promise that already started); an index out of range is a panic at
-the spawn. A program that pins a task runs on the per-core scheduler, where every task stays on
-the worker it started on, so a caller pinned next to the task it talks to never wakes another
-thread. Calling `workerCount()` or `currentWorker()` alone doesn't change the scheduler.
+the spawn. Every task stays on the worker it started on unless that worker is busy enough to
+share its work, so a caller pinned next to the task it talks to never wakes another thread.
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
@@ -288,7 +447,9 @@ anything that task prints in response. Hand-offs are:
 - a channel `send`, a `close`, or a `receive` that frees room in a bounded channel;
 - settling a `new Promise` or `Promise.withResolvers` promise;
 - `abort()`;
-- a child leaving a task scope.
+- a child leaving a task scope;
+- sending on a socket: `fetch`, a server's response or body chunk, a TCP connect, write or
+  close, a UDP datagram (the peer is often a task of the same program).
 
 Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not covered: to keep
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
@@ -332,8 +493,161 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
+  Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
+  once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string, array or
+  typed array, `for (const x of s)` (also over a `Map`, `Set` or typed array), a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
+  (`s.includes(x)`, `s.get(k)`), and `s` passed where a `T` is expected (`count(s)` for
+  `count(xs: u8[])`). An index, a length or a field reads the value in place, and so does a
+  method of it and a function the value or a part of it is passed to, also the callbacks it
+  passes them to (`s.items.some((x) => x.ok)`) and its loops over arrays and maps (the
+  compiler builds a copy of the function that reads them without counting them). What keeps
+  the value or a part of it gets a copy: a parameter that keeps its argument (an `async`
+  function's, a stored one), a variable bound to a part (`const ps = s.ports`), a method's
+  result that is a part of it (`s.get(k)` of a `shared<Map<string, Item>>`), and a call
+  through a function value. Such a copy is another object: `s.get("k") === s.items[2]` and
+  `s.items.find((x) => x.v == 2) === s.items[2]` are `false`, where JavaScript compares the
+  shared object with itself. A change to a part is refused where the compiler follows how it
+  got there: through a variable bound or assigned to it, a `for…of` loop over the value (or
+  over what a method of it returns, such as `s.values()`), a conditional, what a method or
+  getter of it returns (`s.m.get(k)!.v = 1`), a closure at any depth, a function changing it,
+  and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field, also
+  destructured or nested; the container's own slots may change). A new object built from a
+  number or string read out of the value (`new Item(s.head.v)`), or a `map` result, holds no
+  part of it and may change. `subarray()` and `buffer` of a shared typed array are
+  refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
+  change lands on a copy, #1405): a part returned by a function or closure (other than a method
+  or getter of the value: generic, static and interface functions, another object's method), a
+  spread or `Array.from` copy, a `map` whose callback returns its element or a part of it (`xs.map((x) => x)`,
+  `xs.map((x) => x.tags)`),
+  a generator, an `await`, `any` or `Reflect`, and a container filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
+  `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
+  as well. A value of
+  `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
+  (copying it would run that method on objects other threads read): `.clone()` the `shared`
+  and pass it on as a `shared<T>`. While the value or a part of it is read while code runs (a
+  call it is passed to, a loop over it, a method it is the receiver of, a later argument),
+  giving the variable that holds the handle another one is refused where it would be for an
+  array (the loop's body, a closure passed to the same call); where it is allowed (a closure
+  kept in a variable, a module `let` another function reassigns, a field or element holding
+  the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
+  Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
+  read-only …``), and so is passing it or a part of it (`s.m.get(k)!`) to a function that may
+  change it, also one that keeps its argument (an `async` function, a generator, a parameter
+  it stores) or changes what it returns (`st.m.get(k)!.v = 1`), or to a function value, and
+  calling a method of it that changes it (also one returning the value it changes, such as
+  `fill` or a method ending in `return this`): share a `Mutex` instead.
+
+  ```ts
+  async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
+    return countIn(xs, b);
+  }
+
+  function countIn(xs: u8[], b: u8): i64 {
+    let n: i64 = 0;
+    for (let i: usize = 0; i < xs.length; i++) {
+      if (xs[i] == b) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async function main() {
+    const data = shared([1 as u8, 2, 1, 3, 1]);
+    const ones = spawn(count(data, 1));
+    const threes = spawn(count(data, 3));
+    console.log(await ones, await threes, data.length, data[0]);
+  }
+  ```
+- `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
+  runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
+  runs it alone, exactly as `with` does (a writer that has waited a while holds new readers
+  back, so writers don't starve). While nobody writes, readers on different threads touch no
+  memory they share, so reads scale with the cores; while writes come often, readers still run
+  at once between writes. With several tasks reading it is usually faster than a `Mutex`; on
+  one task, or with tiny callbacks and rare writes on many, a `Mutex` can be faster (#1395).
+  Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
+  value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
+  passes it to a function that changes it) is an error ("the function passed to `read` modifies
+  the locked value"), so `read` takes a function literal or a named function, whose body the
+  compiler checks, not a function value. Readers share the value without copying or counting
+  it, also what they keep while the callback runs (a sorted listing of its objects, a value a method returns); a
+  write to it through such a reference stops the program (``panic: cannot modify a value an
+  `RwLock` holds inside its `read` callback …``). What a `read` returns is a copy of what it
+  shares with the value (an element, a `slice()`, a `Map.get`), never the value's object
+  itself. A `read` callback cannot lock anything else exclusively: a `with` or `write` in it is
+  an error (for every `RwLock`, also one whose `read` takes the lock exclusively), and one it
+  reaches through a function it calls, a function value or what locks inside std (a promise's
+  resolver, clearing a timer) stops the program: the callback shares the value without
+  counting it, which the inner callback could not tell from what it changes. Return what you
+  need and lock after `read`, or count with a `shared<i64>` (`.add(n)`). Nor can it start a
+  promise or task, which would outlive it (that stops the program too). A function value the
+  callback calls is checked as it runs (a write to the value through it stops the program).
+  Inside the callback, an object of a type the value holds can be changed when the callback
+  made it, or when it is the caller's: a place rooted in a variable the callback literal
+  captured from code outside any `read` callback, its fields and elements at any depth, a
+  variable of the callback bound to one of them and never given another value (`const x =
+  out[0]`, `for (const o of set)`), what a method or function called on one of them returns
+  when given nothing of the value (`out.at(0)!.tags.push("t")`), and a method or function
+  called with one of them to change it (`out.push(x)`, `seen.add(x)`, `m.set(k, x)`, `mine.v =
+  x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback stores there from the caller's own variables and
+  containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
+  `out2.push(out.pop()!)`, `a.splice(1, 0, a[0])`), also inside an array or object the callback
+  made (`g.push([out[0]])`) and as what a closure it made captures (`fs.push(() => out[0].v)`);
+  anything else it did not make itself is a copy (an element of the value, what a function
+  returns, a closure capturing a part of the value). An array or object the callback made that
+  holds objects of the value's types is the caller's once stored there: the callback can still
+  read it through its own variables, but a write through them stops the program, as for the
+  value's own (store it once it is complete). One whose type the value cannot hold, and a
+  function value, that the callback still uses after storing it is stored as a copy. So is a
+  container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
+  own, holding objects of the value's types, given to a method or function that changes the
+  caller's containers (`mvBag(out, bag)`, `bag.moveTo(out)`): that call gets a copy, so what it
+  moves into `out` is a copy and `bag` keeps what it held. An array of its own given to such a
+  function (`mv(out, list)`, moving `list`'s elements into `out`) loses what the function
+  moved, as in JavaScript, and stays the callback's own when the function did not keep it. What it
+  removes or replaces there is freed once the outermost `read` returns, so a variable still
+  holding it stays valid. Any other object of such a type cannot be told from the value's own,
+  so a write to it stops the program: one a function given the value's objects returns
+  (`pick(s).tags.push("t")`), a function value the callback calls reaches, or a closure made
+  inside the callback captures (`s.items.forEach((it) => out.push(it))`).
+  Reads of other `RwLock`s nest, in any order. A value that holds function
+  or interface values, objects of a class hierarchy, weak references or promises is read under
+  the exclusive lock instead.
+
+  ```ts
+  class Catalog {
+    prices: number[] = [];
+  }
+
+  function total(c: Catalog): number {
+    let t = 0;
+    for (const p of c.prices) {
+      t += p;
+    }
+    return t;
+  }
+
+  async function report(cat: shared<RwLock<Catalog>>): Promise<number> {
+    return cat.read((c) => total(c));
+  }
+
+  async function main() {
+    const cat = shared(new RwLock<Catalog>(new Catalog()));
+    cat.write((c) => {
+      c.prices.push(2, 3);
+    });
+    const a = spawn(report(cat));
+    const b = spawn(report(cat));
+    console.log(await a, await b);
+  }
+  ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
+  value itself (assigning `v` updates it), returns a result, and must not be async. Its value
+  is read only there: a value holding a `Mutex` cannot be printed, written as JSON or
+  converted to `any`, `unknown` or `object` (``cannot convert a `shared<Mutex<C>>` to `any`:
+  it holds a lock``), all of which would read it without the lock, also not through a type
+  parameter (a generic function printing its `T` is refused where it is called with one). Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:
   - The result leaves the lock like a value going to another task: an object the callback made
     moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is
@@ -343,7 +657,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
     stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using
     it after the `with` is an error, "`item` is still used after `with` stored it in the
-    locked value": store `item.clone()` to keep using `item`) — also when a function or
+    locked value": store `item.clone()` to keep using `item`; a struct whose fields are plain
+    values, strings and `shared` values and are never assigned, such as a `TcpStream` or a
+    `WebSocket`, may still be used, since its copy reaches the same shared objects) — also when a function or
     method the callback calls does the storing (`v.giveTo(out)` gives the method a copy of the
     value). A resource without `clone()` cannot be copied, so the value gets the object itself:
     using the variable afterwards is an error ("`conn` is still used after `with` stored it in
@@ -367,6 +683,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     function ("the function passed to `with` comes from an object's field, and may be a
     closure that stores a part of the locked `State` outside it …"); otherwise the call is
     accepted as written.
+  - A variable the callback only reads, and that the function does not use after the `with`
+    (nor again in a loop around it), goes into the lock with the callback: what the callback
+    stores of it into the value is not copied (`const batch = parse(input); m.with((db) =>
+    apply(db, batch))` stores `batch`'s own objects). An object it shares with another
+    variable is still copied. Nothing changes in what the program sees; only the copies go.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without
@@ -386,6 +707,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     promise (`m.with((f) => f())`) is an error when a synchronous closure of its type captured
     objects: the promise would use them after the lock is released. An async closure there is
     fine, since each call gets its own copy of what it captured.
+  - The callback cannot use module state (module-level `let`s and kept constants), directly
+    or through a function it calls, a field initializer, or a `toString()`, `toJSON()` or
+    `[Symbol.dispose]()` method that std or a drop calls ([Module state](variables.md#module-state)).
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)
@@ -463,9 +787,19 @@ async function main() {
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
   awaited (when the task rejects, or when the handle is dropped after it did), and a stored
-  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  promise that rejects after it was dropped unawaited. As in Node, a stored promise that
+  rejects while its owner does not wait for it is reported too, once the callbacks queued
+  before have run (the microtask queue is drained), even though the owner still holds it:
+  `const p = f(); await sleep(10); await p;` ends the process at the rejection if `f` rejects
+  first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
+  it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
-  error fails its `taskScope`.
+  error fails its `taskScope`. A stored promise handed to another task (`spawn(use(p))`, a
+  channel) is that task's to await: if it rejects, the error is reported once, by the task that
+  holds it then (or as that task's own error), not by the task that started it.
+- Only the first uncaught error is reported, as in Node, which stops at it: when tasks on
+  different workers fail at the same moment, the process ends with one report (which one goes
+  first depends on the scheduling).
 
 ## `new Promise`
 
@@ -492,9 +826,8 @@ async function main() {
 - The executor must be an arrow-function literal (``the executor of `new Promise` must be an
   arrow function``); it runs at once and is released before the promise waits.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like
-  in JS (it can lose a `Promise.race`). Awaiting it directly (`await new Promise(…)`) is
-  reported instead of waiting forever: ``panic: awaiting a promise whose resolve and reject were
-  dropped without settling (created at file:line:col)``, exit code 101.
+  in JS (it can lose a `Promise.race`). Awaiting it waits until nothing else can happen, when
+  the program ends, as Node's does ([Promises](#promises)).
 
 ```ts
 import { setTimeout } from "velt:timers";
@@ -532,9 +865,8 @@ type.
 - A value settled from another task is transferred (moved, or copied while that task still uses
   it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
-  JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
-  keeps the process alive (#147) after `main` returns, but not after it fails (an uncaught
-  error or a nonzero exit code ends the process at once, like an uncaught exception in Node).
+  JS: it can lose a `Promise.race`, and awaiting it otherwise waits until nothing else can
+  happen, when the program ends, as Node's does ([Promises](#promises)).
 
 A one-shot reply to a request handled on another task, without a channel per request:
 

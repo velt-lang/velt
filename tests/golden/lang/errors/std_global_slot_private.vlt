@@ -1,0 +1,6 @@
+// A runtime slot holding a std object is read only by the std module that owns it, with its one
+// type: there is no importable generic accessor that could read std/websocket's topics registry
+// as another type.
+import { processGlobal } from "velt:global_slot";
+
+function main() {}

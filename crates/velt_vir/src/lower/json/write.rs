@@ -1,6 +1,6 @@
 //! `JSON.stringify` glue: append the JSON text of a value to a string builder.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::key::JsonKey;
 use crate::lower::hooks::Hook;
@@ -41,6 +41,9 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => true,
+            // An interface value is reached only through a dynamic value (sema rejects one
+            // elsewhere): written as the object it holds.
+            TyKind::Dyn(..) => true,
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
             }
@@ -50,6 +53,12 @@ impl FnLower<'_, '_> {
 
     /// Append `*place` (of concrete type `ty`) to the builder at `buf`.
     pub(super) fn json_write(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        // A function with properties is a function to JSON: `null` as an array element, as
+        // in JavaScript (object members holding one are left out, below).
+        if self.json_callable(ty) {
+            self.push_text(buf, "null");
+            return;
+        }
         if self.json_inline(ty) {
             self.json_write_expand(buf, place, ty, None);
         } else {
@@ -61,6 +70,35 @@ impl FnLower<'_, '_> {
     /// `key`: the value's key in its parent, for a type that passes it to a `toJSON(key)`
     /// (key.rs).
     fn json_write_expand(&mut self, buf: &Operand, place: &Place, ty: TyId, key: Option<&Place>) {
+        if self.cx.proxiable(ty) && self.cx.ty(ty) == Ty::Ptr {
+            // A typed proxy or a view (any_view.rs) is written as the `any` it converts to: the
+            // proxy (its `__json`), or the object a view views, with all of its members.
+            let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+            let t = self.proxy_tagged(p);
+            let (cold, hot, join) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(t, cold, hot);
+            self.switch_to(cold);
+            self.push_scope(crate::lower::ScopeKind::Block);
+            let any = self.cx.any_ty();
+            let avt = self.cx.ty(any);
+            let s = self.share_value(Operand::Copy(place.clone()), ty);
+            let held = Place::local(self.temp(avt));
+            self.any_box_into(s, ty, &held);
+            self.json_write_any(buf, &held);
+            self.drop_glue(held, any);
+            self.scopes.pop();
+            self.goto(join);
+            self.switch_to(hot);
+            self.json_write_typed(buf, place, ty, key);
+            self.goto(join);
+            self.switch_to(join);
+            return;
+        }
+        self.json_write_typed(buf, place, ty, key);
+    }
+
+    /// `json_write_expand` of a value that is not a typed proxy.
+    fn json_write_typed(&mut self, buf: &Operand, place: &Place, ty: TyId, key: Option<&Place>) {
         let v = Operand::Copy(place.clone());
         let vt = self.cx.ty(ty);
         let b = buf.clone();
@@ -84,7 +122,20 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
-            TyKind::Option(e) => self.json_write_option(buf, place, ty, e, key),
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.json_write_any(buf, place),
+            TyKind::Dyn(..) => {
+                // Glue has no scope of its own: the share is dropped here.
+                self.push_scope(crate::lower::ScopeKind::Block);
+                let any = self.cx.any_ty();
+                let v = self.share_value(v, ty);
+                let a = self.make_dyn_any(v, ty, any);
+                let avt = self.cx.ty(any);
+                let held = Place::local(self.copy_to_temp(a, avt));
+                self.json_write_any(buf, &held);
+                self.drop_glue(held, any);
+                self.scopes.pop();
+            }
+            TyKind::Option(e, _) => self.json_write_option(buf, place, ty, e, key),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
                 self.json_write_array(buf, &arr, e)
@@ -274,6 +325,40 @@ impl FnLower<'_, '_> {
             if velt_sema::property_order::is_hidden_key(&name) {
                 continue;
             }
+            // An object literal's getter: what it returns, written as a dynamic member (a
+            // setter is a function field, left out below).
+            if self.holds_literal_getter(ty, &name) {
+                if !pending.is_empty() {
+                    self.push_text(buf, &pending);
+                    pending.clear();
+                }
+                // The call registers its result in a scope of its own (a typed value's
+                // writer has none).
+                self.push_scope(crate::lower::ScopeKind::Block);
+                if let Some(got) = self.run_literal_getter(place, ty, &name) {
+                    let any = self.cx.any_ty();
+                    sep = self.json_write_present(buf, &got, any, &name, sep);
+                    self.drop_glue(got, any);
+                }
+                self.pop_scope();
+                continue;
+            }
+            // A member holding a function with properties is left out, as a function is.
+            let payload = match self.cx.kind(fty) {
+                TyKind::Option(e, _) => e,
+                _ => fty,
+            };
+            if self.json_callable(payload) {
+                continue;
+            }
+            // So is one holding a function: a field an extension adds to a shared layout
+            // (velt_sema `collect::extended_layouts`), which the type written has no field for.
+            if matches!(
+                self.cx.kind(payload),
+                TyKind::FnPtr { .. } | TyKind::Closure(_)
+            ) {
+                continue;
+            }
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
             // `a?: T | null`: written when present, `null` included (`hir::FieldDef::presence`).
@@ -284,29 +369,26 @@ impl FnLower<'_, '_> {
                 }
                 f
             });
+            // A field that holds `undefined` is left out, as JavaScript does (issue #930), and
+            // so is a dynamic one holding `undefined`, a function or a symbol.
+            // A union with such a member (`T | string` at `T = unknown`) too.
+            let dynamic = self.cx.is_dynamic(fty) || self.has_dynamic_member(fty);
             match (optional, self.cx.kind(fty)) {
-                (true, TyKind::Option(e)) => {
+                _ if dynamic => {
                     if !pending.is_empty() {
                         self.push_text(buf, &pending);
                         pending.clear();
                     }
-                    let flag = match sep {
-                        Sep::Maybe(f) => f,
-                        _ => {
-                            let f = self.temp(Ty::Bool);
-                            let written = matches!(sep, Sep::Rest);
-                            self.assign(
-                                Place::local(f),
-                                Rvalue::Use(vir::Operand::Const(
-                                    vir::Const::Bool(written),
-                                    Ty::Bool,
-                                )),
-                            );
-                            f
-                        }
-                    };
+                    sep = self.json_write_present(buf, &fp, fty, &name, sep);
+                }
+                (opt, TyKind::Option(e, n)) if opt || n == Nothing::Undefined => {
+                    if !pending.is_empty() {
+                        self.push_text(buf, &pending);
+                        pending.clear();
+                    }
+                    let flag = self.json_sep_flag(sep);
                     let prev = sep;
-                    match flag_place {
+                    match flag_place.filter(|_| n == Nothing::Null) {
                         Some(present) => {
                             let (yes, done) = (self.new_block(), self.new_block());
                             self.branch(Operand::Copy(present), yes, done);
@@ -353,18 +435,54 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Member `name` holding the dynamic value at `fp` (of type `fty`), written when it has a
+    /// JSON form (not `undefined`, a function or a symbol), after `sep`: the separator state
+    /// after it.
+    fn json_write_present(
+        &mut self,
+        buf: &Operand,
+        fp: &Place,
+        fty: TyId,
+        name: &str,
+        sep: Sep,
+    ) -> Sep {
+        let flag = self.json_sep_flag(sep);
+        let present = self.json_present(fp, fty);
+        let (yes, done) = (self.new_block(), self.new_block());
+        self.branch(present, yes, done);
+        self.switch_to(yes);
+        self.json_member_sep(buf, sep);
+        self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
+        self.push_text(buf, &json_key(name));
+        self.json_write_at(buf, fp, fty, JsonKey::Text(name));
+        self.goto(done);
+        self.switch_to(done);
+        Sep::Maybe(flag)
+    }
+
+    /// The flag telling whether a member was written, for members that may be left out.
+    fn json_sep_flag(&mut self, sep: Sep) -> Local {
+        match sep {
+            Sep::Maybe(f) => f,
+            _ => {
+                let f = self.temp(Ty::Bool);
+                let written = matches!(sep, Sep::Rest);
+                let c = vir::Operand::Const(vir::Const::Bool(written), Ty::Bool);
+                self.assign(Place::local(f), Rvalue::Use(c));
+                f
+            }
+        }
+    }
+
     /// Mark the boxed object at `place` as being written; panic if it already is.
     fn json_enter(&mut self, place: &Place) {
         let ok = self.rt_u8(Rt::JsonEnter, vec![Operand::Copy(place.clone())]);
         let (cycle, fine) = (self.new_block(), self.new_block());
         self.branch(ok, fine, cycle);
         self.switch_to(cycle);
-        let msg = format!(
-            "JSON.stringify: converting circular structure to JSON (an object contains itself){}",
-            self.panic_suffix()
+        let a = self.panic_text(
+            "JSON.stringify: converting circular structure to JSON (an object contains itself)",
         );
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(super::STR_AGG));
         self.call_rt(Rt::Panic, vec![a], None);
         self.switch_to(fine);
     }
@@ -399,4 +517,18 @@ fn json_key(name: &str) -> String {
     }
     s.push_str("\":");
     s
+}
+
+impl FnLower<'_, '_> {
+    /// Is `ty` a function with properties: an object type whose first field is the hidden
+    /// function `#call` (hir_encodings.md "Functions with properties")?
+    pub(super) fn json_callable(&self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if a.fields.first().is_some_and(|f| f.name == "#call")
+            ),
+            _ => false,
+        }
+    }
 }

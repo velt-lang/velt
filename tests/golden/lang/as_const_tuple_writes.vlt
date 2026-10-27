@@ -1,0 +1,87 @@
+// check: no leaks
+// Taking apart a mixed `[…] as const` reads the array, so a write made through a cast is seen,
+// in the declaring function, through a capture and for a module constant; each binding keeps
+// its element's type. Expected output: Node's.
+function run(): string {
+  const e = [1, "s"] as const;
+  (e as unknown as (number | string)[])[0] = 7;
+  const [m] = e;
+  return `${m}${e[0]}`;
+}
+console.log(run());
+
+const c = [1, "s"] as const;
+(c as unknown as (number | string)[])[0] = 7;
+const g = () => {
+  const [n] = c;
+  return n;
+};
+console.log(g(), c[0]);
+
+function reversed(): string {
+  const e = [1, "s", 3] as const;
+  (e as unknown as (number | string)[]).reverse();
+  const [a, b, c] = e;
+  return `${a}${b}${c}`;
+}
+console.log(reversed());
+
+const d = [1, "s", true] as const;
+function assigned(): string {
+  const [a, , b] = d;
+  let x: number = 0;
+  let y: string = "";
+  [x, y] = d;
+  return `${a} ${b} ${x + 1} ${y.toUpperCase()}`;
+}
+console.log(assigned());
+
+function captured(): string {
+  const e = [2, "t"] as const;
+  function inner(): string {
+    const [p, q] = e;
+    return `${p + 1}${q}`;
+  }
+  const arrow = () => () => {
+    const [p] = e;
+    return p;
+  };
+  (e as unknown as (number | string)[])[1] = "u";
+  return inner() + arrow()();
+}
+console.log(captured());
+
+// A hole reads nothing, so an element retyped through a cast is not checked there.
+function holes(): void {
+  const e = [1, "s"] as const;
+  (e as unknown as (number | string)[])[0] = "bad";
+  const [, s] = e;
+  let y = "";
+  [, y] = e;
+  const m = [1, "s", 2] as const;
+  (m as unknown as (number | string)[])[2] = "z";
+  const [n1, s1] = m;
+  const [, s2 = "d"] = m;
+  const k = [1, "s", false] as const;
+  (k as unknown as (number | string | boolean)[])[1] = 9;
+  const [k0, , k2 = true] = k;
+  const [first, ...rest] = k;
+  console.log(s, y, n1, s1, s2, k0, k2, first, rest);
+  for (const [a, , c] of [k]) console.log(a, c);
+}
+holes();
+
+// A default of an element that is never `undefined` is not evaluated.
+function defaults(): void {
+  let side = 0;
+  const [a, b = "d"] = [1, "s"];
+  const [h, i = ((): string => {
+    side++;
+    return "z";
+  })()] = [3, "w"];
+  const [c, d = 5] = [1, undefined];
+  const [p, [q, r = "q"]] = [1, ["x", undefined]];
+  const [f, , g = true] = ["s", 2, false];
+  console.log(a, b, h, i, side, c, d, p, q, r, f, g);
+}
+defaults();

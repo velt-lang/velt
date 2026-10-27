@@ -22,8 +22,61 @@ impl FnCx<'_, '_> {
             let never = self.cx.ty.never;
             return self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
         }
-        let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
-        let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        // A narrowed `T | null | undefined` reads as its `T` (both nothings ruled out).
+        let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
+        // A variable that a closure assigns is checked again where it is used, and read as it
+        // is where a test checks it (`closure_assigned`).
+        let reassigned = self.closure_assignment(l).is_some() || self.is_checked_copy(l);
+        if reassigned
+            && want != Want::BorrowMut
+            && self.raw_read != Some(span)
+            && !self.is_narrowed(l)
+            && self.is_late_let(l)
+        {
+            return self.late_let_read(l, ty, want, span);
+        }
+        if payload.is_some() && reassigned {
+            if self.raw_read == Some(span) {
+                let mode = self.use_mode(ty, want);
+                return self.mk(H::Local(l, mode), ty, span);
+            }
+            return self.checked_narrowed_read(l, ty, want, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Undefined)
+        {
+            // `x !== undefined` on a `T | null | undefined`: its `T | null`.
+            let mid = self
+                .cx
+                .ty
+                .opt_payload(ty)
+                .expect("ICE: option without a payload");
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let mode = self.use_mode(mid, want);
+            return self.mk(H::UnwrapSome(Box::new(base), mode), mid, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && want != Want::BorrowMut
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Null)
+        {
+            // `x !== null` on a `T | null | undefined`: its `T | undefined` (#1218).
+            let mode = self.use_mode(ty, want);
+            let base = self.mk(H::Local(l, mode), ty, span);
+            return self.three_state_without_null(base, want == Want::Move);
+        }
+        let mut member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        // The object of a member read: a union that may hold a view stays the union (narrowed),
+        // whose reads give the view an arm of its own (`union_view`).
+        if std::mem::take(&mut self.view_receiver)
+            && member.is_some()
+            && self.cx.union_view(payload.unwrap_or(ty)).is_some()
+        {
+            member = None;
+        }
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
                 return e;
@@ -45,9 +98,21 @@ impl FnCx<'_, '_> {
                 Some(_) => base_mode,
                 None => self.use_mode(p, want),
             };
-            e = self.mk(H::UnwrapSome(Box::new(e), mode), p, span);
+            e = self.unwrap_present(e, mode, span);
+            if member.is_none() {
+                return self.downcast_narrowed(l, e);
+            }
+        }
+        if let (Some((variant, m)), None) = (member, payload) {
+            // A checked copy of a `typeof`-narrowed field (`checked_copies`).
+            if self.is_checked_copy(l) {
+                return self.checked_member_read(l, variant, m, span);
+            }
         }
         if let Some((variant, m)) = member {
+            if self.holds_assigned_member(l) {
+                self.cx.union_view_safe(span);
+            }
             let mode = self.use_mode(m, want);
             let kind = H::UnwrapVariant {
                 expr: Box::new(e),
@@ -57,6 +122,15 @@ impl FnCx<'_, '_> {
             e = self.mk(kind, m, span);
         }
         self.downcast_narrowed(l, e)
+    }
+
+    /// Is `exp` (or its payload, for `U | null`) a union of the family of union local `l`'s
+    /// (or its payload's), which may hold a view (`crate::union_views`)?
+    fn view_union_expected(&mut self, l: LocalId, exp: TyId) -> bool {
+        let ty = self.local_ty(l);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
+        let x = self.cx.ty.core(exp).unwrap_or(exp);
+        self.cx.union_view(u).is_some() && self.cx.same_view_family(u, x)
     }
 
     /// A union local `l` (of type `ty`, `T | null` narrowed to `payload`) that `instanceof`
@@ -81,7 +155,7 @@ impl FnCx<'_, '_> {
         if let Some(p) = payload {
             let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
             let inner = self.use_mode(p, want);
-            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+            e = self.unwrap_present(base, inner, span);
         }
         self.union_downcast(e, target).ok()
     }
@@ -92,10 +166,24 @@ impl FnCx<'_, '_> {
         let Some(target) = self.narrowed_class(l) else {
             return e;
         };
+        if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
+            // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
+            return self.generic_as_any(e).unwrap_or_else(|e| e);
+        }
         if !self.downcast_applies(e.ty, target) {
-            return e;
+            // `typeof x === "string"` on a `T | string` (`typeof_facts`).
+            return self.open_view(l, e, target).unwrap_or_else(|e| e);
         }
         let span = e.span;
+        if e.ty == target {
+            // `instanceof` of a generic class on an `any`: it stays an `any`.
+            return e;
+        }
+        if self.cx.dynamic(e.ty).is_some() && self.cx.class_of(target).is_none() {
+            // `typeof x === "number"` on an `any`: the value it holds, checked (crate::any).
+            let share = self.share_if_place(e);
+            return self.intrinsic(hir::Intrinsic::AnyTo, vec![share], target, span);
+        }
         self.mk(H::Downcast(Box::new(e)), target, span)
     }
 
@@ -179,9 +267,20 @@ impl FnCx<'_, '_> {
         if self.untyped_use(id, false) {
             return self.error_expr(id.span);
         }
+        let checks = self.f.late.checks.len();
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
-            return self.local_expr(l, want, id.span);
+            // A narrowed union that may hold a view, where a union of its family is expected:
+            // the union itself, as for the object of a member read (no member view).
+            if exp.is_some_and(|x| self.view_union_expected(l, x)) {
+                self.view_receiver = true;
+            }
+            let e = match self.checked_copy_read(l, exp, want, id.span) {
+                Some(e) => e,
+                None => self.local_expr(l, want, id.span),
+            };
+            self.view_receiver = false;
+            return self.late_checked_read(e, checks);
         }
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => return self.def_value(d, id, exp, want),
@@ -213,7 +312,19 @@ impl FnCx<'_, '_> {
                     id.span,
                 );
             }
-            _ => self.unknown_name(id),
+            "globalThis" => {
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        "`globalThis` as a value is not supported yet",
+                        id.span,
+                    )
+                    .with_note("Velt has `globalThis` as a bag of typed properties: read and write one with a type assertion, `(globalThis as { K?: T }).K`, or `Object.defineProperty(globalThis, \"K\", { value })`"),
+                );
+            }
+            _ => match self.browser_global_read(id) {
+                Some(h) => return h,
+                None => self.unknown_name(id),
+            },
         }
         self.error_expr(id.span)
     }
@@ -221,6 +332,9 @@ impl FnCx<'_, '_> {
     /// "cannot find `x`", or — inside a nested declaration — that `x` is a local of an
     /// enclosing function (nested functions do not capture).
     pub(crate) fn unknown_name(&mut self, id: &ast::Ident) {
+        if id.name.starts_with(crate::global_this::PREFIX) {
+            return; // a property of `globalThis` no site gives a type: reported by the rewrite
+        }
         if self.unknown_namespace_member(&id.name, id.span) {
             return;
         }
@@ -228,9 +342,12 @@ impl FnCx<'_, '_> {
             return;
         }
         if !self.enclosing_locals.contains(&id.name) {
-            self.cx
-                .err(format!("cannot find `{}` in this scope", id.name), id.span);
+            let msg = format!("cannot find `{}` in this scope", id.name);
+            self.cx.not_found(msg, &id.name, id.span);
             return;
+        }
+        if self.in_kept_nested() {
+            return; // reported by `nested_closures` (recursion, or a use before a local)
         }
         if self.generic_arrow {
             self.cx.error(
@@ -253,6 +370,14 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// Checking a capturing nested function `nested_closures` reported and left a declaration.
+    fn in_kept_nested(&self) -> bool {
+        !self.cx.kept_nested.is_empty()
+            && self
+                .body_def
+                .is_some_and(|d| self.cx.kept_nested.contains(&self.cx.fn_info(d).name_span))
+    }
+
     fn def_value(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>, want: Want) -> hir::Expr {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
@@ -262,18 +387,43 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                 }
+                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                    return h;
+                }
                 self.fn_ref(d, id, exp)
             }
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
             // compares integers, `N / 3` divides numbers.
             DefInfo::Global(g)
-                if g.src.ann.is_none() && g.src.init.is_some_and(super::member::untyped_int) =>
+                if !g.mutable
+                    && g.src.ann.is_none()
+                    && g.src.init.is_some_and(super::member::untyped_int) =>
             {
+                let stored = g.stored;
                 let init = g.src.init.expect("ICE: checked above");
                 let h = self.expr(init, exp, want);
-                self.literal_at(h, span)
+                let lit = self.literal_at(h, span);
+                match stored {
+                    true => self.after_slot_check(d, lit, span),
+                    false => lit,
+                }
             }
-            DefInfo::Global(_) => self.global_read(d, want, span),
+            DefInfo::Global(_) => match self
+                .named_generic_instance(d, id, exp)
+                .or_else(|| self.narrowed_global(d, exp, want, span))
+            {
+                Some(h) => h,
+                None => self.global_read(d, want, span),
+            },
+            DefInfo::Adt(_)
+                if self
+                    .cx
+                    .adt(d)
+                    .is_some_and(|a| a.kind == hir::AdtKind::Class) =>
+            {
+                self.class_value(d, id, exp, want)
+                    .unwrap_or_else(|| self.error_expr(span))
+            }
             _ => {
                 self.cx
                     .err(format!("`{}` is a type, not a value", id.name), span);
@@ -282,26 +432,87 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `lit`, the value of module constant `d` that a function made above its declaration reads
+    /// (a module state slot, #1438), after a read of the slot: before the declaration ran, that
+    /// read throws Node's `ReferenceError`.
+    fn after_slot_check(&mut self, d: DefId, lit: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::driver::ensure_global(self.cx, d);
+        let ty = self.cx.global(d).map_or(self.cx.ty.error, |g| g.ty);
+        let read = self.mk(H::Global(d), ty, span);
+        let ty = lit.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(read),
+                span,
+            }],
+            value: Some(Box::new(lit)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name) = (g.ty, g.name.clone());
+        let (ty, mutable) = (g.ty, g.stored);
+        // A constant whose value is taken over is the one object Node evaluates once.
+        let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
+        let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);
+        if mutable || (taken && !shared_fn && crate::kept_consts::keep(self.cx, d)) {
+            let read = self.mk(H::Global(d), ty, span);
+            if want == Want::Move && !self.cx.is_copy(ty) {
+                // Another reference to the value the module state keeps, as JS aliases it.
+                return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+            }
+            return read;
+        }
         if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
             // A function computed at each use: another reference to it is owned.
             let read = self.mk(H::Global(d), ty, span);
             return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
         }
-        if want == Want::Move && crate::body::pure_init::is_table(self.cx, d) {
-            let msg = format!("cannot move out of module constant `{name}`");
-            self.cx
-                .error(crate::body::pure_init::table_escapes(&name, msg, span));
-        } else if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
-            self.cx.error(
-                Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-            );
+        if want == Want::Move {
+            let name = self.cx.global(d).map(|g| g.name.clone());
+            self.moved_out_of_const(d, ty, span, name);
         }
         self.mk(H::Global(d), ty, span)
+    }
+
+    /// Module constant `d`, evaluated at each use, taken over by value (`const v = K`, and
+    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`, or a part: `const a = N.a`), when
+    /// its value is not copied, as a string or a number is (`ty`: the type of the value taken;
+    /// `part`: its source form, for the note): kept in the module state, as TypeScript aliases
+    /// the one object, or an error when it can't be kept.
+    pub(crate) fn moved_out_of_const(
+        &mut self,
+        d: DefId,
+        ty: TyId,
+        span: Span,
+        part: Option<String>,
+    ) {
+        use crate::body::moved_const as mc;
+        let Some(g) = self.cx.global(d) else { return };
+        let name = g.name.clone();
+        if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
+            return;
+        }
+        let table = crate::body::pure_init::is_table(self.cx, d);
+        if !table && self.copied_value(ty) {
+            return;
+        }
+        // Taken over, the constant is the one object the module state keeps, as in Node; the
+        // ones that can't be kept (`kept_consts::keep`) are errors.
+        if crate::kept_consts::keep(self.cx, d) {
+            return;
+        }
+        if table {
+            let msg = format!("cannot move out of module constant `{name}`");
+            let err = crate::body::pure_init::table_escapes(&name, msg, span);
+            mc::report(self.cx, d, span, err);
+        } else {
+            let err = mc::error(&name, part.as_deref(), span);
+            mc::report(self.cx, d, span, err);
+        }
     }
 
     /// A named function used as a value; generic ones take their type args from `exp`.
@@ -315,7 +526,28 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if self.gated_value(d, &id.name, span) {
+            return self.error_expr(span);
+        }
+        let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
+        // A generic function where a generic function value is expected, or where no function
+        // type to instantiate it at is: the value of its own generic function type (#943).
+        if !slots.is_empty() {
+            let want = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
+            // Without an expected type, an overloaded function is its implementation (and has
+            // no one generic type of its own).
+            let own = |s: &mut Self| match s.overloaded(d) {
+                true => None,
+                false => s.own_generic_type(d, exp, span),
+            };
+            if let Some(g) = want.or_else(|| own(self)) {
+                return self.generic_fn_value(d, id, g);
+            }
+        }
+        if let Some(h) = self.generator_value(d, None, &slots, exp, span) {
+            return h;
+        }
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
 
@@ -360,30 +592,36 @@ impl FnCx<'_, '_> {
 
     /// The function type of named function `d` used as a value, with what it is known to throw
     /// (an async function's promise rejects with it).
-    fn fn_value_type(&mut self, d: DefId, params: Vec<TyId>, ret: TyId, is_async: bool) -> TyId {
-        if is_async {
-            let ret = self.async_call_ret(d, ret);
-            return self.cx.ty.fn_ptr(params, ret);
-        }
+    pub(super) fn fn_value_type(
+        &mut self,
+        d: DefId,
+        params: Vec<TyId>,
+        ret: TyId,
+        is_async: bool,
+    ) -> TyId {
         let never = self.cx.ty.never;
-        if self.is_generator_fn(d) {
+        let (ret, throws) = if is_async {
+            (self.async_call_ret(d, ret), never)
+        } else if self.is_generator_fn(d) {
             // Calling a generator only creates it: its errors are the result's `E`.
             let e = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
-            let ret = self.cx.with_generator_error(ret, e);
-            return self.cx.ty.fn_ptr(params, ret);
-        }
-        let throws = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
+            (self.cx.with_generator_error(ret, e), never)
+        } else {
+            let throws = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
+            (ret, throws)
+        };
         self.cx.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest: crate::body::defaults::has_rest(self.cx, d),
         })
     }
 
     /// A synchronous function value takes the error type the context expects when it throws
     /// less (lowering's function-value thunk converts its errors); the final error type of `d`
     /// is checked against the one used here.
-    fn fn_value_errors(
+    pub(super) fn fn_value_errors(
         &mut self,
         d: DefId,
         args: &[TyId],
@@ -395,6 +633,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(ty).clone()
         else {
             return ty;
@@ -433,6 +672,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         })
     }
 }

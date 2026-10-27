@@ -19,6 +19,7 @@
 
 use std::alloc::Layout;
 use std::ffi::c_void;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::Poll;
 
@@ -36,6 +37,8 @@ struct Tail {
     reject_drop: Option<ResultDropFn>,
     /// `race_ok`: skip rejected children while others are running.
     first_ok: bool,
+    /// Some child is a holder of a shared promise ([`settled_holder`]).
+    holders: bool,
 }
 
 const TAIL: usize = std::mem::size_of::<Tail>();
@@ -60,6 +63,11 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         // `Promise.race([])` never settles.
         return PENDING;
     }
+    if t.holders && !t.first_ok {
+        if let Some(i) = settled_holder(children) {
+            return win(t, i, cx);
+        }
+    }
     let cx = context(cx);
     loop {
         match Pin::new(&mut *children).poll_next(cx) {
@@ -78,6 +86,49 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         }
         return READY;
     }
+}
+
+/// The child that is a holder of a shared promise that settled first, if one did and no other
+/// child finished already. A holder settles when its promise does, and the race hears of it
+/// with its other wake-ups, in the order they came; a child it adopted settles only when the
+/// race polls it, which may be later than the holder, so polling in wake-up order would let it
+/// win (Node takes the first to settle, task/shared.rs).
+unsafe fn settled_holder(children: &FuturesUnordered<Child>) -> Option<usize> {
+    let mut best: Option<(u64, usize)> = None;
+    for c in children.iter() {
+        let f = c.fut.0;
+        match crate::task::shared::settled_at(f) {
+            Some(at) if best.is_none_or(|(b, _)| at < b) => best = Some((at, c.index)),
+            Some(_) => {}
+            // A started promise that finished: the wake-up order decides.
+            None if crate::task::local::is_started_node(f) && crate::task::local::node_done(f) => {
+                return None;
+            }
+            None => {}
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
+/// Child `i` (a settled holder) wins: its result goes to the race's slot, the others give up.
+unsafe fn win(t: &mut Tail, i: usize, cx: *mut c_void) -> u32 {
+    let Some(children) = t.children.take() else {
+        return READY;
+    };
+    let mut rest: Vec<Child> = children.into_iter().collect();
+    let Some(at) = rest.iter().position(|c| c.index == i) else {
+        t.children = Some(rest.into_iter().collect());
+        return PENDING;
+    };
+    let mut w = rest.swap_remove(at);
+    if Pin::new(&mut w).poll(context(cx)).is_pending() {
+        rest.push(w);
+        t.children = Some(rest.into_iter().collect());
+        return PENDING;
+    }
+    drop(w);
+    give_up_in_order(rest.into_iter().collect());
+    READY
 }
 
 unsafe extern "C" fn race_drop(f: *mut VeltFut) {
@@ -112,6 +163,7 @@ unsafe fn new_race(
     }
     let f = base.add(TAIL) as *mut VeltFut;
     let dst = (f as *mut u8).add(FUT_RESULT_OFFSET);
+    let holders = (0..n as usize).any(|i| crate::task::shared::is_shared(*futs.add(i)));
     let children = (0..n as usize)
         .map(|i| Child {
             fut: SendPtr(*futs.add(i)),
@@ -125,6 +177,7 @@ unsafe fn new_race(
         result_size,
         reject_drop: first_ok.flatten(),
         first_ok: first_ok.is_some(),
+        holders,
     });
     f.write(VeltFut {
         poll: race_poll,
@@ -135,7 +188,7 @@ unsafe fn new_race(
 
 /// If `f` is a race, mark each of its children to transfer its result with `transfer`
 /// (`velt_rt_fut_transfer`): the winner's result is a child's. Whether `f` was one.
-pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: ResultDropFn) -> bool {
+pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) -> bool {
     let race = race_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
     if !std::ptr::fn_addr_eq((*f).poll, race) {
         return false;

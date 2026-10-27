@@ -1,0 +1,26 @@
+// check: no leaks
+// `"k" in x` narrows a union that an earlier test already narrowed (`typeof x === "number" ||
+// x === null` returned), from the members that test left. Expected output: Node's.
+interface A {
+  a: string;
+}
+
+interface B {
+  m: string;
+}
+
+function t5(x: A | B | number | null): string {
+  if (typeof x === "number" || x === null) return "prim";
+  if ("a" in x) return `A ${x.a}`;
+  return `B ${x.m}`;
+}
+
+function t6(x: A | B | string): string {
+  if (typeof x === "string") return "str";
+  return "m" in x ? `B ${x.m}` : `A ${x.a}`;
+}
+
+function main() {
+  console.log(t5({ a: "z" }), t5({ m: "w" }), t5(1), t5(null));
+  console.log(t6({ a: "z" }), t6({ m: "w" }), t6("s"));
+}

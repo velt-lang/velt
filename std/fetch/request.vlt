@@ -183,7 +183,7 @@ export class Request {
       );
     }
     if (input.#raw != 0) {
-      const body = input.body;
+      const body = BodyStream.adopt(input.chunks());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();
@@ -248,16 +248,8 @@ export class Request {
     return s == null ? null : s.signal;
   }
 
-  /**
-   * The body as a stream of `u8[]` chunks (JS: a `ReadableStream`); null without a body.
-   * Reading it uses the body up, as `text()` does.
-   */
-  get body(): BodyStream | null {
-    if (!this.hasBody()) {
-      return null;
-    }
-    return BodyStream.adopt(this.chunks());
-  }
+  // `body` is in velt:fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
 
   get bodyUsed(): bool {
     const e = this.#extra;
@@ -286,7 +278,8 @@ export class Request {
     return JSON.parse<T>(await this.text());
   }
 
-  async bytes(): Promise<u8[], IoError | AbortError> {
+  // The body's bytes, as Velt's byte array.
+  private async rawBytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
     if (this.#raw != 0) {
       return unwrapIo(await velt_rt_http_req_bytes(this.#raw));
@@ -302,10 +295,8 @@ export class Request {
     return s == null ? body.bytes : await collect(s);
   }
 
-  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
-  async arrayBuffer(): Promise<u8[], IoError | AbortError> {
-    return await this.bytes();
-  }
+  // `bytes()` and `arrayBuffer()` are in velt:fetch/typed, loaded with the typed arrays they
+  // give (std/prelude/global/fetch_bytes.vlt).
 
   // Whether there is a body (a received request without one, a GET, has none).
   private hasBody(): bool {

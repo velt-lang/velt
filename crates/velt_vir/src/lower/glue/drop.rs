@@ -59,10 +59,7 @@ impl FnLower<'_, '_> {
             return self.drop_boxed(place, ty, |lw, v| lw.drop_inline(v, ty));
         }
         match self.cx.kind(ty) {
-            TyKind::Str => {
-                let a = self.addr(place.clone());
-                self.call_rt(Rt::StrDrop, vec![a], None);
-            }
+            TyKind::Str => self.str_drop(place.clone()),
             TyKind::Adt(d, _) if self.cx.is_class(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
                 let done = self.new_block();
@@ -71,7 +68,7 @@ impl FnLower<'_, '_> {
                 if self.cx.counted(ty) {
                     let o = obj.clone();
                     let weak = self.cx.weak_capable(ty);
-                    self.release_as(obj, weak, |lw| lw.drop_object(o, ty, d));
+                    self.release_of(obj, ty, weak, |lw| lw.drop_object(o, ty, d));
                 } else {
                     self.drop_object(obj, ty, d);
                 }
@@ -103,7 +100,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.drop_option(place, ty, e),
+            TyKind::Option(e, _) => self.drop_option(place, ty, e),
             TyKind::Array(e) => self.drop_array(place, e),
             TyKind::Shared(e) => self.drop_shared(place, e),
             TyKind::Promise(..) => {
@@ -184,16 +181,19 @@ impl FnLower<'_, '_> {
     }
 
     fn drop_array(&mut self, arr: &Place, e: TyId) {
-        if self.cx.needs_drop(e) {
-            let k = self.temp(Ty::U64);
-            self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-            let len = Operand::Copy(proj(arr, Proj::Field(1)));
-            self.count_loop(k, len, |lw, k| {
-                let p = lw.elem_place(arr, k, e);
-                lw.drop_glue(p, e);
-            });
-        }
-        self.free_buffer(arr, e);
+        // A view releases its view object instead (array_view.rs).
+        self.view_drop(arr, e, |lw| {
+            if lw.cx.needs_drop(e) {
+                let k = lw.temp(Ty::U64);
+                lw.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                let len = Operand::Copy(proj(arr, Proj::Field(1)));
+                lw.count_loop(k, len, |lw, k| {
+                    let p = lw.elem_place(arr, k, e);
+                    lw.drop_glue(p, e);
+                });
+            }
+            lw.free_buffer(arr, e);
+        });
     }
 
     fn drop_shared(&mut self, place: &Place, e: TyId) {
@@ -254,11 +254,13 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return;
         };
+        // A view leaves the cache of views (any_view.rs).
+        self.proxy_unview(this.clone(), d);
         let Some(m) = self.cx.dispose_of(d) else {
             return;
         };
         let targs = self.cx.method_targs(m, ty);
-        let f = self.cx.func_for(m, targs);
+        let f = self.cx.func_for_direct(m, targs, self.mode);
         self.call(vir::Callee::Func(f), vec![this], None, false);
     }
 
@@ -290,8 +292,13 @@ impl FnLower<'_, '_> {
         chain: Option<&super::drop_chain::Chain>,
     ) {
         let fp = self.field_place(obj, ty, f);
-        if self.cx.field_drop_reenters(ty, f, t, chain) {
+        let reenters = self.cx.field_drop_reenters(ty, f, t, chain);
+        if reenters {
             self.drop_field_bracketed(fp, t);
+        } else if self.cx.boxed(t) && self.view_mirror_field(ty, f) {
+            // Not the view type's drop, which drops views (array_view.rs `view_drop_body`).
+            let at = self.addr(fp);
+            self.call_glue(super::Glue::MirrorDrop, t, vec![at]);
         } else {
             self.drop_glue(fp, t);
         }

@@ -1,0 +1,1 @@
+TypeError: reading 'm' through a proxy or `Reflect.get` is not supported for this value yet, such as a method of a class instance (#823)

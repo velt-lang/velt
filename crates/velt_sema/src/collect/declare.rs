@@ -2,7 +2,7 @@
 //! ([`super::imports`]) and collect the prelude's exports (visible in every module without an
 //! import).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -81,10 +81,12 @@ pub(crate) fn fn_placeholder<'m>(
         soft_moves: vec![],
         is_private: false,
         is_getter: false,
+        inherits_this: false,
         escaping: false,
         keeps_fn_params: false,
         mutated_captures: vec![],
         soft_params: vec![],
+        modified_params: 0,
     }
 }
 
@@ -117,7 +119,11 @@ fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
         ast::ItemKind::Enum(e) => &e.name,
         ast::ItemKind::Interface(d) => &d.name,
         ast::ItemKind::TypeAlias(a) => &a.name,
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
     })
 }
 
@@ -130,7 +136,11 @@ pub(super) fn new_def<'m>(
     q: String,
 ) -> Option<(&'m ast::Ident, Item)> {
     let (name, info): (&ast::Ident, DefInfo<'m>) = match &item.kind {
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
         ast::ItemKind::Function(f) => {
             let src = Some(FnSource::Decl(f));
             let info = fn_placeholder(q, f.sig.name.span, f.sig.span, m, FnKind::Free, src);
@@ -169,6 +179,7 @@ pub(super) fn new_def<'m>(
                 decl: a,
                 expanding: false,
                 used: false,
+                outer: vec![],
             });
             return Some((&a.name, Item::Alias(id)));
         }
@@ -181,15 +192,30 @@ pub(super) fn new_def<'m>(
 }
 
 fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
+    if split_meanings(cx, m, item, name, it) {
+        return;
+    }
     if cx.scopes[m].items.contains_key(&name.name) {
         let mut d = Diagnostic::error(
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
-        if matches!(item.kind, ast::ItemKind::Interface(_)) {
-            // TypeScript merges the declarations of an interface (#384).
+        let earlier = match cx.scopes[m].items.get(&name.name) {
+            Some(Item::Def(d)) => Some(&cx.info[d.0 as usize]),
+            _ => None,
+        };
+        let earlier_iface = matches!(earlier, Some(DefInfo::Iface(_)));
+        let earlier_class = matches!(earlier, Some(DefInfo::Adt(_)));
+        let class = matches!(
+            item.kind,
+            ast::ItemKind::Class(_) | ast::ItemKind::Struct(_)
+        );
+        let iface = matches!(item.kind, ast::ItemKind::Interface(_));
+        if (iface && earlier_class) || (class && earlier_iface) {
+            // TypeScript also merges an interface with a class (#384); with a function or a
+            // variable it is a separate meaning (`split_meanings`).
             d = d.with_note(format!(
-                "Velt does not merge interface declarations: declare `{0}` once with every member, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
+                "Velt merges an interface only with other interface declarations: give `{0}` another name, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
                 name.name
             ));
         }
@@ -208,6 +234,37 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
     }
 }
 
+/// `name` is declared as a type and as a value (`type guid = string` and `const guid = …`, as
+/// TypeScript allows): the value keeps the name, the type moves to its type key
+/// ([`crate::type_meanings`]), each exported if its own declaration is.
+fn split_meanings(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) -> bool {
+    let key = crate::type_meanings::type_key(&name.name);
+    let scope = &cx.scopes[m];
+    let Some(&earlier) = scope.items.get(&name.name) else {
+        return false;
+    };
+    if scope.items.contains_key(&key) || !cx.separate_meanings(earlier, it) {
+        return false;
+    }
+    let earlier_exported = scope.exports.contains(&name.name);
+    let (ty, value) = match cx.meaning(it) {
+        crate::type_meanings::Meaning::Type => ((it, item.exported), (earlier, earlier_exported)),
+        _ => ((earlier, earlier_exported), (it, item.exported)),
+    };
+    let scope = &mut cx.scopes[m];
+    scope.items.insert(name.name.clone(), value.0);
+    scope.items.insert(key.clone(), ty.0);
+    scope.type_keys = true;
+    scope.exports.remove(&name.name);
+    if value.1 {
+        scope.exports.insert(name.name.clone());
+    }
+    if ty.1 {
+        scope.exports.insert(key);
+    }
+    true
+}
+
 fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo<'_> {
     DefInfo::Adt(Box::new(AdtInfo {
         name: t.name.name.clone(),
@@ -218,18 +275,19 @@ fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo
         generics: generic_names(&t.generics),
         fields: vec![],
         own_fields_start: 0,
+        redefined: vec![],
         base: None,
-        methods: HashMap::new(),
+        methods: FxHashMap::default(),
         ctor: None,
         own_ctor: None,
         vtable: vec![],
-        vslots: HashMap::new(),
+        vslots: FxHashMap::default(),
         implements: vec![],
         has_dispose: t
             .methods
             .iter()
             .any(|m| !m.is_static && m.decl.sig.name.name == DISPOSE),
-        statics: HashMap::new(),
+        statics: FxHashMap::default(),
         decl: Some(t),
     }))
 }
@@ -266,7 +324,9 @@ fn collect_prelude(cx: &mut Ctx) {
             continue;
         }
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
-        for (name, it) in super::exports::all_exports(cx, m) {
+        for (name, it) in super::exports::all_exports(cx, m).iter() {
+            let it = *it;
+            cx.prelude_type_keys |= crate::type_meanings::of_type_key(name).is_some();
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

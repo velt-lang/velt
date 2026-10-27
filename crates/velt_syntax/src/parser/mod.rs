@@ -3,16 +3,25 @@
 //! `items`/`type_decls`/`members` (declarations), `imports` (imports and re-exports), `stmt`,
 //! `expr` (operators), `postfix` (calls, members), `primary` (atoms), `jsx`, `arrow`, `for_loop`,
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
-//! `<T>x` of `.ts` files), and `recovery` (error synchronization).
+//! `<T>x` of `.ts` files), `asi` (the warning for lines that continue a statement under automatic
+//! semicolon insertion), and `recovery` (error synchronization).
 
+mod ambient;
 mod arrow;
+mod asi;
+mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
 mod members;
+mod namespaces;
+mod optional_types;
 mod param_patterns;
 mod param_props;
 mod paren_match;
@@ -21,15 +30,21 @@ mod postfix;
 mod primary;
 mod recovery;
 mod script;
-mod script_names;
+pub(crate) mod script_names;
+mod static_blocks;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod tuple_types;
 mod type_assertion;
 mod type_decls;
+mod type_level;
+mod type_members;
 mod types;
 mod undefined;
+mod var_decls;
 
+use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
@@ -80,6 +95,12 @@ pub(crate) struct Parser<'a> {
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
+    /// How many `static { … }` blocks the file has had so far: each is named by its number
+    /// (`static_blocks`), which formatting does not change.
+    static_blocks: u32,
+    /// Where the last object type with an accessor (`{ get v(): T }`) starts
+    /// (`type_members::parse_type_alias_item`).
+    accessor_type: Option<u32>,
     /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
     /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
     computed_keys: BTreeSet<String>,
@@ -87,6 +108,38 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Ambient declarations read so far, when the caller asked for them (`ambient`).
+    pub(crate) ambient: Option<Vec<crate::Ambient>>,
+    /// Build-time constants: the identifier expression (or shorthand property) starting at
+    /// one of these offsets is the literal (`crate::ParseOptions::defines`).
+    pub(crate) define_at: Option<&'a FxHashMap<u32, Lit>>,
+    /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
+    pub(crate) saw_module_syntax: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and `T`.
+    this_param: Option<(Span, TypeExpr)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (`velt fmt` refuses files with them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
+    /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
+    /// directly in it.
+    fn_body_next: bool,
+    /// The next type reference is an expression's (`new Map<K, V>()`) or a heritage clause's
+    /// (`extends Base<T>`): its type arguments may start on the next line
+    /// (`parse_named_type_with`).
+    type_args_any_line: bool,
+    /// The statement parsed next is directly in a function body or at the top level, where
+    /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
+    var_ok: bool,
+    /// Token index where the statement (or item, or member) being parsed starts
+    /// (`asi::begin_statement`).
+    stmt_start: usize,
+    /// `asi::bracket_depth_at`'s progress.
+    depth_scan: asi::DepthScan,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -131,8 +184,22 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            static_blocks: 0,
+            accessor_type: None,
+            this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
+            fn_body_next: false,
+            type_args_any_line: false,
+            var_ok: false,
+            stmt_start: 0,
+            depth_scan: asi::DepthScan::default(),
             computed_keys: BTreeSet::new(),
             no_in: false,
+            ambient: None,
+            define_at: None,
+            saw_module_syntax: false,
+            import_meta: None,
         }
     }
 
@@ -266,8 +333,62 @@ impl<'a> Parser<'a> {
         Err(Fail)
     }
 
+    /// The end of a statement: a `;`, or, by automatic semicolon insertion (ECMAScript's rules,
+    /// as TypeScript and Node apply them), a line break before the cursor, a `}` or the end of
+    /// the file (`asi`). Consumes the `;` if there is one. A `for (;;)` header takes its `;`s
+    /// with `expect(Tok::Semi)` instead: no semicolon is ever inserted there.
     fn expect_semi(&mut self) -> PResult<()> {
+        if self.eat(Tok::Semi) || self.at_inserted_semi() {
+            return Ok(());
+        }
         self.expect(Tok::Semi)
+    }
+
+    /// Would automatic semicolon insertion end a statement before the cursor: a line break
+    /// before it, a `}` or the end of the file?
+    fn at_inserted_semi(&mut self) -> bool {
+        matches!(self.peek(), Tok::RBrace | Tok::Eof) || self.line_break_before()
+    }
+
+    /// Is there a line break between tokens `pos + n` and `pos + n + 1`?
+    fn line_break_after(&mut self, n: usize) -> bool {
+        let hi = self.tok(self.pos + n).hi;
+        let lo = self.tok(self.pos + n + 1).lo;
+        self.text(hi.min(lo), lo)
+            .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// At `type`, `interface` or `declare` (also after `export`) followed by a line break: not a
+    /// declaration, as in TypeScript (`nextTokenIsIdentifierOnSameLine`), so the word is read as
+    /// an expression.
+    fn at_decl_word_before_line_break(&mut self) -> bool {
+        let k = usize::from(self.at_kw(Kw::Export));
+        matches!(self.nth(k), Tok::Kw(Kw::Type | Kw::Interface | Kw::Declare))
+            && self.line_break_after(k)
+    }
+
+    /// At `async function` with no line break after `async` (a line break there ends a
+    /// statement `async`, as in JavaScript).
+    fn at_async_function(&mut self) -> bool {
+        self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function) && !self.line_break_after(0)
+    }
+
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace) && self.at_inserted_semi()
     }
 
     /// The literal payload of a token.
@@ -465,10 +586,32 @@ impl<'a> Parser<'a> {
     /// A property name that may be quoted, as in TypeScript: `name`, a keyword, or a string
     /// literal (`"content-type"`, `"client:load"`) whose text becomes the name. Used where a
     /// field is named (object types, interface fields, destructuring); object literals take
-    /// quoted keys themselves (`parse_object_prop`).
+    /// quoted keys themselves (`parse_object_prop`). Also a number (`1.5: T`) and a computed
+    /// key ([`Self::member_key_len`], with paths).
     fn parse_prop_key(&mut self) -> PResult<Ident> {
-        if self.at_symbol_key() {
-            return self.parse_symbol_key();
+        self.parse_prop_key_with(true)
+    }
+
+    /// A key in a destructuring pattern: a computed key other than a symbol key (`[k]`,
+    /// `["a"]`, `[1.5]`, `[-1]`; `parse_pattern_computed_key`), a number (`1.5`, through
+    /// `number_key`), or [`Self::parse_prop_key`]'s.
+    fn parse_pattern_key(&mut self) -> PResult<Ident> {
+        match self.peek() {
+            Tok::LBracket if !self.at_symbol_key() => self.parse_pattern_computed_key(),
+            Tok::Int(_) | Tok::Float(_) => self.parse_number_name(),
+            _ => self.parse_prop_key(),
+        }
+    }
+
+    fn parse_prop_key_with(&mut self, paths: bool) -> PResult<Ident> {
+        if self.at_inline_symbol_key() {
+            return Err(self.reject_inline_symbol_key());
+        }
+        if self.member_key_len(0, paths) > 0 {
+            return self.parse_member_key();
+        }
+        if matches!(self.peek(), Tok::Int(_) | Tok::Float(_)) {
+            return self.parse_number_name();
         }
         if let Tok::Str(idx) = self.peek() {
             let key = Ident {

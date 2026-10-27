@@ -1,0 +1,23 @@
+// check: no leaks
+// A proxy converted to another object type keeps its identity (#823), also when both are
+// compared through `any` or used as dynamic keys (#1240): Node prints `true` for each.
+type Sig = { a: number; b: number };
+type A = { a: number };
+function wrap(o: any): any {
+  return new Proxy(o, {
+    get(t: any, k: string | symbol, r: any): any {
+      console.log("get", String(k));
+      return Reflect.get(t, k, r);
+    },
+  });
+}
+const s = wrap(JSON.parse('{"a":1,"b":2}') as Sig) as Sig;
+console.log(s.a);
+const v: A = s;
+console.log((v as any) === (s as any));
+const seen = new Set<object>();
+seen.add(v);
+console.log(seen.has(s));
+const weak = new WeakMap<object, string>();
+weak.set(s, "found");
+console.log(weak.get(v));

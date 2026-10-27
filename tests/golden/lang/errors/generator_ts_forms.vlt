@@ -1,7 +1,7 @@
 // TypeScript generator forms Velt rejects, each with an error saying why and what to write:
-// using the value of `yield` (`next(value)`) or `yield*` (a return value), `next(value)`,
-// `throw(e)`, a missing result type, `return value`, and `yield`, `throw` or `break` in a
-// `finally` block.
+// using the value of `yield` or `yield*` (a return value), `next(value)` without a `TNext`
+// type, a missing result type, `return value`, and `yield`, `throw` or `break` in a `finally`
+// block.
 function* inner(): Generator<i64> {
   yield 1;
 }
@@ -34,7 +34,6 @@ class Boom extends Error {}
 function main(): void {
   const it = inner();
   it.next(5);
-  it.throw(new Boom("x"));
 }
 
 function* noType() {

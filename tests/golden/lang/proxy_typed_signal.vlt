@@ -1,0 +1,76 @@
+// check: no leaks
+// A sigx-style signal (#823): a proxy typed as `Signal` whose `get` trap tracks each key and
+// whose `set` trap re-runs the effects that read it; a nested object read through the trap is
+// a proxy of its own field type (`Form`).
+type Form = { title: string; done: boolean };
+type State = { count: number; form: Form };
+type Signal = State & { $set(v: State): void };
+
+let active: (() => void) | null = null;
+const deps: Map<string, (() => void)[]> = new Map();
+
+function track(key: string): void {
+  const e = active;
+  if (e === null) return;
+  const list = deps.get(key);
+  if (list == null) {
+    deps.set(key, [e]);
+  } else if (!list.includes(e)) {
+    list.push(e);
+  }
+}
+
+function trigger(key: string): void {
+  const list = deps.get(key);
+  if (list == null) return;
+  for (const e of list.slice()) e();
+}
+
+function effect(fn: () => void): void {
+  active = fn;
+  fn();
+  active = null;
+}
+
+function reactive(target: any, path: string): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      const k = path + String(key);
+      if (key === "$set") {
+        return (v: any): void => {
+          Reflect.set(t, "count", v.count, receiver);
+        };
+      }
+      track(k);
+      const v = Reflect.get(t, key, receiver);
+      if (typeof v === "object" && v !== null) return reactive(v, k + ".");
+      return v;
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      const k = path + String(key);
+      const old = Reflect.get(t, key, receiver);
+      const ok = Reflect.set(t, key, value, receiver);
+      if (old !== value) trigger(k);
+      return ok;
+    },
+  });
+}
+
+function signal(target: State): Signal {
+  return reactive(target, "") as Signal;
+}
+
+const raw: State = { count: 0, form: { title: "a", done: false } };
+const s = signal(raw);
+effect(() => {
+  console.log("effect:", `count=${s.count} title=${s.form.title} done=${s.form.done}`);
+});
+s.count = 1;
+s.count++;
+s.form.title = "b";
+s.form.done = true;
+(s as any).$set({ count: 10, form: { title: "x", done: false } });
+const f: Form = s.form;
+f.title = "c";
+console.log(raw.count, raw.form.title);
+console.log(s === s, (s as any) === (s as any));

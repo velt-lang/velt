@@ -5,7 +5,7 @@
 //! changing it (`super::would_cross`); the call is accepted when none of them stores across the
 //! lock or makes a promise from the value (#457).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -20,7 +20,7 @@ use crate::visit;
 type Instances = (Vec<Vec<TyId>>, bool);
 
 /// Each function's direct calls: the calling body and the type arguments.
-type CallIndex = HashMap<DefId, Vec<(DefId, Vec<TyId>)>>;
+type CallIndex = FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>;
 
 /// Where a candidate crosses the lock.
 #[derive(Clone, Copy)]
@@ -41,30 +41,30 @@ pub(super) struct Offender {
 pub(super) struct Candidates<'s> {
     s: &'s Summaries,
     /// Closures passed to `with` as its argument itself.
-    direct: HashSet<DefId>,
+    direct: FxHashSet<DefId>,
     /// The checked candidates (with their instantiations) and what they do.
-    checked: HashMap<(DefId, Vec<TyId>), Option<Crossing>>,
+    checked: FxHashMap<(DefId, Vec<TyId>), Option<Crossing>>,
     /// The direct calls of each function and its uses as a value: the using body and the type
     /// arguments.
     calls: Option<CallIndex>,
     /// The functions that may be candidates at all (one parameter, synchronous, …).
     fns: Option<Vec<DefId>>,
     /// The result of [`Candidates::offender`] per parameter type.
-    offenders: HashMap<TyId, Option<(DefId, Crossing)>>,
+    offenders: FxHashMap<TyId, Option<(DefId, Crossing)>>,
     /// The result of [`Candidates::instances`] per function making a candidate.
-    instances: HashMap<DefId, Instances>,
+    instances: FxHashMap<DefId, Instances>,
 }
 
 impl<'s> Candidates<'s> {
-    pub(super) fn new(s: &'s Summaries, direct: HashSet<DefId>) -> Self {
+    pub(super) fn new(s: &'s Summaries, direct: FxHashSet<DefId>) -> Self {
         Candidates {
             s,
             direct,
-            checked: HashMap::new(),
+            checked: FxHashMap::default(),
             calls: None,
             fns: None,
-            offenders: HashMap::new(),
-            instances: HashMap::new(),
+            offenders: FxHashMap::default(),
+            instances: FxHashMap::default(),
         }
     }
 
@@ -193,7 +193,7 @@ impl<'s> Candidates<'s> {
     fn find_instances(&mut self, cx: &mut Ctx, res: &mut Resolver, start: DefId) -> Instances {
         let mut out = vec![];
         let mut complete = true;
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         // `None`: the maker's own type parameters.
         let mut work: Vec<(DefId, Option<Vec<TyId>>)> = vec![(start, None)];
         while let Some((f, so_far)) = work.pop() {
@@ -258,7 +258,7 @@ fn direct_calls(cx: &mut Ctx) -> CallIndex {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
-    let mut out = CallIndex::new();
+    let mut out = CallIndex::default();
     for caller in fns {
         let Some(Def::Fn(mut body)) = cx.defs[caller.0 as usize].take() else {
             continue;
@@ -310,7 +310,7 @@ pub(super) fn would_cross(
         instantiate(cx, f, targs);
     }
     let before = transfers(&mut bodies);
-    let found = super::crossings(cx, s, c, &mut bodies, resolved, named);
+    let found = super::crossings(cx, s, c, &mut bodies, resolved, named, &Default::default());
     let mut after = transfers(&mut bodies);
     for (d, f) in originals {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));

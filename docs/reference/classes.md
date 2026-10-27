@@ -65,8 +65,19 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass without a constructor of its own inherits its
-  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  layout, so upcasts are free. A subclass may declare an inherited field again with the same
+  type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
+  the same field, which the subclass's initializer sets after the base class's, in its turn among
+  the subclass's initializers. A subclass without a constructor of its own inherits its
+  base's. Redefining a base method requires `override`, except a method of a standard-library
+  class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
+  `super.m()` calls the base version. An override may give a parameter a default of its own: a
+  call that leaves the argument out takes the default of the method that runs, also through a
+  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), through a
+  method value (`const f = s.scale; f()`, `s.scale.bind(s)`) and when the argument is
+  `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
+  each class applies that class's own default, so a call passing every argument costs the same
+  as before.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -138,8 +149,21 @@ hidden classes and no runtime shape checks.
   zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
-  `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  `static readonly NAME: T = …;` constants (`Account.LIMIT`, `Math.PI`), evaluated like
+  [module constants](variables.md#module-state) (once, with the class, when the program
+  modifies, takes over or compares one, or its value is not a constant), and `static` fields
+  (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
+  module-level `let`: initialized once, where the class is declared, in source order with the
+  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, or
+  `++this.count` in a static method of `Counter`) and read through a subclass (`Sub.count`).
+  Assigning one through a subclass (`Sub.count = 5`, or `this.count = v` in a static method
+  called on a subclass) is an error: in JavaScript it creates a static field of the subclass
+  itself, which Velt does not support yet; assign `Counter.count`. `static { … }` blocks run
+  once, where the class is declared, as in JavaScript (`this` in one is not supported yet: name
+  the class, `Counter.count`; a `return` in one is an error, as in TypeScript). A class declared
+  inside a function or block can't have `static` fields that are not `readonly` or `static`
+  blocks yet: JavaScript evaluates them each time the declaration runs, Velt once.
+  `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
@@ -147,7 +171,13 @@ hidden classes and no runtime shape checks.
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
   body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
   statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
-  nearest first. A static method of a generic class is called without type arguments
+  nearest first. Instance methods of an `extend A` block apply to subclasses too: `new B().m()`
+  finds `m` in `B` and its bases' bodies, then in `B`'s `extend` blocks, then in each base
+  class's, nearest first, and `super.m()` in `B` finds `A`'s. An `extend` method is not
+  virtual, so a subclass cannot redefine one (in its body or in an `extend` block of its own):
+  ``` `m` is an `extend` method of `A` and cannot be redefined in a subclass yet ``` (a call
+  through an `A` would run the `extend` method). This covers std's too: `bytes()` and
+  `arrayBuffer()` and the `body` getter of `Response` and `Request` are `extend` methods (#1133 lifts the restriction). A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
   the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
   also a bounded one (`class Box<T extends Named>`).
@@ -228,11 +258,16 @@ hidden classes and no runtime shape checks.
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
-  skip when the old value decides). A getter may change its object (a signal recording who
-  read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  skip when the old value decides). The setter runs on the object `x` named before the
+  getter and the right-hand side ran, even when one of them assigns another one to `x`. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
-  getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
+  getter or setter must be accessors too. An override of only the getter of a base class's
+  `get`/`set` pair replaces the whole property, as in JS: writing it through the subclass is an
+  error (TypeScript's TS2540), and through the base class, an interface or an intersection it
+  stops with Node's `TypeError: Cannot set property n of #<S> which has only a getter`. Overriding only the setter is an error: the setter-only accessor would
+  hide the base getter (reads give `undefined` in JS), so override the getter too.
+  Getters cannot be `static` or `async`. A getter's
   type may be inferred from its `return` like a method's
   ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
@@ -326,17 +361,54 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### Returning `this`
+
+```ts
+class Registry {
+  names: string[] = [];
+  register(name: string): this {
+    this.names.push(name);
+    return this;
+  }
+}
+
+class Tagged extends Registry {
+  tags: string[] = [];
+  tag(t: string): this {
+    this.tags.push(t);
+    return this;
+  }
+}
+
+const t = new Tagged().register("a").tag("x").register("b");
+console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
+```
+
+- `this` as a method's result type (the polymorphic `this` type) is the class of the object
+  the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
+  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  (`override register(name: string): this`) or left out, when it returns `this` (or
+  `super.register(name)`). An override with another result type (`override register(name:
+  string): Registry`) is TypeScript's error TS2416.
+- Such a method returns `this` (or the result of another `this`-returning method called on
+  `this`); returning another object of the class is TypeScript's error ``type `A` is not
+  assignable to type `this` ``. The `this` type elsewhere in an instance method's signature or
+  body (a parameter `other: this`) is the declaring class. In a static method or outside a class
+  it is TS2526; in an interface it is not supported yet.
+
 ### `instanceof` downcasts
 
 `x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
 for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
 same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
 until `x` is reassigned; a variable that a closure assigns is not narrowed, as
-[for `null`](types.md#null)). The same works on an interface value (a `Shape` holding a `Circle`),
+[for `null`](types.md#null-and-undefined)). The same works on an interface value (a `Shape` holding a `Circle`),
 on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
 `catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
 (`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
-copy it into a local first. Tests joined by `||` narrow to the nearest class they both imply:
+copy it into a local first. A field whose type is a `C` that may be `null` or `undefined`
+(`o.next instanceof Node` with `next?: Node | null`) is narrowed to `C` when the test is true,
+mutable or not, as `o.next != null` would (a read checks it again). Tests joined by `||` narrow to the nearest class they both imply:
 with `class S2 extends S`, `x instanceof S || x instanceof S2` reads `x` as an `S`, and with
 two subclasses `T1` and `T2` of `S`, `x instanceof T1 || x instanceof T2` does too (when `S` is
 not `x`'s own class). The test reads the class id in the object's vtable: one load and
@@ -396,7 +468,9 @@ literal where a `Point` is expected. A struct has no constructor and no inherita
 (`implements` is allowed). Like every object it is a reference
 ([Memory model](memory.md#values-and-references)): assigning or passing it shares it. The
 compiler stores it inline (no heap allocation, no count) as long as the program never shares a
-value of the type, or never changes one in place.
+value of the type, or never changes one in place. `==` compares structs by identity, as for
+every object, but `Map` and `Set` keys of a struct type compare and hash by content, field by
+field ([Map](../std/prelude.md#map)).
 
 **Planned** ([semantics](../internals/design/semantics.md#js-fidelity-decisions)): the `struct`
 keyword is removed (use `class`, or `type Name = { … }` with `extend Name { … }` for plain data).
@@ -423,8 +497,9 @@ console.log(p.len(), q.len());  // 4 4
   and may give methods **default bodies** (mixins). `class C implements I, J` takes any number;
   `interface B extends A, C` inherits everything.
 - An interface with **methods** (or getters or setters, own or inherited) is nominal: a type
-  implements it only by declaring `implements` (or through an [`extend`](#extend) block); an
-  object literal does not satisfy one.
+  implements it only by declaring `implements` (or through an [`extend`](#extend) block), or
+  by being an object literal where it is expected
+  ([Object literals implementing interfaces](types.md#object-literals-implementing-interfaces)).
 - An interface with **only fields** (at least one, no methods, extending only such interfaces)
   describes data: it is an object type, like `type User = { … }`, so object literals satisfy
   it, field reads are loads and it has a JSON form. It converts to and from object types with
@@ -441,14 +516,46 @@ console.log(p.len(), q.len());  // 4 4
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
+- **Fields** are read and written through an interface value or a `T extends I` as in
+  TypeScript: `hook.owner = null`, `sub.flags |= DIRTY`, `sub.runs++`, `sub.dep ??= d`. The
+  write changes the object behind the value (a struct converted to an interface value is a
+  copy, as structs always are); a `readonly` field cannot be assigned
+  (``cannot assign to `id`: it is a readonly field``). Reads go through a getter in the
+  interface's table and writes through a setter that only interfaces the program writes
+  through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
+  object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
+  changes the field the object holds, as in JS: the field is read through its getter, the part
+  changed and the field written back through its setter. The receiver is evaluated once, and a
+  right-hand side with an effect (a call, an `await`) runs before the field is read, so a
+  change it (or another task) makes to the same field is kept. `readonly` is shallow, as in
+  TypeScript: `x.o.v = 5` and `x.t[0] = 5` on a `readonly` field work, written back through a
+  setter the interface keeps for this; an object literal that implements the field with only
+  `get o()` then needs `set o(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
-  (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
-  null`), and a caller writes `o.m?.(x)`.
-- **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
-  them on a concrete class or on a `T extends I` generic, not on an interface value
-  (``generic method `apply` cannot be called on an interface value``): make the calling
-  function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
-  call a method that is not generic. Generic interface methods cannot have default bodies yet.
+  (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
+  `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
+- **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are called on a concrete class, on a
+  `T extends I` generic (resolved for each instantiation, also when an interface value stands
+  for `T`), or on an interface value: there the method's table entry is itself a table, with
+  one entry per list of type arguments the program calls it with, compiled for every class
+  implementing the interface (#943). A generic method calling itself through an interface value
+  with a growing type argument (`r.go([x])` in `go<T>(x: T)`) has infinitely many
+  instantiations and is an error, as for a direct call. Not supported yet: converting a class
+  to such an interface where a subclass overrides the generic method (a `Base` that may hold a
+  `Sub` would run `Base`'s method; converting a `new Base()` or the `Sub` itself is fine), also
+  when the value comes from `any`, `unknown` or `object` (which keep the type it had there), and
+  converting an interface value with a generic method to other type arguments (`H<number>` as
+  `H<unknown>`). Both are errors where the program calls that generic method through interface
+  values. Generic interface methods cannot have default bodies yet.
+  The method that runs is the one of the class the type parameter is given: when a subclass of that
+  class overrides it, a value of the class may hold the subclass, so instantiating the generic
+  with that class is the same error as calling the method on it directly (pass the concrete
+  class), and an interface value cannot stand for such a type parameter. A call that passes
+  exactly that class is allowed: a `new C()` given directly to a parameter of type `T` of a
+  function or of a generic method, or a `const` initialized with `new C()`. Other variables, a
+  value inside another parameter's type (`get: () => T`, `xs: T[]`), a default (`y: T = x`)
+  and a class instantiated with `C` (`new Holder<C>(new C())`) don't count.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
@@ -507,14 +614,81 @@ const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
 console.log(JSON.stringify(u), idOf(u));
 ```
 
+```ts
+interface Hook {
+  currentOwner: number | null;
+  nextId(): number;
+}
+
+class DevHook implements Hook {
+  currentOwner: number | null = 7;
+  nextId(): number {
+    return 1;
+  }
+}
+
+function withoutOwner(h: Hook, f: () => void): void {
+  const prev = h.currentOwner;
+  h.currentOwner = null;                  // through the interface value
+  f();
+  h.currentOwner = prev;
+}
+
+const hook = new DevHook();
+withoutOwner(hook, () => console.log(hook.currentOwner)); // null
+console.log(hook.currentOwner);                           // 7
+```
+
+### Declaration merging
+
+As in TypeScript, an interface declared again in the same module is one interface with the
+members of every declaration: the first declaration's members first, then each later one's.
+`declare module "spec" { interface X { … } }` adds members to the interface `X` that module
+declares (also when it re-exports it from another module), wherever the augmentation is: the
+interface has the same members in every module. `declare global { interface X { … } }` merges
+into an interface `X` of its own module, or declares one there.
+
+```ts
+interface Point {
+  x: number;
+}
+interface Point {
+  y: number;
+}
+
+const p: Point = { x: 1, y: 2 };
+console.log(p.x + p.y); // 3
+```
+
+- The declarations' type parameters must have the same names (TypeScript's TS2428), all of
+  them are exported or none (TS2395), and their `extends` lists are joined.
+- A member declared in two declarations is an error. TypeScript allows a repeated field of the
+  same type, and makes a repeated method an overload.
+- An interface merges only with interfaces, not with a class or enum of its name. Next to a
+  function or constant of its name it is that name's type, the function its value
+  ([Types and values of one name](modules.md#types-and-values-of-one-name)).
+- `var NAME: T;` in `declare global` declares a build-time constant (see
+  [`define`](../tooling/manifest.md#define)).
+- A namespace of types in `declare global` is declared in its module, as a `declare namespace`
+  ([Namespaces](modules.md#namespaces)), like a `declare global` interface.
+- Not supported yet: other declarations in `declare global` and `declare module` blocks
+  (functions, namespaces in `declare module`, `var` in `declare module`), declaring a new interface in another module with
+  `declare module`, a `declare global` interface visible in other modules, and a shorthand
+  `declare module "spec";`.
+
 ## Generics
 
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. Type parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a
-type leaves the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
+interfaces (an interface with only fields is satisfied by any type with its fields; an
+interface value by its own interface and the ones it extends, so `f<Person>` fits
+`function f<T extends Named>` with `interface Person extends Named`, and its methods are
+called through the value's table) or, as in
+TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
+`T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
+parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves
+the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
 it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
 functions and methods take them too ([Generic functions](functions.md#generic-functions)). As
 in TypeScript, a default may use only the parameters declared before it, a parameter without a
@@ -573,9 +747,90 @@ builtins included, at zero cost (the calls are direct):
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be
   exported.
 - **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):
-  `static readonly` constants in `extend`; retroactive
-  `extend Point implements Comparable<Point>`; module scoping (an extension is visible where it
-  is imported) with ambiguity errors.
+  `static readonly` constants in `extend`; module scoping (an extension is visible where it is
+  imported) with ambiguity errors.
+
+### `extend … implements`
+
+`extend Target implements I, J { … }` makes the block's methods implement interfaces for every
+type the target matches, built-in types included: the type then satisfies `I` as a bound and
+converts to an `I` value, as a class with `implements I` does. The block is checked as a class
+is: each method of `I` must be in it with the same parameter and result types (a static method
+does not count), and a method `I` gives a default for may be left out.
+
+- **Blanket blocks** (`extend<T extends Comparable<T>> T implements Describe`) give the
+  interface to every type that meets their bounds, type parameters included: in
+  `function f<K extends Comparable<K>>(k: K)`, `k.describe()` works and `k` meets a
+  `T extends Describe` bound (`show(k)` with `function show<T extends Describe>(x: T)`). A value
+  of a type parameter does not convert to a `Describe` value, whatever its bounds.
+- **A type's own implementation comes first**: a class that says `implements Describe`, or
+  inherits it from a base class, keeps its own methods, and a blanket block applies to the
+  types without one. A block for a type that already implements the interface is an error.
+- **A type implements an interface once**, with the arguments of the block that wins: two
+  blocks for `W` implementing `G<i64>` and `G<string>` conflict, and with `extend<T> Box<T>
+  implements G<T>` and `extend<A> A implements G<i64>`, a `Box<string>` is a `G<string>` only.
+  A block with bounds must give the same arguments as the blocks it wins over (those it is
+  more specific than, and those for a base class of a type it fits): with `extend<T extends
+  Q> T implements G<i64>` and `extend<T> T implements G<string>`, whether a type is a
+  `G<string>` would depend on whether it is a `Q`, so the pair is refused.
+- **Blanket blocks chain**: with `extend<T extends K> T implements J` and `extend<T extends J>
+  T implements I`, a `T extends K` in generic code is an `I` too, through chains of any length.
+- **Interface values meet bounds** on their interface and the ones it extends: with
+  `extend<T extends P> T implements Q`, a `P` value (or a `P2` value, `interface P2 extends
+  P`) is a `Q`, and so is a `Box<P>` with `extend<T extends P> Box<T> implements Q`.
+- **A block's bounds hold when the type meets them at all**, through its own implementation or
+  another block: with `extend<T extends Q> T implements P`, `extend<T> T implements P` and
+  `extend<T extends P> T implements Q`, every type is a `P` and a `Q`, and gets the bounded `P`
+  block. A type never meets a bound only through itself.
+- **The most specific block wins** for each other type, by the rule above: with the blanket block and
+  `extend u64 implements Describe`, a `u64` uses the `u64` block everywhere, in generic code too
+  (`f(5 as u64)` calls it through `K`), and every other comparable type uses the blanket one.
+  Generic code is compiled for each type it is used with, so the call is direct: specializing a
+  generic function or class for some types costs nothing at run time.
+- **Errors**: a missing or mismatched method; two blocks for one interface that can both fit a
+  type where neither is more specific (``conflicting implementations of `I` ``, naming a type
+  both fit: `extend<A> Pair<A, i64>` and `extend<B> Pair<i64, B>` both fit `Pair<i64, i64>`),
+  in one module or in two; a block with bounds that wins over another with other interface
+  arguments (``the block for `G<i64>` has bounds and takes precedence over the other``); a block for an interface the type already implements
+  (`` `P` already implements `I` ``, also for an interface type and an interface it extends); an
+  interface with fields or optional methods (``cannot implement `I`: `I` declares fields``: an
+  `extend` block cannot add fields); a target that is `any`, `unknown`, `never` or a union (a
+  union's value has one member's type: implement the interface for each member); a blanket
+  block bounded by the interface it implements (`extend<T extends I> T implements I`), which
+  no type could get; a bound of `any`, `unknown`, `object` or `Function` on a block that lists
+  `implements` (leave out a bound every type meets). Blocks whose bounds only lead to each other
+  (`extend<T extends I> T implements J` with `extend<U extends J> U implements I`) give a type
+  neither interface unless it has one of its own.
+- A value converted from `any` or `unknown` to `I` uses the implementation a direct conversion of
+  the value would.
+- `extend X implements Comparable<X>` may be written out too; a block that only defines
+  `compareTo` or `[Symbol.iterator]()` implements `Comparable` or `Iterable` without it (above).
+
+```ts
+interface Describe {
+  describe(): string;
+}
+
+extend<T extends Comparable<T>> T implements Describe {
+  describe(): string {
+    return "a comparable value";
+  }
+}
+
+extend u64 implements Describe {
+  describe(): string {
+    return `the u64 ${this}`;
+  }
+}
+
+function label<K extends Comparable<K>>(k: K): string {
+  return k.describe();
+}
+
+const items: Describe[] = [7 as u64, "x"];
+console.log(label(5 as u64), label("abc"), items.map((d) => d.describe()));
+// the u64 5 a comparable value [ 'the u64 7', 'a comparable value' ]
+```
 
 ```ts
 type Shape = { kind: "circle"; r: f64 } | { kind: "square"; side: f64 };

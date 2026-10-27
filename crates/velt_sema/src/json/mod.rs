@@ -18,7 +18,7 @@
 //! [`crate::object_copies`]: `console.log` and `===` on a type parameter (std's `indexOf` and
 //! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -27,10 +27,12 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::inst_sites::{carry_guard, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
 
+mod identity;
 mod union;
 
 use union::union_decode_problem;
@@ -41,6 +43,10 @@ use union::union_decode_problem;
 enum Need {
     Json(bool),
     Seen(Seen),
+    /// Read without a lock (printed, formatted, converted to `any`): no `Mutex` or `RwLock`
+    /// may be in it. Recorded only for a type parameter; concrete types are checked where
+    /// they are read (`Ctx::holds_lock`).
+    NoLock,
 }
 
 /// JSON-relevant facts of one function body.
@@ -49,6 +55,8 @@ struct Uses {
     /// Types given to the JSON intrinsics, `console.log` and `===` directly.
     direct: Vec<(TyId, Span, Need)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
+    /// The guard bits of each of `calls` (`inst_sites::carry_guard`).
+    guards: Vec<u64>,
     closures: Vec<DefId>,
     /// Every type the body mentions (expressions and type arguments of calls), with its first
     /// span: the methods of class types among them may be dispatched dynamically.
@@ -71,8 +79,9 @@ impl Uses {
     }
 }
 
-/// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form.
-type Needs = HashMap<DefId, Vec<(TyId, Need)>>;
+/// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form, with
+/// their guard bits (`inst_sites::carry_guard`).
+type Needs = FxHashMap<DefId, Vec<(TyId, Need, u64)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
@@ -88,29 +97,51 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         .iter()
         .enumerate()
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
+    let std_fns: FxHashSet<DefId> = uses
+        .iter()
+        .map(|(f, _)| *f)
+        .filter(|f| is_std_fn(cx, *f))
+        .collect();
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
-    let mut needs: Needs = HashMap::new();
-    let mut checked: HashSet<(TyId, Span, Need)> = HashSet::new();
+    let mut needs: Needs = FxHashMap::default();
+    let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     // A type without a JSON form is reported once per place, whether it is parsed, written or
     // both (`JSON.stringify(JSON.parse<T>(s))`).
-    let mut reported: HashSet<(TyId, Span)> = HashSet::new();
+    let mut reported: FxHashSet<(TyId, Span)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
         let mut grew = false;
-        for (t, span, parse) in requirements(cx, u, &needs) {
+        for (t, span, parse, guard) in requirements(cx, u, &needs) {
             if has_param(cx, t) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(t, parse)) {
-                    n.push((t, parse));
+                if !n.contains(&(t, parse, guard)) {
+                    n.push((t, parse, guard));
                     grew = true;
                 }
             } else if let Need::Seen(how) = parse {
-                if checked.insert((t, span, parse)) {
+                // The standard library's own looks at its concrete types (`any` in its proxy
+                // code) never see a user's object types, which reach it only as type
+                // arguments, nor whether the user's code runs them.
+                if !std_fns.contains(f) && checked.insert((t, span, parse)) {
                     cx.object_copies.observe(t, span, how);
                 }
+            } else if parse == Need::NoLock {
+                if checked.insert((t, span, parse)) && cx.holds_lock(t) {
+                    let tn = cx.display(t);
+                    cx.error(
+                        Diagnostic::error(
+                            format!("`{tn}` is read here without its lock (printed, formatted or converted to `any` through a type parameter)"),
+                            span,
+                        )
+                        .with_note("a value holding a lock is read only under it (`with`): pass what a callback returns instead"),
+                    );
+                }
             } else if let Need::Json(parse) = parse {
+                if parse && !cx.objects.layouts.families.is_empty() {
+                    cx.objects.layouts.parsed.push(t);
+                }
                 if !reported.contains(&(t, span))
                     && checked.insert((t, span, Need::Json(parse)))
                     && check(cx, t, span, parse)
@@ -129,22 +160,28 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic
 /// functions it calls (substituted), closures it creates and methods the class types it
 /// mentions dispatch dynamically to (instantiated with those types' arguments).
-fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need)> {
-    let mut reqs: Vec<(TyId, Span, Need)> = u.direct.clone();
-    for (d, targs, span) in &u.calls {
-        for (t, parse) in needs.get(d).into_iter().flatten() {
-            reqs.push((cx.subst(*t, targs), *span, *parse));
+fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need, u64)> {
+    let mut reqs: Vec<(TyId, Span, Need, u64)> =
+        u.direct.iter().map(|(t, s, n)| (*t, *s, *n, 0)).collect();
+    for ((d, targs, span), site) in u.calls.iter().zip(&u.guards) {
+        for (t, parse, need) in needs.get(d).into_iter().flatten() {
+            if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                reqs.push((cx.subst(*t, targs), *span, *parse, g));
+            }
         }
     }
     for c in &u.closures {
-        for (t, parse) in needs.get(c).into_iter().flatten() {
-            reqs.push((*t, cx.def_spans[c.0 as usize], *parse));
+        for (t, parse, need) in needs.get(c).into_iter().flatten() {
+            reqs.push((*t, cx.def_spans[c.0 as usize], *parse, *need));
         }
     }
     for (m, args, span) in &u.dyn_calls {
-        for (need, parse) in needs.get(m).into_iter().flatten() {
-            if let Some(need) = instantiate(cx, *need, args) {
-                reqs.push((need, *span, *parse));
+        for (t, parse, need) in needs.get(m).into_iter().flatten() {
+            let Some(g) = carry_guard(cx, *need, args, 0) else {
+                continue;
+            };
+            if let Some(t) = instantiate(cx, *t, args) {
+                reqs.push((t, *span, *parse, g));
             }
         }
     }
@@ -155,11 +192,29 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
+    let copies: Vec<(Span, TyId)> = cx
+        .object_copies
+        .copies
+        .iter()
+        .map(|c| (c.span, c.to))
+        .collect();
+    let mut ids = identity::Looks {
+        any_impl: cx.any.and_then(|a| a.imp),
+        proxy: cx.prelude_adt("Proxy"),
+        tys: &cx.ty,
+        copies: &copies,
+        f: DefId(0),
+        first: cx.object_copies.dyn_sources.len(),
+        sources: vec![],
+    };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
-        let mut seen: HashSet<TyId> = HashSet::new();
+        let mut seen: FxHashSet<TyId> = FxHashSet::default();
+        ids.f = DefId(i as u32);
+        let guards = guards_of(ids.tys, &mut f.body.block);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            let calls = u.calls.len();
             if seen.insert(e.ty) {
                 u.types.push((e.ty, e.span));
             }
@@ -177,16 +232,52 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                     u.types.push((*t, e.span));
                 }
             }
-            uses_of(&mut u, e, looks);
+            uses_of(ids.tys, &mut u, e, looks);
+            if u.calls.len() > calls {
+                let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
+                u.guards.push(guard);
+            }
+            if looks {
+                ids.uses(&mut u.direct, e);
+            }
         });
         out.push((DefId(i as u32), u));
     }
+    let sources = std::mem::take(&mut ids.sources);
+    cx.object_copies.dyn_sources.extend(sources);
     out
 }
 
 /// The JSON intrinsic calls, generic calls and closures of one expression, and with `looks`
 /// its `console.log` and `===` calls.
-fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
+fn uses_of(tys: &crate::types::Types, u: &mut Uses, e: &Expr, looks: bool) {
+    // A type parameter read without a lock: whatever it is instantiated with may hold one.
+    let unlocked = match &e.kind {
+        E::ToDyn { expr, .. } => Some(expr.as_ref()),
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    Intrinsic::Print
+                    | Intrinsic::PrintErr
+                    | Intrinsic::ToString
+                    | Intrinsic::TemplateToString,
+                ),
+            args,
+        } => args.first(),
+        _ => None,
+    };
+    if let E::Call {
+        callee: Callee::Intrinsic(Intrinsic::Print | Intrinsic::PrintErr),
+        args,
+    } = &e.kind
+    {
+        for a in args.iter().skip(1).filter(|a| param_in(tys, a.ty)) {
+            u.direct.push((a.ty, a.span, Need::NoLock));
+        }
+    }
+    if let Some(a) = unlocked.filter(|a| param_in(tys, a.ty)) {
+        u.direct.push((a.ty, a.span, Need::NoLock));
+    }
     match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::JsonStringify),
@@ -202,11 +293,22 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
         } => u.direct.push((e.ty, e.span, Need::Json(true))),
         E::Call {
             callee:
-                Callee::Intrinsic(i @ (Intrinsic::Print | Intrinsic::PrintErr | Intrinsic::Same)),
+                Callee::Intrinsic(
+                    i @ (Intrinsic::Print
+                    | Intrinsic::PrintErr
+                    | Intrinsic::Same
+                    | Intrinsic::SameValue
+                    | Intrinsic::KeyEq
+                    | Intrinsic::IncludesEq),
+                ),
             args,
         } if looks => {
             let how = match i {
-                Intrinsic::Same => Seen::Identity,
+                // `IncludesEq`: `includes`; `KeyEq`: `Map` keys, which `Hash` shows too.
+                Intrinsic::Same
+                | Intrinsic::SameValue
+                | Intrinsic::KeyEq
+                | Intrinsic::IncludesEq => Seen::Identity,
                 _ => Seen::Printed,
             };
             for a in args {
@@ -225,6 +327,45 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
     }
 }
 
+/// `JSON.parse` into, or `JSON.stringify` of, a dynamic type `name` (in `tn` unless `whole`):
+/// not supported yet (#924).
+fn report_dynamic(cx: &mut Ctx, name: &str, whole: bool, tn: &str, span: Span, parse: bool) {
+    let within = match whole {
+        true => String::new(),
+        false => format!(" (in `{tn}`)"),
+    };
+    let d = match parse {
+        true => Diagnostic::error(
+            format!("`JSON.parse` into `{name}`{within} is not supported yet (#924)"),
+            span,
+        )
+        .with_note("TypeScript gives an `any` holding whatever the text has; Velt decodes into a type and checks the data against it")
+        .with_note("name the type the JSON must have: `JSON.parse(text) as User`, `JSON.parse<User>(text)` or `const u: User = JSON.parse(text)`, or use `JSON.parseValue(text)` (a `JsonValue`) for data of unknown shape"),
+        false => Diagnostic::error(
+            format!("`JSON.stringify` of `{name}`{within} is not supported yet (#924)"),
+            span,
+        )
+        .with_note("convert the value to its type first: `JSON.stringify(x as User)` (checked at run time)"),
+    };
+    cx.error(d);
+}
+
+/// Is `f` a function (or closure) of the standard library?
+fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
+    let Some(DefInfo::Fn(info)) = cx.info.get(f.0 as usize) else {
+        return false;
+    };
+    cx.modules.get(info.module).is_some_and(|m| m.is_std)
+}
+
+/// [`has_param`] with the types at hand.
+fn param_in(tys: &crate::types::Types, t: TyId) -> bool {
+    match tys.kind(t) {
+        TyKind::Param(_) => true,
+        k => children(k).into_iter().any(|c| param_in(tys, c)),
+    }
+}
+
 fn has_param(cx: &Ctx, t: TyId) -> bool {
     match cx.ty.kind(t) {
         TyKind::Param(_) => true,
@@ -237,6 +378,13 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
     if !parse {
         let seen = crate::object_copies::Seen::Serialized;
         cx.object_copies.observe(t, span, seen);
+    }
+    if let Some(what) = undefined_problem(cx, t, parse) {
+        cx.error(Diagnostic::error(
+            format!("{what} is not supported yet"),
+            span,
+        ));
+        return true;
     }
     let mut stack = vec![];
     let Some(bad) = unserializable(cx, t, &mut stack, parse) else {
@@ -281,6 +429,10 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
                 "TypeScript allows this (`JSON.stringify` writes a generator as `{}`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with `for...of`)",
             ),
         );
+        return true;
+    }
+    if let Some(d) = cx.dynamic(bad) {
+        report_dynamic(cx, d.name(), t == bad, &tn, span, parse);
         return true;
     }
     let private = private_field(cx, bad, parse);
@@ -370,9 +522,134 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
         DefInfo::Adt(a) => a
             .fields
             .iter()
-            .find(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o)))
+            .find(|f| {
+                f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                    && !cx.plain_private(f.private_to, &f.name)
+            })
             .map(|f| (f.name.clone(), f.span)),
         _ => None,
+    }
+}
+
+/// What this phase of `undefined` (issue #930) cannot convert yet: `JSON.parse` into a type
+/// that holds a `T | undefined` anywhere (a `T | null | undefined` reads as its `T | null`), and `JSON.stringify` of a value that may be
+/// `undefined` itself (Node returns `undefined`, not a string). Object fields and `Map` /
+/// `Record` values holding `undefined` (left out) and array elements (`null`) are written as
+/// Node does.
+/// A class in the value whose `toJSON()` may return `undefined` is not: Node leaves such a
+/// field out and writes `null` for such an array element, where the glue writes what the
+/// method returned.
+fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str> {
+    let undef = |cx: &Ctx, t: TyId| cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+    if parse {
+        let mut stack = vec![t];
+        let mut seen = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            // A `T | null | undefined` decodes into its `T | null` (JSON has no `undefined`).
+            let three = cx.ty.nothing_of(t) == Some(crate::hir::Nothing::Both);
+            if undef(cx, t) && !three {
+                return Some("`JSON.parse` into a type that may hold `undefined`");
+            }
+            if cx.is_callable_object(t) || cx.ctor_sig_own(t).is_some() {
+                return Some("`JSON.parse` into a function with properties (#921)");
+            }
+            stack.extend(children(cx.ty.kind(t)));
+            if let TyKind::Adt(d, _) = cx.ty.kind(t) {
+                stack.extend(parsed_field_tys(cx, *d));
+            }
+        }
+        return None;
+    }
+    if undef(cx, t) {
+        return Some("`JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string)");
+    }
+    // A function with properties is a function to JSON: left out of objects, `null` in arrays
+    // (lowering), and `undefined` itself.
+    if cx.is_callable_object(cx.ty.opt_payload(t).unwrap_or(t)) {
+        return Some("`JSON.stringify` of a function with properties (Node returns `undefined`, not a string)");
+    }
+    let mut stack = vec![t];
+    let mut seen = FxHashSet::default();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        if cx.ctor_sig_own(t).is_some() {
+            return Some("`JSON.stringify` of a class used as a value (#943)");
+        }
+        if let TyKind::Adt(d, args) = cx.ty.kind(t).clone() {
+            // A class with `toJSON()` is written as what the method returns, its own or a
+            // subclass's (the value may be an instance of one).
+            let mut to_json = false;
+            let classes = match cx.writes_undefined {
+                true => with_subclasses(cx, d, &args),
+                false => vec![],
+            };
+            for (c, c_args) in classes {
+                if let Some((_, ret)) = crate::hooks::hook(cx, c, &c_args, crate::hooks::TO_JSON) {
+                    if undef(cx, ret) {
+                        return Some(
+                            "`JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself)",
+                        );
+                    }
+                    to_json |= c == d;
+                    stack.push(ret);
+                }
+            }
+            if !to_json {
+                stack.extend(raw_field_tys(cx, d));
+            }
+        }
+        stack.extend(children(cx.ty.kind(t)));
+    }
+    None
+}
+
+/// Class `d<args>` and every class that extends it (each with its own type parameters as its
+/// arguments); nothing for a type that is not a class.
+fn with_subclasses(cx: &mut Ctx, d: DefId, args: &[TyId]) -> Vec<(DefId, Vec<TyId>)> {
+    if cx.adt(d).is_none_or(|a| a.kind != AdtKind::Class) {
+        return vec![];
+    }
+    let mut out = vec![(d, args.to_vec())];
+    for s in (0..cx.info.len() as u32).map(DefId) {
+        let Some(n) = cx
+            .adt(s)
+            .filter(|a| s != d && a.kind == AdtKind::Class)
+            .map(|a| a.generics.len())
+        else {
+            continue;
+        };
+        if cx.class_extends(s, d) {
+            let own = (0..n as u32).map(|i| cx.ty.param(i)).collect();
+            out.push((s, own));
+        }
+    }
+    out
+}
+
+/// The declared field types of struct / class `d` (and the payloads of enum `d`'s variants).
+/// The field types `JSON.parse` decodes into: an optional field's declared type, whose own
+/// `undefined` stands for an absent key (`a?: T` is a `T | undefined`).
+fn parsed_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a
+            .fields
+            .iter()
+            .map(|f| if f.optional { f.declared } else { f.ty })
+            .collect(),
+        _ => raw_field_tys(cx, d),
+    }
+}
+
+fn raw_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a.fields.iter().map(|f| f.ty).collect(),
+        Some(DefInfo::Enum(e)) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+        _ => vec![],
     }
 }
 
@@ -397,11 +674,26 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
-        TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        // A dynamic value is written as what it holds, checked at run time (velt_vir
+        // `json/any.rs`).
+        TyKind::Dyn(..) if !parse && cx.dynamic(t).is_some() => return None,
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+        // A `shared<T>` is written as the `T` inside, read in its box (velt_vir `json/write.rs`),
+        // when it is read like its `T` (`frozen_readable`): not a `shared<int>`, whose atomics
+        // another task may be running, nor one holding a `Mutex`, read only under its lock.
+        // Decoding makes no `shared` value.
+        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() && cx.frozen_readable(e) => {
+            vec![e]
+        }
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {
             if stack.contains(&t) || cx.is_json_value(d) {
+                return None;
+            }
+            // A function with properties is written as a function is (left out, `null` in an
+            // array: velt_vir `json/write.rs`); parsing into one is reported before.
+            if !parse && cx.is_callable_object(t) {
                 return None;
             }
             // `Record<K, V>` is an object (`record_keys` checked `K` where the type was resolved
@@ -442,9 +734,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 // type keeps to itself. A private field declared by a std type (a runtime
                 // handle, also inherited by a user class) has no JSON form at all.
                 DefInfo::Adt(a)
-                    if a.fields
-                        .iter()
-                        .any(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))) =>
+                    if a.fields.iter().any(|f| {
+                        f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                            && !cx.plain_private(f.private_to, &f.name)
+                    }) =>
                 {
                     return Some(t)
                 }
@@ -455,7 +748,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 {
                     a.fields
                         .iter()
-                        .filter(|f| parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        .filter(|f| {
+                            !cx.plain_private(f.private_to, &f.name)
+                                && (parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        })
                         .map(|f| f.ty)
                         .collect()
                 }

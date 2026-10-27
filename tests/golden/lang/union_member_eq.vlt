@@ -11,20 +11,20 @@ function mixed(v: string | number | null, n: number, w: number | P, p: P): void 
 }
 
 function main() {
-  const a: string | number = 3;
+  const a = 3 as string | number;
   const b: number = 3;
   console.log(a === b, b === a, a !== b, b !== a);
-  const s: string | number = "3";
+  const s = "3" as string | number;
   console.log(s === b, b === s, s !== b);
   const t: string = "3";
   console.log(s === t, t === s, a === t);
   console.log(pick(true) === 3, pick(false) === b, pick(true) === t);
-  const n: string | number = NaN;
+  const n = NaN as string | number;
   const m: number = NaN;
   console.log(n === m, n !== m);
-  const z: string | number = -0;
+  const z = -0 as string | number;
   console.log(z === 0);
-  const u: string | number | boolean = true;
+  const u = true as string | number | boolean;
   console.log(u === b, u === t, u === true);
   const p = new P();
   mixed(2, 2, 2, p);

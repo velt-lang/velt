@@ -40,6 +40,8 @@ impl Emitter<'_> {
             Const::Int(i) if ty == Ty::F32 => float_literal(ty, f64::from(*i as f32)),
             Const::Int(i) if ty == Ty::F64 => float_literal(ty, *i as f64),
             Const::Int(0) if ty == Ty::Ptr => "null".into(),
+            Const::Int(0) if ty == Ty::V128 => "zeroinitializer".into(),
+            Const::Int(_) if ty == Ty::V128 => bail!("non-zero constant of type V128"),
             Const::Int(i) if ty == Ty::Ptr => {
                 format!("inttoptr (i64 {} to ptr)", int_literal(Ty::U64, *i))
             }

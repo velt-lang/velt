@@ -1,0 +1,10 @@
+// A due unref()'d timer runs while code keeps running without waiting for a timer or I/O (here
+// a loop of `yieldNow()`, in Node a chain of `setImmediate`): something still happens, so the
+// process is not ending (#1366). Velt runs it once the loop has gone on for a second, Node at
+// once.
+setTimeout(() => console.log("unref'd runs"), 10).unref();
+const end = Date.now() + 1500;
+while (Date.now() < end) {
+  await yieldNow();
+}
+console.log("spin done");

@@ -14,20 +14,58 @@
 //!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped with `velt_rt_fut_drop`;
 //! - function values and closures → `{ code: ptr, env: ptr }`; interface values → `{ data, vtable }`.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, TyId, TyKind};
+use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, Nothing, TyId, TyKind};
 
 use super::{ice, Cx};
 use crate::vir::{Ty, STR_AGG};
 
 impl<'h> Cx<'h> {
+    /// The kind of `t`, with a `T | null | undefined` seen as what its value is: an option of
+    /// a `T | null` whose own nothing is `undefined` (hir_encodings.md "Undefined"), so glue
+    /// and layout treat it as two nested options.
     pub(super) fn kind(&self, t: TyId) -> TyKind {
-        self.types.kind(t).clone()
+        match self.types.kind(t) {
+            TyKind::Option(_, Nothing::Both) => {
+                let mid = self
+                    .types
+                    .payload(t)
+                    .expect("ICE: option without a payload");
+                TyKind::Option(mid, Nothing::Undefined)
+            }
+            k => k.clone(),
+        }
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
+        // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
+        // that allows `undefined` would lose one nothing (issue #930): report it.
+        if let TyKind::Option(e, n) = &k {
+            if matches!(self.types.kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
+                && !self.keeps_nothings_apart()
+            {
+                self.nothing_clashes.push(self.cur_def);
+            }
+        }
         self.types.intern(k)
+    }
+
+    /// Is the type being made part of the prelude `Map` or `Record` (a function of theirs being
+    /// built, or a map's field types)? Their `V | null` entry slots tell a deleted entry from
+    /// a live one by the map's index where `V` holds a nothing (`__intrinsic_holds_null`), so a
+    /// `V` that allows `undefined` keeps its values (velt_sema `undefined_args`).
+    fn keeps_nothings_apart(&self) -> bool {
+        if self.map_fields > 0 {
+            return true;
+        }
+        let Some(d) = self.cur_def else { return false };
+        match self.hir.def(d) {
+            hir::Def::Fn(f) => ["std/prelude/map::", "std/prelude/record::"]
+                .iter()
+                .any(|m| f.name.starts_with(m)),
+            _ => false,
+        }
     }
 
     /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`, with anonymous object types in
@@ -52,10 +90,22 @@ impl<'h> Cx<'h> {
         let k = match self.kind(t) {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| c(self, a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Op(o, args) => {
+                let op = TyKind::Op(o, args.iter().map(|&a| c(self, a)).collect());
+                let op = self.intern(op);
+                let out = if self.mentions_params(op) {
+                    op
+                } else {
+                    let r = self.reduce_op(op);
+                    self.canon(r)
+                };
+                self.anon.memo.insert(t, out);
+                return out;
+            }
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(k, v) => TyKind::Map(c(self, k), c(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| c(self, a)).collect()),
-            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(c(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
@@ -63,10 +113,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| c(self, a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.anon.memo.insert(t, t);
@@ -120,14 +172,19 @@ impl<'h> Cx<'h> {
         if !e.is_union {
             return None;
         }
-        let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
+        // A union view's variant (velt_sema `union_views.rs`) is no member: the unions of one
+        // family each have it, with the same payload.
+        let payloads: Vec<TyId> = (e.variants.iter())
+            .filter(|v| v.name != UNION_VIEW_VARIANT)
+            .map(|v| v.payload[0])
+            .collect();
         let mut members: Vec<TyId> = vec![];
         for p in payloads {
             let m = self.subst_raw(p, args);
             let m = self.canon(m);
             let plain = !matches!(
                 self.kind(m),
-                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+                TyKind::Option(..) | TyKind::Unit | TyKind::Never | TyKind::Error
             ) && !self.is_union(m);
             if !plain {
                 return None;
@@ -149,7 +206,9 @@ impl<'h> Cx<'h> {
 
     /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
     /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
-    /// the union collapsed to that member. Unchanged for every other enum.
+    /// the union collapsed to that member. Unchanged for every other enum. A variant of a value
+    /// that is no enum is the whole value: a union whose members erase to one type is that type
+    /// (velt_sema `union_layouts`), its variants still written as variants.
     pub(super) fn union_variant(
         &mut self,
         hir_ty: TyId,
@@ -157,6 +216,14 @@ impl<'h> Cx<'h> {
         variant: u32,
         ty: TyId,
     ) -> VariantAt {
+        let is_enum = match self.kind(ty) {
+            TyKind::Adt(d, _) => matches!(self.hir.def(d), hir::Def::Enum(_)),
+            TyKind::Result(..) => true,
+            _ => false,
+        };
+        if !is_enum {
+            return VariantAt::Whole;
+        }
         let raw = self.subst_raw(hir_ty, targs);
         if raw == ty {
             return VariantAt::Index(variant);
@@ -201,7 +268,7 @@ impl<'h> Cx<'h> {
             hir::Def::Adt(a) if a.kind == AdtKind::Anon => a.fields.iter().map(|f| f.ty).collect(),
             _ => vec![],
         };
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut stack: Vec<TyId> = fields(d);
         let mut found = false;
         while let Some(t) = stack.pop() {
@@ -218,7 +285,7 @@ impl<'h> Cx<'h> {
                     stack.extend(args);
                 }
                 TyKind::Tuple(es) => stack.extend(es),
-                TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => stack.push(e),
+                TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => stack.push(e),
                 TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                     stack.extend([a, b]);
                 }
@@ -226,6 +293,7 @@ impl<'h> Cx<'h> {
                     params,
                     ret,
                     throws,
+                    ..
                 } => {
                     stack.extend(params);
                     stack.extend([ret, throws]);
@@ -242,6 +310,66 @@ impl<'h> Cx<'h> {
         self.hir.anon_shapes.get(key).copied()
     }
 
+    /// Does `t` mention a type parameter?
+    fn mentions_params(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Param(_) => true,
+            TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
+                ts.iter().any(|x| self.mentions_params(*x))
+            }
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => self.mentions_params(*e),
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                self.mentions_params(*a) || self.mentions_params(*b)
+            }
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                ..
+            } => {
+                params.iter().any(|x| self.mentions_params(*x))
+                    || self.mentions_params(*ret)
+                    || self.mentions_params(*throws)
+            }
+            _ => false,
+        }
+    }
+
+    /// The type deferred type `op` (concrete arguments) reduces to: sema's entry for it
+    /// (`hir::Program::type_ops`), looked up as written or with canonical arguments. Sema
+    /// reduces every one an instantiation reaches, so a missing one is an internal error, never
+    /// a guessed layout.
+    fn reduce_op(&mut self, op: TyId) -> TyId {
+        if let Some(&r) = self.hir.type_ops.get(&op) {
+            return r;
+        }
+        if self.anon.ops.is_none() {
+            let keys: Vec<(TyId, TyId)> = self.hir.type_ops.iter().map(|(k, v)| (*k, *v)).collect();
+            let mut by_canon = FxHashMap::default();
+            for (k, v) in keys {
+                let TyKind::Op(o, args) = self.kind(k) else {
+                    continue;
+                };
+                let args = args.iter().map(|a| self.canon(*a)).collect();
+                let ck = self.intern(TyKind::Op(o, args));
+                by_canon.insert(ck, v);
+            }
+            self.anon.ops = Some(by_canon);
+        }
+        let TyKind::Op(o, args) = self.kind(op) else {
+            return op;
+        };
+        let args = args.iter().map(|a| self.canon(*a)).collect();
+        let ck = self.intern(TyKind::Op(o, args));
+        match self.anon.ops.as_ref().and_then(|m| m.get(&ck)) {
+            Some(&r) => r,
+            None => ice(format_args!(
+                "deferred type {op:?} ({:?}) was not reduced by sema",
+                self.kind(op)
+            )),
+        }
+    }
+
     /// [`subst`](Self::subst) without canonicalizing.
     fn subst_raw(&mut self, t: TyId, targs: &[TyId]) -> TyId {
         if targs.is_empty() {
@@ -256,10 +384,18 @@ impl<'h> Cx<'h> {
             }
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| s(self, a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| s(self, a)).collect()),
+            TyKind::Op(o, args) => {
+                let op = TyKind::Op(o, args.iter().map(|&a| s(self, a)).collect());
+                let op = self.intern(op);
+                if self.mentions_params(op) {
+                    return op;
+                }
+                return self.reduce_op(op);
+            }
             TyKind::Array(e) => TyKind::Array(s(self, e)),
             TyKind::Map(k, v) => TyKind::Map(s(self, k), s(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| s(self, a)).collect()),
-            TyKind::Option(e) => TyKind::Option(s(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(s(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(s(self, a), s(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(s(self, v), s(self, e)),
             TyKind::Shared(e) => TyKind::Shared(s(self, e)),
@@ -267,10 +403,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| s(self, a)).collect(),
                 ret: s(self, ret),
                 throws: s(self, throws),
+                rest,
             },
             _ => return t,
         };
@@ -350,6 +488,7 @@ impl<'h> Cx<'h> {
             TyKind::Str => Ty::Agg(STR_AGG),
             // The address of a symbol record (rt_abi.md "Symbols"), never null.
             TyKind::Symbol => Ty::Ptr,
+            TyKind::Simd(_) => Ty::V128,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,
             _ if self.boxed(t) => Ty::Ptr,
@@ -360,14 +499,19 @@ impl<'h> Cx<'h> {
                 hir::Def::Enum(_) => Ty::Agg(self.value_agg(t)),
                 _ => ice("type refers to a non-type definition"),
             },
-            TyKind::Option(inner) if self.has_null_niche(inner) => Ty::Ptr,
+            TyKind::Option(inner, _) if self.has_null_niche(inner) => Ty::Ptr,
             // No payload to store (`void`, `never`, a literal): the option is its present flag.
-            TyKind::Option(inner) if self.ty(inner) == Ty::Unit => Ty::Bool,
-            TyKind::Tuple(_) | TyKind::Option(_) | TyKind::Result(..) => Ty::Agg(self.value_agg(t)),
+            TyKind::Option(inner, _) if self.ty(inner) == Ty::Unit => Ty::Bool,
+            TyKind::Tuple(_) | TyKind::Option(..) | TyKind::Result(..) => {
+                Ty::Agg(self.value_agg(t))
+            }
             TyKind::Array(_) => Ty::Agg(self.array_agg()),
             TyKind::Shared(_) | TyKind::Promise(..) => Ty::Ptr,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => Ty::Agg(self.closure_agg()),
             TyKind::Dyn(..) => Ty::Agg(self.dyn_agg()),
+            TyKind::Op(hir::TyOp::ErrSite(_), _) => {
+                ice("an error-set variable reached lowering: sema replaces every one by its set")
+            }
             k => ice(format_args!("type {k:?} cannot be lowered")),
         }
     }
@@ -387,13 +531,15 @@ impl<'h> Cx<'h> {
             | TyKind::Promise(..)
             | TyKind::FnPtr { .. }
             | TyKind::Dyn(..) => true,
-            TyKind::Closure(d) => self.closure_env_is_heap(d),
+            // A closure without captures has a counted env too in a program that compares
+            // functions (closure.rs `identity_closure`): a generic closure's boxed value does.
+            TyKind::Closure(d) => self.closure_env_is_heap(d) || self.fn_identity(),
             TyKind::Adt(..) if self.is_class(t) => true,
             TyKind::Adt(d, _) if self.dispose_of(d).is_some() => true,
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
                 self.part_types(t).into_iter().any(|p| self.needs_drop(p))
             }
-            TyKind::Option(e) => self.needs_drop(e),
+            TyKind::Option(e, _) => self.needs_drop(e),
             _ => false,
         };
         self.lay.drop_memo.insert(t, b);
@@ -424,7 +570,7 @@ impl<'h> Cx<'h> {
             },
             TyKind::Tuple(es) => es,
             TyKind::Result(a, b) => vec![a, b],
-            TyKind::Option(e) => vec![e],
+            TyKind::Option(e, _) => vec![e],
             _ => vec![],
         }
     }
@@ -463,15 +609,24 @@ impl<'h> Cx<'h> {
         let TyKind::Adt(d, args) = self.kind(t) else {
             ice("field types of a non-ADT type")
         };
-        let tys: Vec<TyId> = self.adt_def(d).fields.iter().map(|f| f.ty).collect();
-        tys.into_iter().map(|f| self.subst(f, &args)).collect()
+        let a = self.adt_def(d);
+        let map = (a.name == "Map" || a.name.ends_with("::Map"))
+            && a.fields.get(2).is_some_and(|f| f.name == "entryValues");
+        let tys: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+        self.map_fields += u32::from(map);
+        let out = tys.into_iter().map(|f| self.subst(f, &args)).collect();
+        self.map_fields -= u32::from(map);
+        out
     }
 
     /// Payload types of enum variant `v` of the concrete enum type `t`.
     pub(super) fn variant_tys(&mut self, t: TyId, v: u32) -> Vec<TyId> {
         match self.kind(t) {
             TyKind::Adt(d, args) => {
-                let tys = self.enum_def(d).variants[v as usize].payload.clone();
+                let Some(var) = self.enum_def(d).variants.get(v as usize) else {
+                    ice(format_args!("variant {v} of a union with fewer: a pattern made for another shape of the type (an error-set variable left in it?)"))
+                };
+                let tys = var.payload.clone();
                 tys.into_iter().map(|p| self.subst(p, &args)).collect()
             }
             TyKind::Result(a, b) => vec![if v == 0 { a } else { b }],
@@ -514,6 +669,27 @@ impl<'h> Cx<'h> {
         self.ty(t) == Ty::Unit
     }
 
+    /// The JS error class standard library class `d` stands for (`TypeError` for `UrlError`):
+    /// the prelude `error` class other than `Error` it extends, when declared outside the
+    /// prelude's `error` module.
+    pub(super) fn std_error_class(&self, d: DefId) -> Option<String> {
+        const ERRORS: &str = "std/prelude/error::";
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return None;
+        };
+        if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
+            return None;
+        }
+        let TyKind::Adt(p, _) = self.types.kind(a.base?) else {
+            return None;
+        };
+        let hir::Def::Adt(pa) = self.hir.def(*p) else {
+            return None;
+        };
+        let base = pa.name.strip_prefix(ERRORS)?;
+        (base != "Error").then(|| base.to_string())
+    }
+
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
     pub(super) fn type_name(&self, t: TyId) -> String {
         let full = match self.types.kind(t) {
@@ -526,6 +702,7 @@ impl<'h> Cx<'h> {
             TyKind::Str => "string".into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Int(_) | TyKind::Float(_) => "number".into(),
             // Spelled without intern indices: aggregate names must not change with unrelated
             // edits either (`velt dev` compares layouts across versions by name).
@@ -558,13 +735,15 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
 /// Canonical anonymous object types (`Cx::canon`).
 #[derive(Default)]
 pub(super) struct AnonShapes {
-    memo: HashMap<TyId, TyId>,
+    memo: FxHashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
-    reps: HashMap<Vec<(String, TyId, bool, bool)>, TyId>,
+    reps: FxHashMap<Vec<(String, TyId, bool, bool)>, TyId>,
     /// The same for unions, by sorted member list.
-    union_reps: HashMap<Vec<TyId>, TyId>,
+    union_reps: FxHashMap<Vec<TyId>, TyId>,
     /// Anonymous defs that reach themselves through fields (`Cx::reaches_itself`).
-    recursive: HashMap<DefId, bool>,
+    recursive: FxHashMap<DefId, bool>,
+    /// `hir::Program::type_ops` by canonical arguments (`Cx::reduce_op`), built on first miss.
+    ops: Option<FxHashMap<TyId, TyId>>,
 }
 
 /// Where a generic union's variant lives in the canonical union (`Cx::union_variant`).
@@ -574,3 +753,6 @@ pub(super) enum VariantAt {
     /// The union collapsed to this member: the value itself.
     Whole,
 }
+
+/// The name of a union view's variant (velt_sema `union_views.rs`).
+pub(super) const UNION_VIEW_VARIANT: &str = "<view>";

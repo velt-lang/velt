@@ -144,7 +144,14 @@ fn classes_as_interface_values_and_owned_virtual_args() {
         let_(d, to_dyn(f.mv(b), 0, dy)),
         se(print(
             vec![
-                callee(Callee::Dyn { slot: 0 }, vec![f.bw(d)], t.str),
+                callee(
+                    Callee::Dyn {
+                        slot: 0,
+                        method_type_args: vec![],
+                    },
+                    vec![f.bw(d)],
+                    t.str,
+                ),
                 f.bw(d),
             ],
             t,
@@ -158,14 +165,16 @@ fn classes_as_interface_values_and_owned_virtual_args() {
     );
 }
 
-#[test]
-fn generic_impl_and_structured_hash_print() {
+/// Prints a generic struct through an interface impl and hashes two equal values of it and a
+/// third one; `declared` marks it as declared with `struct` (`AdtDef::declared_struct`).
+fn structured_hash_print(declared: bool) -> String {
     let mut pb = PB::new();
     let t = pb.t;
     let p0 = pb.param(0);
     let box_d = pb.declare();
     let mut bd = adt("Box", AdtKind::Struct, vec![("v", p0, None)]);
     bd.generics = 1;
+    bd.declared_struct = declared;
     pb.set_def(box_d, Def::Adt(bd));
     let box_p = pb.adt_ty(box_d, vec![p0]);
     let sized = pb.declare();
@@ -245,8 +254,22 @@ fn generic_impl_and_structured_hash_print() {
         )),
     ];
     pb.add_main(f.build(body));
-    let out = run(&pb.finish());
-    assert_eq!(out.stdout, "1\n[ 1, 'a' ] Box { v: 'k' }\ntrue false\n");
+    run(&pb.finish()).stdout
+}
+
+#[test]
+fn generic_impl_and_structured_hash_print() {
+    // An object hashes its identity (`Map` keys, #1257): an equal object is another key.
+    let out = structured_hash_print(false);
+    assert_eq!(out, "1\n[ 1, 'a' ] Box { v: 'k' }\nfalse false\n");
+}
+
+#[test]
+fn declared_struct_hashes_its_content() {
+    // A type declared with `struct` hashes its fields (`Map` keys, #641): an equal struct is
+    // the same key.
+    let out = structured_hash_print(true);
+    assert_eq!(out, "1\n[ 1, 'a' ] Box { v: 'k' }\ntrue false\n");
 }
 
 /// `dispose()` hooks run before the fields drop: on scope exit, for class objects, and for

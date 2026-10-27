@@ -1,0 +1,25 @@
+// A call that throws out of a top-level `for await` closes the generator too; the warning names
+// the loop, as in Node (#1366).
+async function* gen(): AsyncGenerator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log("cleanup");
+    await new Promise<void>((resolve) => {});
+  }
+}
+
+function boom(): void {
+  throw new Error("boom");
+}
+
+try {
+  for await (const x of gen()) {
+    console.log("x", x);
+    await Promise.resolve(x);
+    boom();
+  }
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

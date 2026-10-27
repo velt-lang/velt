@@ -1,0 +1,13 @@
+// A `finally` that calls a function which throws and catches inside keeps the location of the
+// error passing through it (#1404).
+function noisy(): void {
+  try { throw new Error("noise"); } catch (e) { }
+}
+function f(): void {
+  try {
+    throw new RangeError("outer");
+  } finally {
+    noisy();
+  }
+}
+f();

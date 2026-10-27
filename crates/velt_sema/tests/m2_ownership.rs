@@ -6,7 +6,7 @@
 mod common;
 
 use common::hir_walk::{calls, exprs, func, uses_of};
-use common::programs::{err_src, ok_src};
+use common::programs::ok_src;
 use velt_sema::hir::{Callee, ExprKind as E, PassMode, UseMode};
 
 #[test]
@@ -54,13 +54,13 @@ fn use_after_passing_to_owned_param_shares() {
          function main() { const a = `x${1}`; take(a); console.log(a); }",
     );
     assert_eq!(shares(func(&p, "main")), 1);
-    // Promises have one owner.
-    let r = err_src(
+    // A promise is shared too (#212).
+    let p = ok_src(
         "async function f(): Promise<i64> { return 1; }
          function keep(p: Promise<i64>): Promise<i64> { return p; }
-         async function main() { const a = f(); keep(a); console.log(await a); }",
+         async function main() { const a = f(); const b = keep(a); console.log(await a, await b); }",
     );
-    assert!(r.contains("use of moved value `a`"), "{r}");
+    assert_eq!(shares(func(&p, "main")), 1);
 }
 
 #[test]
@@ -225,13 +225,12 @@ fn owned_params_can_be_function_values() {
          async function f(s: S): Promise<void> { s.n += 1; }
          async function main() { const g: (s: S) => Promise<void> = f; const s = new S(); await g(s); console.log(s.n); }",
     );
-    // A promise has one owner: a borrowed one cannot be handed on.
-    let r = err_src(
+    // A promise too: the thunk passes another holder of it (#212).
+    ok_src(
         "async function wait(p: Promise<i64>): Promise<i64> { return await p; }
-         async function main() { const w: (p: Promise<i64>) => Promise<i64> = wait; }",
+         async function one(): Promise<i64> { return 1; }
+         async function main() { const w: (p: Promise<i64>) => Promise<i64> = wait; console.log(await w(one())); }",
     );
-    assert!(r.contains("takes ownership of `p`"), "{r}");
-    assert!(!r.contains("clone"), "{r}");
 }
 
 #[test]
@@ -302,13 +301,25 @@ fn try_catch_moves_are_joined() {
 }
 
 #[test]
-fn global_constants_are_not_movable() {
-    let r = err_src(
-        "struct P { s: string; } const K: P = P { s: \"k\" };
-         function main() { const p = K; console.log(p.s); }",
+fn global_constants_taken_over_are_module_state() {
+    // Node evaluates a module constant once: one whose value is taken over is kept in the
+    // module state (#1383), and the move shares it. Only reading it keeps it a constant.
+    let slots = |src: &str| ok_src(src).module_state.map_or(0, |m| m.slots.len());
+    let decl = "struct P { s: string; } const K: P = P { s: \"k\" };";
+    assert_eq!(
+        slots(&format!(
+            "{decl} function main() {{ const p = K; console.log(p.s); }}"
+        )),
+        1
     );
-    assert!(r.contains("cannot move out of module constant `K`"), "{r}");
-    ok_src("const S = \"k\"; function main() { const s = S; console.log(s, S); }");
+    assert_eq!(
+        slots(&format!("{decl} function main() {{ console.log(K.s); }}")),
+        0
+    );
+    assert_eq!(
+        slots("const S = \"k\"; function main() { const s = S; console.log(s, S); }"),
+        0
+    );
 }
 
 #[test]

@@ -46,16 +46,41 @@ fn is_call(e: &hir::Expr) -> bool {
     matches!(e.kind, hir::ExprKind::Call { .. })
 }
 
-/// Append the parts of `e` (a `StrConcat` tree or a leaf) in evaluation order.
-pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
+/// Is `e` an `Intrinsic::HoldsDynamic` test: the condition of the text of a type parameter's
+/// value (hir_encodings.md "Text of a type parameter"), a constant per instantiation?
+pub(super) fn is_holds_dynamic(e: &hir::Expr) -> bool {
+    matches!(
+        e.kind,
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(
+                Intrinsic::HoldsDynamic | Intrinsic::HoldsDynamicOrClass
+            ),
+            ..
+        }
+    )
+}
+
+/// Append the parts of `e` (a `StrConcat` tree or a leaf) in evaluation order. `pick` decides
+/// a `HoldsDynamic` test, whose branch is the part (each instantiation has the parts it would
+/// have without the test).
+pub(super) fn flatten<'e>(
+    e: &'e hir::Expr,
+    out: &mut Vec<Part<'e>>,
+    pick: &mut dyn FnMut(&hir::Expr) -> Option<bool>,
+) {
     match &e.kind {
         hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::StrConcat),
             args,
         } if args.len() == 2 => {
-            flatten(&args[0], out);
-            flatten(&args[1], out);
+            flatten(&args[0], out, pick);
+            flatten(&args[1], out, pick);
         }
+        hir::ExprKind::If { cond, then, els } if is_holds_dynamic(cond) => match pick(cond) {
+            Some(true) => flatten(then, out, pick),
+            Some(false) => flatten(els, out, pick),
+            None => out.push(Part::Str(e)),
+        },
         hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(i @ (Intrinsic::ToString | Intrinsic::TemplateToString)),
             args,
@@ -65,6 +90,7 @@ pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
     }
 }
 
+mod js_list;
 mod symbol_text;
 
 use symbol_text::SYMBOL_TO_STRING;
@@ -73,8 +99,8 @@ impl FnLower<'_, '_> {
     /// `StrConcat(a, b)`, flattened with any nested concatenations and `ToString`s.
     pub(super) fn str_concat(&mut self, a: &hir::Expr, b: &hir::Expr, ty: TyId) -> Operand {
         let mut parts = vec![];
-        flatten(a, &mut parts);
-        flatten(b, &mut parts);
+        flatten(a, &mut parts, &mut |c| self.const_cond(c));
+        flatten(b, &mut parts, &mut |c| self.const_cond(c));
         let ty = self.sub(ty);
         let fresh = parts
             .iter()
@@ -85,7 +111,8 @@ impl FnLower<'_, '_> {
                 return self.build_sized(&parts, ty);
             }
             // Two strings: `velt_rt_str_concat` allocates exactly once, at the exact size.
-            let va = self.expr_held(a, Later::of(b));
+            let later = self.later_of(b);
+            let va = self.expr_held(a, later);
             let vb = self.expr(b);
             let pa = self.operand_addr(va, STR);
             let pb = self.operand_addr(vb, STR);
@@ -147,7 +174,7 @@ impl FnLower<'_, '_> {
         for (i, p) in parts.iter().enumerate().rev() {
             later[i] = acc;
             if let Part::Str(e) | Part::Format(e, _) = p {
-                let l = Later::of(e);
+                let l = self.later_of(e);
                 acc.locals |= l.locals;
                 acc.memory |= l.memory;
             }
@@ -571,29 +598,11 @@ impl FnLower<'_, '_> {
 
     /// Append `String(x)` of the value at `place` (#757): JS's `Array.prototype.toString` for
     /// arrays and tuples (the elements joined with ",", nested arrays the same way, `null` as
-    /// empty text), the `console.log` text for everything else.
-    fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// empty text), also as the active member of a union, the `console.log` text for
+    /// everything else.
+    pub(super) fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         match self.cx.kind(ty) {
-            TyKind::Array(e) => {
-                let arr = self.content(place, ty);
-                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
-                let k = self.temp(Ty::U64);
-                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-                self.count_loop(k, len, |lw, k| {
-                    let first = lw.rvalue_temp(
-                        Ty::Bool,
-                        Rvalue::Binary(BinOp::Eq, k.clone(), cint(0, Ty::U64)),
-                    );
-                    let (sep_bb, elem_bb) = (lw.new_block(), lw.new_block());
-                    lw.branch(first, elem_bb, sep_bb);
-                    lw.switch_to(sep_bb);
-                    lw.push_text(buf, ",");
-                    lw.goto(elem_bb);
-                    lw.switch_to(elem_bb);
-                    let p = lw.elem_place(&arr, k, e);
-                    lw.push_js_element(buf, &p, e);
-                });
-            }
+            TyKind::Array(e) => self.push_js_array(buf, place, ty, e),
             TyKind::Tuple(tys) => {
                 for (i, &t) in tys.iter().enumerate() {
                     if i > 0 {
@@ -603,13 +612,13 @@ impl FnLower<'_, '_> {
                     self.push_js_element(buf, &p, t);
                 }
             }
-            TyKind::Option(e) if self.writes_js_list(e) => {
+            TyKind::Option(e, n) if self.writes_js_list(e) || self.union_has_list(e) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -617,12 +626,23 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(done);
             }
+            // `string | string[]`: the active member, an array joined as above (#1485).
+            TyKind::Adt(..) if self.union_has_list(ty) => {
+                self.for_each_variant(place, ty, |lw, v, parts| {
+                    if let Some(l) = lw.variant_literal(ty, v) {
+                        lw.push_literal(buf, &l, false);
+                    }
+                    for (pp, pt) in parts {
+                        lw.push_js_string(buf, &pp, pt);
+                    }
+                });
+            }
             _ => self.format_top(buf, place, ty),
         }
     }
 
     /// Whether [`push_js_string`](Self::push_js_string) writes values of `ty` as a JS list.
-    fn writes_js_list(&self, ty: TyId) -> bool {
+    pub(super) fn writes_js_list(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Array(_) | TyKind::Tuple(_))
     }
 
@@ -647,7 +667,8 @@ impl FnLower<'_, '_> {
             // `[s].join()`, `String([s])`: JS's `Array.prototype.join` converts each element
             // with `ToString`, which throws for a symbol (sema rejects the direct conversions).
             TyKind::Symbol => self.panic_msg(SYMBOL_TO_STRING),
-            TyKind::Option(e) => {
+            TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
+            TyKind::Option(e, _) => {
                 let (some_bb, done) = (self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, done);
@@ -689,6 +710,15 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.prelude_map(ty).is_some() => Some("[object Map]"),
             TyKind::Adt(..) if self.std_set(ty).is_some() => Some("[object Set]"),
+            TyKind::Adt(..) if self.collection_subclass(ty).is_some() => {
+                match self
+                    .collection_subclass(ty)
+                    .and_then(|(b, _)| self.prelude_map(b))
+                {
+                    Some(_) => Some("[object Map]"),
+                    None => Some("[object Set]"),
+                }
+            }
             TyKind::Adt(..) => Some("[object Object]"),
             _ => None,
         }

@@ -56,7 +56,7 @@ function main() {
 
 ### Iterables
 
-The prelude declares TypeScript's iteration protocol, without `undefined`:
+The prelude declares TypeScript's iteration protocol; a finished result has no `value`:
 
 ```ts
 type IteratorResult<T> = { value: T; done: false } | { done: true };
@@ -76,13 +76,21 @@ interface Iterable<T, E = never> {
 - `for (const x of src)` calls `src[Symbol.iterator]()` once, then `next()` until a result is
   `done`, binding each `value` (owned by the loop variable). `src` may be any type with that
   method, a class declaring `implements Iterable<T>` or not, or an `Iterable<T>` value.
-- A finished result has no `value` (Velt has no `undefined`); `if (r.done)` narrows `r` like
+- A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+  Destructured into `const { value, done } = r`, a test of `done` (`if (done) break;`,
+  `if (!done)`, `done === false`) narrows `value` to `T` as well, as in TypeScript (when `T`
+  itself cannot be `null`).
+  TypeScript's `{ value: undefined, done: true }` is accepted for a finished result, without
+  the `value`. `console.log` of a finished result prints `{ done: true }` where Node prints
+  `{ value: undefined, done: true }` (issue #930, phase 3).
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
   An iterator class that releases something there writes `return(): IteratorResult<T>` and
   returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
-  makes `break` throw a `TypeError`).
+  makes `break` throw a `TypeError`). TypeScript's `it.return(undefined)` (its `return(value)`
+  takes the generator's return value) calls `return()`; another argument is an error, since a
+  finished result carries no value.
 - **Typed errors**: `E` is what `next()` throws (`never`, the default, means nothing). The loop
   throws it, so a function iterating an `Iterable<T, IoError>` throws `IoError`; a generic
   `function sum<E>(xs: Iterable<i64, E>): i64 throws E` throws what its argument does.
@@ -336,7 +344,12 @@ block scope.
   As in TypeScript, that is a `const` (local or module-level) initialized with a literal and
   without a type annotation (`const A = "a"`), or a local whose type is a literal type
   (`const y: "y" = "y"`). A literal that is not a possible value (`case "square":` when `s.kind`
-  is `"circle" | "rect"`) is an error, as in TypeScript. A value may appear in several cases:
+  is `"circle" | "rect"`) is an error, as in TypeScript. A `typeof` case that no member of a union
+  has is an error (TypeScript accepts it). On a type that fixes the `typeof` of its values (a
+  number, string, boolean, function, class, array, ...), also a union local that flow narrowing
+  reduced to one member (`let u: number | string = 5`), such a case is accepted, as in
+  TypeScript, and never matches. On `any`, `unknown` and `object`, cases test the run-time
+  `typeof`; on a type parameter, a case its type doesn't fix is an error. A value may appear in several cases:
   the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`

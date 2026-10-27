@@ -1,0 +1,14 @@
+// A generic class's plain field provides an intersection's field at the instance's type
+// argument (`val: T` of `Cell<string>` is a `val: string`), read and written (#350).
+interface Base { refresh(): number }
+class Cell<T> implements Base {
+  val: T;
+  constructor(v: T) { this.val = v; }
+  refresh() { return 2; }
+}
+const a: Base & { val: string } = new Cell("x");
+a.val = "y";
+console.log(a.val, a.refresh());
+const b: Base & { val: number } = new Cell(4);
+b.val = b.val + 1;
+console.log(b.val);

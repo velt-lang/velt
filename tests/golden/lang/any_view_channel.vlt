@@ -1,0 +1,47 @@
+// check: no leaks
+// A view (#1485) sent on a channel while its object is still used here reaches the receiving
+// task as a copy: its writes stay there, and converting the object here again gives a view of
+// this thread's object.
+import { channel, Channel } from "velt:channel";
+
+type Item = { name: string; price: number };
+
+const tracked = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+async function consume(ch: Channel<Item>): Promise<number> {
+  let n = 0;
+  for await (const v of ch) {
+    v.price = v.price + 1;
+    const again: any = v;
+    n += (again as Item) === v ? v.price : -1000;
+  }
+  return n;
+}
+
+async function main(): Promise<void> {
+  const a: any = new Product();
+  const ch = channel<Item>(4);
+  const c = spawn(consume(ch));
+  for (let i = 0; i < 3; i++) {
+    const v = a as Item;
+    await ch.send(v);
+    console.log((a as Item).price, v === (a as Item));
+  }
+  await ch.send(a as Item);
+  await ch.send(new Product() as any as Item);
+  ch.close();
+  console.log(await c);
+
+  const junk: any[] = [];
+  for (let i = 0; i < 1000; i++) {
+    junk.push({ name: "x" + i, price: i });
+  }
+  const w = a as Item;
+  console.log(w.name, w.price, tracked.name, junk.length);
+}

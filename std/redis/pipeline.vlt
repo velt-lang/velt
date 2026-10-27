@@ -7,7 +7,7 @@
 import { IoResult } from "velt:io";
 import { RawReply, RedisReply, checkReply, replyItems, scoreArg } from "velt:redis/reply";
 
-declare async function velt_rt_redis_pipeline(
+declare async function velt_std_redis__pipeline(
   c: u64,
   args: string[],
   counts: u64[],
@@ -109,7 +109,7 @@ export class RedisPipeline {
    * throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
    */
   async exec(): Promise<RedisReply[]> {
-    const r = await velt_rt_redis_pipeline(this.#handle, this.#args, this.#counts, this.#atomic);
+    const r = await velt_std_redis__pipeline(this.#handle, this.#args, this.#counts, this.#atomic);
     return replyItems(checkReply(r));
   }
 }

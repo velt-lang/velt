@@ -1,0 +1,8 @@
+// `f.call(thisArg, ...)` of a `Function` with an object as `thisArg` (#926): a function value
+// has no `this` to set, so this stops with a `TypeError` (Node prints 3).
+function main(): void {
+  const add: Function = (a: number, b: number) => a + b;
+  const self = { k: 1 };
+  console.log("before");
+  console.log(add.call(self, 1, 2));
+}

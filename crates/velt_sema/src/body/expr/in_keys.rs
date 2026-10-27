@@ -16,7 +16,7 @@ use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
 use crate::symbols::Presence;
 
 /// The members of `Object.prototype`, which `k in o` finds on every object (Node 22).
-const OBJECT_PROTOTYPE: [&str; 12] = [
+pub(super) const OBJECT_PROTOTYPE: [&str; 12] = [
     "__defineGetter__",
     "__defineSetter__",
     "__lookupGetter__",
@@ -124,6 +124,52 @@ impl FnCx<'_, '_> {
             );
         }
         declared
+    }
+
+    /// Facts of `KEY in x` / `"k" in x` on a union local: the members that may have the member
+    /// when true (an optional one or a record's entry may), the members that may lack it when
+    /// false.
+    pub(in crate::body) fn key_in_facts(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+    ) -> (
+        Vec<crate::body::narrow::Fact>,
+        Vec<crate::body::narrow::Fact>,
+    ) {
+        use crate::symbols::Presence;
+        let Some(key) = self.in_key_of(lhs) else {
+            return (vec![], vec![]);
+        };
+        // A `U | null` local too, once a test proved it not null (`if (x === null) return;`).
+        let Some((l, nullable, u)) = self.local_with_members(rhs) else {
+            return (vec![], vec![]);
+        };
+        let Some(members) = self
+            .cx
+            .union_members(u)
+            .filter(|_| !nullable || self.is_narrowed(l))
+        else {
+            return (vec![], vec![]);
+        };
+        let (mut yes, mut no) = (vec![], vec![]);
+        for (i, m) in members.into_iter().enumerate() {
+            // A value whose class is known only at run time may have it (`in_test`).
+            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
+                Some((p, held)) => (Some(p), !held.is_empty()),
+                None => (None, false),
+            };
+            if p != Some(Presence::No) || held {
+                yes.push(i as u32);
+            }
+            if p != Some(Presence::Yes) {
+                no.push(i as u32);
+            }
+        }
+        (
+            vec![crate::body::narrow::Fact::Members(l, yes)],
+            vec![crate::body::narrow::Fact::Members(l, no)],
+        )
     }
 
     /// [`Self::key_presence`] for a symbol key, reported at `at` when unknown (if `report`).
@@ -250,7 +296,8 @@ impl FnCx<'_, '_> {
 
     /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
     /// `__recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
-    /// as JavaScript converts it); elsewhere an error.
+    /// as JavaScript converts it); on a prototype (`k in Object.prototype`), `__prototypeIn(k, o)`;
+    /// elsewhere an error.
     pub(crate) fn dynamic_key_in(
         &mut self,
         lhs: &ast::Expr,
@@ -263,6 +310,13 @@ impl FnCx<'_, '_> {
         let open = self
             .record_args(target)
             .is_some_and(|(k, _)| k == self.cx.ty.str_);
+        let proto = self.cx.prelude_adt("ObjectPrototype");
+        if kind == KeyKind::Str
+            && matches!(self.cx.ty.kind(target), TyKind::Adt(d, _) if Some(*d) == proto)
+        {
+            // `k in Object.prototype` (a proxy's `get` trap telling protocol keys apart).
+            return self.prelude_fn_call("__prototypeIn", vec![lhs.clone(), rhs.clone()], span);
+        }
         if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);
             self.expr(rhs, None, Want::Borrow);
@@ -293,7 +347,12 @@ impl FnCx<'_, '_> {
             KeyKind::Converted => syn.call(syn.name("String"), vec![lhs.clone()]),
             _ => lhs.clone(),
         };
-        let test = syn.call(syn.name("__recordIn"), vec![key, rhs.clone()]);
+        // A record made by `Object.create(null)` inherits nothing (`hir::Program::null_proto_records`).
+        let helper = match self.cx.objects.null_proto_records {
+            true => "__recordInMaybeNullProto",
+            false => "__recordIn",
+        };
+        let test = syn.call(syn.name(helper), vec![key, rhs.clone()]);
         self.expr(&test, None, Want::Move)
     }
 }

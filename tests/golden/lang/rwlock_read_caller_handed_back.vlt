@@ -1,0 +1,39 @@
+// A container a reader made, given to a function that moves elements out of it into the
+// caller's containers, stays the reader's own: it can be changed and stored afterwards, and the
+// moved elements stay themselves.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1)];
+}
+function mv(dst: Item[], src: Item[]) {
+  dst.push(src.pop()!);
+}
+function keepIt(dst: Item[][], src: Item[]) {
+  dst.push(src);
+}
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(1), new Item(2)];
+  const got: Item[] = [];
+  const g: Item[][] = [];
+  const r = rw.read((s) => {
+    const mine = new Item(7);
+    const l: Item[] = [out[0], new Item(5), mine, new Item(9)];
+    mv(got, l);
+    l.push(new Item(6));
+    mv(got, l);
+    g.push(l);
+    const l2: Item[] = [new Item(3)];
+    keepIt(g, l2);
+    const n2 = l2.length;
+    const l3: Item[] = [new Item(4), out[1]];
+    mv(got, l3);
+    return [l.length, n2, l3.length, mine.v, l[1].v];
+  });
+  console.log(r.join(","), got.length, got[0] === got[0], g.length, g[0][0] === out[0], g[0].length, got[2] === out[1], g[1][0].v);
+}

@@ -1,0 +1,9 @@
+// `let` and `const` in `declare global` are not properties of `globalThis` (TypeScript's
+// TS2339 on `globalThis.K`): only a `var` there types one.
+declare global {
+  let __LK__: number | undefined;
+  const __CK__: string;
+}
+
+globalThis.__LK__ = 3;
+console.log(globalThis.__CK__);

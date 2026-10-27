@@ -1,5 +1,5 @@
 // Record<K, V> (docs/internals/design/record.md, issue #17): TypeScript object syntax over an
-// insertion-ordered dictionary; open (`string` keys, reads are `V | null`) and closed
+// insertion-ordered dictionary; open (`string` keys, reads are `V | undefined`) and closed
 // (literal keys, every key present) records, Object.keys/values/entries, delete, JSON.
 type Limit = "cpu" | "mem";
 
@@ -94,8 +94,8 @@ function enumKeys() {
   console.log(r.cpu, r.mem, r[Res.Mem], r);
 }
 
-// With a type-parameter key, reads are `V | null` and copies need a spread.
-function lookup<K, V>(r: Record<K, V>, k: K): V | null {
+// With a type-parameter key, reads are `V | undefined` and copies need a spread.
+function lookup<K, V>(r: Record<K, V>, k: K): V | undefined {
   return r[k];
 }
 

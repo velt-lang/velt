@@ -66,9 +66,21 @@ impl<'a> Parser<'a> {
         while Self::is_name(self.nth(1))
             || matches!(
                 self.nth(1),
-                Tok::LBracket | Tok::Star | Tok::PrivateName | Tok::Str(_)
+                Tok::LBracket
+                    | Tok::Star
+                    | Tok::PrivateName
+                    | Tok::Str(_)
+                    | Tok::Int(_)
+                    | Tok::Float(_)
             )
         {
+            // Only `static`, `get` and `set` apply across a line break, as in TypeScript and
+            // JavaScript; any other modifier before one is the member's name (`async` / `foo()
+            // {}` is a field `async` and a method `foo`).
+            let across_lines = self.at_kw(Kw::Static) || self.at_word("get") || self.at_word("set");
+            if !across_lines && self.line_break_after(0) {
+                break;
+            }
             let flag = match self.cur_kw() {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,
@@ -106,8 +118,8 @@ impl<'a> Parser<'a> {
 
     /// After `get` / `set`: is the next token a name (or the next tokens a symbol key) followed
     /// by `(`?
-    fn at_accessor_name(&mut self) -> bool {
-        let key = self.symbol_key_len(1);
+    pub(super) fn at_accessor_name(&mut self) -> bool {
+        let key = self.member_key_len(1, true);
         match key {
             0 => self.nth(2) == Tok::LParen,
             n => self.nth(1 + n) == Tok::LParen,
@@ -117,6 +129,9 @@ impl<'a> Parser<'a> {
     /// One `struct`/`class`/`extend` member.
     pub(super) fn parse_member(&mut self) -> PResult<Member> {
         let lo = self.cur_lo();
+        if self.at_static_block() {
+            return Ok(Member::Field(self.parse_static_block(lo)?));
+        }
         let mods = self.parse_modifiers();
         if self.at_kw(Kw::Constructor) && self.nth(1) == Tok::LParen {
             let (ctor, fields) = self.parse_constructor(lo, &mods)?;
@@ -126,9 +141,17 @@ impl<'a> Parser<'a> {
         if star.is_some() {
             self.bump();
         }
-        let name = self.parse_member_name()?;
+        let literal = self.at_literal_name();
+        let name = match self.peek() {
+            // A quoted method name, reported below (a quoted field name is not supported yet).
+            Tok::Str(_) if matches!(self.nth(1), Tok::LParen | Tok::Lt) => self.parse_prop_key()?,
+            _ => self.parse_member_name()?,
+        };
         self.reject_protected(&mods, &name);
         let mods = self.private_name_mods(mods, &name);
+        if literal && self.at_method_start() {
+            self.reject_literal_method_name(&name);
+        }
         if !self.at_method_start() {
             if let Some(s) = star {
                 self.error("`*` marks a generator method: expected `(`", s);
@@ -144,13 +167,12 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
-        sig.is_generator = star.is_some();
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         self.check_accessor(&sig, &mods);
-        if self.at(Tok::Semi) {
+        if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
         }
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         Ok(Member::Method(Method {
             decl: FnDecl {
                 sig,
@@ -165,7 +187,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// After a method signature ending in `;`: a TypeScript-form overload, attached to the
+    /// After a method signature ending in `;` or a line break: a TypeScript-form overload, attached to the
     /// method of the same name that follows (`FnDecl::overloads`).
     fn method_overload(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
         while self.eat(Tok::Semi) {}
@@ -333,7 +355,12 @@ impl<'a> Parser<'a> {
 
     /// A field or interface member ends with `;`, `,` or the closing `}`.
     pub(super) fn expect_member_end(&mut self) -> PResult<()> {
-        if self.eat(Tok::Semi) || self.eat(Tok::Comma) || self.at(Tok::RBrace) {
+        // A line break ends a member too (TypeScript's automatic semicolon insertion).
+        if self.eat(Tok::Semi)
+            || self.eat(Tok::Comma)
+            || self.at(Tok::RBrace)
+            || self.line_break_before()
+        {
             return Ok(());
         }
         self.error_expected("`;`");
@@ -371,9 +398,10 @@ impl<'a> Parser<'a> {
             throws,
             is_async: false,
             is_generator: false,
+            this_param: None,
             span: self.span_from(lo),
         };
-        let mut body = self.parse_block()?;
+        let mut body = self.parse_fn_body()?;
         self.store_param_props(&mut body, &fields);
         Ok((
             FnDecl {
@@ -398,29 +426,25 @@ impl<'a> Parser<'a> {
             );
             self.bump();
         }
-        let quoted = matches!(self.peek(), Tok::Str(_));
-        let name = if quoted {
-            self.parse_prop_key()?
-        } else {
-            self.parse_member_name()?
+        let literal = self.at_literal_name();
+        let name = match self.peek() {
+            Tok::Str(_) => self.parse_prop_key()?,
+            _ => self.parse_member_name()?,
         };
-        if quoted && self.at_method_start() {
-            self.error(
-                "a quoted name is supported for interface fields, not methods",
-                name.span,
-            );
+        if literal && self.at_method_start() {
+            self.reject_literal_method_name(&name);
         }
         self.reject_protected(&mods, &name);
         self.reject_private_name(&name);
         if self.at(Tok::Question) && matches!(self.nth(1), Tok::LParen | Tok::Lt) {
             // `m?(x: T): R`: an optional member of function type, `m?: (x: T) => R`.
             self.bump();
-            let ty = self.parse_method_sig_type(lo, &name, true)?;
+            let ty = self.parse_method_sig_type(lo, &name)?;
             let span = self.span_from(lo);
             self.expect_member_end()?;
             decl.fields.push(Field {
                 name,
-                ty: super::types::or_null(ty),
+                ty: super::types::or_undefined(ty),
                 default: None,
                 readonly: false,
                 optional: true,
@@ -450,10 +474,10 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let sig = self.parse_sig_rest(lo, name, mods.is_async)?;
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, false)?;
         self.check_accessor(&sig, &mods);
         let body = if self.at(Tok::LBrace) {
-            Some(self.parse_block()?)
+            Some(self.parse_fn_body()?)
         } else {
             self.expect_member_end()?;
             None

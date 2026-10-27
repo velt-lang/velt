@@ -25,6 +25,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "AsyncIterator",
     "Date",
     "Error",
+    "EvalError",
     "Generator",
     "Infinity",
     "Iterable",
@@ -38,10 +39,24 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "NaN",
     "Number",
     "Object",
+    // What a proxy's `getOwnPropertyDescriptor` trap answers (data properties).
+    "PropertyDescriptor",
+    // `new Proxy(target, handler)` is an `any` in Velt for now (#823); the operations on it
+    // run the handler's traps as in Node.
+    "Proxy",
+    "ProxyHandler",
+    "RangeError",
+    "ReferenceError",
+    "Reflect",
+    // TypeScript's `ReadonlyMap<K, V>` is a type: Velt's is `Map<K, V>` seen through it.
+    "ReadonlyMap",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
     "StringIterator",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
     "WeakMap",
     "WeakRef",
     "WeakSet",
@@ -49,6 +64,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "isNaN",
     "parseFloat",
     "parseInt",
+    "queueMicrotask",
     // The DOM's timer functions (TypeScript's baseline has the DOM's lib); in shared code the
     // handle only goes back to `clearTimeout` / `clearInterval` (a number in the browser).
     "clearInterval",
@@ -57,6 +73,11 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "setTimeout",
     // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
     "structuredClone",
+    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
+    "any",
+    "unknown",
+    "object",
+    "Function",
     // Builtins.
     "console",
     "Promise",
@@ -90,7 +111,15 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep process information out of code shared with TypeScript",
     ),
     (
+        "ObjectPrototype",
+        "compare prototypes with `===` without naming their type (`Object.getPrototypeOf(v) === Object.prototype`)",
+    ),
+    (
         "Mutex",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
+    (
+        "RwLock",
         "keep thread-shared state out of code shared with TypeScript",
     ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
@@ -112,6 +141,14 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "throw an `Error` when the condition fails: `if (!c) throw new Error(msg)`",
     ),
     (
+        "clearImmediate",
+        "keep it out of shared code: it is Node's (the baseline has no Node types); use `clearTimeout`",
+    ),
+    (
+        "setImmediate",
+        "keep it out of shared code: it is Node's (the baseline has no Node types); use `setTimeout(f, 0)`",
+    ),
+    (
         "assertEq",
         "keep test assertions out of code shared with TypeScript",
     ),
@@ -129,11 +166,27 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ),
     ("promiseAllSettled", "use `Promise.allSettled(…)`"),
     ("promiseAny", "use `Promise.any(…)`"),
+    ("promiseCatch", "use `p.catch(…)`"),
+    ("promiseCatchAsync", "use `p.catch(…)`"),
+    ("promiseCatchVoid", "use `p.catch(…)`"),
+    ("promiseCatchNever", "use `p.catch(…)`"),
+    ("promiseCatchNeverAsync", "use `p.catch(…)`"),
+    ("promiseCatchVoidAsync", "use `p.catch(…)`"),
+    ("promiseFinally", "use `p.finally(…)`"),
+    ("promiseFinallyAsync", "use `p.finally(…)`"),
+    ("promiseFinallyAsyncThrows", "use `p.finally(…)`"),
+    ("promiseFinallyThrows", "use `p.finally(…)`"),
     ("promiseNew", "use `new Promise(…)`"),
     ("promiseNewResolveOnly", "use `new Promise(…)`"),
     ("promiseReject", "use `Promise.reject(…)`"),
     ("promiseResolve", "use `Promise.resolve(…)`"),
     ("promiseResolveVoid", "use `Promise.resolve()`"),
+    ("promiseThen", "use `p.then(…)`"),
+    ("promiseThenAsync", "use `p.then(…)`"),
+    ("promiseThenAsyncThrows", "use `p.then(…)`"),
+    ("promiseThenElse", "use `p.then(…)`"),
+    ("promiseThenElseAsync", "use `p.then(…)`"),
+    ("promiseThenThrows", "use `p.then(…)`"),
     (
         "promiseWithResolvers",
         "use `new Promise(…)` and keep its functions",
@@ -209,7 +262,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("AsyncGenerator", &["next", "return"]),
     ("AsyncIterator", &["next", "return"]),
-    ("Generator", &["next", "return"]),
+    ("Generator", &["next", "return", "throw"]),
     ("Iterator", &["next", "return"]),
     ("ArrayIterator", &["next"]),
     ("StringIterator", &["next"]),
@@ -264,7 +317,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "valueOf",
         ],
     ),
-    ("Error", &["message"]),
+    ("Error", &["message", "name", "stack", "toString"]),
     ("JSON", &["parse", "stringify"]),
     (
         "Map",
@@ -298,7 +351,23 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "parseInt",
         ],
     ),
-    ("Object", &["entries", "keys", "values"]),
+    ("Object", &["entries", "fromEntries", "keys", "values"]),
+    // `Object.prototype.hasOwnProperty` read as a value: its `call` is `Function.call`.
+    ("__HasOwnProperty", &["call"]),
+    // An array method read through a proxy (`Reflect.get(array, "push")`): its name.
+    ("__ArrayMethod", &["name"]),
+    (
+        "Reflect",
+        &[
+            "defineProperty",
+            "deleteProperty",
+            "get",
+            "getOwnPropertyDescriptor",
+            "has",
+            "ownKeys",
+            "set",
+        ],
+    ),
     ("String", &["fromCharCode"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
@@ -341,8 +410,33 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         "Array",
         &[
             ("isEmpty", "write `xs.length === 0`"),
+            ("prefetch", "leave it out: it is only a hint"),
+            ("reserve", "leave it out: arrays grow as needed"),
+            (
+                "rotateLeft",
+                "move the element with `xs.splice(end - 1, 0, ...xs.splice(start, 1))`",
+            ),
+            (
+                "rotateRight",
+                "move the element with `xs.splice(start, 0, ...xs.splice(end - 1, 1))`",
+            ),
             ("set", "assign the element: `xs[i] = v`"),
+            ("swap", "swap with `[xs[i], xs[j]] = [xs[j], xs[i]]`"),
+            (
+                "swapIn",
+                "swap with `[xss[a][i], xss[b][j]] = [xss[b][j], xss[a][i]]`",
+            ),
             ("truncate", "remove the tail with `xs.splice(n)`"),
+            (
+                "utf8Equals",
+                "compare `new TextDecoder().decode(bytes)` with the string",
+            ),
+            (
+                "utf8EqualsIgnoreCase",
+                "compare the decoded text's `toLowerCase()`",
+            ),
+            ("utf8Slice", "decode with `new TextDecoder().decode(bytes)`"),
+            ("write", "use `TextEncoder`'s `encodeInto(s, bytes)`"),
             ("xorMask", "XOR the bytes in a loop"),
             // Builtins.
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
@@ -365,6 +459,19 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "Date",
         &[("compareTo", "compare `a.getTime()` with `b.getTime()`")],
+    ),
+    (
+        "ObjectPrototype",
+        &[
+            (
+                "toJSON",
+                "compare prototypes with `===`; don't serialize them",
+            ),
+            (
+                "toString",
+                "compare prototypes with `===`; don't convert them",
+            ),
+        ],
     ),
     (
         "JSON",
@@ -411,6 +518,18 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
                 "getOrInsert",
                 "write `m.get(k) ?? d` and `m.set(k, d)` when it is missing",
             ),
+            (
+                "getUtf8",
+                "decode the key first: `m.get(new TextDecoder().decode(bytes))`",
+            ),
+            (
+                "hasUtf8",
+                "decode the key first: `m.has(new TextDecoder().decode(bytes))`",
+            ),
+            (
+                "setUtf8",
+                "decode the key first: `m.set(new TextDecoder().decode(bytes), v)`",
+            ),
             ("update", "read with `m.get(k)`, then `m.set(k, f(v))`"),
             ("upsert", "read with `m.get(k)`, then `m.set(k, …)`"),
         ],
@@ -443,7 +562,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         ],
     ),
     ("boolean", &[("compareTo", COMPARE)]),
-    ("number", &[("compareTo", COMPARE)]),
+    (
+        "number",
+        &[
+            ("compareTo", COMPARE),
+            ("countOnes", "count the set bits in a loop"),
+            ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
+        ],
+    ),
     (
         "string",
         &[("compareTo", "compare with `<` or `a.localeCompare(b)`")],

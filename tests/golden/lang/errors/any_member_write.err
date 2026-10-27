@@ -1,0 +1,3 @@
+any_member_write.vlt:12:15: error: an `unknown` value must be narrowed before use
+any_member_write.vlt:13:3: error: an `unknown` value must be narrowed before use
+any_member_write.vlt:14:3: error: an `unknown` value must be narrowed before use

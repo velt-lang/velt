@@ -1,0 +1,16 @@
+export const registry: string[] = [];
+export let loads = 0;
+
+export function register(name: string): void {
+  registry.push(name);
+}
+
+console.log("registry loaded");
+loads++;
+try {
+  if (registry.length === 0) {
+    throw new Error("empty");
+  }
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

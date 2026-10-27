@@ -1,0 +1,71 @@
+// check: no leaks
+// Handing the array a `for...of` loop iterates over to a function that takes it (and keeps,
+// grows, empties or drops it) shares the array, as in JS: the element the loop is looking at
+// stays alive, and the loop sees what the function did to the array.
+
+class Handler {
+  tag: string;
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+  test(v: unknown): boolean {
+    return typeof v === "number" && this.tag === "num";
+  }
+  serialize(v: unknown): unknown {
+    return "n:" + String(v);
+  }
+}
+
+let store: Handler[] | null = null;
+
+// Keeps the array, grows it (moving its buffer), empties it and drops it again.
+function take(xs: Handler[], round: number): number {
+  store = xs;
+  for (let i = 0; i < 40; i++) xs.push(new Handler("extra" + i));
+  xs.length = 0;
+  store = null;
+  return round;
+}
+
+function walk(xs: Handler[], round: number): string {
+  for (const h of xs) {
+    if (h.tag === "b") {
+      const n = take(xs, round);
+      return h.tag + n + h.tag.length;
+    }
+  }
+  return "none";
+}
+
+// The shape of a recursive encoder that passes its handler lists on (sigx `serialize`).
+function encode(value: unknown, custom: readonly Handler[], builtin: readonly Handler[], depth: number): unknown {
+  if (depth > 4) return value;
+  for (const h of custom) {
+    if (h.test(value)) {
+      const payload = encode(h.serialize(value), custom, builtin, depth + 1);
+      return h.tag + "(" + String(payload) + ")";
+    }
+  }
+  for (const h of builtin) {
+    if (h.test(value)) {
+      const payload = encode(h.serialize(value), custom, builtin, depth + 1);
+      return h.tag + "[" + String(payload) + "]";
+    }
+  }
+  return value;
+}
+
+function run(): void {
+  const xs = [new Handler("a"), new Handler("b"), new Handler("c")];
+  console.log(walk(xs, 1), xs.length);
+  const ys = [new Handler("b")];
+  console.log(walk(ys, 2), ys.length);
+  console.log(walk([new Handler("z")], 3));
+
+  const custom = [new Handler("num")];
+  console.log(encode(5, custom, [], 0));
+  console.log(encode("s", custom, [new Handler("str")], 0));
+  console.log(encode(7, [], [new Handler("num")], 0));
+}
+
+run();

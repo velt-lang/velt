@@ -1,0 +1,12 @@
+// `this` in a generator function expression (TypeScript's TS2683, as for other function
+// expressions). As an object-literal property's value, `this` is the literal
+// (`lang/object_literal_this`).
+class K {
+  x = 5;
+  m(): number[] {
+    const g = function* (): Generator<number> {
+      yield this.x;
+    };
+    return [...g()];
+  }
+}

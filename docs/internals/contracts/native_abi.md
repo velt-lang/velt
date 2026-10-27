@@ -10,21 +10,29 @@ rationale: [native-packages.md](../design/native-packages.md). Implemented by `c
 ## Calls from Velt into the library
 
 Velt declares the library's functions with `declare function` / `declare async function`, with
-the pass modes of `rt_abi_async.md` §3.1. Only these types cross the boundary (v1):
+the pass modes of `rt_abi_async.md` §3.1. A package passes the same values std's runtime
+functions do, under one rule for both (`veltc/src/native/`):
 
 | Velt | Parameter (C) | Result (C) | Signature name |
 |---|---|---|---|
 | `bool`, `i8`…`i64`, `u8`…`u64`, `f32`, `f64` (`number`) | by value | returned | `bool`, `i64`, `f64`, … |
 | `string` | `const VeltStr*` (borrowed for the call) | trailing `VeltStr*` out-pointer | `string` |
-| `u8[]` | `const VeltBytes*` (borrowed for the call) | trailing `VeltBytes*` out-pointer | `u8[]` |
-| `IoResult<T>`, `T` one of the above | — | trailing `IoResult<T>*` (§3) | `IoResult<T>` |
+| `T[]`, `T` a value | `const VeltArray*`: `{ T* ptr; u64 len; u64 cap; }` (borrowed) | trailing `VeltArray*` out-pointer (elements from `alloc`) | `u8[]`, `{id:i64,name:string}[]`, … |
+| a `struct` of values | `const S*` (borrowed) | trailing `S*` out-pointer | its shape: `{id:i64,name:string}` |
+| `IoResult<T>`, `T` a value | — | trailing `IoResult<T>*` (§3) | `IoResult<T>` |
 | `IoStatus` | — | trailing `VeltErr*` | `IoStatus` |
 | `void` | — | nothing | `void` |
 | `Promise<R>` (`declare async function`) | — | returns `VeltFut*`, result `R` at +16 | the `R` name, `async ` before the signature |
 
-`isize`/`usize`, structs, arrays other than `u8[]`, classes, closures and functions cannot cross:
-native objects are `u64` handles (§3.2) that the package wraps in a class with
-`[Symbol.dispose]()` (or a Copy struct for copies used by async calls).
+A value is a scalar, a `string`, an array of values or a `struct` of values, in Velt's own
+layout (rt_abi.md): a struct is named by its shape, its fields' names (as Velt spells them),
+order and types, so a field that differs is a build error. `isize`/`usize`, classes,
+interfaces, unions, optional or private fields, recursive structs, closures and functions
+cannot cross: native objects are `u64` handles (§3.2) that the package wraps in a class with
+`[Symbol.dispose]()` (or a Copy struct for copies used by async calls). The SDK's
+`#[derive(velt_native::Value)]` gives a `#[repr(C)]` Rust struct Velt's layout and its
+signature name (field names camelCased, or `#[velt(name)]`); `velt_native::Array<T>` is a
+Velt array in the runtime's memory.
 
 **Signatures** are written `(<param>,<param>)-><result>`, with `async ` in front for
 `declare async function`: `(string,u32)->IoResult<u64>`, `async (u64,string)->IoResult<string>`.
@@ -100,7 +108,8 @@ typedef struct VeltRtApi {
 - The library never links a `velt_rt_*` symbol: it gets this table (every entry is the runtime
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.
-- **Versioning**: the table is append-only; `abi_version` grows by one with each addition. A
+- **Versioning**: the table is append-only; `abi_version` grows by one with each addition
+  (version 2 adds the async I/O part below and the values beyond `u8[]`). A
   library records the version it needs (`abi` in `native.json`, `native_abi` in the index);
   vpm refuses a library needing more than the running `velt` provides
   (`vpm::native::NATIVE_ABI` = velt_rt's `NATIVE_ABI_VERSION`), and the SDK's init checks
@@ -116,11 +125,204 @@ typedef struct VeltRtApi {
   `Completer` (results that can fail only) completes with the error "completer dropped" when it
   is dropped without completing, so awaiting Velt code never hangs.
 - `VeltStr` and `VeltBytes` layouts are private to the runtime: libraries read them only through
-  `str_bytes` and `bytes_data`. velt_rt's unit tests check that the SDK's `Api`, `VeltStr`,
+  `str_bytes` and `bytes_data`. One value is fixed: all 24 bytes zero is the empty string (and
+  the empty `u8[]`), which a library may make and drop without a call. velt_rt's unit tests check that the SDK's `Api`, `VeltStr`,
   `VeltBytes`, `VeltErr` and `IoResultSlot` match the runtime's exactly.
 - Hot-reload rule (`rt_abi_async.md` §13.5): the only code pointers stored are `work`,
   `drop_ctx` and `drop_result`, which point into the library; libraries are never unloaded. A
   library never stores a Velt code pointer (no function types cross the boundary).
+
+## Async I/O
+
+The table's second part lets a library run async Rust on the program's scheduler, the way the
+runtime's own drivers do: its futures are polled inline by the task awaiting them, its sockets
+are the runtime's (on Velt's scheduler, registered with the worker's reactor; on tokio's, with
+tokio's), and a task it spawns runs on the worker that spawned it. Nothing Rust-specific
+crosses: a library carries its own std, possibly from another compiler.
+
+```c
+typedef uint32_t (*VeltPollFn)(void* state, void* cx, void* out);   // READY = 1, PENDING = 0
+typedef struct { const void* (*clone)(const void*); void (*wake)(const void*);
+                 void (*wake_by_ref)(const void*); void (*drop)(const void*); } VeltForeignWaker;
+typedef struct { const void* runtime; const void* data; const VeltForeignWaker* vtable; } VeltWakerArg;
+
+    VeltFut* (*fut_poll)(VeltPollFn poll, void* state, void (*drop_state)(void*), size_t result_size);
+    const void* (*cx_waker)(void* cx);                // the task's waker, borrowed for the poll
+    void* (*waker_clone)(const void* w);              // an owned (boxed) copy of a runtime waker
+    void (*waker_wake)(void* w);                      // wake and free
+    void (*waker_wake_by_ref)(const void* w);
+    void (*waker_drop)(void* w);
+    uint32_t (*fut_poll_ext)(VeltFut* f, const VeltWakerArg* w);  // await a runtime future
+    // (appended later) fut_poll with the state inside the future's block:
+    VeltFut* (*fut_poll_in)(VeltPollFn poll, void (*drop_state)(void*), size_t result_size,
+                            size_t state_size, size_t state_align, void** state_out);
+    void (*fut_drop)(VeltFut* f);
+    void (*spawn)(VeltFut* f);                        // detached; result size 0
+    VeltFut* (*tcp_connect)(const uint8_t* addr, size_t len);     // "host:port" -> IoResult<u64>
+    int32_t (*stream_from_socket)(int64_t socket, uint64_t* out); // adopt a connected socket
+    uint32_t (*stream_poll_read)(uint64_t h, const VeltWakerArg* w, uint8_t* buf, size_t cap,
+                                 size_t* n, int32_t* err);        // n == 0: end of stream
+    uint32_t (*stream_poll_write)(uint64_t h, const VeltWakerArg* w, const uint8_t* buf,
+                                  size_t len, size_t* n, int32_t* err);
+    uint32_t (*stream_poll_flush)(uint64_t h, const VeltWakerArg* w, int32_t* err);
+    uint32_t (*stream_poll_shutdown)(uint64_t h, const VeltWakerArg* w, int32_t* err);
+    int64_t (*stream_socket)(uint64_t h);             // for socket options; the stream owns it
+    void (*stream_close)(uint64_t h);
+    uint64_t (*now_ns)(void);                         // monotonic
+    void* (*sleep_new)(uint64_t deadline_ns);
+    uint32_t (*sleep_poll)(void* s, const VeltWakerArg* w);
+    void (*sleep_reset)(void* s, uint64_t deadline_ns);
+    void (*sleep_drop)(void* s);
+    int64_t (*worker_index)(void);                    // -1 off the workers / on tokio's stealing
+```
+
+- `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`
+  on the thread of the awaiting task; `READY` means `result_size` bytes are at `out`. `state`
+  is freed with `drop_state` when the future finishes or is dropped. A panic must not cross
+  `poll` (the SDK turns it into the result's error). `fut_poll_in` is the same with one
+  allocation instead of two: the runtime's block has room for the state (`state_size`,
+  `state_align`) at `*state_out`, where the library moves it before the first poll; it never
+  moves, and `drop_state` drops it in place (the runtime frees the block). The SDK uses it for
+  every `#[export(async)]` call and `rt::spawn`.
+- `cx` is the runtime's poll context, valid during the call; `cx_waker(cx)` is the task's
+  waker, borrowed for the call. Functions that wait take a `VeltWakerArg`: `runtime` set to a
+  runtime waker (borrowed or owned) when the library's waker is one, which costs nothing; else
+  `data` (borrowed for the call) and `vtable`, the library's own waker (a combinator's), which
+  the runtime clones through `clone` when it must keep it.
+- Error codes (`err`, `stream_from_socket`): 0 is success; a positive value is the OS error
+  number, a negative one the negated `IoError` code (rt_abi_async.md §3).
+- Handles (streams, sleeps, owned wakers) are pointers the library owns until it closes,
+  drops or wakes them; using one after that is undefined, as with any Rust value.
+- The SDK wraps all of it: `#[export(async)] async fn`, `velt_native::rt::spawn`,
+  `velt_native::net::TcpStream` (tokio's `AsyncRead`/`AsyncWrite` with the `tokio` feature),
+  `velt_native::time::{sleep, timeout}`, `velt_native::rt::worker_index`.
+
+## Strings
+
+A Velt string knows its UTF-16 length and whether it is ASCII (rt_abi.md "Strings"), so
+making one reads its text once. The table lets a library make strings without copying them:
+
+```c
+    void* (*alloc)(uint64_t size, uint64_t align);                  // the runtime's allocator
+    void* (*realloc)(void* p, uint64_t old_size, uint64_t align, uint64_t new_size);
+    void (*free)(void* p, uint64_t size, uint64_t align);
+    void (*str_from_utf8)(const uint8_t* p, size_t len, VeltStr* out); // trusted UTF-8, counted
+    void (*str_retain)(const VeltStr* s, VeltStr* out);               // another reference
+    uint8_t* (*strbuf_spare)(VeltStr* buf, uint64_t min, uint64_t* avail);
+    void (*strbuf_commit)(VeltStr* buf, uint64_t n, uint8_t ascii);
+    const uint8_t* (*str_utf8)(const VeltStr* s, size_t* len);       // bytes if UTF-8, else null
+```
+
+- `alloc`/`realloc`/`free`: memory Velt frees (arrays a library returns).
+- `str_from_utf8`: like `str_new` for bytes the library knows are UTF-8 (no check in release
+  builds; debug runtimes check).
+- `str_retain`: another reference to the same immutable string (a count, no copy): a library
+  keeps a string argument past the call this way (an async export's parameter).
+- `str_utf8`: a string's bytes when they are UTF-8 (no lone surrogate), else null. The string
+  knows (its lone-surrogate count), so a `&str` parameter borrows the text without scanning it;
+  only a string with a lone surrogate takes the lossy copy. A `&Str` parameter is the caller's
+  string itself and reads nothing until asked (`as_bytes`, `to_str`): JSON text from
+  `JSON.stringify` (always UTF-8) is read as stored this way.
+- `strbuf_spare(buf, min, avail)`: makes `buf` a unique heap buffer with room for at least `min`
+  bytes after its text and returns where the room starts (`*avail` bytes). Bytes written there
+  are not text yet; the runtime keeps them when a later `strbuf_spare` grows the buffer.
+  `strbuf_commit(buf, n, ascii)` makes the next `n` written bytes text: UTF-8 of whole
+  characters, counted once (not at all when `ascii` is 1). The first non-ASCII text of an ASCII
+  buffer gives it a header (rt_abi.md "Strings"): the text moves once, into a fresh buffer.
+- The SDK's `velt_native::StrBuf` is built on them: it writes into the spare room directly (a
+  bounds check and a copy per write, no call into the runtime), grows by doubling, keeps up to 23
+  bytes to itself (an inline string), and `finish()` commits once. `velt_text`'s encoders
+  (numbers, JSON, database rows) write into any `velt_text::Out`, a `Vec<u8>` or a `StrBuf`.
+  `velt_native::Str` is an owned Velt string: a parameter (retained, not copied), a result
+  (moved), an array element or a field.
+
+What a string result costs, per path (`cargo run --release -p velt_rt --example
+native_strings`, Apple M-series): a `StrBuf` is as fast as or faster than a `Vec<u8>` copied
+into a string once (the runtime's own drivers before), from −11 % (short text) to +1 % (1 MB of
+non-ASCII text), and 18–77 % faster than a `String` result (checked, then copied); a retained
+`Str` parameter costs 2–4 ns where a `String` copy costs 13 ns (16 bytes) to 17 µs (64 KB).
+
+## Handles and borrowed async arguments
+
+- `velt_native::handles::Registry<T>` keys (generation-checked, sharded): for handles Velt may
+  copy (a Copy struct like std's `Database` or `RedisClient`): a closed handle fails cleanly
+  through every copy.
+- `velt_native::handles::Single<T>`: the object's address, for an object exactly one Velt value
+  owns (a class that never copies its handle and releases it once, like std's `Statement`).
+  Using it costs nothing; nothing checks a stale one, so it is for that ownership only.
+- `#[export(async)] fn f(a: &[Str], ..) -> impl Future<Output = R> + Send + 'static`: the
+  arguments are borrowed for the synchronous part (encode a request from them), and the
+  returned future cannot keep them (a compile error). `async fn` exports take owned arguments.
+
+## Rows
+
+A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
+JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
+into a `velt_native::Array<u8>`, the Velt array itself). std decodes them with the std-only
+intrinsic `__intrinsic_json_parse_rows<T>(rows, flags, max_depth)`: the same generated decoder
+as `JSON.parse<T>`, over a reader made from the array (`velt_rt_json_reader_new_with` flag 4,
+rt_abi_async.md), which answers every call as it would for the JSON the rows stand for
+(`[{"col":value,...},...]`, or with `single` one row's object). No number formatting or
+escaping on the way out, no scanning on the way in.
+
+Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
+cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT` 3 + `i64`,
+`FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
+bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
+trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
+reads as a type mismatch, never out of bounds. std/postgres still writes JSON text (its arrays
+and json/jsonb columns are nested values, which the format has no cell for yet); std/sqlite
+hands std a row cursor instead (below).
+
+## Row cursors
+
+A driver can also let the decoder read its rows where it has them, without writing them into a
+buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header of
+the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
+call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
+of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
+text, borrowed until the next step) — and hands std the address of a `RawCursor`
+(`RawCursor::new`: the data pointer and a `#[repr(C)]` table of those three functions). std
+decodes with the std-only intrinsic `__intrinsic_json_parse_cursor<T>(cursor, flags, max_depth)`
+(reader flag 8, rt_abi_async.md) and gives the cursor back to the driver afterwards, which
+releases what it held (std/sqlite: the connection's lock) and reports a failure met while
+stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
+union of whole results) gets the remaining rows copied into binary form once, and a nested value
+is read with a JSON reader over its text.
+
+When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
+`u8[]`), the compiler reads the rows by column instead of through the JSON reader
+(`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. std/sqlite and
+std/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
+instead ([velt:db](../../std/db.md)), read the same way through its own methods.
+
+## Parameter sinks
+
+The other way, a driver can take a statement's parameters as typed values instead of the JSON
+text of `JSON.stringify(params)`: it implements `ParamSink` — `object()` (the parameters are an
+object's members), `name(bytes)` (the next value is the member of that name) and `value(Cell)`
+— and hands std a `RawSink`. The std-only intrinsic `__intrinsic_db_bind<P>(sink, params)`
+calls them from code generated for `P` (`Glue::DbBind`): values in order for an array, a tuple
+or a lone value, `object()` and then names and values for an object, each value as its JSON
+text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
+It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such
+fields, and returns false, doing nothing, for any other type: std then sends the JSON text, so
+the binding never depends on which way the parameters went (std/sqlite: `bind_begin` …
+`open_rows_bound`, rt_abi_async.md §14.11).
+
+## Drivers in the runtime
+
+std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`;
+`velt:redis`: `velt_std_redis`) are crates on this SDK only
+(`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
+`#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
+signature records like any package's, `veltc/src/native/` `check_std_driver`), and an
+executable stays self-contained. The runtime hands them its table at start-up
+(`velt_rt::native::embed`, from `entry::init`), as `velt_native_init_<pkg>` does for a
+package, without replacing the panic hook (they share the runtime's std). They share two helper crates any
+native library can use: `velt_text` (string encoding, number formatting, JSON, database rows)
+and `velt_tls` (one rustls client setup per process: the `ring` provider, Mozilla's roots plus
+extra PEM CAs, cached per CA text; the runtime's `fetch` and WebSockets use it too).
 
 ## Start-up
 

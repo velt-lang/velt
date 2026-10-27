@@ -1,0 +1,23 @@
+// A union asserted as some of its members is checked (#893): a value of another member stops
+// the program, where Node goes on with it.
+interface A {
+  kind: "a";
+}
+
+interface B {
+  kind: "b";
+}
+
+interface C {
+  kind: "c";
+}
+
+function pick(x: A | B | C | undefined): string {
+  const y = x as (A | B | undefined);
+  return y?.kind ?? "none";
+}
+
+function main() {
+  console.log(pick({ kind: "b" }), pick(undefined));
+  console.log(pick({ kind: "c" }));
+}

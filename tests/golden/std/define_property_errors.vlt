@@ -1,0 +1,7 @@
+// Errors TypeScript reports too (tsc --strict).
+interface Box {
+  v: number;
+}
+const box: Box = { v: 1 };
+Object.defineProperty(box, "v");
+Object.defineProperty(box, "v", { valu: 2 });

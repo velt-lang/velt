@@ -1,0 +1,55 @@
+// TypeScript syntax from sigx's sources that parses and runs as in Node: optional parameters
+// in function types (called with every argument: leaving one out is not supported yet), tuple
+// element labels and `var` directly in a function body (several declarators in one).
+
+type PluginInstallFn<Options = number> = (name: string, options?: Options) => void;
+
+const install: PluginInstallFn = (name, options) => {
+  console.log(name, options ?? "no options");
+};
+install("router", 2);
+install("store", 5);
+
+type MountFn = (vnode: string, container: string[], before?: string | null) => void;
+const mount: MountFn = (vnode, container, before) => {
+  container.push(before == null ? vnode : `${vnode} before ${before}`);
+};
+const root: string[] = [];
+mount("a", root, null);
+mount("b", root, "a");
+console.log(root.join(", "));
+
+function accessorFor(name: string): (scopedProps?: string) => string {
+  return (p) => name + ":" + (p ?? "default");
+}
+
+const slot = accessorFor("header");
+console.log(slot("light"), slot("dark"));
+
+type Person = [name: string, age: number];
+const ada: Person = ["Ada", 36];
+const [who, age] = ada;
+console.log(who, age);
+
+let width = 3;
+let height = 4;
+const area = width * height;
+console.log(area);
+
+function guid(seed: number): string {
+  var r = (seed * 16) | 0;
+  var v = seed > 0.5 ? r : (r & 0x3) | 0x8;
+  return r.toString(16) + v.toString(16);
+}
+
+console.log(guid(0.25), guid(0.75));
+
+function tally(xs: number[]): number {
+  var total = 0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}
+
+console.log(tally([1, 2, 3]));

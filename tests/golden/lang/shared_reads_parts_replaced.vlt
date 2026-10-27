@@ -1,0 +1,183 @@
+// check: no leaks
+// A part of a `shared<T>` read in place (a field, an element, a string field) stays where it is
+// while code runs that gives the handle's variable another handle: passed to a callee, looped
+// over (also across an `await` and in a generator), a method's receiver, next to a later
+// argument or an index that reassigns it. The read keeps the box alive, so each one sees what
+// JavaScript sees (the old array, `string`, element).
+class C {
+  xs: number[];
+  name: string;
+  constructor(xs: number[]) {
+    this.xs = xs;
+    this.name = `${"a".repeat(xs.length - 1)}b`;
+  }
+}
+
+class Item {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class D {
+  item: Item;
+  constructor(v: number) {
+    this.item = new Item(v);
+  }
+}
+
+function mk(n: number): number[] {
+  const o: number[] = [];
+  for (let i = 0; i < n; i++) {
+    o.push(i * 1000);
+  }
+  return o;
+}
+
+function churn() {
+  let t = 0;
+  for (let i = 0; i < 20; i++) {
+    t += mk(100000).length;
+  }
+}
+
+let G = shared(new C(mk(100000)));
+let H = shared([mk(100000)]);
+let W = shared(new C(mk(100000)));
+let V = shared([mk(100000)]);
+let S = shared(new C(mk(5)));
+let K = shared(new D(5));
+
+function resetG(): number {
+  G = shared(new C(mk(1)));
+  churn();
+  return 1;
+}
+
+function resetH() {
+  H = shared([mk(1)]);
+  churn();
+}
+
+function itemV(i: Item): number {
+  K = shared(new D(1));
+  churn();
+  return i.v;
+}
+
+function last(xs: number[]): number {
+  resetG();
+  return xs[99999];
+}
+
+function lastH(xs: number[]): number {
+  resetH();
+  return xs[99999];
+}
+
+function nameCode(n: string): number {
+  resetG();
+  return n.length + n.charCodeAt(99999);
+}
+
+function plus(xs: number[], r: number): number {
+  return xs[99999] + r;
+}
+
+function after(xs: number[], cb: () => void): number {
+  cb();
+  return xs[99999];
+}
+
+function* gen(): Generator<number> {
+  for (const x of G.xs) {
+    yield x;
+  }
+}
+
+async function walkW(): Promise<number> {
+  let t = 0;
+  for (const x of W.xs) {
+    if (x == 1000) {
+      await Promise.resolve(0);
+    }
+    t += x;
+  }
+  return t;
+}
+
+async function walkV(): Promise<number> {
+  let t = 0;
+  for (const x of V[0]) {
+    if (x == 1000) {
+      await Promise.resolve(0);
+    }
+    t += x;
+  }
+  return t;
+}
+
+async function main() {
+  console.log(last(G.xs));
+  console.log(itemV(K.item), K.item.v);
+  G = shared(new C(mk(100000)));
+  console.log(lastH(H[0]));
+  console.log(nameCode(G.name));
+  G = shared(new C(mk(100000)));
+  let n = 0;
+  let t = 0;
+  for (const x of G.xs) {
+    if (n == 0) {
+      resetG();
+    }
+    n++;
+    t += x;
+  }
+  console.log(n, t);
+  G = shared(new C(mk(100000)));
+  let k = 0;
+  const doubled = G.xs.map((x) => {
+    if (k == 0) {
+      resetG();
+    }
+    k++;
+    return x * 2;
+  });
+  console.log(doubled.length, doubled[99999]);
+  G = shared(new C(mk(100000)));
+  console.log(G.xs.indexOf(resetG() * 99999000));
+  G = shared(new C(mk(100000)));
+  console.log(plus(G.xs, resetG()));
+  console.log(S.xs, S = shared(new C(mk(1))), S.xs.length);
+  const pw = walkW();
+  W = shared(new C(mk(1)));
+  const pv = walkV();
+  V = shared([mk(1)]);
+  console.log(await pw, await pv);
+  G = shared(new C(mk(100000)));
+  let gn = 0;
+  let gt = 0;
+  for (const x of gen()) {
+    if (gn == 0) {
+      resetG();
+    }
+    gn++;
+    gt += x;
+  }
+  console.log(gn, gt);
+  let s = shared(new C(mk(100000)));
+  const reset = () => {
+    s = shared(new C(mk(1)));
+    churn();
+  };
+  console.log(after(s.xs, reset));
+  let h = shared([mk(100000)]);
+  const resetLocal = () => {
+    h = shared([mk(1)]);
+    churn();
+  };
+  console.log(after(h[0], resetLocal));
+  let q = shared(mk(100000));
+  console.log(q[(q = shared(mk(3))).length + 99996]);
+}

@@ -34,9 +34,9 @@ const NOT_AN_OBJECT: &str =
 
 /// A key of an object type: its name, whether it is listed only while present, and whether its
 /// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
-struct Key {
-    name: String,
-    optional: bool,
+pub(super) struct Key {
+    pub(super) name: String,
+    pub(super) optional: bool,
     presence: bool,
 }
 
@@ -159,7 +159,41 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if d == prelude => {}
             _ => return None,
         }
+        if !keys {
+            if let Some(h) = self.any_values(&prop.name, arg, span) {
+                return Some(h);
+            }
+        } else if reevaluable(arg) {
+            let call = super::setters::synth(
+                ast::ExprKind::Call {
+                    callee: Box::new(callee.clone()),
+                    type_args: vec![],
+                    args: args.to_vec(),
+                    optional: false,
+                },
+                span,
+            );
+            if let Some(h) = self.proxy_keys(call, arg) {
+                return Some(h);
+            }
+        } else if self.typed_proxy_once(arg) {
+            // `Object.keys(f())` of a typed proxy: the operand once, then as above.
+            let callee = callee.clone();
+            return Some(self.operand_once(arg, span, |cx, t| {
+                let call = super::setters::synth(
+                    ast::ExprKind::Call {
+                        callee: Box::new(callee),
+                        type_args: vec![],
+                        args: vec![t.clone()],
+                        optional: false,
+                    },
+                    span,
+                );
+                cx.expr(&call, None, Want::Move)
+            }));
+        }
         let obj = self.expr(arg, None, Want::Borrow);
+        let obj = self.read_shared(obj);
         if self.cx.ty.is_bottom(obj.ty) {
             return Some(self.error_expr(span));
         }
@@ -202,12 +236,43 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        match self.cx.dynamic(obj.ty) {
+            // TypeScript takes `{}`, which an `unknown` is not (TS2345).
+            Some(crate::any::Dynamic::Unknown) => {
+                self.unknown_use_error(obj.span);
+                return self.error_expr(span);
+            }
+            // The keys of the value an `any`, `object` or `Function` holds, listed at run time
+            // through its descriptor (`Intrinsic::AnyKeys`).
+            Some(_) => return self.any_keys(obj, span),
+            None => {}
+        }
+        // A value of a type parameter (`T extends Record<string, V>`, `T & object`): the keys
+        // of each instantiation's value, at run time.
+        let obj = match self.generic_as_any(obj) {
+            Ok(boxed) => return self.any_keys(boxed, span),
+            Err(obj) => obj,
+        };
         self.cx
             .object_copies
             .observe(obj.ty, span, crate::object_copies::Seen::Keys);
         // An interface value lists the fields of the class it holds (none can hold anything
         // else: see `iface_classes`).
+        let own = match self.cx.ty.kind(obj.ty) {
+            // The interface of a literal with no expected type holds only that literal.
+            TyKind::Dyn(i, _) if self.cx.literal_ifaces.contains(i) => {
+                (self.cx.impls.iter()).find(|m| m.iface == *i).map(|m| m.ty)
+            }
+            _ => None,
+        };
         let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {
+            TyKind::Dyn(..) if own.is_some() => {
+                let t = own.expect("ICE: a literal's own type");
+                let Some(keys) = self.object_key_names(t, obj.span) else {
+                    return self.error_expr(span);
+                };
+                (keys, None)
+            }
             TyKind::Dyn(i, _) => match self.iface_classes(i, obj.ty, obj.span) {
                 Some(classes) => (vec![], Some(classes)),
                 None => return self.error_expr(span),
@@ -242,6 +307,51 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_array, span)
     }
 
+    /// `Object.keys(x)` of an `any`, `object` or `Function` `x`.
+    fn any_keys(&mut self, mut obj: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        // A record's keys are its `__keyNames()`, called through the member slots.
+        self.note_dyn_members();
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
+        self.any_op(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
+    }
+
+    /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
+    /// `x`: the prelude's `__anyValues(x)` / `__anyEntries(x)` (an `any[]` / `[string, any][]`,
+    /// as TypeScript types them). `None`: `x` is not dynamic.
+    fn any_values(&mut self, helper: &str, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+        let t = self.trial_type(arg)?;
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        let d = self.cx.dynamic(t)?;
+        if d == crate::any::Dynamic::Unknown {
+            self.expr(arg, None, Want::Borrow);
+            self.unknown_use_error(arg.span);
+            return Some(self.error_expr(span));
+        }
+        let f = self.proxy_op(match helper {
+            "values" => "__anyValues",
+            _ => "__anyEntries",
+        });
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Ident(ast::Ident {
+                        name: f.to_string(),
+                        span,
+                    }),
+                    span,
+                )),
+                type_args: vec![],
+                args: vec![arg.clone()],
+                optional: false,
+            },
+            span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, Want::Move))
+    }
+
     /// `["a", "b"]`.
     fn name_array(&mut self, keys: &[Key], span: Span) -> hir::Expr {
         let lits = keys.iter().map(|k| self.str_lit(&k.name, span)).collect();
@@ -268,7 +378,12 @@ impl FnCx<'_, '_> {
     /// The classes whose instances an interface value of `iface` (type `t`) can hold, deepest
     /// first; `None` (reported at `span`) when a type that is not a class implements it, whose
     /// values carry no class to tell them apart.
-    fn iface_classes(&mut self, iface: DefId, t: TyId, span: Span) -> Option<Vec<DefId>> {
+    pub(super) fn iface_classes(
+        &mut self,
+        iface: DefId,
+        t: TyId,
+        span: Span,
+    ) -> Option<Vec<DefId>> {
         let mut classes = vec![];
         for d in (0..self.cx.info.len() as u32).map(DefId) {
             let Some(a) = self.cx.adt(d) else { continue };
@@ -280,6 +395,10 @@ impl FnCx<'_, '_> {
                 if self.holds_class(d, iface) {
                     classes.push((self.class_depth(d), d));
                 }
+                continue;
+            }
+            // An `any` may hold anything (`Object.keys` of one is `Intrinsic::AnyKeys`).
+            if self.cx.any.is_some_and(|a| a.any == iface) {
                 continue;
             }
             if self.implements(d, iface) {
@@ -320,7 +439,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The number of base classes of class `d`.
-    fn class_depth(&self, d: DefId) -> usize {
+    pub(super) fn class_depth(&self, d: DefId) -> usize {
         let mut cur = self.cx.adt(d).and_then(|a| a.base);
         let mut n = 0;
         while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
@@ -342,11 +461,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut arms = vec![];
         for s in subs {
+            let literal = self.cx.literal_structs.contains(&s);
             let names: Vec<Key> = self.cx.adt(s).map_or(vec![], |a| {
                 let fields = a.fields.iter().filter(|f| !is_private_name(&f.name));
                 fields
-                    .map(|f| Key {
-                        name: f.name.clone(),
+                    .filter_map(|f| listed_name(literal, &a.fields, &f.name))
+                    .map(|name| Key {
+                        name,
                         optional: false,
                         presence: false,
                     })
@@ -457,7 +578,7 @@ impl FnCx<'_, '_> {
 
     /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
     /// `None` (reported at `span`): `t` is not an object type, struct or class.
-    fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
+    pub(super) fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
         let d = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => Some(*d),
             _ => None,
@@ -465,20 +586,28 @@ impl FnCx<'_, '_> {
         let Some(a) = d.and_then(|d| self.cx.adt(d)) else {
             return self.not_an_object(t, span);
         };
-        if a.kind != AdtKind::Anon && self.cx.scopes[a.module].is_std {
+        // A std class's fields are its internals, except those of `import.meta`'s class, whose
+        // fields are Node's keys of `import.meta`.
+        if a.kind != AdtKind::Anon
+            && self.cx.scopes[a.module].is_std
+            && self.cx.modules[a.module].path != "std/import_meta"
+        {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;
+        let literal = self.cx.literal_structs.contains(&d.expect("ICE: an ADT"));
         let keys = a
             .fields
             .iter()
             .filter(|f| {
                 !is_private_name(&f.name) && crate::property_order::symbol_key(&f.name).is_none()
             })
-            .map(|f| Key {
-                name: f.name.clone(),
-                optional: f.optional && !class,
-                presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
+            .filter_map(|f| {
+                Some(Key {
+                    name: listed_name(literal, &a.fields, &f.name)?,
+                    optional: f.optional && !class,
+                    presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
+                })
             });
         // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
         let keys: Vec<Key> = keys.collect();
@@ -498,7 +627,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(d, _) if self.cx.is_json_value(*d) => {
                 Some("list a JSON object's keys with `v.keys()`")
             }
-            TyKind::Option(_) => Some("test for `null` first"),
+            TyKind::Option(..) => Some("test for `null` first"),
             _ => None,
         };
         if let Some(fix) = fix {
@@ -518,6 +647,17 @@ fn is_object_lit(e: &ast::Expr) -> bool {
     }
 }
 
+/// The key field `name` of an ADT with `fields` is listed under, if any. An object literal's
+/// (`literal`) accessor pair is one property: its getter's field is listed under the name, and
+/// a setter's (`set k`) only when there is no getter.
+fn listed_name(literal: bool, fields: &[crate::defs::FieldInfo], name: &str) -> Option<String> {
+    match name.strip_prefix("set ") {
+        Some(n) if literal && fields.iter().any(|f| f.name == n) => None,
+        Some(n) if literal => Some(n.to_string()),
+        _ => Some(name.to_string()),
+    }
+}
+
 /// An ES private field (`#x`): `Object.keys` does not list it, as in JavaScript.
 fn is_private_name(name: &str) -> bool {
     name.starts_with(ast::PRIVATE_NAME_PREFIX)
@@ -525,7 +665,7 @@ fn is_private_name(name: &str) -> bool {
 
 /// Can `e` be evaluated a second time to the same object without side effects (a name,
 /// `this`, or a property of one)?
-fn reevaluable(e: &ast::Expr) -> bool {
+pub(crate) fn reevaluable(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => reevaluable(inner),

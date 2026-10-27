@@ -1,0 +1,3 @@
+generic_convert_copy.vlt:15:10: error: cannot spread a value of type `f64` into an object
+generic_convert_copy.vlt:9:10: error: a value of type `{ a: f64; tag: string }` converts to `{ a: f64 }` by copying its fields, and this program compares `{ a: f64 }` values with `===` or `!==`: two copies of one object are not `===`
+generic_convert_copy.vlt:12:10: error: a value of type `{ a: f64; tag: string }` converts to `{ tag: string }` by copying its fields, and this program assigns field `tag`, which the other object would not see

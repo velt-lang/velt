@@ -3,13 +3,30 @@
 //! records, and the ` at <path>:<line>:<col>` suffix of compiler-emitted panics.
 //!
 //! Functions defined in the standard library that panic on behalf of their caller (`unwrap`,
-//! `assert*`, …) *track the caller*, like Rust's `#[track_caller]`: each direct call site gets
-//! its own instance (`Work::Tracked`) whose panics report the call site (see track_caller.rs).
+//! `assert*`, …) *track the caller*, like Rust's `#[track_caller]`: a small one gets an instance
+//! per direct call site (`Work::Tracked`) whose panics report the call site, a larger one takes
+//! it as a parameter (`ARG_LOC`; see track_caller.rs).
 
 use velt_common::{SourceMap, Span};
 
 use super::FnLower;
-use crate::vir::{Operand, SrcLoc};
+use crate::vir::{self, Operand, SrcLoc, Ty};
+
+/// The caller location of a caller-tracking instance called from glue, which has none: its
+/// panics report no location (`FnLower::panic_suffix`).
+pub(super) const UNKNOWN_LOC: SrcLoc = SrcLoc {
+    file: u32::MAX,
+    line: 0,
+    col: 0,
+};
+
+/// The caller location of a caller-tracking instance that takes it as its last parameter
+/// (`FnLower::caller_arg`), one instance for all call sites (track_caller.rs).
+pub(super) const ARG_LOC: SrcLoc = SrcLoc {
+    file: u32::MAX,
+    line: 1,
+    col: 0,
+};
 
 /// Line tables of every source file, plus the paths reported in `vir::Program::files`.
 pub(super) struct LocMap {
@@ -132,12 +149,49 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// ` at <path>:<line>:<col>` for a panic raised here (empty without location info).
+    /// ` at <path>:<line>:<col>` for a panic raised here (empty without location info), known
+    /// when lowering: not in an instance that takes its caller's location (`panic_at`).
     pub(super) fn panic_suffix(&self) -> String {
         match (self.cx.locs.as_ref(), self.panic_loc()) {
-            (Some(m), Some(l)) => format!(" at {}", m.describe(l)),
+            (Some(_), Some(ARG_LOC)) => {
+                super::ice("panic_suffix in an instance that takes its caller's location")
+            }
+            (Some(m), Some(l)) if l != UNKNOWN_LOC => format!(" at {}", m.describe(l)),
             _ => String::new(),
         }
+    }
+
+    /// Where a panic raised here is, as a pointer to the `Str` ` at <path>:<line>:<col>`: the
+    /// parameter of an instance that takes its caller's location, else a static one (empty
+    /// without location info).
+    pub(super) fn panic_at(&mut self) -> Operand {
+        if let (Some(ARG_LOC), Some(p)) = (self.panic_loc(), self.caller_arg) {
+            return Operand::Copy(vir::Place::local(p));
+        }
+        let suffix = self.panic_suffix();
+        let id = self.cx.static_str_object(&suffix);
+        Operand::Const(vir::Const::Static(id), Ty::Ptr)
+    }
+
+    /// The text `msg` with ` at …` for a panic raised here, as a pointer to its `Str`: a
+    /// constant, or for an instance that takes its caller's location the two joined (the
+    /// process ends right after, so the joined text is never freed).
+    pub(super) fn panic_text(&mut self, msg: &str) -> Operand {
+        let str_agg = Ty::Agg(vir::STR_AGG);
+        if self.panic_loc() != Some(ARG_LOC) {
+            let text = format!("{msg}{}", self.panic_suffix());
+            let lit = self.str_lit(&text);
+            return self.operand_addr(lit, str_agg);
+        }
+        let lit = self.str_lit(msg);
+        let head = self.operand_addr(lit, str_agg);
+        let at = self.panic_at();
+        // Not `concat`: no scope drops the text (a panic block may be built after the body's
+        // scopes closed, as the division-by-zero ones are).
+        let joined = self.temp(str_agg);
+        let out = self.addr(vir::Place::local(joined));
+        self.call_rt(super::rt::Rt::StrConcat, vec![head, at, out.clone()], None);
+        out
     }
 }
 

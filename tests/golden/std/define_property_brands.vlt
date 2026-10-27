@@ -1,0 +1,30 @@
+// Symbol brands added with Object.defineProperty, as in Node (#922).
+const CELL: unique symbol = Symbol("cell");
+const TAG: unique symbol = Symbol("tag");
+interface Cell {
+  state: string;
+  value: number;
+}
+type Slot = { name: string };
+function makeCell(state: string): Cell {
+  const cell: Cell = { state, value: 1 };
+  Object.defineProperty(cell, CELL, { value: true });
+  return cell;
+}
+function makeSlot(name: string): Slot {
+  const slot = { name } as Slot;
+  return Object.defineProperty(slot, TAG, { value: "slot", enumerable: true });
+}
+function isCell(v: Cell): boolean {
+  return CELL in v;
+}
+const a = makeCell("live");
+const b: Cell = { state: "plain", value: 2 };
+console.log(isCell(a), isCell(b), Object.keys(a), JSON.stringify(a));
+console.log(a, b);
+console.log({ ...a }, CELL in { ...a });
+const s = makeSlot("main");
+console.log(s, TAG in s);
+const p = { state: "x", value: 0 } as Cell;
+Object.defineProperty(p, "value", { value: 9 });
+console.log(p.value);

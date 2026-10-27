@@ -84,7 +84,8 @@ function errors() {
   } catch (e) {
     console.log(e.message);
   }
-  const badHex = ["abc", "0g", "zz00"];
+  // Text that is not ASCII is read as its UTF-8 bytes: offsets count bytes.
+  const badHex = ["abc", "0g", "zz00", "\u00ff", "0\u00ff0", "AbCdEf0G"];
   for (const s of badHex) {
     try {
       console.log(hexDecode(s));

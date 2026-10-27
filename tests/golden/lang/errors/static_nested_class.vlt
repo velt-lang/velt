@@ -1,0 +1,11 @@
+// A class declared inside a function or block can't have mutable statics or static blocks yet:
+// JavaScript evaluates them each time the declaration runs, Velt once (#1501).
+function mk(): number {
+  class L { static c: number = 0; static readonly k: number = 1; }
+  L.c++;
+  return L.c + L.k;
+}
+console.log(mk(), mk());
+{
+  class T { static { console.log("block"); } }
+}

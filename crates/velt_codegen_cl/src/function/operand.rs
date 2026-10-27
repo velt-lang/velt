@@ -51,6 +51,8 @@ impl<M: Module> Translator<'_, '_, M> {
         let v = match c {
             Const::Int(i) if ty == Ty::F32 => self.builder.ins().f32const(*i as f32),
             Const::Int(i) if ty == Ty::F64 => self.builder.ins().f64const(*i as f64),
+            Const::Int(0) if ty == Ty::V128 => self.zero_vector(),
+            Const::Int(_) if ty == Ty::V128 => bail!("non-zero constant of type V128"),
             Const::Int(i) => self.iconst(t, *i),
             Const::Float(x) if ty == Ty::F32 => self.builder.ins().f32const(*x as f32),
             Const::Float(x) if ty == Ty::F64 => self.builder.ins().f64const(*x),
@@ -134,7 +136,12 @@ impl<M: Module> Translator<'_, '_, M> {
 
     pub(super) fn extern_id(&self, id: vir::ExternId) -> CodegenResult<FuncId> {
         match self.decls.externs.get(id.0 as usize) {
-            Some(x) => Ok(*x),
+            Some(Some(x)) => Ok(*x),
+            Some(None) => bail!(
+                "inline operation #{} (SIMD or atomic) is called with another signature, or its \
+                 address is taken",
+                id.0
+            ),
             None => bail!("unknown extern #{}", id.0),
         }
     }

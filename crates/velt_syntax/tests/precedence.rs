@@ -30,8 +30,8 @@ fn arithmetic_precedence() {
 fn comparison_logic_bitwise_precedence() {
     check("a < b == c > d", "(== (< a b) (> c d))");
     check("a <= b != c >= d", "(!= (<= a b) (>= c d))");
-    check("a === b", "(== a b)");
-    check("a !== b", "(!= a b)");
+    check("a === b", "(=== a b)");
+    check("a !== b", "(!== a b)");
     check("a & b | c ^ d", "(| (& a b) (^ c d))");
     check("a == b & c", "(& (== a b) c)");
     check("a || b && c", "(|| a (&& b c))");
@@ -56,10 +56,19 @@ fn as_binds_like_relational() {
     check("5 as f64 / 2.0", "(/ (as 5 f64) 2.0)");
     check("a + b as f64", "(as (+ a b) f64)");
     check("a as i64 < b", "(< (as a i64) b)");
-    check("x as u8 | y", "(| (as x u8) y)");
+    check("x as u8 | y", "(as x (u8 | y))");
+    check("(x as u8) | y", "(| (paren (as x u8)) y)");
     check("x as T | null", "(as x (T | null))");
     check("k as \"a\" | \"b\" | null", "(as k (\"a\" | \"b\" | null))");
-    check("x as 1 | y", "(| (as x 1) y)");
+    check("x as 1 | y", "(as x (1 | y))");
+    check("x as A | B<C>[]", "(as x (A | B<C>[]))");
+    check("c ? x as T[\"k\"] : y", "(? c (as x T[\"k\"]) y)");
+    check(
+        "x as
+    | A
+    | null",
+        "(as x (A | null))",
+    );
     check("-x as f64", "(as (- x) f64)");
     check(
         "(small as i64) * 100000",
@@ -117,6 +126,55 @@ fn update_expressions() {
     check("a.b++", "(++post (. a b))");
     check("-i++", "(- (++post i))");
     check("a + ++b", "(+ a (++pre b))");
+}
+
+/// A `?` followed by any token that can start an expression is a ternary, not the removed
+/// postfix `?` (`can_start_expr`): every prefix operator and every primary expression.
+#[test]
+fn ternary_branch_starts() {
+    check("c ? void 0 : v", "(? c (void 0) v)");
+    check("c ? typeof c : \"n\"", "(? c (typeof c) \"n\")");
+    check("c ? !a : b", "(? c (! a) b)");
+    check("c ? ~a : b", "(? c (~ a) b)");
+    check("c ? -a : b", "(? c (- a) b)");
+    check("c ? +a : b", "(? c (+ a) b)");
+    check("c ? ++a : b", "(? c (++pre a) b)");
+    check("c ? --a : b", "(? c (--pre a) b)");
+    check("c ? await p : b", "(? c (await p) b)");
+    check("c ? delete o.k : b", "(? c (delete (. o k)) b)");
+    check("c ? undefined : b", "(? c undefined b)");
+    check("c ? null : b", "(? c null b)");
+    check("c ? true : false", "(? c true false)");
+    check("c ? this : b", "(? c this b)");
+    check("c ? 1 : 2.5", "(? c 1 2.5)");
+    check("c ? \"s\" : b", "(? c \"s\" b)");
+    check("c ? (a) : b", "(? c (paren a) b)");
+    check("c ? [a] : b", "(? c [a] b)");
+    check("c ? type : of", "(? c type of)");
+    for src in [
+        "c ? `t` : b",
+        "c ? `${a}` : b",
+        "c ? /a+/.test(s) : false",
+        "c ? { a: 1 } : b",
+        "c ? new A() : b",
+        "c ? async () => 1 : b",
+        "c ? (x: number) => x : b",
+        "c ? <T>(x: T) => x : b",
+        "c ? super.m() : b",
+    ] {
+        let e = expr(src);
+        assert!(matches!(e.kind, ExprKind::Cond { .. }), "{src}: {e:?}");
+    }
+    // A function expression is rejected as such, not as a removed `?`.
+    let errs = errors("function f(c: bool) { const g = c ? function () {} : null; }");
+    assert!(
+        !errs.iter().any(|e| e.contains("operator was removed")),
+        "{errs:?}"
+    );
+    // `#x in o` as a branch.
+    let errs =
+        errors("class A { #x = 1; has(c: bool, o: A): bool { return c ? #x in o : false; } }");
+    assert!(errs.is_empty(), "{errs:?}");
 }
 
 #[test]

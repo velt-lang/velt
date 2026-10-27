@@ -1,0 +1,124 @@
+// A function that never returns (`() => { throw e; }`, `never` as in TypeScript) converts to
+// function types with another result (`() => void`, `() => number`), and a `catch` handler that
+// only rethrows keeps the promise's value type.
+import { libCast, libNumber, libVoid } from "./_never_fn_lib";
+
+function runVoid(f: () => void): string {
+  try {
+    f();
+    return "returned";
+  } catch (e) {
+    return `caught ${(e as Error).message}`;
+  }
+}
+function runNumber(f: () => number): number {
+  try {
+    return f();
+  } catch (e) {
+    return -1;
+  }
+}
+
+const boom = () => {
+  throw new Error("b");
+};
+console.log(runVoid(boom), runNumber(boom));
+
+function make2() {
+  return () => {
+    throw new Error("m");
+  };
+}
+console.log(runVoid(make2()));
+let h: () => void = () => {};
+console.log(runVoid(h));
+h = make2();
+console.log(runVoid(h));
+
+const o = {
+  m() {
+    throw new Error("o.m");
+  },
+};
+const v: () => void = o.m;
+console.log(runVoid(v));
+const n: () => number = boom;
+console.log(runNumber(n), runVoid(libVoid), runVoid(libCast));
+
+async function load(ok: boolean): Promise<number> {
+  if (!ok) {
+    throw new RangeError("offline");
+  }
+  return 7;
+}
+
+async function run() {
+  console.log(await load(true).catch((e) => {
+    throw e;
+  }));
+  try {
+    await load(false).catch((e) => {
+      throw e;
+    });
+  } catch (e) {
+    console.log("rethrown", e instanceof RangeError, (e as Error).message);
+  }
+}
+run();
+
+// Callbacks that only throw, inferred for a type argument (`map`) or passed as values.
+const xs = [1, 2];
+try {
+  xs.forEach(boom);
+} catch (e) {
+  console.log("forEach", (e as Error).message);
+}
+try {
+  const ys = xs.map((x) => {
+    throw new Error("m" + x);
+  });
+  console.log(ys.length);
+} catch (e) {
+  console.log("map", (e as Error).message);
+}
+const fns: (() => void)[] = [boom, () => {}];
+try {
+  fns[1]();
+  fns[0]();
+} catch (e) {
+  console.log("array", (e as Error).message);
+}
+
+// Outside a function: module state and field initializers.
+const fieldBoom = () => {
+  throw new Error("field");
+};
+class Fields {
+  h: () => void = fieldBoom;
+  n: () => number = fieldBoom;
+}
+console.log(runVoid(new Fields().h), runNumber(new Fields().n), runNumber(libNumber));
+
+// `catch` on a promise that never fulfills gives what the handler gives.
+function wrap<R>(f: () => R): (x: number) => R {
+  return (x) => f();
+}
+async function more() {
+  const w = await Promise.resolve(1)
+    .then((x) => {
+      throw new Error("t2");
+    })
+    .catch((e) => 7);
+  console.log("w", w + 1);
+  console.log(await Promise.reject(new Error("r")).catch((e) => "z"));
+  try {
+    await Promise.resolve(1).then(
+      wrap(() => {
+        throw new Error("wrapped");
+      }),
+    );
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+more();

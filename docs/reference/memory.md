@@ -10,7 +10,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
 - **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), literal and
   enum types, and unions, tuples and `T | null` of those. A tuple is copied when it is
   assigned or stored, but a function or callback that changes an element of a tuple it was
-  passed (`t[1] = 0`) changes the caller's tuple, as in JS.
+  passed (`t[1] = 0`) changes the caller's tuple, as in JS. The objects a tuple holds are
+  shared, not copied: `pick()[0].x = 5` changes the object in the tuple `pick` returned. A
+  write into an element of a tuple that a call or a conditional gives (`m.get(k)![1] = 2`) is
+  an error, since it would change a copy.
 - **Objects are references**, as in JS: class instances, arrays, maps, structs, object types
   (`type P = { x: i64 }`, object literals) and closures. `const b = a;`, passing `a` to a
   function, storing it in a field, an array or a map, returning it and capturing it all refer
@@ -34,8 +37,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
   variable again hands it over for free, one that does shares it. Returning a field of a class
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
-- A **promise** has one owner: `await` a stored promise once; using a promise variable after
-  handing it on is ``use of moved value `p` ``.
+- A **promise** is shared like an object: every holder may `await` it and gets the result
+  ([Async](async.md#promises)).
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
   linked list through a `next: Node | null` field or a tree through `left` and `right` is
   freed in a loop (when the class is not part of a class hierarchy, with no base class and no
@@ -174,6 +177,12 @@ is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, thi
 is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
 variables that refer to the same object (`const ys = xs; append(xs, ys)`) are allowed and work
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
+So is a closure argument that takes over a variable another argument only borrows
+(`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
+The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
+compared by identity, so it may be the object the collection is reached through: in
+`for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A
+key inside the collection itself is still an error.
 `m.with(f)` gives `f` the locked value; when `m` is a `shared` handle, that value is not part of
 `m`'s place, so a callback may read what sits next to it (`this.m.with((v) => { v.n +=
 this.step; })`), while one that changes the object holding `m` is still an error.

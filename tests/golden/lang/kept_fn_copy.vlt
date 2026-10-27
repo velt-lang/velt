@@ -1,0 +1,42 @@
+// check: no leaks
+// Closures and overridden / interface methods have fixed borrowed params, yet they may keep a
+// function they receive (a copy, a spawned call, a capture): the program then passes them only
+// closures that own their environment.
+function apply(h: (g: () => string) => void) {
+  let n = 1;
+  h(() => `n=${n}`);
+}
+
+interface Sink {
+  put(f: () => string): void;
+}
+
+class Store implements Sink {
+  fs: (() => string)[] = [];
+
+  put(f: () => string) {
+    this.fs.push(f);
+  }
+}
+
+function main() {
+  const kept: (() => string)[] = [];
+  apply((g) => {
+    kept.push(g.clone());
+  });
+  apply((g) => {
+    kept.push(g);
+  });
+  apply((g) => {
+    kept.forEach((k) => {
+      const c = g.clone();
+      console.log(k(), c());
+    });
+  });
+  const store = new Store();
+  const s: Sink = store;
+  const tag = "x".repeat(2);
+  s.put(() => tag);
+  for (const k of kept) console.log(k());
+  console.log(store.fs[0]());
+}

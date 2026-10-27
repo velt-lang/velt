@@ -1,0 +1,23 @@
+[ 'str' ]
+[ 0, 'str', 5, 3 ]
+{ q: 'str' }
+{ a: 1, q: 'str', r: 'd', z: 5 }
+{ q: 'str', w: { v: 'str' } }
+[ 'str' ]
+{ a: [ 'str' ] }
+{ q: 'str' }
+{ q: 2 } 3
+[ 2 ]
+{ a: { q: 'str' } }
+[ 'str' ]
+{ k: [ 'str' ] }
+[ [ 'str' ], { z: 5 } ]
+[ [ 'str' ] ]
+{"q":"str"} ["str"]
+[ 'str' ]
+str string
+[ 'str', 5 ]
+{ q: 'str' }
+fallback
+6
+{ name: 'str', n: 5, k: 'str' }

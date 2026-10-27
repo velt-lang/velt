@@ -1,0 +1,34 @@
+// check: no leaks
+// `Map` and `Record` values that may be `null` or `undefined` (#1218): an entry holding either is
+// present (`has`, `size`, `Object.keys`), reads back as what it holds, and a missing key reads
+// `undefined`; `JSON.stringify` leaves out an entry holding `undefined` and writes `null`, as
+// Node does.
+function main(): void {
+  const m = new Map<string, number | null | undefined>();
+  m.set("a", 1);
+  m.set("b", null);
+  m.set("c", undefined);
+  console.log(m.get("a"), m.get("b"), m.get("c"), m.get("d"), m.has("c"), m.has("d"), m.size);
+  for (const [k, v] of m) console.log(k, v, v === null, v === undefined);
+  console.log(m);
+  m.delete("b");
+  console.log([...m.keys()], [...m.values()], m.get("b"));
+
+  const u = new Map<string, string | undefined>([["x", undefined], ["y", "1"]]);
+  u.delete("y");
+  console.log(u.get("x"), u.has("x"), u.size, u);
+
+  const r: Record<string, number | null | undefined> = { a: 1, b: null, c: undefined };
+  r.d = null;
+  console.log(r, r.a, r.b, r.c, r.zz, Object.keys(r), "c" in r);
+  console.log(JSON.stringify(r));
+  delete r.a;
+  console.log(r, Object.values(r));
+  for (const [k, v] of Object.entries(r)) console.log(k, v, v === null, v === undefined);
+
+  const s: Record<string, string | undefined> = { x: "1", y: undefined };
+  s.z = "3";
+  console.log(s, JSON.stringify(s), s["y"], s["q"], Object.keys(s));
+  const nested = { list: [r, s], n: 2 };
+  console.log(JSON.stringify(nested));
+}

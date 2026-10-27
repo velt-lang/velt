@@ -1,0 +1,16 @@
+// check: no leaks
+// A named function that takes ownership of a promise used as a function value (#224): the
+// value's thunk passes it another holder of the caller's promise (#212).
+
+async function wait(p: Promise<i64>): Promise<i64> {
+  return await p;
+}
+
+async function one(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const w: (p: Promise<i64>) => Promise<i64> = wait;
+  console.log(await w(one()));
+}

@@ -23,6 +23,33 @@ unsafe impl Send for VeltBytes {}
 
 const _: () = assert!(std::mem::size_of::<VeltBytes>() == 24);
 
+/// The most bytes an array's buffer holds, and so the most elements an array holds: 2^52 - 1
+/// (rt_abi.md "Array length limit"; velt_vir's `MAX_ARRAY_LEN`, which generated code checks
+/// where it chooses a length). The runtime checks it where it hands a Rust `Vec` over as a Velt
+/// array ([`check_array_len`]) and in `velt_rt_realloc`, which array growth calls.
+pub const MAX_ARRAY_LEN: u64 = (1 << 52) - 1;
+
+/// An array of `len` elements may be handed to generated code: within [`MAX_ARRAY_LEN`], else
+/// the program stops with the same `RangeError` generated code reports. On a 32-bit target
+/// (wasm32) every length is.
+#[inline]
+pub fn check_array_len(len: usize) {
+    if !array_len_ok(len) {
+        array_too_long();
+    }
+}
+
+#[inline]
+fn array_len_ok(len: usize) -> bool {
+    len as u64 <= MAX_ARRAY_LEN
+}
+
+/// Stop with the `RangeError` of an array past [`MAX_ARRAY_LEN`].
+#[cold]
+pub(crate) fn array_too_long() -> ! {
+    crate::panic::fatal("RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes")
+}
+
 impl VeltBytes {
     /// Take ownership of a Vec's buffer.
     pub fn from_vec(v: Vec<u8>) -> VeltBytes {
@@ -33,6 +60,7 @@ impl VeltBytes {
                 cap: 0,
             };
         }
+        check_array_len(v.len());
         let mut v = std::mem::ManuallyDrop::new(v);
         // Generated code frees the buffer like one of its own blocks (leak counters).
         crate::str::stats::block_alloc();
@@ -98,6 +126,22 @@ pub unsafe extern "C" fn velt_rt_bytes_to_str(b: *const VeltBytes, out: *mut IoR
     r.write_to(out);
 }
 
+/// The text of the UTF-8 bytes `b`, an invalid sequence as U+FFFD (WHATWG's decoder, as std's
+/// `utf8DecodeLossy`: one per maximal invalid subpart).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_to_str_lossy(b: *const VeltBytes, out: *mut VeltStr) {
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy((*b).as_bytes()).as_bytes(),
+    ));
+}
+
+/// Whether `b` is valid UTF-8: the bytes of a string, as it stores them (a lone surrogate's
+/// three bytes are not UTF-8, and decoding replaces them).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_is_utf8(b: *const VeltBytes) -> u8 {
+    u8::from(std::str::from_utf8((*b).as_bytes()).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +172,31 @@ mod tests {
         unsafe { crate::str::velt_rt_str_drop(&mut r.err.message) };
         let mut bad = bad;
         unsafe { velt_rt_bytes_drop(&mut bad) };
+    }
+}
+
+#[cfg(test)]
+mod array_len_tests {
+    use super::{array_len_ok, MAX_ARRAY_LEN};
+
+    #[test]
+    fn lengths_up_to_the_limit_pass() {
+        assert!(array_len_ok(0));
+        assert!(array_len_ok(u32::MAX as usize));
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert!(array_len_ok(MAX_ARRAY_LEN as usize));
+            assert!(!array_len_ok(MAX_ARRAY_LEN as usize + 1));
+            assert!(!array_len_ok(usize::MAX));
+        }
+    }
+
+    /// wasm32: every length a 32-bit `usize` can hold is within the limit, so the check holds
+    /// there without ever stopping a program.
+    #[test]
+    fn every_32_bit_length_is_within_the_limit() {
+        assert!(u64::from(u32::MAX) <= MAX_ARRAY_LEN);
+        #[cfg(target_pointer_width = "32")]
+        assert!(array_len_ok(usize::MAX));
     }
 }

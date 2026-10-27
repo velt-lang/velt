@@ -13,11 +13,11 @@
 //! given, so a spawned call is allowed too, and `Promise.all` and the other combinators only
 //! wait for the promises they are given, each checked where it is made.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
-use super::regions::{Regions, IN};
+use super::regions::{Regions, IN, MOVED};
 use super::stores::wrap;
 use super::summary::outer_mode;
 use super::summary::Summaries;
@@ -54,7 +54,7 @@ pub(super) fn made_from_value(
         s,
         def,
         copy,
-        spawned: HashSet::new(),
+        spawned: FxHashSet::default(),
         found: vec![],
     };
     visit::block(&mut f.body.block, &mut p);
@@ -68,13 +68,14 @@ struct Promises<'a, 'r, 's, 'm> {
     def: DefId,
     copy: bool,
     /// Spans of the calls `spawn` takes.
-    spawned: HashSet<Span>,
+    spawned: FxHashSet<Span>,
     found: Vec<Made>,
 }
 
 impl Promises<'_, '_, '_, '_> {
     fn reaches_value(&mut self, e: &Expr) -> bool {
-        self.r.mentions(self.cx, self.def, e) & IN != 0
+        // A moved variable is released under the lock too (`super::moves`).
+        self.r.mentions(self.cx, self.def, e) & (IN | MOVED) != 0
     }
 
     /// A call (or `new`) `e` of `callee` with `args`; may give some arguments copies.

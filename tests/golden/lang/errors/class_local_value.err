@@ -1,0 +1,1 @@
+class_local_value.vlt:6:10: error: class `L` declared in a function or a block can't be used as a plain value yet

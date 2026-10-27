@@ -1,0 +1,12 @@
+// Writing a getter without a setter through `any` stops with the `TypeError` strict code gets
+// in Node (#924).
+class P {
+  get only(): number {
+    return 7;
+  }
+}
+function main(): void {
+  const a: any = new P();
+  console.log(a.only);
+  a.only = 3;
+}

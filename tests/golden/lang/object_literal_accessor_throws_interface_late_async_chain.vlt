@@ -1,0 +1,45 @@
+// The late conversion of `object_literal_accessor_throws_interface_late_async`, read through a
+// chain of `async` functions and by an `async` arrow function held in a `const`, each declared
+// before the conversion.
+
+interface G {
+  get value(): string;
+}
+
+async function inner(h: G): Promise<string> {
+  await null;
+  return h.value;
+}
+
+async function mid(h: G): Promise<string> {
+  const v = await inner(h);
+  return v + "!";
+}
+
+async function outer(h: G): Promise<string> {
+  await null;
+  return await mid(h);
+}
+
+const arrow = async (h: G): Promise<string> => {
+  await null;
+  return h.value;
+};
+let bad = true;
+const a = {
+  get value(): string {
+    if (bad) {
+      throw new TypeError("a failed");
+    }
+    return "a";
+  },
+};
+
+async function start(): Promise<void> {
+  await outer(a as G).catch((e) => console.log("outer", (e as Error).message));
+  await arrow(a as G).catch((e) => console.log("arrow", (e as Error).message));
+  bad = false;
+  console.log(await outer(a as G), await arrow(a as G));
+}
+
+start();

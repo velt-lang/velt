@@ -1,0 +1,15 @@
+// The same static method called on the subclass: `this.count += 1` would create a static of
+// `Sub` in JavaScript (#1501), also when reached through another static.
+class Base {
+  static count: number = 0;
+  static inc(): number {
+    this.count += 1;
+    return this.count;
+  }
+  static twice(): number {
+    this.inc();
+    return this.inc();
+  }
+}
+class Sub extends Base {}
+console.log(Sub.twice());

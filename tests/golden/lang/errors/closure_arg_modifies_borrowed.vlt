@@ -1,0 +1,66 @@
+// A closure argument that captures a variable another argument of the same call borrows shares
+// it only when it never changes it (#1383): one that modifies it, directly, through another
+// name for it or through the elements of a loop over it, could change it while the call reads
+// it, and stays an error.
+
+type Pt = { x: number };
+
+class Registry {
+  fs: (() => number)[] = [];
+  names: string[] = [];
+
+  add(xs: string[], f: () => number) {
+    this.names.push(xs[0]);
+    this.fs.push(f);
+  }
+
+  addPts(ps: Pt[], f: () => number) {
+    this.names.push(`${ps[0].x}`);
+    this.fs.push(f);
+  }
+}
+
+function pushes(r: Registry) {
+  const xs = ["a"];
+  r.add(xs, () => {
+    xs.push("c");
+    return xs.length;
+  });
+}
+
+function alias(r: Registry) {
+  const names = ["a"];
+  r.add(names, () => {
+    const other = names;
+    other.push("x");
+    return names.length;
+  });
+}
+
+function row(r: Registry) {
+  const grid = [["a"]];
+  r.add(grid[0], () => {
+    const first = grid[0];
+    first.push("y");
+    return grid.length;
+  });
+}
+
+function elements(r: Registry) {
+  const ps: Pt[] = [{ x: 1 }];
+  r.addPts(ps, () => {
+    for (const p of ps) {
+      p.x += 1;
+    }
+    return ps.length;
+  });
+}
+
+function main() {
+  const r = new Registry();
+  pushes(r);
+  alias(r);
+  row(r);
+  elements(r);
+  console.log(r.names);
+}

@@ -254,6 +254,7 @@ impl FnCx<'_, '_> {
             params: vec![c.elem, i64_],
             ret: error,
             throws: error,
+            rest: false,
         });
         let fh = match as_arrow(f) {
             Some(a) => {
@@ -327,6 +328,11 @@ impl Synth {
         }
     }
 
+    /// The hidden name of an index.
+    pub(super) fn index_name(&self) -> String {
+        self.index.clone()
+    }
+
     pub(super) fn expr(&self, kind: E) -> Expr {
         Expr {
             id: ast::NodeId(u32::MAX),
@@ -365,7 +371,7 @@ impl Synth {
         }
     }
 
-    fn int(&self, n: usize) -> Expr {
+    pub(super) fn int(&self, n: usize) -> Expr {
         self.expr(E::Lit(ast::Lit::Int {
             value: n as u128,
             suffix: None,
@@ -394,7 +400,7 @@ impl Synth {
         self.call(self.member(object, method), args)
     }
 
-    fn binary(&self, op: ast::BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
+    pub(super) fn binary(&self, op: ast::BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
         self.expr(E::Binary {
             op,
             lhs: Box::new(lhs),
@@ -402,7 +408,7 @@ impl Synth {
         })
     }
 
-    fn stmt(&self, kind: ast::StmtKind) -> ast::Stmt {
+    pub(super) fn stmt(&self, kind: ast::StmtKind) -> ast::Stmt {
         ast::Stmt {
             kind,
             span: self.at,

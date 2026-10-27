@@ -1,0 +1,63 @@
+// The callbacks of `then`, `catch` and `finally`, and `queueMicrotask`, run in Node's order:
+// after the code that is running, first queued first, before timers.
+
+async function value(n: number): Promise<number> {
+  return n;
+}
+
+async function step(name: string): Promise<string> {
+  console.log(`${name} starts`);
+  return name;
+}
+
+// Lets every queued callback run: a timer fires after all of them.
+async function settle(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), ms));
+}
+
+async function chains() {
+  const a = value(1);
+  const b = value(2);
+  a.then((v) => console.log(`a ${v}`)).then(() => console.log("a again"));
+  b.then((v) => console.log(`b ${v}`)).then(() => console.log("b again"));
+  queueMicrotask(() => console.log("microtask"));
+  console.log("chains: sync done");
+}
+
+async function flattening() {
+  const r = await value(5).then((v) => value(v * 10)).then((v) => v + 1);
+  console.log(`flattened ${r}`);
+}
+
+async function nested() {
+  queueMicrotask(() => {
+    console.log("outer");
+    queueMicrotask(() => console.log("inner"));
+  });
+  queueMicrotask(() => console.log("second"));
+  value(0).then(() => console.log("then after both"));
+}
+
+async function later(): Promise<string> {
+  await settle(5);
+  console.log("later settles");
+  return "later";
+}
+
+async function main() {
+  await chains();
+  await settle(100);
+  await flattening();
+  await nested();
+  await settle(10);
+  Promise.all([step("x"), step("y")]).then((xs) => console.log(xs.join(",")));
+  await settle(10);
+  const s = step("z");
+  s.then((v) => console.log(`then ${v}`)).finally(() => console.log("finally z"));
+  const l = later();
+  const shown = l.then((v) => console.log(`then ${v}`));
+  queueMicrotask(() => console.log("queued last"));
+  console.log("main: sync done");
+  await shown;
+  console.log("end");
+}

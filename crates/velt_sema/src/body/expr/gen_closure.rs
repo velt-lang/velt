@@ -34,6 +34,20 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let sig = &d.sig;
+        if let Some(t) = &sig.this_param {
+            let this_ty = self.resolve(t);
+            let shown = self.cx.display(this_ty);
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` in a function expression with a `this` parameter is not supported yet",
+                    span,
+                )
+                .with_note(format!(
+                    "TypeScript allows this (`this` is the object the function is called on, typed `{shown}`); Velt doesn't yet because a function value has no receiver; take the object as an ordinary parameter, or declare the function (`function f(this: T, ...)`) and call it with `f.call(obj, ...)`"
+                )),
+            );
+            return self.error_expr(span);
+        }
         if !sig.is_generator {
             self.cx.error(
                 Diagnostic::error("function expressions are not supported", span).with_note(
@@ -44,6 +58,13 @@ impl FnCx<'_, '_> {
         }
         if !self.gen_closure_sig_ok(sig) {
             return self.error_expr(span);
+        }
+        // A generator method using `this` (`literal_this.rs`).
+        if super::literal_this::fn_takes_this(d) {
+            let at = super::literal_this::first_this_fn(d, span);
+            if self.method_this_ty(span, at).is_none() {
+                return self.error_expr(span);
+            }
         }
         let ret = match &sig.ret {
             Some(t) => self.resolve(t),
@@ -113,8 +134,12 @@ impl FnCx<'_, '_> {
         frame.escaping = true;
         frame.is_async = sig.is_async;
         frame.yield_ty = Some(t);
+        let n = self.cx.generator_next_ty(ret);
+        frame.next_ty = (!self.cx.ty.is_bottom(n)).then_some(n);
         frame.fn_expr_name = Some(sig.name.name.clone()).filter(|n| !n.is_empty());
         let defaults = sig.params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends =
+            crate::body::assign_ends::assignment_ends(&d.body.stmts, defaults.clone());
         let assigned = crate::body::assigned::assigned_by_closures(&d.body.stmts, defaults);
         frame.closure_assigned = crate::body::closure_assigned::owned(assigned);
         let saved = std::mem::replace(&mut self.f, frame);
@@ -122,12 +147,18 @@ impl FnCx<'_, '_> {
         let mut params = vec![];
         let mut ptys = vec![];
         for p in &sig.params {
-            let ty = self.resolve(&p.ty);
+            let this = self.method_this.filter(|(at, _)| *at == span);
+            let ty = match this.filter(|_| ast::is_method_this(&p.name)) {
+                Some((_, this)) => this,
+                None => self.resolve(&p.ty),
+            };
             params.push(self.declare_local_mut(&p.name, ty, LocalKind::Param, false));
             ptys.push(ty);
         }
         let mut stmts = vec![];
+        self.cx.fn_value_depth += 1;
         self.stmts_into(&d.body.stmts, &mut stmts);
+        self.cx.fn_value_depth -= 1;
         let block = hir::Block {
             stmts,
             value: None,
@@ -151,6 +182,7 @@ impl FnCx<'_, '_> {
             params: ptys.clone(),
             ret: result,
             throws: never,
+            rest: false,
         });
         self.cx.fn_info_mut(def).escaping = true;
         let ret = self.cx.with_generator_error(ret, never);
@@ -167,7 +199,7 @@ impl FnCx<'_, '_> {
             span,
         });
         let aparams: Vec<ast::ArrowParam> = sig.params.iter().map(arrow_param).collect();
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams, false);
         self.mk(H::Closure(def), fn_ty, span)
     }
 }

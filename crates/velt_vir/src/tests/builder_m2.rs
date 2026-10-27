@@ -13,7 +13,7 @@ impl PB {
         self.ty(TyKind::Array(e))
     }
     pub fn opt(&mut self, e: TyId) -> TyId {
-        self.ty(TyKind::Option(e))
+        self.ty(TyKind::Option(e, Nothing::Null))
     }
     pub fn adt_ty(&mut self, d: DefId, args: Vec<TyId>) -> TyId {
         self.ty(TyKind::Adt(d, args))
@@ -27,6 +27,7 @@ impl PB {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 
@@ -58,6 +59,7 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
                 name: n.into(),
                 ty,
                 // Like sema: a `null` default is what an optional field (`a?: T`) gets.
+                hidden: false,
                 optional: matches!(
                     default,
                     Some(Expr {
@@ -71,10 +73,12 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
             })
             .collect(),
         is_copy,
+        declared_struct: false,
         private_fields: false,
         opaque: false,
         assigned: false,
         base: None,
+        inherited_inits: vec![],
         ctor: None,
         dispose: None,
         to_string: None,
@@ -142,6 +146,7 @@ pub(super) fn adt_lit(def: DefId, fields: Vec<Expr>, ty: TyId) -> Expr {
             def,
             type_args: vec![],
             fields,
+            converted: velt_sema::hir::Conversion::No,
         },
         ty,
     )

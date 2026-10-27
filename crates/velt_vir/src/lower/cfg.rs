@@ -7,7 +7,7 @@ use super::{ice, FnLower};
 use crate::vir::{
     self, BasicBlock, BlockId, Const, Function, Linkage, Local, LocalDecl, Operand, Place, Rvalue,
 };
-use crate::vir::{Terminator, Ty, STR_AGG};
+use crate::vir::{Terminator, Ty};
 
 /// Successor blocks of a terminator.
 pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
@@ -24,7 +24,7 @@ pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
     }
 }
 
-fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Terminator {
+pub(super) fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Terminator {
     match t {
         Terminator::Goto(b) => Terminator::Goto(map(b)),
         Terminator::Branch { cond, then, els } => Terminator::Branch {
@@ -133,6 +133,10 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return;
         }
+        // A function value called in read mode may write what sema cannot see (boxing/locks.rs).
+        if self.mode == super::LkMode::Read && matches!(callee, vir::Callee::Ptr { .. }) {
+            self.cx.facts.read_indirect = true;
+        }
         let next = self.new_block();
         self.terminate(Terminator::Call {
             callee,
@@ -154,6 +158,7 @@ impl FnLower<'_, '_> {
     /// Materialize deferred blocks, prune unreachable ones and build the VIR function.
     pub(super) fn finish(mut self, symbol: String, params: Vec<Ty>, ret: Ty) -> Function {
         self.build_div_zero_blocks();
+        self.version_view_loops(params.len());
         let mut remap = vec![None; self.blocks.len()];
         for (n, (i, _)) in self
             .live
@@ -199,10 +204,13 @@ impl FnLower<'_, '_> {
                 continue;
             }
             self.switch_to(bb);
-            self.loc = at;
-            let msg = format!("division by zero{}", self.panic_suffix());
-            let msg = self.str_lit(&msg);
-            let a = self.operand_addr(msg, Ty::Agg(STR_AGG));
+            // A caller-tracking instance called from glue has no caller location to point at,
+            // and one that takes its caller's location has it only at run time.
+            let known = |l: &crate::vir::SrcLoc| {
+                *l != super::srcloc::UNKNOWN_LOC && *l != super::srcloc::ARG_LOC
+            };
+            self.loc = at.filter(known);
+            let a = self.panic_text("division by zero");
             self.call_rt(Rt::Panic, vec![a], None);
         }
     }

@@ -1,0 +1,166 @@
+// `indexOf`, `includes` and `xorMask` on `u8[]` against byte-at-a-time loops, for every length
+// around the 16- and 64-byte steps they take and around the length where the search moves to
+// the runtime (more than 208 bytes from the start position), every position of the byte and
+// start positions before, inside and past the array.
+function naiveIndexOf(d: u8[], b: u8, from: number): number {
+  const n = d.length;
+  let i = from < 0 ? (n + from < 0 ? 0 : n + from) : from;
+  while (i < n) {
+    if (d[i] == b) {
+      return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function searches(): number {
+  let checks = 0;
+  const lengths: number[] = [];
+  for (let n = 0; n <= 150; n++) {
+    lengths.push(n);
+  }
+  for (const n of [207, 208, 209, 210, 224, 225, 256, 300, 1000]) {
+    lengths.push(n);
+  }
+  for (const n of lengths) {
+    const d: u8[] = Buffer.alloc(n);
+    for (let at = -1; at < n; at++) {
+      if (at >= 0) {
+        d[at] = 7;
+      }
+      for (const from of [
+        0,
+        1,
+        15,
+        16,
+        17,
+        63,
+        64,
+        65,
+        81,
+        n - 1,
+        n,
+        n + 5,
+        n - 208,
+        n - 209,
+        n - 210,
+        -1,
+        -16,
+        -17,
+        -n,
+        -n - 3,
+      ]) {
+        const got = d.indexOf(7, from);
+        const want = naiveIndexOf(d, 7, from);
+        if (got != want) {
+          console.log("FAIL indexOf", n, at, from, got, want);
+        }
+        if (d.includes(7, from) != (want >= 0)) {
+          console.log("FAIL includes", n, at, from);
+        }
+        checks++;
+      }
+      if (d.includes(7) != (at >= 0) || d.includes(9)) {
+        console.log("FAIL includes", n, at);
+      }
+      if (at >= 0) {
+        d[at] = 0;
+      }
+    }
+  }
+  // Start positions far outside the array are clamped, not wrapped.
+  const far: u8[] = Buffer.alloc(40);
+  far[5] = 7;
+  const huge: i64 = 9223372036854775807;
+  console.log(
+    "far",
+    far.indexOf(7, 4294967296),
+    far.indexOf(7, huge),
+    far.indexOf(7, -huge - 1),
+    far.indexOf(7, -4294967299),
+  );
+  // Two matches: the first one wins, also when a later vector holds the other.
+  const two: u8[] = Buffer.alloc(200);
+  two[70] = 1;
+  two[150] = 1;
+  console.log("two", two.indexOf(1), two.indexOf(1, 71), two.indexOf(1, 151), two.indexOf(1, -50));
+  return checks;
+}
+
+function masks(): number {
+  let checks = 0;
+  const mask: u32 = 0xa1b2c3d4;
+  const key: u8[] = [0xa1, 0xb2, 0xc3, 0xd4];
+  for (let n = 0; n <= 70; n++) {
+    for (const [start, end] of [
+      [0, n],
+      [1, n],
+      [3, n - 2],
+      [0, 17],
+      [5, 37],
+      [-20, -1],
+      [n, n],
+      [9, 4],
+      [-n - 4, n + 9],
+    ]) {
+      const d: u8[] = Buffer.alloc(n);
+      const want: u8[] = Buffer.alloc(n);
+      for (let i = 0; i < n; i++) {
+        // `% 256`: a `number` cast to `u8` saturates instead of wrapping.
+        d[i] = ((i * 37 + 11) % 256) as u8;
+        want[i] = d[i];
+      }
+      const lo = start < 0 ? (n + start < 0 ? 0 : n + start) : start < n ? start : n;
+      const hi = end < 0 ? (n + end < 0 ? 0 : n + end) : end < n ? end : n;
+      for (let i = lo; i < hi; i++) {
+        want[i] = want[i] ^ key[(i - lo) % 4];
+      }
+      d.xorMask(mask, start, end);
+      for (let i = 0; i < n; i++) {
+        if (d[i] != want[i]) {
+          console.log("FAIL xorMask", n, start, end, i, d[i], want[i]);
+        }
+      }
+      checks++;
+    }
+  }
+  return checks;
+}
+
+// Long frames, as WebSocket code masks them: from 0 and from 3 (after a header) to the end,
+// through the 128- and 64-byte steps, then 16-byte ones and the overlapping last vector, with a
+// different mask per length.
+function frames(): number {
+  let checks = 0;
+  for (let n = 64; n <= 400; n++) {
+    // `%`: a `number` cast to an integer type saturates instead of wrapping.
+    const mask = ((0x9e3779b9 + n * 2654435761) % 4294967296) as u32;
+    const key: u8[] = [(mask >> 24) as u8, (mask >> 16) as u8, (mask >> 8) as u8, mask as u8];
+    const d: u8[] = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) {
+      d[i] = ((i * 29 + n) % 256) as u8;
+    }
+    d.xorMask(mask);
+    for (let i = 0; i < n; i++) {
+      if (d[i] != (((i * 29 + n) % 256) as u8 ^ key[i % 4])) {
+        console.log("FAIL frame", n, i);
+      }
+    }
+    d.xorMask(mask, 3);
+    for (let i = 0; i < n; i++) {
+      const once = ((i * 29 + n) % 256) as u8 ^ key[i % 4];
+      if (d[i] != (i < 3 ? once : once ^ key[(i - 3) % 4])) {
+        console.log("FAIL frame from 3", n, i);
+      }
+    }
+    checks++;
+  }
+  return checks;
+}
+
+function main() {
+  console.log("frames", frames());
+  console.log("searches", searches());
+  console.log("masks", masks());
+}

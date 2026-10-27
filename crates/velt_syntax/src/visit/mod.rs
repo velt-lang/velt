@@ -49,6 +49,11 @@ pub fn type_queries<'a>(t: &'a ast::TypeExpr, f: &mut dyn FnMut(&'a [ast::Ident]
     walk_type(t, &mut Queries(f));
 }
 
+/// Visit type `t` and every type nested in it.
+pub fn walk_type_expr<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
+    walk_type(t, v);
+}
+
 /// Visit every node of `module`.
 pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     for item in &module.items {
@@ -65,6 +70,7 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
         ast::ItemKind::Extend(ext) => {
             walk_generics(&ext.generics, v);
             walk_type(&ext.target, v);
+            ext.implements.iter().for_each(|i| walk_type(i, v));
             ext.methods.iter().for_each(|m| walk_fn(&m.decl, v));
         }
         ast::ItemKind::Enum(e) => {
@@ -78,6 +84,8 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
             walk_type(&alias.ty, v);
         }
         ast::ItemKind::ExternFn(sig) => walk_sig_types(sig, v),
+        ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| walk_item(i, v)),
+        ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| walk_item(i, v)),
         ast::ItemKind::Import(_) => {}
     }
 }
@@ -118,6 +126,7 @@ fn walk_interface<'a>(i: &'a ast::InterfaceDecl, v: &mut dyn Visit<'a>) {
     walk_generics(&i.generics, v);
     i.extends.iter().for_each(|e| walk_type(e, v));
     i.fields.iter().for_each(|f| walk_type(&f.ty, v));
+    i.call_sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
     for m in &i.methods {
         walk_sig_types(&m.sig, v);
         if let Some(body) = &m.body {

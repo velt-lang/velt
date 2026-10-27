@@ -1,0 +1,50 @@
+// A parameter or a local named `Object` is the program's own.
+interface Pair {
+  get k(): number;
+  set k(v: number);
+}
+
+interface Definer {
+  defineProperty(o: Pair, key: string, d: { get: () => number }): Pair;
+}
+
+function viaParameter(Object: Definer): number {
+  let n = 1;
+  const o: Pair = {
+    get k() {
+      return n;
+    },
+    set k(v) {
+      n = v;
+    },
+  };
+  Object.defineProperty(o, "k", { get: () => 2 });
+  return o.k;
+}
+
+const definer: Definer = {
+  defineProperty: (o, key, d) => {
+    console.log("parameter defineProperty", key, d.get());
+    return o;
+  },
+};
+console.log(viaParameter(definer));
+
+// A local `Object` is the program's own.
+function ownObject(): number {
+  const Object = {
+    defineProperty: (o: Pair, key: string, d: { get: () => number }): void => {
+      console.log("own defineProperty", key, d.get());
+    },
+  };
+  const o: Pair = {
+    get k() {
+      return 1;
+    },
+    set k(v) {},
+  };
+  Object.defineProperty(o, "k", { get: () => 2 });
+  return o.k;
+}
+
+console.log(ownObject());

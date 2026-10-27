@@ -1,0 +1,11 @@
+// `u32x4.sha1rnds4`'s `func` is SHA1RNDS4's immediate, 0 to 3: past 3 it is a RangeError, on
+// every CPU (the check comes before the instruction or the emulation).
+import { u32x4 } from "velt:simd";
+
+function main() {
+  const abcd = u32x4.splat(0x67452301);
+  const ewk = u32x4.splat(0x5a827999);
+  for (let func: u32 = 0; func < 5; func++) {
+    console.log(func, abcd.sha1rnds4(ewk, func).lane(3).toString(16));
+  }
+}

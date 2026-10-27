@@ -1,0 +1,706 @@
+// A chain of 63 `extend` blocks (`I0` … `I62`) and 6 more (`X0` … `X5`) leading into it: `C`
+// meets `X0` through 69 nested bounds. Bound checks are not nested calls but one fixed-point
+// computation over the lookups they reach, so there is no depth limit, and the answer does
+// not depend on whether `I0` was looked up before. (`X0` alone; `_b` with `I0` in an earlier function.)
+
+interface I0 {
+  i0(): string;
+}
+
+interface I1 {
+  i1(): string;
+}
+
+interface I2 {
+  i2(): string;
+}
+
+interface I3 {
+  i3(): string;
+}
+
+interface I4 {
+  i4(): string;
+}
+
+interface I5 {
+  i5(): string;
+}
+
+interface I6 {
+  i6(): string;
+}
+
+interface I7 {
+  i7(): string;
+}
+
+interface I8 {
+  i8(): string;
+}
+
+interface I9 {
+  i9(): string;
+}
+
+interface I10 {
+  i10(): string;
+}
+
+interface I11 {
+  i11(): string;
+}
+
+interface I12 {
+  i12(): string;
+}
+
+interface I13 {
+  i13(): string;
+}
+
+interface I14 {
+  i14(): string;
+}
+
+interface I15 {
+  i15(): string;
+}
+
+interface I16 {
+  i16(): string;
+}
+
+interface I17 {
+  i17(): string;
+}
+
+interface I18 {
+  i18(): string;
+}
+
+interface I19 {
+  i19(): string;
+}
+
+interface I20 {
+  i20(): string;
+}
+
+interface I21 {
+  i21(): string;
+}
+
+interface I22 {
+  i22(): string;
+}
+
+interface I23 {
+  i23(): string;
+}
+
+interface I24 {
+  i24(): string;
+}
+
+interface I25 {
+  i25(): string;
+}
+
+interface I26 {
+  i26(): string;
+}
+
+interface I27 {
+  i27(): string;
+}
+
+interface I28 {
+  i28(): string;
+}
+
+interface I29 {
+  i29(): string;
+}
+
+interface I30 {
+  i30(): string;
+}
+
+interface I31 {
+  i31(): string;
+}
+
+interface I32 {
+  i32(): string;
+}
+
+interface I33 {
+  i33(): string;
+}
+
+interface I34 {
+  i34(): string;
+}
+
+interface I35 {
+  i35(): string;
+}
+
+interface I36 {
+  i36(): string;
+}
+
+interface I37 {
+  i37(): string;
+}
+
+interface I38 {
+  i38(): string;
+}
+
+interface I39 {
+  i39(): string;
+}
+
+interface I40 {
+  i40(): string;
+}
+
+interface I41 {
+  i41(): string;
+}
+
+interface I42 {
+  i42(): string;
+}
+
+interface I43 {
+  i43(): string;
+}
+
+interface I44 {
+  i44(): string;
+}
+
+interface I45 {
+  i45(): string;
+}
+
+interface I46 {
+  i46(): string;
+}
+
+interface I47 {
+  i47(): string;
+}
+
+interface I48 {
+  i48(): string;
+}
+
+interface I49 {
+  i49(): string;
+}
+
+interface I50 {
+  i50(): string;
+}
+
+interface I51 {
+  i51(): string;
+}
+
+interface I52 {
+  i52(): string;
+}
+
+interface I53 {
+  i53(): string;
+}
+
+interface I54 {
+  i54(): string;
+}
+
+interface I55 {
+  i55(): string;
+}
+
+interface I56 {
+  i56(): string;
+}
+
+interface I57 {
+  i57(): string;
+}
+
+interface I58 {
+  i58(): string;
+}
+
+interface I59 {
+  i59(): string;
+}
+
+interface I60 {
+  i60(): string;
+}
+
+interface I61 {
+  i61(): string;
+}
+
+interface I62 {
+  i62(): string;
+}
+
+extend<T extends I1> T implements I0 {
+  i0(): string {
+    return "0";
+  }
+}
+
+extend<T extends I2> T implements I1 {
+  i1(): string {
+    return "1";
+  }
+}
+
+extend<T extends I3> T implements I2 {
+  i2(): string {
+    return "2";
+  }
+}
+
+extend<T extends I4> T implements I3 {
+  i3(): string {
+    return "3";
+  }
+}
+
+extend<T extends I5> T implements I4 {
+  i4(): string {
+    return "4";
+  }
+}
+
+extend<T extends I6> T implements I5 {
+  i5(): string {
+    return "5";
+  }
+}
+
+extend<T extends I7> T implements I6 {
+  i6(): string {
+    return "6";
+  }
+}
+
+extend<T extends I8> T implements I7 {
+  i7(): string {
+    return "7";
+  }
+}
+
+extend<T extends I9> T implements I8 {
+  i8(): string {
+    return "8";
+  }
+}
+
+extend<T extends I10> T implements I9 {
+  i9(): string {
+    return "9";
+  }
+}
+
+extend<T extends I11> T implements I10 {
+  i10(): string {
+    return "10";
+  }
+}
+
+extend<T extends I12> T implements I11 {
+  i11(): string {
+    return "11";
+  }
+}
+
+extend<T extends I13> T implements I12 {
+  i12(): string {
+    return "12";
+  }
+}
+
+extend<T extends I14> T implements I13 {
+  i13(): string {
+    return "13";
+  }
+}
+
+extend<T extends I15> T implements I14 {
+  i14(): string {
+    return "14";
+  }
+}
+
+extend<T extends I16> T implements I15 {
+  i15(): string {
+    return "15";
+  }
+}
+
+extend<T extends I17> T implements I16 {
+  i16(): string {
+    return "16";
+  }
+}
+
+extend<T extends I18> T implements I17 {
+  i17(): string {
+    return "17";
+  }
+}
+
+extend<T extends I19> T implements I18 {
+  i18(): string {
+    return "18";
+  }
+}
+
+extend<T extends I20> T implements I19 {
+  i19(): string {
+    return "19";
+  }
+}
+
+extend<T extends I21> T implements I20 {
+  i20(): string {
+    return "20";
+  }
+}
+
+extend<T extends I22> T implements I21 {
+  i21(): string {
+    return "21";
+  }
+}
+
+extend<T extends I23> T implements I22 {
+  i22(): string {
+    return "22";
+  }
+}
+
+extend<T extends I24> T implements I23 {
+  i23(): string {
+    return "23";
+  }
+}
+
+extend<T extends I25> T implements I24 {
+  i24(): string {
+    return "24";
+  }
+}
+
+extend<T extends I26> T implements I25 {
+  i25(): string {
+    return "25";
+  }
+}
+
+extend<T extends I27> T implements I26 {
+  i26(): string {
+    return "26";
+  }
+}
+
+extend<T extends I28> T implements I27 {
+  i27(): string {
+    return "27";
+  }
+}
+
+extend<T extends I29> T implements I28 {
+  i28(): string {
+    return "28";
+  }
+}
+
+extend<T extends I30> T implements I29 {
+  i29(): string {
+    return "29";
+  }
+}
+
+extend<T extends I31> T implements I30 {
+  i30(): string {
+    return "30";
+  }
+}
+
+extend<T extends I32> T implements I31 {
+  i31(): string {
+    return "31";
+  }
+}
+
+extend<T extends I33> T implements I32 {
+  i32(): string {
+    return "32";
+  }
+}
+
+extend<T extends I34> T implements I33 {
+  i33(): string {
+    return "33";
+  }
+}
+
+extend<T extends I35> T implements I34 {
+  i34(): string {
+    return "34";
+  }
+}
+
+extend<T extends I36> T implements I35 {
+  i35(): string {
+    return "35";
+  }
+}
+
+extend<T extends I37> T implements I36 {
+  i36(): string {
+    return "36";
+  }
+}
+
+extend<T extends I38> T implements I37 {
+  i37(): string {
+    return "37";
+  }
+}
+
+extend<T extends I39> T implements I38 {
+  i38(): string {
+    return "38";
+  }
+}
+
+extend<T extends I40> T implements I39 {
+  i39(): string {
+    return "39";
+  }
+}
+
+extend<T extends I41> T implements I40 {
+  i40(): string {
+    return "40";
+  }
+}
+
+extend<T extends I42> T implements I41 {
+  i41(): string {
+    return "41";
+  }
+}
+
+extend<T extends I43> T implements I42 {
+  i42(): string {
+    return "42";
+  }
+}
+
+extend<T extends I44> T implements I43 {
+  i43(): string {
+    return "43";
+  }
+}
+
+extend<T extends I45> T implements I44 {
+  i44(): string {
+    return "44";
+  }
+}
+
+extend<T extends I46> T implements I45 {
+  i45(): string {
+    return "45";
+  }
+}
+
+extend<T extends I47> T implements I46 {
+  i46(): string {
+    return "46";
+  }
+}
+
+extend<T extends I48> T implements I47 {
+  i47(): string {
+    return "47";
+  }
+}
+
+extend<T extends I49> T implements I48 {
+  i48(): string {
+    return "48";
+  }
+}
+
+extend<T extends I50> T implements I49 {
+  i49(): string {
+    return "49";
+  }
+}
+
+extend<T extends I51> T implements I50 {
+  i50(): string {
+    return "50";
+  }
+}
+
+extend<T extends I52> T implements I51 {
+  i51(): string {
+    return "51";
+  }
+}
+
+extend<T extends I53> T implements I52 {
+  i52(): string {
+    return "52";
+  }
+}
+
+extend<T extends I54> T implements I53 {
+  i53(): string {
+    return "53";
+  }
+}
+
+extend<T extends I55> T implements I54 {
+  i54(): string {
+    return "54";
+  }
+}
+
+extend<T extends I56> T implements I55 {
+  i55(): string {
+    return "55";
+  }
+}
+
+extend<T extends I57> T implements I56 {
+  i56(): string {
+    return "56";
+  }
+}
+
+extend<T extends I58> T implements I57 {
+  i57(): string {
+    return "57";
+  }
+}
+
+extend<T extends I59> T implements I58 {
+  i58(): string {
+    return "58";
+  }
+}
+
+extend<T extends I60> T implements I59 {
+  i59(): string {
+    return "59";
+  }
+}
+
+extend<T extends I61> T implements I60 {
+  i60(): string {
+    return "60";
+  }
+}
+
+extend<T extends I62> T implements I61 {
+  i61(): string {
+    return "61";
+  }
+}
+
+class C implements I62 {
+  i62(): string {
+    return "c";
+  }
+}
+
+interface X0 {
+  x0(): string;
+}
+
+interface X1 {
+  x1(): string;
+}
+
+interface X2 {
+  x2(): string;
+}
+
+interface X3 {
+  x3(): string;
+}
+
+interface X4 {
+  x4(): string;
+}
+
+interface X5 {
+  x5(): string;
+}
+
+extend<T extends X1> T implements X0 {
+  x0(): string {
+    return "x0";
+  }
+}
+
+extend<T extends X2> T implements X1 {
+  x1(): string {
+    return "x1";
+  }
+}
+
+extend<T extends X3> T implements X2 {
+  x2(): string {
+    return "x2";
+  }
+}
+
+extend<T extends X4> T implements X3 {
+  x3(): string {
+    return "x3";
+  }
+}
+
+extend<T extends X5> T implements X4 {
+  x4(): string {
+    return "x4";
+  }
+}
+
+extend<T extends I0> T implements X5 {
+  x5(): string {
+    return "x5";
+  }
+}
+
+function needI<T extends I0>(x: T): string {
+  return x.i0();
+}
+
+function needX<T extends X0>(x: T): string {
+  return x.x0();
+}
+
+function main() {
+  console.log(needX(new C()));
+}

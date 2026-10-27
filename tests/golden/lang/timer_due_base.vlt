@@ -1,0 +1,12 @@
+// A timer is due its delay after the clock read when it was created (in whole milliseconds, as
+// in Node): a shorter delay created after busy code still runs after a longer one created before.
+function busy(ms: number) {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+function main() {
+  setTimeout(() => console.log("a 5"), 5);
+  busy(20);
+  setTimeout(() => console.log("b 4"), 4);
+}

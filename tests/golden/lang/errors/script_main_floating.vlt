@@ -1,0 +1,12 @@
+// In a script that declares its own `main`, `main` is an ordinary function (#1567): a promise it
+// drops is a floating promise, as in any function. Only the top-level statements start a
+// dropped promise as Node does.
+async function load(): Promise<void> {
+  await null;
+}
+
+async function main(): Promise<void> {
+  load();
+}
+
+main();

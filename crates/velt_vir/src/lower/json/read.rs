@@ -6,7 +6,7 @@
 //! the path *below* this value. Numbers, bools, strings and options are decoded inline; other
 //! types call their glue.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::{Seg, STR, TOKEN_NULL};
 use crate::lower::operand::proj;
@@ -227,7 +227,7 @@ impl FnLower<'_, '_> {
             TyKind::Literal(_) => true,
             // A union of literal types is just its tag.
             TyKind::Adt(..) if self.cx.is_union(ty) => self.json_choices(ty).is_some(),
-            TyKind::Option(_) => true,
+            TyKind::Option(..) => true,
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
             }
@@ -267,7 +267,7 @@ impl FnLower<'_, '_> {
         if self.cx.boxed(ty) {
             // A boxed array / object is read into a fresh box of its own.
             let payload = self.cx.payload_ty(ty);
-            let p = self.counted_alloc(payload);
+            let p = self.counted_alloc_of(payload, ty);
             let pp = self.operand_place(p.clone(), Ty::Ptr);
             let zero = self.zero_value(payload);
             self.assign(
@@ -297,7 +297,7 @@ impl FnLower<'_, '_> {
                 self.json_expect(Rt::JsonReadString, vec![ro, a], ctx, "string", fail);
             }
             TyKind::Unit => self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail),
-            TyKind::Option(e) => self.json_read_option(r, place, ctx, ty, e, fail),
+            TyKind::Option(e, _) => self.json_read_option(r, place, ctx, ty, e, fail),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
                 self.json_read_array(r, &arr, ctx, e, fail)
@@ -383,6 +383,15 @@ impl FnLower<'_, '_> {
         e: TyId,
         fail: BlockId,
     ) {
+        // `T | null | undefined` (an option of a `T | null`): JSON has no `undefined`, so the
+        // value is present and the payload reads `null` as its own nothing.
+        if matches!(self.cx.kind(e), TyKind::Option(..)) {
+            if let Ty::Agg(_) = self.cx.ty(ty) {
+                self.json_read(r, &proj(place, Proj::Field(1)), ctx, e, fail);
+                self.assign(proj(place, Proj::Field(0)), Rvalue::Use(Self::ctrue()));
+                return;
+            }
+        }
         let ro = Operand::Copy(Place::local(r));
         let kind = self.temp(Ty::U32);
         self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(kind)));
@@ -397,6 +406,28 @@ impl FnLower<'_, '_> {
         let (null_bb, some_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is_null, null_bb, some_bb);
         self.switch_to(null_bb);
+        // `a?: T` (a `T | undefined` without `null`): a JSON `null` leaves the field absent
+        // for `JSON.parse<T>`; for `JSON.parse(text) as T` the reader says no, and the value is
+        // read as a `T`, which fails (`expected string at $.a`).
+        if matches!(self.cx.kind(ty), TyKind::Option(_, Nothing::Undefined)) {
+            let absent = self.temp(Ty::U8);
+            self.call_rt(
+                Rt::JsonNullAbsent,
+                vec![ro.clone()],
+                Some(Place::local(absent)),
+            );
+            let yes = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Ne,
+                    Operand::Copy(Place::local(absent)),
+                    cint(0, Ty::U8),
+                ),
+            );
+            let read_null = self.new_block();
+            self.branch(yes, read_null, some_bb);
+            self.switch_to(read_null);
+        }
         self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail);
         self.goto(done);
         self.switch_to(some_bb);

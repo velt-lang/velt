@@ -1,0 +1,14 @@
+// A generic method overridden in a subclass, called through a type parameter given only values
+// that hold exactly the base class: a `new` given directly, a `const` initialized with one, and a
+// generic method of a non-generic class (#1132).
+interface Mapper { apply<U>(f: (n: number) => U): U; }
+class A implements Mapper { apply<U>(f: (n: number) => U): U { return f(1); } }
+class B extends A { override apply<U>(f: (n: number) => U): U { return f(2); } }
+function run<T extends Mapper>(m: T): number { return m.apply((n) => n); }
+class Runner { run<T extends Mapper>(m: T): number { return m.apply((n) => n); } }
+const a = new A();
+console.log(run(a));
+console.log(new Runner().run(new A()));
+const r = new Runner();
+const a2 = new A();
+console.log(r.run(a2), run(new B()));

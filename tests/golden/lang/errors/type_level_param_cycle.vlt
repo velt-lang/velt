@@ -1,0 +1,17 @@
+// A generic method that calls itself through a type parameter with a growing type argument has
+// infinitely many instantiations: reported, and the deferred-type pass (which would carry
+// `IsString<U[]>`, `IsString<U[][]>`, … without end) does not run.
+type IsString<T> = T extends string ? string : number;
+interface Sh {
+  area<U>(u: U, n: number): number;
+}
+function go2<S extends Sh, V>(s: S, v: V, n: number): number {
+  return s.area<V>(v, n);
+}
+class Sq implements Sh {
+  area<U>(u: U, n: number): number {
+    const o: IsString<U>[] = [];
+    return n == 0 ? o.length : go2<Sq, U[]>(this, [u], n - 1);
+  }
+}
+console.log(go2(new Sq(), "a", 3));

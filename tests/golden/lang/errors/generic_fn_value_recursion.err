@@ -1,0 +1,1 @@
+generic_fn_value_recursion.vlt:6:24: error: instantiating a generic function value made in `main` at `<T[]>` from `wrap<T>` grows without end

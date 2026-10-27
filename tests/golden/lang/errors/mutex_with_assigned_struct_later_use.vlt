@@ -1,0 +1,17 @@
+// A struct of plain fields and `shared` values is a handle (lang/mutex_with_handle_struct) only
+// while none of its fields is ever assigned: here the locked value got a copy, and `t.n = 5`
+// changes only the variable's, so using `t` after `with` stored it is an error.
+struct Counter {
+  n: i64;
+  hits: shared<i64>;
+}
+
+function main() {
+  const all = shared(new Mutex<Counter[]>([]));
+  let t = Counter { n: 1, hits: shared(0) };
+  all.with((a) => {
+    a.push(t);
+  });
+  t.n = 5;
+  console.log(all.with((a) => a[0].n), t.n);
+}

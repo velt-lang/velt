@@ -1,0 +1,5 @@
+3000
+direct n=2 abcabcabc
+forwarded n=3 qq 1,2,3
+qq3
+relayed n=4 rr

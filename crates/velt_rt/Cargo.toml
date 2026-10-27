@@ -25,19 +25,26 @@ libm = "0.2.16"
 libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 lock_api = "0.4.14"
 memchr = "2.8.3"
+mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }
 mimalloc = { version = "0.1.52", default-features = false, optional = true }
 parking_lot = "0.12.5"
-postgres-protocol = "0.6.12"
+parking_lot_core = "0.9.12"
 regex = "1.13.1"
-rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 ryu = "1.0.23"
+velt_text = { path = "../velt_text" }
+velt_tls = { path = "../velt_tls" }
+# std/postgres's driver (an SDK-only crate, linked in: its exports are std's externs).
+velt_std_postgres = { path = "../velt_std_postgres" }
+# std/sqlite's driver (the same: an SDK-only crate, linked in).
+velt_std_sqlite = { path = "../velt_std_sqlite" }
+# std/redis's driver (the same).
+velt_std_redis = { path = "../velt_std_redis" }
+# The SDK the drivers are built on: the runtime hands it its function table at start-up.
+velt_native = { path = "../velt_native" }
 socket2 = "0.6.5"
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
-tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
-base64 = "0.22.1"
-sha1 = "0.11.0"
 url = "2.5.8"
 webpki-roots = "1.0.9"
 
@@ -47,7 +54,7 @@ libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 # Listener handover in dev mode (named pipe + WSADuplicateSocketW).
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [features]
 # mimalloc is the global allocator by default; build with --no-default-features for the system allocator.
@@ -56,5 +63,6 @@ mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 
 [dev-dependencies]
 cc = "1.5.1"
-# The native-package SDK: its table and value layouts must match `native.rs`.
-velt_native = { path = "../velt_native" }
+# The native-package SDK: its table and value layouts must match `native/`, and its async I/O
+# runs against the runtime in `native/aio_tests.rs`.
+velt_native = { path = "../velt_native", features = ["tokio"] }

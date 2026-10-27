@@ -1,0 +1,17 @@
+// Keys of a `Record<symbol, unknown>` cast that are not symbols are TypeScript's TS7053; a key
+// computed by a call or a condition, and a well-known symbol (`[Symbol.iterator]`), are not
+// supported yet (TypeScript accepts a symbol one).
+export const S: unique symbol = Symbol("s");
+const o: unknown = { [S]: 5, a: 1 };
+function mk(): symbol {
+  return S;
+}
+function g(k0: 0, kn: number, kb: boolean): void {
+  console.log((o as Record<symbol, unknown>)[k0]);
+  console.log((o as Record<symbol, unknown>)[kn]);
+  console.log((o as Record<symbol, unknown>)[1]);
+  console.log((o as Record<symbol, unknown>)[`a`]);
+  console.log((o as Record<symbol, unknown>)[kb ? "a" : "b"]);
+  console.log((o as Record<symbol, unknown>)[mk()]);
+}
+console.log(typeof g, (o as Record<symbol, unknown>)[Symbol.iterator]);

@@ -21,11 +21,20 @@
   }
   console.log(parse("42")); // 42
   ```
+- An assignment is an expression whose value is the value assigned, as in TypeScript: in
+  `a = b = null` the value of `b = null` is that `null`, so `a` and `b` may have different
+  types that each take it (`let a: string | null`, `let b: number[] | null`). A chained
+  assignment of a literal evaluates the literal for each target; of another value, the outer
+  target gets the inner target's value read back, of the inner target's type.
 - One declaration may declare several variables, as in TypeScript: `let i: number, j = 0;` is
   `let i: number; let j = 0;` (at the top level, in a block and in a `for` initializer).
 - `let x!: T` (TypeScript's definite assignment assertion) declares `x` as `let x: T;` does.
-  Velt still checks that `x` is assigned before it is read; a variable assigned only inside a
-  closure (where TypeScript needs `!`) is not supported yet.
+  Velt still checks that `x` is assigned before it is read. A variable declared without an
+  initializer that a closure assigns (`let x: T;` or `let x!: T;`, read in another closure or
+  after a call as `x` or `x!`, which TypeScript does not check) is held so that each read
+  checks it was assigned: reading it before then stops the program with
+  ``TypeError: `x` was read before it was assigned`` (JavaScript would read `undefined`).
+  `x++`, `x += v` and the other compound assignments read it the same way.
 
   ```ts
   let lo: number, hi: number = 10;
@@ -37,20 +46,31 @@
 - `const` only fixes the binding: modifying a `const` object or array is fine, as in JS.
 - `using` and `await using` declare a `const` that is disposed at the end of the block
   ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)).
-- There is no `var`.
+- `var` directly in a function body (or at the top level of a module) declares what `let` does:
+  the variable belongs to the whole function either way. Elsewhere (in a nested block, a loop,
+  a `switch` or the head of a `for`), a `var` still belongs to the whole function, which `let`
+  can't express: that is reported as not supported yet; declare it with `let`.
+
+  ```ts
+  function digits(n: number): string {
+    var hi = Math.floor(n / 16), lo = n % 16;
+    return hi.toString(16) + lo.toString(16);
+  }
+  console.log(digits(171)); // ab
+  ```
 
 ## Conditions: truthiness
 
 Conditions (`if`, `while`, `do … while`, `for`, `?:`) and the operands of `!`, `&&` and `||`
 test values of any type as JavaScript does.
 
-- Falsy are `false`, `null`, `0` and `-0` (of `number` and of every integer type: `0` of `i64`,
+- Falsy are `false`, `null`, `undefined`, `0` and `-0` (of `number` and of every integer type: `0` of `i64`,
   `u8`, …), `NaN` and `""`. Everything else is truthy: `" "`, `"0"` and `"false"`, `Infinity`,
   and every object, array and function (also an empty array).
-- A nullable is truthy when it is not `null` and its payload is truthy, and the test narrows it
-  like `x !== null` does: `if (!user) return;` leaves `user` non-null below, and
+- A nullable (`T | null` or `T | undefined`) is truthy when it is neither `null` nor `undefined`
+  and its payload is truthy, and the test narrows it like `x != null` does: `if (!user) return;` leaves `user` non-null below, and
   `if (user && user.manager)` narrows both. `if (name)` on a `string | null` makes `name` a
-  `string` (which may still be `""` in the `else` branch). `??` still replaces only `null`: for
+  `string` (which may still be `""` in the `else` branch). `??` still replaces only `null` and `undefined`: for
   `n: number | null` holding `0`, `n ?? 5` is `0` and `n || 5` is `5`.
 - An enum value is falsy when its member's value is `0` or `""`. A union is tested by the
   member it holds.
@@ -74,6 +94,16 @@ test values of any type as JavaScript does.
 - `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
 - `c ? a : b` is typed the same way: when one branch converts to the other's type, that type,
   else their union (`qty ? qty : "none"` is a `number | string`).
+- When one value of `c ? a : b`, `||`, `&&` or `??` is an `any` and the other is not, the
+  result has the other value's type (`c ? 1 : data.n` is a `number`, so `(c ? 1 : data.n) + 1`
+  and `(name ?? data.name).trim()` work; the conversion stops with a `TypeError` when the `any`
+  holds a value of another type), except where an `any` or `unknown` is expected: a `: any`
+  result (a proxy's `get` trap returning `k === "price" ? 99 : t[k]`), variable, parameter or
+  element, a field of an object literal or an element of an array literal held there, and a
+  literal spread there (`[...[c ? 1 : data.n]]`, `{ ...{ q: c ? 1 : data.q } }`) keeps the
+  `any` as it is, whatever it holds. TypeScript types all of these as `any`
+  (`number | any` is `any`); operators and built-in methods called through an `any` are not
+  supported yet (#924), which is why the other places take the typed value's type.
 
 ```ts
 function label(count: number, name: string | null): string {
@@ -98,52 +128,162 @@ function main() {
 }
 ```
 
-## No mutable module state
+## Module state
 
-Module scope holds only constants, functions and types. A module-level `let` is an error
-("mutable module-level state is not allowed"; in a root file with top-level statements, a `let`
-that only those statements use is a local of the generated `main`, see
-[Scripts](modules.md#scripts-top-level-statements)), and module `const` initializers must be
-constant expressions (literals, struct literals of constants, other module constants, closures),
-[tables](#tables) or [calls of pure functions](#module-constants-initialized-by-a-call). State that changes lives in values created by `main` (for
-example `shared(...)` or class instances) and is passed where it is needed. This keeps request
-handlers free of data races, and it is what lets `velt dev` swap code in a running program
-without migrating globals ([hot reload](../tooling/dev.md)).
+A module-level `let` is module state, as in Node: functions, methods and closures read and
+assign it, and every module that imports it sees its current value (an ES live binding). Its
+initializer runs once, when the program starts, in Node's module evaluation order: a module
+after the modules it imports (depth first, in the order of the `import` statements), and the
+declarations of one module in source order. One declared without a value
+(`let signal: AbortSignal | undefined;`) starts as `undefined`, which its type must allow
+(`T | undefined`, `any` or `unknown`).
 
 ```ts
-const MAX_USERS: usize = 100;           // module constant: fine
+let count = 0;
+let current: string | null = null;
+const seen = new Map<string, number>();   // not a constant value: kept like a `let`
 
-class User {
-  name: string = "ann";
-  manager?: User;
-}
-
-function managerName(user: User | null): string {
-  if (!user) {
-    return "nobody";                    // a null check: user is a User below
-  }
-  return (user.manager && user.manager.name) ?? "none";   // `&&` gives string | null
+function enter(name: string) {
+  current = name;
+  count++;
+  seen.set(name, (seen.get(name) ?? 0) + 1);
 }
 
 function main() {
-  const hits = shared(0);               // state lives in values main creates
-  const names: string[] = [];
-  names.push("ann");                    // modifying a const array is fine
-  let count = names.length;
-  if (count !== 0 && count < MAX_USERS) {
-    hits.add(1);
-  }
-  console.log(hits.get(), count, managerName(new User()), managerName(null));
+  enter("a");
+  enter("b");
+  enter("a");
+  const add = (n: number) => {
+    count += n;                         // closures read and write the module's `count`
+  };
+  add(10);
+  console.log(count, current, seen.get("a"));   // 13 a 2
 }
 ```
 
-```ts error
-let requestCount = 0;                   // error: mutable module-level state is not allowed
+A module-level `const` whose value is not a constant is kept the same way (`seen` above), and
+so is one the program uses as the one object Node evaluates once: a use takes its value over
+(binds it to a name, stores it, returns it, passes it to a function that keeps it), modifies
+what it holds (`K.n = 1`, `K.push(1)`, passing it to a function that modifies it) or compares
+it by identity (`K === x`). Every use then refers to that object, and a change through one name
+shows through the others. A constant that is only read is evaluated where it is used instead
+(a [table](#tables)'s elements are read from read-only data), which costs nothing at startup.
+A `static readonly` field is kept the same way, as Node evaluates it once with its class
+(`const v = Geo.ORIGIN; v.x = 1` changes `Geo.ORIGIN.x`). So is a constant or a field whose
+initializer reads module state the program changes, directly or through the functions it calls
+(`const START = count`, `static readonly F = S.cur()`): it holds the value from when Node
+evaluated it.
+
+```ts
+type Hit = { hit: boolean; value: number };
+
+const MISS: Hit = { hit: false, value: 0 };
+const EMPTY: number[] = [];
+
+function peek(key: string): Hit {
+  return key === "x" ? { hit: true, value: 1 } : MISS;   // MISS itself, as in Node
+}
 
 function main() {
-  if (requestCount) {
-    console.log("never");
-  }
+  const a = peek("y");
+  a.value = 7;
+  const xs = EMPTY;
+  xs.push(1);
+  console.log(MISS.value, a === MISS, EMPTY.length);   // 7 true 1
+}
+```
+
+- **One per process**, as in Node: every task (a task started with `spawn`, an HTTP request
+  handler, a task on any core) reads and updates the same module state, so a module counter
+  that every request handler increments counts every request. Code that uses module state
+  runs as on Node's single thread: a task's code between two `await`s runs without any other
+  task's code that uses module state running at the same time, so `count++` or
+  `seen.set(k, (seen.get(k) ?? 0) + 1)` never loses an update, and what a task reads stays as
+  it is until its next `await`. Across an `await` other tasks may change it, as in Node.
+  Tasks run in parallel until they first use module state; from then on a task takes a
+  process-wide lock for its code between `await`s ([cost](#module-state-cost) below).
+- **Values from other tasks**: a value a task stores in module state (`seen.set(k, obj)`) is
+  then the module's, and every task that reads it gets that same object, as in Node. A value
+  from module state handed to `spawn`, sent on a channel or put into `shared(...)` is copied
+  like any value that is still referenced elsewhere
+  ([Thread safety](async.md#thread-safety)), since the module keeps it.
+- **Objects are shared, not copied**: `const a = items` refers to the module's array, so
+  `a.push(1)` shows in `items`, as in JS.
+- **Imports are read-only bindings**: assigning an imported `let` is an error
+  (``cannot assign to imported binding `x` ``), as in JavaScript; export a function that
+  assigns it. Modifying its contents (`items.push(x)`) is fine.
+- A `const` whose value is not a constant (`new Map()`, an array of objects, a call with
+  effects) is kept the same way, evaluated once per process, before `main`; every task sees
+  the same object. Assigning it is an error. A regex constant (`const RE = /a+/g;`) is one
+  `RegExp` object too, so the `lastIndex` of a `g` or `y` regex carries over from one
+  function's `RE.test(s)` to the next, as in Node. So is a `const` whose initializer reads a
+  module-level `let` or a property of `globalThis` (`const first = count;`): it keeps the
+  value from when the module was evaluated, not the variable's current one. Through a function
+  it calls (`const first = getCount();`) it is not kept yet.
+- A `const` used as the one object through `!`, `as`, `??`, `||` or `?:`, a namespace import
+  or a part of it is kept the same way as one used directly: `K!.v = 2`, `(K as any).v = 2`,
+  `(K ?? d).v = 2`, `(c ? K! : d).v = 2`, `const v = K!`, `let v = K ?? d`, `const a = K!.a`,
+  `const { a } = K ?? d`, `{ ...K! }` (the spread shares the objects it holds),
+  `(ns.K as any).v = 2`, an argument a callee keeps (`m.set("x", N.a)`, `set.add(K?.a ?? d)`,
+  `new Box(N.a)`, `xs.fill(N.a)`) and a weak key (`wm.set(K!.a, 1)`, `wm.get(K!.a)`). A
+  constant holding a promise can't be module state, so those uses of one are errors
+  (``cannot move out of module constant `K` ``, ``cannot assign to a field of module-level
+  constant `K` ``). On a module `let` `g`, `g!`, `g as T` and `g ?? d` are the object the
+  module keeps.
+- An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
+  pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
+  error thrown while Node evaluates a module does: the rest of that module and the modules that
+  import it don't run.
+- An initializer that reads a `let` declared after it (whose initializer has not run yet) is
+  an error (``` `b` is read before its initializer runs ```), where JavaScript throws a
+  `ReferenceError`. A read through a function the initializer calls (also across a cyclic
+  import) stops the program with that `ReferenceError`
+  (`Cannot access 'b' before initialization`, exit code 1), as an uncaught one does in Node;
+  it cannot be caught.
+- Module state cannot hold a promise itself (`let p = work();`, `let t = spawn(work());`, also
+  `Promise<T> | null`, or an object type with a promise field): it is initialized before
+  `main` runs, outside async code, where a promise does not start until something awaits it
+  (Node starts it at once). Start the work in `main` and pass the promise, or its result,
+  where it is needed. A class, an array or a `Map` in module state may hold promises that the
+  program puts there as it runs, such as a cache of requests in flight
+  (`const inflight = new Map<string, Promise<T>>()`): a promise read from there on any task is
+  another holder of the same promise ([shared promises](async.md#promises)), which runs on the
+  task that started it, and every holder gets the same result (an object result is the same
+  object, as everything reached through module state is shared by the tasks).
+- A `Mutex` `with` callback cannot use module state, including a constant kept there by a use
+  elsewhere in the program, directly or through a function it calls (``the function passed to `with`
+  may use module state``). Code that runs without a call counts too: field initializers at `new`,
+  and the `toString()`, `toJSON()` and `[Symbol.dispose]()` methods of the values the callback
+  handles, which `join`, a template, `JSON.stringify`, `using` and the end of a scope call. So does
+  a call of a function value whose body the compiler cannot see, also one the callback hands to the
+  standard library (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with`
+  blocks the thread while it waits for the lock, and a task holds the module lock for its code
+  between `await`s, so two tasks could wait for each other. Read what the callback needs before
+  `with`, and store what it returns after.
+- In a root file with top-level statements, a `let` that only those statements use is a local
+  of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
+  function uses is module state, and its initializer runs where it stands, after the statements
+  above it, as in Node.
+- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
+  task that never uses it. A read or write of a module-level `let`, or of a constant kept as
+  module state, asks the runtime for the state (a constant only read is not: one use that keeps
+  it makes every use of it pay that). A debug build asks at every access; a release build asks
+  once per function call, plus once for each later slot (in declaration order) that the call has
+  not checked yet, so a loop over module state does not call the runtime at each iteration. A
+  task takes the lock at its first use and at the start of each later run between `await`s (one
+  uncontended atomic operation when no other task holds it). Tasks on other cores that use module state at the same moment wait for each other, so
+  keep long computations that many tasks run in parallel out of the code between their `await`s that
+  uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
+  the module lock while it waits (the `Mutex`'s holder never needs it, see above).
+- `velt dev`: code swapped into a running program starts its module state over, as after a
+  restart ([hot reload](../tooling/dev.md)).
+
+```ts error
+let a = b + 1;                          // error: `b` is read before its initializer runs
+let b = 1;
+
+function main() {
+  console.log(a, b);
 }
 ```
 
@@ -178,51 +318,48 @@ function main() {
 ```
 
 - Each element is a number or boolean literal, also negated or converted with `as`, or a module
-  constant that is one (``an element of module constant `K` is not a literal``). Strings, nested
-  arrays and objects are not tables (``only arrays of numbers or booleans can be module
-  constants``), and neither is an array inside a struct or tuple constant: create those in
-  `main` and pass them on.
-- Used in any other way, a table is what every module constant is: evaluated at that use, here
-  to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
-  in a hot loop index the table or iterate it instead of passing it along.
-- Nothing can modify a table or take it over, and a use that could is a compile error. That is
-  `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
-  parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
-  table it is also:
-  - passing it to a function value (`const f = (xs: u8[]) => …; f(K)`, `fs[0](K)`, a callback
-    parameter), or to a function together with a function value that could modify it
-    (``cannot pass module constant `K` to a function value``): the compiler can't see what that
-    function does;
-  - binding it to a name or a field, however it is named: `const mine = K`, `K!`, `ns.K` for an
-    imported table, `Cls.K` for a `static readonly` one (``cannot move out of module constant
-    `K` ``); an `async` function, which takes over its arguments, is the same.
-
-  `K.slice()` is the copy to use there: an ordinary array to keep, modify or pass anywhere.
-- Comparing a table by identity (`K === K`) is an error, like for other module constants.
+  constant that is one. Any other array constant (strings, nested arrays, objects, computed
+  elements) is not a table but [module state](#module-state), evaluated once per process.
+- Passed to a function or method that only reads it (`f(K)` when `f` doesn't modify its parameter,
+  `K.includes(x)`, `K.indexOf(x)`, `u32x4.load(K, i)`), a table is that read-only data too:
+  nothing is built, so such calls are as cheap in a hot loop as indexing.
+- Used in any other way, a table is [module state](#module-state), like every module constant
+  used so: binding it to a name or a field (`const mine = K`, `K!`, `ns.K` for an imported
+  table), returning it, modifying it (`K[0] = 1`, `K.push(1)`, `K.fill(0)`, passing it to a
+  function that modifies its parameter), passing it to a function value the compiler can't see
+  into, or comparing it by identity. It is then the one array Node evaluates once, every use
+  refers to it, and its elements are read from it instead of from read-only data. `K.slice()`
+  makes a copy.
+- A `static readonly` table is the same: `Cls.K.push(1)` and `const mine = Cls.K` make it
+  module state.
 
 ## Module constants initialized by a call
 
-A module constant is not stored: its initializer is evaluated where the constant is used. A
-call can initialize one when that call is *pure*, so that evaluating it at each use gives what
-TypeScript's single evaluation at load gives:
+A module constant whose initializer is a call is evaluated where it is used when that call is
+*pure*, so that evaluating it at each use gives what TypeScript's single evaluation at load
+gives; any other initializer (a call with effects, a class instance, a `Map`) makes it
+[module state](#module-state), evaluated once per process:
 
 - the callee is a named function (a free function, a static method or an imported function,
   generic or not), not a function value or a method of a value;
 - each argument is a constant expression, another module constant, a function or a closure;
 - the callee and everything it calls have no loops, no recursion, no `throw`, no `await`, no
   calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
-  `spawn`, external functions). It may allocate, construct objects and create closures, as
-  `component` does below: the closures it returns run later as ordinary code;
+  `spawn`, external functions), and read no [module state](#module-state) (a module-level
+  `let`, a constant kept there), which the program may change after Node evaluated the
+  initializer: such a constant is module state itself, evaluated once. It may allocate, construct
+  objects and create closures, as `component` does below: the closures it returns run later as
+  ordinary code;
 - a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
-  object, array or class instance (``it returns a closure that keeps mutable state (`n`)``).
-  In Node the constant is one closure whose state carries over from call to call; a new
-  closure at each use would start over each time;
-- the result is a value: a number, string, struct, tuple, enum or function. Class instances,
-  arrays and maps are rejected (a new array at each use would change what `X.push(1)` does;
-  an array of number literals is a [table](#tables), which needs no call).
-  An object or struct constant can't be moved into a variable or a field (``cannot move out of
-  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
-  so a change through the copy would show in the constant.
+  object, array or class instance. Otherwise the constant is module state, one closure whose
+  state carries over from call to call, as in Node;
+- the result is a value: a number, string, struct, tuple or enum. A function from a call is
+  kept as module state, so that it is one value as in Node, and so are class instances, arrays
+  and maps (a new array at each use would change what `X.push(1)` does; an array of number
+  literals is a [table](#tables), which needs no call).
+  An object or struct constant that the program takes over, modifies or compares by identity
+  is [module state](#module-state), so a change through a variable or a field holding it shows
+  in the constant, as in Node.
 
 ```ts
 type Props = { start: number };
@@ -250,46 +387,13 @@ function main() {
 }
 ```
 
-A call that does not qualify is an error that says why and where, through the call chain, with
-the fix: compute the value in `main` and pass it on, or make the constant a function.
-
-```ts error
-function load(): string {
-  console.log("loading");
-  return "data";
-}
-
-const DATA = load();                    // error: `load` cannot initialize module constant `DATA`:
-                                        // it calls `console.log`, which has effects
-function main() {
-  console.log(DATA);
-}
-```
-
-Evaluated at each use, such a constant is a new object or closure each time, so comparing it by
-identity would always be false where TypeScript says `true`. `===` and `!==` with a module
-constant compared by identity (objects, arrays, functions) are an error: ``Counter` is evaluated
-at each use, so comparing it by identity is always false``.
-
-```ts error
-function adder(n: number): (x: number) => number {
-  return (x: number): number => x + n;
-}
-
-const ADD_ONE = adder(1);
-
-function main() {
-  console.log(ADD_ONE === ADD_ONE);     // error: `ADD_ONE` is evaluated at each use
-}
-```
-
-**Known difference.** A function-valued constant passed on is a new closure at each use: after
-`const a = ADD_ONE; const b = ADD_ONE;`, `a === b` is `false` (TypeScript: `true`), and so is
-any identity comparison the constant reaches by being passed, which the compiler cannot see:
-`[ADD_ONE].indexOf(ADD_ONE)` is `-1`, and an event emitter's `off(ADD_ONE)` does not find the
-handler that `on(ADD_ONE)` added. **Planned**: evaluating such a constant once, as Node does,
-which removes this difference ([#802](https://github.com/velt-lang/velt/issues/802)). Until then,
-copy the constant into a local once and pass the local:
+A call that does not qualify makes the constant [module state](#module-state): it is
+evaluated once per process, before `main`, in module order, as Node evaluates it once at load;
+every task sees the same value.
+A call that is `async` stays an error (``it is async``): nothing could await it there. One
+that may throw is module state too; an error it throws
+[stops the program](#module-state) while the modules are evaluated, as in Node.
+A function from a call is kept the same way, so it is one value wherever it goes:
 
 ```ts
 type Handler = (x: number) => number;
@@ -298,13 +402,18 @@ function adder(n: number): Handler {
   return (x: number): number => x + n;
 }
 
+function load(): string {
+  console.log("loading");               // runs once, before main
+  return "data";
+}
+
 const ADD_ONE = adder(1);
+const DATA = load();
+const handlers: Handler[] = [];
 
 function main() {
-  const handlers: Handler[] = [];
-  const h = ADD_ONE;                    // one value, passed on
-  handlers.push(h);
-  console.log(handlers.indexOf(h));     // 0 (`handlers.indexOf(ADD_ONE)` would be -1)
+  handlers.push(ADD_ONE);
+  console.log(handlers.indexOf(ADD_ONE), ADD_ONE === ADD_ONE, DATA);   // 0 true data
 }
 ```
 

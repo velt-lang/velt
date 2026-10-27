@@ -20,9 +20,33 @@
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
 
 mod abi;
+mod adapters;
 mod adt;
+mod any;
+mod any_builtin;
+mod any_checks;
+mod any_delete;
+mod any_eq;
+mod any_errors;
+mod any_generic_fn;
+mod any_glue;
+mod any_has;
+mod any_iface;
+mod any_keys;
+mod any_member;
+mod any_number;
+mod any_proxy;
+mod any_record;
+mod any_rest;
+mod any_set;
+mod any_set_site;
+mod any_tuple;
+mod any_view;
 mod append;
 mod array;
+mod array_view;
+mod array_view_index;
+mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod attempt;
@@ -30,6 +54,7 @@ mod boxes;
 mod boxing;
 mod call;
 mod callee;
+mod caller_stores;
 mod cells;
 mod cfg;
 mod class_test;
@@ -42,31 +67,48 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod fresh_fns;
+mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
 mod keys;
 mod layout;
+mod literal_accessors;
 mod match_switch;
 mod matching;
+mod module_state;
+mod narrowed_paths;
 mod operand;
 mod ops;
+mod param_any;
 mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_call;
+mod proxy_method;
+mod proxy_throws;
+mod proxy_typed;
+mod proxy_write;
+mod quiet;
 mod rc;
+mod receiver;
 mod rt;
 mod same;
 mod sequence;
 mod share;
+mod simd;
+mod spread_object;
 mod srcloc;
 mod stabilize;
 mod stmt;
@@ -78,10 +120,16 @@ mod track_caller;
 mod transfer;
 mod truthy;
 mod types;
+mod upcast;
+mod view_unswitch;
+mod view_unswitch_plain;
 mod weak;
+mod weak_object;
+mod weak_view;
 mod widen;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use velt_sema::hir::{self, DefId, LocalId, TyId, TyTable};
@@ -107,13 +155,19 @@ const MAX_BOXING_PASSES: usize = 8;
 /// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
 /// shares of types that were not counted yet (boxing/); the type table carries over, so type
 /// ids in the counted set stay valid.
-pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
+pub(crate) fn lower_program(
+    hir: &hir::Program,
+    opts: &LowerOptions,
+) -> (vir::Program, Vec<velt_common::Diagnostic>) {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
-    for _ in 0..MAX_BOXING_PASSES {
+    let mut no_await_steps = false;
+    // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
+    for _ in 0..=MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -122,11 +176,13 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
+        cx.build_iface_glues();
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
+        cx.build_iface_glues();
         let next = cx.close_boxing();
         if next == counted {
             if cx.facts.unmet {
@@ -136,7 +192,20 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
-            return cx.finish();
+            if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
+                eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
+            }
+            let mut diags = cx.nothing_clash_diagnostics();
+            diags.extend(cx.fresh_fn_diagnostics());
+            let types_now = cx.types.clone();
+            let program = cx.finish();
+            if !no_await_steps && async_fn::await_order::unobservable(&program) {
+                // Lower again without the steps: the program then has no step code at all.
+                no_await_steps = true;
+                types = types_now;
+                continue;
+            }
+            return (program, diags);
         }
         types = cx.types;
         counted = next;
@@ -170,6 +239,32 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// First param is the data pointer of an interface value holding a closure (a generic
+    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
+    /// with the closure's env.
+    BoxedClosure,
+    /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
+    /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
+    /// called on its own (without the proxy as `this`) it throws a `TypeError`.
+    Unbound,
+}
+
+/// When a function runs in velt_rt's read mode (boxing/locks.rs), which decides how it counts
+/// and writes lock-set objects (rc.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum LkMode {
+    /// Never: inline counts.
+    #[default]
+    Plain,
+    /// Always (code only a `read` callback calls directly): read mode's inline rules.
+    Read,
+    /// Either: asks the thread once (`velt_rt_lk_mode`).
+    Checked,
+    /// Plain's counts, in code that changes the caller's containers inside a `read` callback
+    /// (`Work::Deferred`): an object of the lock set whose last reference goes is freed once the
+    /// thread's reads end (velt_rt `velt_rt_free_after_reads`), since a reader may still point
+    /// at it without counting it (read mode cannot tell it from the store's).
+    Deferred,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -195,10 +290,35 @@ enum Work {
     Oob(bool),
     /// A caller-tracking function instance (track_caller.rs) for one call site.
     Tracked(DefId, Vec<TyId>, SrcLoc),
-    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
+    /// `Work` compiled to run in velt_rt's read mode as well (boxing/locks.rs): its counts and
+    /// writes of lock-set objects ask the thread's mode (rc.rs). Every function whose address is
+    /// taken, every callback and every poll is one; a plain `Work` is code only ever called
+    /// directly from code outside read mode, which counts lock-set objects inline.
+    Checked(Box<Work>),
+    /// `Work` reached only by direct calls from a `read` callback literal: it always runs in read
+    /// mode, so it counts lock-set objects by read mode's rules without asking.
+    Read(Box<Work>),
+    /// A `read` callback literal that code outside read mode calls: `Read`, and what it
+    /// captured is that code's, never a store's object (`FnLower::own_captures`).
+    ReadOwn(Box<Work>),
+    /// `Work` changing the caller's containers inside a `read` callback (`LkMode::Deferred`).
+    Deferred(Box<Work>),
+    /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
+    /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
+    /// the call site when it is given, and given closure literals for some function params:
+    /// it calls their code directly (frozen.rs `KnownFn`).
+    Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
+    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling;
+    /// `velt_rt_realloc` refuses a buffer past the array length limit).
     ArrayGrow,
+    /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
+    /// calls stay cold and small).
+    ArrayTooLong,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
+    /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
+    /// promises or tasks; stores its result at `state` (entry.rs).
+    SyncMainRoot,
     /// `(state: ptr, cx: ptr) -> u32` poll function of an async function instance (async_fn/).
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.
@@ -206,6 +326,9 @@ enum Work {
     /// `(state: ptr)`: request the awaited close of an async generator instance (sets
     /// `CLOSE_BIT`; async_fn/generator.rs).
     AsyncCloseStart(DefId, Vec<TyId>),
+    /// `(state: ptr, error: ptr) -> u32`: resume a generator instance with an error thrown in
+    /// (`throw()`; async_fn/gen_send.rs).
+    GenThrow(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),
@@ -220,6 +343,10 @@ enum Work {
     /// (async_fn/widen.rs).
     WidenPoll(TyId, TyId),
     WidenDrop(TyId, TyId),
+    /// Poll / drop of the wrapper adopting a foreign result slot of an async extern's promise of
+    /// type `T` (async_fn/foreign_promise.rs).
+    AdoptPoll(TyId),
+    AdoptDrop(TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
@@ -233,13 +360,20 @@ enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
+    /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
+    /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
+    ModuleInit(u32, u32),
 }
 
 /// Program-level lowering state.
 struct Cx<'h> {
     hir: &'h hir::Program,
+    /// The prelude's `Proxy` class type, once looked up (proxy_throws.rs).
+    prelude_proxy: Option<Option<TyId>>,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
+    view_fn: Option<Option<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
@@ -247,39 +381,57 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
+    /// nothing in it can make a task's await word non-0.
+    no_await_steps: bool,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,
     externs: Vec<ExternFn>,
-    extern_map: HashMap<String, ExternId>,
+    extern_map: FxHashMap<String, ExternId>,
     statics: Vec<StaticData>,
-    static_map: HashMap<(Vec<u8>, u32), StaticId>,
+    /// The module state's descriptor, once a slot is used (module_state.rs).
+    module_desc: Option<StaticId>,
+    /// The module state slots some code assigns as a whole, once asked (module_state.rs).
+    reassigned_slots: Option<FxHashSet<hir::DefId>>,
+    /// The prelude's `Error` class, once looked up (js_string.rs).
+    prelude_error: Option<Option<hir::DefId>>,
+    /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
+    tla_marks: Option<[Option<hir::DefId>; 2]>,
+    static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
-    tables: HashMap<hir::DefId, Option<(StaticId, usize)>>,
+    tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
-    work_map: HashMap<Work, FuncId>,
+    work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
+    /// The `AnyIface` glues, built last (any_iface.rs): each with the number of types `any`
+    /// values held when it was built.
+    iface_glues: Vec<(FuncId, TyId, Option<usize>)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
-    building: HashSet<FuncId>,
+    building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.
-    asyncs: HashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
+    asyncs: FxHashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
-    by_ref_params: HashSet<(DefId, Vec<TyId>)>,
+    by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
     /// Async closure instances used as http handlers: the capture modes their state machine
     /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: HashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
+    shared_envs: FxHashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
     /// Debug types of source variables (`LowerOptions::debug_info`, debug_vars.rs).
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
-    tracked: HashMap<DefId, bool>,
+    tracked: FxHashMap<DefId, bool>,
+    /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
+    tracked_size: FxHashMap<DefId, usize>,
+    /// Memoized `quiet` answers (quiet.rs).
+    quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
-    str_objects: HashMap<String, StaticId>,
+    str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).
     symbol_records: symbols::SymbolRecords,
     /// Types whose values carry a reference count in this pass (boxing/).
@@ -287,19 +439,36 @@ struct Cx<'h> {
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
-    iface_impls: Option<HashMap<DefId, Rc<[u32]>>>,
+    iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
-    own_clones: Option<HashMap<DefId, DefId>>,
+    own_clones: Option<FxHashMap<DefId, DefId>>,
     /// Memoized `own_clone` answers per class type (only resource owners' are honoured).
-    honoured_clones: HashMap<TyId, Option<DefId>>,
+    honoured_clones: FxHashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
-    dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    dyn_modes_memo: FxHashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
     /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
     /// (json/key.rs); `None` until first asked.
-    json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
+    json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
+    /// The function whose instance is being built (for `nothing_clashes`).
+    cur_def: Option<DefId>,
+    /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
+    cur_mode: LkMode,
+    /// Whether the function being built is a `Work::ReadOwn`.
+    cur_own: bool,
+    /// Functions whose instances made an option of an option with another nothing (`T | null`
+    /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
+    /// represent (issue #930): reported, not lowered silently.
+    nothing_clashes: Vec<Option<DefId>>,
+    /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
+    /// `keeps_nothings_apart`).
+    map_fields: u32,
 }
 
 /// Static ownership state of a droppable local without a drop flag.
@@ -381,6 +550,10 @@ enum ScopeKind {
     },
     /// Inside a `try` with `finally`: the block runs on every exit (taken while being lowered).
     Finally(Option<Rc<hir::Block>>),
+    /// A module state initializer: an error thrown in it and not caught there prints
+    /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
+    /// evaluates a module (module_state.rs).
+    Uncaught,
 }
 
 struct Scope {
@@ -393,14 +566,20 @@ struct FnLower<'c, 'h> {
     cx: &'c mut Cx<'h>,
     /// Type arguments substituted for `TyKind::Param` in the HIR being lowered.
     targs: Vec<TyId>,
+    /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
+    glue: bool,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).
     loc: Option<SrcLoc>,
-    /// In a caller-tracking instance: the call site its panics report.
+    /// In a caller-tracking instance: the call site its panics report (`srcloc::ARG_LOC`: the
+    /// one `caller_arg` points to).
     caller_loc: Option<SrcLoc>,
+    /// In a caller-tracking instance that takes its caller's location as a parameter: that
+    /// parameter, a pointer to the `Str` ` at <path>:<line>:<col>` (empty when unknown).
+    caller_arg: Option<vir::Local>,
     /// A block is live once a live block jumps to it; dead blocks are pruned in `finish`.
     live: Vec<bool>,
     cur: BlockId,
@@ -414,9 +593,67 @@ struct FnLower<'c, 'h> {
     /// anything jumps to them.
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
-    ref_bindings: HashSet<LocalId>,
+    ref_bindings: FxHashSet<LocalId>,
+    /// Locals that borrow a value other threads read at the same time: frozen params and the
+    /// bindings by reference into them (frozen.rs).
+    frozen: FxHashSet<LocalId>,
+    /// While lowering the arguments of a call to a `Work::Frozen` instance: frozen arguments
+    /// are borrowed as they are (frozen.rs).
+    frozen_args: bool,
+    /// The `BoxHold` the projection being lowered hands to the projection site lowered next
+    /// (async_fn/sync.rs `projection_base`), which takes it.
+    proj_hold: Option<async_fn::BoxHold>,
+    /// The locals this function's code may change (frozen.rs `changed_locals`), once asked.
+    changed: Option<FxHashSet<LocalId>>,
+    /// Function params of a `Work::Frozen` instance given closure literals: their code
+    /// (frozen.rs `KnownFn`).
+    known_fns: FxHashMap<LocalId, frozen::KnownFn>,
+    /// While binding a pattern into a frozen value: bindings take no shares (frozen.rs).
+    frozen_binds: bool,
+    /// While evaluating a place only to read it (`FieldPresent`): no write barrier.
+    read_target: bool,
+    /// The field read lowered next is about to be changed in place, reached by running code
+    /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
+    owner_write: bool,
+    /// While an assignment is lowered: the box pointers of the array views its target goes
+    /// through, written back after the store (array_view.rs), each with the element index
+    /// written when the target is an element of it (only that element is written back).
+    view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
+    /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
+    mirror_drop: bool,
+    /// While an `AnyTo` with a text is lowered: the words its `TypeError` starts with
+    /// (any_errors.rs).
+    any_context: Option<String>,
+    /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
+    view_loops: view_unswitch::ViewLoops,
+    /// This function's read mode, once asked (rc.rs `lk_mode`).
+    lk_mode: Option<Local>,
+    /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
+    rw_reader: Option<Local>,
+    /// Whether this function runs in read mode (`Work::Checked`, `Work::Read`).
+    mode: LkMode,
+    /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
+    /// variables it captured hold none of a store's objects.
+    own_captures: bool,
+    /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
+    /// code runs in.
+    lock_callback: Option<(DefId, LkMode)>,
+    /// The owned arguments being lowered go into the caller's containers in a `read` callback
+    /// (call.rs `call_def`, caller_stores.rs `keep_for_caller`).
+    args_to_caller: bool,
+    /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
+    /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
+    kept_args: u64,
+    /// Those arguments as passed, handed back to the reader after the call (with whether each
+    /// was the reader's own, referenced once: caller_stores.rs `hand_back`).
+    kept_handed: Vec<(Operand, TyId, Option<Local>)>,
+    /// Those of them the call's own values, dropped after that in the mode given.
+    kept_drops: Vec<(Place, TyId, LkMode)>,
+    /// A `read` callback's variables naming the caller's objects (caller_stores.rs
+    /// `caller_alias`), once asked.
+    caller_aliases: Option<FxHashSet<LocalId>>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
-    scope_ends: HashMap<LocalId, SrcLoc>,
+    scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
     asyncx: Option<async_fn::AsyncCx>,
     /// The next call lowered is awaited or spawned right away: its promise is not started
@@ -438,11 +675,32 @@ struct FnLower<'c, 'h> {
     /// The next call lowered is spawned through a function value, vtable or interface: its
     /// arguments are transferred (transfer.rs). Taken by that call before anything else.
     transfer_call: bool,
+    /// The direct method call being lowered has a receiver of a proxiable class: once the
+    /// receiver is lowered, a proxy with a `get` trap reads the method through it
+    /// (proxy_method.rs), before the other arguments.
+    proxy_recv: Option<(DefId, Vec<TyId>)>,
+    /// The call being lowered is `super.m(args)` (`Program::super_calls`): its receiver is not
+    /// read through a proxy (`call_def` takes it).
+    super_call: bool,
+    /// The location of the top-level `await` lowered last (velt_sema's `top_level_await.rs`
+    /// marks each with `__topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
+    /// waits there (`velt_rt_tla_at`, async_fn/suspend.rs), only when it really suspends.
+    tla_site: Option<velt_common::Span>,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
-    /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
-    /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
+    /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare
+    /// with JS's SameValue, `NaN` equal to itself and `0` unequal to `-0` (same.rs).
+    value_mode: bool,
+    /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`; `Intrinsic::Eq`:
+    /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
+    /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Lowering an expression checked outside any body (module_state.rs): the module state's
+    /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
+    /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`
+    /// literal, ...) belong to no function body and are declared at their `let`
+    /// (`declare_init_local`).
+    init_locals: Option<u32>,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
@@ -451,5 +709,19 @@ struct FnLower<'c, 'h> {
     init_stack: Vec<TyId>,
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
-    frame_closures: HashSet<DefId>,
+    frame_closures: FxHashSet<DefId>,
+    /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
+    /// (frame_envs.rs).
+    direct_siblings: FxHashMap<LocalId, DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
+    /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
+    /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
+    in_reflect: bool,
+    /// The body of a function of a user module or of std/proxy: its operations on `any` throw
+    /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
+    proxy_routes: bool,
+    /// An object is being built from a record's entries (`any_record_fill`): its fields are
+    /// converted without that path, so a type that contains itself ends.
+    record_fill: bool,
 }

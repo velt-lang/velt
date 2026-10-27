@@ -1,0 +1,18 @@
+// The `body` getter loads when it is destructured or indexed with a literal key, not only as
+// `res.body`; a used `Request`'s body is closed and locked. Expected output is Node 22's.
+
+async function main() {
+  const { body, status } = new Response("hi");
+  console.log(status, body);
+  if (body != null) {
+    const r = await body.getReader().read();
+    console.log(r.done ? "" : new TextDecoder().decode(r.value));
+  }
+  const res = new Response("x");
+  console.log(res["body"]);
+
+  const req = new Request("http://example.com/", { method: "POST", body: "data" });
+  console.log(await req.text());
+  const { body: used } = req;
+  console.log(used);
+}

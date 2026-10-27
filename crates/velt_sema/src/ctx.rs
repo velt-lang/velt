@@ -1,14 +1,14 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};
 
 use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
-use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
-use crate::types::{int_name, Types};
+use crate::hir::{AdtKind, Def, DefId, ImplDef, LocalId, TyId, TyKind};
+use crate::types::Types;
 use crate::SourceModule;
 
 /// A name visible at module level.
@@ -21,16 +21,24 @@ pub(crate) enum Item {
 #[derive(Default)]
 pub(crate) struct ModuleScope {
     /// Own items and imports.
-    pub items: HashMap<String, Item>,
+    pub items: FxHashMap<String, Item>,
     /// Names declared with `export` (lists and re-exports: `crate::collect::exports`).
-    pub exports: HashSet<String>,
+    pub exports: FxHashSet<String>,
     /// `import * as ns`: namespace name → module index (its exports are bound as `ns.x`).
-    pub namespaces: HashMap<String, usize>,
+    pub namespaces: FxHashMap<String, usize>,
     /// Names bound by `import type` (types only: using one as a value is an error).
-    pub type_only: HashSet<String>,
+    pub type_only: FxHashSet<String>,
+    /// Of those, the names their module exports only as types (`export type { x }`).
+    pub via_export_type: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
+    /// Some name has a type key (`crate::type_meanings`).
+    pub type_keys: bool,
 }
+
+/// The classes below a class, deepest first, each with the method its vtable calls at a slot
+/// (`Ctx::classes_below`).
+pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
 pub(crate) struct Ctx<'m> {
     pub modules: &'m [SourceModule],
@@ -43,28 +51,84 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: Vec<Span>,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
-    pub prelude: HashMap<String, Item>,
+    pub prelude: FxHashMap<String, Item>,
+    /// Some prelude name has a type key (`crate::type_meanings`).
+    pub prelude_type_keys: bool,
     pub aliases: Vec<AliasInfo<'m>>,
+    /// The names of type aliases without parameters that are read-only array or collection types
+    /// and number-keyed record types, directly or through other such aliases
+    /// ([`Ctx::marked_aliases`]).
+    pub marked_aliases: std::cell::OnceCell<(FxHashSet<String>, FxHashSet<String>)>,
+    /// Sites of `globalThis` whose variable key is not one of the listed keys, with the key
+    /// (`body::expr::checked_key`): the key's error is the site's only one.
+    pub bad_key_sites: Vec<(velt_common::Span, velt_common::Span)>,
     pub extensions: Vec<Extension>,
+    /// The extensions declaring each method name, built for the first `extensions.len()`
+    /// extensions (body/expr/method.rs `applicable_extensions`).
+    pub(crate) extension_names: (usize, FxHashMap<String, Vec<usize>>),
     pub impls: Vec<ImplDef>,
+    /// Interfaces written through and their setter slots (`crate::iface_writes`).
+    pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
+    /// Interfaces made for intersections and `Pick`s of interfaces with methods.
+    pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
+    pub(crate) generic_fns: crate::generic_fns::GenericFns,
+    /// The generic methods called through interface values (`hir::Program::generic_dyn_methods`).
+    pub(crate) generic_called: crate::generic_override_sites::GenericCalls,
+    /// While a generic closure's body is checked: the type bounds of the type parameters in
+    /// scope, its own included (`Ctx::constraint_of`).
+    pub(crate) closure_constraints: Option<Vec<Option<TyId>>>,
+    /// Each conversion through an interface adapter: the interface and where.
+    pub(crate) adapter_uses: Vec<(DefId, Span)>,
+    /// Views of unions of interfaces (`crate::union_views`).
+    pub(crate) union_views: crate::union_views::UnionViews,
+    pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
-    /// Anonymous object types by shape.
+    /// Impls from `extend … implements I` blocks: impl index → extension index
+    /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
+    /// fitting ones the most specific wins (`Ctx::find_impl`).
+    pub ext_impls: FxHashMap<u32, usize>,
+    /// `ext_impls` by interface, in order.
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
+    /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
+    pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
+    pub ext_exists_memo: FxHashMap<crate::infer::ExistsKey, bool>,
+    pub ext_memo_impls: usize,
+    /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
+    /// has through blanket impls come from its declared bounds only, not from other blanket
+    /// impls, so the check never recurses.
+    pub in_blanket: bool,
+    /// The type-parameter bounds in scope of the `satisfies` call running `find_impl`: an
+    /// `extend` impl's bounds are checked in it (`Ctx::fitting_impl`).
+    pub impl_scope: Vec<Vec<crate::defs::Bound>>,
     /// Anonymous object defs by shape: field names, declared types and flags, in order.
-    pub anon: HashMap<Vec<crate::anon::ShapeField>, DefId>,
+    pub anon: FxHashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
     /// `readonly` fields → their twin without, and field-only interfaces' object types → the
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
-    pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    pub readonly_twins: FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// A container of `any` was used as one of `unknown` or back (`same_but_any_unknown`):
+    /// `unknown` is erased to `any` before lowering (`crate::readonly`), so both are one type.
+    pub any_unknown_views: bool,
+    /// What the `Object` built-ins make: frozen types, prototype-less records.
+    pub objects: crate::anon::ObjectState,
     /// Branded type definitions → their primitive (`crate::brands`).
-    pub brands: HashMap<DefId, TyId>,
+    pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
-    pub brand_keys: HashMap<(TyId, TyId), DefId>,
+    pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands whose object part mentions type parameters (`symbol & { __t?: T }`): substitution
+    /// brands the substituted object part (`Ctx::subst`). Empty in most programs.
+    pub generic_brands: FxHashSet<DefId>,
+    /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
+    /// its index signature → that object type of the named members (`crate::index_signatures`).
+    pub record_views: FxHashMap<DefId, TyId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
-    pub field_only: HashMap<DefId, DefId>,
+    pub field_only: FxHashMap<DefId, DefId>,
     /// The reverse of `field_only`.
-    pub field_only_of: HashMap<DefId, DefId>,
+    pub field_only_of: FxHashMap<DefId, DefId>,
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
@@ -79,81 +143,188 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
-    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
-    /// now: a utility type in a field type shapes the type it reads first, whatever the
-    /// declaration order.
-    pub shaped: HashSet<DefId>,
+    /// Some body has a type predicate on a type parameter's value (`MayHoldPrimitive`, #1251):
+    /// error inference then drops what a guarded branch throws in object instances.
+    pub primitive_guards: bool,
+    /// The state of type-level evaluation (`crate::type_level`).
+    pub(crate) type_level: crate::type_level::State,
+    /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
+    /// a `toJSON()` returning `undefined`) are skipped (the prelude uses `T | undefined` itself).
+    pub writes_undefined: bool,
+    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
+    /// a utility type in a field type shapes the type it reads first, whatever the order.
+    pub shaped: FxHashSet<DefId>,
     pub shaping: Vec<DefId>,
     /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
-    pub laid_out: HashSet<DefId>,
+    pub laid_out: FxHashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
-    pub canon_memo: HashMap<TyId, TyId>,
-    /// Object types the replaced-holder check (`crate::replaced_holders`) accepted assignments
-    /// for because they are shared: lowering counts them from its first pass
-    /// (`hir::Program::counted_objects`).
+    pub canon_memo: FxHashMap<TyId, TyId>,
+    /// The canonical error type of each error type canonicalized so far (`Ctx::canon_error`).
+    pub canon_errors: FxHashMap<TyId, Option<TyId>>,
+    /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
+    /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
+    /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
+    pub replaced_unions: FxHashSet<DefId>,
+    pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
+    pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    /// The properties of `globalThis` the program uses (`crate::global_this`).
+    pub global_props: crate::global_this::GlobalProps,
+    /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
+    pub global_cycles: u32,
+    /// How many function values (arrows, function expressions, literal methods) are being
+    /// checked inside the module constant being checked: a read of the constant there runs
+    /// later, once it is initialized (`body::driver::ensure_global`).
+    pub fn_value_depth: u32,
+    /// Module constants whose initializer is being checked on trial for its type, while it
+    /// reads the constant inside a function value (`body::driver::ensure_global`).
+    pub typing_globals: Vec<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
-    pub unions: HashMap<Vec<TyId>, DefId>,
+    pub unions: FxHashMap<Vec<TyId>, DefId>,
+    pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
+    /// Generic recursive union aliases (`crate::recursive_unions`): whether alias `a` is one,
+    /// and its union at each list of arguments.
+    pub generic_recursive: FxHashMap<u32, bool>,
+    pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
-    pub alias_names: HashMap<TyId, String>,
+    pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
+    /// The throwing setters a getter-only override gets (`collect::classes`): a write through
+    /// the class itself is a type error, as in TypeScript, one through a base class throws.
+    pub getter_only_setters: FxHashSet<DefId>,
+    /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
+    /// getter-only property (`crate::defined_accessors`), by interface and method name: a
+    /// write through the literal's own type is rejected, as TypeScript does (TS2540).
+    pub defined_setters: FxHashSet<(DefId, String)>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
-    pub defaults_checked: HashSet<DefId>,
+    pub defaults_checked: FxHashSet<DefId>,
+    /// Per class and vtable slot: the classes below it, deepest first, with the method each
+    /// one's vtable calls there (`body::expr::virtual_defaults`).
+    pub classes_below: FxHashMap<(DefId, u32), ClassesBelow>,
+    /// The default-filling vtable entries (`collect::fill_defaults`).
+    pub fills: FxHashMap<DefId, crate::collect::fill_defaults::Fill>,
+    /// What each parameter default that may throw throws, by its span (`defaults::check_default`).
+    pub default_throws: FxHashMap<Span, Vec<crate::defs::ThrowSrc>>,
+    /// Implementations of accessor interfaces for object types (`body::expr::iface_from_object`).
+    pub object_impls: crate::body::expr::iface_from_object::ObjectImpls,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
-    pub hook_adapters: HashMap<DefId, DefId>,
+    pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
     /// use by a `new` or struct literal in a default checked before them.
-    pub field_defaults_checked: HashSet<DefId>,
+    pub field_defaults_checked: FxHashSet<DefId>,
     /// Closure counters per top-level function name.
-    pub closure_counts: HashMap<String, u32>,
+    pub closure_counts: FxHashMap<String, u32>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
-    /// Named functions used as values (`FnRef`) with their type arguments, checked after
-    /// ownership inference.
+    /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Declarations of the `for…of` bindings over a value read out of a `shared` (or what a
+    /// method of one returns): the ownership pass refuses changing them
+    /// (`ownership::finish::frozen_bindings`).
+    pub frozen_elems: FxHashSet<Span>,
+    /// Declarations of `for…of` bindings, with the local whose value the loop walks: a function
+    /// changing such an element changes that local's value (`FnInfo::modified_params`; a map
+    /// loop's bindings are not bound into its source, `ownership::evidence`).
+    pub loop_roots: FxHashMap<Span, LocalId>,
+    /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
+    /// ownership pass track `FnInfo::modified_params`.
+    pub frozen_reads: bool,
+    /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
+    /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
+    pub literal_hosts: crate::body::literal_hosts::LiteralHosts,
+    /// What the methods of the object literals being checked throw, by interface slot, before
+    /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
+    pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
+    /// The interfaces made from object literals with no expected type
+    /// (`body/expr/literal_iface.rs`), whose methods all use `this`.
+    pub literal_ifaces: FxHashSet<DefId>,
+    /// The structs (or classes) of object literals implementing interfaces
+    /// (`body/expr/iface_object.rs`), whose `set k` fields hold the setters.
+    pub literal_structs: FxHashSet<DefId>,
+    /// The literal interfaces being displayed (`display.rs`): one inside its own members
+    /// (`add(): this`) shows as `this`.
+    pub literal_display: std::cell::RefCell<Vec<DefId>>,
+    /// The adapters converting generic interface values to `unknown` type arguments
+    /// (`body/expr/iface_adapt.rs`), made on first use.
+    pub iface_adapters: FxHashMap<
+        crate::body::expr::iface_adapt::AdapterKey,
+        crate::body::expr::iface_adapt::Adapter,
+    >,
+    /// Checked conversions of dynamic values to generic interfaces (`iface_adapt_dynamic`).
+    pub(crate) dyn_iface_targets: Vec<crate::body::expr::iface_adapt_dynamic::DynIfaceTarget>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
-    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
-    /// error type is inferred: it must turn out `never`, since the interface's iterator type
-    /// is fixed before bodies are checked (throws/checks.rs).
+    /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
+    pub fn_sites: crate::throws::FnSites,
+    /// The number of definitions collected from declarations, before any body was checked.
+    pub collected_defs: usize,
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
+    /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
+    /// Slot methods of object literals returning the promise of a function value that never
+    /// rejects, and that type: made async when their dispatch group's promises may reject
+    /// (`collect::forwarders::await_forwarded`).
+    pub promise_forwarders: Vec<(crate::hir::DefId, TyId)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
-    pub nested_locals: HashMap<DefId, Vec<String>>,
+    pub nested_locals: FxHashMap<DefId, Vec<String>>,
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
-    pub enclosing_class: HashMap<DefId, DefId>,
+    pub enclosing_class: FxHashMap<DefId, DefId>,
     /// Static methods using `this`/`super` and their copies: the class `this` is (`static_this`).
-    pub static_this: HashMap<DefId, DefId>,
+    pub static_this: FxHashMap<DefId, DefId>,
     /// The copy of a static method (using `this`) whose `this` is a given subclass.
-    pub static_copies: HashMap<(DefId, DefId), DefId>,
+    pub static_copies: FxHashMap<(DefId, DefId), DefId>,
     /// For each copy of a static method: the method.
-    pub static_copy_of: HashMap<DefId, DefId>,
+    pub static_copy_of: FxHashMap<DefId, DefId>,
+    /// Errors in copies of static methods reported only if the copy is used, and the copies
+    /// used, each with the function using it (`None`: outside any) (`body::static_copy_uses`).
+    pub copy_diags: Vec<(DefId, Diagnostic)>,
+    pub copy_uses: Vec<(Option<DefId>, DefId)>,
+    /// Interface values converted to the object type of their shape, checked once the bodies are
+    /// (`body::expr::iface_from_object::check_unwraps`).
+    pub unwraps: Vec<crate::body::expr::iface_from_object::Unwrap>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
-    pub generic_arrow_fns: HashSet<Span>,
-    /// Name spans of every function made from a generic arrow, module-level ones included
-    /// (diagnostics show them as arrows).
-    pub generic_arrow_all: HashSet<Span>,
+    pub generic_arrow_fns: FxHashSet<Span>,
+    /// Name spans of every function made from a generic arrow (diagnostics show arrows).
+    pub generic_arrow_all: FxHashSet<Span>,
+    /// Why recursive aliases were not rewritten (`recursive_aliases::Blocked`).
+    pub alias_blocked: crate::recursive_aliases::Blocked,
+    /// Name spans of capturing nested functions reported by `crate::nested_closures`.
+    pub kept_nested: FxHashSet<Span>,
+    /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
+    /// a closure may capture one before it is assigned.
+    pub late_consts: FxHashSet<Span>,
+    /// Per generator with a dynamic default (and its type arguments), the function its value
+    /// is (`gen_value.rs`).
+    pub generator_values: FxHashMap<(DefId, Vec<TyId>), (DefId, TyId)>,
+    /// Recursive closure groups made by `crate::nested_closures`.
+    pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
+    /// Group and member of each group member, by the name span of its `const`.
+    pub group_names: FxHashMap<Span, (usize, usize)>,
+    /// Definitions of the closures that are members of a recursive closure group.
+    pub group_defs: FxHashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
-    pub overloaded_methods: HashSet<String>,
-    /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
-    /// errors were reported).
-    pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
-    /// JSX component adapters, checked after ownership inference.
-    pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
+    pub overloaded_methods: FxHashSet<String>,
+    /// Each JSX module's runtime, resolved on first use (`None` after its errors).
+    pub jsx_providers: FxHashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
     /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
-    pub callback_wrappers: std::collections::HashMap<DefId, TyId>,
+    pub callback_wrappers: rustc_hash::FxHashMap<DefId, TyId>,
     /// Captured variables reported as modified by a closure that crosses threads, with the
     /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
     pub reported_captures: Vec<(String, velt_common::Span)>,
@@ -166,15 +337,22 @@ pub(crate) struct Ctx<'m> {
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
-    pub shared_memo: HashMap<TyId, bool>,
+    pub shared_memo: FxHashMap<TyId, bool>,
+    /// Function values kept by functions with fixed modes (`crate::ownership::KeptFns`).
+    pub kept_fns: crate::ownership::KeptFns,
     /// Memoized purity of functions that initialize module constants (`body::pure_init`).
     pub pure_fns: crate::body::pure_init::PurityMemo,
+    /// Module constants kept in the module state because of how the program uses them, in the
+    /// order `crate::kept_consts::keep` kept them (a rolled-back check undoes its own).
+    pub kept_consts: Vec<DefId>,
+    /// The classes extending each class, directly or not (`ownership::locked::regions`), built
+    /// on first use once every class is known.
+    pub subclasses: Option<FxHashMap<DefId, Vec<DefId>>>,
     /// The member names symbols give (`crate::symbols`).
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
-    /// Function bodies being checked, outermost first (a return type inferred from a body that
-    /// is on this stack refers to itself: `body::returns`).
+    /// Bodies being checked, outermost first (inferring one on it is recursion: `body::returns`).
     pub checking: Vec<DefId>,
     /// Signature comparisons waiting for inferred result types (`body::returns`).
     pub ret_checks: Vec<crate::defs::RetCheck>,
@@ -182,7 +360,7 @@ pub(crate) struct Ctx<'m> {
     pub rec: crate::body::recursion::RecState,
     /// Methods some subclass overrides (`collect::ret_infer`): a result inferred from JS-number
     /// integers is a `number` (`f64`) there, which an override may return a fraction in.
-    pub overridden: HashSet<DefId>,
+    pub overridden: FxHashSet<DefId>,
     /// The address of a local near the bottom of the checking thread's stack, and how much of
     /// the stack inferring return types may use above it (`body::returns::ret_of`).
     pub stack_base: usize,
@@ -191,19 +369,24 @@ pub(crate) struct Ctx<'m> {
     /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
     /// second check of a program the borrowing version rejects (`crate::check_with`).
     pub held_borrows: bool,
+    /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
+    pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
+    /// Module constants taken over, reported: (constant, start of the value taken) → index in
+    /// `diags` (`body::moved_const`).
+    pub moved_consts: FxHashMap<(crate::hir::DefId, velt_common::Span), usize>,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
-    /// Object values converted by copying their fields, and the field assignments that could
-    /// tell the copy from the original (`crate::object_copies`).
+    /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
+    pub super_calls: rustc_hash::FxHashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
-    /// Second arguments of protocol types written before base classes were known
-    /// (`crate::ts_protocol`).
+    /// Protocol types' second arguments written before base classes were known (`ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
@@ -214,12 +397,24 @@ pub(crate) struct Ctx<'m> {
     /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
     /// (`None`: all of it), and each module the prelude's globals re-export from, with the
     /// names re-exported from it (`Some`).
-    pub js_api_modules: std::cell::OnceCell<HashMap<usize, Option<HashSet<String>>>>,
+    pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
-    pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
+    pub literal_types: FxHashMap<DefId, FxHashMap<Span, TyId>>,
     /// What the last check of a body found about those locals.
-    pub literal_found: HashMap<DefId, crate::body::literal_locals::LiteralLocals>,
+    pub literal_found: FxHashMap<DefId, crate::body::literal_locals::LiteralLocals>,
+    /// Modules whose parse reported errors (`velt check` goes on with the recovered syntax
+    /// trees, [`crate::check_recovered`]), with the words of their source: a name missing from
+    /// one may be a declaration the parser dropped (`collect::exports::maybe_dropped`).
+    pub recovered: FxHashMap<usize, FxHashSet<String>>,
+    /// Names bound by such an import that found nothing (file of the importing module, local
+    /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
+    pub poisoned: FxHashSet<(velt_common::FileId, String)>,
+    /// What each module exports, computed once (`crate::collect::exports`).
+    pub export_memo: std::cell::RefCell<crate::collect::exports::Memo>,
+    /// For each module, the module each of its import specifiers resolved to
+    /// (`exports::import_target`).
+    pub import_targets: Vec<FxHashMap<&'m str, usize>>,
 }
 
 impl<'m> Ctx<'m> {
@@ -227,6 +422,8 @@ impl<'m> Ctx<'m> {
         Ctx {
             modules,
             root,
+            export_memo: Default::default(),
+            import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),
             defs: vec![],
             info: vec![],
@@ -238,80 +435,157 @@ impl<'m> Ctx<'m> {
                     ..Default::default()
                 })
                 .collect(),
-            prelude: HashMap::new(),
+            prelude: FxHashMap::default(),
+            prelude_type_keys: false,
             aliases: vec![],
+            marked_aliases: Default::default(),
+            bad_key_sites: vec![],
             extensions: vec![],
+            extension_names: (0, FxHashMap::default()),
             impls: vec![],
+            iface_writes: Default::default(),
+            part_ifaces: Default::default(),
+            synth_ifaces: Default::default(),
+            generic_fns: Default::default(),
+            generic_called: Default::default(),
+            closure_constraints: None,
+            adapter_uses: vec![],
+            union_views: Default::default(),
+            any: None,
             impl_index: Default::default(),
-            anon: HashMap::new(),
-            readonly_twins: HashMap::new(),
-            brands: HashMap::new(),
-            brand_keys: HashMap::new(),
-            field_only: HashMap::new(),
-            field_only_of: HashMap::new(),
+            ext_impls: FxHashMap::default(),
+            ext_by_iface: FxHashMap::default(),
+            ext_memo: Default::default(),
+            ext_exists_memo: Default::default(),
+            ext_memo_impls: 0,
+            in_blanket: false,
+            impl_scope: vec![],
+            anon: FxHashMap::default(),
+            readonly_twins: FxHashMap::default(),
+            any_unknown_views: false,
+            objects: Default::default(),
+            brands: FxHashMap::default(),
+            brand_keys: FxHashMap::default(),
+            generic_brands: FxHashSet::default(),
+            record_views: FxHashMap::default(),
+            field_only: FxHashMap::default(),
+            field_only_of: FxHashMap::default(),
             shapes_done: false,
             query_locals: vec![],
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
-            shaped: HashSet::new(),
+            primitive_guards: false,
+            type_level: Default::default(),
+            writes_undefined: false,
+            shaped: FxHashSet::default(),
             shaping: vec![],
-            laid_out: HashSet::new(),
-            canon_memo: HashMap::new(),
+            laid_out: FxHashSet::default(),
+            canon_memo: FxHashMap::default(),
+            canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
-            unions: HashMap::new(),
-            alias_names: HashMap::new(),
+            replaced_unions: FxHashSet::default(),
+            module_slots: Vec::new(),
+            module_scripts: Vec::new(),
+            promoted_consts: FxHashSet::default(),
+            global_props: Default::default(),
+            global_cycles: 0,
+            fn_value_depth: 0,
+            typing_globals: Vec::new(),
+            unions: FxHashMap::default(),
+            recursive_unions: FxHashMap::default(),
+            generic_recursive: FxHashMap::default(),
+            recursive_union_insts: FxHashMap::default(),
+            alias_names: FxHashMap::default(),
             generic_overrides: vec![],
+            getter_only_setters: FxHashSet::default(),
+            defined_setters: FxHashSet::default(),
             display_params: vec![],
-            defaults_checked: HashSet::new(),
-            hook_adapters: HashMap::new(),
-            field_defaults_checked: HashSet::new(),
-            closure_counts: HashMap::new(),
+            defaults_checked: FxHashSet::default(),
+            classes_below: FxHashMap::default(),
+            fills: FxHashMap::default(),
+            default_throws: FxHashMap::default(),
+            object_impls: Default::default(),
+            hook_adapters: FxHashMap::default(),
+            field_defaults_checked: FxHashSet::default(),
+            closure_counts: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
+            frozen_elems: FxHashSet::default(),
+            loop_roots: FxHashMap::default(),
+            frozen_reads: false,
+            cpu_targets: FxHashMap::default(),
             groups: None,
+            literal_hosts: Default::default(),
+            provisional_slots: vec![],
+            literal_ifaces: Default::default(),
+            literal_structs: Default::default(),
+            literal_display: Default::default(),
+            iface_adapters: FxHashMap::default(),
+            dyn_iface_targets: vec![],
             throw_checks: vec![],
+            fn_sites: Default::default(),
+            collected_defs: 0,
             iface_generators: vec![],
+            promise_forwarders: vec![],
             nested: vec![],
-            nested_locals: HashMap::new(),
-            enclosing_class: HashMap::new(),
-            static_this: HashMap::new(),
-            static_copies: HashMap::new(),
-            static_copy_of: HashMap::new(),
-            generic_arrow_fns: HashSet::new(),
-            generic_arrow_all: HashSet::new(),
+            nested_locals: FxHashMap::default(),
+            enclosing_class: FxHashMap::default(),
+            static_this: FxHashMap::default(),
+            static_copies: FxHashMap::default(),
+            static_copy_of: FxHashMap::default(),
+            copy_diags: vec![],
+            copy_uses: vec![],
+            unwraps: vec![],
+            generic_arrow_fns: FxHashSet::default(),
+            kept_nested: FxHashSet::default(),
+            late_consts: FxHashSet::default(),
+            generator_values: FxHashMap::default(),
+            closure_groups: vec![],
+            group_names: FxHashMap::default(),
+            group_defs: FxHashSet::default(),
+            generic_arrow_all: FxHashSet::default(),
+            alias_blocked: Default::default(),
             has_overloads: false,
-            overloaded_methods: HashSet::new(),
-            jsx_providers: HashMap::new(),
-            jsx_adapters: vec![],
+            gen_throw: false,
+            overloaded_methods: FxHashSet::default(),
+            jsx_providers: FxHashMap::default(),
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             sync_handlers: vec![],
             thread_adapters: vec![],
             ide: None,
-            shared_memo: HashMap::new(),
-            pure_fns: HashMap::new(),
+            recovered: FxHashMap::default(),
+            poisoned: FxHashSet::default(),
+            shared_memo: FxHashMap::default(),
+            kept_fns: Default::default(),
+            pure_fns: FxHashMap::default(),
+            kept_consts: vec![],
+            subclasses: None,
             symbol_keys: Default::default(),
             matching_context: false,
             checking: vec![],
             ret_checks: vec![],
             rec: Default::default(),
-            overridden: HashSet::new(),
+            overridden: FxHashSet::default(),
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
+            ns_private: vec![],
             held_borrows_used: false,
+            moved_consts: Default::default(),
             borrow_pass_errors: false,
             fresh_checks: vec![],
             object_copies: Default::default(),
+            super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
             rechecks: vec![],
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
-            literal_types: HashMap::new(),
-            literal_found: HashMap::new(),
+            literal_types: FxHashMap::default(),
+            literal_found: FxHashMap::default(),
         }
     }
 
@@ -321,6 +595,21 @@ impl<'m> Ctx<'m> {
 
     pub fn err(&mut self, msg: impl Into<String>, span: Span) {
         self.diags.push(Diagnostic::error(msg, span));
+    }
+
+    /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
+    /// one of the SIMD types, which are not global (`velt:simd`).
+    pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
+        if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
+            return;
+        }
+        let mut d = Diagnostic::error(msg, span);
+        if crate::hir::SimdTy::named(name).is_some() {
+            d = d.with_note(format!(
+                "import it: `import {{ {name} }} from \"velt:simd\";`"
+            ));
+        }
+        self.diags.push(d);
     }
 
     /// Define the closure of a rolled-back check again as `info` (`body::recheck`).
@@ -367,67 +656,6 @@ impl<'m> Ctx<'m> {
         match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => Some(a),
             _ => None,
-        }
-    }
-
-    /// The visibility of the constructor `new C(...)` of class `d` runs: its own, or the one it
-    /// inherits from the nearest base class declaring one (public without any).
-    pub fn ctor_visibility(&self, d: DefId) -> velt_syntax::ast::CtorVisibility {
-        self.adt(d)
-            .and_then(|a| a.ctor)
-            .and_then(|c| self.fn_info(c).owner)
-            .and_then(|owner| self.adt(owner)?.decl)
-            .map_or_else(Default::default, |decl| decl.ctor_visibility)
-    }
-
-    /// The public static methods of class `d` that return a `d` (its factories), as
-    /// `` `C.of(...)` or `C.parse(...)` ``; `None` without any.
-    pub fn factories(&self, d: DefId) -> Option<String> {
-        let a = self.adt(d)?;
-        let mut names: Vec<String> = a
-            .methods
-            .iter()
-            .filter(|(_, m)| m.is_static && !self.fn_info(m.def).is_private)
-            .filter(|(_, m)| {
-                matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
-            })
-            .map(|(name, _)| {
-                let name = name.strip_prefix("static ").unwrap_or(name);
-                format!("`{}.{name}(...)`", a.name)
-            })
-            .collect();
-        names.sort();
-        let last = names.pop()?;
-        Some(match names.is_empty() {
-            true => last,
-            false => format!("{} or {last}", names.join(", ")),
-        })
-    }
-
-    /// A note saying how code outside class `d` creates one: `new`, its factories, or (for a
-    /// class of the user's own with a private or protected constructor and no factory) adding
-    /// a factory.
-    pub fn creation_note(&self, d: DefId) -> String {
-        use velt_syntax::ast::CtorVisibility;
-        let Some(a) = self.adt(d) else {
-            return String::new();
-        };
-        let name = &a.name;
-        let visibility = self.ctor_visibility(d);
-        if visibility == CtorVisibility::Public {
-            return format!("create it with `new {name}(...)`");
-        }
-        if let Some(factories) = self.factories(d) {
-            return format!("create it with {factories}");
-        }
-        match visibility {
-            _ if self.scopes[a.module].is_std => {
-                format!("`{name}` values come from the functions of the module that declares it")
-            }
-            CtorVisibility::Protected => {
-                format!("add a static factory method to `{name}`, or construct a subclass")
-            }
-            _ => format!("add a static factory method to `{name}` and call that"),
         }
     }
 
@@ -496,45 +724,35 @@ impl<'m> Ctx<'m> {
     }
 
     /// Name lookup at module level: own items and imports, then the prelude.
+    /// A module-level name that is only a type does not hide a prelude value of its name
+    /// (`type Map = …` next to `new Map()`, `crate::type_meanings`).
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
-        self.scopes[module]
-            .items
-            .get(name)
-            .or_else(|| self.prelude.get(name))
-            .copied()
+        let own = self.scopes[module].items.get(name).copied();
+        let Some(it) = own else {
+            return self.prelude.get(name).copied();
+        };
+        match self.meaning(it) {
+            crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),
+            _ => own,
+        }
     }
 
     /// Name lookup at a source position of `module`: the innermost nested item whose block
     /// contains `at`, then module level.
+    /// A nested type that is only a type (an interface, a type alias) does not hide a value of
+    /// its name further out (`crate::type_meanings`).
     pub fn lookup_item_at(&self, module: usize, name: &str, at: Span) -> Option<Item> {
         let file = self.modules[module].file;
-        let nested = self
+        let mut nested = self
             .nested
             .iter()
             .filter(|n| n.module == module && n.name == name && at.file == file)
             .filter(|n| n.lo <= at.lo && at.hi <= n.hi)
-            .min_by_key(|n| n.hi - n.lo);
-        match nested {
-            Some(n) => Some(n.item),
-            None => self.lookup_item(module, name),
+            .peekable();
+        if nested.peek().is_none() {
+            return self.lookup_item(module, name);
         }
-    }
-
-    /// The item a written type path names: `T`, or `ns.T` through namespace import `ns`.
-    pub fn lookup_path_at(
-        &self,
-        module: usize,
-        path: &[velt_syntax::ast::Ident],
-        at: Span,
-    ) -> Option<Item> {
-        match path {
-            [name] => self.lookup_item_at(module, &name.name, at),
-            [ns, name] if self.scopes[module].namespaces.contains_key(&ns.name) => {
-                let key = format!("{}.{}", ns.name, name.name);
-                self.scopes[module].items.get(&key).copied()
-            }
-            _ => None,
-        }
+        self.nested_value_item(nested.collect(), module, name)
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves
@@ -545,208 +763,15 @@ impl<'m> Ctx<'m> {
 
     /// Semantics stage 2: a non-Copy value that is *shared* — another reference to the same
     /// value — where its place stays in use or cannot be moved from, instead of being moved
-    /// (strings, objects, arrays, maps, closures). Promises have one owner (`await` takes the
-    /// result out), so values that hold one are moved as before.
+    /// (strings, objects, arrays, maps, closures, promises: another holder of the same
+    /// promise, #212): every type that is not Copy.
     pub fn is_shared_value(&mut self, t: TyId) -> bool {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
+        let b = !self.is_copy(t);
         self.shared_memo.insert(t, b);
         b
-    }
-
-    /// Does a value of `t` hold a promise (itself, or in a part)?
-    pub(crate) fn holds_promise(&mut self, t: TyId) -> bool {
-        self.holds_promise_in(t, 0)
-    }
-
-    fn holds_promise_in(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 8 {
-            return false;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Promise(..) => return true,
-            TyKind::Array(e) | TyKind::Option(e) => vec![e],
-            TyKind::Tuple(ts) => ts,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
-            }
-            _ => vec![],
-        };
-        parts
-            .into_iter()
-            .any(|p| self.holds_promise_in(p, depth + 1))
-    }
-
-    /// Ownership: can values of this type be duplicated bitwise?
-    pub fn is_copy(&mut self, t: TyId) -> bool {
-        self.is_copy_depth(t, 0)
-    }
-
-    fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        if let Some(base) = self.brand_base(t) {
-            return self.is_copy_depth(base, depth + 1);
-        }
-        match self.ty.kind(t).clone() {
-            TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Bool
-            | TyKind::Symbol
-            | TyKind::Literal(_)
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error => true,
-            TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t) => self.is_copy_depth(t, depth + 1),
-            TyKind::Result(a, b) => {
-                self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
-            }
-            // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
-            TyKind::Adt(d, args) => {
-                // Objects (structs included, semantics stage 2) are references: never Copy.
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => return false,
-                };
-                tys.into_iter().all(|f| {
-                    let f = self.subst(f, &args);
-                    self.is_copy_depth(f, depth + 1)
-                })
-            }
-            _ => false,
-        }
-    }
-
-    /// Human-readable type for diagnostics.
-    pub fn display(&self, t: TyId) -> String {
-        self.display_in(t, &self.display_params)
-    }
-
-    /// Display `t` with `Param(i)` named `names[i]`.
-    pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
-        let list = |s: &Self, ts: &[TyId]| {
-            ts.iter()
-                .map(|t| s.display_in(*t, names))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let with_args = |s: &Self, name: &str, args: &[TyId]| {
-            if args.is_empty() {
-                name.to_string()
-            } else {
-                format!("{name}<{}>", list(s, args))
-            }
-        };
-        if let Some(n) = self.alias_names.get(&t) {
-            return n.clone();
-        }
-        match self.ty.kind(t) {
-            TyKind::Int(i) => int_name(*i).to_string(),
-            TyKind::Float(crate::hir::FloatTy::F32) => "f32".into(),
-            TyKind::Float(crate::hir::FloatTy::F64) => "f64".into(),
-            TyKind::Bool => "boolean".into(),
-            TyKind::Str => "string".into(),
-            TyKind::Symbol => "symbol".into(),
-            TyKind::Unit => "void".into(),
-            TyKind::Never => "never".into(),
-            TyKind::Error => "_".into(),
-            TyKind::Literal(v) => crate::literals::display_lit(v),
-            TyKind::Array(e) => match self.ty.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => {
-                    format!("({})[]", self.display_in(*e, names))
-                }
-                _ if self.union_def(*e).is_some() => format!("({})[]", self.display_in(*e, names)),
-                _ => format!("{}[]", self.display_in(*e, names)),
-            },
-            TyKind::Map(k, v) => format!(
-                "Map<{}, {}>",
-                self.display_in(*k, names),
-                self.display_in(*v, names)
-            ),
-            TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
-            TyKind::Option(t) => format!("{} | null", self.display_in(*t, names)),
-            TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
-            TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
-            TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
-            TyKind::Shared(t) => with_args(self, "shared", &[*t]),
-            TyKind::FnPtr {
-                params,
-                ret,
-                throws,
-            } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
-                let th = if *throws == self.ty.never {
-                    String::new()
-                } else {
-                    format!(" throws {}", self.display_in(*throws, names))
-                };
-                format!(
-                    "({}) => {}{th}",
-                    ps.join(", "),
-                    self.display_in(*ret, names)
-                )
-            }
-            TyKind::Adt(d, args) => match &self.info[d.0 as usize] {
-                DefInfo::Adt(a) if a.kind == AdtKind::Anon => {
-                    // Field types are written over the anon def's own parameters, which
-                    // `args` binds to the parameters in scope.
-                    let bound: Vec<String> =
-                        args.iter().map(|t| self.display_in(*t, names)).collect();
-                    let fs: Vec<String> = a
-                        .fields
-                        .iter()
-                        .map(|f| {
-                            let name = self
-                                .key_spelling(&f.name)
-                                .unwrap_or_else(|| display_key(&f.name));
-                            if f.optional {
-                                format!("{name}?: {}", self.display_in(f.declared, &bound))
-                            } else {
-                                format!("{name}: {}", self.display_in(f.ty, &bound))
-                            }
-                        })
-                        .collect();
-                    format!("{{ {} }}", fs.join("; "))
-                }
-                DefInfo::Adt(a) => with_args(self, &a.name, args),
-                DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
-                DefInfo::Enum(e) => with_args(self, &e.name, args),
-                _ => "unknown".into(),
-            },
-            TyKind::Dyn(d, args) => match self.iface(*d) {
-                Some(i) => with_args(self, &i.name, args),
-                None => "unknown".into(),
-            },
-            TyKind::Closure(d) => match self.try_fn(*d) {
-                Some(f) => {
-                    let ps: Vec<String> = f
-                        .params
-                        .iter()
-                        .map(|p| format!("{}: {}", p.name, self.display_in(p.ty, names)))
-                        .collect();
-                    format!("({}) => {}", ps.join(", "), self.display_in(f.ret, names))
-                }
-                None => "unknown".into(),
-            },
-            TyKind::Param(n) => names
-                .get(*n as usize)
-                .cloned()
-                .unwrap_or_else(|| format!("T{n}")),
-        }
     }
 
     /// Fully qualified name of a module-level item.
@@ -756,20 +781,5 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
-    }
-}
-
-/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
-/// identifier, otherwise quoted (`{ "content-type": string }`).
-pub(crate) fn display_key(name: &str) -> String {
-    let mut chars = name.chars();
-    let ident = chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
-    if ident {
-        name.to_string()
-    } else {
-        format!("{name:?}")
     }
 }

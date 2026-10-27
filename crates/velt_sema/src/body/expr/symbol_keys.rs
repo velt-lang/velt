@@ -60,10 +60,62 @@ impl FnCx<'_, '_> {
                 {
                     Some(format!("[Symbol.{}]", prop.name))
                 }
-                _ => None,
+                _ => self.enum_key_of(e),
             },
             _ => None,
         }
+    }
+
+    /// The member name an enum member names as a key (`Flags.SKIP` for
+    /// `SKIP = "__v_skip"`: `__v_skip`; `crate::enum_keys`), if `Flags` is an enum not hidden by
+    /// a local.
+    pub(crate) fn enum_key_of(&mut self, e: &ast::Expr) -> Option<String> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(x) = &object.kind else {
+            return None;
+        };
+        if self.local_hides(&x.name) {
+            return None;
+        }
+        let path = format!("{}.{}", x.name, prop.name);
+        let key = self.cx.enum_key(self.module, &path)?;
+        self.cx.note_spelling(&key, &format!("[{path}]"));
+        Some(key)
+    }
+
+    /// `props` with each `[E.M]: v` whose key is an enum member (which the parser writes as a
+    /// key known only at run time, `...__computed_key(E.M, v)`) as the property its value
+    /// names; `None` if there is none.
+    pub(crate) fn enum_computed_keys(
+        &mut self,
+        props: &[ast::ObjectProp],
+    ) -> Option<Vec<ast::ObjectProp>> {
+        let mut out = Vec::with_capacity(props.len());
+        let mut any = false;
+        for p in props {
+            let entry = match p {
+                ast::ObjectProp::Spread(e) => super::record_literal::computed_entry(e),
+                _ => None,
+            };
+            match entry.and_then(|(k, v)| Some((self.enum_key_of(k)?, k.span, v))) {
+                Some((name, span, v)) => {
+                    any = true;
+                    out.push(ast::ObjectProp::KeyValue(
+                        ast::Ident { name, span },
+                        v.clone(),
+                    ));
+                }
+                None => out.push(p.clone()),
+            }
+        }
+        any.then_some(out)
     }
 
     /// Key `k` of an object literal as a member name: a computed key `[KEY]` becomes the name
@@ -103,11 +155,11 @@ impl FnCx<'_, '_> {
     /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one
     /// or may hold one (a union with a `symbol` member, `string | symbol`).
     pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let symbol = |t: &TyId| {
             matches!(
-                self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)),
+                self.cx.ty.kind(self.cx.ty.core(*t).unwrap_or(*t)),
                 TyKind::Symbol
             )
         };
@@ -134,10 +186,47 @@ impl FnCx<'_, '_> {
     /// (`[KEY]?: T`, `a?: T`) or a record's entry, whether it is present (tested at run time).
     /// A key known only at run time is `in_keys.rs`'s.
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        // `"a" in #tmp`, built by a destructuring default for an optional field with a presence
+        // flag (`pattern_defaults.rs`); source code cannot write it (no node id).
+        if let (ast::NodeId(u32::MAX), ast::ExprKind::Lit(ast::Lit::Str(name))) =
+            (lhs.id, &lhs.kind)
+        {
+            let obj = self.expr(rhs, None, Want::Borrow);
+            return self.present_test(obj, name, true, span);
+        }
+        if let Some(h) = self.dynamic_in(lhs, rhs, span) {
+            return h;
+        }
+        if let Some(h) = self.generic_in(lhs, rhs, span) {
+            return h;
+        }
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
-        let s = self.expr(rhs, None, Want::Borrow);
+        if matches!(key, InKey::Str(_)) {
+            if self.typed_proxy_once(rhs) {
+                // `"k" in f()` of a typed proxy: the operand once, then as below.
+                return self.operand_once(rhs, span, |cx, t| cx.key_in(lhs, t, span));
+            }
+            if let Some(h) = self.proxy_in(lhs, rhs, span) {
+                return h;
+            }
+        }
+        // `"toString" in r` on a record that may have no prototype: tested at run time.
+        if let (true, InKey::Str(k)) = (self.cx.objects.null_proto_records, &key) {
+            let target = match super::in_keys::OBJECT_PROTOTYPE.contains(&k.as_str()) {
+                true => Some(self.trial_expr(rhs).ty),
+                false => None,
+            };
+            let str_ = self.cx.ty.str_;
+            if target
+                .and_then(|t| self.record_args(t))
+                .is_some_and(|(k, _)| k == str_)
+            {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
+        let s = self.type_test_operand(rhs);
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
@@ -158,8 +247,16 @@ impl FnCx<'_, '_> {
         let sty = s.ty;
         let union = self.cx.union_def(sty).map(|(d, _)| d);
         let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
+        // The members a test narrowed the operand to (`typeof o === "object" && "k" in o`):
+        // the others cannot be there, and are not asked about.
+        let live = self.narrowed_variants(&s);
+        let dead = |v: usize| live.as_ref().is_some_and(|vs| !vs.contains(&(v as u32)));
         let mut found = Vec::with_capacity(members.len());
-        for &m in &members {
+        for (v, &m) in members.iter().enumerate() {
+            if dead(v) {
+                found.push((Presence::No, vec![]));
+                continue;
+            }
             match self.in_test(m, &key, lhs.span, true) {
                 Some(p) => found.push(p),
                 None => return self.error_expr(span),
@@ -168,6 +265,9 @@ impl FnCx<'_, '_> {
         let mut arms = vec![];
         let b = self.cx.ty.bool_;
         for (v, (&m, (p, held))) in members.iter().zip(&found).enumerate() {
+            if dead(v) {
+                continue;
+            }
             if *p == Presence::No {
                 if let InKey::Str(k) = &key {
                     // A copy made for a narrower object type lacks the original's other fields.
@@ -285,9 +385,20 @@ impl FnCx<'_, '_> {
             let b = self.cx.ty.bool_;
             return self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], b, span);
         }
-        let payload = self.cx.ty.opt_payload(field.ty).unwrap_or(field.ty);
+        if self.cx.dynamic(field.ty).is_some() {
+            // `k?: any` left out holds the dynamic `undefined` (`object.rs`).
+            let b = self.cx.ty.bool_;
+            let undef = self.dynamic_nothing(hir::Nothing::Undefined, field.ty, span);
+            let eq = self.intrinsic(hir::Intrinsic::AnyStrictEq, vec![field, undef], b, span);
+            let not = H::Unary {
+                op: hir::UnOp::Not,
+                expr: Box::new(eq),
+            };
+            return self.mk(not, b, span);
+        }
+        let payload = self.cx.ty.core(field.ty).unwrap_or(field.ty);
         let wild = self.pat(P::Wildcard, payload, span);
-        let some = self.pat(P::Some(Box::new(wild)), field.ty, span);
+        let some = self.present_pat(wild, field.ty, span);
         self.bool_match(field, Some(some), span)
     }
 

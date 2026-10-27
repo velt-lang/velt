@@ -1,0 +1,75 @@
+// check: no leaks
+// `typeof o.f === "tag"` narrows a union-typed field path of a local, as in TypeScript (#1264):
+// the `typeof vnode.text === "string"` test of sigx's server renderer. Expected output: Node's.
+interface VNode {
+  text: string | number | null;
+  children: VNode[];
+}
+
+function textLength(v: VNode): number {
+  if (typeof v.text === "string") return v.text.length;
+  return -1;
+}
+
+function describe(v: VNode): string {
+  if (typeof v.text === "number") {
+    return `number ${v.text.toFixed(1)}`;
+  } else if (typeof v.text !== "string") {
+    return "null";
+  }
+  return `string ${v.text.toUpperCase()}`;
+}
+
+// A nested path, and `&&` / `?:` reading the narrowed field on the right.
+interface Holder {
+  node: VNode;
+}
+function nested(h: Holder): string {
+  const shout = typeof h.node.text === "string" && h.node.text.endsWith("!");
+  const n = typeof h.node.text === "number" ? h.node.text * 2 : 0;
+  return `${shout} ${n}`;
+}
+
+// A `readonly` class field, and `this.f`.
+class Cell {
+  readonly value: string | boolean;
+  label: string | number = 0;
+  constructor(value: string | boolean) {
+    this.value = value;
+  }
+  show(): string {
+    if (typeof this.label === "number") this.label = `#${this.label + 1}`;
+    if (typeof this.value === "boolean") return this.value ? "yes" : "no";
+    return `${this.label}: ${this.value.trim()}`;
+  }
+}
+
+// Assigning the field drops the narrowing; assigning narrows it again by the value.
+function reassign(v: VNode): string {
+  if (typeof v.text === "string") {
+    const before = v.text.length;
+    v.text = 42;
+    if (typeof v.text === "number") return `${before} then ${v.text + 1}`;
+  }
+  return "no";
+}
+
+// The narrowed field is read in place: a string field moves nowhere.
+function keep(v: VNode): string[] {
+  const out: string[] = [];
+  if (typeof v.text === "string") {
+    out.push(v.text);
+    out.push(v.text);
+  }
+  return out;
+}
+
+const a: VNode = { text: "abc", children: [] };
+const b: VNode = { text: 5, children: [] };
+const c: VNode = { text: null, children: [] };
+console.log(textLength(a), textLength(b), textLength(c));
+console.log(describe(a), describe(b), describe(c));
+console.log(nested({ node: { text: "hi!", children: [] } }), nested({ node: b }));
+console.log(new Cell(true).show(), new Cell("  x  ").show());
+console.log(reassign({ text: "four", children: [] }), reassign(b));
+console.log(keep(a).join(","), keep(b).length);

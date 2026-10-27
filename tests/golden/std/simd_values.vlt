@@ -1,0 +1,109 @@
+// A vector is a value like a number wherever a value can be: fields, arrays, `| null`, tuples,
+// maps, captured by closures, across `await`, through generics, in generators.
+
+import { u8x16, u16x8, i32x4, i64x2, f32x4, f64x2 } from "velt:simd";
+
+class Accumulator {
+  total: i32x4 = i32x4.splat(0);
+  seen = 0;
+
+  add(v: i32x4) {
+    this.total = this.total.add(v);
+    this.seen++;
+  }
+}
+
+type Pair = { low: f64x2; high: f64x2 };
+
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+function find(xs: u8x16[], lane0: u8): u8x16 | null {
+  for (const x of xs) {
+    if (x.lane(0) == lane0) {
+      return x;
+    }
+  }
+  return null;
+}
+
+function* ramps(n: i64): Generator<i32x4> {
+  let v = i32x4.splat(0);
+  for (let i = 0; i < n; i++) {
+    v = v.add(i32x4.splat(1));
+    yield v;
+  }
+}
+
+async function later(v: i32x4): Promise<i32x4> {
+  await sleep(1);
+  return v.add(v);
+}
+
+function maybe(flag: boolean): i32x4 | undefined {
+  return flag ? i32x4.splat(6) : undefined;
+}
+
+async function main() {
+  const acc = new Accumulator();
+  acc.add(i32x4.splat(3));
+  acc.add(i32x4.splat(4).withLane(1, 10));
+  console.log("field", acc.total.lane(0), acc.total.lane(1), acc.seen);
+
+  const vs: u8x16[] = [];
+  for (let i = 0; i < 5; i++) {
+    vs.push(u8x16.splat((i * 10) as u8));
+  }
+  console.log(
+    "array",
+    vs.length,
+    vs[4].lane(15),
+    first(vs).lane(0),
+    vs.map((v) => v.lane(0)).join(","),
+  );
+
+  const hit = find(vs, 30);
+  const miss = find(vs, 31);
+  console.log("nullable", hit == null ? 0 : hit.lane(7), miss == null);
+
+  const pair: Pair = { low: f64x2.splat(1.5), high: f64x2.splat(2.5) };
+  const tuple: [u16x8, string] = [u16x8.splat(7), "seven"];
+  console.log("object", pair.low.add(pair.high).sum(), tuple[0].lane(3), tuple[1]);
+
+  const byName = new Map<string, f32x4>();
+  byName.set("ones", f32x4.splat(1));
+  byName.set("twos", f32x4.splat(2));
+  const twos = byName.get("twos");
+  console.log("map", byName.size, twos == null ? 0 : twos.sum());
+
+  let captured = i64x2.splat(5);
+  const bump = () => {
+    captured = captured.add(i64x2.splat(1));
+  };
+  bump();
+  bump();
+  console.log("closure", captured.lane(0), captured.sum());
+
+  const doubled = await later(i32x4.splat(21));
+  const kept = i32x4.splat(8);
+  await sleep(1);
+  console.log("await", doubled.lane(2), kept.lane(3));
+
+  let last = i32x4.splat(0);
+  for (const v of ramps(3)) {
+    last = v;
+  }
+  console.log("generator", last.sum());
+
+  const some = maybe(true);
+  const none = maybe(false);
+  const both: (i32x4 | undefined)[] = [some, none];
+  console.log(
+    "undefined",
+    some === undefined,
+    none === undefined,
+    both[0]?.lane(1),
+    both[1]?.lane(1),
+  );
+}

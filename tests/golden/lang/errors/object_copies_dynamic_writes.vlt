@@ -1,0 +1,26 @@
+// A write through `any` still reaches a copy, or its original, that the program made an `any`
+// (#1383): Node writes the one object, so each conversion stays an error.
+interface Full {
+  a: number;
+  b: string;
+}
+interface Part {
+  a?: number;
+}
+function keep(p: Part): Part {
+  return p;
+}
+
+// The copy becomes an `any` and is written through it.
+const f1: Full = { a: 1, b: "x" };
+const p1 = keep(f1);
+const d: any = p1;
+d.a = 5;
+console.log(f1.a, p1.a);
+
+// The original is held in an `any` array and written through it; the copy would miss it.
+const f2: Full = { a: 1, b: "x" };
+const p2 = keep(f2);
+const holder: any[] = [f2];
+holder[0].a = 7;
+console.log(f2.a, p2.a);

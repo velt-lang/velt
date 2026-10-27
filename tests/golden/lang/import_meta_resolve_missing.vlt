@@ -1,0 +1,12 @@
+// `import.meta.resolve` of a package name throws "Cannot find package", as in Node: a Velt
+// program's packages are compiled into it rather than looked up while it runs, so every package
+// name is missing, and `try` / `catch` (the usual test for an optional dependency) catches it.
+// Output compared with Node.
+console.log(import.meta.resolve("fs"));
+try {
+  import.meta.resolve("no-such-package");
+  console.log("not reached");
+} catch (e) {
+  console.log((e as Error).message.replace(import.meta.filename, "<file>"));
+}
+console.log(import.meta.resolve("_http_agent"), import.meta.resolve("_tls_wrap"));

@@ -35,8 +35,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn transfer_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            let at = place.clone();
+            self.proxy_glue_split(&place, done, |lw, up, pty| lw.transfer_proxy(&at, up, pty));
+            done
+        });
         self.transfer_expand(&place, ty);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// A typed proxy at `at` (its `Proxy` object, untagged, at `up`): the object transferred
+    /// as an `any` holding it is (a deep copy of it, its target and its handler when shared),
+    /// and stored back tagged.
+    fn transfer_proxy(&mut self, at: &Place, up: Place, pty: TyId) {
+        self.transfer_in_place(up.clone(), pty);
+        let t = self.proxy_tag(Operand::Copy(up));
+        self.assign(at.clone(), Rvalue::Use(t));
     }
 
     fn transfer_expand(&mut self, place: &Place, ty: TyId) {
@@ -46,7 +65,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // weak_threads.rs); this is one in a function value's environment, or behind a type
             // sema could not see into (docs/internals/design/weak-refs.md).
             self.panic_msg(&format!(
-                "a `{name}` cannot go to another thread (`spawn`, a channel, a timer, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
+                "a `{name}` cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
             ));
             return;
         }
@@ -66,14 +85,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     }
                 }
             }
-            TyKind::Option(e) => self.transfer_option(place, ty, e),
+            TyKind::Option(e, _) => self.transfer_option(place, ty, e),
             TyKind::Array(e) => self.transfer_elems(place, e),
             TyKind::Promise(..) => self.transfer_promise(place, ty),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.transfer_closure(place),
             TyKind::Dyn(..) => {
                 let data = proj(place, Proj::Field(0));
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
-                self.via_vtable(&data, vt);
+                if !self.cx.has_proxies() {
+                    return self.via_vtable(&data, vt);
+                }
+                let at = data.clone();
+                self.proxy_dyn_data(
+                    &data,
+                    |lw, up, pty| lw.transfer_proxy(&at, up, pty),
+                    |lw| lw.via_vtable(&data, vt),
+                );
             }
             _ => {}
         }
@@ -132,10 +159,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let done = self.new_block();
         if self.cx.counted(ty) {
             let (unique, shared) = (self.new_block(), self.new_block());
-            let one = self.count_is_one(o.clone());
+            let one = self.unique_of(o.clone(), ty);
             self.branch(one, unique, shared);
             self.switch_to(shared);
-            self.find_copy(o.clone(), |lw, copy| {
+            self.keep_callers(o.clone(), ty, done, unique);
+            self.find_copy(o.clone(), ty, |lw, copy| {
                 lw.defer_release(o.clone(), ty);
                 lw.assign(Place::local(out), Rvalue::Use(copy));
                 lw.goto(done);
@@ -147,11 +175,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
+            // Moved out of a `read` callback: no longer the reader's own (locks.rs).
+            self.leave_read(o.clone(), ty);
+        }
+        // A view leaves the table of views before its target may be copied (any_view.rs).
+        let view_of = match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => Some(d),
+            _ => None,
+        };
+        if let Some(d) = view_of {
+            self.proxy_unview(o.clone(), d);
         }
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
             let fp = self.field_place(&Place::local(obj), ty, i as u32);
             self.transfer_in_place(fp, t);
+        }
+        if let Some(d) = view_of {
+            self.proxy_review(o, d);
         }
         self.goto(done);
         self.switch_to(done);
@@ -188,10 +229,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let nn = self.non_null(p.clone());
         self.when(nn, done);
         let (unique, shared) = (self.new_block(), self.new_block());
-        let one = self.count_is_one(p.clone());
+        let one = self.unique_of(p.clone(), ty);
         self.branch(one, unique, shared);
         self.switch_to(shared);
-        self.find_copy(p.clone(), |lw, copy| {
+        self.keep_callers(p.clone(), ty, done, unique);
+        self.find_copy(p.clone(), ty, |lw, copy| {
             lw.defer_release(p.clone(), ty);
             lw.assign(place.clone(), Rvalue::Use(copy));
             lw.goto(done);
@@ -204,6 +246,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
+        // Moved out of a `read` callback: no longer the reader's own (locks.rs).
+        self.leave_read(p.clone(), ty);
         let pp = self.operand_place(p, Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
         match self.cx.kind(ty) {
@@ -252,6 +296,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // with the full sequence, which frees it if this was its last reference.
             let p = self.operand_place(v, Ty::Ptr);
             self.drop_glue(p, ty);
+        } else if self.cx.lock_counted(ty) {
+            // Above 1, or a store object a reader never counted (locks.rs).
+            self.release_of(v, ty, false, |_| {});
         } else {
             let c = self.count_place(v);
             let n = self.rvalue_temp(
@@ -265,12 +312,72 @@ impl<'c, 'h> FnLower<'c, 'h> {
         new
     }
 
+    /// In a transfer `velt_rt_xfer_keep_begin` started (a `read` callback's value going into its
+    /// caller's containers, lower/caller_stores.rs), in read mode, the still-shared lock-set
+    /// object `o` of type `ty` stays itself: one the reader did not make (the caller's) gets
+    /// the reference the reader held uncounted (the transfer goes on at `done`); one it made
+    /// whose parts may hold another's objects uncounted is the caller's from then on, counted
+    /// once, for the reference the transfer keeps, and has its parts kept in turn (at `unique`):
+    /// the reader's other references borrow it uncounted, as a store object; one it made that
+    /// holds no lock-set object stays the reader's (counted, at `done`). Outside such a
+    /// transfer it is copied as in any.
+    fn keep_callers(&mut self, o: Operand, ty: TyId, done: vir::BlockId, unique: vir::BlockId) {
+        if !self.cx.lock_counted(ty) {
+            return;
+        }
+        let keep = self.temp(Ty::U8);
+        self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
+        self.lk_split(
+            |_| {},
+            |lw| lw.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keep))),
+        );
+        let k = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Ne,
+                Operand::Copy(Place::local(keep)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (keeping, go) = (self.new_block(), self.new_block());
+        self.branch(k, keeping, go);
+        self.switch_to(keeping);
+        let c = self.count_place(o.clone());
+        let mine = self.is_local(&c);
+        let (made, theirs) = (self.new_block(), self.new_block());
+        self.branch(mine, made, theirs);
+        self.switch_to(theirs);
+        self.retain(o.clone());
+        self.goto(done);
+        self.switch_to(made);
+        match self.holds_lock_set(ty) {
+            true => {
+                let c = self.count_place(o);
+                self.assign(c, Rvalue::Use(cint(1, Ty::U64)));
+                self.goto(unique);
+            }
+            false => self.goto(done),
+        }
+        self.switch_to(go);
+    }
+
+    /// Can a part of a `ty` object (counted) refer to a lock-set object?
+    pub(in crate::lower) fn holds_lock_set(&mut self, ty: TyId) -> bool {
+        let parts = match self.cx.kind(ty) {
+            TyKind::Array(e) => vec![e],
+            _ if self.cx.is_class(ty) => self.cx.adt_field_tys(ty),
+            _ => self.cx.part_types(ty),
+        };
+        parts.into_iter().any(|t| self.cx.reaches_lock_set(t))
+    }
+
     /// Hand the reference to the counted `ty` object `v`, which the transfer under way replaced
     /// by a copy, to velt_rt's `transfer_map`: it is released when the transfer ends, so the
     /// object stays alive (and keeps its count) while copies are looked up by address. True if
     /// so; outside a transfer the caller releases it.
     fn defer_release(&mut self, v: Operand, ty: TyId) -> Operand {
-        let drop = cfunc(self.cx.func(Work::Glue(Glue::Drop, ty)));
+        // Run when this transfer ends, on this thread: in this function's mode.
+        let drop = cfunc(self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode));
         self.rt_u8(Rt::XferDefer, vec![v, drop])
     }
 
@@ -280,12 +387,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(in crate::lower) fn find_copy(
         &mut self,
         p: Operand,
+        ty: TyId,
         hit: impl FnOnce(&mut Self, Operand),
     ) -> Operand {
         let found = Place::local(self.temp(Ty::Ptr));
         self.assign(found.clone(), Rvalue::Use(cint(NO_TRANSFER, Ty::Ptr)));
         let (look, hit_bb, go) = (self.new_block(), self.new_block(), self.new_block());
-        let one = self.count_is_one(p.clone());
+        let one = self.unique_of(p.clone(), ty);
         self.branch(one, go, look);
         self.switch_to(look);
         self.call_rt(Rt::XferFind, vec![p], Some(found.clone()));
@@ -380,7 +488,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     fn transfer_elems(&mut self, arr: &Place, e: TyId) {
-        if !self.cx.holds_counted(e) {
+        // A view goes as a plain array of its elements (array_view.rs).
+        self.view_materialize(arr, e);
+        if !self.cx.transfers(e) {
             return;
         }
         let k = self.temp(Ty::U64);
@@ -395,19 +505,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// A promise: the runtime transfers its result where it is produced (a started promise
     /// finishes on the task that started it), before anyone on another task can see it. A
     /// lazy one (a `Promise.all` kept as a value) is started first, so this task drives it and
-    /// the inputs it reads stay here.
+    /// the inputs it reads stay here: the objects, and the holders of shared promises it awaits
+    /// (a `Promise.all` over one, #212). A result with nothing counted needs no glue (null), but
+    /// the runtime still hears of the promise: a holder of a shared one is handed over.
     fn transfer_promise(&mut self, place: &Place, ty: TyId) {
         let slot = self.cx.promise_slot(ty);
-        if !self.cx.holds_counted(slot) {
-            return;
-        }
         let f = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
         let done = self.new_block();
         let nn = self.non_null(f.clone());
         self.when(nn, done);
         let unclaimed = self.unclaimed_drop_fn(ty);
         self.call_rt(Rt::FutStart, vec![f.clone(), unclaimed], None);
-        let g = cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot)));
+        let g = match self.cx.holds_counted(slot) {
+            true => cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))),
+            false => cint(0, Ty::Ptr),
+        };
         self.call_rt(Rt::FutTransfer, vec![f, g], None);
         self.goto(done);
         self.switch_to(done);

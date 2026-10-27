@@ -1,0 +1,6 @@
+a flusher started: true
+still writing: true
+close queued: true
+bounded: true
+stopped: ECONNRESET flushing: false
+refused: true

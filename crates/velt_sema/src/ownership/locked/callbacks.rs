@@ -4,7 +4,7 @@
 //! function parameter that reaches `with`, the closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
 //! not visible, so its type and the functions it may be are checked (`super::opaque`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use super::values::Resolver;
 use crate::ctx::Ctx;
@@ -16,12 +16,15 @@ use crate::visit;
 pub(super) struct Found {
     /// Closures `with` calls, and whether the literal is `with`'s argument itself.
     pub(super) callbacks: Vec<(DefId, bool)>,
+    /// The literals written as the argument of a `Mutex`'s `with` (not an `RwLock`'s
+    /// `read` or `write`): only those take variables along into the lock (`super::moves`).
+    pub(super) mutex_literals: FxHashSet<DefId>,
     /// Named functions `with` calls, and where they are passed.
     pub(super) named: Vec<(DefId, velt_common::Span)>,
     /// Opaque callbacks: the function passing them, and the argument expressions.
     pub(super) opaque: Vec<(DefId, Expr)>,
     /// `(function, parameter index)` of parameters passed to `with` as the callback.
-    params: HashSet<(DefId, usize)>,
+    params: FxHashSet<(DefId, usize)>,
 }
 
 /// Every callback of the program's `with` calls.
@@ -35,10 +38,16 @@ pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
     let mut found = Found::default();
     for &d in &fns {
         let calls = calls_in(cx, d, |c, _| {
-            matches!(c, Callee::Intrinsic(Intrinsic::MutexWith))
+            matches!(
+                c,
+                Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+            )
         });
         for (args, params) in calls {
-            if let [_, cb] = args.as_slice() {
+            if let [m, cb] = args.as_slice() {
+                if let (E::Closure(c), false) = (&cb.kind, cx.is_rwlock(m.ty)) {
+                    found.mutex_literals.insert(*c);
+                }
                 resolve(cx, res, d, cb, &params, true, &mut found);
             }
         }
@@ -110,7 +119,11 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
                 .filter(|i| pick(callee, *i))
                 .map(|i| args[i].clone())
                 .collect();
-            if matches!(callee, Callee::Intrinsic(Intrinsic::MutexWith)) && !picked.is_empty() {
+            if matches!(
+                callee,
+                Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+            ) && !picked.is_empty()
+            {
                 args_found.push(args.clone());
             } else if !picked.is_empty() {
                 args_found.push(picked);

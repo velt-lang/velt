@@ -1,0 +1,53 @@
+// A name a function above a top-level `const` binds in a nested scope (a loop's or a `catch`
+// clause's binding, a block's local, an arrow's parameter, a method's) is that scope's own:
+// the function's other uses of the name read the constant once it ran, as in Node (#1438).
+const f = (): number => {
+  for (const K of [1]) {
+    console.log(K);
+  }
+  return K;
+};
+const g = (): number => [5].map((K) => K)[0] + K;
+const h = { a: (K: number): number => K, b: (): number => K };
+const blk = (): number => {
+  {
+    const K = 10;
+    console.log(K);
+  }
+  return K;
+};
+const caught = (): number => {
+  try {
+    throw new Error("e");
+  } catch (K) {
+    console.log((K as Error).message);
+  }
+  return K;
+};
+const loop = (): number => {
+  let s = 0;
+  for (let K = 0; K < 3; K++) {
+    s += K;
+  }
+  return s + K;
+};
+const sw = (x: number): number => {
+  switch (x) {
+    case 1: {
+      const K = 5;
+      return K;
+    }
+    default:
+      return K;
+  }
+};
+function item(): number {
+  return [5].map((K) => K)[0] + K;
+}
+const K = 2;
+console.log(f());
+console.log(g());
+console.log(h.a(1), h.b());
+console.log(blk(), caught(), loop());
+console.log(sw(1), sw(2));
+console.log(item());

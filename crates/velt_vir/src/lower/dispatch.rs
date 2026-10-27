@@ -39,7 +39,15 @@ impl super::Cx<'_> {
         );
         let mut join: Option<Vec<PassMode>> = None;
         for m in methods {
-            let modes = method_modes(self.fn_def(m));
+            let f = self.fn_def(m);
+            let modes = match f.self_ty {
+                Some(_) => method_modes(f),
+                // A generic closure (glue/generic_slots.rs): the receiver is the boxed closure,
+                // then its declared params.
+                None => std::iter::once(PassMode::Borrow)
+                    .chain(f.params[f.captures.len()..].iter().map(|p| p.mode))
+                    .collect(),
+            };
             match &mut join {
                 None => join = Some(modes),
                 Some(j) => {
@@ -88,6 +96,21 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The receiver `rv` of a dispatched call (`args[0]`), held against the arguments after it.
+    /// An argument may replace or free what the receiver was read from (`xs[0].m(clear())`
+    /// where `clear` pops `xs`, `x.f = v()` where `v` reassigns `x`), and JavaScript calls the
+    /// method on the object read before, so the receiver gets a reference of its own for the
+    /// call, as a class method's receiver does (`lower_args`). Arguments that run no code that
+    /// can change memory or write a local leave the receiver as it was read.
+    fn hold_receiver(&mut self, rv: Operand, args: &[hir::Expr], transfer: bool) -> Operand {
+        // A frozen receiver changes for nobody, and is not counted (frozen.rs).
+        if transfer || self.frozen_root(&args[0]) {
+            return rv;
+        }
+        let later = self.later_each(args).first().copied().unwrap_or_default();
+        self.hold(rv, args[0].ty, later)
+    }
+
     pub(super) fn call_virtual(
         &mut self,
         slot: u32,
@@ -107,10 +130,29 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.receiver(recv, transfer);
+        // The method or an argument may replace or free the receiver where it was read from
+        // (`XS[0].m(clear())` where `clear` empties a module array, `this.items[0].m(reset())`),
+        // so it is stabilized as a class method's receiver is (`lower_args`): a receiver read
+        // through a counted object, a cell or module state is shared for the call, then held
+        // against the arguments.
+        let rv = match !transfer && !super::call::is_moved(recv) {
+            true => self.stable_borrow(recv, &args[1..]),
+            false => self.receiver(recv, transfer),
+        };
+        let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
-        let vt = self.obj_vtable(obj.clone(), cls);
-        let entry = self.dispatch(vt, slot as i128);
+        let entry = match self.cx.proxiable(cls) {
+            true => {
+                let vt = self.proxy_obj_vtable(obj.clone(), cls);
+                let entry = self.dispatch(vt, slot as i128);
+                self.proxy_virtual_get(&obj, cls, slot, &entry);
+                entry
+            }
+            false => {
+                let vt = self.obj_vtable(obj.clone(), cls);
+                self.dispatch(vt, slot as i128)
+            }
+        };
         let ret = self.sub(ty);
         self.call_ptr(
             entry,
@@ -121,9 +163,30 @@ impl FnLower<'_, '_> {
         )
     }
 
+    /// The slot of method `slot` of interface `iface` in the table of the interface value type
+    /// `recv` (an interface that is `iface` or extends it), found by name; `None` when `recv` is
+    /// not an interface value.
+    pub(super) fn dyn_slot_for(&mut self, iface: DefId, slot: u32, recv: TyId) -> Option<u32> {
+        let TyKind::Dyn(have, _) = self.cx.kind(recv) else {
+            return None;
+        };
+        if have == iface {
+            return Some(slot);
+        }
+        let (hir::Def::Interface(want), hir::Def::Interface(own)) =
+            (self.cx.hir.def(iface), self.cx.hir.def(have))
+        else {
+            return None;
+        };
+        let name = &want.methods.get(slot as usize)?.name;
+        let found = own.methods.iter().position(|m| &m.name == name)?;
+        Some(found as u32)
+    }
+
     pub(super) fn call_dyn(
         &mut self,
         slot: u32,
+        method_type_args: &[TyId],
         args: &[hir::Expr],
         ty: TyId,
         transfer: bool,
@@ -132,14 +195,22 @@ impl FnLower<'_, '_> {
             .first()
             .unwrap_or_else(|| ice("interface call without receiver"));
         let dty = self.sub(recv.ty);
-        let (modes, throws) = match self.cx.kind(dty) {
-            TyKind::Dyn(iface, args) => (
+        let margs: Vec<TyId> = method_type_args.iter().map(|&t| self.sub(t)).collect();
+        let (modes, throws, generic) = match self.cx.kind(dty) {
+            TyKind::Dyn(iface, iargs) => (
                 self.cx.dyn_modes(iface, slot),
-                self.cx.slot_throws(iface, slot, &args),
+                self.cx.slot_throws(iface, slot, &iargs),
+                (!margs.is_empty()).then_some((iface, iargs, slot)),
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv, transfer);
+        // A receiver read from a place the method may replace gets a reference of its own for
+        // the call (receiver.rs): the method is only known at run time.
+        let rv = match !transfer && self.replaceable_receiver(recv) {
+            true => self.held_receiver(recv),
+            false => self.receiver(recv, transfer),
+        };
+        let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,
@@ -149,7 +220,15 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&rp, Proj::Field(1)))),
         );
-        let entry = self.dispatch(vt, slot as i128);
+        if self.cx.has_proxies() {
+            // The interface value may hold a typed proxy (its data tagged): the same check as
+            // a direct call through the proxy.
+            self.proxy_method_check(&data);
+        }
+        let entry = match generic {
+            Some(key) => self.dispatch_generic(vt, key, margs),
+            None => self.dispatch(vt, slot as i128),
+        };
         let ret = self.sub(ty);
         self.call_ptr(
             entry,

@@ -7,7 +7,7 @@
 //! through `Glue::JsonWriteKey`, which takes the key; everything else keeps `Glue::JsonWrite`,
 //! so a program without a `toJSON(key)` writes exactly as before.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};
 
@@ -38,7 +38,7 @@ impl Cx<'_> {
     pub(super) fn json_needs_key(&mut self, ty: TyId) -> bool {
         if self.json_key_memo.is_none() {
             let keyed = self.any_keyed_to_json();
-            self.json_key_memo = Some((keyed, HashMap::new()));
+            self.json_key_memo = Some((keyed, FxHashMap::default()));
         }
         let Some((keyed, memo)) = &mut self.json_key_memo else {
             return false;
@@ -60,7 +60,7 @@ impl Cx<'_> {
 
     fn json_needs_key_uncached(&mut self, ty: TyId) -> bool {
         match self.kind(ty) {
-            TyKind::Option(e) | TyKind::Shared(e) => self.json_needs_key(e),
+            TyKind::Option(e, _) | TyKind::Shared(e) => self.json_needs_key(e),
             TyKind::Adt(d, args) => match self.hir.def(d) {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => {
                     if self.keyed_class(ty) {

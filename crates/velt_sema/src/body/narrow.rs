@@ -11,13 +11,16 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{DefId, LocalId, TyId};
+use crate::hir::{DefId, LocalId, Nothing, TyId};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Fact {
     /// The `T | null` local is not null.
     NonNull(LocalId),
+    /// The `T | null | undefined` local is not this nothing (`x !== undefined`, `x !== null`);
+    /// with both excluded it is narrowed as by `NonNull`.
+    Excludes(LocalId, Nothing),
     /// The union local (or, for `U | null`, its payload when not null) is one of these variants.
     Members(LocalId, Vec<u32>),
     /// The class or interface local (or the union member it is narrowed to) holds an instance
@@ -30,6 +33,9 @@ impl FnCx<'_, '_> {
     /// Facts that hold when `cond` is true / when it is false.
     pub fn narrowing(&mut self, cond: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
         use ast::BinaryOp as B;
+        if let Some(facts) = self.destructured_facts(cond, true) {
+            return facts;
+        }
         match &cond.kind {
             ast::ExprKind::Paren(inner) => self.narrowing(inner),
             ast::ExprKind::Unary {
@@ -71,12 +77,12 @@ impl FnCx<'_, '_> {
                 (t, f)
             }
             ast::ExprKind::Binary {
-                op: op @ (B::Eq | B::NotEq),
+                op: op @ (B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq),
                 lhs,
                 rhs,
             } => {
-                let (t, f) = self.eq_facts(lhs, rhs);
-                if *op == B::Eq {
+                let (t, f) = self.eq_facts(lhs, rhs, op.is_strict());
+                if op.loose() == B::Eq {
                     (t, f)
                 } else {
                     (f, t)
@@ -89,7 +95,8 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => self.predicate_facts(callee, args, cond.span),
+            } => self.call_facts(cond, callee, args),
+            ast::ExprKind::Call { optional: true, .. } => (self.chain_facts(cond), vec![]),
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -113,9 +120,7 @@ impl FnCx<'_, '_> {
                 self.discriminant_facts(cond, &t).unwrap_or_default()
             }
             ast::ExprKind::Ident(_)
-            | ast::ExprKind::Member {
-                optional: false, ..
-            }
+            | ast::ExprKind::Member { .. }
             | ast::ExprKind::Index {
                 optional: false, ..
             }
@@ -130,27 +135,22 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for fa in a {
             match fa {
-                Fact::NonNull(l) => {
+                Fact::NonNull(_) | Fact::Excludes(..) => {
                     if b.contains(fa) && !out.contains(fa) {
-                        out.push(Fact::NonNull(*l));
+                        out.push(fa.clone());
                     }
                 }
-                Fact::Members(l, va) => {
-                    let mut vs = va.clone();
-                    let mut seen = false;
-                    for fb in b {
-                        if let Fact::Members(m, vb) = fb {
-                            if m == l {
-                                seen = true;
-                                vs.extend(vb.iter().copied());
-                            }
-                        }
-                    }
-                    if seen
-                        && !out
-                            .iter()
-                            .any(|f| matches!(f, Fact::Members(m, _) if m == l))
+                Fact::Members(l, _) => {
+                    // Each side's facts about `l` all hold together (`typeof c !== "string"`
+                    // and then `typeof c === "number"`): intersect them per side, then join.
+                    let done = out
+                        .iter()
+                        .any(|f| matches!(f, Fact::Members(m, _) if m == l));
+                    if let (false, Some(va), Some(vb)) =
+                        (done, members_in(a, *l), members_in(b, *l))
                     {
+                        let mut vs = va;
+                        vs.extend(vb);
                         vs.sort_unstable();
                         vs.dedup();
                         out.push(Fact::Members(*l, vs));
@@ -163,7 +163,15 @@ impl FnCx<'_, '_> {
                     });
                     let done = out.iter().any(|f| matches!(f, Fact::Class(m, _) if m == l));
                     if let (Some(tb), false) = (tb, done) {
-                        if let Some(c) = self.common_class(*l, *ta, tb) {
+                        let c = if *ta == tb {
+                            Some(tb)
+                        } else {
+                            self.common_class(*l, *ta, tb)
+                        };
+                        // `u instanceof Map || u instanceof Box` on an `unknown`: read through
+                        // `any` either way (`dynamic_narrow`).
+                        let c = c.or_else(|| self.dynamic_join(*l));
+                        if let Some(c) = c {
                             out.push(Fact::Class(*l, c));
                         }
                     }
@@ -204,7 +212,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let ty = self.local_ty(l);
-        let ty = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let ty = self.cx.ty.core(ty).unwrap_or(ty);
         let declared = self.cx.union_members(ty).unwrap_or_else(|| vec![ty]);
         let is_declared = declared
             .iter()
@@ -214,7 +222,7 @@ impl FnCx<'_, '_> {
 
     /// Drops from `facts` those about a variable `e` assigns, or about a field path of one.
     fn drop_assigned_facts(&mut self, facts: &mut Vec<Fact>, e: &ast::Expr) {
-        let mut names = super::assigned::Assigned::new();
+        let mut names = super::assigned::Assigned::default();
         super::assigned::assigned_in_expr(e, &mut names);
         if names.is_empty() {
             return;
@@ -231,10 +239,17 @@ impl FnCx<'_, '_> {
                 gone.push(l);
                 gone.extend(self.field_tokens_of(l));
             }
+            for t in self.global_tokens_named(name) {
+                gone.push(t);
+                gone.extend(self.field_tokens_of(t));
+            }
         }
         facts.retain(|f| {
             let l = match f {
-                Fact::NonNull(l) | Fact::Members(l, _) | Fact::Class(l, _) => l,
+                Fact::NonNull(l)
+                | Fact::Members(l, _)
+                | Fact::Class(l, _)
+                | Fact::Excludes(l, _) => l,
             };
             !gone.contains(l)
         });
@@ -251,21 +266,88 @@ impl FnCx<'_, '_> {
         out
     }
 
+    /// Facts of `done == b` (`if (done)` for `b` true) where `done` is the discriminant binding
+    /// of `const { value, done } = r` (`Frame::destructured_discriminants`): the bindings not
+    /// null when it holds / does not hold `b`.
+    fn destructured_facts(&mut self, e: &ast::Expr, b: bool) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        if !matches!(e.kind, ast::ExprKind::Ident(_)) {
+            return None;
+        }
+        let l = self.named_local(e)?;
+        let facts = self.f.destructured_discriminants.get(&l)?;
+        let when = |v: bool| -> Vec<Fact> {
+            facts
+                .iter()
+                .filter(|(w, _)| *w == v)
+                .map(|(_, l)| Fact::NonNull(*l))
+                .collect()
+        };
+        Some((when(b), when(!b)))
+    }
+
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
-    fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
+    pub(super) fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
+        if let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: true,
+        } = &e.kind
+        {
+            // `a?.b` is truthy: `a` is not null, and `a.b` is truthy (`if (def?.transform)`).
+            let plain = ast::Expr {
+                kind: ast::ExprKind::Member {
+                    object: object.clone(),
+                    prop: prop.clone(),
+                    optional: false,
+                },
+                ..e.clone()
+            };
+            let mut facts = self.truthy_facts(object);
+            facts.extend(self.truthy_facts(&plain));
+            return facts;
+        }
         if let Some(l) = self.nullable_local(e) {
             return vec![Fact::NonNull(l)];
         }
-        if super::expr::member::member_view(e).is_some() {
+        if super::expr::member::member_view(e).is_some() || self.keyed_view(e).is_some() {
             return self.field_token(e).map(Fact::NonNull).into_iter().collect();
         }
-        vec![]
+        self.chain_facts(e)
     }
 
     /// Facts of `lhs == rhs` (true / false).
-    fn eq_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+    fn eq_facts(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        strict: bool,
+    ) -> (Vec<Fact>, Vec<Fact>) {
         if is_null(lhs) || is_null(rhs) {
-            let other = if is_null(rhs) { lhs } else { rhs };
+            let (other, word) = match nothing_word(rhs) {
+                Some(w) => (lhs, w),
+                None => (rhs, nothing_word(lhs).unwrap_or("null")),
+            };
+            // `x === null` on a `T | undefined` is constant: it narrows nothing.
+            if strict && self.lacks_nothing(other, word) {
+                return (vec![], vec![]);
+            }
+            // `x === null` / `x === undefined` on a `T | null | undefined` rules out one
+            // nothing when false; both ruled out narrow the local to its value.
+            if strict && self.three_state_operand(other) {
+                let which = if word == "null" {
+                    Nothing::Null
+                } else {
+                    Nothing::Undefined
+                };
+                let token = match self.nullable_local(other) {
+                    Some(l) => Some(l),
+                    None => self.field_token(other),
+                };
+                return match token {
+                    Some(l) => (vec![], vec![Fact::Excludes(l, which)]),
+                    None => (vec![], vec![]),
+                };
+            }
             return match self.nullable_local(other) {
                 Some(l) => (vec![], vec![Fact::NonNull(l)]),
                 None => match self.field_token(other) {
@@ -282,6 +364,11 @@ impl FnCx<'_, '_> {
             (Some(l), None) => (rhs, l),
             _ => return (vec![], vec![]),
         };
+        if let ast::Lit::Bool(b) = lit.lit {
+            if let Some(facts) = self.destructured_facts(other, b) {
+                return facts;
+            }
+        }
         if let Some(facts) = self.discriminant_facts(other, &lit) {
             return facts;
         }
@@ -309,7 +396,7 @@ impl FnCx<'_, '_> {
         let l = self.named_local(object)?;
         let ty = self.local_ty(l);
         let nullable = self.cx.ty.opt_payload(ty).is_some();
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         let values = self.cx.discriminant_values(u, &prop.name)?;
         let (yes, no): (Vec<u32>, Vec<u32>) = (0..values.len() as u32)
             .partition(|v| crate::literals::lit_matches(&values[*v as usize], lit));
@@ -330,7 +417,7 @@ impl FnCx<'_, '_> {
             return false;
         };
         let ty = self.local_ty(l);
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         self.cx
             .discriminant_values(u, &prop.name)
             .is_some_and(|vs| {
@@ -339,44 +426,53 @@ impl FnCx<'_, '_> {
             })
     }
 
-    /// Facts of `KEY in x` / `"k" in x` on a union local: the members that may have the member
-    /// when true (an optional one or a record's entry may), the members that may lack it when
-    /// false.
-    fn key_in_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
-        use crate::symbols::Presence;
-        let Some(key) = self.in_key_of(lhs) else {
-            return (vec![], vec![]);
-        };
-        let Some((l, false, u)) = self.local_with_members(rhs) else {
-            return (vec![], vec![]);
-        };
-        let Some(members) = self.cx.union_members(u) else {
-            return (vec![], vec![]);
-        };
-        let (mut yes, mut no) = (vec![], vec![]);
-        for (i, m) in members.into_iter().enumerate() {
-            // A value whose class is known only at run time may have it (`in_test`).
-            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
-                Some((p, held)) => (Some(p), !held.is_empty()),
-                None => (None, false),
-            };
-            if p != Some(Presence::No) || held {
-                yes.push(i as u32);
-            }
-            if p != Some(Presence::Yes) {
-                no.push(i as u32);
+    /// Facts of `typeof x === tag`.
+    pub(super) fn typeof_split(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+        // `any` / `unknown`: read as the primitive type the tag names.
+        if let Some(l) = self.own_dynamic_local(e) {
+            {
+                let t = match tag {
+                    "number" => self.cx.ty.f64,
+                    "string" => self.cx.ty.str_,
+                    "boolean" => self.cx.ty.bool_,
+                    // TypeScript's `Function` (issue #926): called through the descriptor.
+                    "function" => return (self.dynamic_to_function_fact(e), vec![]),
+                    // TypeScript's `object | null` (issue #926), which is `object` here.
+                    "object" => return (self.dynamic_to_object_fact(e), vec![]),
+                    _ => return (vec![], vec![]),
+                };
+                return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        (vec![Fact::Members(l, yes)], vec![Fact::Members(l, no)])
-    }
-
-    /// Facts of `typeof x === tag`.
-    fn typeof_facts(&mut self, operand: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
-        let Some((l, nullable, u)) = self.local_with_members(operand) else {
-            return (vec![], vec![]);
+        let (l, nullable, u, nothing) = match self.local_with_members(e) {
+            Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
+            // A field path of a local (`typeof node.text === "string"`).
+            None => match self.field_with_members(e) {
+                Some(found) => found,
+                None => return (vec![], vec![]),
+            },
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        self.split_facts(l, nullable, u, &pred, tag == "object")
+        // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
+        // its `undefined`; the false branch rules that nothing out.
+        if nothing == Some(Nothing::Both) {
+            return match tag {
+                "undefined" => (vec![], vec![Fact::Excludes(l, Nothing::Undefined)]),
+                "object" => {
+                    let (mut t, mut f) = self.split_facts(l, false, u, &pred, false);
+                    t.push(Fact::Excludes(l, Nothing::Undefined));
+                    f.push(Fact::Excludes(l, Nothing::Null));
+                    (t, f)
+                }
+                _ => self.split_facts(l, nullable, u, &pred, false),
+            };
+        }
+        let none_matches = match tag {
+            "object" => nothing.is_none_or(|n| n.has_null()),
+            "undefined" => nothing.is_some_and(|n| n.has_undefined()),
+            _ => false,
+        };
+        self.split_facts(l, nullable, u, &pred, none_matches)
     }
 
     fn instanceof_facts(&mut self, e: &ast::Expr, ty: &ast::TypeExpr) -> (Vec<Fact>, Vec<Fact>) {
@@ -389,7 +485,7 @@ impl FnCx<'_, '_> {
         }
         match self.instanceof_class_quiet(ty) {
             Some(class) => self.class_facts(e, class),
-            None => (vec![], vec![]),
+            None => self.ctor_value_facts(e, ty),
         }
     }
 
@@ -400,12 +496,15 @@ impl FnCx<'_, '_> {
             Some(x) => Some(x),
             None => self
                 .readonly_field_path(e)
-                .map(|(token, t)| match self.cx.ty.opt_payload(t) {
+                .map(|(token, t)| match self.cx.ty.core(t) {
                     Some(p) => (token, true, p),
                     None => (token, false, t),
                 }),
         };
         let Some((l, nullable, u)) = found else {
+            if let Some(token) = self.nullable_instance_field(e, class) {
+                return (vec![Fact::NonNull(token)], vec![]);
+            }
             self.note_mutable_test(e);
             return (vec![], vec![]);
         };
@@ -435,6 +534,26 @@ impl FnCx<'_, '_> {
         (t, f)
     }
 
+    /// Facts for `Array.isArray(e)`: its array members.
+    pub(super) fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        // A variable of a type parameter (`T`, `T & object`) reads as an `any` where the test
+        // holds (TypeScript's `T & any[]`), boxed per instantiation (`downcast_narrowed`).
+        if let Some(l) = self.own_generic_local(e) {
+            return match self.any_ty() {
+                Some(any) => (vec![Fact::Class(l, any)], vec![]),
+                None => (vec![], vec![]),
+            };
+        }
+        let Some((l, nullable, u)) = self.local_with_members(e) else {
+            return (vec![], vec![]);
+        };
+        if let Some(facts) = self.generic_member_array_facts(l, nullable, u) {
+            return facts;
+        }
+        let pred = crate::body::expr::object_builtins::is_array_ty;
+        self.split_facts(l, nullable, u, &pred, false)
+    }
+
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff
     /// `null_matches`).
     pub(super) fn split_facts(
@@ -451,6 +570,14 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
+        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+            && crate::unions::typeof_exact(self.cx, u)
+            && pred(self.cx, u)
+        {
+            // A test every value passes (`typeof x === "string"` on a `string`, which may be a
+            // `string | bigint`): nothing is left where it fails, as in TypeScript. Only for
+            // types whose `typeof` the static type fixes.
+            f.push(Fact::Members(l, vec![]));
         }
         if nullable {
             if null_matches {
@@ -465,7 +592,7 @@ impl FnCx<'_, '_> {
     /// A loop may run its body again after an assignment in it: narrowing of every local the
     /// loop assigns does not hold inside (or after) it.
     pub(crate) fn unnarrow_assigned_in(&mut self, lp: &ast::Stmt) {
-        let mut names = super::assigned::Assigned::new();
+        let mut names = super::assigned::Assigned::default();
         super::assigned::assigned_in_stmt(lp, &mut names);
         for name in names.into_keys() {
             let found = self
@@ -477,6 +604,9 @@ impl FnCx<'_, '_> {
             if let Some(l) = found {
                 self.unnarrow(l);
             }
+            for t in self.global_tokens_named(name) {
+                self.unnarrow(t);
+            }
         }
     }
 
@@ -484,7 +614,7 @@ impl FnCx<'_, '_> {
     pub(super) fn local_with_members(&mut self, e: &ast::Expr) -> Option<(LocalId, bool, TyId)> {
         let l = self.named_local(e)?;
         let ty = self.local_ty(l);
-        Some(match self.cx.ty.opt_payload(ty) {
+        Some(match self.cx.ty.core(ty) {
             Some(p) => (l, true, p),
             None => (l, false, ty),
         })
@@ -497,8 +627,34 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` / `this` naming an `Option`-typed local of the current function.
+    /// Is `e` (a variable or a path of fields) of an option type without nothing `word`
+    /// (`"null"` / `"undefined"`)?
+    fn lacks_nothing(&mut self, e: &ast::Expr, word: &str) -> bool {
+        let ty = match self.named_local(e) {
+            Some(l) => Some(self.local_ty(l)),
+            None => self.peek_ty(e),
+        };
+        ty.and_then(|t| self.cx.ty.nothing_of(t))
+            .is_some_and(|n| match word {
+                "undefined" => !n.has_undefined(),
+                _ => !n.has_null(),
+            })
+    }
+
+    fn three_state_operand(&mut self, e: &ast::Expr) -> bool {
+        let ty = match self.named_local(e) {
+            Some(l) => Some(self.local_ty(l)),
+            None => self.peek_ty(e),
+        };
+        ty.is_some_and(|t| self.is_three_state(t))
+    }
+
+    /// `x` naming a `T | null` local, or the token of such a module variable
+    /// (`global_narrow`).
     fn nullable_local(&mut self, e: &ast::Expr) -> Option<LocalId> {
-        let l = self.named_local(e)?;
+        let Some(l) = self.named_local(e) else {
+            return self.nullable_global(e);
+        };
         self.cx.ty.opt_payload(self.local_ty(l)).map(|_| l)
     }
 
@@ -530,12 +686,29 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `null` (possibly parenthesized).
+/// `null` or `undefined` (possibly parenthesized): compared with either, a value of a type
+/// with one nothing (`T | null`, `T | undefined`) tests for that nothing (issue #930).
 pub(crate) fn is_null(e: &ast::Expr) -> bool {
+    nothing_word(e).is_some()
+}
+
+/// `null`, `undefined`, or a conditional whose arms are only those
+/// (`i > 2 ? null : undefined`): an expression whose type comes from the other values.
+pub(crate) fn only_nothings(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) => true,
-        ast::ExprKind::Paren(inner) => is_null(inner),
-        _ => false,
+        ast::ExprKind::Paren(inner) => only_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => only_nothings(then) && only_nothings(els),
+        _ => is_null(e),
+    }
+}
+
+/// `"null"` / `"undefined"` for those literals (possibly parenthesized).
+pub(crate) fn nothing_word(e: &ast::Expr) -> Option<&'static str> {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Null) => Some("null"),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some("undefined"),
+        ast::ExprKind::Paren(inner) => nothing_word(inner),
+        _ => None,
     }
 }
 
@@ -596,4 +769,21 @@ pub(crate) fn literal_of(e: &ast::Expr) -> Option<ast::SignedLit> {
         ast::ExprKind::Paren(inner) => literal_of(inner),
         _ => None,
     }
+}
+
+/// The union members `facts` together allow local `l` (the intersection of their `Members`
+/// facts about it; `None`: they say nothing about its members).
+fn members_in(facts: &[Fact], l: LocalId) -> Option<Vec<u32>> {
+    let mut out: Option<Vec<u32>> = None;
+    for f in facts {
+        if let Fact::Members(m, vs) = f {
+            if *m == l {
+                out = Some(match out {
+                    Some(cur) => cur.into_iter().filter(|v| vs.contains(v)).collect(),
+                    None => vs.clone(),
+                });
+            }
+        }
+    }
+    out
 }

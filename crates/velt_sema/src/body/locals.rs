@@ -6,10 +6,15 @@ use super::narrow::Fact;
 
 /// Per open scope: its non-null locals, union member facts and subclass facts (see
 /// `FnCx::narrow_state`).
-pub(crate) type NarrowState = Vec<(Vec<LocalId>, Vec<(LocalId, Vec<u32>)>, Vec<(LocalId, TyId)>)>;
+pub(crate) type NarrowState = Vec<(
+    Vec<LocalId>,
+    Vec<(LocalId, Vec<u32>)>,
+    Vec<(LocalId, TyId)>,
+    Vec<(LocalId, crate::hir::Nothing)>,
+)>;
 
 /// What a local is narrowed to: non-null, union members, a subclass.
-type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
+pub(crate) type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
 use super::{CaptureCx, FnCx, Frame, LocalKind, Scope};
 use crate::ctx::Item;
 use crate::hir::{LocalDef, LocalId, TyId};
@@ -58,7 +63,7 @@ fn add_narrowed_capture(
     narrowing: Narrowing,
 ) -> LocalId {
     let inner = add_capture(f, name, outer, ty, span);
-    let (non_null, members, class) = narrowing;
+    let (non_null, members, class) = narrowing.clone();
     let root = &mut f.scopes[0];
     if non_null {
         root.narrowed.push(inner);
@@ -72,6 +77,7 @@ fn add_narrowed_capture(
     }
     if let Some(c) = f.captures.last_mut() {
         c.narrowed = narrowed;
+        c.start = narrowing;
     }
     inner
 }
@@ -92,12 +98,34 @@ fn add_capture(f: &mut Frame, name: &str, outer: LocalId, ty: TyId, span: Span) 
         mutated: false,
         mutated_at: None,
         narrowed: false,
+        start: (false, None, None),
     });
     f.scopes[0].names.insert(name.to_string(), inner);
     inner
 }
 
 impl FnCx<'_, '_> {
+    /// `e`, an expression checked outside any body (a parameter's or a field's default),
+    /// placed in this one: its temporaries, numbered from 0 in a frame no body has
+    /// (`visit::detached_locals`), become new locals of this body instead of naming this body's
+    /// own locals with the same ids.
+    pub(crate) fn adopt_detached(&mut self, mut e: crate::hir::Expr) -> crate::hir::Expr {
+        let declared = crate::visit::detached_locals(&mut e);
+        if declared.is_empty() {
+            return e;
+        }
+        let error = self.cx.ty.error;
+        let map: Vec<LocalId> = declared
+            .into_iter()
+            .map(|(ty, mutable)| {
+                let ty = ty.unwrap_or(error);
+                self.new_local("<default>", ty, mutable, e.span, LocalKind::Temp)
+            })
+            .collect();
+        crate::visit::remap_expr_locals(&mut e, &map);
+        e
+    }
+
     pub fn new_local(
         &mut self,
         name: &str,
@@ -158,33 +186,132 @@ impl FnCx<'_, '_> {
 
     /// A local visible here: the current frame's, or one of an enclosing function (which is then
     /// captured by every closure frame in between).
+    /// Is `name` a local of this function's frame (no capture is recorded)?
+    /// The literal elements of the mixed `[…] as const` the local `name` holds
+    /// (`Frame::as_const_tuples`), in this function or an enclosing one: `Some(None)` for a
+    /// local holding anything else, `None` when no local has that name. The literals give the
+    /// element types; the values are read from the array.
+    pub(crate) fn local_as_const_tuple(&self, name: &str) -> Option<Option<&[ast::Expr]>> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        frames.into_iter().find_map(|f| {
+            let l = frame_lookup(f, name)?;
+            Some(f.as_const_tuples.get(&l).map(|v| &v[..]))
+        })
+    }
+
+    pub(crate) fn declares_here(&self, name: &str) -> bool {
+        frame_lookup(&self.f, name).is_some()
+    }
+
+    /// The local `name` names in this function, without using it.
+    pub(crate) fn declared_local(&self, name: &str) -> Option<LocalId> {
+        frame_lookup(&self.f, name)
+    }
+
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
+            if !self.f.late.caps.is_empty() {
+                self.late_lookup(None, l, l, name, span);
+            }
             return Some(l);
         }
         let j = (0..self.outer.len())
             .rev()
             .find(|&j| frame_lookup(&self.outer[j], name).is_some())?;
-        let mut prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
+        let prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
+        // A member of a recursive closure group, inside the group: the member's hidden local.
+        let (j, mut prev) = match self.group_peer(j, prev, name, span) {
+            Some((k, l)) if k == self.outer.len() => return Some(l),
+            Some((k, l)) => (k, l),
+            None => (j, prev),
+        };
+        let declared = (j, prev);
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
-        let mut narrowing = frame_narrowing(&self.outer[j], prev);
+        // A variable some closure assigns is not narrowed in the closures that capture it: the
+        // check outside may no longer hold when they run (TS does not narrow it there either).
+        let by_closure = self.assigned_by_closure_in(j, prev);
+        let assigned = by_closure || self.assigned_after(j, prev, span.lo);
+        // What a closure assigning the variable keeps the closure from seeing (for the note).
+        let dropped = by_closure.then(|| frame_narrowing(&self.outer[j], prev));
+        let none: Narrowing = (false, None, None);
+        let mut narrowing = match assigned {
+            true => none.clone(),
+            false => frame_narrowing(&self.outer[j], prev),
+        };
         // A captured closure `const` is still that closure: a call through the capture fills
         // in its parameters' defaults (`FnCx::call_value`).
         let closure = self.outer[j].closure_consts.get(&prev).copied();
+        let method = self.outer[j].method_values.contains(&prev);
+        // A read-only array or collection (or a number-keyed record) is one in the closures that
+        // capture it too.
+        let marks = self.outer[j].local_marks.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
             if let Some(c) = closure {
                 f.closure_consts.insert(prev, c);
             }
+            if method {
+                f.method_values.insert(prev);
+            }
+            if let Some(m) = marks {
+                f.local_marks.insert(prev, m);
+            }
             ty = f.locals[prev.0 as usize].ty;
-            narrowing = frame_narrowing(f, prev);
+            narrowing = match assigned {
+                true => none.clone(),
+                false => frame_narrowing(f, prev),
+            };
         }
         let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        if let Some(n) = dropped {
+            self.note_dropped_capture(inner, name, n);
+        }
         if let Some(c) = closure {
             self.f.closure_consts.insert(inner, c);
         }
+        if method {
+            self.f.method_values.insert(inner);
+        }
+        if let Some(m) = marks {
+            self.f.local_marks.insert(inner, m);
+        }
+        self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)
+    }
+
+    /// Does a closure assign local `l` of enclosing frame `outer[j]` (or the variable it
+    /// captures)?
+    fn assigned_by_closure_in(&self, j: usize, l: LocalId) -> bool {
+        let mut l = l;
+        for f in self.outer[..=j].iter().rev() {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => {
+                    let name = &f.locals[l.0 as usize].name;
+                    return f.closure_assigned.contains_key(name);
+                }
+            }
+        }
+        false
+    }
+
+    /// Does the function declaring local `l` of enclosing frame `outer[j]` (or the variable it
+    /// captures) assign it after source offset `at` (`Frame::assign_ends`)? A closure created
+    /// at `at` may run after that assignment, so the narrowing where it is created may not
+    /// hold when it runs (TS keeps it only when nothing assigns the variable later).
+    fn assigned_after(&self, j: usize, l: LocalId, at: u32) -> bool {
+        let mut l = l;
+        for f in self.outer[..=j].iter().rev() {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => {
+                    let name = &f.locals[l.0 as usize].name;
+                    return f.assign_ends.get(name).is_some_and(|end| *end > at);
+                }
+            }
+        }
+        false
     }
 
     /// Lookup without creating captures (for "is this name a local?" questions).
@@ -264,25 +391,42 @@ impl FnCx<'_, '_> {
     pub fn lookup_item(&mut self, name: &str, at: Span) -> Option<Item> {
         let item = self.cx.lookup_item_at(self.module, name, at);
         self.cx.rec_item(at, item);
-        if item.is_some() && self.cx.scopes[self.module].type_only.contains(name) {
+        let scope = &self.cx.scopes[self.module];
+        if item.is_some() && scope.type_only.contains(name) {
+            // The value meaning of a name that is a type too, if any, after the error
+            // (`crate::type_meanings`): no second error for the same use.
+            let value = (scope.items.get(&crate::type_meanings::type_only_key(name))).copied();
             self.type_only_value(name, at);
+            return value.or(item);
         }
         item
     }
 
     /// "`T` is imported with `import type`", once per use.
     fn type_only_value(&mut self, name: &str, at: Span) {
-        let msg = format!("`{name}` is imported with `import type` and cannot be used as a value");
+        let msg = match self.cx.scopes[self.module].via_export_type.contains(name) {
+            true => format!(
+                "`{name}` is exported only as a type by the module it is imported from and cannot \
+                 be used as a value"
+            ),
+            false => {
+                format!("`{name}` is imported with `import type` and cannot be used as a value")
+            }
+        };
         let reported = self
             .cx
             .diags
             .iter()
             .any(|d| d.message == msg && d.labels.first().is_some_and(|l| l.span == at));
         if !reported {
+            let note = match self.cx.scopes[self.module].via_export_type.contains(name) {
+                true => "that module exports it with `export type`, or exports again a name it \
+                         imports with `import type`"
+                    .to_string(),
+                false => format!("import it as a value: `import {{ {name} }} from …`"),
+            };
             self.cx
-                .error(velt_common::Diagnostic::error(msg, at).with_note(format!(
-                    "import it as a value: `import {{ {name} }} from …`"
-                )));
+                .error(velt_common::Diagnostic::error(msg, at).with_note(note));
         }
     }
 
@@ -311,6 +455,11 @@ impl FnCx<'_, '_> {
         self.f.scopes.iter().any(|s| s.narrowed.contains(&l))
     }
 
+    /// Is `T | null | undefined` local `l` known not to hold nothing `n` here?
+    pub fn excludes(&self, l: LocalId, n: crate::hir::Nothing) -> bool {
+        self.f.scopes.iter().any(|s| s.excluded.contains(&(l, n)))
+    }
+
     /// Assume `fact` in the innermost scope (member sets intersect with what is known).
     pub fn narrow(&mut self, fact: &Fact) {
         if self.refuse_fact(fact) {
@@ -318,6 +467,18 @@ impl FnCx<'_, '_> {
         }
         match fact {
             Fact::NonNull(l) => self.innermost_scope().narrowed.push(*l),
+            Fact::Excludes(l, n) => {
+                let other = match n {
+                    crate::hir::Nothing::Null => crate::hir::Nothing::Undefined,
+                    _ => crate::hir::Nothing::Null,
+                };
+                let both = self.excludes(*l, other);
+                let scope = self.innermost_scope();
+                scope.excluded.push((*l, *n));
+                if both {
+                    scope.narrowed.push(*l);
+                }
+            }
             Fact::Members(l, vs) => {
                 let vs = match self.allowed_members(*l) {
                     Some(cur) => vs.iter().copied().filter(|v| cur.contains(v)).collect(),
@@ -337,6 +498,11 @@ impl FnCx<'_, '_> {
     /// Records that `l` holds only the union variants `vs` from here to the end of the scope.
     pub(crate) fn narrow_members(&mut self, l: LocalId, vs: Vec<u32>) {
         self.innermost_scope().members.push((l, vs));
+    }
+
+    /// Does union local `l` hold the member it is narrowed to because it was assigned to it?
+    pub(crate) fn holds_assigned_member(&self, l: LocalId) -> bool {
+        self.f.scopes.iter().any(|s| s.held.contains(&l))
     }
 
     fn innermost_scope(&mut self) -> &mut super::Scope {
@@ -376,26 +542,130 @@ impl FnCx<'_, '_> {
         self.f
             .scopes
             .iter()
-            .map(|s| (s.narrowed.clone(), s.members.clone(), s.classes.clone()))
+            .map(|s| {
+                (
+                    s.narrowed.clone(),
+                    s.members.clone(),
+                    s.classes.clone(),
+                    s.excluded.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// [`narrow_state`](Self::narrow_state) for the outermost `depth` scopes only, with what
+    /// the inner ones hold folded into the last of them: the state a jump out to code at that
+    /// depth (a `break` out of a `switch`) carries there.
+    pub fn narrow_state_at(&self, depth: usize) -> NarrowState {
+        let mut st = self.narrow_state();
+        if depth == 0 || st.len() <= depth {
+            return st;
+        }
+        let inner = st.split_off(depth);
+        let last = st.last_mut().expect("ICE: no scope");
+        for (n, m, c, x) in inner {
+            last.0.extend(n);
+            last.1.extend(m);
+            last.2.extend(c);
+            last.3.extend(x);
+        }
+        st
+    }
+
+    /// The facts the innermost scope holds now about locals declared outside it: what a branch
+    /// that ends here passes on to the code after it (assumed at its start and not undone by an
+    /// assignment since, or established by its own statements).
+    pub fn scope_end_facts(&self) -> Vec<Fact> {
+        let Some(s) = self.f.scopes.last() else {
+            return vec![];
+        };
+        let outer = |l: &LocalId| !s.names.values().any(|x| x == l);
+        let narrowed = s
+            .narrowed
+            .iter()
+            .filter(|l| outer(l))
+            .map(|l| Fact::NonNull(*l));
+        let excluded = s
+            .excluded
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, n)| Fact::Excludes(*l, *n));
+        let members = s
+            .members
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, vs)| Fact::Members(*l, vs.clone()));
+        let classes = s
+            .classes
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, t)| Fact::Class(*l, *t));
+        narrowed
+            .chain(excluded)
+            .chain(members)
+            .chain(classes)
             .collect()
     }
 
     pub fn restore_narrowing(&mut self, st: &NarrowState) {
-        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(st) {
+        for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(st) {
             s.narrowed = n.clone();
             s.members = m.clone();
             s.classes = c.clone();
+            s.excluded = x.clone();
+        }
+        self.keep_capture_narrowing();
+    }
+
+    /// The narrowing each capture starts with, in the closure's outermost scope again: a state
+    /// saved before the capture was made (at the start of a branch the closure first names the
+    /// variable in) does not hold it, yet it holds in the whole body.
+    fn keep_capture_narrowing(&mut self) {
+        let f = &mut self.f;
+        let Some(root) = f.scopes.first_mut() else {
+            return;
+        };
+        for c in f.captures.iter().filter(|c| c.narrowed) {
+            let (non_null, members, class) = &c.start;
+            if *non_null && !root.narrowed.contains(&c.inner) {
+                root.narrowed.push(c.inner);
+            }
+            if let Some(vs) = members {
+                if !root.members.iter().any(|(l, _)| *l == c.inner) {
+                    root.members.push((c.inner, vs.clone()));
+                }
+            }
+            if let Some(t) = class {
+                if !root.classes.iter().any(|(l, _)| *l == c.inner) {
+                    root.classes.push((c.inner, *t));
+                }
+            }
         }
     }
 
     /// After sibling branches that both continue: keep only the facts `other` (the state at the
     /// end of the other branch) still has.
     pub fn meet_narrowing(&mut self, other: &NarrowState) {
-        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(other) {
+        for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(other) {
+            // A nothing is ruled out after both branches when each rules it out, by a strict
+            // test or by narrowing the local to its value (`NonNull` rules out both).
+            let mut excluded: Vec<_> = s
+                .excluded
+                .iter()
+                .filter(|f| x.contains(f) || n.contains(&f.0))
+                .copied()
+                .collect();
+            for f in x {
+                if s.narrowed.contains(&f.0) && !excluded.contains(f) {
+                    excluded.push(*f);
+                }
+            }
+            s.excluded = excluded;
             s.narrowed.retain(|l| n.contains(l));
             s.members.retain(|f| m.contains(f));
             s.classes.retain(|f| c.contains(f));
         }
+        self.keep_capture_narrowing();
     }
 
     /// The local was reassigned: its narrowing no longer holds.
@@ -406,6 +676,8 @@ impl FnCx<'_, '_> {
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
             s.members.retain(|(x, _)| *x != l && !fields.contains(x));
             s.classes.retain(|(x, _)| *x != l && !fields.contains(x));
+            s.held.retain(|x| *x != l);
+            s.excluded.retain(|(x, _)| *x != l && !fields.contains(x));
         }
     }
 

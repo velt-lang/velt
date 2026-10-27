@@ -64,14 +64,29 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Does type `t` have a setter `name` (and no field of that name)?
+    /// Does type `t` have a setter `name` (and no field of that name)? Not the throwing one a
+    /// getter-only override gets, nor the one a literal's getter-only property gets from
+    /// `Object.defineProperty`: TypeScript rejects that write (TS2540).
     pub(crate) fn has_setter(&mut self, t: TyId, name: &str) -> bool {
-        self.field_of(t, name).is_none()
-            && self.resolve_method(t, &member_key(name, true)).is_some()
+        if self.field_of(t, name).is_some() {
+            return false;
+        }
+        match self.resolve_method(t, &member_key(name, true)) {
+            Some(Resolved::Def { def, .. } | Resolved::Virtual { def, .. }) => {
+                !self.cx.getter_only_setters.contains(&def)
+            }
+            Some(Resolved::Iface { iface, method, .. }) => {
+                !(self.cx.defined_setters).contains(&(iface, method.name))
+            }
+            r => r.is_some(),
+        }
     }
 
     /// The parameter type of setter `name` of type `t` (`None` when it is not known here).
     pub(super) fn setter_param_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        if let Some(f) = self.iface_field_of(t, name) {
+            return Some(f.ty);
+        }
         let (ty, slots) = match self.resolve_method(t, &member_key(name, true))? {
             Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
                 (self.cx.fn_info(def).params.first()?.ty, slots)
@@ -105,6 +120,9 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "assign to a property of") {
             self.check_args_loose(args);
             return self.error_expr(span);
+        }
+        if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
+            return self.iface_setter_call(obj, f, arg, span);
         }
         self.method_call_on(obj, &key, &[], args, None, span)
     }
@@ -170,7 +188,7 @@ impl FnCx<'_, '_> {
 
     /// A read-modify-write of setter `prop` needs a getter. Reports and returns false otherwise.
     fn readable(&mut self, t: TyId, prop: &ast::Ident) -> bool {
-        if self.has_getter(t, &prop.name) {
+        if self.has_getter(t, &prop.name) || self.iface_field_of(t, &prop.name).is_some() {
             return true;
         }
         self.cx.err(

@@ -1,0 +1,6 @@
+computed_key_types.vlt:4:13: error: a computed key must be a string, number or symbol, found `boolean`
+  = note: convert it to a string first (`[String(k)]`)
+computed_key_types.vlt:6:14: error: a computed key must be a string, number or symbol, found `f64[]`
+  = note: convert it to a string first (`[String(k)]`)
+computed_key_types.vlt:7:14: error: a computed key must be a string, number or symbol, found `{  }`
+  = note: convert it to a string first (`[String(k)]`)

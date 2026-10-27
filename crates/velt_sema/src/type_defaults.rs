@@ -8,7 +8,7 @@
 //! collection, so an unknown type in a default is reported there, once, even when no use
 //! leaves the parameter out.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -29,11 +29,11 @@ pub(crate) enum DefaultsOf {
 #[derive(Default)]
 pub(crate) struct TypeDefaults {
     /// Per declaration, per parameter: its default (`Error` when invalid), `None` without one.
-    resolved: HashMap<DefaultsOf, Vec<Option<TyId>>>,
+    resolved: FxHashMap<DefaultsOf, Vec<Option<TyId>>>,
     /// The declarations whose defaults are being resolved, with the parameter at hand.
     resolving: Vec<(DefaultsOf, usize, ast::Ident)>,
     /// Declarations reported for a circular default.
-    circular: HashSet<DefaultsOf>,
+    circular: FxHashSet<DefaultsOf>,
     /// Circular defaults found so far (a default resolved while one was found is invalid too).
     hits: u32,
 }
@@ -246,7 +246,10 @@ fn not_declared_before<'a>(
             .chain(std::iter::once(&**ret))
             .chain(throws.as_deref())
             .find_map(|a| not_declared_before(a, rest)),
-        K::GenericFunction { ty, .. } | K::Construct(ty) => not_declared_before(ty, rest),
+        K::GenericFunction { ty, .. }
+        | K::Construct(ty)
+        | K::TupleRest(ty)
+        | K::TupleOptional(ty) => not_declared_before(ty, rest),
         K::Object(fields) => fields.iter().find_map(|f| not_declared_before(&f.ty, rest)),
         K::IndexSig {
             fields, key, value, ..
@@ -255,8 +258,32 @@ fn not_declared_before<'a>(
             .map(|f| &f.ty)
             .chain([&key.ty, &**value])
             .find_map(|a| not_declared_before(a, rest)),
+        K::Callable { sigs, members } => sigs
+            .iter()
+            .flat_map(|s| {
+                let sig = &s.sig;
+                let bounds = sig
+                    .generics
+                    .iter()
+                    .flat_map(|g| g.bounds.iter().chain(&g.default));
+                bounds
+                    .chain(sig.params.iter().map(|p| &p.ty))
+                    .chain(&sig.ret)
+                    .chain(&sig.throws)
+            })
+            .chain(std::iter::once(&**members))
+            .find_map(|a| not_declared_before(a, rest)),
         K::KeyOf(t) => not_declared_before(t, rest),
+        K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
+            .into_iter()
+            .find_map(|a| not_declared_before(a, rest)),
+        K::Mapped(m) => std::iter::once(&m.source)
+            .chain(m.name.as_ref())
+            .chain(std::iter::once(&m.value))
+            .find_map(|a| not_declared_before(a, rest)),
+        K::TemplateLiteral { types, .. } => types.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Infer(_) => None,
         K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
-        K::Literal(_) | K::Null | K::Void | K::Query(_) => None,
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => None,
     }
 }

@@ -1,6 +1,5 @@
-//! Rules on turning values into text: template literals of errors and promises
-//! (`object-in-template`) and of values that may be `null` (`nullable-in-template`), and
-//! `JSON.stringify` of a `Map` (`json-map`; a `Set` has no JSON form in Velt).
+//! Rules on turning values into text: template literals of promises (`object-in-template`),
+//! and `JSON.stringify` of a `Map` (`json-map`; a `Set` has no JSON form in Velt).
 
 use std::collections::HashSet;
 
@@ -8,19 +7,16 @@ use velt_sema::ide::{NamedKind, TypeRef, TypeView};
 use velt_syntax::ast::{self, ExprKind as E};
 
 use super::numbers::is_global;
-use super::{nulls, Typed};
+use super::Typed;
 use crate::Severity;
 
 /// How a template literal prints a value, compared with JavaScript.
 enum Printed {
     /// The same in both: primitives, enums, arrays, and objects, which both write as JS's
-    /// `String(x)` does (a class's `toString()`, own or inherited, else `[object Object]`, or
-    /// `[object Map]` for std's classes); or unknown (a generic parameter).
+    /// `String(x)` does (a class's `toString()`, own or inherited, as `Error`'s `"Error: boom"`,
+    /// else `[object Object]`, or `[object Map]` for std's classes); or unknown (a generic
+    /// parameter).
     Same,
-    /// The same, except that JavaScript prints `undefined` where the value is `undefined`.
-    Nullable,
-    /// An `Error`: Velt prints it as `console.log` does, JavaScript as `Error: message`.
-    Error,
     /// A `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]`.
     Promise,
 }
@@ -31,32 +27,6 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
         let Some(ty) = t.type_of(e) else { continue };
         let (what, velt, js, instead) = match printed(&ty, t, 0) {
             Printed::Same => continue,
-            // Only a value that is `undefined` in JavaScript prints differently: a `null`
-            // prints `null` in both.
-            Printed::Nullable => {
-                let Some(why) = nulls::undefined_source(e, t) else {
-                    continue;
-                };
-                t.cx.report(
-                    "nullable-in-template",
-                    Severity::Warning,
-                    e.span,
-                    "`${…}` of a value that may be `undefined` in JavaScript: it prints                      `undefined` there, `null` in Velt"
-                        .into(),
-                    &[
-                        why,
-                        "say what to print for nothing: `${x ?? \"\"}`, or test the value first",
-                    ],
-                    None,
-                );
-                continue;
-            }
-            Printed::Error => (
-                "an error",
-                "`Error { message: 'boom' }`",
-                "`Error: boom`",
-                "write its message: `${e.message}`",
-            ),
             Printed::Promise => (
                 "a `Promise`",
                 "`Promise { <pending> }`",
@@ -83,28 +53,15 @@ fn printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
         return Printed::Same;
     }
     match t.view(ty) {
-        TypeView::Nullable(inner) => match printed(&inner, t, depth + 1) {
-            Printed::Same | Printed::Nullable => Printed::Nullable,
-            p => p,
-        },
+        TypeView::Nullable(inner) => printed(&inner, t, depth + 1),
         TypeView::Union(members) => {
             members
                 .iter()
                 .map(|m| printed(m, t, depth + 1))
                 .fold(Printed::Same, |acc, p| match (acc, p) {
-                    (Printed::Error, _) | (_, Printed::Error) => Printed::Error,
                     (Printed::Promise, _) | (_, Printed::Promise) => Printed::Promise,
-                    (Printed::Nullable, _) | (_, Printed::Nullable) => Printed::Nullable,
                     _ => Printed::Same,
                 })
-        }
-        // An error class's own `toString()` is called in both.
-        TypeView::Named(n)
-            if n.kind == NamedKind::Class
-                && t.program.analysis.is_error(ty)
-                && !t.program.analysis.declares_method(ty, "toString") =>
-        {
-            Printed::Error
         }
         TypeView::Promise(_) => Printed::Promise,
         // Everything else is written as JS writes it, or (a function) is a compile error in

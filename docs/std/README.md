@@ -11,7 +11,9 @@ import { Deque } from "velt:collections/deque";
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
 scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
 `Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
-`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder` and `structuredClone`.
+`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`, `atob`,
+`DOMException`, `structuredClone`, `ArrayBuffer`, `DataView`, `Uint8Array` and the other
+[typed arrays](typed_array.md), and [`ReadableStream`](streams.md).
 `velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions
@@ -44,14 +46,14 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Area | Modules |
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [fetch](fetch.md) (global) · [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
-| Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
-| Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
+| Network | [fetch](fetch.md) (global) · [http](http.md) · [http/server](http_server.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
+| Data formats | [json](json.md) · [csv](csv.md) · [db](db.md) (typed rows from any source) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
+| Collections | [collections/btree_map](collections/btree_map.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/set](collections/set.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
-| Language | [symbol](symbol.md) (global `Symbol`) |
+| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
@@ -66,15 +68,15 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
-| `velt:websocket` | tokio-tungstenite connections and server upgrades |
+| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP and TLS streams, and an HTTP server and client on hyper; TLS, HTTPS and HTTP/2 through rustls |
+| `velt:websocket` | none of its own: the protocol is written in Velt on `velt:net` streams and `velt:http` upgrades (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
 | `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
 | `velt:regex` | Rust's `regex` engine |
 | `velt:channel`, `velt:task` | channel queues, abort signals and task groups |
 | `velt:child_process` | process spawning and pipes |
 | `velt:udp`, `velt:dns` | sockets and the system resolver |
 | `velt:bigint` | arbitrary-precision integers (dashu-int) |
-| `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt |
+| `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt (on the CPU's SHA instructions through `velt:simd` where it has them) |
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
 | `velt:html` | `escapeHtml` is one runtime pass |
@@ -83,7 +85,7 @@ what Velt can't do on its own:
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
+Pure Velt: `velt:path`, `velt:math`, `velt:mem`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
 `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals) and `velt:json`; `velt:jsx`
 too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
 runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in

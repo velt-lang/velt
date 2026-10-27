@@ -1,0 +1,36 @@
+500 200 true -250
+<hi>! ?<hi> <hi>1 NaN
+[object Object] NaN true
+1000 1000 true true 1000
+NaN [object Set]1 [object Map]
+NaN false false
+true true true false true
+6 number
+123
+12 xy
+12 14 14
+[ 12, 15 ] 12
+3
+27
+108
+109
+54
+6
+9
+4
+2
+1
+2
+4
+-Infinity -0 NaN 1.4142135623730951
+false true true true false
+11 11 19 10! $10 [object Object]
+false false true true false
+true true true false true
+42 42 true dflt1 true dflt
+2 2
+14 71 true true
+6 10 true true [object Object]
+false false true false NaN
+1000 true string
+true true true true true true true

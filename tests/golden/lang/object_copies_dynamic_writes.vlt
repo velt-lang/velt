@@ -1,0 +1,41 @@
+// check: no leaks
+// Writes through `any` reach only objects the program has made an `any` (#1383): a conversion
+// that copies an `Options` (to read one field) or an `AppContext` (into a parameter that reads
+// its map) is not told apart by a write through an unrelated `any`.
+interface Options {
+  name?: string;
+  flag?: boolean;
+}
+interface RequiredOptions {
+  hint?: string;
+  flag?: boolean;
+}
+interface AppContext {
+  provides: Map<string, number>;
+  app: string;
+}
+
+function hintOf(o: Options | undefined): string {
+  return (o as RequiredOptions | undefined)?.flag === true ? "flagged" : "plain";
+}
+
+function listProvides(list: string[], ctx: { provides?: Map<string, number> } | null): string[] {
+  const out = list.slice();
+  if (ctx && ctx.provides) {
+    for (const [k, v] of ctx.provides) out.push(k + "=" + v);
+  }
+  return out;
+}
+
+function poke(x: any, k: string, v: unknown): void {
+  x[k] = v;
+}
+
+const box: any = { a: 1, b: "x" };
+poke(box, "a", 2);
+box.b = "y";
+console.log(JSON.stringify(box));
+const ctx: AppContext = { provides: new Map([["x", 1]]), app: "a" };
+ctx.provides.set("y", 2);
+console.log(listProvides(["l"], ctx).join(","));
+console.log(hintOf({ flag: true }), hintOf({ name: "n" }), hintOf(undefined));

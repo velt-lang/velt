@@ -61,8 +61,11 @@ impl FnCx<'_, '_> {
             ast::PatternKind::Ident(name) => self.binding(name, ty, ctx),
             ast::PatternKind::Object { fields, rest } => {
                 if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
+                    // Declarations and parameters take the rest (`object_rest.rs`).
+                    self.cx.err(
+                        "`...rest` in this object pattern is not supported yet (only in `const` and `let` declarations and parameters)",
+                        r.span,
+                    );
                 }
                 self.object_pattern(fields, ty, ctx)
             }
@@ -119,19 +122,24 @@ impl FnCx<'_, '_> {
                     x
                 }
                 None => {
-                    if !self.cx.ty.is_bottom(ty) {
+                    if !self.cx.ty.is_bottom(ty)
+                        && name.name != velt_syntax::REPORTED_KEY
+                        && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
+                    {
                         let tn = self.cx.display(ty);
-                        self.cx.err(
-                            format!("no field `{}` on type `{tn}`", name.name),
-                            name.span,
-                        );
+                        let msg = match name.name.starts_with('[') && !name.name.starts_with("[Symbol.") {
+                            // `{ [k]: v }` with a `k` that is not a constant naming a field.
+                            true => format!(
+                                "a computed key in a destructuring pattern must name a field of `{tn}` through a constant (`[KEY]`); a key known only at run time is not supported yet: read it with `o{}`",
+                                name.name
+                            ),
+                            false => format!("no field `{}` on type `{tn}`", name.name),
+                        };
+                        self.cx.err(msg, name.span);
                     }
                     (0, err)
                 }
             };
-            if self.binds_promise(fty) && self.cx.class_of(ty).is_some() {
-                self.promise_out_of_object(fty, sub.span);
-            }
             let sp = self.pattern(sub, fty, ctx);
             out.push((idx, sp));
         }
@@ -173,9 +181,6 @@ impl FnCx<'_, '_> {
                 P::Tuple(pats)
             }
             TyKind::Array(e) => {
-                if !elems.is_empty() {
-                    self.reject_promise_destructuring(e, span);
-                }
                 let pats = elems.iter().map(|p| self.pattern(p, e, ctx)).collect();
                 let rest = rest.map(|r| {
                     if !self.cx.is_copy(e) && !self.cx.is_shared_value(e) {

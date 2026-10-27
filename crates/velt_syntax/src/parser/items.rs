@@ -15,12 +15,20 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !self.at(Tok::Eof) {
             let start = self.pos;
+            if self.at_module_syntax() {
+                self.saw_module_syntax = true;
+            }
             match self.peek() {
                 Tok::Semi => self.bump(),
                 Tok::RBrace => {
                     let span = self.cur_span();
                     self.error("unexpected `}`", span);
                     self.bump();
+                }
+                _ if self.at_ambient() => {
+                    if self.parse_ambient().is_err() {
+                        self.sync_item(start);
+                    }
                 }
                 _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {
@@ -48,6 +56,10 @@ impl<'a> Parser<'a> {
         if !stmts.is_empty() {
             self.finish_script(&mut items, stmts);
         }
+        if let Some(span) = self.import_meta {
+            items.push(self.import_meta_import());
+            items.push(self.import_meta_item(span));
+        }
         Module {
             items,
             span: Span::new(self.file, 0, self.src.len() as u32),
@@ -57,6 +69,13 @@ impl<'a> Parser<'a> {
 
     /// One item, with optional `export`. `top` is false for items nested in blocks.
     pub(super) fn parse_item(&mut self, top: bool) -> PResult<Item> {
+        let outer = self.begin_statement();
+        let item = self.parse_item_here(top);
+        self.end_statement(outer);
+        item
+    }
+
+    fn parse_item_here(&mut self, top: bool) -> PResult<Item> {
         let lo = self.cur_lo();
         let mut exported = self.at_kw(Kw::Export);
         if exported {
@@ -93,7 +112,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
+    pub(super) fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
         let kind = match self.cur_kw() {
             Some(Kw::Import) => {
                 if !import_ok {
@@ -103,7 +122,7 @@ impl<'a> Parser<'a> {
                 ItemKind::Import(self.parse_import()?)
             }
             Some(Kw::Function) => ItemKind::Function(self.parse_fn_decl(lo, false)?),
-            Some(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+            Some(Kw::Async) if self.at_async_function() => {
                 self.bump();
                 ItemKind::Function(self.parse_fn_decl(lo, true)?)
             }
@@ -111,9 +130,7 @@ impl<'a> Parser<'a> {
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
             Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
-            Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => {
-                ItemKind::TypeAlias(self.parse_type_alias()?)
-            }
+            Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => self.parse_type_alias_item()?,
             Some(Kw::Const | Kw::Let) if self.at_class_binding() => {
                 ItemKind::Class(self.parse_class_binding()?)
             }
@@ -122,7 +139,17 @@ impl<'a> Parser<'a> {
                 self.expect_semi()?;
                 ItemKind::Var(var)
             }
+            Some(Kw::Declare) if self.at_augment() => ItemKind::Augment(self.parse_augment()?),
+            Some(Kw::Declare) if self.at_namespace(1) => {
+                ItemKind::Namespace(self.parse_namespace()?)
+            }
+            None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
+            _ if self.at_var_decl() => {
+                let var = self.parse_var_decl()?;
+                self.expect_semi()?;
+                ItemKind::Var(var)
+            }
             _ if self.at_using_decl() => {
                 let span = self.cur_span();
                 self.error(
@@ -148,19 +175,21 @@ impl<'a> Parser<'a> {
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
-        self.expect_semi()?;
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
         Ok(sig)
     }
 
     /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
-    /// signature ending in `;` is a TypeScript-form overload: the declarations of the same name
-    /// that follow it, up to the one with a body, are parsed with it (`FnDecl::overloads`).
+    /// signature ending in `;` (or a line break: automatic semicolon insertion) is a
+    /// TypeScript-form overload: the declarations of the same name that follow it, up to the one
+    /// with a body, are parsed with it (`FnDecl::overloads`).
     fn parse_fn_decl(&mut self, lo: u32, is_async: bool) -> PResult<FnDecl> {
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
         let mut sigs: Vec<(FnSig, bool)> = vec![];
-        while self.at(Tok::Semi) {
-            self.bump(); // ;
+        while self.eat_signature_end() {
             self.signature_defaults(&sig);
             let (next_exported, next_async) = match self.at_function_after(&sig.name.name) {
                 Some(Ok(next)) => next,
@@ -184,7 +213,17 @@ impl<'a> Parser<'a> {
             exported = next_exported;
             sig = self.parse_fn_sig(next_lo, next_async)?;
         }
-        let body = self.parse_block()?;
+        let this_param = self.this_param.take();
+        let body = self.parse_fn_body()?;
+        // `this` in a function declaration is sema's to report, but for `this: void`. A
+        // function whose body doesn't use `this` (or with overloads or a generator, not
+        // supported yet) is called without it.
+        if !sigs.is_empty() || sig.is_generator || super::fn_exprs::own_this(&body).is_none() {
+            sig.this_param = None;
+        }
+        if this_param.is_some() && sig.this_param.is_none() {
+            self.check_fn_this(this_param, &body, false);
+        }
         // TypeScript's TS2383, at each signature exported differently from the implementation.
         for (s, e) in &sigs {
             if *e != exported {
@@ -275,48 +314,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A function expression at `function` (after `async`, with `is_async`): `function*
-    /// [name](...)[: R] { ... }`; the name may be left out (empty). Sema allows only generators.
-    pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
-        self.expect_kw(Kw::Function, "function")?;
-        let is_generator = self.eat(Tok::Star);
-        let name = match Self::is_ident_like(self.peek()) {
-            true => self.parse_binding_ident()?,
-            false => Ident {
-                name: String::new(),
-                span: self.span_from(lo),
-            },
-        };
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
-        let body = self.parse_block()?;
-        Ok(ExprKind::Function(Box::new(FnDecl {
-            sig,
-            body,
-            overloads: vec![],
-        })))
-    }
-
     /// `function name(...)` or `function* name(...)` (a generator).
     fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
         let name = self.parse_binding_ident()?;
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
-        Ok(sig)
+        self.parse_sig_rest(lo, name, is_async, is_generator)
     }
 
     /// After the function/method name: generics, parameters, optional return type and
-    /// `throws` clause.
+    /// `throws` clause, of a generator (`is_generator`) or not.
     pub(super) fn parse_sig_rest(
         &mut self,
         lo: u32,
         name: Ident,
         is_async: bool,
+        is_generator: bool,
     ) -> PResult<FnSig> {
         let generics = self.parse_generic_params()?;
-        let params = self.parse_params()?;
+        let params = self.parse_params(is_generator)?;
+        let this_param = self.this_type();
         let ret = if self.eat(Tok::Colon) {
             Some(self.parse_ret_type()?)
         } else {
@@ -330,7 +347,8 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
-            is_generator: false,
+            is_generator,
+            this_param,
             span: self.span_from(lo),
         })
     }
@@ -352,9 +370,29 @@ impl<'a> Parser<'a> {
             let name = self.parse_ident()?;
             let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
+                let lo = self.cur_lo();
+                self.eat(Tok::Pipe);
                 bounds.push(self.parse_type_no_union()?);
                 while self.eat(Tok::Amp) {
                     bounds.push(self.parse_type_no_union()?);
+                }
+                // `T extends A | B`: one bound, a union type (`A & B | C` is `(A & B) | C`).
+                if self.at(Tok::Pipe) {
+                    let first = match bounds.len() {
+                        1 => bounds.remove(0),
+                        _ => TypeExpr {
+                            kind: TypeExprKind::Intersection(std::mem::take(&mut bounds)),
+                            span: self.span_from(lo),
+                        },
+                    };
+                    let mut members = vec![first];
+                    while self.eat(Tok::Pipe) {
+                        members.push(self.parse_intersection()?);
+                    }
+                    bounds = vec![TypeExpr {
+                        kind: TypeExprKind::Union(members),
+                        span: self.span_from(lo),
+                    }];
                 }
             }
             let default = self.type_param_default(&out, &name)?;
@@ -419,10 +457,12 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// `( name: Type [= default], ... )`
-    pub(super) fn parse_params(&mut self) -> PResult<Vec<Param>> {
+    /// `( name: Type [= default], ... )`, of a `generator` or not (whose defaults run at the
+    /// call: [`Parser::check_param_defaults`]).
+    pub(super) fn parse_params(&mut self, generator: bool) -> PResult<Vec<Param>> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
+        self.parse_this_param()?;
         while !self.at(Tok::RParen) {
             let p = self.parse_param(params.len())?;
             if params.last().is_some_and(|q: &Param| q.rest) {
@@ -435,12 +475,14 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
-        self.check_param_defaults(&checked);
+        for i in self.check_param_defaults(&checked, generator) {
+            params[i].ty = super::param_patterns::applied_in_callee(params[i].ty.clone());
+        }
         Ok(params)
     }
 
     /// One parameter, the `index`-th: `name: T`, `name?: T`, `name: T = e`, `name = e` (the type
-    /// stated by the default, as for class fields), `...name: T[]`, or a destructuring pattern
+    /// stated by the default, as for class fields), `...name: T[]` (or another array type), or a destructuring pattern
     /// `[a, b]: T` / `{ a, b }: T = e`.
     pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
@@ -485,18 +527,14 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`.
+            // `name?: T` is `name: T | undefined = undefined`, as in TypeScript.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-            ty = super::types::or_null(ty);
+            default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
+            ty = super::types::optional_param(ty);
         }
         if rest {
-            if !matches!(ty.kind, TypeExprKind::Array(_)) {
-                self.error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    ty.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
             if let Some(d) = &default {
                 self.error("a rest parameter cannot have a default value", d.span);
             }
@@ -515,13 +553,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
+    /// `type Name<T> = T;` (the `;` may be left out before the `}` of a block, namespace or
+    /// `declare global` and at the end of the file, as everywhere in TypeScript).
+    pub(super) fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
         let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
-        self.expect_semi()?;
+        if !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
+            self.expect_semi()?;
+        }
         Ok(TypeAlias { name, generics, ty })
     }
 
@@ -530,6 +572,9 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let kind = if self.eat_kw(Kw::Const) {
             VarKind::Const
+        } else if self.at_var_decl() {
+            self.bump(); // var
+            VarKind::Let
         } else {
             self.expect_kw(Kw::Let, "let")?;
             VarKind::Let

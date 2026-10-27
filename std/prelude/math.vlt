@@ -77,8 +77,9 @@ export class Math {
   }
 
   /**
-   * Any number of values, like JS (`Math.max()` is -Infinity). The two-value call passes an
-   * empty rest array, which costs no allocation.
+   * Any number of values, like JS (`Math.max()` is -Infinity). A call with 2 to 16 plain
+   * arguments compiles to a balanced tree of `max2` calls (sema, `body/expr/math_minmax.rs`)
+   * and never builds the rest array; this body runs for spread calls and the other counts.
    */
   static max(a: f64 = -Infinity, b: f64 = -Infinity, ...rest: f64[]): f64 {
     let m = max2(a, b);
@@ -90,7 +91,8 @@ export class Math {
 
   /**
    * Returns the smaller of a set of supplied numeric expressions: any number of values, like JS
-   * (`Math.min()` is Infinity). NaN if any value is NaN.
+   * (`Math.min()` is Infinity). NaN if any value is NaN. Calls with 2 to 16 plain arguments
+   * compile to a tree of `min2` calls, as for `max`.
    */
   static min(a: f64 = Infinity, b: f64 = Infinity, ...rest: f64[]): f64 {
     let m = min2(a, b);
@@ -266,4 +268,16 @@ export function __floatIndex(x: f64): usize {
     return x as usize;
   }
   panic(`index out of bounds: the index is ${x}`);
+}
+
+/**
+ * A `number` given as a position or lane index of a SIMD method (the compiler inserts the call,
+ * `sema` `numbers.rs`): a whole number from 0 up as itself. Anything else is the largest `usize`,
+ * which is out of range everywhere, so `fits` gives `false` and the others a `RangeError`.
+ */
+export function __floatPosition(x: f64): usize {
+  if (x >= 0.0 && __intrinsic_trunc(x) == x && x < 18446744073709551616.0) {
+    return x as usize;
+  }
+  return ~(0 as usize);
 }

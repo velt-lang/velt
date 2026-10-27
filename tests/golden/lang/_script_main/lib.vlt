@@ -1,0 +1,8 @@
+// A module that declares `main` and calls it: the call runs when the module is evaluated.
+export const greeting = "hello";
+
+function main() {
+  console.log("lib main");
+}
+
+main();

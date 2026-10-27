@@ -1,7 +1,7 @@
 //! Which bytes of the frame each place names, and how the whole poll function uses the frame
 //! (the facts `mod.rs` chooses promoted slots from).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{
     AggId, AggLayout, Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
@@ -38,7 +38,7 @@ pub(super) struct Frame<'a> {
     pub param: Local,
     pub state: AggId,
     /// `q` → path, for locals assigned once with `q = &(*frame as State).path`.
-    pub derived: HashMap<Local, Vec<u32>>,
+    pub derived: FxHashMap<Local, Vec<u32>>,
 }
 
 impl Frame<'_> {
@@ -163,9 +163,9 @@ impl Frame<'_> {
 }
 
 /// `q = &(*frame as State).f.g…` definitions of pointer locals assigned exactly once.
-pub(super) fn derived_pointers(frame: &Frame, func: &Function) -> HashMap<Local, Vec<u32>> {
+pub(super) fn derived_pointers(frame: &Frame, func: &Function) -> FxHashMap<Local, Vec<u32>> {
     let usage = Usage::of(func);
-    let mut out = HashMap::new();
+    let mut out = FxHashMap::default();
     for s in func.blocks.iter().flat_map(|b| &b.stmts) {
         let Stmt::Assign(dst, Rvalue::AddrOf(src)) = s else {
             continue;

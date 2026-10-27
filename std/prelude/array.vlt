@@ -138,15 +138,15 @@ extend<T> Array<T> {
     return acc;
   }
 
-  /** First element matching `pred` (see header), or null. */
-  find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
+  /** First element matching `pred` (see header), or `undefined`. */
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
     if (!__intrinsic_may_alias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (pred(this[i], i as i64)) {
           return __intrinsic_share(this[i]);
         }
       }
-      return null;
+      return undefined;
     }
     let n = this.length;
     for (let i: usize = 0; i < n; i++) {
@@ -157,7 +157,7 @@ extend<T> Array<T> {
         n = this.length;
       }
     }
-    return null;
+    return undefined;
   }
 
   /** Index of the first element matching `pred`, or -1. */
@@ -182,10 +182,18 @@ extend<T> Array<T> {
     return -1;
   }
 
-  /** Last element matching `pred` (see header), or null. */
-  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
-    const i = this.findLastIndex(pred);
-    return i < 0 || i as usize >= this.length ? null : __intrinsic_share(this[i as usize]);
+  /** Last element matching `pred` (see header), or `undefined`. */
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    // Calls `pred` itself, as `find` does: handing it to another method beside `this` would
+    // count as a call that may change `this` (an `RwLock.read` callback could not use it).
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if ((!__intrinsic_may_alias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return __intrinsic_share(this[i]);
+      }
+    }
+    return undefined;
   }
 
   /** Index of the last element matching `pred`, or -1. */
@@ -201,13 +209,13 @@ extend<T> Array<T> {
   }
 
   /**
-   * The element at `index` (negative counts from the end; see header), or null when
+   * The element at `index` (negative counts from the end; see header), or `undefined` when
    * out of range.
    */
-  at(index: i64): T | null {
+  at(index: i64): T | undefined {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
-      return null;
+      return undefined;
     }
     return __intrinsic_share(this[i as usize]);
   }
@@ -282,12 +290,12 @@ extend<T> Array<T> {
   }
 
   /**
-   * Position of the first element `==` `x`, or -1. `==` compares objects by identity and numbers
-   * by value, like JS's `===`, so `NaN` is never found (JS `indexOf` semantics).
+   * Position of the first element `===` `x`, or -1: objects by identity, numbers by value, so
+   * `NaN` is never found and `null` does not find `undefined` (JS `indexOf` semantics).
    */
   indexOf(x: T): i64 {
     for (let i: usize = 0; i < this.length; i++) {
-      if (this[i] == x) {
+      if (this[i] === x) {
         return i as i64;
       }
     }
@@ -303,7 +311,7 @@ extend<T> Array<T> {
     let i = this.length;
     while (i > 0) {
       i--;
-      if (this[i] == x) {
+      if (this[i] === x) {
         return i as i64;
       }
     }
@@ -312,12 +320,24 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
-   * `includes`, `NaN` is never found.
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
    * @param x - The element to search for.
    */
   includes(x: T): bool {
-    return this.indexOf(x) >= 0;
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `===` itself can compare otherwise: the number `NaN`.
+    if (x === x) {
+      return false;
+    }
+    for (let i: usize = 0; i < this.length; i++) {
+      if (__intrinsic_includes_eq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -348,6 +368,49 @@ extend<T> Array<T> {
       out.push(__intrinsic_share(other[i]));
     }
     return out;
+  }
+
+  /**
+   * Exchanges elements `i` and `j` (each must be below the length): their bits change places,
+   * nothing is copied or dropped.
+   */
+  swap(i: usize, j: usize) {
+    __intrinsic_array_swap(this, i, j);
+  }
+
+  /**
+   * Rotates the elements in `[start, end)` one place down: the one at `start` moves to `end - 1`
+   * and the others one place towards `start`, by one memory move (what `splice` would do with
+   * a removal and an insert). `end` must be at most the length, `start` at most `end`.
+   */
+  rotateLeft(start: usize, end: usize) {
+    checkRange(start, end, this.length);
+    if (end - start > 1) {
+      __intrinsic_array_rotate_left(this, start, end - 1);
+    }
+  }
+
+  /** As `rotateLeft`, one place up: the element at `end - 1` moves to `start`. */
+  rotateRight(start: usize, end: usize) {
+    checkRange(start, end, this.length);
+    if (end - start > 1) {
+      __intrinsic_array_rotate_right(this, start, end - 1);
+    }
+  }
+
+  /**
+   * A hint that element `i` is read soon: the CPU starts loading it, so that the read does not
+   * wait for memory (a hint only, it changes nothing; an index past the end does nothing).
+   */
+  prefetch(i: usize) {
+    if (i < this.length) {
+      __intrinsic_array_prefetch(this, i);
+    }
+  }
+
+  /** Makes room for `extra` more elements without growing again (the length stays). */
+  reserve(extra: usize) {
+    __intrinsic_array_reserve(this, extra);
   }
 
   /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
@@ -391,13 +454,13 @@ extend<T> Array<T> {
   }
 
   /**
-   * Removes and returns the first element, or null when the array is empty (JS: undefined).
+   * Removes and returns the first element, or `undefined` when the array is empty.
    * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
    * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
    */
-  shift(): T | null {
+  shift(): T | undefined {
     if (this.length == 0) {
-      return null;
+      return undefined;
     }
     return __intrinsic_array_remove(this, 0);
   }
@@ -442,16 +505,14 @@ extend<T> Array<T> {
 
   /**
    * `xs.length = n`, as in JS: drops the elements from `n` on (`xs.length = 0` empties the
-   * array). Like JS, a length that is not a whole number from 0 to 2^32 - 1 (negative,
-   * fractional, `NaN`) panics with `RangeError: Invalid array length`. A larger `n` panics too:
-   * JS would add empty slots, which Velt has no value for (push the elements, or build the
-   * array with `new Array<T>(n).fill(v)`).
+   * array). A length that is not a whole number from 0 to 2^52 - 1, the most elements a Velt
+   * array holds (JS stops at 2^32 - 1), panics with `RangeError: Invalid array length`
+   * (`arrayLength`). A larger `n` than the array's length panics too: JS would add empty
+   * slots, which Velt has no value for (push the elements, or build the array with
+   * `new Array<T>(n).fill(v)`).
    */
   set length(n: number) {
-    if (!(n >= 0 && __intrinsic_trunc(n) == n && n <= 4294967295)) {
-      panic("RangeError: Invalid array length");
-    }
-    const len = n as usize;
+    const len = arrayLength(n);
     if (len > this.length) {
       panic(
         `cannot grow an array by setting its length (from ${this.length} to ${len}): JS would add empty slots, which Velt has no value for; push the elements instead`,
@@ -741,12 +802,28 @@ function clampPosition(pos: i64, len: usize): usize {
   return pos > n ? len : pos as usize;
 }
 
+// An array length `n` as JS's `ArrayCreate` and `length` setter take it: a whole number from 0
+// up (else `RangeError: Invalid array length`, as in Node), and at most 2^52 - 1, the most
+// elements a Velt array holds (JS stops at 2^32 - 1; past it, the limit's `RangeError`).
+function arrayLength(n: number): usize {
+  if (!(n >= 0 && __intrinsic_trunc(n) == n)) {
+    panic("RangeError: Invalid array length");
+  }
+  if (n > 4503599627370495) {
+    panic(
+      "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
+    );
+  }
+  return n as usize;
+}
+
 /**
  * `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
- * of `v` in one allocation.
+ * of `v` in one allocation. `n` is a length as `xs.length = n` takes it (`arrayLength`):
+ * `new Array(-1)`, `new Array(1.5)` and `new Array(NaN)` are a `RangeError`, as in Node.
  */
-export function __arrayFilled<T>(n: i64, v: T): T[] {
-  const len: usize = n > 0 ? n as usize : 0;
+export function __arrayFilled<T>(n: number, v: T): T[] {
+  const len = arrayLength(n);
   const out: T[] = __intrinsic_array_with_capacity(len);
   for (let i: usize = 0; i < len; i++) {
     out.push(__intrinsic_share(v));
@@ -754,8 +831,17 @@ export function __arrayFilled<T>(n: i64, v: T): T[] {
   return out;
 }
 
-/** `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index. */
-export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
+/**
+ * `new Array<T>(x).fill(v)` with an `x` that is no number (sema `array_ctor`): as in JS, an
+ * array of the one element `x`, which `fill` replaces with `v`. Sema passes `x` (evaluated
+ * first, then dropped) and `[v]`.
+ */
+export function __arrayOne<X, U>(_x: X, a: U): U {
+  return a;
+}
+
+/** `Array.from({ length: n }, (_, i) => f(i))`: `f(i)` for each index, throwing what `f` throws. */
+export function __arrayFromLength<U, E>(n: i64, f: (i: i64) => U throws E): U[] throws E {
   const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
   for (let i = 0; i < n; i++) {
     out.push(f(i));
@@ -775,4 +861,34 @@ function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
     i++;
     j--;
   }
+}
+
+extend<T> Array<T> {
+  // Kept last, so the lines above keep their numbers in panic locations.
+
+  /**
+   * `this[index]` read where the program expects `T | undefined` (the compiler calls it, sema
+   * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
+   * of range, negative or not a whole number), as in JS.
+   */
+  __get(index: number): T | undefined {
+    const i = __floatPosition(index);
+    if (i >= this.length) {
+      return undefined;
+    }
+    return __intrinsic_share(this[i]);
+  }
+}
+
+// `[start, end)` lies in an array of `len` elements, else a RangeError panic.
+function checkRange(start: usize, end: usize, len: usize) {
+  if (start > end || end > len) {
+    rangeOutside(start, end, len);
+  }
+}
+
+// The panic of `checkRange`, out of line: a function that never returns is not inlined, so the
+// message's formatting stays here instead of in every caller of a checked method.
+function rangeOutside(start: usize, end: usize, len: usize): never {
+  panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
 }

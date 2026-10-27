@@ -1,0 +1,9 @@
+// `xs.length = n` accepts lengths up to 2^52 - 1 (JS stops at 2^32 - 1); past that it is a
+// `RangeError` naming Velt's limit, and the array is unchanged. Node throws its
+// `RangeError: Invalid array length` here too.
+function main() {
+  const xs = [1, 2, 3];
+  console.log(xs.length);
+  xs.length = 2 ** 53;
+  console.log(xs.length);
+}

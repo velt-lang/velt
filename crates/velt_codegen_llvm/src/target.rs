@@ -132,6 +132,19 @@ impl Target {
         self.triple.starts_with("x86_64")
     }
 
+    /// Whether read-modify-writes call libgcc's / compiler-rt's `__aarch64_*` helpers, which use
+    /// the LSE instructions when the CPU has them (clang's `-moutline-atomics`, as Rust's
+    /// arm64 Linux targets): generic armv8-a has no LSE, so inline code would be LL/SC loops on
+    /// every CPU. Apple arm64 always has LSE and gets the instructions inline.
+    pub fn outline_atomics(&self) -> bool {
+        self.os == Os::Linux && self.has_neon()
+    }
+
+    /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
+    pub fn has_neon(&self) -> bool {
+        self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")
+    }
+
     /// Whether this is a WebAssembly target.
     pub fn is_wasm(&self) -> bool {
         matches!(self.os, Os::Wasi | Os::WasmBrowser)
@@ -176,6 +189,13 @@ mod tests {
         let web = normalize("wasm32-unknown-unknown").unwrap();
         assert_eq!(web.os, Os::WasmBrowser);
         assert_eq!(web.function_attributes(), ["nounwind"]);
+        assert!(normalize("aarch64-unknown-linux-gnu")
+            .unwrap()
+            .outline_atomics());
+        assert!(!normalize("aarch64-apple-darwin").unwrap().outline_atomics());
+        assert!(!normalize("x86_64-unknown-linux-gnu")
+            .unwrap()
+            .outline_atomics());
         assert!(is_wasm(" wasm32-wasip1") && !is_wasm("aarch64-apple-darwin"));
         assert!(!normalize("aarch64-apple-darwin")
             .unwrap()

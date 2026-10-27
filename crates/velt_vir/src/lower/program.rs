@@ -1,7 +1,8 @@
 //! Program-level lowering state: interning of externs and static data, and the worklist of
 //! functions to build ([`Work`] → [`FuncId`], each built exactly once, in request order).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 use velt_sema::hir::{self, DefId};
 
@@ -21,9 +22,12 @@ impl<'h> Cx<'h> {
     ) -> Self {
         Cx {
             hir,
+            prelude_proxy: None,
             native_inits: vec![],
+            view_fn: None,
             uses_placement: false,
             cell_checks: false,
+            no_await_steps: false,
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),
@@ -32,32 +36,69 @@ impl<'h> Cx<'h> {
                 fields: vec![(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)],
             }],
             externs: vec![],
-            extern_map: HashMap::new(),
+            extern_map: FxHashMap::default(),
             statics: vec![],
-            static_map: HashMap::new(),
-            tables: HashMap::new(),
+            module_desc: None,
+            reassigned_slots: None,
+            prelude_error: None,
+            tla_marks: None,
+            static_map: FxHashMap::default(),
+            tables: FxHashMap::default(),
             funcs: vec![],
-            work_map: HashMap::new(),
+            work_map: FxHashMap::default(),
             queue: VecDeque::new(),
-            building: HashSet::new(),
-            asyncs: HashMap::new(),
-            by_ref_params: HashSet::new(),
-            shared_envs: HashMap::new(),
+            iface_glues: vec![],
+            building: FxHashSet::default(),
+            asyncs: FxHashMap::default(),
+            by_ref_params: FxHashSet::default(),
+            shared_envs: FxHashMap::default(),
             lay: Layouts::default(),
             locs: None,
             debug: None,
-            tracked: HashMap::new(),
-            str_objects: HashMap::new(),
+            tracked: FxHashMap::default(),
+            tracked_size: FxHashMap::default(),
+            quiet: FxHashMap::default(),
+            str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            ext_memo: Default::default(),
+            exists_memo: Default::default(),
             own_clones: None,
-            honoured_clones: HashMap::new(),
-            dyn_modes_memo: HashMap::new(),
+            honoured_clones: FxHashMap::default(),
+            dyn_modes_memo: FxHashMap::default(),
             json_key_memo: None,
             anon: Default::default(),
+            cur_def: None,
+            cur_mode: super::LkMode::Plain,
+            cur_own: false,
+            nothing_clashes: vec![],
+            map_fields: 0,
         }
+    }
+
+    /// Errors for `nothing_clashes`, one per function.
+    pub(super) fn nothing_clash_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut seen = FxHashSet::default();
+        let mut out = vec![];
+        for d in &self.nothing_clashes {
+            if !seen.insert(*d) {
+                continue;
+            }
+            let (name, span) = match d.map(|d| self.hir.def(d)) {
+                Some(hir::Def::Fn(f)) => (f.name.rsplit("::").next().unwrap_or(&f.name), f.span),
+                _ => ("the program", velt_common::Span::DUMMY),
+            };
+            out.push(
+                velt_common::Diagnostic::error(
+                    format!("an instance of `{name}` would hold both `null` and `undefined` in one value, which is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("a type argument with one nothing (`T | undefined`) meets an option with the other (`T | null`) in this code"),
+            );
+        }
+        out
     }
 
     /// Queue the user entry (`velt_main` is queued once everything it reaches is lowered:
@@ -91,7 +132,47 @@ impl<'h> Cx<'h> {
     }
 
     /// The function built for `work`; queued for building on first request.
+    /// The function for `work`, whose address may be taken: it may run in any mode.
     pub(super) fn func(&mut self, work: Work) -> FuncId {
+        self.func_in(work, super::LkMode::Checked)
+    }
+
+    /// The function for `work` called directly from code of read mode `mode`: it runs in the
+    /// same mode.
+    pub(super) fn func_direct(&mut self, work: Work, mode: super::LkMode) -> FuncId {
+        self.func_in(work, mode)
+    }
+
+    /// The function for `read` callback literal `work` that code outside read mode calls
+    /// (`Work::ReadOwn`).
+    pub(super) fn func_read_own(&mut self, work: Work) -> FuncId {
+        match self.has_lock_set() {
+            true => self.func_in(Work::ReadOwn(Box::new(work)), super::LkMode::Plain),
+            false => self.func_in(work, super::LkMode::Read),
+        }
+    }
+
+    fn func_in(&mut self, work: Work, mode: super::LkMode) -> FuncId {
+        use super::LkMode as M;
+        // Without a lock set every function counts the same way: one version.
+        let fixed = matches!(
+            work,
+            Work::Checked(_)
+                | Work::Read(_)
+                | Work::ReadOwn(_)
+                | Work::Deferred(_)
+                | Work::Main
+                | Work::ModuleInit(..)
+                | Work::ArrayGrow
+                | Work::ArrayTooLong
+                | Work::Oob(_)
+        ) || !self.has_lock_set();
+        let work = match (fixed, mode) {
+            (true, _) | (false, M::Plain) => work,
+            (false, M::Read) => Work::Read(Box::new(work)),
+            (false, M::Checked) => Work::Checked(Box::new(work)),
+            (false, M::Deferred) => Work::Deferred(Box::new(work)),
+        };
         if let Some(&id) = self.work_map.get(&work) {
             return id;
         }
@@ -108,7 +189,29 @@ impl<'h> Cx<'h> {
         if self.funcs[fid.0 as usize].is_some() || !self.building.insert(fid) {
             return;
         }
-        let func = super::FnLower::build(self, work);
+        let outer = self.cur_def;
+        self.cur_def = work_def(work).or(outer);
+        let outer_mode = std::mem::take(&mut self.cur_mode);
+        let func = match work {
+            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
+                let (mode, suffix) = match work {
+                    Work::Read(_) => (super::LkMode::Read, "_R"),
+                    Work::ReadOwn(_) => (super::LkMode::Read, "_O"),
+                    Work::Deferred(_) => (super::LkMode::Deferred, "_D"),
+                    _ => (super::LkMode::Checked, "_K"),
+                };
+                self.cur_mode = mode;
+                self.cur_own = matches!(work, Work::ReadOwn(_));
+                let mut f = super::FnLower::build(self, w);
+                self.cur_own = false;
+                // `_K` / `_R` follow no mangled name or suffix the plain version has.
+                f.symbol.push_str(suffix);
+                f
+            }
+            _ => super::FnLower::build(self, work),
+        };
+        self.cur_mode = outer_mode;
+        self.cur_def = outer;
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }
@@ -116,6 +219,24 @@ impl<'h> Cx<'h> {
     /// Instance of a user function with concrete type args.
     pub(super) fn func_for(&mut self, def: DefId, targs: Vec<hir::TyId>) -> FuncId {
         self.func(Work::Fn(def, targs))
+    }
+
+    /// Whether the code built so far starts promises or tasks (a synchronous `main` then runs as a
+    /// task, entry.rs).
+    pub(super) fn reaches_tasks(&self) -> bool {
+        self.extern_map
+            .keys()
+            .any(|s| s.starts_with("velt_rt_fut_start") || s.starts_with("velt_rt_spawn"))
+    }
+
+    /// [`func_for`](Self::func_for), called directly from code that is `checked` or not.
+    pub(super) fn func_for_direct(
+        &mut self,
+        def: DefId,
+        targs: Vec<hir::TyId>,
+        mode: super::LkMode,
+    ) -> FuncId {
+        self.func_direct(Work::Fn(def, targs), mode)
     }
 
     pub(super) fn rt(&mut self, r: Rt) -> ExternId {
@@ -192,5 +313,30 @@ impl<'h> Cx<'h> {
         });
         self.str_objects.insert(s.to_string(), id);
         id
+    }
+}
+
+/// The function `work` builds an instance (or a part) of.
+fn work_def(work: &Work) -> Option<DefId> {
+    match work {
+        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),
+        Work::Fn(d, _)
+        | Work::Thunk(_, d, _)
+        | Work::EnvDrop(d, _)
+        | Work::EnvDropFrame(d, _)
+        | Work::EnvClone(d, _)
+        | Work::EnvTransfer(d, _)
+        | Work::Tracked(d, _, _)
+        | Work::Frozen(d, _, _, _, _)
+        | Work::Poll(d, _)
+        | Work::AsyncDrop(d, _)
+        | Work::AsyncCloseStart(d, _)
+        | Work::GenThrow(d, _)
+        | Work::ValuePoll(d, _)
+        | Work::ValueDrop(d, _)
+        | Work::HandlerInit(d, _)
+        | Work::GenNew(d, _)
+        | Work::GenFree(d, _) => Some(*d),
+        _ => None,
     }
 }

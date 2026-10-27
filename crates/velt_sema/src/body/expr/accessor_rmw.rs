@@ -19,12 +19,13 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::assign_paths::is_pure_value;
 use super::setters::{side_effect_free, synth};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, LocalId, UseMode};
 
-const RECEIVER: &str = "<receiver>";
+pub(super) const RECEIVER: &str = "<receiver>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
 
@@ -58,9 +59,13 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        let later = match rmw {
+            Rmw::Compound(_, v) | Rmw::Logical(_, v) => Some(v),
+            Rmw::Update(..) => None,
+        };
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, later, &mut stmts);
         let e = self.accessor_rmw_in(recv, prop, rmw, as_value, span, &mut stmts);
         self.pop_scope();
         e
@@ -224,7 +229,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
         let v = match self.setter_param_ty(recv.ty, &prop.name) {
             Some(t) => self.value_for(value, t),
             None => self.expr(value, None, Want::Move),
@@ -255,16 +260,24 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The receiver to read and write through: `obj` itself when evaluating it again has no
-    /// effect (a variable, `this`, a path of fields), else a temporary holding it. A path through
-    /// a getter (`h.inner.value++`) runs that getter once, as in JS.
-    fn receiver_once(
+    /// The receiver to read and write through: `obj` itself when evaluating it again names the
+    /// same object whatever runs in between (`this`, a `const`, or a variable that only this
+    /// function's own code assigns while `later`, the value evaluated between the read and the
+    /// write, assigns nothing), else a temporary holding it. A path through a getter
+    /// (`h.inner.value++`) runs that getter once, as in JS; and the setter runs on the object
+    /// named before the getter and `later` ran, even when one of them assigns another object
+    /// to the variable, field or module `let` naming it (`holder.x.p += f()`).
+    pub(super) fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
         object: &ast::Expr,
+        later: Option<&ast::Expr>,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        if side_effect_free(object) && is_field_path(&obj) {
+        let stable = is_this(object)
+            || self.const_local(&obj)
+            || (later.is_none_or(is_pure_value) && self.only_written_here(&obj));
+        if stable && side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
         set_place_mode(&mut obj, UseMode::Move);
@@ -273,9 +286,51 @@ impl FnCx<'_, '_> {
         self.mk(H::Local(l, UseMode::Borrow), ty, span)
     }
 
+    /// Is `obj` a variable that no call can assign another object to: a module `const`, or a
+    /// local of this function that no closure assigns? (A field, or a module `let`, may be
+    /// assigned by the getter that runs before the setter.)
+    fn only_written_here(&self, obj: &hir::Expr) -> bool {
+        match obj.kind {
+            H::Global(d) => self.cx.global(d).is_some_and(|g| !g.mutable),
+            H::Local(l, _) => {
+                let kind = self.f.kinds.get(l.0 as usize);
+                let name = &self.f.locals[l.0 as usize].name;
+                !matches!(kind, Some(LocalKind::Capture) | None)
+                    && !self.f.closure_assigned.contains_key(name)
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `obj` a `const` of this function? Nothing evaluated later can make it name another
+    /// object, so it needs no temporary (one would count a reference per statement).
+    fn const_local(&self, obj: &hir::Expr) -> bool {
+        let H::Local(l, _) = obj.kind else {
+            return false;
+        };
+        // A capture of an enclosing function's `const` is one too.
+        let (mut frame, mut l) = (&self.f, l);
+        let mut outer = self.outer.iter().rev();
+        loop {
+            match frame.kinds.get(l.0 as usize) {
+                Some(LocalKind::Const | LocalKind::Using) => return true,
+                Some(LocalKind::Capture) => {
+                    let Some(c) = frame.captures.iter().find(|c| c.inner == l) else {
+                        return false;
+                    };
+                    let Some(up) = outer.next() else {
+                        return false;
+                    };
+                    (frame, l) = (up, c.outer);
+                }
+                _ => return false,
+            }
+        }
+    }
+
     /// `if` condition under which `old op= v` assigns: `old == null` for `??=`, `!old` for
     /// `||=`, `old` for `&&=`.
-    fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
+    pub(super) fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
         let test = match op {
             ast::BinaryOp::Nullish => {
                 let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
@@ -294,7 +349,12 @@ impl FnCx<'_, '_> {
     }
 
     /// `const <name> = init` (appended to `stmts`), visible by `name` in the innermost scope.
-    fn bind_temp(&mut self, name: &str, init: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> LocalId {
+    pub(super) fn bind_temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> LocalId {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
@@ -305,7 +365,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The value of temporary `l` as the result of the block.
-    fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
+    pub(super) fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
         let mode = if self.cx.is_copy(ty) {
             UseMode::Copy
         } else {
@@ -315,8 +375,17 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// `this` (parentheses removed), which nothing can assign another object to.
+fn is_this(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => is_this(inner),
+        _ => false,
+    }
+}
+
 /// Is `e` a variable or a path of fields of one (no getter or other call on the way)?
-fn is_field_path(e: &hir::Expr) -> bool {
+pub(super) fn is_field_path(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } => is_field_path(base),
@@ -324,7 +393,7 @@ fn is_field_path(e: &hir::Expr) -> bool {
     }
 }
 
-fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
+pub(super) fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
     synth(
         ast::ExprKind::Binary {
             op,
@@ -335,11 +404,11 @@ fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast:
     )
 }
 
-fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
+pub(super) fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
     hir::Stmt { kind, span }
 }
 
-fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
+pub(super) fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
     hir::Block {
         stmts,
         value: value.map(Box::new),

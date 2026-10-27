@@ -1,0 +1,14 @@
+// A wider object type converts to an alias with accessors as the same object, written through
+// it; a wider alias converts to the object type it spells out (#1501).
+type T = { get v(): number; set v(x: number) };
+type L = { get v(): number; set v(x: number); label: string };
+const wide = { v: 9, label: "w" };
+const t: T = wide;
+t.v = 10;
+console.log(wide.v, t.v);
+function take(x: { v: number; label: string }): string {
+  return x.label + x.v;
+}
+const lit: L = { v: 3, label: "a" };
+lit.v = 4;
+console.log(take(lit), take(wide));

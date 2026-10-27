@@ -1,0 +1,15 @@
+// Built-in string methods called on a string held in an `any` (#924), with arguments converted
+// as JavaScript converts them.
+const s: any = "  Hello, World  ";
+console.log(s.trim(), s.trimStart(), s.trimEnd(), s.toUpperCase(), s.toLowerCase());
+const t: any = "hello world";
+console.log(t.slice(1, 4), t.slice(-5), t.slice(), t.substring(3), t.substring(4, 1));
+console.log(t.indexOf("o"), t.indexOf("o", 5), t.indexOf("zz"), t.lastIndexOf("o"), t.indexOf());
+console.log(t.includes("wor"), t.includes("x"), t.startsWith("he"), t.startsWith("wo", 6), t.endsWith("ld"), t.endsWith("lo", 5));
+console.log(t.split(" "), t.split(""), t.split(), t.split("o", 2));
+console.log(t.replace("o", "0"), t.replaceAll("o", "0"), t.charAt(1), t.charAt(99), t.charCodeAt(0), t.charCodeAt(99));
+console.log(t.at(-1), t.at(99), t.repeat(2), "x".padStart(3), "x".padEnd(3, "-"), t.concat("!", 1, null));
+console.log(t.localeCompare("a"), t.toString(), t.valueOf(), t.length);
+// `split`'s limit is `ToUint32`: `-1` keeps every part, `0` none, 2**32 + 1 is 1.
+const abc: any = "a,b,c";
+console.log(abc.split(",", -1), abc.split(undefined, 0), abc.split(",", 4294967297), abc.split(",", 0), abc.split(",", NaN), abc.split(",", "2"));

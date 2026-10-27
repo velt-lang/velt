@@ -5,8 +5,10 @@
 //! definitions, impls of one interface, vtables and call chains that modification inference
 //! must propagate through. The fast test runs in CI; `cargo test -p velt_sema --release --test
 //! scaling -- --ignored --nocapture` runs the N = 100 / 1000 / 5000 sizes. The instantiation
-//! checks (record keys, JSON, promise copies) count their work, which these tests compare
-//! between sizes exactly instead of by CPU time.
+//! checks (record keys, JSON, promise copies), the type searches, the checks of arrows and of
+//! expressions and the resolution of exports count their work (`check_work`), which these tests
+//! compare between sizes exactly instead of by CPU time, which load on the machine tilts (#1502).
+//! Only `sema_time_grows_linearly`, which guards every pass at once, measures CPU time.
 
 mod common;
 
@@ -14,9 +16,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
 use common::process_work;
-use common::programs::{load_src, ok_src, repo_root, Loaded};
+use common::programs::{err_src, load_src, load_src_at, ok_src, repo_root, Loaded};
 use velt_sema::hir::PassMode;
-use velt_sema::{instantiation_work, InstantiationWork};
+use velt_sema::{check_work, instantiation_work, InstantiationWork};
 
 /// `n` generated units; `g{i}` calls `g{i-1}` except for every `chain`-th unit, which modifies
 /// the array itself (so the modification travels up `chain` calls).
@@ -58,14 +60,85 @@ fn generic_chains(n: usize) -> String {
         };
         out += &format!(
             "function k{i}<K>(s: string): number {{\n  return {keys};\n}}\n\
-             function p{i}<T>(xs: T[]): T | null {{\n  return {first};\n}}\n"
+             function p{i}<T>(xs: T[]): T | undefined {{\n  return {first};\n}}\n"
         );
     }
     out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n}\n"
 }
 
-/// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock, which
-/// would count another test's work too.
+/// A type graph whose types share parts: `N{k}` holds two `N{k-1}`, so `N{n-1}` has 2^n paths
+/// to the `Record` in `N0`, while it has only `n` types. The record-key check walks the types a
+/// function mentions, and reading `v` of the union `U` asks whether `N{n-1}` owns a resource.
+fn shared_type_graph(n: usize) -> String {
+    let mut out = String::from("interface N0 {\n  r: Record<string, number>;\n}\n");
+    for k in 1..n {
+        out += &format!("interface N{k} {{\n  a: N{p};\n  b: N{p};\n}}\n", p = k - 1);
+    }
+    let top = format!("N{}", n - 1);
+    out += &format!("type U = {{ kind: \"a\"; v: {top} }} | {{ kind: \"b\"; v: {top} }};\n");
+    out += &format!("function pick(u: U): {top} {{\n  return u.v;\n}}\n");
+    out + &format!(
+        "function main() {{\n  const v: {top} | null = null;\n  console.log(v === null);\n}}\n"
+    )
+}
+
+/// Arrows nested `depth` deep, each passed where a union of function types is expected and
+/// using the parameter of the arrow around it, so each try of an enclosing arrow gives the
+/// nested one another type to see (#859).
+fn nested_trials(depth: usize) -> String {
+    let mut call = "1".to_string();
+    for k in (1..=depth).rev() {
+        call = format!(
+            "run((x{k}) => {{\n  const u = x{p};\n  const r = {call};\n  const s: string = x{k};\n  return r;\n}})",
+            p = k - 1
+        );
+    }
+    "type H = ((x: number) => number) | ((x: string) => number);\n\
+     function run(h: H): number {\n  return 1;\n}\n\
+     function main() {\n  const x0 = \"s\";\n"
+        .to_string()
+        + &format!("  console.log({call});\n}}\n")
+}
+
+/// A package of `n` modules behind barrels, as sigx's packages are: `index` re-exports every
+/// module (`export *`), `left` and `right` re-export `index`, `pkg` re-exports both, and the root
+/// imports every name of `pkg` by name. Each import once walked the barrels again and rebuilt
+/// `pkg`'s whole export list.
+fn barrel_package(n: usize) -> Loaded {
+    let dir = std::env::temp_dir().join(format!("velt-barrels-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write =
+        |name: &str, src: &str| std::fs::write(dir.join(format!("{name}.vlt")), src).unwrap();
+    let mut index = String::new();
+    for i in 0..n {
+        write(
+            &format!("m{i}"),
+            &format!("export function f{i}(): i64 {{\n  return {i};\n}}\n"),
+        );
+        index += &format!("export * from \"./m{i}\";\n");
+    }
+    write("index", &index);
+    write("left", "export * from \"./index\";\n");
+    write("right", "export * from \"./index\";\n");
+    write(
+        "pkg",
+        "export * from \"./left\";\nexport * from \"./right\";\n",
+    );
+    let names: Vec<String> = (0..n).map(|i| format!("f{i}")).collect();
+    let mut main = format!("import {{ {} }} from \"./pkg\";\n", names.join(", "));
+    main += "function main() {\n  let s: i64 = 0;\n";
+    for i in 0..n {
+        main += &format!("  s += f{i}();\n");
+    }
+    main += "  console.log(s);\n}\n";
+    // The loader reads every module now: the directory is not needed after.
+    let loaded = load_src_at(&dir.join("main.vlt"), &main);
+    let _ = std::fs::remove_dir_all(&dir);
+    loaded
+}
+
+/// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock and the
+/// work counters count every check in the process, which would count another test's work too.
 fn serial() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
@@ -81,55 +154,103 @@ fn sema_cost(loaded: &Loaded) -> u64 {
     cost
 }
 
-/// Sema cost per unit (above an empty program's) must not grow by more than `slack`× from
-/// `sizes[0]` to each larger size. Sizes are measured interleaved, best of `ROUNDS` each, so
-/// what load still shows in CPU time (cache and frequency effects of other processes) hits every
-/// size alike instead of one of them.
+/// Sema cost per unit, measured as the slope between consecutive sizes, must not grow by more
+/// than `slack`× from the first slope (`sizes[0]` to `sizes[1]`) to each later one. A slope
+/// between two non-empty programs leaves out the cost every program pays (setting up, the
+/// prelude), which is most of a small program's and once made the per-unit cost at the smallest
+/// size mostly noise (#1339). Sizes are measured interleaved, best of `ROUNDS` each, so what load
+/// still shows in CPU time (cache and frequency effects of other processes) hits every size alike
+/// instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
-    const ROUNDS: usize = 7;
+    assert_slopes(sizes, |n| generated_program(n, chain(n)), slack);
+}
+
+/// [`assert_linear`] for the programs `program` generates.
+fn assert_slopes(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
+    // A shared CI runner can slow one size's measurements enough to tilt a slope past the
+    // slack. A pass that really grows faster than linearly fails every attempt, so the test
+    // measures again, up to `ATTEMPTS` times, before it fails.
+    const ATTEMPTS: usize = 3;
+    assert!(
+        sizes.len() >= 3,
+        "ICE: assert_linear needs three sizes for two slopes"
+    );
     // Before loading: parsing the programs is work on the process's clock too.
     let _serial = serial();
-    let mut programs = vec![load_src("function main() {}")];
-    programs.extend(
-        sizes
-            .iter()
-            .map(|&n| load_src(&generated_program(n, chain(n)))),
-    );
+    let programs: Vec<Loaded> = sizes.iter().map(|&n| load_src(&program(n))).collect();
+    let mut failure = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match linear_slopes(sizes, &programs, slack) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("attempt {attempt} of {ATTEMPTS}: {e}");
+                failure = e;
+            }
+        }
+    }
+    panic!("{failure}");
+}
+
+/// One measurement for [`assert_linear`]: each size's best sema cost of `ROUNDS`, then the
+/// slopes between consecutive sizes, each later one under `slack`× the first.
+fn linear_slopes(sizes: &[usize], programs: &[Loaded], slack: f64) -> Result<(), String> {
+    const ROUNDS: usize = 7;
     let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
-        for (b, p) in best.iter_mut().zip(&programs) {
+        for (b, p) in best.iter_mut().zip(programs) {
             *b = (*b).min(sema_cost(p));
         }
     }
-    let empty = best[0] as f64;
-    eprintln!("empty program: cost {empty}");
-    let per_unit: Vec<f64> = sizes
-        .iter()
-        .zip(&best[1..])
-        .map(|(&n, &c)| {
-            eprintln!("N = {n:>5} (chains of {:>5}): cost {c:>12}", chain(n));
-            (c as f64 - empty).max(0.0) / n as f64
-        })
-        .collect();
-    for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
-        assert!(
-            *u < slack * per_unit[0],
-            "sema cost per unit grew from {:.0} (N = {}) to {:.0} (N = {n})",
-            per_unit[0],
-            sizes[0],
-            u,
-        );
+    for (&n, &c) in sizes.iter().zip(&best) {
+        eprintln!("N = {n:>5}: cost {c:>12}");
     }
+    slopes_within(sizes, &best, slack)
 }
 
-/// The instantiation checks' work for one `check` of `loaded`.
-fn instantiation_cost(loaded: &Loaded) -> [u64; 3] {
-    let parts = |w: InstantiationWork| [w.record_keys, w.json, w.promise_copies];
-    let start = parts(instantiation_work());
+/// The slopes of `cost` between consecutive `sizes`, each later one under `slack`× the first.
+fn slopes_within(sizes: &[usize], cost: &[u64], slack: f64) -> Result<(), String> {
+    let slopes: Vec<f64> = (1..sizes.len())
+        .map(|i| (cost[i] as f64 - cost[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
+        .collect();
+    if slopes[0] <= 0.0 {
+        return Err(format!(
+            "sema cost did not grow from N = {} to {}: the measurement is broken",
+            sizes[0], sizes[1],
+        ));
+    }
+    for (i, s) in slopes.iter().enumerate().skip(1) {
+        if *s >= slack * slopes[0] {
+            return Err(format!(
+                "sema cost per unit grew from {:.0} (N = {} to {}) to {:.0} (N = {} to {})",
+                slopes[0],
+                sizes[0],
+                sizes[1],
+                s,
+                sizes[i],
+                sizes[i + 1],
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The work `counters` count during one `check` of `loaded`.
+fn counted_work<const K: usize>(loaded: &Loaded, counters: &impl Fn() -> [u64; K]) -> [u64; K] {
+    let start = counters();
     let (program, diags) = loaded.check();
     assert!(program.is_some(), "{}", loaded.render(&diags));
-    let end = parts(instantiation_work());
-    [0, 1, 2].map(|i| end[i] - start[i])
+    let end = counters();
+    std::array::from_fn(|i| end[i] - start[i])
+}
+
+/// The instantiation checks' counters.
+fn instantiation_counters() -> [u64; 3] {
+    let InstantiationWork {
+        record_keys,
+        json,
+        promise_copies,
+    } = instantiation_work();
+    [record_keys, json, promise_copies]
 }
 
 /// Each instantiation check's work per unit (above an empty program's) must not grow by more
@@ -137,22 +258,35 @@ fn instantiation_cost(loaded: &Loaded) -> [u64; 3] {
 /// exact: a check that revisits every function per round of its fixed point, or scans every
 /// impl per class type, grows by the size ratio per unit and fails.
 fn assert_linear_work(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
-    const PASSES: [&str; 3] = ["record_keys", "json", "promise_copies"];
+    let names = ["record_keys", "json", "promise_copies"];
+    let load = |n| load_src(&program(n));
+    assert_linear_counted(sizes, load, names, instantiation_counters, slack);
+}
+
+/// [`assert_linear_work`] for the work `counters` count (named `names`) in the programs `load`
+/// loads.
+fn assert_linear_counted<const K: usize>(
+    sizes: &[usize],
+    load: impl Fn(usize) -> Loaded,
+    names: [&str; K],
+    counters: impl Fn() -> [u64; K],
+    slack: f64,
+) {
     let _serial = serial();
-    let empty = instantiation_cost(&load_src("function main() {}"));
-    let per_unit: Vec<[f64; 3]> = sizes
+    let empty = counted_work(&load_src("function main() {}"), &counters);
+    let per_unit: Vec<[f64; K]> = sizes
         .iter()
         .map(|&n| {
-            let work = instantiation_cost(&load_src(&program(n)));
+            let work = counted_work(&load(n), &counters);
             eprintln!("N = {n:>5}: work {work:?} (empty program {empty:?})");
-            [0, 1, 2].map(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
+            std::array::from_fn(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
         })
         .collect();
     for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
-        for (i, pass) in PASSES.iter().enumerate() {
+        for (i, name) in names.iter().enumerate() {
             assert!(
                 u[i] <= slack * per_unit[0][i],
-                "{pass}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
+                "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
                 per_unit[0][i],
                 sizes[0],
                 u[i],
@@ -172,18 +306,187 @@ fn instantiation_work_grows_linearly() {
 /// One test, so the timings don't compete with each other for the CPU.
 #[test]
 fn sema_time_grows_linearly() {
-    // 8× the units: quadratic growth would be 8× per unit; 4× leaves room for cache effects.
-    // At least 100 units: the empty program's cost, subtracted from each, varies by about the
-    // cost of 50 units between runs on a loaded machine.
-    assert_linear(&[100, 800], |_| 8, 4.0);
+    // The slope from 100 to 400 units against the one from 400 to 1600: purely quadratic growth
+    // makes the second about 4× the first, and less when the quadratic part is small next to
+    // linear work (an all-pairs loop over the prelude's functions as well as the program's). The
+    // first slope spans 300 units, so it is well above the noise of two measurements; 2× leaves
+    // room for cache effects.
+    assert_linear(&[100, 400, 1600], |_| 8, 2.0);
     // One chain through the whole program: modification inference must not take a round over
     // every body per call level.
-    assert_linear(&[100, 800], |n| n, 4.0);
+    assert_linear(&[100, 400, 1600], |n| n, 2.0);
+}
+
+/// Walks over a type graph whose types share parts (`known::owns_resource`, the record keys)
+/// visit each type once, not each path (#859): `N` types with 2^N paths. The type searches stop
+/// 32 levels down, so they are compared below that depth, where a walk by path costs 2^N: per
+/// unit 2^8 / 8 at N = 8 against 2^20 / 20 at N = 20. They are compared first: a walk by path
+/// does not finish at the record-key sizes.
+#[test]
+fn shared_type_graphs_are_walked_by_type() {
+    let search = || [check_work().type_search];
+    let load = |n| load_src(&shared_type_graph(n));
+    assert_linear_counted(&[8, 20], load, ["type_search"], search, 1.5);
+    assert_linear_work(&[100, 800], shared_type_graph, 1.5);
+}
+
+/// `n` interfaces `T{i}` and a type holding one of each, then `last`: a type far wider than a
+/// walk over the type graph visits in a real program.
+fn wide_holder(n: usize, generic: &str, last: &str) -> String {
+    let mut out = String::new();
+    for i in 0..n {
+        out += &format!("interface T{i} {{\n  v: number;\n}}\n");
+    }
+    out += &format!("interface Holder{generic} {{\n");
+    for i in 0..n {
+        out += &format!("  p{i}: T{i};\n");
+    }
+    out + &format!("  {last};\n}}\n")
+}
+
+/// The walks over the type graph search a wide type completely: only depth (and the nesting of
+/// generic types) limits them, not the number of types (#859).
+#[test]
+fn wide_types_are_searched_completely() {
+    let _serial = serial();
+    // The promise after 4100 other fields still makes reading `h` of the union a copy of a
+    // value that owns one (`known::owns_resource`).
+    let src = wide_holder(4100, "", "res: Promise<number>")
+        + "interface A {\n  kind: \"a\";\n  h: Holder;\n}\n\
+           interface B {\n  kind: \"b\";\n  h: Holder;\n}\n\
+           function take(u: A | B): Holder {\n  return u.h;\n}\n\
+           function main() {}\n";
+    let e = err_src(&src);
+    assert!(
+        e.contains("cannot copy `h` of a union value `A | B`"),
+        "{e}"
+    );
+    // The record after them still brings its key into `g`, which `main` instantiates with a
+    // key type a record cannot have (`key_groups`).
+    let src = wide_holder(4100, "<K>", "r: Record<K, number>")
+        + "function g<K>(): number {\n  const h: Holder<K> | null = null;\n  return h === null ? 1 : 2;\n}\n\
+           function main() {\n  console.log(g<number>());\n}\n";
+    let e = err_src(&src);
+    assert!(e.contains("`f64` cannot be a `Record` key"), "{e}");
+    assert!(
+        e.contains("required because `g` uses it as a `Record` key"),
+        "{e}"
+    );
+}
+
+/// A chain of `n` distinct generic interfaces, each holding the next in one of `wrappers`
+/// (taken in turn), the last holding a `Record<K, number>`; `g` uses the first with `K` and
+/// `main` instantiates it with `number`, which a record cannot have as a key.
+fn wrapped_chain(n: usize, wrappers: &[&str]) -> String {
+    let mut out: String = wrappers
+        .iter()
+        .map(|w| format!("interface {w}<T> {{\n  v: T;\n}}\n"))
+        .collect();
+    for i in 0..n {
+        let w = wrappers[i % wrappers.len()];
+        out += &format!("interface C{i}<K> {{\n  b: {w}<C{}<K>>;\n}}\n", i + 1);
+    }
+    out += &format!("interface C{n}<K> {{\n  r: Record<K, number>;\n}}\n");
+    out + "function g<K>(): number {\n  const h: C0<K> | null = null;\n  return h === null ? 1 : 2;\n}\n\
+           function main() {\n  console.log(g<number>());\n}\n"
+}
+
+/// The record-key walk follows a chain of distinct types through one generic wrapper (or two
+/// in turn) to its end, however long: a wrapper whose type arguments don't grow is not a
+/// generic type that grows as it recurses (#859).
+#[test]
+fn chains_through_generic_wrappers_are_walked_to_the_end() {
+    let _serial = serial();
+    for src in [
+        wrapped_chain(70, &["Box"]),
+        wrapped_chain(140, &["Box", "Cell"]),
+    ] {
+        let e = err_src(&src);
+        assert!(e.contains("`f64` cannot be a `Record` key"), "{e}");
+        assert!(
+            e.contains("required because `g` uses it as a `Record` key"),
+            "{e}"
+        );
+    }
+}
+
+/// Importing every name of a package through barrels of `export *` costs the same per name
+/// at every size: a module's exports are found once, not again for each import. Walking the
+/// barrels again per imported name makes the work per module grow with the modules.
+#[test]
+fn imports_through_barrels_grow_linearly() {
+    let exports = || [check_work().exports];
+    assert_linear_counted(&[100, 800], barrel_package, ["exports"], exports, 1.5);
+}
+
+/// Choosing the member of a union of function types for nested arrows that each use the
+/// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
+/// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in
+/// the depth: their slope doubles with the depth, and a cubic one would quadruple.
+#[test]
+fn nested_arrow_trials_grow_polynomially() {
+    let sizes = [15, 30, 60];
+    let _serial = serial();
+    let checks: Vec<u64> = sizes
+        .iter()
+        .map(|&n| {
+            let [c] = counted_work(&load_src(&nested_trials(n)), &|| {
+                [check_work().closure_checks]
+            });
+            eprintln!("depth {n:>3}: {c} arrows checked");
+            c
+        })
+        .collect();
+    if let Err(e) = slopes_within(&sizes, &checks, 3.0) {
+        panic!("{e}");
+    }
+}
+
+/// An array literal, an object literal and a call of a rest parameter, each holding one chain
+/// of `n` additions (`[x + x + ..., ...ys]`), with spreads or (`spread` false) without.
+fn spread_chains(n: usize, spread: bool) -> String {
+    let chain = vec!["x"; n].join(" + ");
+    let (array, object, call) = match spread {
+        true => ("...ys", "...o", "...[1]"),
+        false => ("1", "a: 1", "1"),
+    };
+    format!(
+        "function g(...xs: number[]): number {{\n  return xs.length;\n}}\n\
+         function main() {{\n  let x = 1;\n  const ys = [1];\n  const o = {{ a: 1, b: 2 }};\n  \
+         console.log([{chain}, {array}]);\n  console.log({{ {object}, b: {chain} }}.b);\n  \
+         console.log(g({chain}, {call}));\n  x = 2;\n  console.log(o.a, ys.length);\n}}\n"
+    )
+}
+
+/// Whether an operand of a spread literal or call has effects, which decides what is evaluated
+/// first, is told by one walk over it, so a long operand costs about what it costs without the
+/// spread: telling it once checked the operand again per operator (800 terms took 19 s, 3000
+/// over 300 s; `bench/spread_order/chains.sh`). Checking such a chain is not linear in its
+/// length by itself, so the test compares the expressions checked with those of the same program
+/// without spreads.
+#[test]
+fn spread_operand_chains_cost_what_they_cost_without_spreads() {
+    let _serial = serial();
+    let checks = |p: &Loaded| {
+        let [c] = counted_work(p, &|| [check_work().expr_checks]);
+        c
+    };
+    for n in [800, 3000] {
+        let w = checks(&load_src(&spread_chains(n, true)));
+        let wo = checks(&load_src(&spread_chains(n, false)));
+        eprintln!("n = {n}: {w} expressions checked with spreads, {wo} without");
+        assert!(
+            (w as f64) < 1.5 * wo as f64,
+            "n = {n}: {w} expressions checked with spreads against {wo} without"
+        );
+    }
 }
 
 #[test]
 #[ignore = "slow: generates programs of up to 5000 units (run with --release)"]
 fn sema_time_grows_linearly_large() {
+    // Slopes 100 to 1000 against 1000 to 5000: purely quadratic growth makes the second about
+    // 5.5×.
     assert_linear(&[100, 1000, 5000], |_| 8, 2.0);
     assert_linear(&[100, 1000, 5000], |n| n, 2.0);
     assert_linear_work(&[100, 1000, 5000], |n| generated_program(n, 8), 1.5);
@@ -202,4 +505,64 @@ fn modification_propagates_up_a_long_call_chain() {
     src += "function main() {\n  const xs: i64[] = [];\n  g1499(xs);\n}\n";
     let p = ok_src(&src);
     assert_eq!(func(&p, "g1499").params[0].mode, PassMode::BorrowMut);
+}
+
+/// `Math.max` / `Math.min` of up to 16 plain arguments compile to a balanced tree of `max2` /
+/// `min2` calls, not to a chain as deep as the call is wide, and wider calls keep the ordinary
+/// call with its rest array: a chain or tree per argument made later passes quadratic (5,000
+/// arguments took numrep from 3 ms to 247 ms, 20,000 took 127 s to build in debug).
+#[test]
+fn wide_math_min_max_calls_stay_shallow() {
+    let _serial = serial();
+    use velt_sema::hir::{Callee, Def, Expr, ExprKind as E};
+    fn depth(e: &Expr) -> usize {
+        match &e.kind {
+            E::Call { args, .. } => 1 + args.iter().map(depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    let list = |n: usize| -> String {
+        let args: Vec<String> = (0..n).map(|i| format!("{}", (i * 7919) % 10007)).collect();
+        args.join(", ")
+    };
+    let src = format!(
+        "function narrow(): number {{\n  return Math.max({});\n}}\n\
+         function odd(): number {{\n  return Math.min({});\n}}\n\
+         function wide(): number {{\n  return Math.max({});\n}}\n\
+         function main() {{\n  console.log(narrow(), odd(), wide());\n}}\n",
+        list(16),
+        list(9),
+        list(5000)
+    );
+    let p = ok_src(&src);
+    let named = |c: &Callee| match c {
+        Callee::Def(d, _) => match p.def(*d) {
+            Def::Fn(f) => f.name.clone(),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    // `min2` / `max2`, whatever path the name carries.
+    let helper = |c: &Callee| {
+        let n = named(c);
+        n.ends_with("min2") || n.ends_with("max2")
+    };
+    for (name, calls, deepest) in [("narrow", 15, 4), ("odd", 8, 4), ("wide", 0, 0)] {
+        let f = func(&p, name);
+        let helpers = common::hir_walk::calls(f)
+            .into_iter()
+            .filter(|(c, _)| helper(c))
+            .count();
+        let d = common::hir_walk::exprs(f)
+            .into_iter()
+            .filter(|e| matches!(&e.kind, E::Call { callee, .. } if helper(callee)))
+            .map(depth)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            (helpers, d),
+            (calls, deepest),
+            "{name}: helper calls and their depth"
+        );
+    }
 }

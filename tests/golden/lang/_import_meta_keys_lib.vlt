@@ -1,0 +1,4 @@
+// Helper for import_meta_keys.vlt: `import.meta.main` is false outside the program's root module.
+export function libMeta(): string {
+  return `${import.meta.main} ${import.meta.resolve("./x").endsWith("/lang/x")}`;
+}

@@ -15,13 +15,13 @@ export function __processWrite(stream: u32, s: string): bool {
   return true;
 }
 
-/** The value of environment variable `name`, or null if it is unset. */
-export function __processEnv(name: string): string | null {
+/** The value of environment variable `name`, or `undefined` if it is unset. */
+export function __processEnv(name: string): string | undefined {
   let out = "";
   if (velt_rt_env_get(name, out)) {
     return out;
   }
-  return null;
+  return undefined;
 }
 
 declare function velt_rt_memory_rss(): i64;
@@ -46,4 +46,15 @@ declare function velt_rt_process_node_argv(): string[];
  */
 export function __processArgv(): string[] {
   return velt_rt_process_node_argv();
+}
+
+declare function velt_rt_tla_at(site: string);
+
+/**
+ * Compiler-internal: marks the top-level `await`s after it as at `site` (`path:line:col`, a
+ * string literal). The compiler lowers a call to `velt_rt_tla_at(site)` where they suspend
+ * instead of this call; a program that ends there writes Node's warning and exits with code 13.
+ */
+export function __topLevelAwaitAt(site: string) {
+  velt_rt_tla_at(site);
 }

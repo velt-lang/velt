@@ -7,12 +7,14 @@
 //! an opening bracket.
 
 use super::error::{mismatch_message, syntax_message, unknown_message};
+use super::node_syntax::node_syntax_message;
 use super::rows_reader::RowReader;
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
 use crate::str::{VeltStr, STRIDE};
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 /// `peek` results.
@@ -55,6 +57,9 @@ pub struct Reader {
     /// Options (`JSON.parse` options): fail on unknown object keys; the deepest nesting allowed
     /// (`usize::MAX`: no limit), and the containers open now.
     reject_unknown: bool,
+    /// A JSON `null` for an optional field whose type has no `null` (`a?: string`) is an error,
+    /// not an absent field (`FLAG_NULL_NOT_ABSENT`: `JSON.parse(text) as T`).
+    pub(crate) null_not_absent: bool,
     max_depth: usize,
     depth: usize,
     /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
@@ -73,6 +78,15 @@ pub struct Reader {
 
 /// `velt_rt_json_reader_new_with` flags.
 pub const FLAG_REJECT_UNKNOWN: u32 = 1;
+/// A JSON `null` for an optional field whose type has no `null` fails the decode
+/// (`velt_rt_json_reader_null_absent` answers 0).
+pub const FLAG_NULL_NOT_ABSENT: u32 = 2;
+/// The source is a `u8[]` of a driver's binary rows (`rows_bin.rs`), not a string
+/// (`__intrinsic_json_parse_rows`).
+pub const FLAG_ROWS: u32 = 4;
+/// The source is a driver's live rows (a `velt_text::rows_cursor::RawCursor`), read as binary
+/// rows are (`__intrinsic_json_parse_cursor`).
+pub const FLAG_CURSOR: u32 = 8;
 
 /// Bits of a mark: position, open containers, `after_open`.
 const MARK_DEPTH_BITS: u32 = 21;
@@ -98,6 +112,7 @@ impl Reader {
             after_open: false,
             error: None,
             reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
+            null_not_absent: flags & FLAG_NULL_NOT_ABSENT != 0,
             max_depth: if max_depth == 0 {
                 usize::MAX
             } else {
@@ -112,19 +127,24 @@ impl Reader {
     }
 
     /// A reader over a driver's binary rows (`rows_bin.rs`), with `FLAG_*` options.
-    pub fn over_rows(rows: Vec<u8>, flags: u32) -> Reader {
+    pub fn over_rows(rows: RowReader, flags: u32) -> Reader {
         let mut r = Reader::with_source(&[], true, flags, 0);
-        r.rows = Some(Box::new(RowReader::new(rows, flags)));
+        r.rows = Some(Box::new(rows));
         r.error = Some(ReadError::Mismatch);
         r
     }
 
     /// On a failure branch: what the rows reader answers, or `failed` for a text reader.
+    ///
+    /// The rows reader is called as a function that cannot unwind ([`no_unwind`]): it may
+    /// panic (and reads nested JSON text with a `Reader` of its own), and a text reader's
+    /// methods, which reach it only here, must stay `nounwind` so that their `extern "C"`
+    /// entry points (`reader_abi.rs`) need no abort-on-unwind frame and tail-call them.
     #[cold]
     #[inline(never)]
-    fn rows_or<R>(&mut self, failed: R, f: impl FnOnce(&mut RowReader) -> R) -> R {
-        match &mut self.rows {
-            Some(rows) => f(rows),
+    pub(crate) fn rows_or<R>(&mut self, failed: R, f: impl FnOnce(&mut RowReader) -> R) -> R {
+        match self.rows.as_deref_mut() {
+            Some(rows) => no_unwind(move || f(rows)),
             None => failed,
         }
     }
@@ -137,6 +157,11 @@ impl Reader {
     /// The sticky error, if any.
     pub fn error(&self) -> Option<ReadError> {
         self.error
+    }
+
+    /// The arrays and objects open now (0 once the top-level value is read).
+    pub(crate) fn depth(&self) -> usize {
+        self.depth
     }
 
     fn fail(&mut self, e: ReadError) -> u8 {
@@ -191,7 +216,7 @@ impl Reader {
     /// Consume `{` or `[`.
     pub fn open(&mut self, bracket: u8) -> u8 {
         if self.value_start(|b| b == bracket).is_none() {
-            return self.rows_or(0, |rows| rows.open(bracket));
+            return self.rows_or(0, move |rows| rows.open(bracket));
         }
         if self.depth >= self.max_depth {
             let e = self.sc.error(TOO_DEEP);
@@ -232,6 +257,9 @@ impl Reader {
     }
 
     /// Next object key and its `:`; `Ok(None)` after the closing `}`, `Err` on failure.
+    // Inlined into its entry point (`reader_abi.rs`): the rows reader's nested values call it
+    // too, and with a second caller LLVM keeps it out of line (+5% on `JSON.parse<T>`).
+    #[inline(always)]
     pub(crate) fn next_key(&mut self) -> Result<Option<StrTok>, ()> {
         if self.error.is_some() {
             return Err(());
@@ -428,11 +456,12 @@ impl Reader {
         if let Some(rows) = &self.rows {
             return rows.message(expected, path);
         }
-        match self.error {
+        // Text that is not JSON fails as in Node, wherever the decoder stopped.
+        node_syntax_message(self.sc.src).unwrap_or_else(|| match self.error {
             Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
             Some(ReadError::Unknown) => unknown_message(path),
             _ => mismatch_message(expected, path),
-        }
+        })
     }
 
     /// A string token as a `VeltStr`: borrowed from the source if it had no escapes, unless it
@@ -442,6 +471,9 @@ impl Reader {
     /// Such a long non-ASCII key is copied because threads remember positions in long static
     /// strings (`str/recent.rs`), which is sound only for bytes that are never freed: literals.
     /// A borrowed key short enough, or ASCII, is never remembered, nor is any sub-range of one.
+    // Inlined into its entry point (`reader_abi.rs`): the rows reader's nested values call it
+    // too, and with a second caller LLVM keeps it out of line (+5% on `JSON.parse<T>`).
+    #[inline(always)]
     pub(crate) fn borrowed_str(&self, tok: StrTok) -> VeltStr {
         let units = self.sc.units;
         match tok {
@@ -482,6 +514,9 @@ impl Reader {
     }
 
     /// A string token as an owned `VeltStr`.
+    // Inlined into its entry point (`reader_abi.rs`): the rows reader's nested values call it
+    // too, and with a second caller LLVM keeps it out of line (+5% on `JSON.parse<T>`).
+    #[inline(always)]
     pub(crate) fn owned_str(&self, tok: StrTok) -> VeltStr {
         match tok {
             StrTok::Borrowed(start, end) if start == end => VeltStr::empty(),
@@ -504,4 +539,29 @@ impl Reader {
         // SAFETY: the scanner counted the units of the token it read last, which `v` is.
         unsafe { VeltStr::from_text_counted(text, self.sc.units) }
     }
+}
+
+/// Runs `f` behind an `extern "C"` call, which aborts if `f` panics, so LLVM knows the call
+/// does not unwind (see [`Reader::rows_or`]).
+///
+/// The call goes through a pointer LLVM cannot see through (`black_box`): a direct call would
+/// put the rows reader, which reads nested values with a `Reader` (so calls back into this
+/// file's methods), in one call-graph cycle with them, and LLVM gives up on `nounwind` for a
+/// whole cycle when any function in it may unwind. A direct call would also let it inline
+/// `call`, whose abort-on-unwind landing pad makes the caller one that may unwind again.
+#[inline(always)]
+fn no_unwind<R>(f: impl FnOnce() -> R) -> R {
+    extern "C" fn call<F: FnOnce() -> R, R>(f: *mut Option<F>, out: *mut MaybeUninit<R>) {
+        // SAFETY: `no_unwind` passes its closure, once, and the slot for the result.
+        unsafe {
+            let f = (*f).take().unwrap_unchecked();
+            (*out).write(f());
+        }
+    }
+    let mut f = Some(f);
+    let mut out = MaybeUninit::uninit();
+    let call: extern "C" fn(_, _) = std::hint::black_box(call);
+    call(&mut f, &mut out);
+    // SAFETY: `call` returned, so it wrote the result (a panic in `f` aborts).
+    unsafe { out.assume_init() }
 }

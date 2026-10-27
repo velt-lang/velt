@@ -35,7 +35,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - Before the first poll a state may be moved/copied bytewise (the runtime copies initial states
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
-- `cx` is the Rust `&mut Context`; generated code only passes it on.
+- `cx` points to the runtime's `{ const uint32_t* word; Context* cx; }`: the task's **await
+  word**, then the Rust `&mut Context`. Generated code passes `cx` on and reads only the word
+  (below, "Awaiting").
 - Generators (`function*`) reuse this state-machine shape without the runtime: their poll
   function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
   or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
@@ -54,6 +56,18 @@ typedef struct VeltFut {                             // every runtime-owned futu
   then move the result out of `(char*)f + 16` (type given per function below), then
   `velt_rt_fut_drop(f)` (frees it; never touches the result). `f->poll(f, cx)` may be called
   directly instead of `velt_rt_fut_poll`.
+- *The step after an `await`* (user code; std code takes none, its prelude counts Node's steps
+  with `velt_rt_microtask`): once the child or heap future is READY, the code after the `await`
+  runs one microtask later, as in Node. `if (*cx->word != 0) { t = velt_rt_await_tick(cx); if
+  (t != 0) { st->ticket = t; suspend; on resume: if (!velt_rt_await_ready(st->ticket, cx))
+  return 0; } }`. The result stays where it is (child state offset 0, or moved out of the heap
+  future before it was freed) and is dropped by the cancel path of that suspension. The word is
+  0 while no other job of the task could run first (its microtask queue is empty and no
+  synchronous run is under way: a started promise's first run, a promise run from inside another
+  poll), so `await`-only code pays one load and branch. A program that calls none of
+  `velt_rt_fut_start`, `velt_rt_microtask`, `velt_rt_latch_open`, `velt_rt_fut_detach`,
+  `velt_rt_race`, `velt_rt_race_ok`, `velt_rt_all_or_reject` can never make the word non-0;
+  lowering drops its checks (velt_vir `async_fn/await_order.rs`).
 - Every runtime function returning `VeltFut*` allocates exactly that object and does no work until
   the first poll, except that a timer's deadline is fixed at creation (like Rust's `sleep`).
 
@@ -63,17 +77,32 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
-| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
+| `velt_rt_fut_start_rejecting` | `(VeltFut* f, void (*result_drop)(void* slot))` | `velt_rt_fut_start` for a promise that can reject (its result is a `Result`, tag first; `result_drop` reports an `Err`): when it rejects while its owner does not wait for it, the rejection is reported as uncaught (through `result_drop`, which then gets 0 from `velt_rt_unhandled_defer`) once the task's microtask queue is drained, unless the owner awaited it, dropped it, or handed it to a combinator or another task by then, as Node reports a rejection without a handler. (additive) |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); with or without `transfer`, a started promise's rejection is no longer reported by the task that started it (`velt_rt_fut_start_rejecting`) but claimed or given up by the task holding it (#1497); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
 | `velt_rt_xfer_begin` / `velt_rt_xfer_end` | `()` | bracket one transfer of a value to another task (the `TransferRoot` glue, a `thread_copy`); nest. The outermost `end` releases the deferred references (`xfer_defer`) and forgets the copies (additive) |
 | `velt_rt_xfer_find` | `(const void* obj) -> void*` | the copy of the counted object `obj` made in this transfer, null if none yet, or `1` outside a transfer. The clone glue of a counted object asks it before copying one whose count is above 1, the transfer glue before copying a still-shared one, so an object reached twice is copied once and a cycle is copied as a cycle (additive) |
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
 | `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
 | `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
+| `velt_rt_xfer_keep_begin` | `()` | `velt_rt_xfer_begin` of a value a `read` callback keeps in its caller's containers (§9.1): when it is the outermost one, the transfer glue keeps the lock-set objects the reader did not make (the caller's) with one more reference instead of copying them [additive, #708] |
+| `velt_rt_xfer_keeps` | `() -> u8` | 1 inside a transfer `velt_rt_xfer_keep_begin` started, else 0 [additive, #708] |
 | `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` (additive) |
 | `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down (additive) |
 | `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
+| `velt_rt_await_tick` | `(void* cx) -> u64` | the step of an `await` when the word is not 0: 0 to go on now (nothing else can run first, or the waiter's step was queued by `velt_rt_latch_open` already), else the ticket of an entry queued at the back of the task's microtask queue for `cx`'s waker. No allocation. (additive) |
+| `velt_rt_await_ready` | `(u64 ticket, void* cx) -> u32` | 1 once the queue reached `ticket` (or for a ticket of another queue); 0 while it waits, and the entry then resumes whoever polls with `cx` now. (additive) |
+| `velt_rt_microtask` | `() -> VeltFut*` | waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.vlt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` steps (`velt_rt_await_tick`) use the same queue. No code pointers are stored (§13.5). (additive) |
+| `velt_rt_unhandled_defer` | `() -> u8` | called by the function that disposes of an unclaimed rejecting promise's result (`velt_rt_fut_start`'s `result_drop`) before it reports an `Err`: 1 when the runtime keeps the promise to report it once the task's microtask queue is drained, as Node does (the function then returns without reporting or dropping; the runtime calls it again then, and it gets 0); 0 to report now (outside a runtime drop of a started promise in a task). (additive) |
+| `velt_rt_task_gate` | `() -> u64` | a counted handle to the gate of the task being polled (0 outside a task): a callback that runs on another task can wait with it for the end of its creator's poll (std/prelude/timers.vlt no longer needs it: its callbacks run on the creating task). Released with `velt_rt_task_gate_free`. WebAssembly: always 0. (additive) |
+| `velt_rt_task_gate_wait` | `(u64 gate) -> VeltFut*` | completes once the poll the gate's task was in when the wait was first polled has ended (each poll ends with the task's microtask queue drained), at once when the task is not in a poll or for gate 0; so a timer's callback never runs before the callbacks its creator queued. Result: none. (additive) |
+| `velt_rt_timer_new` | `(i64 ms) -> u64` | a place in the process-wide order of timer callbacks (`setTimeout`, `setInterval`, `setImmediate`; std/prelude/timers.vlt) for a timer of the task being polled, as Node orders timers: at the end of the task's list for delay `ms` (negative = 0); a new list's expiry is the monotonic clock read now in whole milliseconds plus `ms`. The lists of all tasks run by (expiry, creation of the list); a pass over the due timers reads the clock once and runs each due list's timers due by then in creation order, and a list whose next timer is not due by then waits for it with a new place (Node's `listOnTimeout`). `ms` 0 (or less) is an immediate (`setImmediate`): the task's immediates are not in a list; once a pass finds nothing more due, the immediates created by then run, in creation order, before the next pass reads the clock (Node's check phase). The turn waits at least `ms`. Insert, removal and finding the next timer take logarithmic time. Freed with `velt_rt_timer_free`. (additive) |
+| `velt_rt_timer_turn` | `(u64 timer, u64 gate) -> VeltFut*` | completes once the timer is due, the poll `gate`'s task (0: none; the prelude passes 0, its callbacks run on the creating task) was in when it came due has ended (as `velt_rt_task_gate_wait`), it comes next in the order among the timers whose task is not busy in a poll of another task (a busy task's lists are passed over as a whole), and the poll of the task that took the previous turn has ended (each poll ends with its microtask queue drained); the timer then leaves the order. So callbacks run in Node's order, each followed by its microtasks, across tasks. Ready at once for a timer that is no longer queued (`velt_rt_timer_clear`). Called in the first run of a started promise (the prelude's), it marks that promise as a timer's: it does not keep an orphaned set alive (§1.1; a ref'd timer holds a keep-alive reference itself). WebAssembly: the same lists, fired by the executor, and `block_on` does not wait for such promises. Result: none. (additive) |
+| `velt_rt_timer_again` | `(u64 timer, i64 ms)` | queues the timer again at the end of its list, due `ms` after the clock read when it last took its turn (an interval's next run, as Node's: called after the callback's synchronous part). (additive) |
+| `velt_rt_timer_clear` | `(u64 timer)` | takes the timer out of the order (`clearTimeout`; a no-op once it took its turn or was cleared); its turn completes at once. May be called from any task while the handle is live (the prelude calls it under the timer state's lock, which also covers `velt_rt_timer_free`). (additive) |
+| `velt_rt_timer_free` | `(u64 timer)` | takes the timer out of the order if it is still queued (its task ends without a turn) and frees the handle. (additive) |
+| `velt_rt_task_gate_free` | `(u64 gate)` | releases a gate handle (0: no-op). (additive) |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
 | `velt_rt_all` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results) -> VeltFut*` | `Promise.all(array)`: takes ownership of the `n` futures (not of the pointer array); child `i`'s result is moved to `results + i*result_size` (must stay valid until completion/drop); concurrent, only woken children are re-polled. Result: none. |
 | `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs — all results belong to the awaiter. Use it whenever `T` needs dropping. |
@@ -81,6 +110,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
 | `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
+| `velt_rt_fut_share` | `(VeltFut* f, u64 result_size, void (*share)(const void* src, void* dst), void (*result_drop)(void* slot)) -> VeltFut*` | another holder of promise `f` (§1.2): a new handle on `f`, which is now shared; null stays null. `share` writes another reference to a result into a slot (null: the bytes are copied), `result_drop` drops one (null: nothing to drop) (additive) |
 | `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending (additive) |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
@@ -110,49 +140,143 @@ each polled until done, done-flags in the state): no allocation.
   awaited, the result is dropped then. The node is freed when the owner, the set and every cloned
   waker let go of it (reference count).
 - If a task's root finishes while local promises are unfinished, they move to an orphan task that
-  drives them to completion and holds a keep-alive reference (the program entry waits, §7). A
+  drives them to completion and holds a keep-alive reference (the program entry waits, §7) while
+  any of them is not a timer's (`velt_rt_timer_turn`). A
   cancelled task (dropped before finishing, e.g. an HTTP request whose client disconnected)
   cancels its unfinished local promises (their `DropFn` runs); awaiting one of those afterwards
   is a fatal error.
-- Outside a task (no `block_on` running, e.g. synchronous `main`), `velt_rt_fut_start` does
-  nothing: the promise runs when it is awaited or spawned.
+- Outside a task (no `block_on` running), `velt_rt_fut_start` does nothing: the promise runs
+  when it is awaited or spawned. A synchronous `main` of a program that calls `velt_rt_fut_start*`
+  or `velt_rt_spawn*` anywhere runs inside `velt_rt_block_on` (a root that calls `main` and
+  stores its result at `state+0`), so this happens only in module initializers.
 - Layout: a boxed future is `[head (96 bytes)][VeltFut hdr][state]`; the head holds the state's
   poll/drop, `result_drop`, the reference count, flags, the set and the awaiter's waker. Code
   pointers live only there and in the `VeltFut` header (hot-reload rule, §13.5).
+
+### 1.2 Shared promises
+
+A promise is a shared value (docs/reference/async.md "Promises"): where sema shares a promise
+place (`Intrinsic::Share`, or a clone of a value holding a promise), lowering calls
+`velt_rt_fut_share(f, ...)` and gives the new holder the future it returns. A program that never
+shares a promise never calls it, and its futures are unchanged.
+- The first share moves the original future's header entries to a side record (the hub, found by
+  the future's address) and replaces them with the runtime's own. The original pointer stays its
+  first holder's. Every share returns a new handle: a small heap future with a result slot at
+  +16, with the hub in front of its header. Each holder is awaited and dropped as one future.
+- Awaiting is unchanged for generated code: poll until `READY`, move the result out of +16, drop.
+  Before a holder returns `READY`, it writes a fresh share of the settled result into its slot,
+  using the `share` glue. That gives the same object for an object result, and a copy of a
+  string or a value.
+- A started original future is driven by its task's set: the hub awaits it with a waker of its
+  own, and when it finishes every waiting holder is queued in the task's microtask queue (as
+  `velt_rt_latch_open` queues its waiters) in the order they started waiting, as Node queues a
+  promise's reactions. `velt_rt_race` over a holder that settled takes it before a child that
+  only finishes when the race polls it. Any other original is driven by the first holder that
+  waits, with its own `cx`; when it settles there, that holder goes on as the awaiter of an
+  unshared promise would, and the others are queued the same way.
+- Dropping a holder never cancels the promise. The last holder drops the settled result with
+  `result_drop`. If the promise has not settled, the last holder restores the original header
+  and drops the future, which then behaves like any dropped promise: a started promise runs to
+  completion, and its own result drop reports an unhandled rejection. A waiting holder that is
+  dropped wakes the others, so the first of them drives the promise.
+- The runtime functions that recognize boxed promises by their header (`velt_rt_fut_start`,
+  `velt_rt_futs_handled`) treat a holder as some other future. `velt_rt_fut_peek` reads the
+  settled result.
+- `velt_rt_fut_transfer` of a holder (the holder goes to another task: `spawn`, a channel, a
+  closure capturing it) hands it over: a new holder awaits the promise on this task inside a
+  started promise of its own (the proxy), whose result `transfer` moves or copies for the other
+  task as for any promise handed over (#160); a null `transfer` (a result with nothing counted)
+  copies it as it is. The holder handed over forwards its polls and its drop to the proxy, so
+  the other task gets a copy made on the promise's task. On the other task the holder is a
+  promise of that task: `velt_rt_fut_share` of it shares its proxy there, and handing it on
+  again hands over its role in that promise the same way.
+- Every holder has the same `poll` and `drop` entries, which say only that a future is shared.
+  An original future is found in the runtime's table of hubs by its address, and a handle never
+  is.
+- A shared promise stays on the logical task where it was shared (`velt_rt_task_id`: the
+  orphan task driving a task's promises after its root returned has the same one; on
+  WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
+  dropped on another task without having been handed over (above) stops the program with a
+  fatal error (exit code 101), unless the thread holds the module lock (§ module state; on
+  WebAssembly: the program has module state). That is all the check tests. It is sound because
+  the task the promise is shared on holds the lock whenever it runs too: a holder reaches
+  module state only through code holding the lock, so the task it is shared on put it there
+  or first used it from there, and is a *touched* task from then on, whose every poll takes
+  the lock; the outside home (below) is a touched task in every program with module state. So
+  the tasks using a holder read from module state (a `Map` of promises in flight), its
+  result, and the objects reached from that run one at a time.
+- A holder handed over outside a task (a synchronous `main`) gets its proxy in the *outside
+  home*, a set with a task id of its own that code outside a task enters for each hand-over,
+  so every holder handed over from there is one of the same task. When `main` returns, the
+  home's set moves to an orphan task, which drives it (and keeps the process alive) until its
+  promises finish. In a program with module state the home's polls take the module lock, here
+  and in the orphan, as any touched task's do.
+- A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
+  hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
+  the other finds it settled.
 
 ## 2. Tasks
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`: `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
+| `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`, and a synchronous `main` of a program that starts promises or tasks (§1.1; its root calls `main`): `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
+| `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.vlt `__topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
 | `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.vlt). Additive. |
 | `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
+| `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | a due `unref()`'d timer asks whether to drop its callback: true once the process was seen with nothing left that can happen (quiet.rs), as Node exits without running it (std/prelude/timers.vlt). While nothing but running code may be left (a thread waits for the end, no keep-alive reference, no timer or I/O pending, nothing queued), it waits until the last worker parks, which records the end or wakes it. Ready at once with false on WebAssembly, whose one thread runs the timers and decides the end. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 | `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. With the stealing scheduler the task is spawned as usual. Additive. |
 | `velt_rt_worker_count` | `() -> u64` | `workerCount()`: the per-core workers, or the stealing runtime's worker threads (1 on WebAssembly). Additive. |
 | `velt_rt_current_worker` | `() -> u64` | `currentWorker()`: the per-core worker running this task; with the stealing scheduler an index for this worker thread. Additive. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: per-core. `velt_main` calls it first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`); otherwise it isn't called (`workerCount()` and `currentWorker()` alone don't select per-core). `VELT_SCHEDULER` overrides it. A no-op on WebAssembly. Additive. |
+| `velt_rt_set_scheduler` | `(u32 kind)` | `velt_main` calls it with `1` first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`). A no-op: the default scheduler keeps pinned tasks on their workers itself (kept for programs compiled to call it). Additive. |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
-The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program that pins a task, or
-`VELT_SCHEDULER=per-core`) makes every worker a one-worker multi-thread runtime with
+The per-core scheduler (#211; `VELT_SCHEDULER=per-core`) makes every worker a one-worker multi-thread runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
-(`task/runtime.rs`). A connection's socket and its tasks stay on one worker: `accept()`
+(`task/runtime/`). A connection's socket and its tasks stay on one worker: `accept()`
 registers the connection with the caller's worker, and `serve`'s accept loop spawns each
 connection where placement puts it (`runtime::spawn_with`), moving its socket to that worker's
 driver only when it is another worker. A listening socket has one registration (per-worker
 duplicates woke every worker for each connection, and on Windows could block a worker in
-`accept`). The default, `stealing`, is one
-multi-thread runtime. Per-core trade-offs today: a task never moves after its first poll, so a
+`accept`). `stealing` (`VELT_SCHEDULER=stealing`) is one multi-thread runtime. Per-core trade-offs today: a task never moves after its first poll, so a
 CPU-bound task delays every task on its worker; placement counts live tasks, not CPU; a socket
 stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
 much slower than stealing (no batch steal-before-start yet, #997).
-Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
-64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
+
+Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`,
+`block_on`, and its own `JoinHandle`/`AbortHandle`); nothing else in the runtime names a backend's
+types. The default (`VELT_SCHEDULER` unset or `velt`; `stealing` and `per-core` select tokio's;
+`velt_rt_set_scheduler` selects nothing any more) is the runtime's own executor
+(`task/runtime/velt/`): worker threads with their
+own queue and `mio` poll; a task woken by I/O, a timer or another thread queues on its home
+worker, one woken by a running task runs next on the waker's worker (a one-task slot, at most 3
+in a row; it keeps its home), and a spawn stays on the spawning worker (from outside the
+workers: worker 0). Each worker's run queue (`velt/queue.rs`) runs input (data to read, timers,
+other threads) before output and the work tasks made (room to write, spawns, budget yields),
+each in order; every 61st task comes from the second
+queue, and once it has waited 10 ms a fair pass runs all of it. A worker whose input has a
+delay of 200 µs or more over a 10 ms window (the mean input queue noted in the window times the
+mean wall time of a poll; the whole queue once polls average 20 µs), or that was awake for 95 %
+of the window with input waiting, offers half of its
+queue to a sleeping worker, which becomes the tasks' home (`velt/spread.rs`). A worker that runs
+out of work, before it sleeps, runs half of the input waiting on another awake worker without
+taking it over (the tasks keep their home). The monitor does the duties of a worker that has
+started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
+of its queue to another worker, each 1 ms tick while the stall lasts. A connection's socket
+moves its registration to its task's home worker when the task reads there (Unix). A Postgres
+pool hands a task an idle connection whose protocol task last ran on the task's worker first. A worker
+with 256 or more queued tasks polls its reactor every 4 tasks.
+TCP sockets (`net/sys.rs`), the HTTP server, Postgres over TCP and timers are native; tokio
+types elsewhere (files, processes, Postgres over a Unix socket, Redis, the HTTP client, UDP, DNS,
+`spawn_blocking`) run on a one-thread tokio runtime whose context every worker stays inside.
+Allocation per task: on the Velt executor, 3 (the boxed future with its state, the task and the
+join state shared with the handle). On tokio's schedulers, states ≤ 1 KiB (align ≤ 16) live
+inline in tokio's task cell (size classes 64/256/448/576/1024), so a detached spawn is 1
+allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)
@@ -164,8 +288,8 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 |---|---|---|
 | `velt_rt_latch_new` | `() -> u64` | a closed latch |
 | `velt_rt_latch_free` | `(u64 latch)` | releases the handle (a pending wait keeps the latch alive) |
-| `velt_rt_latch_open` | `(u64 latch)` | opens it and wakes every waiter; a no-op when open |
-| `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open |
+| `velt_rt_latch_open` | `(u64 latch)` | opens it and resumes every waiter; a no-op when open. A waiter of the task being polled (its root or one of its started promises) is queued in that task's microtask queue now, as Node queues a promise's reactions inside `resolve`; that entry is the waiter's `await` step. Other waiters are woken. |
+| `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
 | `velt_rt_task_id` | `() -> u64` | a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
 ### 2.2 Channels (`velt:channel`)
@@ -198,6 +322,20 @@ it.
 | `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
+
+**Process-wide slots.** A module has no mutable globals; a std feature that needs one object
+per process (std/websocket's topics, slot 0) keeps a `shared<T>` in a runtime slot. Only the
+std module that owns a slot touches it, with the slot's one type: there is no generic accessor
+an importer could use to read a slot as another type. A slot is an unbounded channel holding at most one item, since a channel is what can own
+a typed Velt value: std locks the slot, takes the item out (making it the first time), puts a
+reference back and unlocks. The item is dropped with the channel's leftovers when the program
+ends. No suspension point may lie between lock and unlock.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them) |
+| `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
+| `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
 
 ### 2.3 Abort signals (`velt:task`)
 
@@ -275,11 +413,11 @@ declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
 `VeltResp`, `VeltFetchResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
-`VeltFileWriter`, `VeltWs`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
+`VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
-  `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
+  `VeltChild`, `VeltFileReader`, `VeltFileWriter`) are keys into runtime handle tables
   (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
@@ -311,6 +449,8 @@ their own forms); functions taking one never accept the other.
 | `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
+| `velt_rt_bytes_to_str_lossy` | `(const VeltBytes* b, VeltStr* out)` — copy, an invalid sequence as U+FFFD (WHATWG, as `utf8DecodeLossy`); additive |
+| `velt_rt_bytes_is_utf8` | `(const VeltBytes* b) -> u8` — whether `b` is valid UTF-8; additive |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` — drops elements + buffer, zeroes |
 
 ## 5. std/fs
@@ -354,10 +494,12 @@ read or write of an opened file names no path (`EISDIR: illegal operation on a d
 read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
 denied).
 
-## 6. std/net (TCP)
+## 6. std/net (TCP, TLS over TCP)
 
 Handles (`VeltListener`, `VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time.
+alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket, a TLS stream
+(rustls, §14.8) or an HTTP connection handed over by an upgrade (`velt_rt_http_req_take_upgrade`,
+§14.8); every operation below works on all of them, and one task may read while another writes.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
@@ -368,11 +510,23 @@ alive, so `close` may be called at any time.
 | `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltStream>` |
 | `velt_rt_tcp_read` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltBytes>` 1..max bytes, empty = EOF; `max == 0` ⇒ 64 KiB |
 | `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
-| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied |
+| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied. Writes go out in call order: a write that cannot finish at the call goes on in its first poll (at the `await`, which a std `write` reaches at its call), and later ones wait for it |
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
+| `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | `readInto`: reads what is there into `data[start..end]` (a `u8[]` the caller lends for the call and the runtime writes; sema's written-parameter list has it), without waiting: the bytes read, 0 at the end of the stream, -1 when nothing has arrived yet. A raw socket reads straight into the range; a TLS or upgraded stream hands over what `velt_rt_tcp_readable` read ahead. An empty or out-of-range range reads nothing (0). Additive |
+| `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | result `IoStatus` once a `velt_rt_tcp_try_read_into` may find data, the end of the stream or an error (it may also find nothing yet: try again); holds no buffer of the caller's. A TLS or upgraded stream reads its next chunk (up to 64 KiB) ahead here. `read` / `readString` deliver what was read ahead first. Additive |
+| `velt_rt_tcp_readable_within` | `(StreamHandle s, int64_t ms, uint64_t signal) -> VeltFut*` (`IoResult<u8>`) | 1 once a `tryRead` may find something, 0 when `ms` passed first (`ms < 0`: no limit) or the signal (0: none) was aborted; additive |
+| `velt_rt_tcp_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> VeltFut*` | `velt_rt_tcp_write_bytes` of `data[start..end]` (clamped): a `Uint8Array`'s range. Additive |
+| `velt_rt_tcp_try_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> u64` | `velt_rt_tcp_try_write` of `data[start..end]` (clamped). Additive |
+| `velt_rt_tcp_write_later` | `(VeltStream s, const VeltStr* data, IoResult<u64>* out)` | queues `data` (copied), sent after the current task poll with everything else queued on the stream; the bytes still to be sent; fails once sending failed, after `abort`, on a closed handle. Additive |
+| `velt_rt_tcp_write_later_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<u64>* out)` | `velt_rt_tcp_write_later` of `data[start..end]` (clamped). Additive |
+| `velt_rt_tcp_drained` | `(VeltStream s, u64 max) -> VeltFut*` (`IoResult<()>`) | once at most `max` queued bytes (and writes after them) are still to be sent, or the error that stopped sending. Additive |
+| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
+| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail with `ECONNABORTED` (a raw socket is shut down both ways, which ends a waiting read; the read then reports the abort, not EOF); the handle stays open |
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
+| `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
+| `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
 
 ## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
 
@@ -496,12 +650,105 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
+| `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
+| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
+| `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 [additive, #708] |
+| `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
+| `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
+| `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
+| `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
+| `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
+| `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
+| `velt_rt_bytes_hash` | `(const VeltBytes* b) -> u64` | `velt_rt_str_hash` of the string whose bytes are `b` (`Map.getUtf8`: a key looked up by its UTF-8 bytes); additive |
+| `velt_rt_str_eq_bytes` | `(const VeltStr* s, const VeltBytes* b) -> u8` | whether `s`'s bytes are `b`; additive |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |
 | `velt_rt_math_add_int32` | `(i32 a, f64 x) -> i32` | JS `(a + x) \| 0`; emitted inline, integer add when `x` is a whole number of at most 2^52 [additive, #521] |
 | `velt_rt_math_clz32` | `(i32) -> i32` | `Math.clz32` of the 32-bit pattern (32 for 0); emitted as one instruction [additive, #521] |
+
+### 9.1 Read mode (`RwLock.read`)
+
+Readers of an `RwLock<T>` run on many threads at once without copies or atomic counts. The
+*lock set* is the counted types a `T` of some `RwLock` can reach (velt_vir `boxing/locks.rs`;
+an `RwLock` whose `T` reaches a function or interface value, a class in a hierarchy, a weak-capable
+or proxiable type, or a promise has no such readers: its `read` takes the lock exclusively).
+Between `velt_rt_rwlock_read` and its unlock the thread is in *read mode*, and the code it runs
+counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
+- bit 62 of a lock-set object's count word, `LOCAL`, marks an object made in read mode: only this
+  reader reaches it. A count compares and decrements without the bit. A transfer that moves one
+  out of the callback (its result) clears it;
+- a reader counts (retains, releases, tests for uniqueness) only `LOCAL` objects; the others (the
+  store) it borrows, so their counts stay what the last writer left. No writer runs meanwhile;
+- a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
+  program (sema rejects the writes it can see);
+- a reader takes no lock exclusively: `velt_rt_rwlock_write` and `velt_rt_mutex_lock_checked`
+  (which code not known to run outside read mode calls instead of `velt_rt_mutex_lock`) stop the
+  program in read mode, since the inner callback could not tell the store's uncounted objects
+  from what it changes (sema rejects the ones written in a `read` callback's body);
+- a reader starts no promise or task (`velt_rt_fut_start*`, `velt_rt_spawn*` stop the program in
+  read mode once the program has made an `RwLock`): what it holds would outlive the callback
+  without leaving through its result;
+- what the callback returns leaves by these rules too (velt_vir `async_fn/sync.rs`), before the
+  unlock, whatever the calling code's mode: an object it shares with the store is copied, never
+  moved out;
+- the caller's containers (places rooted in a variable a `read` callback literal captured from
+  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object and are counted by the
+  counts outside read mode. What a store, a `push` or a method or function changing one
+  (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
+  place the caller holds already (also a reader's variable borrowing one; what comes from the
+  store sema copies), so it stays the same object; anything else is a copy of what the reader
+  did not make. A value the reader made that holds what the caller holds is kept by a
+  transfer `velt_rt_xfer_keep_begin` starts: the caller's objects get one more reference and
+  stay themselves, and what the reader made becomes the caller's. A container of the reader's
+  that such a method or function may change is counted by those counts for the call and handed
+  back after it, or, when its type is outside the lock set and holds lock-set objects (a
+  class's `Item[]`, a `Map`), passed as a copy of what the reader did not make, dropped by
+  those counts after the call. What leaves one (an element removed, the old value a store replaces, such a
+  method's or function's result) loses its reference by those counts, and a lock-set object
+  whose last reference goes is handed to `velt_rt_free_after_reads` with its drop glue: the
+  reader may still point at it uncounted, so it is freed when the thread's outermost read ends
+  (at once outside read mode; the glue releases a reference, so one stored again meanwhile
+  lives on). A result the reader keeps is borrowed uncounted from then on, as the store's
+  objects are, unless the reader made it (`LOCAL`).
+
+Code whose mode is fixed counts without asking: functions only called directly from outside read
+mode (and `with` / `write` callbacks, which never run in read mode) count as before; functions only called directly from a
+`read` callback literal use read mode's rules. Everything else (callbacks given as values,
+closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode` once per call.
+
+### 9.2 How `RwLock` readers go in
+
+The lock is *biased* (Dice and Kogan, "BRAVO: Biased Locking for Reader-Writer Locks", 2019)
+until it is written: a reader names the lock in a slot of its own thread (a cache line no other
+thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
+write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
+slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
+`RawRwLock`) exclusively. While it waits the state says so (revoking): one writer revokes at a
+time, and another writer, holding the underlying lock or not, writes only once the state says
+the bias is revoked, and waits for the revocation without holding the lock. Each change of the
+state has one owner (biased to revoking: the revoker's compare-exchange; revoking to revoked:
+that revoker; revoked to biased: a reader's compare-exchange), so a revoker held up for any
+time never takes a later revocation for its own. It never waits for the slots while holding the
+underlying lock: a
+reader in a slot may be nested in a read of another lock whose writer waits for this writer's
+readers. A reader that biased the lock again before the writer took it (its revocation was old
+enough) makes the writer let the underlying lock go and revoke once more. From then on readers take the underlying lock shared, so they still
+run at once and a lock written often costs about what a `Mutex` does, until a reader holding it
+finds the revocation old enough and biases the lock again. A writer blocked on the underlying
+lock holds new outermost readers back, so writers don't starve, while a read nested in another
+goes past it (a recursive shared lock), so readers nesting reads of two locks in opposite orders
+never wait for each other's writers. How long a revocation lasts adapts to how long the
+bias before it lasted (at most 10 ms). The lock words are the underlying lock, then (on the next
+128-byte line, which only revocations write) the state.
+
+A thread waiting for the underlying lock backs off exponentially between tries (about 0.5 µs
+doubling to 35 µs, yielding each time, blocking after about 0.7 ms): a waiter that tries takes
+the line from the holder, so short callbacks taking turns run several in a row on one core.
+Generated code passes each lock call the reader state an earlier one in the same call of the
+function returned, so the common reads and writes run without a
+thread-local lookup or a call.
 
 ## 10. Output with many tasks
 
@@ -610,10 +857,18 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `__inspect()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` (additive) |
 | `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
+| `velt_rt_rows_begin` / `_end` | `(const RawCursor* c, const u8* fields) -> RowsState*` / `(RowsState* st)` | `Glue::RowsRead` (std's `__intrinsic_json_parse_cursor<T>` when the row type is an object of plain fields) reads a driver's row cursor by column: `fields` is static data (`u32` count, then per field `u32` byte length and the name); each column is matched to its field once (the map is kept per thread for the next result with the same header and table). Additive |
+| `velt_rt_rows_next` / `_columns` / `_field` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none). Additive |
+| `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` / `_bytes` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD). Additive |
+| `velt_rt_rows_map` / `_map_column` | `(const u8* fields) -> RowsState*` / `(RowsState* st, const VeltStr* name)` | the column map of std/db' `RowSource` written in Velt (`__intrinsic_read_rows<T, S>`), whose rows the compiled code reads through the source's own methods: a state without a cursor, then each column's name in order. Additive |
+| `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell), else 0. Additive |
+| `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself). Additive |
+| `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`__intrinsic_db_bind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
+| `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(const RawSink* s, v)` (`_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB. Additive |
 | `velt_rt_json_leave` | `()` | done with the innermost object entered |
 
 ### 12.2 String methods
@@ -669,8 +924,9 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` | `JSON.parse` options: flag 1 = `skip_unknown` fails; `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. When `src` is the marker string a database driver returned for parked binary rows (`velt_rt_sqlite_query`), the reader walks those rows instead of text, and owns them. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most), and their keys borrow the reader's buffer rather than `src` |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set only by `__intrinsic_json_parse_cursor`, additive): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
+| `velt_rt_json_reader_null_absent` | `(VeltJsonReader* r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
 | `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes or is a non-ASCII key of more than 64 UTF-16 units (copied: threads remember positions in long static strings, `str/recent.rs`, which is sound only for bytes never freed) — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
@@ -720,7 +976,11 @@ Paths only need to be built on the failure path (e.g. append segments while retu
 | Situation | Message |
 |---|---|
 | well-formed, but a different kind than the decoder asked for (incl. non-integral / out-of-range for `read_i64`), or no reader error at all (e.g. missing field) | `expected <expected> at <path>` — e.g. `expected string at $.name` (golden) |
-| syntax error (seen by the reader, or by `JSON.parseValue`) | `invalid JSON at <path>: <detail> (byte <offset>)`; for `parseValue` the path is that of the value being read when the error occurred (`$[1]`, `$.a`) |
+| the text is not JSON (anywhere in it, also past the point where the decoder stopped; `JSON.parseValue` too) | Node 22's `JSON.parse` message, e.g. `Expected property name or '}' in JSON at position 1 (line 1 column 2)`, `Unexpected end of JSON input`, `Unexpected token 'x', "[x]" is not valid JSON` (positions, lines and columns in UTF-16 units) |
+| syntax error the reader sees that V8 accepts (none is known) | `invalid JSON at <path>: <detail> (byte <offset>)`; for `parseValue` the path is that of the value being read when the error occurred (`$[1]`, `$.a`) |
+
+`velt_rt_json_error` checks the whole text for a Node syntax error first (only on this failure
+path, so it costs nothing on success), then gives the decoder's message.
 
 With the reader's options: an unknown key (rejected) is `unknown field at <path>` (the decoder
 puts the key in the path), and nesting past `max_depth` is
@@ -1013,36 +1273,21 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
+| `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
 
 ### 14.9 WebSockets (`velt:websocket`)
 
-`VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
-RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
-at the call (call order is wire order, also before a server-side upgrade completes) and
-completes once it is queued; a writer task per connection sends everything queued in one
-write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
-reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
-Pings are answered automatically. No callbacks are stored.
-
-```c
-typedef struct { VeltWs ws; VeltResp response; } VeltWsAccept;                    // 16 bytes
-typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } VeltWsMessage; // 56
-// kind: 0 = closed (no more messages), 1 = text (in `text`), 2 = binary (in `data`)
-```
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_ws_accept` | `(u64 upgrade_key, const VeltStr* sec_websocket_key, IoResult<VeltWsAccept>* out)` | claims the parked upgrade (§14.8) and builds the `101` response (handshake headers) the handler must return; the connection's first operation waits for the upgrade; `EINVAL` if not an upgrade request |
-| `velt_rt_ws_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltWs>`; `ws://` / `wss://` (TLS as §14.8, extra CAs in `ca_pem`); HTTP/1.1 handshake |
-| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
-| `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
-| `velt_rt_ws_subscribe` | `(VeltWs ws, const VeltStr* topic) -> VeltFut*` | `IoResult<()>` once the connection is open; subscribing twice is a no-op |
-| `velt_rt_ws_unsubscribe` | `(VeltWs ws, const VeltStr* topic)` | leaves the topic (nothing if not subscribed or not open yet) |
-| `velt_rt_ws_publish` | `(const VeltStr* topic, const VeltStr* text, VeltWs except) -> u64` | text frame encoded once, queued for every subscriber but `except` (0: none) with at most 16 MiB queued; returns how many |
-| `velt_rt_ws_publish_binary` | `(const VeltStr* topic, const VeltBytes* data, VeltWs except) -> u64` | the same, binary |
+`velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
+(§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
+the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
+of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
+lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
+(reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
+`utf8Slice`), except the process-wide slot of the topics (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+order, also before a server-side upgrade completes) and completes once it is queued; a flusher
+task started by whoever queues into an idle connection writes everything queued in one write
+(a reply by the connection's reading task, with no more input waiting, is written at once
+instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 
@@ -1060,62 +1305,72 @@ Stable hash (`velt:hash`, additive):
 
 ### 14.11 SQLite (`velt:sqlite`; stream db, additive)
 
-`crates/velt_rt/src/sqlite/` over `rusqlite` (SQLite compiled in: `bundled`; also
-`column_decltype`). **Synchronous**: a typical statement takes microseconds, less than a
-blocking-pool round trip. `VeltSqliteDb` is an `Arc` of `Mutex<Option<Connection>>` plus a failure
-counter and the last error; `VeltSqliteStmt` is an `Arc` of `{ Arc<db>, sql }` that re-finds its
-compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call, so
-closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). The null
-handle (a closed `Database` / `Statement` in std) fails the same way instead of crashing.
+The crate `velt_std_sqlite` over `rusqlite` (SQLite compiled in: `bundled`; also
+`column_decltype`), built on the native-package SDK only and linked into the runtime
+(native_abi.md "Drivers in the runtime"): its functions are `velt_std_sqlite__*` exports with
+the signatures below. **Synchronous**: a typical statement takes microseconds, less than a
+blocking-pool round trip. A database is a registry key of `Mutex<Option<Connection>>` plus a
+failure counter and the last error; a statement is a key of `{ Arc<db>, sql }` that re-finds
+its compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call,
+so closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). A
+null or closed handle (a closed `Database` / `Statement` in std) fails the same way instead of
+crashing.
 
 Errors: `err.code` is SQLite's **extended result code** (never 0; e.g. 2067
 `SQLITE_CONSTRAINT_UNIQUE`), `message` SQLite's message. Parameter problems are `SQLITE_RANGE`
 (25), a closed handle or several statements in one `prepare` `SQLITE_MISUSE` (21).
 
-Parameters (`params`) are JSON text (`crates/velt_rt/src/db_json/params.rs`): `""` = none, an
-object binds `:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members
-ignored), an array or a lone scalar binds by position (count must match). Integer literals in
-i64 range ⇒ INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0,
-`null` ⇒ NULL, arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`.
-Rows are JSON text (`db_json/rows.rs`): `[{"col":value,...}]` keyed by column name, INTEGER as
-exact digits, REAL in JS shortest form (non-finite ⇒ `null`), TEXT escaped like
-`JSON.stringify`, BLOB as a number array, NULL as `null`; a 0/1 value in a column declared
-`BOOL`/`BOOLEAN` is written as `false`/`true`.
-
-```c
-typedef struct { int64_t changes; int64_t last_insert_rowid; } VeltSqliteRun;   // 16 bytes
-```
+Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an object binds
+`:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
+array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
+INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
+arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. For the parameter
+types it can, std hands the parameters to a sink instead (`bind_begin`, native_abi.md "Parameter
+sinks"), which binds them as their JSON text would. Rows come through a row cursor
+(native_abi.md "Row cursors"), which std decodes with `__intrinsic_json_parse_cursor<T>`: they
+read as the JSON `[{"col":value,...}]` keyed by column name, INTEGER exact, REAL a number
+(non-finite ⇒ `null`), TEXT a string, BLOB a number array, NULL `null`; a 0/1 value in a column
+declared `BOOL`/`BOOLEAN` is `false`/`true`. The cursor holds the connection's lock until std
+gives it back with `close_rows`, as a sink does until it is handed on or given up.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_sqlite_open` | `(const VeltStr* path, u8 readonly, u8 create, u32 timeout_ms, IoResult<VeltSqliteDb>* out)` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
-| `velt_rt_sqlite_close` | `(VeltSqliteDb db, VeltErr* out)` | closes the connection (finalizing cached statements) and releases the handle; null ⇒ no-op |
-| `velt_rt_sqlite_exec` | `(VeltSqliteDb db, const VeltStr* sql, VeltErr* out)` | `;`-separated statements, no parameters |
-| `velt_rt_sqlite_pragma` | `(VeltSqliteDb db, const VeltStr* source, IoResult<VeltStr>* out)` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
-| `velt_rt_sqlite_in_transaction` | `(VeltSqliteDb db) -> u8` | not in autocommit mode; 0 when closed |
-| `velt_rt_sqlite_error_count` | `(VeltSqliteDb db) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_rt_sqlite_reset_error_count` | `(VeltSqliteDb db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
-| `velt_rt_sqlite_last_error` | `(VeltSqliteDb db, VeltErr* out)` | the most recent failure as a failed status (code 0 if none) |
-| `velt_rt_sqlite_prepare` | `(VeltSqliteDb db, const VeltStr* sql, IoResult<VeltSqliteStmt>* out)` | compiles exactly one statement into the cache |
-| `velt_rt_sqlite_run` | `(VeltSqliteStmt stmt, const VeltStr* params, IoResult<VeltSqliteRun>* out)` | steps to completion (rows discarded) |
-| `velt_rt_sqlite_query` | `(VeltSqliteStmt stmt, const VeltStr* params, u8 first_only, IoResult<VeltStr>* out)` | the rows for `JSON.parse<T[]>`; `first_only` ⇒ the first row for `JSON.parse<T>`, or `""`. The string is a marker, not JSON text: the rows are parked in binary form (`json/rows_bin.rs`) for the reader the calling thread makes from that string next (`velt_rt_json_reader_new_with`), which reads them as the JSON `[{"col":value,...}]` (#33) |
-| `velt_rt_sqlite_note_error` | `(VeltSqliteStmt stmt, i32 code, const VeltStr* message)` | counts a failure std found (a row that does not decode) against the connection |
-| `velt_rt_sqlite_stmt_free` | `(VeltSqliteStmt stmt)` | releases the handle; null ⇒ no-op |
-| `velt_rt_sqlite_error_name` | `(i32 code, VeltStr* out)` | static name: known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
+| `velt_std_sqlite__open` | `(string path, bool readonly, bool create, u32 timeout_ms) -> IoResult<u64>` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
+| `velt_std_sqlite__close` | `(u64 db) -> IoStatus` | closes the connection (finalizing cached statements) and releases the handle; null or closed ⇒ no-op |
+| `velt_std_sqlite__exec` | `(u64 db, string sql) -> IoStatus` | `;`-separated statements, no parameters |
+| `velt_std_sqlite__pragma` | `(u64 db, string source) -> IoResult<string>` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
+| `velt_std_sqlite__in_transaction` | `(u64 db) -> bool` | not in autocommit mode; false when closed |
+| `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
+| `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
+| `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
+| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement; the connection keeps it per SQL text (preparing the same text again compiles nothing) |
+| `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
+| `velt_std_sqlite__open_rows` | `(u64 stmt, string params, bool first_only) -> IoResult<u64>` | binds, steps to the first row: a row cursor (`RawCursor*`) for `__intrinsic_json_parse_cursor<T[]>`; `first_only` ⇒ the first row alone (`<T>`), or 0 if there is none |
+| `velt_std_sqlite__close_rows` | `(u64 cursor) -> IoStatus` | releases a cursor (and the connection's lock); fails with what SQLite met while stepping; 0 ⇒ no-op |
+| `velt_std_sqlite__bind_begin` | `(u64 stmt) -> IoResult<u64>` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>` |
+| `velt_std_sqlite__open_rows_bound` | `(u64 sink, bool first_only) -> IoResult<u64>` | `open_rows` with the parameters the sink bound (missing or extra ones fail as with JSON text) |
+| `velt_std_sqlite__run_bound` | `(u64 sink) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | `run` with the parameters the sink bound |
+| `velt_std_sqlite__bind_abort` | `(u64 sink)` | gives up a sink std did not use (it then binds JSON text) |
+| `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
+| `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
+| `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
 
 Not available on WebAssembly (no symbols in `libvelt_rt_wasm.a`: linking fails with undefined
-`velt_rt_sqlite_*`).
+`velt_std_sqlite__*`).
 
 ### 14.12 Redis (std/redis; stream db, additive)
 
-A RESP2 client written directly over tokio (`crates/velt_rt/src/redis/`), with TLS from the
-shared rustls configuration of §14.8 (`ring`, webpki roots + extra PEM CAs). `VeltRedis` is an
-`Arc` of one **multiplexed** connection: requests from any number of tasks are queued in order
-and written in batches, and a reader task completes them in order; in-flight operations keep a
-clone, so `close` is allowed any time. A failed connection fails the commands already written to
-it (`ECONNRESET`); later commands reopen it (exponential backoff for up to 10 s, stream
-linux-servers) or fail with the connect error. `VeltRedisSub` is an `Arc` of a dedicated
-subscribed connection whose messages are pulled (no callbacks are stored, §13.5).
+The crate `velt_std_redis`, built on the native-package SDK only and linked into the runtime
+(native_abi.md "Drivers in the runtime"): a RESP2 client over the runtime's own sockets
+(`velt_native::net::TcpStream`, on Velt's scheduler the worker's reactor) and timers, with TLS
+from the shared client configuration (`velt_tls`: `ring`, webpki roots + extra PEM CAs). A
+client is a registry key of one **multiplexed** connection: requests from any number of tasks
+are queued in order and written in batches, and a reader task completes them in order;
+in-flight operations keep a reference, so `close` is allowed any time, and a closed handle
+fails with `EBADF`. A failed connection fails the commands already written to it
+(`ECONNRESET`); later commands reopen it (exponential backoff for up to 10 s, stream
+linux-servers) or fail with the connect error. A subscriber is a key of a dedicated subscribed
+connection whose messages are pulled (no callbacks are stored, §13.5).
 
 URLs: `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS); percent-decoded
 credentials, `[v6]` hosts, `?db=N`. The handshake sends `AUTH` and `SELECT` as needed; connecting
@@ -1125,33 +1380,35 @@ Errors: I/O failures use the §3 codes. An **error reply** from the server uses 
 with the reply text as the message (`WRONGTYPE Operation against …`); std/redis takes its first
 word as `RedisError.code`. A reply that is not valid RESP is `EILSEQ`.
 
-```c
-typedef struct { VeltBytes tags; VeltArray<i64> nums; VeltStrArray strs; } VeltRedisReply; // 72
-// One entry per node in pre-order (a node, then its children). tags: 0 nil, 1 status,
-// 2 error, 3 int, 4 bulk string, 5 array; nums: the int value or the array's length (else 0);
-// strs: the text of status/error/string nodes (else ""; invalid UTF-8 becomes U+FFFD).
-typedef struct { uint32_t kind; uint32_t pad; VeltStr channel; VeltStr message; VeltStr pattern; }
-    VeltRedisMessage;                                                                     // 80
-// kind: 0 = closed (after close), 1 = message, 2 = pattern message (pattern set)
+Commands are encoded from the borrowed `string[]` when called (an `#[export(async)]` `fn`
+returning its future, native_abi.md); replies are written straight into Velt's arrays.
+
+```
+RawReply   { tags: u8[]; nums: i64[]; strs: string[] }
+  One entry per node in pre-order (a node, then its children). tags: 0 nil, 1 status,
+  2 error, 3 int, 4 bulk string, 5 array; nums: the int value or the array's length (else 0);
+  strs: the text of status/error/string nodes (else ""; invalid UTF-8 becomes U+FFFD).
+RawMessage { kind: u32; channel: string; message: string; pattern: string }
+  kind: 0 = closed (after close), 1 = message, 2 = pattern message (pattern set)
 ```
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_redis_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltRedis>`; `ca_pem` `""` = built-in roots only |
-| `velt_rt_redis_duplicate` | `(VeltRedis c) -> VeltFut*` | `IoResult<VeltRedis>`: a new connection opened like `c` |
-| `velt_rt_redis_close` | `(VeltRedis c)` | releases the handle |
-| `velt_rt_redis_command` | `(VeltRedis c, const VeltStrArray* args) -> VeltFut*` | `IoResult<VeltRedisReply>`; `args[0]` is the command (copied); a top-level error reply fails with code 100; empty `args` ⇒ `EINVAL` |
-| `velt_rt_redis_pipeline` | `(VeltRedis c, const VeltStrArray* args, const VeltArray<u64>* counts, u8 atomic) -> VeltFut*` | `IoResult<VeltRedisReply>`: `args` split into commands of `counts[i]` args, sent in one write; the reply is an array with one node per command, error replies as tag 2. `atomic`: wrapped in `MULTI`/`EXEC`, the reply is `EXEC`'s array and an aborted transaction fails with code 100 (`EXECABORT …`, naming the first rejected command) |
-| `velt_rt_redis_subscribe` | `(VeltRedis c, const VeltStr* url, const VeltStr* ca_pem, const VeltStrArray* names, u8 patterns) -> VeltFut*` | `IoResult<VeltRedisSub>`: a new connection to where `c` is connected (`c != 0`) or to `url`; `SUBSCRIBE` (`PSUBSCRIBE` when `patterns`) resolves once every name is confirmed |
-| `velt_rt_redis_sub_next` | `(VeltRedisSub s) -> VeltFut*` | `IoResult<VeltRedisMessage>`: the next message; kind 0 once closed; a connection lost to the server ⇒ `ECONNRESET` |
-| `velt_rt_redis_sub_change` | `(VeltRedisSub s, const VeltStrArray* names, u8 patterns, u8 subscribe) -> VeltFut*` | `IoResult<()>`: `(P)SUBSCRIBE` (`subscribe` 1) or `(P)UNSUBSCRIBE` (0), resolved once confirmed; no names = no-op |
-| `velt_rt_redis_sub_close` | `(VeltRedisSub s)` | pending and later `next` calls resolve with kind 0; releases the handle |
+| `velt_std_redis__connect` | `async (string url, string ca) -> IoResult<u64>` | `ca`: extra PEM CAs for `rediss://` (`""` = none) |
+| `velt_std_redis__duplicate` | `async (u64 c) -> IoResult<u64>` | a second connection opened like `c` |
+| `velt_std_redis__close` | `(u64 c)` | releases the handle (through any copy; again: no-op) |
+| `velt_std_redis__command` | `async (u64 c, string[] args) -> IoResult<RawReply>` | one command (`args[0]` its name); an error reply fails with code 100 |
+| `velt_std_redis__pipeline` | `async (u64 c, string[] args, u64[] counts, bool atomic) -> IoResult<RawReply>` | `args` split by `counts`, sent together; one array node per command (error replies as nodes); `atomic`: in `MULTI`/`EXEC`, the result is `EXEC`'s array |
+| `velt_std_redis__subscribe` | `async (u64 c, string url, string ca, string[] names, bool patterns) -> IoResult<u64>` | a new subscribed connection (to client `c`'s server, or `url` when `c` is 0); resolves once every name is confirmed |
+| `velt_std_redis__sub_next` | `async (u64 s) -> IoResult<RawMessage>` | the next message; kind 0 after `close` |
+| `velt_std_redis__sub_change` | `async (u64 s, string[] names, bool patterns, bool subscribe) -> IoStatus` | (un)subscribe, once confirmed |
+| `velt_std_redis__sub_close` | `(u64 s)` | pending and later `next` calls return kind 0 |
 
 Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm`.
 
 ### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
 
-`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.18).
+The crate `velt_std_postgres`, built on the native-package SDK only (`velt_native`, `velt_text`) and linked into the runtime (native_abi.md "Drivers in the runtime"); its functions are `velt_std_postgres__*` exports, with the signatures below. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream (§14.18). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
@@ -1176,8 +1433,12 @@ quotes and comments are skipped; mixing with `$1` ⇒ `EINVAL`; missing member �
 are converted for the prepared parameter types: Int ⇒ int2/int4/int8/oid (range-checked),
 float4/float8, numeric, text types; Float ⇒ float4/float8, numeric, text types; Bool ⇒ bool,
 text types; Bytes ⇒ bytea; Text ⇒ text types and json/jsonb in binary, any other type in text
-format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`.
-Rows are JSON text (`db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
+format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`. For the parameter
+types it can, std hands them to a sink instead (`bind_begin`, native_abi.md "Parameter sinks"),
+which keeps them as the JSON text would have parsed.
+Rows come through a row cursor (native_abi.md "Row cursors", decoded by
+`__intrinsic_json_parse_cursor`), the values as JSON text would give them (batches still return
+JSON text, `db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
 ⇒ `null`), numeric ⇒ string of its digits, bool, text types/enums ⇒ string, uuid ⇒ string,
 date/time/timestamp ⇒ ISO 8601 string, timestamptz ⇒ ISO 8601 UTC with `Z`, json/jsonb ⇒ the
 document, bytea ⇒ number array, arrays ⇒ nested arrays, domains ⇒ base type, NULL ⇒ `null`;
@@ -1185,29 +1446,34 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_rt_pg_query` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<VeltStr>`: rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
-| `velt_rt_pg_execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
-| `velt_rt_pg_batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
-| `velt_rt_pg_begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
-| `velt_rt_pg_end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
-| `velt_rt_pg_depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
-| `velt_rt_pg_error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_rt_pg_reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
-| `velt_rt_pg_error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
-| `velt_rt_pg_note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
-| `velt_rt_pg_close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
-| `velt_rt_pg_pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
-| `velt_rt_pg_pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_rt_pg_close` |
-| `velt_rt_pg_pool_query` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | as `velt_rt_pg_query` on a borrowed connection |
-| `velt_rt_pg_pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_rt_pg_execute` |
-| `velt_rt_pg_pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_rt_pg_batch` |
-| `velt_rt_pg_pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
-| `velt_rt_pg_pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
+| `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
+| `velt_std_postgres__query_rows` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<u64>`: a row cursor (`RawCursor*`) over the rows, given back to `close_rows`; `first_only` ⇒ the first row alone, or 0 if there is none |
+| `velt_std_postgres__query_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink, u8 first_only) -> VeltFut*` | `query_rows` with the parameters a sink took |
+| `velt_std_postgres__execute_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink) -> VeltFut*` | `execute` with the parameters a sink took |
+| `velt_std_postgres__bind_begin` | `() -> u64` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>`, handed on to a `…_bound` call |
+| `velt_std_postgres__bind_abort` | `(u64 sink)` | gives up a sink std did not use |
+| `velt_std_postgres__close_rows` | `(u64 cursor, VeltErr* out)` | releases a row cursor; fails if a value could not be read; 0 ⇒ no-op |
+| `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
+| `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
+| `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
+| `velt_std_postgres__end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
+| `velt_std_postgres__depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
+| `velt_std_postgres__error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
+| `velt_std_postgres__reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
+| `velt_std_postgres__error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
+| `velt_std_postgres__note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
+| `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
+| `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
+| `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
+| `velt_std_postgres__pool_query_rows` / `_pool_query_bound` / `_pool_execute_bound` | as the client's, with `VeltPgPool p` | on a borrowed connection |
+| `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
+| `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
+| `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
+| `velt_std_postgres__pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
 
 Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framework
 CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
-lists). Not available on WebAssembly (no `velt_rt_pg_*` symbols in `libvelt_rt_wasm.a`).
+lists). Not available on WebAssembly (no `velt_std_postgres__*` symbols in `libvelt_rt_wasm.a`).
 
 ### 14.14 Releasing an HTTP handler (stream linux-servers, additive)
 `VeltHandler.env` is null or a closure environment box whose first word is its drop function
@@ -1230,13 +1496,13 @@ against the client.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
-| `velt_rt_pg_copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
-| `velt_rt_pg_copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
-| `velt_rt_pg_copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
-| `velt_rt_pg_copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
-| `velt_rt_pg_copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
-| `velt_rt_pg_copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
+| `velt_std_postgres__copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
+| `velt_std_postgres__copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
+| `velt_std_postgres__copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
+| `velt_std_postgres__copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
+| `velt_std_postgres__copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
+| `velt_std_postgres__copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
+| `velt_std_postgres__copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
 
 ### 14.16 Fast random numbers (`velt:random`; stream linux-servers, additive)
 | Symbol | Signature | Notes |
@@ -1294,5 +1560,5 @@ earlier writes are rolled back with it (all or nothing). Failures count against 
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
-| `velt_rt_pg_pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_rt_pg_query_batch`, on one pooled connection |
+| `velt_std_postgres__query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
+| `velt_std_postgres__pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_std_postgres__query_batch`, on one pooled connection |

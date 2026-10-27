@@ -56,7 +56,11 @@ impl Cx<'_> {
             .map(DefId)
             .find(|&d| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == name))
             .unwrap_or_else(|| ice("the prelude has no generator class"));
-        self.intern(TyKind::Adt(d, vec![t, e]))
+        let args = match f.is_async {
+            true => vec![t, e],
+            false => vec![t, e, self.gen_next_arg(f, targs)],
+        };
+        self.intern(TyKind::Adt(d, args))
     }
 
     /// The object layout of instance `def<targs>`: the class's fields (the table pointer first),
@@ -103,6 +107,9 @@ impl Cx<'_> {
         if self.fn_def(def).is_async {
             let start = self.func(Work::AsyncCloseStart(def, targs.to_vec()));
             relocs.push((24, Const::Func(start)));
+        } else if self.throws_in() {
+            let throw = self.func(Work::GenThrow(def, targs.to_vec()));
+            relocs.push((super::gen_send::TABLE_THROW as u32, Const::Func(throw)));
         }
         let bytes = vec![0; relocs.len() * 8];
         self.statics.push(StaticData {
@@ -243,7 +250,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
         let fid = self.cx.func(Work::GenNew(def, targs.clone()));
-        let argv = self.lower_args(args, &modes, true);
+        let argv = self.lower_args(args, &modes, crate::lower::call::Stabilize::Share);
         let gty = self.cx.gen_class_ty(def, &targs);
         self.finish_call(vir::Callee::Func(fid), argv, gty, None)
     }

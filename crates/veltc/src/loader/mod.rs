@@ -14,7 +14,13 @@
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
 //! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
 //!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
-//!   [`PackageResolver`] (vpm's installed package graph).
+//!   [`PackageResolver`] (vpm's installed package graph);
+//! - any other bare specifier (`"@sigx/reactivity"`, `"sigx/internals"`) → the TypeScript source
+//!   of an npm package in `node_modules` or the workspace, as its `package.json` `exports` name
+//!   it ([`vpm::npm`]).
+//!
+//! Non-std modules parse with the root package's `define` constants, and ambient
+//! `declare const`s come from modules and their packages' `.d.ts` files ([`ambient`]).
 //!
 //! The names an import spells must match the files on disk in case, on every OS ([`case`]); a
 //! file module hiding a folder module of another extension gets a warning ([`pick`]).
@@ -29,8 +35,10 @@
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
 
+mod ambient;
 mod case;
 mod globals;
+mod import_meta;
 mod jsx;
 mod locate;
 mod pick;
@@ -48,7 +56,7 @@ use velt_syntax::ast;
 pub use locate::{module_path, Origin, PackageResolver};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
-pub use std_root::{prelude_files, std_root};
+pub use std_root::{in_std, prelude_files, std_root};
 
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
@@ -62,6 +70,10 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
+    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt:fs`), not
+    /// as `main`: the language server, for a std file opened in the editor, so it is checked like
+    /// std code (runtime declarations, std's own types) instead of as a user program.
+    pub std_root_as_std: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -114,6 +126,9 @@ pub fn load_with_roots(
         extra_phase: false,
         dir_names: case::DirNames::default(),
         globals: vec![],
+        npm: vpm::npm::NpmResolver::default(),
+        ambient: ambient::Ambients::new(opts.packages),
+        global_vars: vec![],
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -129,7 +144,22 @@ pub fn load_with_roots(
     };
     let dir = root.parent().unwrap_or(Path::new("")).to_path_buf();
     let origin = Origin::Root(dir);
-    let root_index = loader.add(root, file_key(root), src, "main".into(), origin.clone());
+    let key = file_key(root);
+    let std_origin = match (&opts.std_root, &loader.std_key) {
+        (Some(std), Some(std_key)) if opts.std_root_as_std && key.starts_with(std_key) => {
+            Some(Origin::Std(std.clone()))
+        }
+        _ => None,
+    };
+    let root_index = match std_origin {
+        // A prelude file opened in the editor is already loaded.
+        Some(_) if loader.by_file.contains_key(&key) => loader.by_file[&key],
+        Some(std) => {
+            let canonical = std.canonical(root);
+            loader.add(root, key, src, canonical, std)
+        }
+        None => loader.add(root, key, src, "main".into(), origin.clone()),
+    };
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
@@ -137,6 +167,8 @@ pub fn load_with_roots(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    loader.check_ambients();
+    loader.declare_global_types();
     Ok(Loaded {
         modules: loader.modules,
         root: root_index,
@@ -162,6 +194,13 @@ struct Loader<'a, 'o> {
     dir_names: case::DirNames,
     /// The globals loaded on demand ([`globals`]) not loaded yet.
     globals: Vec<globals::Global>,
+    /// npm packages found so far ([`vpm::npm`]).
+    npm: vpm::npm::NpmResolver,
+    /// Build-time constants and ambient declarations ([`ambient`]).
+    ambient: ambient::Ambients,
+    /// The typed `var`s of each module's `declare global { … }`, by module index
+    /// ([`ambient::global_vars`]).
+    global_vars: Vec<(usize, Vec<velt_syntax::Ambient>)>,
 }
 
 impl Loader<'_, '_> {
@@ -231,18 +270,39 @@ impl Loader<'_, '_> {
         origin: Origin,
     ) -> usize {
         let file = self.sm.add(path, src);
-        let src = &self.sm.get(file).src;
-        let (ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
-            velt_syntax::parse_ts_file(file, src)
+        let is_std = matches!(origin, Origin::Std(_));
+        let plain_ts = vpm::sources::is_plain_ts(path);
+        let mut ast = if is_std {
+            let src = &self.sm.get(file).src;
+            let (ast, parse_diags) = if plain_ts {
+                velt_syntax::parse_ts_file(file, src)
+            } else {
+                velt_syntax::parse_file(file, src)
+            };
+            self.diags.extend(parse_diags);
+            ast
         } else {
-            velt_syntax::parse_file(file, src)
+            self.ambient.read_declarations(self.sm, path);
+            let opts = velt_syntax::ParseOptions {
+                plain_ts,
+                defines: self.ambient.defines(),
+            };
+            let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
+            self.diags.extend(parsed.diags);
+            let typed = ambient::global_vars(&parsed.ambient);
+            if !typed.is_empty() {
+                self.global_vars.push((self.modules.len(), typed));
+            }
+            self.ambient
+                .declared(parsed.ambient, file, parsed.is_module);
+            parsed.module
         };
-        self.diags.extend(parse_diags);
+        import_meta::fill(&mut ast, path, canonical == "main");
         let index = self.modules.len();
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
             path: canonical,
-            is_std: matches!(origin, Origin::Std(_)),
+            is_std,
             file,
             ast,
             imports: vec![],
@@ -254,9 +314,45 @@ impl Loader<'_, '_> {
 
     /// Resolve the imports of every queued module, and of the modules that loads.
     fn resolve_all(&mut self, queue: &mut VecDeque<usize>) {
-        while let Some(index) = queue.pop_front() {
-            self.resolve_imports(index, queue);
+        loop {
+            while let Some(index) = queue.pop_front() {
+                self.resolve_imports(index, queue);
+            }
+            // Conditional globals once everything else is loaded: what they add may load more.
+            if !self.load_conditional_globals(queue) {
+                break;
+            }
         }
+    }
+
+    /// Load the conditional globals ([`globals`]) whose std module is loaded and whose words a
+    /// non-std module mentions; whether any was.
+    fn load_conditional_globals(&mut self, queue: &mut VecDeque<usize>) -> bool {
+        let Some(std) = self.opts.std_root.clone() else {
+            return false;
+        };
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let due = |g: &globals::Global| {
+            let Some((module, words)) = &g.when else {
+                return false;
+            };
+            modules.iter().any(|m| m.is_std && m.path == *module)
+                && modules.iter().filter(|m| !m.is_std).any(|m| {
+                    let src = &sm.get(m.file).src;
+                    words.iter().any(|w| globals::mentions_word(src, &m.ast, w))
+                })
+        };
+        let (wanted, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.globals).into_iter().partition(due);
+        self.globals = rest;
+        let mut loaded = false;
+        for g in wanted {
+            if let Some(new) = self.load_prelude(&g.file, &std) {
+                queue.push_back(new);
+                loaded = true;
+            }
+        }
+        loaded
     }
 
     /// Load `file` as an extra root with `origin` (the root's), unless it is already loaded.
@@ -283,6 +379,43 @@ impl Loader<'_, '_> {
                 self.error(format!("cannot read `{shown}`: {e}"), vec![], span);
             }
         }
+    }
+
+    /// Give the typed `var`s of every module's `declare global` to the rewrite of `globalThis`
+    /// ([`ambient::declare_global_types`]), when a module of the program names it (a program
+    /// that doesn't has no use for them).
+    fn declare_global_types(&mut self) {
+        let vars = std::mem::take(&mut self.global_vars);
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let names = |m: &SourceModule| {
+            let src = &sm.get(m.file).src;
+            globals::mentions(src, "globalThis")
+                || src.contains("global.")
+                || src.contains("global[")
+        };
+        if vars.is_empty() || !modules.iter().any(|m| !m.is_std && names(m)) {
+            return;
+        }
+        for (i, vars) in vars {
+            ambient::declare_global_types(&mut self.modules[i].ast, &vars);
+        }
+    }
+
+    /// Report the ambient constants that modules use but nothing gives a value
+    /// ([`ambient::Ambients::check`]).
+    fn check_ambients(&mut self) {
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let mentioned = |name: &str, owner: Option<velt_common::FileId>| {
+            modules
+                .iter()
+                .filter(|m| !m.is_std && owner.is_none_or(|f| f == m.file))
+                .any(|m| {
+                    globals::mentions(&sm.get(m.file).src, name)
+                        && !velt_syntax::scope::free_values(&m.ast, &|n| n == name).is_empty()
+                })
+        };
+        let found = self.ambient.check(&mentioned);
+        self.diags.extend(found);
     }
 
     /// Whether a loaded module has module path `path`.
@@ -314,6 +447,11 @@ impl Loader<'_, '_> {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
                     Some((imp.from.clone(), imp.from_span))
                 }
+                // `declare module "spec" { … }` augments that module: it is loaded as an import.
+                ast::ItemKind::Augment(ast::Augment {
+                    module: Some((spec, span)),
+                    ..
+                }) => Some((spec.clone(), *span)),
                 _ => None,
             })
             .collect();
@@ -385,13 +523,38 @@ impl Loader<'_, '_> {
         let (importer, from) = self.origins[index].clone();
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
-        let aliased = alias.is_some();
+        let mut aliased = alias.is_some();
+        // No npm package was found for the specifier: an error that follows says why the
+        // workspace walk may have missed it.
+        let mut npm_missed = false;
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
-            None => match resolve_spec(spec, dir) {
-                Ok(m) => m,
-                Err(msg) => return self.error(msg, vec![], span),
-            },
+            None => {
+                let classified = resolve_spec(spec, dir);
+                match npm_module(
+                    &mut self.npm,
+                    self.opts.packages,
+                    &importer,
+                    spec,
+                    &classified,
+                ) {
+                    Some(Ok(file)) => {
+                        aliased = true;
+                        ModuleRef::Relative { file }
+                    }
+                    Some(Err((msg, notes))) => return self.error(msg, notes, span),
+                    None => {
+                        npm_missed = matches!(classified, Ok(ModuleRef::Package { .. }));
+                        match classified {
+                            Ok(m) => m,
+                            Err(msg) => {
+                                let notes = self.npm.workspace_note(&importer);
+                                return self.error(msg, notes.into_iter().collect(), span);
+                            }
+                        }
+                    }
+                }
+            }
         };
         let target = match locate::target(
             module,
@@ -401,7 +564,12 @@ impl Loader<'_, '_> {
             self.opts.packages,
         ) {
             Ok(t) => t,
-            Err((msg, notes)) => return self.error(msg, notes, span),
+            Err((msg, mut notes)) => {
+                if npm_missed {
+                    notes.extend(self.npm.workspace_note(&importer));
+                }
+                return self.error(msg, notes, span);
+            }
         };
         let shown = pick::Shown {
             dir,
@@ -500,6 +668,29 @@ impl Loader<'_, '_> {
     }
 }
 
+/// The npm package module bare specifier `spec` names ([`vpm::npm`]), unless the importing
+/// package has a Velt dependency of that name (which wins) or `spec` is not bare
+/// (`classified`: what [`resolve_spec`] made of it). `None`: no npm package of that name.
+fn npm_module(
+    npm: &mut vpm::npm::NpmResolver,
+    packages: Option<&dyn PackageResolver>,
+    importer: &Path,
+    spec: &str,
+    classified: &Result<ModuleRef, String>,
+) -> Option<Result<PathBuf, vpm::npm::NpmError>> {
+    let bare = match classified {
+        Ok(ModuleRef::Package { name, .. }) => {
+            packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
+        }
+        Ok(_) => false,
+        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt:"),
+    };
+    if !bare {
+        return None;
+    }
+    npm.resolve(importer, spec)
+}
+
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
 fn is_std_path(path: &str) -> bool {
     path == "std" || path.starts_with("std/")
@@ -532,6 +723,8 @@ fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
 
 #[cfg(test)]
 mod case_tests;
+#[cfg(test)]
+mod globals_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

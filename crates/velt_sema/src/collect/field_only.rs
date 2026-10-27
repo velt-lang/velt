@@ -10,7 +10,7 @@
 //! anonymous object type of its fields (`crate::readonly`), so it converts to and from object
 //! types of the same layout (an `Upcast`) and stays the same object.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_syntax::ast;
 
@@ -25,7 +25,7 @@ pub(super) fn declare(cx: &mut Ctx) {
         .map(DefId)
         .filter(|d| matches!(&cx.info[d.0 as usize], DefInfo::Iface(i) if i.decl.is_some()))
         .collect();
-    let mut memo: HashMap<DefId, bool> = HashMap::new();
+    let mut memo: FxHashMap<DefId, bool> = FxHashMap::default();
     for d in &ifaces {
         is_field_only(cx, *d, &mut memo, &mut vec![]);
     }
@@ -46,18 +46,20 @@ pub(super) fn declare(cx: &mut Ctx) {
                 names: i.generics.names.clone(),
                 bounds: vec![],
                 defaults: vec![],
+                constraints: vec![],
             },
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
-            methods: HashMap::new(),
+            methods: FxHashMap::default(),
             ctor: None,
             own_ctor: None,
             vtable: vec![],
-            vslots: HashMap::new(),
+            vslots: FxHashMap::default(),
             implements: vec![],
             has_dispose: false,
-            statics: HashMap::new(),
+            statics: FxHashMap::default(),
             decl: None,
         };
         let span = i.span;
@@ -72,7 +74,7 @@ pub(super) fn declare(cx: &mut Ctx) {
 fn is_field_only(
     cx: &Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, bool>,
+    memo: &mut FxHashMap<DefId, bool>,
     stack: &mut Vec<DefId>,
 ) -> bool {
     if let Some(&known) = memo.get(&d) {
@@ -112,7 +114,7 @@ fn parent_iface(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<DefId> {
     let [name] = path.as_slice() else {
         return None;
     };
-    match cx.lookup_item_at(module, &name.name, name.span)? {
+    match cx.lookup_type_item_at(module, &name.name, name.span)? {
         Item::Def(p) if cx.iface(p).is_some() => Some(p),
         _ => None,
     }
@@ -135,7 +137,7 @@ pub(super) fn fill(cx: &mut Ctx) {
         a.generics.bounds = bounds;
     }
     // The anonymous object type of the same fields replaces it before lowering.
-    for (_, adt) in pairs {
+    for &(_, adt) in &pairs {
         let a = cx.adt(adt).expect("ICE: adt");
         let module = a.module;
         let fields: Vec<crate::anon::ShapeField> =
@@ -147,6 +149,7 @@ pub(super) fn fill(cx: &mut Ctx) {
         };
         cx.readonly_twins.insert(adt, (twin, Some(template)));
     }
+    super::extended_layouts::families(cx, &pairs);
 }
 
 impl Ctx<'_> {
@@ -184,6 +187,16 @@ impl Ctx<'_> {
             }
             found.push((index, *ty));
         }
+        let writable = self.setter_fields(iface);
+        let setters = writable
+            .iter()
+            .map(|&k| crate::iface_writes::SetterSrc::Field {
+                d,
+                self_ty: t,
+                index: found[k].0,
+                ty: found[k].1,
+            })
+            .collect();
         let methods = found
             .into_iter()
             .map(|(index, ty)| super::getters::field_getter(self, d, t, index, ty))
@@ -195,6 +208,8 @@ impl Ctx<'_> {
             iface_args: vec![],
             methods,
         });
-        Some(((self.impls.len() - 1) as u32, vec![], t))
+        let index = (self.impls.len() - 1) as u32;
+        self.note_setters(index, setters);
+        Some((index, vec![], t))
     }
 }

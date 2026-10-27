@@ -1,0 +1,230 @@
+// check: no leaks
+// Spread arguments and spread elements are evaluated in written order, as in JavaScript: an
+// argument or element before a spread runs before the spread's source (#1458), for calls,
+// `new`, methods, `super(...)`, array literals, `push` and `Math.max`; an iterable spread
+// (a generator, a `Set`) is consumed where it is written, before what follows it.
+function tr(s: string, v: number = 0): number {
+  console.log("eval " + s);
+  return v;
+}
+function tn(s: string, v: number[]): number[] {
+  console.log("eval " + s);
+  return v;
+}
+function ts(s: string, v: string): string {
+  console.log("eval " + s);
+  return v;
+}
+function g(...xs: number[]): number {
+  return xs.length;
+}
+function h(a: number, ...xs: number[]): number {
+  return a + xs.length;
+}
+function* gen(s: string): Generator<number> {
+  console.log("gen start " + s);
+  yield 1;
+  console.log("gen mid " + s);
+  yield 2;
+  console.log("gen end " + s);
+}
+class C {
+  n: number;
+  constructor(...xs: number[]) {
+    this.n = xs.length;
+  }
+  m(...xs: number[]): number {
+    return xs.length;
+  }
+}
+class D extends C {
+  constructor() {
+    super(tr("s1", 1), ...tn("s2", [2]), tr("s3", 3));
+  }
+}
+
+console.log("-- call");
+console.log(g(tr("a", 0), ...tn("b", [5]), tr("c", 6)));
+console.log("-- call after a fixed parameter");
+console.log(h(tr("a", 0), tr("a2", 1), ...tn("b", [5]), tr("c", 6)));
+console.log("-- array");
+const arr: number[] = [tr("a", 0), ...tn("b", [5]), tr("c", 6)];
+console.log(arr);
+console.log("-- array, two spreads");
+console.log([...tn("x", [1]), tr("y", 2), ...tn("z", [3])]);
+console.log("-- array, pure elements first");
+const one = 1;
+const xs = [7, 8];
+console.log([one, one + 1, ...tn("b", [3]), ...xs, tr("c", 4)]);
+console.log("-- new");
+console.log(new C(tr("a", 0), ...tn("b", [5])).n);
+console.log("-- method");
+const c = new C();
+console.log(c.m(tr("a", 0), ...tn("b", [5]), tr("c", 1)));
+console.log("-- super");
+console.log(new D().n);
+console.log("-- arrow with a rest parameter, optional call");
+const ar = (...ys: number[]) => ys.length;
+console.log(ar(tr("a", 0), ...tn("b", [1]), tr("c", 2)));
+const of: ((...ys: number[]) => number) | undefined = ar;
+console.log(of?.(tr("a", 0), ...tn("b", [1])));
+console.log("-- generator");
+console.log([tr("a", 0), ...gen("g"), tr("c", 9), ...tn("d", [4])]);
+console.log(g(tr("a", 0), ...gen("g2"), ...tn("d", [4]), tr("e", 5)));
+console.log("-- Set, Map, string");
+const s = new Set<number>([7, 8]);
+console.log([tr("a", 0), ...s, tr("b", 1), ...tn("c", [2])]);
+const strs: string[] = [ts("a", "x"), ...ts("b", "hi"), ts("c", "y")];
+console.log(strs);
+const mp = new Map<string, number>([["k", 1]]);
+const keys: string[] = [ts("a", "x"), ...mp.keys(), ts("b", "y")];
+console.log(keys);
+const entries: [string, number][] = [["a", tr("a", 0)], ...mp, ["b", tr("b", 1)]];
+console.log(entries);
+console.log("-- nested arrays");
+console.log([[tr("a", 0)], ...[tn("b", [1])], [tr("c", 2)]]);
+console.log("-- Math.max, push");
+console.log(Math.max(tr("a", 1), ...tn("b", [5]), tr("c", 2)));
+const ps: number[] = [];
+ps.push(tr("a", 0), ...tn("b", [5]), tr("c", 1));
+console.log(ps);
+console.log("-- generic");
+function around<T>(x: () => T, ys: () => T[], z: () => T): T[] {
+  return [x(), ...ys(), z()];
+}
+console.log(around(() => tr("x", 1), () => tn("ys", [2]), () => tr("z", 3)));
+console.log("-- values that are not Copy");
+class Box {
+  v: string;
+  constructor(v: string) {
+    this.v = v;
+  }
+}
+function tb(s: string): Box[] {
+  console.log("eval " + s);
+  return [new Box(s)];
+}
+function b1(s: string): Box {
+  console.log("eval " + s);
+  return new Box(s);
+}
+const bs: Box[] = [b1("a"), ...tb("b"), b1("c")];
+console.log(bs.map((b) => b.v).join(","));
+console.log("-- an element that changes the array spread after it, or before it");
+function add3(a: number[]): number {
+  a.push(3);
+  return 0;
+}
+const ys = [1, 2];
+console.log([add3(ys), ...ys]);
+const popped = [...ys, ys.pop()!];
+console.log(popped, ys);
+console.log("-- a spread that throws");
+function boom(): number[] {
+  throw new Error("boom");
+}
+try {
+  console.log([tr("a", 1), ...boom(), tr("c", 2)]);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log("-- template and conditional elements");
+const tpl: string[] = [`x${tr("a", 1)}`, ...["p"], tr("b", 1) > 0 ? "y" : "z"];
+console.log(tpl);
+console.log("-- a variable or a field read before a spread that changes it");
+let vn = 1;
+function bump(): number[] {
+  vn = vn + 10;
+  return [vn];
+}
+function cnt(...ns: number[]): string {
+  return ns.join(",");
+}
+console.log(cnt(vn, ...bump(), vn));
+let vs = "a";
+function bumps(): string[] {
+  vs = vs + "b";
+  return [vs];
+}
+console.log([vs, ...bumps()].join(","));
+console.log([vn, vn + 1, ...bump()].join(","));
+console.log(Math.max(vn, ...bump()));
+const holder = { v: 1 };
+function setv(): number[] {
+  holder.v = 50;
+  return [1];
+}
+console.log([holder.v, ...setv()].join(","));
+function three(a: number, b: number, c: number): string {
+  return [a, b, c].join(",");
+}
+function pair(): [number, number] {
+  vn = vn + 1000;
+  return [vn, vn];
+}
+console.log(three(vn, ...pair()));
+console.log("-- a spread of an array that a later spread changes");
+const zs = [1];
+function grow(): number[] {
+  zs.push(9);
+  return [0];
+}
+console.log([...zs, ...grow()].join(","));
+console.log([...zs, vn, ...bump()].join(","));
+function* gn(): Generator<number> {
+  vn = vn + 100;
+  yield 1;
+}
+console.log([...gn(), ...[vn]].join(","));
+console.log([one, one + 1, ...bump()].join(","));
+console.log(JSON.stringify([[vn], ...bump()]));
+class Items {
+  items: number[] = [1, 2];
+  more(): number[] {
+    this.items.push(3);
+    return [9];
+  }
+  all(): number[] {
+    return [...this.items, ...this.more()];
+  }
+}
+console.log(new Items().all().join(","));
+const xa = [1];
+const xb = [2];
+let pick = true;
+function flip(): number[] {
+  pick = false;
+  return [0];
+}
+console.log([vn, ...(pick ? xa : xb), ...flip()].join(","));
+function cat3(a: string, b: string, c: string): string {
+  return a + b + c;
+}
+let sv = "a";
+function setSv(): [string, string] {
+  sv = "b";
+  return [sv, sv];
+}
+console.log(cat3(sv, ...setSv()), sv);
+console.log("-- room for a later spread");
+let ss = ["p", "q"];
+function moreS(): string[] {
+  ss.push("r");
+  return ["s", "t", "u"];
+}
+const joined = [...ss, ...moreS(), ...ss];
+console.log(joined.join(","), joined.length);
+const none: string[] = [];
+console.log([...none, ...none.map((s) => s + "!")].length, [...none, ...moreS()].join(","));
+const objs = [{ k: 1 }];
+function moreO(): { k: number }[] {
+  objs[0].k = 5;
+  return [{ k: 2 }];
+}
+const os = [...objs, ...moreO()];
+console.log(os.map((o) => o.k).join(","), os[0] === objs[0]);
+console.log("-- async");
+async function am(): Promise<number[]> {
+  return [tr("a", 0), ...(await Promise.resolve(tn("b", [1]))), tr("c", 2)];
+}
+am().then((v) => console.log(v));

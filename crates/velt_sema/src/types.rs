@@ -1,7 +1,7 @@
 //! Type interning helpers, classification, substitution of generic parameters and
 //! pattern matching of generic signatures against concrete types (type-argument inference).
 
-use crate::hir::{FloatTy, IntTy, TyId, TyKind, TyTable};
+use crate::hir::{FloatTy, IntTy, Nothing, TyId, TyKind, TyTable};
 
 pub(crate) struct Types {
     pub table: TyTable,
@@ -15,7 +15,17 @@ pub(crate) struct Types {
     pub u64: TyId,
     pub usize: TyId,
     pub f64: TyId,
+    /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
+    pub bigint_named: bool,
+    /// The function types of sites resolved with an inferred error type, and the types made
+    /// from them by substitution: shown as written, without it (`throws::fn_types`).
+    pub inferred_fns: rustc_hash::FxHashSet<TyId>,
 }
+
+/// The note on an error about a `never` in a program that names `bigint`, whose `never` is
+/// likely a `bigint` (`bigint[]` is `never[]`).
+pub(crate) const BIGINT_NEVER_NOTE: &str =
+    "a `bigint` is a `never` too: it has no values in Velt yet (#1088)";
 
 impl Types {
     pub fn new() -> Self {
@@ -42,11 +52,50 @@ impl Types {
             u64,
             usize,
             f64,
+            bigint_named: false,
+            inferred_fns: Default::default(),
         }
     }
 
+    /// The type `bigint` names: `never`, since no value is a `bigint` yet (#1088).
+    pub fn bigint(&mut self) -> TyId {
+        self.bigint_named = true;
+        self.never
+    }
+
+    /// The id of type `k`. A function type whose rest parameter is a tuple
+    /// (`(...args: [string, number]) => R`, often a type parameter's or `infer`'s value) is the
+    /// function type with those parameters (`(a: string, b: number) => R`), as in TypeScript.
     pub fn intern(&mut self, k: TyKind) -> TyId {
+        if let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: true,
+        } = &k
+        {
+            if let Some(TyKind::Tuple(ts)) = params.last().map(|t| self.kind(*t)) {
+                let mut params = params[..params.len() - 1].to_vec();
+                params.extend(ts);
+                let (ret, throws) = (*ret, *throws);
+                return self.table.intern(TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                    rest: false,
+                });
+            }
+        }
         self.table.intern(k)
+    }
+
+    /// `to`, a function type made from `from` by replacing its parts, is shown as written when
+    /// `from` is ([`Types::inferred_fns`]).
+    pub fn inferred_like(&mut self, from: TyId, to: TyId) -> TyId {
+        if from != to && !self.inferred_fns.is_empty() && self.inferred_fns.contains(&from) {
+            self.inferred_fns.insert(to);
+        }
+        to
     }
 
     pub fn kind(&self, t: TyId) -> &TyKind {
@@ -77,8 +126,22 @@ impl Types {
         t == self.error || t == self.never
     }
 
+    /// `t | null`
     pub fn option(&mut self, t: TyId) -> TyId {
-        self.intern(TyKind::Option(t))
+        self.intern(TyKind::Option(t, Nothing::Null))
+    }
+
+    /// `t | null`, `t | undefined` or both, per `n`.
+    pub fn option_of(&mut self, t: TyId, n: Nothing) -> TyId {
+        self.intern(TyKind::Option(t, n))
+    }
+
+    /// Which nothings option type `t` allows (`None` if `t` is not an option).
+    pub fn nothing_of(&self, t: TyId) -> Option<Nothing> {
+        match self.kind(t) {
+            TyKind::Option(_, n) => Some(*n),
+            _ => None,
+        }
     }
 
     pub fn array(&mut self, t: TyId) -> TyId {
@@ -89,10 +152,30 @@ impl Types {
         self.intern(TyKind::Param(n))
     }
 
-    /// Payload of `T | null`.
+    /// Payload of `T | null` (or `T | undefined`): what `WrapSome` / `UnwrapSome` hold. For
+    /// `T | null | undefined` that is `T | null` (`TyTable::payload`); `core` is `T` itself.
     pub fn opt_payload(&self, t: TyId) -> Option<TyId> {
+        self.table.payload(t)
+    }
+
+    /// `undefined` alone as a type: an option of `never`, so its one value is the option's
+    /// nothing (hir_encodings.md "Undefined").
+    pub fn undefined(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Undefined)
+    }
+
+    /// `null` alone as a type (a field that is always `null` in one member of a discriminated
+    /// union): an option of `never`, like `undefined` alone.
+    pub fn null_alone(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Null)
+    }
+
+    /// `T` of `T | null`, `T | undefined` and `T | null | undefined`.
+    pub fn core(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {
-            TyKind::Option(p) => Some(*p),
+            TyKind::Option(p, _) => Some(*p),
             _ => None,
         }
     }
@@ -131,6 +214,7 @@ impl Types {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 
@@ -190,8 +274,11 @@ impl Types {
             TyKind::Error => true,
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
-            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
-            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => any(&[*e]),
+            TyKind::Adt(_, args)
+            | TyKind::Dyn(_, args)
+            | TyKind::Tuple(args)
+            | TyKind::Op(_, args) => any(args),
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
         }
@@ -205,17 +292,20 @@ impl Types {
         let m = |s: &mut Self, x: TyId| s.without_error_types(x);
         let nk = match k {
             TyKind::Promise(v, _) => TyKind::Promise(m(self, v), error),
-            TyKind::FnPtr { params, ret, .. } => TyKind::FnPtr {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: error,
+                rest,
             },
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
             _ => return t,
@@ -233,10 +323,11 @@ impl Types {
         let nk = match k {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(m(self, v), m(self, e)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
@@ -244,14 +335,17 @@ impl Types {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: m(self, throws),
+                rest,
             },
             other => return self.intern(other),
         };
-        self.intern(nk)
+        let out = self.intern(nk);
+        self.inferred_like(t, out)
     }
 
     /// Resolve a primitive type name (`i64`, `number`, `string`, ...).
@@ -275,7 +369,7 @@ impl Types {
             "symbol" | "unique symbol" => TyKind::Symbol,
             "void" => TyKind::Unit,
             "never" => TyKind::Never,
-            _ => return None,
+            _ => TyKind::Simd(crate::hir::SimdTy::named(name)?),
         };
         Some(self.intern(k))
     }
@@ -304,13 +398,14 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
-        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
-        TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => vec![*e],
+        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) | TyKind::Op(_, a) => a.clone(),
+        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
             params,
             ret,
             throws,
+            ..
         } => {
             let mut v = params.clone();
             v.push(*ret);
@@ -318,6 +413,40 @@ pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
             v
         }
         _ => vec![],
+    }
+}
+
+/// `k` with each direct component type mapped by `f` (in [`children`]'s order).
+pub(crate) fn map_children(k: &TyKind, f: &mut dyn FnMut(TyId) -> TyId) -> TyKind {
+    fn m(ts: &[TyId], f: &mut dyn FnMut(TyId) -> TyId) -> Vec<TyId> {
+        ts.iter().map(|t| f(*t)).collect()
+    }
+    match k {
+        TyKind::Adt(d, a) => TyKind::Adt(*d, m(a, f)),
+        TyKind::Dyn(d, a) => TyKind::Dyn(*d, m(a, f)),
+        TyKind::Tuple(a) => TyKind::Tuple(m(a, f)),
+        TyKind::Op(o, a) => TyKind::Op(*o, m(a, f)),
+        TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } => {
+            let params = m(params, f);
+            TyKind::FnPtr {
+                params,
+                ret: f(*ret),
+                throws: f(*throws),
+                rest: *rest,
+            }
+        }
+        TyKind::Array(e) => TyKind::Array(f(*e)),
+        TyKind::Option(e, n) => TyKind::Option(f(*e), *n),
+        TyKind::Shared(e) => TyKind::Shared(f(*e)),
+        TyKind::Map(a, b) => TyKind::Map(f(*a), f(*b)),
+        TyKind::Result(a, b) => TyKind::Result(f(*a), f(*b)),
+        TyKind::Promise(a, b) => TyKind::Promise(f(*a), f(*b)),
+        k => k.clone(),
     }
 }
 
@@ -371,5 +500,20 @@ pub(crate) fn int_range(i: IntTy) -> String {
         format!("{}..={}", -m, m - 1)
     } else {
         format!("0..={}", (1u128 << bits) - 1)
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

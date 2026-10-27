@@ -7,7 +7,9 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 ## Features
 
 - **Diagnostics** from the parser, the module loader and the type checker, as you type. Unsaved
-  changes of other open files are taken into account.
+  changes of other open files are taken into account. A standard library file opened from the
+  toolchain (go to definition into `velt:http`, say) is checked as that std module, as it is when
+  your program imports it.
 - **Formatting** with [`velt fmt`](fmt.md).
 - **Navigation**: document outline, go to definition (also through `ns.x` namespace imports and
   re-exports, landing on the original declaration), find references, rename, document highlight
@@ -64,7 +66,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   `let` bindings carry a `mutable` modifier, and calls of functions and methods declared in
   Velt source that modify their receiver or an argument a `mutating` modifier (built-in methods
   such as `push` are not marked), which you can style.
-- **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
+- **Quick fixes** for compiler errors: remove `mut`, turn
   `"a" + xs` (a string and a value `+` does not convert, such as an array) into a template
   literal, replace `export default` with a named export, add `await`
   or `spawn(...)` to a floating promise, add `async` to a method whose promise must carry

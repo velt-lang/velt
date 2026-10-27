@@ -1,0 +1,57 @@
+// check: no leaks
+// Follow-ups of the three-state `T | null | undefined` (#1218).
+interface P {
+  n: number;
+}
+
+// Comparing a three-state value with a `T | null` or a `T | undefined` one.
+function cmp(n: number | null | undefined, k: number | null, m: number | undefined): string {
+  return `${n === k} ${n == m} ${k == n} ${n !== m} ${k === n} ${k == m} ${k === m}`;
+}
+console.log(cmp(null, null, undefined), cmp(undefined, null, undefined));
+console.log(cmp(1, 1, 1), cmp(2, null, 2), cmp(undefined, 3, undefined));
+const names: (string | null | undefined)[] = ["a", null, undefined];
+const want: string | null = null;
+console.log(names.map((s) => s === want), names.map((s) => s == want));
+
+// `?.` after `!== undefined` gives `undefined` for `null`.
+function opt(p: P | null | undefined): void {
+  if (p !== undefined) {
+    console.log(p?.n);
+  }
+}
+opt(null);
+opt({ n: 1 });
+opt(undefined);
+
+// `null` ruled out: the value reads as a `T | undefined`.
+function defined(x: string | null | undefined): string | undefined {
+  if (x === null) {
+    return "was null";
+  }
+  return x;
+}
+function definedObj(p: P | null | undefined): P | undefined {
+  if (p !== null) {
+    return p;
+  }
+  return { n: -1 };
+}
+console.log(defined(null), defined(undefined), defined("s"));
+console.log(definedObj(null), definedObj(undefined), definedObj({ n: 2 }));
+
+// Conditionals with both `null` and `undefined` arms.
+for (let i = 0; i < 4; i++) {
+  const v = i === 1 ? null : i === 2 ? undefined : i;
+  const w = i === 1 ? undefined : i === 2 ? null : i;
+  const z = i === 0 ? i : i === 1 ? null : undefined;
+  console.log(v, typeof v, w, typeof w, z, v === w, v == w);
+}
+
+// A conditional whose first arm is a conditional of nothings only.
+for (let i = 0; i < 4; i++) {
+  const a = i > 1 ? (i > 2 ? null : undefined) : "s" + i;
+  const c = i === 0 ? "u" + i : i === 1 ? null : undefined;
+  const same = a == c;
+  console.log(a, typeof a, c, typeof c, same, a === c);
+}

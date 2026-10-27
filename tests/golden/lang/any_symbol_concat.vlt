@@ -1,0 +1,9 @@
+// A symbol in an `any` appended to a string with `+=` stops with Node's `TypeError` (#924).
+function main(): void {
+  const s: any = Symbol("x");
+  let t = "a";
+  t += "b";
+  console.log(t);
+  t += s;
+  console.log(t);
+}

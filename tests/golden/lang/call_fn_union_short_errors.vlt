@@ -1,0 +1,24 @@
+// A call of a union of function types with fewer arguments than its longest member takes, or
+// with a spread of an array, is an error, never a crash, and the errors after it are still
+// reported. TypeScript reports the first, third and fourth too (tsc --strict: TS2554, TS2556);
+// it accepts `f(1)`, which leaves out an optional parameter of a function type, not supported
+// yet (docs/reference/functions.md).
+type F = ((a: number, b?: number) => void) | (() => void);
+type G = ((a: number, b: string) => number) | ((a: number) => number);
+
+function short(f: F) {
+  f();
+  f(1);
+}
+
+function shortG(g: G, xs: number[]) {
+  const n = g(1);
+  const m = g(...xs);
+  console.log(n, m);
+}
+
+function main() {
+  short(() => console.log(1));
+  shortG((a: number) => a, [1]);
+  const late: string = 1;
+}

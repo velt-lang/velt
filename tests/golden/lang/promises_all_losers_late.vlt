@@ -1,0 +1,30 @@
+// The siblings `Promise.all` gives up when one rejects keep running, and resume in timer order
+// even when the task's next poll comes late (busy code here, a loaded machine elsewhere) and
+// finds both of their timers due: `mid` (300 ms) before `slow` (600 ms), as in Node.
+class Failed extends Error {
+  constructor(ms: i64) {
+    super(`failed after ${ms} ms`);
+  }
+}
+function busy(ms: number) {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+async function step(name: string, ms: i64, fail: bool): Promise<string> throws Failed {
+  await sleep(ms);
+  console.log("settled", name);
+  if (fail) {
+    throw new Failed(ms);
+  }
+  return name;
+}
+async function main() {
+  try {
+    await Promise.all([step("slow", 600, false), step("fails", 40, true), step("mid", 300, false)]);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+  busy(700);
+  await sleep(1000);
+  console.log("done");
+}

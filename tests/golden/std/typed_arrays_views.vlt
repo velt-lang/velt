@@ -1,0 +1,43 @@
+// Typed arrays and `DataView` as values of a construct signature type, `ArrayBufferView` (what
+// every view is: `buffer`, `byteOffset`, `byteLength`), `ArrayBuffer.isView` narrowing an
+// `unknown`, and `SharedArrayBuffer` (Node's global; no Velt buffer is one), as sigx's
+// serialize/bytes.ts uses them, and a class value is the same object wherever it is named. Node
+// prints the same.
+type ViewCtor = new (buffer: ArrayBuffer) => ArrayBufferView;
+const KINDS: readonly (readonly [string, ViewCtor])[] = [
+  ["Uint8Array", Uint8Array],
+  ["Int16Array", Int16Array],
+  ["Float64Array", Float64Array],
+  ["DataView", DataView],
+];
+function bytesOf(n: number): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) out[i] = i;
+  return out;
+}
+const bytes = bytesOf(8);
+for (const [name, C] of KINDS) {
+  const v = new C(bytes.buffer);
+  console.log(name, C.name, v instanceof C, v.byteLength, v.byteOffset, v.buffer === bytes.buffer);
+}
+const sharedBacked = (v: ArrayBufferView): boolean =>
+  typeof SharedArrayBuffer !== "undefined" && v.buffer instanceof SharedArrayBuffer;
+const test = (v: unknown): boolean =>
+  v instanceof ArrayBuffer ||
+  (ArrayBuffer.isView(v) && !sharedBacked(v) && KINDS.some(([, C]) => v instanceof C));
+console.log(test(bytes), test(bytes.buffer), test(3), test(new DataView(bytes.buffer, 2)));
+console.log(test(new Uint32Array(2)), typeof SharedArrayBuffer);
+const w: unknown = bytes.subarray(2, 6);
+console.log(ArrayBuffer.isView(w) ? [w.byteOffset, w.byteLength] : [], ArrayBuffer.isView(bytes.buffer));
+type Bytes = ArrayBuffer | ArrayBufferView;
+const startOf = (v: Bytes): number => (v instanceof ArrayBuffer ? v.byteLength : v.byteOffset);
+console.log(startOf(bytes.buffer), startOf(new Float32Array(bytes.buffer, 4)));
+try {
+  const odd: ViewCtor = Float64Array;
+  new odd(bytes.buffer.slice(1));
+} catch (e) {
+  console.log((e as Error).name);
+}
+// One value per class and signature type: the array's elements are the classes.
+const again: ViewCtor = Uint8Array;
+console.log(KINDS.findIndex(([, C]) => C === again), KINDS[3][1] === DataView, again !== Int16Array);

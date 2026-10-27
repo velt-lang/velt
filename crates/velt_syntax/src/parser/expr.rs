@@ -75,21 +75,24 @@ impl<'a> Parser<'a> {
     }
 
     /// `yield`, `yield expr` or `yield* expr` (assignment precedence, like JS). The operand is
-    /// absent when the next token cannot start one (`yield;`, `f(yield)`).
+    /// absent when the next token cannot start one (`yield;`, `f(yield)`) or is on the next line
+    /// (a restricted production).
     fn parse_yield(&mut self) -> PResult<Expr> {
         let lo = self.cur_lo();
         self.bump(); // yield
-        let delegate = self.eat(Tok::Star);
-        let ends = matches!(
-            self.peek(),
-            Tok::Semi
-                | Tok::RParen
-                | Tok::RBracket
-                | Tok::RBrace
-                | Tok::Comma
-                | Tok::Colon
-                | Tok::Eof
-        );
+        let same_line = !self.line_break_before();
+        let delegate = same_line && self.eat(Tok::Star);
+        let ends = !same_line
+            || matches!(
+                self.peek(),
+                Tok::Semi
+                    | Tok::RParen
+                    | Tok::RBracket
+                    | Tok::RBrace
+                    | Tok::Comma
+                    | Tok::Colon
+                    | Tok::Eof
+            );
         let arg = if ends && !delegate {
             None
         } else {
@@ -182,14 +185,18 @@ impl<'a> Parser<'a> {
             Tok::Pipe => (BitOr, PREC_BITOR, 1),
             Tok::Caret => (BitXor, PREC_BITXOR, 1),
             Tok::Amp => (BitAnd, PREC_BITAND, 1),
-            Tok::EqEq | Tok::EqEqEq => (Eq, PREC_EQ, 1),
-            Tok::BangEq | Tok::BangEqEq => (NotEq, PREC_EQ, 1),
+            Tok::EqEq => (Eq, PREC_EQ, 1),
+            Tok::EqEqEq => (StrictEq, PREC_EQ, 1),
+            Tok::BangEq => (NotEq, PREC_EQ, 1),
+            Tok::BangEqEq => (StrictNotEq, PREC_EQ, 1),
             Tok::Lt => (Lt, PREC_REL, 1),
             Tok::LtEq => (LtEq, PREC_REL, 1),
             Tok::Kw(Kw::In) if !self.no_in => (In, PREC_REL, 1),
-            Tok::Kw(Kw::As) => return Some((BinTok::As, PREC_REL, 1)),
+            // TypeScript ends the expression at a line break before `as` / `satisfies`
+            // (`const y = 1` and `as(2)` on the next line call a function `as`).
+            Tok::Kw(Kw::As) if !self.line_break_before() => return Some((BinTok::As, PREC_REL, 1)),
             Tok::Kw(Kw::Instanceof) => return Some((BinTok::InstanceOf, PREC_REL, 1)),
-            Tok::Ident if self.at_word("satisfies") => {
+            Tok::Ident if self.at_word("satisfies") && !self.line_break_before() => {
                 return Some((BinTok::Satisfies, PREC_REL, 1))
             }
             Tok::Shl => (Shl, PREC_SHIFT, 1),
@@ -233,6 +240,9 @@ impl<'a> Parser<'a> {
         while let Some((op, prec, ntoks)) = self.peek_binop() {
             if prec < min_prec {
                 break;
+            }
+            if let BinTok::Op(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Div) = op {
+                self.warn_continuation();
             }
             for _ in 0..ntoks {
                 self.bump();
@@ -316,7 +326,7 @@ impl<'a> Parser<'a> {
             {
                 self.delete_expr()?
             }
-            Tok::Kw(Kw::Void) => self.void_expr()?,
+            Tok::Kw(Kw::Void) => self.finish_prefix(UnaryOp::Void)?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
                 op: self.bump_update_op(),
                 prefix: true,

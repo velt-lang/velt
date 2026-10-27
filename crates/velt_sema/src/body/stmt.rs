@@ -17,36 +17,66 @@ impl FnCx<'_, '_> {
 
     /// A block whose scope starts with the `narrow` facts assumed.
     pub fn block_narrowed(&mut self, b: &ast::Block, narrow: &[Fact]) -> hir::Block {
+        self.block_narrowed_ending(b, narrow).0
+    }
+
+    /// [`block_narrowed`](Self::block_narrowed), and the facts that still hold at the end of
+    /// the block: those assumed at its start that its statements did not undo, and those its
+    /// own statements established (`y = "filled";`, `if (y == null) return;`).
+    fn block_narrowed_ending(
+        &mut self,
+        b: &ast::Block,
+        narrow: &[Fact],
+    ) -> (hir::Block, Vec<Fact>) {
         self.push_scope_until(b.span.hi);
         for fact in narrow {
             self.narrow(fact);
         }
         let mut stmts = vec![];
         self.stmts_into(&b.stmts, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: b.span,
-        }
+        };
+        (block, facts)
     }
 
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
+        let at = self.open_class_lets(out);
         self.stmts_in_scope(stmts, out);
+        self.close_class_lets(at, out);
         // A function body's own scope is never popped: its `let x;` never assigned end here.
-        if self.f.scopes.len() == 1 {
+        // (A member of a recursive closure group has its captures' scope outside it.)
+        let body_scopes = 1 + usize::from(self.f.groups.member_of.is_some());
+        if self.f.scopes.len() == body_scopes {
             let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
             self.report_untyped_lets(left.into_iter());
         }
     }
 
     fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
+        // The property writes a cast took as members (#921).
+        let mut taken: Vec<usize> = vec![];
         for (i, s) in stmts.iter().enumerate() {
+            if taken.contains(&i) {
+                continue;
+            }
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {
                     // The rest of the block runs in a `try` whose `finally` awaits the cleanup.
                     self.await_using(v, s.span, &stmts[i + 1..], out);
                     return;
+                }
+                // `const f = fn as T; f.a = …;`: the cast may take the writes (#921).
+                if let Some(pending) = callable_writes(v, &stmts[i + 1..]) {
+                    let outer = self.f.callable_writes.replace(pending);
+                    self.stmt(s, out);
+                    let done = std::mem::replace(&mut self.f.callable_writes, outer);
+                    taken.extend(done.into_iter().flat_map(|p| p.used).map(|k| i + 1 + k));
+                    continue;
                 }
             }
             self.stmt(s, out);
@@ -64,7 +94,14 @@ impl FnCx<'_, '_> {
         let site = self.f.kind == FnKind::Ctor && self.f.super_sites.contains(&s.span);
         self.f.super_ok = site && !self.f.super_called && is_super_call(s);
         self.f.stmt_depth += 1;
+        let (at, checks) = (out.len(), self.f.late.checks.len());
         self.stmt_inner(s, out);
+        if self.f.late.checks.len() > checks {
+            // Reads of a `const` whose initializer may still run (`late_consts`).
+            let late = self.f.late.checks.split_off(checks);
+            let late = self.late_check_stmts(late, s.span);
+            out.splice(at..at, late);
+        }
         self.f.stmt_depth -= 1;
         self.f.super_ok = false;
     }
@@ -75,8 +112,13 @@ impl FnCx<'_, '_> {
         match &s.kind {
             A::Var(v) => self.var_decl(v, span, out),
             A::Expr(e) => {
+                // `assertIsT(x);` (`asserts v is T`) narrows `x` after it (`predicates.rs`).
+                let facts = self.assertion_facts(e);
                 let h = self.expr_stmt(e);
                 Self::push(out, S::Expr(h), span);
+                if let Some(p) = facts {
+                    self.assertion_checked(p, span, out);
+                }
             }
             A::Return(e) => self.return_stmt(e.as_ref(), span, out),
             A::If { cond, then, els } => self.if_stmt(cond, then, els.as_deref(), span, out),
@@ -86,6 +128,10 @@ impl FnCx<'_, '_> {
             A::Break(label) => {
                 if let Some(i) = self.loop_target(label.as_ref(), "break", span) {
                     self.f.loops[i].has_break = true;
+                    if self.f.loops[i].is_switch {
+                        let st = self.narrow_state_at(self.f.loops[i].depth);
+                        self.f.loops[i].break_states.push(st);
+                    }
                     Self::push(out, S::Break(label.as_ref().map(|l| l.name.clone())), span);
                 }
             }
@@ -143,10 +189,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `else` branch / braceless body: a one-statement block with its own scope.
-    pub fn stmt_as_block(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> hir::Block {
+    /// `else` branch / braceless body: a one-statement block with its own scope, and the facts
+    /// that still hold where it falls through (see [`block_narrowed_ending`]).
+    ///
+    /// [`block_narrowed_ending`]: Self::block_narrowed_ending
+    fn stmt_as_block_ending(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> (hir::Block, Vec<Fact>) {
         if let ast::StmtKind::Block(b) = &s.kind {
-            return self.block_narrowed(b, narrow);
+            return self.block_narrowed_ending(b, narrow);
         }
         self.push_scope_until(s.span.hi);
         for fact in narrow {
@@ -154,17 +203,25 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         self.stmt(s, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: s.span,
-        }
+        };
+        (block, facts)
     }
 
     /// Expression in statement position (value discarded).
     pub fn expr_stmt(&mut self, e: &ast::Expr) -> hir::Expr {
+        let unit = Some(self.cx.ty.unit);
         match &e.kind {
+            ast::ExprKind::Update { .. } | ast::ExprKind::Assign { op: Some(_), .. }
+                if self.late_let_rmw(e) =>
+            {
+                self.expr(e, unit, Want::Borrow)
+            }
             ast::ExprKind::Update { op, prefix, target } => {
                 self.update(*op, *prefix, target, false, e.span)
             }
@@ -176,6 +233,20 @@ impl FnCx<'_, '_> {
                 ) =>
             {
                 self.expr_stmt(inner)
+            }
+            // `await null;`: one step (`expr::await_value`).
+            ast::ExprKind::Await(inner)
+                if self.f.is_async && crate::body::expr::await_value::nothing_lit(inner) =>
+            {
+                self.await_step(e.span)
+            }
+            // `void e;`: evaluates `e` and ignores its value (also a promise's).
+            ast::ExprKind::Unary {
+                op: ast::UnaryOp::Void,
+                expr,
+            } => {
+                self.stmt_yields(expr);
+                self.expr(expr, None, Want::Borrow)
             }
             _ => {
                 self.stmt_yields(e);
@@ -196,23 +267,47 @@ impl FnCx<'_, '_> {
     ) {
         let (when_true, when_false) = self.narrowing(cond);
         let c = self.cond(cond);
+        let c = self.primitive_guard(cond, c);
         let exhausted_before = self.exhausted_union_local();
         let before = self.narrow_state();
         let super_before = (self.f.super_called, self.f.before_super);
-        let t = self.block_narrowed(then, &when_true);
+        // Each branch starts from the state before the `if` with the condition's facts assumed,
+        // and ends with what still holds there: a branch's own assignments win over the facts it
+        // started from (#1226). Those end states are joined below.
+        // `if (u32x4.hasShaX86())`: the `then` branch may call functions gated on it.
+        let guard = self.cpu_guard(&c);
+        if let Some(g) = guard {
+            self.f.cpu_guards.push(g);
+        }
+        let unmarked = self.instanceof_unmark(cond);
+        let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        self.restore_marks(unmarked);
+        if guard.is_some() {
+            self.f.cpu_guards.pop();
+        }
+        then_facts.iter().for_each(|f| self.narrow(f));
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
         // Each branch starts from the state before the `if`: `super(...)` once in each.
         let super_then = (self.f.super_called, self.f.before_super);
         (self.f.super_called, self.f.before_super) = super_before;
-        let e = els.map(|s| self.stmt_as_block(s, &when_false));
+        let (e, els_facts) = match els {
+            Some(s) => {
+                let (b, facts) = self.stmt_as_block_ending(s, &when_false);
+                (Some(b), facts)
+            }
+            // No `else`: the false facts hold where the `if` is skipped.
+            None => (None, when_false),
+        };
+        els_facts.iter().for_each(|f| self.narrow(f));
         self.f.super_called |= super_then.0;
         self.f.before_super &= super_then.1;
         let then_div = crate::flow::block_diverges(&t, &self.cx.ty);
         let els_div = e
             .as_ref()
             .is_some_and(|b| crate::flow::block_diverges(b, &self.cx.ty));
-        // Only the branches that fall through decide what still holds after the `if`.
+        // Only the branches that fall through decide what still holds after the `if`
+        // (`if (x == null) return;` narrows `x` for the rest of the block).
         match (then_div, els_div) {
             (false, false) => self.meet_narrowing(&after_then),
             (false, true) => self.restore_narrowing(&after_then),
@@ -227,13 +322,6 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        // `if (x == null) return;` narrows `x` for the rest of the block (also union tests).
-        if then_div && !els_div {
-            when_false.iter().for_each(|f| self.narrow(f));
-        }
-        if els_div && !then_div {
-            when_true.iter().for_each(|f| self.narrow(f));
-        }
         if !exhausted_before && self.exhausted_union_local() {
             // Every member of a union local was handled by a branch that left: the rest of
             // the block is unreachable (an `instanceof` / `typeof` chain is exhaustive).
@@ -251,7 +339,11 @@ impl FnCx<'_, '_> {
         }
         let ann = v.ty.as_ref().map(|t| self.resolve(t));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
-            return self.simple_decl(v, name, ann, span, out);
+            if let Some(t) = &v.ty {
+                self.cx.note_written_type(name.span, t.span);
+            }
+            self.simple_decl(v, name, ann, span, out);
+            return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
             self.cx.err(
@@ -260,7 +352,28 @@ impl FnCx<'_, '_> {
             );
             return;
         };
-        if super::pattern_defaults::has_default(&v.pattern) {
+        // `const { a } = K!`: a part of a module constant evaluated at each use, taken over.
+        let root = self.per_use_init_root(e);
+        self.pattern_decl(v, e, ann, span, out);
+        self.per_use_destructured(root, &v.pattern);
+    }
+
+    /// `const <pattern> = e` (`v`, `ann`: its annotation).
+    fn pattern_decl(
+        &mut self,
+        v: &ast::VarDecl,
+        e: &ast::Expr,
+        ann: Option<hir::TyId>,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        if self.literal_pattern_decl(v, out) || self.computed_key_decl(v, out) {
+            return;
+        }
+        if super::pattern_defaults::has_default(&v.pattern)
+            || super::object_rest::has_object_rest(&v.pattern)
+            || super::index_keys::has_index_key(&v.pattern)
+        {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
                 Some(t) => self.typed_temp(e, t, out),
@@ -270,10 +383,29 @@ impl FnCx<'_, '_> {
         }
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.expr(e, None, Want::Borrow),
+            // What is taken apart is the payload of a narrowed value (`checked_copies`).
+            None => self.payload_expr(e, None, Want::Borrow),
         };
+        // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
+        if self.cx.dynamic(init.ty).is_some()
+            && matches!(
+                v.pattern.kind,
+                ast::PatternKind::Array { .. } | ast::PatternKind::Object { .. }
+            )
+        {
+            let name = ast::Ident {
+                name: format!("#d{}", self.f.locals.len()),
+                span,
+            };
+            self.hidden_local(name.clone(), init, false, out);
+            let tmp = super::pattern_defaults::mk(ast::ExprKind::Ident(name), span);
+            return self.any_pattern_decls(v.kind, &v.pattern, &tmp, out);
+        }
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
+                if let Some(src) = self.method_source(fields, e, init.clone(), out) {
+                    return self.object_decls(v.kind, fields, None, &src, out);
+                }
                 return self.property_decls(v.kind, fields, init, out);
             }
         }
@@ -317,6 +449,12 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if ann.is_none()
+            && v.kind == ast::VarKind::Const
+            && self.group_member_decl(v, name, span, out)
+        {
+            return;
+        }
         // Declared from a literal and used as one integer type: that type (`literal_locals`).
         let decided = ann
             .is_none()
@@ -326,13 +464,59 @@ impl FnCx<'_, '_> {
         if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
             self.reject_untyped_init(e);
         }
+        if self.late_const_decl(v, name, ann, span, out) {
+            return;
+        }
+        // `const r = Object.assign(place, ...)`: the call, then `const r = place`.
+        if let Some(place) = (v.init.as_ref()).and_then(|e| self.assign_decl_split(e, out)) {
+            let v = ast::VarDecl {
+                init: Some(place),
+                ..v.clone()
+            };
+            return self.simple_decl(&v, name, ann, span, out);
+        }
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,
             Err(Some(h)) => Some(h),
             Err(None) => v.init.as_ref().map(|e| match ann {
-                Some(t) => self.expr_coerce(e, t, Want::Move),
-                None => self.expr(e, None, Want::Move),
+                // `const t: readonly string[] = NAMES`: a read-only variable may hold a copy.
+                Some(t) if v.ty.as_ref().is_some_and(crate::body::is_readonly_array) => {
+                    let h = self.expr(e, Some(t), Want::Move);
+                    self.readonly_array_arg(h, t)
+                }
+                Some(t) => {
+                    // Stored into the variable's site (`throws::fn_flows`).
+                    let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                    self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
+                }
+                None => self.copy_init(e, name, Want::Move),
             }),
+        };
+        // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).
+        let late = self.late_let(v, name, ann, init.is_none());
+        let ann = match (late, ann) {
+            (true, Some(t)) => Some(self.cx.ty.option_of(t, hir::Nothing::Undefined)),
+            _ => ann,
+        };
+        // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
+        let init = match (init, ann) {
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) =>
+            {
+                Some(self.nothing_value(hir::Nothing::Undefined, t, name.span))
+            }
+            // `let x: any;` and `let x: unknown;` start as `undefined` too.
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && matches!(
+                        self.cx.dynamic(t),
+                        Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                    ) =>
+            {
+                self.cx.dynamic_undefined(t, name.span)
+            }
+            (init, _) => init,
         };
         let ty = match (ann, &init) {
             (Some(t), _) => t,
@@ -347,6 +531,20 @@ impl FnCx<'_, '_> {
                 );
                 self.cx.ty.error
             }
+        };
+        // `let f = () => {}`: assigning `f` a closure that throws makes it throw
+        // (`throws::fn_types`).
+        let (ty, init) = match init {
+            Some(h) if ann.is_none() && v.kind == ast::VarKind::Let => {
+                let site = self.cx.untyped_let_site(ty, name.span, self.module);
+                let at = self.cx.site_in(name.span, site);
+                self.flow_into(&h, at);
+                let outer = self.set_target(at);
+                let h = if site == ty { h } else { self.coerce(h, site) };
+                self.set_target(outer);
+                (site, Some(h))
+            }
+            init => (ty, init),
         };
         if ty == self.cx.ty.unit {
             let mut d = Diagnostic::error(
@@ -371,6 +569,14 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if late {
+            self.f.late_lets.insert(local);
+        }
+        self.note_marks(local, v.ty.as_ref(), v.init.as_ref());
+        if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
+            self.note_readonly_init(local, e, h);
+        }
+        self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
         }
@@ -393,9 +599,28 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
         }
+        let root = v.init.as_ref().and_then(super::expr::read_root);
+        if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
+            if self.is_local_name(&o.name) {
+                if let Some(r) = self.lookup_local(&o.name, o.span) {
+                    self.f.member_reads.insert(local, r);
+                }
+            }
+        }
+        if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
+            if super::expr::is_member_read(e) {
+                self.f.method_values.insert(local);
+            }
+        }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
         }
+        // `let u: string | number = "x"` holds a `string` until it is assigned (TS).
+        let cast = v.init.as_ref().is_some_and(super::assign_narrow::is_cast);
+        if let (Some(_), Some(h), false) = (ann, &init, cast) {
+            self.narrow_to_assigned(local, ty, h);
+        }
+        self.note_checked_copy(local, v.ty.is_none(), v.init.as_ref());
         Self::push(out, S::Let { local, init }, span);
     }
 
@@ -425,6 +650,16 @@ impl FnCx<'_, '_> {
             return;
         };
         match e {
+            // `return;` in a function whose result may be `undefined` returns it (issue #930).
+            None if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined()) =>
+            {
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
+                Self::push(out, S::Return(Some(value)), span);
+            }
             None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
@@ -433,6 +668,20 @@ impl FnCx<'_, '_> {
                             .with_note(format!("expected {rn}, found void")),
                     );
                 }
+                Self::push(out, S::Return(None), span);
+            }
+            // `return undefined;` in a `void` function is `return;`, as in TypeScript.
+            Some(e)
+                if ret == self.cx.ty.unit
+                    && crate::body::narrow::nothing_word(e) == Some("undefined") =>
+            {
+                Self::push(out, S::Return(None), span);
+            }
+            // `return void e;` (also an arrow body `(): void => void e`) in a `void` function
+            // is `e;` then `return;`, as in TypeScript.
+            Some(e) if ret == self.cx.ty.unit && void_op(e).is_some() => {
+                let h = self.expr_stmt(void_op(e).unwrap_or(e));
+                Self::push(out, S::Expr(h), span);
                 Self::push(out, S::Return(None), span);
             }
             // `return value;` in an arrow whose `void` result comes from its expected type.
@@ -448,6 +697,12 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                if std::mem::take(&mut self.f.adopt_stmt) {
+                    // A promise to adopt: stored, then the scopes are left (`async_returned`).
+                    Self::push(out, S::Expr(h), span);
+                    return;
+                }
+                self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }
         }
@@ -483,6 +738,18 @@ fn is_empty_array(e: &ast::Expr) -> bool {
     }
 }
 
+/// `void e` (possibly parenthesized), without the parentheses.
+pub(crate) fn void_op(e: &ast::Expr) -> Option<&ast::Expr> {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => void_op(inner),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Void,
+            ..
+        } => Some(e),
+        _ => None,
+    }
+}
+
 /// Is `s` the statement `super(args);`?
 pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
     let ast::StmtKind::Expr(e) = &s.kind else {
@@ -499,4 +766,26 @@ pub(crate) fn closure_def(h: &hir::Expr) -> Option<crate::hir::DefId> {
         hir::ExprKind::Block(b) => b.value.as_deref().and_then(closure_def),
         _ => None,
     }
+}
+
+/// The property writes after declaration `v` (`const f = <cast>;`) that a cast of a function
+/// to a callable object type may take (`expr::callables`), or `None`.
+fn callable_writes(v: &ast::VarDecl, rest: &[ast::Stmt]) -> Option<super::expr::PendingWrites> {
+    let ast::PatternKind::Ident(name) = &v.pattern.kind else {
+        return None;
+    };
+    let init = v.init.as_ref()?;
+    let mut e = init;
+    while let ast::ExprKind::Paren(x) = &e.kind {
+        e = x;
+    }
+    if !matches!(e.kind, ast::ExprKind::Cast { .. }) {
+        return None;
+    }
+    let writes = super::expr::property_writes(&name.name, rest);
+    (!writes.is_empty()).then(|| super::expr::PendingWrites {
+        cast: e.span,
+        writes,
+        used: vec![],
+    })
 }

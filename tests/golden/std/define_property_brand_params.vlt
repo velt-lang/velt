@@ -1,0 +1,24 @@
+// Brands through a parameter, and a brand written directly that is enumerable and writable (#1299).
+const K: unique symbol = Symbol("k");
+const W: unique symbol = Symbol("w");
+
+interface Cell {
+  n: number;
+}
+
+function mark(c: Cell): void {
+  Object.defineProperty(c, K, { value: true });
+}
+
+const mark2 = (c: Cell): void => {
+  Object.defineProperty(c, K, { value: true });
+};
+const c: Cell = { n: 1 };
+const e: Cell = { n: 3 };
+mark(c);
+mark2(e);
+console.log(K in c, K in e, c);
+const d: Cell = { n: 2 };
+Object.defineProperty(d, W, { value: 1, writable: true, enumerable: true });
+(d as (Cell & { [W]?: number }))[W] = 2;
+console.log(d);

@@ -1,0 +1,18 @@
+// Literal-typed, union and interface members read through `any` (#924).
+// check: no leaks
+interface Ok {
+  kind: "ok";
+  v: number;
+  tag: "a" | "b";
+  n: 1 | 2 | null;
+}
+
+function main(): void {
+  const o: Ok = { kind: "ok", v: 1, tag: "b", n: null };
+  const a: any = o;
+  console.log(a.kind, a.v, a.kind === "ok", a.tag, a.n);
+  const u: unknown = o;
+  console.log((u as any).kind, Object.keys(a));
+  const xs: any = ["x" as ("x" | "y"), "y" as ("x" | "y")];
+  console.log(xs[1]);
+}

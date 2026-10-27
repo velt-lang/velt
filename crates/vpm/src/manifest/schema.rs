@@ -123,6 +123,16 @@ pub const PACKAGE: &[Field] = &[
         doc: "How the package's modules compile JSX.",
     },
     Field {
+        key: "define",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "Build-time constants, as Vite's `define`: `{ __DEV__: \"false\" }`. Each value is \
+              the source of a literal (`true`, `false`, `null`, a number, or a quoted string \
+              such as `\"\\\"1.0\\\"\"`); every use of the name as a value is that literal, so \
+              `if (__DEV__)` branches fold. Only the root package's apply.",
+    },
+    Field {
         key: "native",
         kind: Kind::Object(NATIVE),
         ty: "Native",

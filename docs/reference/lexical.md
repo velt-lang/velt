@@ -46,7 +46,37 @@ export function larger(a: i64, b: i64): i64 {
 }
 ```
 
-- Semicolons are required after statements. There is no automatic semicolon insertion.
+- Semicolons are optional: automatic semicolon insertion follows JavaScript's rules, as
+  TypeScript and Node apply them, in `.vlt`, `.ts` and `.tsx` files alike. A statement, a
+  declaration, or a member of a class, an interface or an object type ends with `;`, or without
+  one at a line break, before `}` or at the end of the file, when the next token cannot
+  continue it. No `;` is inserted in a `for (;;)` header; one is after `do { … } while (c)`,
+  even on the same line. `velt fmt` prints semicolons.
+- Some productions end at a line break whatever follows, as in JavaScript: `return` and
+  `yield` (`return` / a line break / `x` returns nothing, and `x` is the next statement),
+  `break` and `continue` before a label, and postfix `++` / `--` (`a` / `++b` on two lines
+  increments `b`). A line break after `throw`, before `=>`, or after `async` in an arrow
+  function is an error, as in TypeScript. In a type, type arguments start on the line of
+  their type (`a: string` / `<T>(x: T): T` in an interface is a member and a call signature);
+  after `new` and in `extends` / `implements` they may follow on the next line. A modifier
+  followed by a line break is a member name (`async` / `foo() {}` in a class is a field `async`
+  and a method `foo`), except `static`, `get` and `set`, which apply to the name on the next
+  line; `type`, `interface`, `declare` and `namespace` followed by a line break do not declare
+  anything, as in TypeScript.
+- The line terminators are line feed, carriage return, U+2028 and U+2029.
+- A line that starts with `(`, `[`, `+`, `-` or `/` continues the statement on the line
+  before, as in Node: `const a = b` / `(c).run()` calls `b`. Velt warns about it ("this line
+  continues the expression on the line before; add `;` at the end of that line if it is a new
+  statement", ESLint's `no-unexpected-multiline`), unless the line break is inside
+  parentheses, brackets or braces, where the line before could not have ended the statement.
+  A template literal starting such a line would make a tagged template, which Velt does not
+  have: that is an error. Code formatted without semicolons starts such a line with `;`:
+
+```ts
+const parts: string[] = []
+;["a", "b"].forEach((p) => parts.push(p))
+console.log(parts.length)
+```
 
 ## Identifiers
 
@@ -63,8 +93,15 @@ members and in `#name in o` ([Classes](classes.md#classes)).
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an
   optional type suffix: `10u8`, `5i32`, `1.0f32`. There are no `BigInt` literals (`10n`); use
   [`velt:bigint`](../std/bigint.md).
-- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \uHHHH \u{H…}`.
-- **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`.
+- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \b \v \f \\ \" \' \0 \xHH \uHHHH
+  \u{H…}`, cooked as JavaScript does: a backslash before a line break continues the line, a
+  surrogate pair written as two escapes (`\uD83D\uDE00`) is one character, and a backslash
+  before any other character is dropped (`"a\d"` is `"ad"`, so `new RegExp("\\d")` needs the
+  doubled backslash, as in JS). Legacy octal escapes (`\1`, `\01`) and `\8` `\9` are errors, as
+  in TypeScript; a lone surrogate (`"\uD800"`) is an error too, since Velt strings are UTF-8.
+- **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`,
+  with the same escapes as strings. There are no tagged templates (`` tag`…` ``) or
+  `String.raw`.
   `${expr}` writes a value as JS's `String(x)` does: numbers, strings and booleans as JS writes
   them, an array as its elements joined with `,` (`${[1, 2]}` is `1,2`), a class instance
   through its `toString()` (its own or inherited, a subclass's override also through a
@@ -92,11 +129,11 @@ type typeof void while yield
 
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
-Not part of the language: `var`, `undefined`, `any`, `unknown`, `abstract`, `protected` (as a
+Not part of the language: `var` outside the top level of a function body or a module
+([Variables](variables.md)), `any`, `unknown`, `abstract`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)),
-`export default`, `function` expressions other than generators (`function* (…) { … }` is
-supported; otherwise use arrow functions), `mut`, `match`. Writing most of
+`export default`, `mut`, `match`. Writing most of
 these is an error that names the Velt replacement.
 
 ## Operators
@@ -113,23 +150,31 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `+` `-` | |
 | `<<` `>>` `>>>` | |
 | `<` `<=` `>` `>=` `as` `instanceof` `in` | `in`: [a key test](types.md#the-in-operator) (`"k" in o`), or a brand check (`#x in o`); `for (k in o)` is a `for...in` loop |
-| `==` `!=` `===` `!==` | `==` is `===` ([Types](types.md#equality-and-comparison)) |
+| `==` `!=` `===` `!==` | no coercion; `==` differs from `===` only against `null` / `undefined` ([Types](types.md#equality-and-comparison)) |
 | `&` | |
 | `^` | |
 | `\|` | |
 | `&&` | returns an operand, as in JS ([truthiness](variables.md#conditions-truthiness)) |
-| `\|\|` `??` | `\|\|` returns an operand; `??` replaces only `null` |
+| `\|\|` `??` | `\|\|` returns an operand; `??` replaces only `null` and `undefined` |
 | `?:` | |
 | `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |
 
 The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
-right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). As in JavaScript, a compound
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null-and-undefined)). As in JavaScript, a compound
 assignment or `++` / `--` evaluates its target's object and indices once, before the right
 side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. The write goes to
 that element where it is after the right side ran: `xs[0] += grow(xs)` updates `xs[0]` even when
 `grow` made `xs` longer. If the right side made the array shorter than the index, that write
 is out of bounds and panics, where JavaScript extends the array: `xs[0] += xs.pop()!` on `[5]`
 panics, on `[5, 6]` it makes `[11]` (Velt arrays never grow by assignment, see
-[Types](types.md#objects-arrays-tuples-and-maps)). A postfix `!` after an expression on the same
-line is the non-null assertion (`m.get(k)!`).
+[Types](types.md#objects-arrays-tuples-and-maps)). An assignment to an element or a member is an
+expression with the value assigned, as in JS: `const v = (xs[i] = 7)`, `(c.t[1] += "z")` and
+`(get().n = 4)` evaluate the object and indices once, before the right side, and give the
+element written even when the right side changes a variable index (`(xs[k] = next())`, where
+`next` changes `k`, gives the value written into the element `k` named before). The target's
+object may be any expression that gives an object: `(c ? a : b).t[0] = 7` and
+`xs.find(f)!.t[1] = "x"` write into the object the conditional or the call gave, which every
+other reference to it sees. A tuple is a value, so a write into an element of a tuple that a
+call or a conditional gives (`m.get(k)![1] = 2`) is an error: it would change a copy. A postfix
+`!` after an expression on the same line is the non-null assertion (`m.get(k)!`).

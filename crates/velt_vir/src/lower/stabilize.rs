@@ -7,7 +7,8 @@
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
-//! and shared for the statement, so a closure the callee runs cannot free it.
+//! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
+//! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
 use velt_sema::hir::{self, TyId};
 
@@ -21,17 +22,45 @@ impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
     /// `later`: the arguments evaluated after it, before the call.
     pub(super) fn stable_borrow(&mut self, a: &hir::Expr, later: &[hir::Expr]) -> Operand {
+        self.stable_borrow_as(a, later, true)
+    }
+
+    /// `stable_borrow`, or for a quiet callee (`share` false, quiet.rs) the same facts recorded
+    /// (`through_counted`, `in_shared_cell`, identity borrows: what boxing, `noalias` and `hold`
+    /// rely on) without the share or retained containers, since nothing the callee runs can
+    /// replace or free what the borrow goes through.
+    pub(super) fn stable_borrow_as(
+        &mut self,
+        a: &hir::Expr,
+        later: &[hir::Expr],
+        share: bool,
+    ) -> Operand {
+        // A frozen value (frozen.rs): nothing changes it, its box is retained where something
+        // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
+        // change.
+        if self.frozen_root(a) {
+            return self.frozen_borrow(a);
+        }
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
         if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
             return self.borrowed_arg(a);
         }
-        if self.cx.counted(ty) {
+        // An `any` holds a counted box (or a plain value its share copies): the callee may
+        // replace the place it is read from through a method it runs on it (`show(h.x)` where a
+        // method of `h.x` sets `h.x = null`), so it gets a share, as a counted value does.
+        if !share && (self.cx.counted(ty) || self.cx.is_dynamic(ty)) {
+            return self.borrowed_arg(a);
+        }
+        if self.cx.counted(ty) || self.cx.is_dynamic(ty) {
             let v = self.expr(a);
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        if self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
+        // A value held in a module state slot, or inside what one holds, is like an element:
+        // any callee may replace it there and drop it.
+        let movable = self.in_array_buffer(a) || self.in_module_slot(a);
+        if movable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -47,7 +76,10 @@ impl FnLower<'_, '_> {
                     self.cx.note_identity_borrow(t);
                 }
             } else {
-                if later.iter().all(runs_no_code) {
+                if !share {
+                    return self.borrowed_arg(a);
+                }
+                if later.iter().all(|x| self.runs_no_code(x)) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
                     }
@@ -57,7 +89,7 @@ impl FnLower<'_, '_> {
                 return self.own_value(s, ty);
             }
         }
-        let prev = std::mem::replace(&mut self.retain_hops, true);
+        let prev = std::mem::replace(&mut self.retain_hops, share);
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v
@@ -81,7 +113,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the place `e` rooted in a variable held in a shared cell, which a closure the callee
-    /// runs may reassign? Its value's type is then counted (recorded as shared), so the borrow
+    /// runs may reassign, or in a module state slot, which any function may reassign or change
+    /// in place? A variable's value type is then counted (recorded as shared), so the borrow
     /// can share what it reaches from the variable.
     pub(super) fn in_shared_cell(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
@@ -95,10 +128,53 @@ impl FnLower<'_, '_> {
                 self.cx.note_share(ty);
                 true
             }
-            K::Field { base, .. } | K::Index { base, .. } => self.in_shared_cell(base),
+            // A module state slot is a cell every function reaches: the callee may reassign it
+            // (when some code does), as a closure may a variable in a cell, or empty an array
+            // held there in place (`XS.length = 0`, `splice`), even one nothing reassigns.
+            K::Global(d) => {
+                let ty = self.sub(e.ty);
+                if !self.slot_reassigned(*d)
+                    && !(self.slot_of(*d).is_some() && self.contents_replaceable(ty))
+                {
+                    return false;
+                }
+                self.cx.note_share(ty);
+                true
+            }
+            // Whatever lies inside a slot, the callee may replace in place (`xs.length = 0`,
+            // `reg.items = []`), even when nothing reassigns the slot itself.
+            K::Field { base, .. } | K::Index { base, .. } => {
+                self.in_shared_cell(base) || self.rooted_in_slot(base)
+            }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
                 self.in_shared_cell(base)
             }
+            _ => false,
+        }
+    }
+
+    /// Can a call replace or free what a value of `ty` holds in place, even when nothing
+    /// reassigns the slot holding it? True for an array (any function may empty or grow it while
+    /// a loop, a callback method or a callee walks its buffer), and for a struct, class, object
+    /// or tuple with a part that owns something (`REG.items = []`, `REG.child = new T()` frees
+    /// the old part while a method borrows it through `this`, or a callee through a parameter).
+    /// A module slot holding such a value is counted like a variable in a cell, so those
+    /// borrows go through a counted object. Maps need no such rule: their loops re-read the
+    /// entries every step and their callbacks get shares (prelude `Map`), so
+    /// `const seen = new Map<string, number>()` stays uncounted.
+    fn contents_replaceable(&mut self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            hir::TyKind::Array(_) => true,
+            hir::TyKind::Option(inner, _) => {
+                let inner = self.sub(inner);
+                self.contents_replaceable(inner)
+            }
+            hir::TyKind::Tuple(parts) => parts.into_iter().any(|p| self.cx.needs_drop(p)),
+            hir::TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => self
+                .cx
+                .adt_field_tys(ty)
+                .into_iter()
+                .any(|f| self.cx.needs_drop(f)),
             _ => false,
         }
     }
@@ -116,6 +192,24 @@ impl FnLower<'_, '_> {
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.in_array_buffer(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does the place `e` lie in a module state slot, or inside what one holds? Every function
+    /// reaches the slot, so a callee may replace the value there, even behind a counted object
+    /// (retaining keeps the object, not what its field holds: `relabel(REG.label)` where
+    /// `relabel` sets `REG.label` still sees the old string, as in JavaScript). Called only for
+    /// places `in_shared_cell` accepted (the slot itself when a call may change it, or a place
+    /// inside a slot).
+    fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. } | K::Index { base, .. } => self.in_module_slot(base),
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.in_module_slot(base)
             }
             _ => false,
         }
@@ -140,7 +234,9 @@ impl FnLower<'_, '_> {
         };
         let aty = self.sub(base.ty);
         let vt = self.cx.ty(ty);
+        // A reader of an `RwLock` never sees an array other readers read as unique.
         if !self.cx.boxed(aty)
+            || self.cx.lock_counted(aty)
             || self.info[l.0 as usize].in_cell
             || !matches!(vt, Ty::Agg(_))
             || self.cx.share_kind(ty) == ShareKind::Plain
@@ -215,7 +311,8 @@ impl FnLower<'_, '_> {
             return base.clone();
         }
         let t = self.copy_to_temp(Operand::Copy(base.clone()), Ty::Ptr);
-        self.retain(Operand::Copy(Place::local(t)));
+        let c = self.count_ptr(Operand::Copy(Place::local(t)), ty);
+        self.retain_of(c, ty);
         self.own_temp(t, ty);
         Place::local(t)
     }
@@ -237,20 +334,22 @@ pub(super) struct PendingBorrow {
     ty: TyId,
 }
 
-/// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
-/// literal (which only captures), or a plain field, element or numeric cast of one of those?
-fn runs_no_code(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
-        K::Field { base, .. } | K::Cast(base) | K::Upcast(base) | K::WrapSome(base) => {
-            runs_no_code(base)
-        }
-        K::Index { base, index, .. } => runs_no_code(base) && runs_no_code(index),
-        _ => false,
-    }
-}
-
 fn cbool(b: bool) -> Operand {
     Operand::Const(Const::Bool(b), Ty::Bool)
+}
+
+impl FnLower<'_, '_> {
+    /// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
+    /// literal (which only captures), or a plain field, element or numeric cast of one of those?
+    /// A copy of an object type's fields (`part_copy_upcast`) makes a new object.
+    fn runs_no_code(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
+            K::Upcast(base) => !self.part_copy_upcast(e) && self.runs_no_code(base),
+            K::Field { base, .. } | K::Cast(base) | K::WrapSome(base) => self.runs_no_code(base),
+            K::Index { base, index, .. } => self.runs_no_code(base) && self.runs_no_code(index),
+            _ => false,
+        }
+    }
 }

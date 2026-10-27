@@ -8,13 +8,16 @@
 //!   by [`super::exports`];
 //! - the JSX runtime of a module containing JSX is bound as the namespace `JSX`.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
-use super::exports::{all_exports, bound_name, export_of, import_target, imports_of, local_of};
+use super::exports::{
+    all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
+};
 use crate::ctx::Ctx;
+use crate::type_meanings::{type_key, type_only_key};
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
@@ -37,7 +40,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
         };
         if item.exported {
             for n in &imp.names {
-                exported_item(cx, t, imp, n);
+                exported_item(cx, m, t, imp, n);
             }
         } else if let Some(ns) = &imp.namespace {
             bind_namespace(cx, m, t, ns);
@@ -57,15 +60,26 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
 /// `n` of `import { n } from` / `export { n } from` module `t`: its item, or an error.
 fn exported_item(
     cx: &mut Ctx,
+    m: usize,
     t: usize,
     imp: &ast::Import,
     n: &ast::ImportName,
 ) -> Option<crate::ctx::Item> {
-    if let Some(it) = export_of(cx, t, &n.name.name) {
+    let found = export_of(cx, t, &n.name.name);
+    if let Some(it) = found.or_else(|| export_of(cx, t, &type_key(&n.name.name))) {
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
     }
+    if !namespace_exports(cx, t, &n.name.name).is_empty() {
+        return None; // a namespace: its members are bound by `import_name`
+    }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
+        if super::exports::maybe_dropped(cx, t, &n.name.name) {
+            // The parser may have dropped its declaration: that error is reported already.
+            let file = cx.modules[m].file;
+            cx.poisoned.insert((file, bound_name(n).name.clone()));
+            return None;
+        }
         let mut d = Diagnostic::error(
             format!("module `{}` has no member `{}`", imp.from, n.name.name),
             n.name.span,
@@ -119,16 +133,65 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
-    let Some(it) = exported_item(cx, t, imp, n) else {
-        return;
+    // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
+    // a type or interface of the same name is imported with it.
+    let members = namespace_exports(cx, t, &n.name.name);
+    if !members.is_empty() {
+        let local = bound_name(n).clone();
+        // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
+        // local namespace instead).
+        let prefix = format!("{}.", local.name);
+        if cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix)) {
+            cx.error(crate::namespaces::conflict(&local, None));
+            return;
+        }
+        for (x, it) in members {
+            let key = format!("{}.{x}", local.name);
+            cx.scopes[m].items.insert(key.clone(), it);
+            if n.type_only {
+                cx.scopes[m].type_only.insert(key);
+            }
+        }
+        super::exports::namespace_bound(cx, m, &local.name);
+        if export_of(cx, t, &n.name.name).is_none() {
+            return;
+        }
+    }
+    // A name that is both a type and a value in `t` (`crate::type_meanings`): both meanings,
+    // or with `import type` the type alone.
+    // A name `t` exports only as a type (`export type { x }`) binds as with `import type`; the
+    // value meaning, if any, is kept under the local's type-only key for the error.
+    let ty = export_of(cx, t, &type_key(&n.name.name));
+    let value_only = export_of(cx, t, &type_only_key(&n.name.name));
+    let plain = export_of(cx, t, &n.name.name);
+    let type_only = n.type_only || value_only.is_some();
+    let it = match (ty, plain, value_only) {
+        (Some(ty), _, _) if n.type_only => ty,
+        (_, None, Some(v)) => v,
+        _ => match exported_item(cx, m, t, imp, n) {
+            Some(it) => it,
+            None => return,
+        },
     };
+    cx.rec_item(n.name.span, Some(it));
     let local = bound_name(n);
     if !define(cx, m, local) {
         return;
     }
-    cx.scopes[m].items.insert(local.name.clone(), it);
-    if n.type_only {
-        cx.scopes[m].type_only.insert(local.name.clone());
+    let scope = &mut cx.scopes[m];
+    scope.items.insert(local.name.clone(), it);
+    if type_only {
+        scope.type_only.insert(local.name.clone());
+        if !n.type_only {
+            scope.via_export_type.insert(local.name.clone());
+        }
+        let value = value_only.or(plain.filter(|_| ty.is_some()));
+        if let Some(v) = value.filter(|&v| v != it) {
+            scope.items.insert(type_only_key(&local.name), v);
+        }
+    } else if let Some(ty) = ty.filter(|&ty| ty != it) {
+        scope.items.insert(type_key(&local.name), ty);
+        scope.type_keys = true;
     }
 }
 
@@ -171,9 +234,12 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
         return;
     }
     cx.scopes[m].namespaces.insert(ns.name.clone(), t);
-    for (name, it) in all_exports(cx, t) {
-        cx.scopes[m].items.insert(format!("{}.{name}", ns.name), it);
+    for (name, it) in all_exports(cx, t).iter() {
+        let scope = &mut cx.scopes[m];
+        scope.type_keys |= crate::type_meanings::of_type_key(name).is_some();
+        scope.items.insert(format!("{}.{name}", ns.name), *it);
     }
+    super::exports::namespace_bound(cx, m, &ns.name);
 }
 
 /// A module containing JSX sees its runtime's exports as `JSX.x` (`JSX.Element`, …), as if it
@@ -217,7 +283,10 @@ fn define(cx: &mut Ctx, m: usize, local: &ast::Ident) -> bool {
 fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
     for n in &imp.names {
         let item = local_of(cx, m, &n.name.name);
-        if item.is_some() {
+        let prefix = format!("{}.", n.name.name);
+        let namespace = cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix))
+            && !cx.scopes[m].namespaces.contains_key(&n.name.name);
+        if item.is_some() || namespace {
             cx.rec_item(n.name.span, item);
             continue;
         }
@@ -235,7 +304,7 @@ fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
 
 /// Each exported name may be exported once (by a declaration, a list or a re-export).
 fn check_duplicate_exports(cx: &mut Ctx, m: usize) {
-    let mut seen: HashSet<String> = cx.scopes[m].exports.clone();
+    let mut seen: FxHashSet<String> = cx.scopes[m].exports.clone();
     let mut dups = vec![];
     for (imp, exported) in imports_of(cx, m) {
         for n in imp.names.iter().filter(|_| exported) {

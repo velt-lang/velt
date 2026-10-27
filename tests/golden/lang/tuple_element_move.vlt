@@ -1,0 +1,20 @@
+// Moving an element out of a tuple local (`const t1 = tup[1]`) drops the others when the tuple
+// goes out of scope, also on an early return (lowering asked for an ADT's fields before).
+function take(): void {
+  const tup: [string, string, number[]] = ["a", "b", [1]];
+  const t1 = tup[1];
+  console.log(t1);
+  const pair: [string, string] = ["x", "y"];
+  const p0 = pair[0];
+  if (p0.length > 5) {
+    return;
+  }
+  console.log(p0);
+}
+
+function main(): void {
+  take();
+  const t: [number | undefined, string] = [undefined, "s"];
+  const [t0 = 5, t1] = t;
+  console.log(t0, t1);
+}

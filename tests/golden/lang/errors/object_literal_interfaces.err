@@ -1,0 +1,4 @@
+object_literal_interfaces.vlt:14:22: error: missing method `next` of `Counter` in object literal
+object_literal_interfaces.vlt:17:49: error: `Counter` has no member `extra`: an object literal implementing it may only give its members
+object_literal_interfaces.vlt:23:14: error: mismatched types
+  = note: expected f64, found string

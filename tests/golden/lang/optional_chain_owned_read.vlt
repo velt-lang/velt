@@ -5,7 +5,7 @@
 type Inner = { name: string };
 type Rec = { state: string; etag: string; inner: Inner; tags: string[] };
 
-function show(s: string | null): string {
+function show(s: string | undefined): string {
   return s ?? "-";
 }
 

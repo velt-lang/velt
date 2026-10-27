@@ -38,10 +38,12 @@ mod llc;
 mod module;
 mod rounding;
 mod runtime;
+mod simd;
 mod statics;
 mod string_compare;
 mod strings;
 mod target;
+mod tbaa;
 mod types;
 mod units;
 

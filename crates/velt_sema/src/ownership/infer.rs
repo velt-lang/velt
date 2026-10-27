@@ -12,7 +12,7 @@
 //! (at the least fixpoint, whatever the visiting order); `super::worklist` schedules it so
 //! that only the bodies reading a changed function are visited again.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -34,9 +34,44 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
         .filter(|d| cx.fn_info(*d).state == BodyState::Done && cx.defs[d.0 as usize].is_some())
         .collect();
     let dispatch = super::mutation::Dispatch::new(cx);
-    let mut work = super::worklist::Worklist::new(cx, &fns, &dispatch);
-    let position: HashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
-    let mut reported = HashSet::new();
+    super::kept_fns::find_parents(cx, &fns);
+    fixpoint(cx, &fns, &dispatch);
+    // A program that keeps borrowed function values runs again under the rules that make
+    // keeping them sound (`super::kept_fns`); modes only grow, so the second run continues
+    // from the first one's.
+    if super::kept_fns::any_kept(cx, &fns) {
+        cx.kept_fns.on = true;
+        let before = cx.diags.len();
+        fixpoint(cx, &fns, &dispatch);
+        // What the first run reported is reported once.
+        let again: Vec<Diagnostic> = cx.diags.drain(before..).collect();
+        for e in again {
+            let seen = cx.diags[..before].iter().any(|o| {
+                o.message == e.message
+                    && o.labels.first().map(|l| l.span) == e.labels.first().map(|l| l.span)
+            });
+            if !seen {
+                cx.diags.push(e);
+            }
+        }
+    }
+    super::finish::demote_fn_values(cx);
+    for &d in &fns {
+        with_body(cx, d, |cx, f| {
+            super::finish::reassigned_fixed_params(cx, d, f);
+            super::finish::soft_args(cx, d, f);
+            super::finish::frozen_bindings(cx, f);
+            sync_params(cx, d, f);
+            false
+        });
+    }
+}
+
+/// Visit the bodies of `fns` until no mode changes.
+fn fixpoint(cx: &mut Ctx, fns: &[DefId], dispatch: &super::mutation::Dispatch) {
+    let mut work = super::worklist::Worklist::new(cx, fns, dispatch);
+    let position: FxHashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
+    let mut reported = FxHashSet::default();
     // Errors found while patching, reported in definition order (not visiting order).
     let mut errors = vec![];
     let mut changed = vec![];
@@ -61,12 +96,16 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
             break;
         }
         let before = cx.diags.len();
+        let mut forced = vec![];
         let body_changed = with_body(cx, d, |cx, f| {
             let borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
             let patched =
                 super::patch::patch_calls(cx, &mut f.body.block, &borrowed, &mut reported);
-            infer_body(cx, d, f) | patched
+            let inferred = infer_body(cx, d, f) | patched;
+            forced = super::kept_fns::force_roots(cx, d, f);
+            inferred
         });
+        forced.into_iter().for_each(|r| work.changed(r));
         errors.extend(cx.diags.drain(before..).map(|e| (position[&d], e)));
         if body_changed {
             work.changed(d);
@@ -78,15 +117,6 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
     }
     errors.sort_by_key(|(at, _)| *at);
     cx.diags.extend(errors.into_iter().map(|(_, e)| e));
-    super::finish::demote_fn_values(cx);
-    for &d in &fns {
-        with_body(cx, d, |cx, f| {
-            super::finish::reassigned_fixed_params(cx, d, f);
-            super::finish::soft_args(cx, d, f);
-            sync_params(cx, d, f);
-            false
-        });
-    }
 }
 
 /// Run `op` on def `d`'s body (taken out of the context meanwhile).
@@ -108,8 +138,8 @@ pub(super) fn with_body(
 /// Neither do strings taken out of a larger value or captured by a closure: they become copies
 /// when the root stays alive (`super::strings`), so `return this.name` borrows `this`; nor do
 /// fields taken out of a class instance, which become shares.
-fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId> {
-    let mut out = HashSet::new();
+fn moved_roots(cx: &Ctx, b: &mut Block, soft: &FxHashSet<Span>) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
     visit::exprs_mut(b, &mut |e: &mut Expr| match &e.kind {
         // A copy of a function value outlives the call: a function-typed param that is copied
         // (`.clone()`, an async-call argument) must own its closure (`super::fn_values`).
@@ -186,8 +216,15 @@ fn through_class(cx: &Ctx, e: &Expr) -> bool {
 }
 
 fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
-    let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
-    let moved = moved_roots(cx, &mut f.body.block, &soft);
+    let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
+    let mut moved = moved_roots(cx, &mut f.body.block, &soft);
+    // Parameters that must own their closure (`super::kept_fns`).
+    moved.extend(
+        f.params
+            .iter()
+            .map(|p| p.local)
+            .filter(|l| cx.kept_fns.forced.contains(&(d, *l))),
+    );
     let mut changed = false;
     let fixed = cx.fn_info(d).fixed_modes;
     let has_this = cx.fn_info(d).this.is_some();
@@ -215,7 +252,7 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
             changed = true;
         }
     }
-    let ev = super::evidence::collect(cx, &mut f.body.block);
+    let ev = super::evidence::collect_in(cx, d, f);
     changed |= super::mutation::apply(cx, d, f, &ev, &moved);
     let kinds = cx.fn_info(d).local_kinds.clone();
     let mut flip = Flip {
@@ -229,7 +266,7 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
 
 /// Turns borrowed bindings that are moved from into moves (and moves the matched place).
 struct Flip<'a> {
-    moved: &'a HashSet<LocalId>,
+    moved: &'a FxHashSet<LocalId>,
     kinds: &'a [LocalKind],
     changed: bool,
 }
@@ -308,8 +345,20 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 .global(*d)
                 .map(|g| (g.ty, g.name.clone()))
                 .unwrap_or((cx.ty.error, String::new()));
-            if crate::body::pure_init::shares_on_move(cx, *d) {
-                // A function computed at each use: another reference to it is owned.
+            let mutable = cx.global(*d).is_some_and(|g| g.stored);
+            if mutable && cx.is_copy(ty) {
+                return false;
+            }
+            // A function computed at each use is shared as it is; any other constant taken over
+            // is the one object the module state keeps (`crate::kept_consts::keep`).
+            let shared_fn = crate::body::pure_init::shares_on_move(cx, *d);
+            let kept = !shared_fn
+                && !cx.is_copy(ty)
+                && ty != cx.ty.str_
+                && crate::kept_consts::keep(cx, *d);
+            if mutable || shared_fn || kept {
+                // A function computed at each use, or a module-level `let` the module state
+                // keeps: another reference to it is owned.
                 let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));
                 let read = Expr {
                     kind: read,
@@ -322,21 +371,21 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 };
                 return true;
             }
+            if crate::body::moved_const::reported(cx, *d, e.span) {
+                return false;
+            }
             if crate::body::pure_init::is_table(cx, *d) {
                 let msg = format!("cannot move out of module constant `{name}`");
                 errors.push(crate::body::pure_init::table_escapes(&name, msg, e.span));
             } else if !cx.is_copy(ty) && ty != cx.ty.str_ {
-                errors.push(
-                    Diagnostic::error(
-                        format!("cannot move out of module constant `{name}`"),
-                        e.span,
-                    )
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-                );
+                errors.push(crate::body::moved_const::error(&name, Some(&name), e.span));
             }
             false
         }
         _ => {
+            // A part of a module constant evaluated at each use, kept by the callee
+            // (`m.set("x", N.a)`, `new Box(K!.a)`): a copy where TypeScript shares it.
+            per_use_part(cx, e, errors);
             if !is_place(e) {
                 return false;
             }
@@ -352,6 +401,89 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
             true
         }
     }
+}
+
+/// `e`, taken over by value, is a part of a module constant evaluated at each use, whose value
+/// is not copied: the constant is kept in the module state, or it is the error of
+/// `const a = N.a`.
+fn per_use_part(cx: &mut Ctx, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    use crate::body::moved_const as mc;
+    if mc::copied_value(cx, e.ty) {
+        return;
+    }
+    let Some((d, part)) = mc::hir_root(cx, e) else {
+        return;
+    };
+    // Taken over, the constant is the one object the module state keeps, as in Node.
+    if mc::reported(cx, d, e.span) || crate::kept_consts::keep(cx, d) {
+        return;
+    }
+    let Some(name) = cx.global(d).map(|g| g.name.clone()) else {
+        return;
+    };
+    errors.push(mc::error(&name, part.as_deref(), e.span));
+}
+
+/// `e`, passed to parameter `param` of `f`, which `f` borrows: when `f` shares it into what it
+/// keeps (`fill(value)` storing `__intrinsic_share(value)`, or a function handing it to `fill`),
+/// the callee keeps the argument as an owned parameter would, so a part of a module constant
+/// evaluated at each use is taken over.
+pub(super) fn kept_by_share(
+    cx: &mut Ctx,
+    f: DefId,
+    param: usize,
+    e: &Expr,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::body::moved_const as mc;
+    if mc::copied_value(cx, e.ty) || mc::hir_root(cx, e).is_none() {
+        return;
+    }
+    if shares_param(cx, f, param, &mut FxHashSet::default()) {
+        per_use_part(cx, e, errors);
+    }
+}
+
+/// Does `f` share its borrowed parameter `param` (`__intrinsic_share(p)`), directly or by
+/// passing it on to a borrowed parameter of a function that does? (`seen`: the functions and
+/// parameters already followed.)
+fn shares_param(
+    cx: &mut Ctx,
+    f: DefId,
+    param: usize,
+    seen: &mut FxHashSet<(DefId, usize)>,
+) -> bool {
+    if !seen.insert((f, param)) {
+        return false;
+    }
+    let mut next = Vec::new();
+    let shares = with_body(cx, f, |cx, def| {
+        let Some(local) = def.params.get(param).map(|p| p.local) else {
+            return false;
+        };
+        let is_param = |a: &Expr| matches!(a.kind, E::Local(l, _) if l == local);
+        let mut shares = false;
+        visit::exprs_mut(&mut def.body.block, &mut |x: &mut Expr| match &x.kind {
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } => shares |= args.first().is_some_and(is_param),
+            E::Call { callee, args } => {
+                let target = super::patch::call_target(cx, callee, args);
+                if let Some(super::patch::Target::Fn(g)) = target {
+                    let modes = super::patch::modes_of(cx, g);
+                    for (i, a) in args.iter().enumerate() {
+                        if is_param(a) && modes.get(i) == Some(&PassMode::Borrow) {
+                            next.push((g, i));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        });
+        shares
+    });
+    shares || next.into_iter().any(|(g, i)| shares_param(cx, g, i, seen))
 }
 
 fn current_mode(e: &Expr) -> Option<UseMode> {

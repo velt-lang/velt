@@ -1,0 +1,1 @@
+cannot spread the `Record<string, f64>` into an object of a fixed shape

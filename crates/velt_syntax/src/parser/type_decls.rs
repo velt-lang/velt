@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
         }
         let span = self.cur_span();
         self.bump();
-        let base = self.parse_type_no_union()?;
+        let base = self.parse_heritage_type()?;
         if self.at(Tok::Comma) {
             let span = self.cur_span();
             self.error(
@@ -150,11 +150,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A type in `extends` / `implements`, an expression with type arguments in TypeScript: its
+    /// type arguments may start on the next line (`extends Base` / `<T>`).
+    fn parse_heritage_type(&mut self) -> PResult<TypeExpr> {
+        self.type_args_any_line = true;
+        let ty = self.parse_type_no_union();
+        self.type_args_any_line = false;
+        ty
+    }
+
     /// `A, B<T>, C` (no unions).
     fn parse_type_list(&mut self) -> PResult<Vec<TypeExpr>> {
-        let mut out = vec![self.parse_type_no_union()?];
+        let mut out = vec![self.parse_heritage_type()?];
         while self.eat(Tok::Comma) {
-            out.push(self.parse_type_no_union()?);
+            out.push(self.parse_heritage_type()?);
         }
         Ok(out)
     }
@@ -169,12 +178,25 @@ impl<'a> Parser<'a> {
         if self.eat_kw(Kw::Extends) {
             extends = self.parse_type_list()?;
         }
+        self.parse_interface_body(lo, name, generics, extends)
+    }
+
+    /// The `{ members }` of an interface (also of a type alias of an object type with
+    /// accessors, `type_members::parse_type_alias_item`).
+    pub(super) fn parse_interface_body(
+        &mut self,
+        lo: u32,
+        name: Ident,
+        generics: Vec<GenericParam>,
+        extends: Vec<TypeExpr>,
+    ) -> PResult<ItemKind> {
         let mut decl = InterfaceDecl {
             name,
             generics,
             extends,
             fields: vec![],
             methods: vec![],
+            call_sigs: vec![],
         };
         let mut index = None;
         self.parse_members(|p| {
@@ -189,6 +211,10 @@ impl<'a> Parser<'a> {
             if p.at_index_signature() {
                 let sig = p.parse_index_signature(lo, readonly)?;
                 p.add_index_signature(&mut index, sig);
+                return p.expect_member_end();
+            }
+            if let Some(sig) = p.parse_call_signature()? {
+                decl.call_sigs.push(sig);
                 return p.expect_member_end();
             }
             p.parse_interface_member(&mut decl)
@@ -217,25 +243,36 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(|f| ObjectTypeField {
                 name: f.name,
-                // An object type's optional field has the `| null` an interface's leaves out.
+                // An object type's optional field has the `| undefined` an interface's leaves out.
                 ty: if f.optional {
-                    super::types::or_null(f.ty)
+                    super::types::or_undefined(f.ty)
                 } else {
                     f.ty
                 },
                 optional: f.optional,
                 readonly: f.readonly,
                 span: f.span,
+                accessors: vec![],
             })
             .collect();
         let span = self.span_from(lo);
+        let mut ty = TypeExpr {
+            kind: index.into_type(fields),
+            span,
+        };
+        if !decl.call_sigs.is_empty() {
+            ty = TypeExpr {
+                kind: TypeExprKind::Callable {
+                    sigs: decl.call_sigs,
+                    members: Box::new(ty),
+                },
+                span,
+            };
+        }
         Ok(ItemKind::TypeAlias(TypeAlias {
             name: decl.name,
             generics: decl.generics,
-            ty: TypeExpr {
-                kind: index.into_type(fields),
-                span,
-            },
+            ty,
         }))
     }
 
@@ -255,6 +292,10 @@ impl<'a> Parser<'a> {
             );
         }
         let target = self.parse_type_no_union()?;
+        let mut implements = Vec::new();
+        if self.eat_kw(Kw::Implements) {
+            implements = self.parse_type_list()?;
+        }
         let mut methods = Vec::new();
         self.parse_members(|p| {
             let span = match p.parse_member()? {
@@ -272,6 +313,7 @@ impl<'a> Parser<'a> {
         Ok(ExtendDecl {
             generics,
             target,
+            implements,
             methods,
         })
     }

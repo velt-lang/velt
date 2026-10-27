@@ -17,11 +17,11 @@ use velt_common::Span;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, Generics, ParamSig, ThisSig, ThrowSrc};
 use crate::hir::{
-    self, Callee, Def, DefId, ExprKind as H, LocalDef, LocalId, PassMode, TyId, UseMode,
+    self, Callee, Def, DefId, ExprKind as H, LocalDef, LocalId, PassMode, TyId, TyKind, UseMode,
 };
 
 /// What a synthesized method calls.
-pub(super) enum Target {
+pub(crate) enum Target {
     /// Interface default `def` with these type args (`iface args ++ [Self]`).
     Default(DefId, Vec<TyId>),
     /// Vtable slot of the receiver's class.
@@ -34,10 +34,38 @@ pub(super) enum Target {
         gen: TyId,
         impl_index: u32,
     },
+    /// The function value in field `index` of the receiver (of function type `fn_ty`), called
+    /// with the parameters: an object literal implementing an interface
+    /// (`body/expr/iface_object.rs`). With `this = Some((ty, impl_index))` (a method using
+    /// `this`, `body/expr/literal_this.rs`), the receiver goes first, as interface value `ty`
+    /// through `Program::impls[impl_index]`.
+    Field {
+        index: u32,
+        fn_ty: TyId,
+        this: Option<(TyId, u32)>,
+    },
+    /// The generic function value in field `index` of the receiver (of generic function type
+    /// `fn_ty`, `crate::generic_fns`), called with the parameters at the method's own type
+    /// parameters `margs`: an object literal implementing a generic interface method
+    /// (`body/expr/iface_object.rs`).
+    GenericField {
+        index: u32,
+        fn_ty: TyId,
+        margs: Vec<TyId>,
+    },
+    /// The function value (of type `fn_ty`, which throws nothing) getter `def` with these type
+    /// args returns for the receiver, called with the parameters: a field holding a function
+    /// that fills a method's slot (`synth_ifaces/upcasts.rs`).
+    Getter {
+        def: DefId,
+        targs: Vec<TyId>,
+        fn_ty: TyId,
+    },
 }
 
 /// The type a synthesized method belongs to.
-pub(super) struct Host {
+#[derive(Clone)]
+pub(crate) struct Host {
     /// The class / struct / interface (`None`: an `extend` block's target).
     pub d: Option<DefId>,
     pub generics: Generics,
@@ -60,7 +88,7 @@ impl Host {
 
 /// A method of `host` (self type `self_ty`) with the given signature that calls `target`.
 #[allow(clippy::too_many_arguments)] // the signature parts of the synthesized method
-pub(super) fn synth_method(
+pub(crate) fn synth_method(
     cx: &mut Ctx,
     host: &Host,
     self_ty: TyId,
@@ -92,6 +120,8 @@ pub(super) fn synth_method(
         .collect();
     let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
     let mut wrap = None;
+    let mut this_arg = None;
+    let mut recv = None;
     let callee = match target {
         Target::Default(dd, targs) => {
             cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(dd, targs.clone(), span)];
@@ -117,8 +147,86 @@ pub(super) fn synth_method(
             wrap = Some((gen, impl_index));
             Callee::Def(g, targs)
         }
+        Target::Field { index, fn_ty, this } => {
+            this_arg = this;
+            if let TyKind::FnPtr { throws, .. } = cx.ty.kind(fn_ty) {
+                if *throws != cx.ty.never {
+                    cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Direct(*throws, span)];
+                }
+            }
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            Callee::Indirect(Box::new(hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index,
+                    mode: UseMode::Borrow,
+                },
+                ty: fn_ty,
+                span,
+            }))
+        }
+        Target::GenericField {
+            index,
+            fn_ty,
+            margs,
+        } => {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            if let TyKind::Dyn(iface, gargs) = cx.ty.kind(fn_ty).clone() {
+                let mut args = gargs;
+                args.push(fn_ty);
+                args.extend(margs.iter().copied());
+                cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Slot {
+                    iface,
+                    slot: 0,
+                    args,
+                    span,
+                }];
+                let call = (iface, crate::generic_fns::CALL.to_string());
+                cx.generic_called.on.insert(call);
+            }
+            recv = Some(hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index,
+                    mode: UseMode::Borrow,
+                },
+                ty: fn_ty,
+                span,
+            });
+            Callee::Dyn {
+                slot: 0,
+                method_type_args: margs,
+            }
+        }
+        Target::Getter {
+            def: g,
+            targs,
+            fn_ty,
+        } => {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            Callee::Indirect(Box::new(hir::Expr {
+                kind: H::Call {
+                    callee: Callee::Def(g, targs),
+                    args: vec![this],
+                },
+                ty: fn_ty,
+                span,
+            }))
+        }
     };
-    let call = (callee, wrap);
+    let call = (callee, wrap, this_arg, recv);
     let body = forward_body(cx, self_ty, this_mode, &params, ret, call, span);
     let fndef = hir::FnDef {
         name,
@@ -148,15 +256,21 @@ pub(super) fn synth_method(
     def
 }
 
+/// A type and an implementation index (`Program::impls`): the interface value a call result
+/// becomes, or the receiver passed as one.
+type AsDyn = Option<(TyId, u32)>;
+
 /// `return callee(this, p1, .., pn);` (with `wrap = Some((ty, impl))`, the call has type `ty`
-/// and its result becomes an interface value through `impl`).
+/// and its result becomes an interface value through `impl`). An indirect call passes no
+/// receiver, unless `this_arg` says how to pass it (`Target::Field`); `recv` is the receiver
+/// of a call through a field (`Target::GenericField`).
 fn forward_body(
     cx: &mut Ctx,
     self_ty: TyId,
     this_mode: PassMode,
     params: &[ParamSig],
     ret: TyId,
-    (callee, wrap): (Callee, Option<(TyId, u32)>),
+    (callee, wrap, this_arg, recv): (Callee, AsDyn, AsDyn, Option<hir::Expr>),
     span: Span,
 ) -> hir::Body {
     let local = |name: &str, ty| LocalDef {
@@ -172,11 +286,26 @@ fn forward_body(
     } else {
         UseMode::Borrow
     };
-    let mut args = vec![hir::Expr {
+    let mut args = vec![];
+    let this = hir::Expr {
         kind: H::Local(LocalId(0), this_use),
         ty: self_ty,
         span,
-    }];
+    };
+    match (&callee, this_arg) {
+        // The receiver of a call through a field (`Target::GenericField`).
+        _ if recv.is_some() => args.extend(recv),
+        (Callee::Indirect(_), None) => {}
+        (Callee::Indirect(_), Some((ty, impl_index))) => args.push(hir::Expr {
+            kind: H::ToDyn {
+                expr: Box::new(this),
+                impl_index,
+            },
+            ty,
+            span,
+        }),
+        _ => args.push(this),
+    }
     for (i, p) in params.iter().enumerate() {
         locals.push(local(&p.name, p.ty));
         let mode = if cx.is_copy(p.ty) {
@@ -217,5 +346,58 @@ fn forward_body(
             value: None,
             span,
         },
+    }
+}
+
+/// Synthesized method `def` returning `ret`, a promise rejecting with `err` (`never`: it does
+/// not reject), what the function value it calls returns: made an async method returning what it awaits, so its promise rejects
+/// with what its dispatch group's members throw, as an async method's does (throws/groups.rs
+/// `Group::promise`), which may be more than `err`.
+pub(crate) fn await_forwarded(cx: &mut Ctx, def: DefId, ret: TyId, err: TyId, span: Span) {
+    let Some(v) = cx.ty.promise_payload(ret) else {
+        return;
+    };
+    let never = cx.ty.never;
+    let mut params = cx.fn_info(def).params.clone();
+    super::sigs::owned_async_params(cx, &mut params);
+    let info = cx.fn_info_mut(def);
+    info.is_async = true;
+    if let Some(this) = &mut info.this {
+        this.mode = PassMode::Owned;
+    }
+    info.params.clone_from(&params);
+    info.throw_srcs = match err == never {
+        true => vec![],
+        false => vec![ThrowSrc::Direct(err, span)],
+    };
+    let Some(Def::Fn(f)) = &mut cx.defs[def.0 as usize] else {
+        return;
+    };
+    f.is_async = true;
+    f.ret = v;
+    for (p, sig) in f
+        .params
+        .iter_mut()
+        .zip(std::iter::once(None).chain(params.iter().map(Some)))
+    {
+        p.mode = sig.map_or(PassMode::Owned, |s| s.mode);
+    }
+    for s in &mut f.body.block.stmts {
+        if let hir::StmtKind::Return(Some(e)) = &mut s.kind {
+            let call = std::mem::replace(
+                e,
+                hir::Expr {
+                    kind: H::Lit(hir::Lit::Null),
+                    ty: v,
+                    span,
+                },
+            );
+            let call = hir::Expr { ty: ret, ..call };
+            *e = hir::Expr {
+                kind: H::Await(Box::new(call)),
+                ty: v,
+                span,
+            };
+        }
     }
 }

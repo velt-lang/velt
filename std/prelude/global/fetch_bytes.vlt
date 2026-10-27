@@ -1,0 +1,5 @@
+// Global, conditional (crates/veltc/src/loader/globals.rs): `bytes()` and `arrayBuffer()` of
+// `Response` and `Request` (velt:fetch/typed), with the typed arrays they give, for a program
+// that uses `Response` and reads bytes; other fetch and http programs don't load typed arrays.
+// load when std/fetch/response uses: bytes arrayBuffer
+import "velt:fetch/typed";

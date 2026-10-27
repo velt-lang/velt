@@ -248,4 +248,18 @@ mod tests {
         reply_stop(&s).unwrap();
         program.join().unwrap();
     }
+
+    /// A failed build's report waits for no reply: the host may have written it and closed its
+    /// end before the supervisor accepts (a busy machine), and the report still arrives.
+    #[test]
+    fn a_report_from_a_host_that_already_left_is_read() {
+        let mut server = Server::bind().unwrap();
+        let files = vec![PathBuf::from("/a/main.vlt")];
+        assert!(report_build(server.name(), false, &files)
+            .unwrap()
+            .is_none());
+        let s = server.accept().unwrap();
+        let failed = Request::Built { ok: false, files };
+        assert_eq!(read_request(&s).unwrap(), failed);
+    }
 }

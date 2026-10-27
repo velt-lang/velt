@@ -1,0 +1,10 @@
+// What a `const` used by closures in its own initializer still rejects (#750, #1292): an
+// object literal whose type depends on the constant itself needs its type written, as
+// TypeScript requires (TS7022, TS7023). (An object holding a promise is shared like any other
+// object, #212: `lang/const_closure_promise_field`.)
+async function run(): Promise<void> {
+  const o = { n: 1, get() { return o.n; } };
+  const p = { n: 1, inc: () => p.n + 1 };
+  console.log(o.get(), p.inc());
+}
+spawn(run());

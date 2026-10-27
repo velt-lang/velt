@@ -1,0 +1,56 @@
+// An async function or arrow without a result type that returns a promise (#1166): its result
+// is the promise's value, as in TypeScript, and the promise is adopted like one returned with a
+// written result type (the same steps as in Node).
+async function inner(n: number): Promise<number> {
+  return n * 2;
+}
+
+const f = async (n: number) => inner(n);
+const g = async (n: number) => {
+  return inner(n);
+};
+
+async function h(n: number) {
+  if (n > 10) {
+    return 0;
+  }
+  return inner(n);
+}
+
+async function guarded(n: number) {
+  try {
+    return inner(n);
+  } finally {
+    console.log("finally", n);
+  }
+}
+
+class Loader {
+  async load(n: number) {
+    return inner(n + 100);
+  }
+}
+
+async function tick(label: string) {
+  await Promise.resolve();
+  console.log(label, 1);
+  await Promise.resolve();
+  console.log(label, 2);
+  await Promise.resolve();
+  console.log(label, 3);
+}
+
+async function main() {
+  console.log(await f(1));
+  console.log(await g(2));
+  console.log(await h(3), await h(30));
+  console.log(await guarded(4));
+  console.log(await new Loader().load(5));
+  const local = async (n: number) => inner(n + 1000);
+  console.log(await local(6));
+  // The steps: the same order as Node's.
+  const t = tick("tick");
+  const a = f(7).then((v) => console.log("inferred", v));
+  const b = (async (n: number): Promise<number> => inner(n))(8).then((v) => console.log("declared", v));
+  await Promise.all([t, a, b]);
+}

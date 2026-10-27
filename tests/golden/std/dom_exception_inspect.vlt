@@ -1,0 +1,26 @@
+// `console.log` of a `DOMException` prints the first line of what Node prints (Node follows it
+// with the stack, which Velt does not keep): `DOMException [<name>]: <message>`, without the
+// brackets for a name that does not end in `Error`, and without `: ` for an empty message.
+try {
+  atob("*");
+} catch (e) {
+  console.log(e);
+}
+console.log(new DOMException("m", "AbortError"));
+console.log(new DOMException("m"));
+console.log(new DOMException(""));
+console.log(new DOMException("m", "Custom"));
+console.log([new DOMException("in an array", "DataCloneError")]);
+console.log({ error: new DOMException("in an object", "TimeoutError") });
+// `JSON.stringify` writes its message, as for Velt's other errors (Node writes `{}`).
+console.log(
+  JSON.stringify(new DOMException("m", "AbortError")),
+  JSON.stringify(new Error("plain")),
+);
+try {
+  atob("*");
+} catch (e) {
+  console.log(JSON.stringify({ err: e }));
+}
+// Uncaught, it is reported with that line too (Node shows the stack and the source line).
+throw new DOMException("not caught", "NotFoundError");

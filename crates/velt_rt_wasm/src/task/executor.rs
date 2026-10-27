@@ -2,8 +2,8 @@
 //!
 //! Tasks are heap `VeltFut`s. A waker is just a task id (0 = the `block_on` root) that `wake`
 //! pushes onto the ready queue once. When nothing is ready, the executor sleeps until the
-//! earliest timer; if there is no timer either, no task can ever be woken again and the
-//! program is deadlocked, which is reported as a panic (the native runtime would hang).
+//! earliest timer; if there is no timer either, no task can ever be woken again and the program
+//! ends, as Node exits with promises pending (and as the native runtime does, task/quiet.rs).
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{Ordering, Reverse};
@@ -47,7 +47,12 @@ struct Task {
     fut: *mut VeltFut,
     result_size: usize,
     join: Option<Rc<RefCell<JoinState>>>,
+    /// The logical task it runs for ([`logical_task`]).
+    logical: u64,
 }
+
+/// The logical task of the `block_on` root.
+const ROOT_LOGICAL: u64 = 1;
 
 /// A pending timer (ordered by deadline, then creation order).
 struct Timer {
@@ -94,9 +99,14 @@ struct Executor {
     /// Slot `id - 1` holds task `id`.
     tasks: Vec<Option<Task>>,
     free: Vec<usize>,
-    ready: VecDeque<usize>,
-    /// The tasks in `ready`, with the turn that queued them.
-    queued: HashMap<usize, u32>,
+    /// Queued tasks with the number of their entry: an entry whose number is not the task's in
+    /// `queued` is stale (the task moved, ran or was cancelled) and is skipped, so moving a task
+    /// in the queue costs no search through it.
+    ready: VecDeque<(usize, u64)>,
+    /// The tasks in `ready`, with the turn that queued them and the number of their entry.
+    queued: HashMap<usize, (u32, u64)>,
+    /// Numbers the entries of `ready`.
+    entries: u64,
     timers: BinaryHeap<Reverse<Timer>>,
     timer_seq: u64,
     /// Inside `block_on` (promises can only be started while tasks run).
@@ -114,6 +124,23 @@ struct Executor {
     yielded: u32,
     /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
     keep_alive: usize,
+    /// The microtask queue (`then` callbacks, `queueMicrotask`): it runs before the ready
+    /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
+    /// (velt_rt task/local/micro.rs).
+    micro: VecDeque<Rc<MicroSlot>>,
+    /// Entries of `ready` that [`wake_next`] queued: an awaiter resumed by a promise that
+    /// finished, a step of the microtask checkpoint that is not over while one is queued.
+    resumed: std::collections::HashSet<u64>,
+    /// Queued tasks of promises a combinator gave up ([`refresh_first`]).
+    refresh: Vec<usize>,
+    /// The last logical task id handed out (after [`ROOT_LOGICAL`]).
+    logicals: u64,
+}
+
+/// An entry of the microtask queue: whom to run when the queue reaches it.
+pub struct MicroSlot {
+    fired: Cell<bool>,
+    waker: RefCell<Option<Waker>>,
 }
 
 thread_local! {
@@ -150,34 +177,177 @@ pub fn waker(id: usize) -> Waker {
 /// Queue task `id` (once) to be polled.
 fn schedule(id: usize) {
     with_exec(|e| {
-        if let std::collections::hash_map::Entry::Vacant(v) = e.queued.entry(id) {
-            v.insert(e.turn);
-            e.ready.push_back(id);
+        if !e.queued.contains_key(&id) {
+            let turn = e.turn;
+            e.enqueue(id, turn, false);
         }
     });
 }
 
+impl Executor {
+    /// Queue task `id` (at the front or the back), queued by `turn`; an entry it had is now stale.
+    fn enqueue(&mut self, id: usize, turn: u32, front: bool) {
+        self.entries += 1;
+        let entry = (id, self.entries);
+        self.queued.insert(id, (turn, self.entries));
+        if front {
+            self.ready.push_front(entry);
+        } else {
+            self.ready.push_back(entry);
+        }
+    }
+
+    /// Is `entry` of `ready` the live one of its task?
+    fn live(&self, entry: &(usize, u64)) -> bool {
+        self.queued.get(&entry.0).is_some_and(|q| q.1 == entry.1)
+    }
+}
+
 /// Wake `w` so that its task runs next (before the tasks already queued): how a finished
 /// promise resumes whoever awaits it, like a JS microtask. Other wakers are woken normally.
+/// While microtasks run, it goes first in their queue: velt_rt resumes the awaiter at once.
 pub fn wake_next(w: Waker) {
+    let Err(w) = micro_first(w) else {
+        return;
+    };
     if !std::ptr::eq(w.vtable(), &VTABLE) {
         w.wake();
         return;
     }
     let id = w.data() as usize;
     with_exec(|e| {
-        if e.queued.insert(id, e.turn).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
-        e.ready.push_front(id);
+        let turn = e.turn;
+        e.enqueue(id, turn, true);
+        let entry = e.entries;
+        e.resumed.insert(entry);
     });
 }
 
-fn next_ready() -> Option<usize> {
+/// Whether the next ready task is an awaiter [`wake_next`] resumed (the checkpoint waits for it).
+fn resuming() -> bool {
     with_exec(|e| {
-        let id = e.ready.pop_front()?;
-        e.queued.remove(&id);
-        Some(id)
+        let live = e.ready.iter().find(|en| e.live(en));
+        live.is_some_and(|en| e.resumed.contains(&en.1))
+    })
+}
+
+/// Put `w` first in the microtask queue when it is not empty; gives it back otherwise.
+fn micro_first(w: Waker) -> Result<(), Waker> {
+    with_exec(|e| {
+        if e.micro.is_empty() {
+            return Err(w);
+        }
+        e.micro.push_front(Rc::new(MicroSlot {
+            fired: Cell::new(false),
+            waker: RefCell::new(Some(w)),
+        }));
+        Ok(())
+    })
+}
+
+/// The await word on the one thread: 1 while tasks run (every `await` asks [`await_tick`]),
+/// 0 outside `block_on`.
+static mut AWAIT_WORD: u32 = 0;
+
+/// Synchronous runs under way (a started promise's first run, a promise run from inside
+/// another poll): their `await`s take a step even when the queue is empty.
+static SYNC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn await_word() -> *const u32 {
+    std::ptr::addr_of!(AWAIT_WORD)
+}
+
+fn set_running_word(on: bool) {
+    // SAFETY: one thread; generated code only reads the word.
+    unsafe { AWAIT_WORD = on as u32 };
+}
+
+/// Run `f` as synchronous code that goes on afterwards (see [`SYNC_DEPTH`]).
+pub fn sync_run<R>(f: impl FnOnce() -> R) -> R {
+    use std::sync::atomic::Ordering::Relaxed;
+    SYNC_DEPTH.fetch_add(1, Relaxed);
+    let r = f();
+    SYNC_DEPTH.fetch_sub(1, Relaxed);
+    r
+}
+
+/// The step of an `await`: 0 to go on (nothing else could run first), else a ticket (an owned
+/// queue entry) for [`await_ready`].
+pub fn await_tick(cx: &mut Context<'_>) -> u64 {
+    if !running() {
+        return 0;
+    }
+    let idle = SYNC_DEPTH.load(std::sync::atomic::Ordering::Relaxed) == 0
+        && with_exec(|e| e.micro.is_empty());
+    if idle {
+        return 0;
+    }
+    let s = Rc::new(MicroSlot {
+        fired: Cell::new(false),
+        waker: RefCell::new(Some(cx.waker().clone())),
+    });
+    with_exec(|e| e.micro.push_back(s.clone()));
+    Rc::into_raw(s) as usize as u64
+}
+
+/// Has the queue reached `ticket` (from [`await_tick`])? Its entry is released once it has.
+pub fn await_ready(ticket: u64, cx: &mut Context<'_>) -> bool {
+    let p = ticket as usize as *const MicroSlot;
+    // SAFETY: the ticket owns one reference until this returns true.
+    let s = unsafe { &*p };
+    if s.fired.get() {
+        // SAFETY: as above; the reference is given back now.
+        drop(unsafe { Rc::from_raw(p) });
+        return true;
+    }
+    *s.waker.borrow_mut() = Some(cx.waker().clone());
+    false
+}
+
+/// `velt_rt_microtask`: ready once the queue reached it (at once outside `block_on`).
+pub fn poll_microtask(slot: &mut Option<Rc<MicroSlot>>, cx: &mut Context<'_>) -> Poll<()> {
+    match slot {
+        Some(s) if s.fired.get() => Poll::Ready(()),
+        Some(s) => {
+            *s.waker.borrow_mut() = Some(cx.waker().clone());
+            Poll::Pending
+        }
+        None if !running() => Poll::Ready(()),
+        None => {
+            let s = Rc::new(MicroSlot {
+                fired: Cell::new(false),
+                waker: RefCell::new(Some(cx.waker().clone())),
+            });
+            with_exec(|e| e.micro.push_back(s.clone()));
+            *slot = Some(s);
+            Poll::Pending
+        }
+    }
+}
+
+/// The task the next microtask runs (other wakers in the queue are woken on the way).
+fn next_micro() -> Option<usize> {
+    loop {
+        let s = with_exec(|e| e.micro.pop_front())?;
+        s.fired.set(true);
+        let Some(w) = s.waker.borrow_mut().take() else {
+            continue;
+        };
+        if std::ptr::eq(w.vtable(), &VTABLE) {
+            return Some(w.data() as usize);
+        }
+        w.wake();
+    }
+}
+
+fn next_ready() -> Option<usize> {
+    with_exec(|e| loop {
+        let entry = e.ready.pop_front()?;
+        e.resumed.remove(&entry.1);
+        if e.live(&entry) {
+            e.queued.remove(&entry.0);
+            return Some(entry.0);
+        }
     })
 }
 
@@ -206,6 +376,20 @@ fn begin_poll(id: usize) {
     });
 }
 
+/// The logical task being polled (0 outside a poll): the `block_on` root, a spawned task, or
+/// the task that started the promise being driven. Never reused (velt_rt's `velt_rt_task_id`).
+pub fn logical_task() -> u64 {
+    with_exec(|e| match e.polling.last() {
+        None => 0,
+        Some((ROOT, _)) => ROOT_LOGICAL,
+        Some((id, _)) => e
+            .tasks
+            .get(id - 1)
+            .and_then(Option::as_ref)
+            .map_or(0, |t| t.logical),
+    })
+}
+
 /// Back to the turn the poll interrupted.
 fn end_poll() {
     with_exec(|e| {
@@ -219,7 +403,7 @@ fn end_poll() {
 pub fn queued_earlier(id: usize) {
     with_exec(|e| {
         if let Some(t) = e.queued.get_mut(&id) {
-            *t = 0;
+            t.0 = 0;
         }
     });
 }
@@ -232,11 +416,12 @@ pub fn run_now(id: usize, turn: u32) {
     loop {
         let next = with_exec(|e| {
             let i = e.ready.iter().position(|q| {
-                *q != ROOT
-                    && e.queued.get(q) == Some(&turn)
-                    && !e.polling.iter().any(|(p, _)| p == q)
+                q.0 != ROOT
+                    && e.live(q)
+                    && e.queued.get(&q.0).is_some_and(|t| t.0 == turn)
+                    && !e.polling.iter().any(|(p, _)| *p == q.0)
             })?;
-            let q = e.ready.remove(i)?;
+            let (q, _) = e.ready.remove(i)?;
             e.queued.remove(&q);
             Some(q)
         });
@@ -246,10 +431,7 @@ pub fn run_now(id: usize, turn: u32) {
     }
     let queued = with_exec(|e| {
         let free = !e.polling.iter().any(|(p, _)| *p == id);
-        free && e.queued.remove(&id).is_some() && {
-            e.ready.retain(|&q| q != id);
-            true
-        }
+        free && e.queued.remove(&id).is_some()
     });
     if queued {
         // SAFETY: as above.
@@ -287,13 +469,40 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     with_exec(|e| e.keep_alive -= 1);
 }
 
+/// `velt_rt_timer_unref_due()`: never ending early here: one thread both runs the timers and
+/// decides the end ([`velt_rt_block_on`]), so no due timer runs after the end was seen. Ready at
+/// once with 0.
+#[no_mangle]
+pub extern "C" fn velt_rt_timer_unref_due() -> *mut VeltFut {
+    super::leaf::ready_leaf(|| 0u8)
+}
+
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
 /// `join` (if any) and the future is freed. Returns the task id.
 pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) -> usize {
+    spawn_for(fut, result_size, join, None)
+}
+
+/// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
+/// runs for the logical task that started it, as on native targets, where the task's own set
+/// drives it.
+pub fn spawn_for(
+    fut: *mut VeltFut,
+    result_size: usize,
+    join: Option<Rc<RefCell<JoinState>>>,
+    logical: Option<u64>,
+) -> usize {
+    let logical = logical.unwrap_or_else(|| {
+        with_exec(|e| {
+            e.logicals = e.logicals.max(ROOT_LOGICAL) + 1;
+            e.logicals
+        })
+    });
     let task = Task {
         fut,
         result_size,
         join,
+        logical,
     };
     let id = with_exec(|e| match e.free.pop() {
         Some(slot) => {
@@ -319,9 +528,7 @@ pub fn live_tasks() -> usize {
 /// that still holds its waker wakes nothing, or the slot's next task spuriously.
 pub fn cancel(id: usize) {
     let task = with_exec(|e| {
-        if e.queued.remove(&id).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
+        e.queued.remove(&id);
         let task = e.tasks.get_mut(id - 1)?.take()?;
         e.free.push(id - 1);
         Some(task)
@@ -340,7 +547,7 @@ unsafe fn run_task(id: usize) {
     let w = waker(id);
     let mut cx = Context::from_waker(&w);
     begin_poll(id);
-    let r = ((*fut).poll.0)(fut, raw_cx(&mut cx));
+    let r = ((*fut).poll.0)(fut, raw_cx(&mut cx).ptr());
     end_poll();
     if r != READY {
         return;
@@ -401,11 +608,18 @@ pub fn poll_timer(t: &Rc<TimerCell>, cx: &mut Context<'_>) -> Poll<()> {
     Poll::Pending
 }
 
-/// Fire every timer due at `now`, in (deadline, creation) order: each wakes its task, which goes
-/// to the back of the ready queue in that order (also one that was queued already), so the
-/// tasks resume in timer order.
+/// Fire every timer due at `now`, in (deadline, creation) order, and the timers of
+/// `setTimeout` / `setInterval` in Node's order (order.rs) among them by their lists' expiry:
+/// each wakes its task, which goes to the back of the ready queue in that order (also one that
+/// was queued already), so the tasks resume in timer order.
 fn fire_due(now: f64) {
     loop {
+        let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
+        if let Some(list) = super::order::first_expiry().filter(|x| *x <= now) {
+            if sleep.is_none_or(|s| list <= s) && super::order::fire_phase(now) {
+                continue;
+            }
+        }
         let due = with_exec(|e| match e.timers.peek() {
             Some(t) if t.0.deadline <= now => e.timers.pop().map(|t| t.0.cell),
             _ => None,
@@ -421,7 +635,7 @@ fn fire_due(now: f64) {
 }
 
 /// Wake `w`; a task of this executor goes to the back of the ready queue even if it was queued.
-fn wake_last(w: Waker) {
+pub(super) fn wake_last(w: Waker) {
     if !std::ptr::eq(w.vtable(), &VTABLE) {
         w.wake();
         return;
@@ -429,25 +643,47 @@ fn wake_last(w: Waker) {
     let id = w.data() as usize;
     with_exec(|e| {
         // Turn 0: a timer's wake-up is no turn's microtask, so `run_now` leaves it in its place.
-        if e.queued.insert(id, 0).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
-        e.ready.push_back(id);
+        e.enqueue(id, 0, false);
     });
+}
+
+/// Queued task `id` drives a promise a combinator gave up (local.rs `velt_rt_fut_detach`): its
+/// leaves may hold a waker of the combinator's, which reaches nobody now. It runs before due
+/// timers fire, so it points them at itself and its timer wakes it in timer order (velt_rt's
+/// set.rs `drain` does the same), not at its place in the ready queue (a busy program can find
+/// the timers of two such promises due together).
+pub fn refresh_first(id: usize) {
+    with_exec(|e| e.refresh.push(id));
 }
 
 /// Fire the timers that are due now (between two task polls, so a busy program still sees its
 /// timers fire, in order).
-fn fire_due_now() {
-    if with_exec(|e| e.timers.is_empty()) {
+unsafe fn fire_due_now() {
+    if with_exec(|e| e.timers.is_empty()) && super::order::first_expiry().is_none() {
+        with_exec(|e| e.refresh.clear());
         return;
     }
-    fire_due(platform::monotonic_ms());
+    let now = platform::monotonic_ms();
+    let due = with_exec(|e| e.timers.peek().is_some_and(|t| t.0.deadline <= now))
+        || super::order::first_expiry().is_some_and(|x| x <= now);
+    if due {
+        for id in with_exec(|e| std::mem::take(&mut e.refresh)) {
+            if with_exec(|e| e.queued.remove(&id).is_some()) {
+                run_task(id);
+            }
+        }
+    }
+    fire_due(now);
 }
 
 /// Sleep until the earliest timer and fire every timer that is due; false if there is none.
 fn wait_for_timers() -> bool {
-    let Some(first) = with_exec(|e| e.timers.peek().map(|t| t.0.deadline)) else {
+    let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
+    let Some(first) = [sleep, super::order::first_expiry()]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+    else {
         return false;
     };
     platform::sleep_ms(first - platform::monotonic_ms());
@@ -457,23 +693,42 @@ fn wait_for_timers() -> bool {
 
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
 /// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
-/// held. Spawned tasks still running afterwards are abandoned.
+/// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
+/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running
+/// afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
+    set_running_word(true);
     schedule(ROOT);
     let mut root_done = false;
     loop {
+        if root_done && with_exec(|e| e.micro.is_empty()) && !resuming() {
+            super::local::flush_unhandled();
+        }
         if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
             with_exec(|e| e.running = false);
+            set_running_word(false);
             return;
         }
         fire_due_now();
-        let Some(id) = next_ready() else {
+        let Some(id) = next_micro().or_else(|| {
+            // The microtask queue is drained (and no awaiter resumes): unhandled rejections are
+            // reported now.
+            if !resuming() {
+                super::local::flush_unhandled();
+            }
+            next_ready()
+        }) else {
             if !wait_for_timers() {
-                crate::panic::fatal(
-                    "deadlock: the main task is waiting, but no task or timer can wake it",
-                );
+                // Nothing can wake a task any more: the end, as in Node (exit code 13 at an
+                // unsettled top-level `await`).
+                if !root_done {
+                    crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code());
+                }
+                with_exec(|e| e.running = false);
+                set_running_word(false);
+                return;
             }
             continue;
         };
@@ -487,80 +742,11 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         let w = waker(ROOT);
         let mut cx = Context::from_waker(&w);
         begin_poll(ROOT);
-        root_done = poll(state, raw_cx(&mut cx)) == READY;
+        root_done = poll(state, raw_cx(&mut cx).ptr()) == READY;
         end_poll();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::task::leaf::new_leaf;
-    use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_sleep, PENDING};
-    use std::ffi::c_void;
-
-    thread_local! {
-        static LOG: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
-        static ROOT_WAKER: RefCell<Option<Waker>> = const { RefCell::new(None) };
-        static B_WAKER: RefCell<Option<Waker>> = const { RefCell::new(None) };
-    }
-
-    /// A task that awaits the sleep `f`, then logs `name` and wakes the root.
-    fn waiter(f: *mut VeltFut, name: &'static str) -> *mut VeltFut {
-        new_leaf(move |cx: &mut Context<'_>| {
-            if name == "b" {
-                B_WAKER.with(|w| *w.borrow_mut() = Some(cx.waker().clone()));
-            }
-            // SAFETY: `f` is a live sleep owned by this task until it completes.
-            if unsafe { velt_rt_fut_poll(f, raw_cx(cx)) } == PENDING {
-                return Poll::Pending;
-            }
-            // SAFETY: as above; not used again.
-            unsafe { velt_rt_fut_drop(f) };
-            LOG.with(|l| l.borrow_mut().push(name));
-            ROOT_WAKER.with(|w| w.borrow().as_ref().map(Waker::wake_by_ref));
-            Poll::Ready(())
-        })
-    }
-
-    /// `{ result, tag }`: two tasks wait for `a = sleep(1)` and `b = sleep(1)` (created in that
-    /// order). Then `b`'s task is woken by something else and both deadlines pass before it runs,
-    /// so it is polled first while both timers are due.
-    unsafe extern "C" fn overtake_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-        let st = s as *mut i64;
-        let cx = crate::task::context(cx);
-        match *st.add(1) {
-            0 => {
-                ROOT_WAKER.with(|w| *w.borrow_mut() = Some(cx.waker().clone()));
-                let (a, b) = (velt_rt_sleep(1), velt_rt_sleep(1));
-                spawn(waiter(a, "a"), 0, None);
-                spawn(waiter(b, "b"), 0, None);
-                *st.add(1) = 1;
-                cx.waker().wake_by_ref(); // after both tasks registered their timers
-                PENDING
-            }
-            1 => {
-                B_WAKER.with(|w| w.borrow().as_ref().map(Waker::wake_by_ref));
-                platform::sleep_ms(5.0);
-                *st.add(1) = 2;
-                PENDING
-            }
-            _ if LOG.with(|l| l.borrow().len()) < 2 => PENDING,
-            _ => {
-                *st = 0;
-                READY
-            }
-        }
-    }
-
-    /// A timer is not ready just because its deadline passed when something polls it: timers fire
-    /// in (deadline, creation) order, so a task whose later timer is polled first does not
-    /// overtake one with an earlier timer (the 50 timers of tests/golden/lang/promises_timer_order
-    /// resumed out of order on a slow machine).
-    #[test]
-    fn a_due_timer_polled_first_does_not_overtake_an_earlier_one() {
-        let mut st = [0i64; 2];
-        unsafe { velt_rt_block_on(overtake_poll, st.as_mut_ptr() as *mut u8) };
-        assert_eq!(LOG.with(|l| l.borrow().clone()), ["a", "b"]);
-    }
-}
+#[path = "executor_tests.rs"]
+mod tests;

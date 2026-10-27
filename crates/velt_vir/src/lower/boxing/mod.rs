@@ -9,10 +9,13 @@
 //! representation everywhere.
 
 mod kinds;
+mod locks;
 mod transfers;
 mod weak;
 
-use std::collections::HashSet;
+use crate::lower::fresh_fns::FnKey;
+use rustc_hash::FxHashSet;
+use std::collections::BTreeSet;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -24,36 +27,108 @@ pub(super) use kinds::ShareKind;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Boxing {
     /// Class hierarchies (by root class) whose objects carry a count in front of them.
-    roots: HashSet<DefId>,
+    pub(super) roots: FxHashSet<DefId>,
     /// Arrays and object types whose values are counted boxes (`Ptr` to the inline value with
     /// the count in front) instead of inline values.
-    boxes: HashSet<TyId>,
+    pub(super) boxes: FxHashSet<TyId>,
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
-    interior: HashSet<TyId>,
+    interior: FxHashSet<TyId>,
     /// Interface types whose values are compared by identity: an object type converted to one
     /// is counted, so the interface value points at the object itself (`make_dyn`).
-    identity_dyns: HashSet<TyId>,
+    identity_dyns: FxHashSet<TyId>,
+    /// The program compares `any` values that may both be objects, or keys collections by
+    /// them (any_eq.rs): every dynamic type holds objects by identity (#1256).
+    any_identity: bool,
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program holds a generic closure as `unknown` (glue/vtable.rs `ClosureAny`): every
+    /// function's `any` table has the slots that carry its table back.
+    pub(super) generic_any: bool,
+    /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
+    /// have the write slots (any_set.rs).
+    pub(super) any_writes: bool,
+    /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
+    /// slot (any_has.rs).
+    pub(super) any_has: bool,
+    /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
+    /// tables have the delete slot (any_delete.rs).
+    pub(super) any_delete: bool,
+    /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
+    /// (any_keys.rs).
+    pub(super) any_keys: bool,
+    /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
+    /// (json/any.rs).
+    pub(super) any_json: bool,
+    /// The program converts an `any` to a number (`Intrinsic::AnyToNumber`, an operator on
+    /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
+    /// (any_number.rs).
+    pub(super) any_number: bool,
+    /// The method names called through `any` with a key known at compile time (`""`: a key
+    /// known only at run time, which may name any): the built-in methods the `AnyCall` slots
+    /// of strings, arrays, numbers and booleans look for (any_builtin.rs).
+    pub(super) any_call_keys: BTreeSet<String>,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
-    recursive: HashSet<DefId>,
+    recursive: FxHashSet<DefId>,
     /// Counted types a transfer to another thread can copy (transfers.rs).
-    transferred: HashSet<TyId>,
+    transferred: FxHashSet<TyId>,
     /// Weak-capable class hierarchies (by root class) and other counted types: their release
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
-    weak_roots: HashSet<DefId>,
-    weak: HashSet<TyId>,
+    weak_roots: FxHashSet<DefId>,
+    weak: FxHashSet<TyId>,
+    /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types that reach
+    /// `object` (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
+    /// and the trace glue looks into dynamic values (weak_object.rs). False in every other
+    /// program, which compiles as before.
+    pub(super) weak_object: bool,
+    pub(super) dyn_types: FxHashSet<TyId>,
+    /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
+    /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
+    pub(super) dyn_to_any: FxHashSet<DefId>,
+    /// Typed proxies (#823, proxy_typed.rs): class hierarchies (by root class) and object types
+    /// whose values may hold a tagged pointer to the prelude's `Proxy` object. Empty in a
+    /// program that creates no proxy.
+    pub(super) proxy_roots: FxHashSet<DefId>,
+    pub(super) proxy_types: FxHashSet<TyId>,
+    /// The prelude's `Proxy` class, once the program creates a proxy.
+    pub(super) proxy_class: Option<DefId>,
+    /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
+    /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
+    pub(super) proxy_traced: BTreeSet<TyId>,
+    /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
+    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    pub(super) array_views: FxHashSet<TyId>,
+    /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
+    /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
+    pub(super) lock_values: FxHashSet<TyId>,
+    pub(super) lock_roots: FxHashSet<DefId>,
+    pub(super) lock_boxes: FxHashSet<TyId>,
+    pub(super) lock_exclusive: FxHashSet<TyId>,
+    /// Code that runs in a `read` callback calls a function value (or another function through
+    /// a pointer): every type a shared read reaches is counted (locks.rs `count_reached`).
+    pub(super) read_indirect: bool,
 }
 
 impl Boxing {
     /// The counted types before any share is observed: the recursive object types, and the
     /// object types sema relies on being counted (`hir::Program::counted_objects`).
     pub(super) fn initial(hir: &hir::Program) -> Boxing {
+        let mut recursive = recursive_objects(hir);
+        // A generic counted type (a generic interface adapter): every instance of it.
+        for &t in &hir.counted_objects {
+            if let TyKind::Adt(d, args) = hir.types.kind(t) {
+                if args
+                    .iter()
+                    .any(|a| matches!(hir.types.kind(*a), TyKind::Param(_)))
+                {
+                    recursive.insert(*d);
+                }
+            }
+        }
         Boxing {
-            recursive: recursive_objects(hir),
+            recursive,
             boxes: hir.counted_objects.iter().copied().collect(),
             ..Boxing::default()
         }
@@ -63,7 +138,7 @@ impl Boxing {
 /// Object types (anonymous ones, which field-only interfaces are by now) that reach themselves
 /// through fields stored inline: nested object types, nullable values, tuples and union
 /// payloads, not arrays, classes or other pointers.
-fn recursive_objects(hir: &hir::Program) -> HashSet<DefId> {
+fn recursive_objects(hir: &hir::Program) -> FxHashSet<DefId> {
     let objects: Vec<DefId> = (0..hir.defs.len() as u32)
         .map(DefId)
         .filter(|d| matches!(hir.def(*d), hir::Def::Adt(a) if a.kind == AdtKind::Anon))
@@ -71,7 +146,7 @@ fn recursive_objects(hir: &hir::Program) -> HashSet<DefId> {
     objects
         .into_iter()
         .filter(|&d| {
-            let mut seen = HashSet::new();
+            let mut seen = FxHashSet::default();
             fields_of(hir, d)
                 .into_iter()
                 .any(|t| reaches(hir, t, d, &mut seen))
@@ -88,20 +163,22 @@ fn fields_of(hir: &hir::Program, d: DefId) -> Vec<TyId> {
 }
 
 /// Does a value of type `t` hold a `target` inline?
-fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>) -> bool {
+fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut FxHashSet<TyId>) -> bool {
     if !seen.insert(t) {
         return false;
     }
     match hir.types.kind(t) {
         TyKind::Adt(d, args) => {
+            // A class's type arguments are behind its pointer (`Map<string, G>`): not walked,
+            // so `seen` holds only types reached inline.
             *d == target
-                || args.iter().any(|a| reaches(hir, *a, target, seen))
-                    && matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                || matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                    && args.iter().any(|a| reaches(hir, *a, target, seen))
                 || fields_of(hir, *d)
                     .into_iter()
                     .any(|f| reaches(hir, f, target, seen))
         }
-        TyKind::Option(x) => reaches(hir, *x, target, seen),
+        TyKind::Option(x, _) => reaches(hir, *x, target, seen),
         TyKind::Tuple(ts) => ts.iter().any(|x| reaches(hir, *x, target, seen)),
         TyKind::Result(a, b) => reaches(hir, *a, target, seen) || reaches(hir, *b, target, seen),
         _ => false,
@@ -112,28 +189,80 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>)
 #[derive(Debug, Default)]
 pub(super) struct Facts {
     /// Types of shared values.
-    shares: HashSet<TyId>,
+    shares: FxHashSet<TyId>,
     /// `(container, value)`: a borrowed place of type `value` reached through a `container`.
-    projections: HashSet<(TyId, TyId)>,
+    projections: FxHashSet<(TyId, TyId)>,
     /// Object types compared by identity (`==`, same.rs).
-    identity: HashSet<TyId>,
+    identity: FxHashSet<TyId>,
+    /// `any` values compared by identity (`Boxing::any_identity`).
+    pub(in crate::lower) any_identity: bool,
+    /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
+    /// identity when `to` values are.
+    upcasts: FxHashSet<(TyId, TyId)>,
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
-    identity_borrows: HashSet<TyId>,
+    identity_borrows: FxHashSet<TyId>,
     /// Types of values transferred to another thread as a whole (transfers.rs).
-    transfers: HashSet<TyId>,
+    transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// The types of the function values compared (fresh_fns.rs).
+    pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
+    /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
+    pub(in crate::lower) generic_any_keys: FxHashSet<FnKey>,
+    /// The conversions of function values between function types (fresh_fns.rs).
+    pub(in crate::lower) fn_edges: FxHashSet<(FnKey, FnKey)>,
+    /// The fresh closures made (fresh_fns.rs).
+    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey, bool)>,
+    /// A generic closure is held as `unknown` (`Boxing::generic_any`).
+    pub(super) generic_any: bool,
+    /// A member is written through `any`.
+    any_set: bool,
+    /// `key in x` is tested on an `any`.
+    any_has: bool,
+    /// A property of an `any` is deleted.
+    any_delete: bool,
+    /// `Object.keys` of an `any` is listed.
+    any_keys: bool,
+    /// A dynamic value is written as JSON.
+    any_json: bool,
+    /// An `any` is converted to a number.
+    any_number: bool,
+    /// Method names called through `any`.
+    any_call_keys: BTreeSet<String>,
     /// Capture types of the closure environments built (transfers.rs).
-    captures: HashSet<TyId>,
+    captures: FxHashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
     /// hierarchy (transfers.rs).
-    vtable_types: HashSet<TyId>,
+    vtable_types: FxHashSet<TyId>,
     /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
-    weak_seeds: HashSet<TyId>,
+    weak_seeds: FxHashSet<TyId>,
+    /// `object` is a weak key or a `WeakRef` target.
+    pub(super) weak_object: bool,
+    /// Concrete types an `any` table was built for: the types dynamic values hold.
+    pub(super) dyn_types: FxHashSet<TyId>,
+    /// Concrete types converted to `object` straight from a typed value.
+    pub(super) object_types: FxHashSet<TyId>,
+    /// An `any`, `unknown` or interface value is converted to `object`: it may hold any type
+    /// dynamic values hold.
+    pub(super) object_from_dyn: bool,
+    /// Interfaces whose values are converted to `any` / `unknown`.
+    dyn_to_any: FxHashSet<DefId>,
+    /// The program creates a `Proxy` (proxy_typed.rs).
+    pub(super) proxy_new: bool,
+    /// Concrete targets of `AnyTo` in the program's own code (proxy_typed.rs).
+    pub(super) proxy_targets: FxHashSet<TyId>,
+    /// `(from, to)` of the `Upcast`s lowered: a proxiable `from` makes `to` proxiable.
+    pub(super) proxy_casts: FxHashSet<(TyId, TyId)>,
+    /// Array types an `any` is converted to in the program's own code (array_view.rs).
+    pub(super) array_view_targets: FxHashSet<TyId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
+    /// Value types of the `RwLock`s made or locked (locks.rs).
+    pub(super) lock_values: FxHashSet<TyId>,
+    /// Code in read mode called a function through a pointer (`Boxing::read_indirect`).
+    pub(super) read_indirect: bool,
 }
 
 impl Cx<'_> {
@@ -153,9 +282,61 @@ impl Cx<'_> {
         self.facts.identity_borrows.insert(t);
     }
 
+    /// Record an interface upcast of a `from` value to `to` (upcast.rs).
+    pub(super) fn note_upcast(&mut self, from: TyId, to: TyId) {
+        self.facts.upcasts.insert((from, to));
+    }
+
+    /// Record that values of the interface `iface` are converted to `any` / `unknown`.
+    pub(super) fn note_dyn_to_any(&mut self, iface: DefId) {
+        self.facts.dyn_to_any.insert(iface);
+    }
+
+    /// Record that `any` values are compared by identity (see [`Boxing::any_identity`]).
+    pub(super) fn note_any_identity(&mut self) {
+        self.facts.any_identity = true;
+    }
+
     /// Record that function values are compared by identity.
     pub(super) fn note_fn_identity(&mut self) {
         self.facts.fn_compared = true;
+    }
+
+    /// Record that a member is written through `any`.
+    pub(super) fn note_any_set(&mut self) {
+        self.facts.any_set = true;
+    }
+
+    /// Record that `key in x` is tested on an `any`.
+    pub(super) fn note_any_has(&mut self) {
+        self.facts.any_has = true;
+    }
+
+    /// Record that a property of an `any` is deleted.
+    pub(super) fn note_any_delete(&mut self) {
+        self.facts.any_delete = true;
+    }
+
+    /// Record that `Object.keys` of an `any` is listed.
+    pub(super) fn note_any_keys(&mut self) {
+        self.facts.any_keys = true;
+    }
+
+    /// Record that a dynamic value is written as JSON.
+    pub(super) fn note_any_json(&mut self) {
+        self.facts.any_json = true;
+    }
+
+    /// Record that a method named `name` (`""`: any name) is called through `any`.
+    pub(super) fn note_any_call_key(&mut self, name: &str) {
+        if !self.facts.any_call_keys.contains(name) {
+            self.facts.any_call_keys.insert(name.to_string());
+        }
+    }
+
+    /// Record that an `any` is converted to a number.
+    pub(super) fn note_any_number(&mut self) {
+        self.facts.any_number = true;
     }
 
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
@@ -166,7 +347,18 @@ impl Cx<'_> {
     /// The interface value type `dyn_ty` is compared by identity, and its implementor `t` is an
     /// object type that a conversion would copy: record that `t` must be counted.
     pub(super) fn note_dyn_identity(&mut self, dyn_ty: TyId, t: TyId) {
-        if self.boxing.identity_dyns.contains(&dyn_ty) && self.copied_object(t) {
+        // Once values convert to `object` / `Function` (issue #926), which key collections by
+        // identity, every dynamic type holds objects by identity: a value may reach `object`
+        // through `any` or `unknown` (`u as object`).
+        let identity = self.boxing.identity_dyns.contains(&dyn_ty)
+            || (self.is_dynamic(dyn_ty)
+                && (self.boxing.any_identity
+                    || self
+                        .boxing
+                        .identity_dyns
+                        .iter()
+                        .any(|d| self.is_narrow_dynamic(*d))));
+        if identity && self.copied_object(t) {
             self.facts.identity.insert(t);
             self.facts.shares.insert(t);
         }
@@ -213,15 +405,55 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.generic_any |= self.facts.generic_any;
+        next.any_identity |= self.facts.any_identity;
+        next.any_writes |= self.facts.any_set;
+        next.any_has |= self.facts.any_has;
+        next.any_delete |= self.facts.any_delete;
+        next.any_keys |= self.facts.any_keys;
+        next.any_json |= self.facts.any_json;
+        next.any_number |= self.facts.any_number;
+        next.any_call_keys
+            .extend(self.facts.any_call_keys.iter().cloned());
+        next.dyn_to_any
+            .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();
         let dyns: Vec<TyId> = dyns
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
             .collect();
         next.identity_dyns.extend(dyns);
+        loop {
+            let more: Vec<TyId> = self
+                .facts
+                .upcasts
+                .iter()
+                .filter(|(f, t)| next.identity_dyns.contains(t) && !next.identity_dyns.contains(f))
+                .map(|&(f, _)| f)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            next.identity_dyns.extend(more);
+        }
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
+        self.close_proxies(&mut next);
+        self.close_array_views(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
-        let mut seen = HashSet::new();
+        // A weak key of type `object` (issue #926) is any dynamic value's object: each type
+        // dynamic values hold is counted, so its data pointer is the object itself.
+        next.weak_object |= self.facts.weak_object;
+        if next.weak_object {
+            // Only the types that reach `object` pay (all a dynamic value holds when an `any`,
+            // `unknown` or interface value converts to `object`).
+            let reach = match self.facts.object_from_dyn {
+                true => &self.facts.dyn_types,
+                false => &self.facts.object_types,
+            };
+            next.dyn_types.extend(reach.iter().copied());
+            work.extend(next.dyn_types.iter().copied());
+        }
+        let mut seen = FxHashSet::default();
         loop {
             while let Some(t) = work.pop() {
                 if seen.insert(t) {
@@ -241,6 +473,7 @@ impl Cx<'_> {
             if work.is_empty() {
                 self.close_transfers(&mut next);
                 self.close_weak(&mut next);
+                self.close_locks(&mut next);
                 return next;
             }
         }
@@ -269,7 +502,7 @@ impl Cx<'_> {
     }
 
     /// `counted` against a candidate set.
-    fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
+    pub(super) fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
             TyKind::Adt(d, _) if b.recursive.contains(d) => true,

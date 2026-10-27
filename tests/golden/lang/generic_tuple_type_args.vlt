@@ -1,0 +1,20 @@
+// Generic functions over tuples whose type arguments are tuples themselves (issue #1073).
+function swap<A, B>(t: [A, B]): [B, A] {
+  return [t[1], t[0]];
+}
+
+function firsts<A, B>(ts: [A, B][]): A[] {
+  return ts.map((t) => t[0]);
+}
+
+function nest<T>(x: T): [T, [T, T]] {
+  return [x, [x, x]];
+}
+
+function main() {
+  console.log(swap<number, [string, number]>([3, ["x", 2.5]]));
+  console.log(swap([["a", 1], [true, "b"]]));
+  console.log(firsts<[number, number], string>([[[1, 2], "p"], [[3, 4], "q"]]));
+  const n = nest<[string, boolean]>(["k", false]);
+  console.log(n, n[1][0][1]);
+}

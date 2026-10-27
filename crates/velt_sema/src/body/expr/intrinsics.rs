@@ -18,7 +18,11 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "to_string" => I::ToString,
         "str_concat" => I::StrConcat,
         "str_len" => I::StrLen,
+        "str_byte_len" => I::StrByteLen,
         "str_char_code_at" => I::StrCharCodeAt,
+        "str_byte_at" => I::StrByteAt,
+        "str_load_u8x16" => I::StrLoadU8x16,
+        "str_load_partial_u8x16" => I::StrLoadPartialU8x16,
         "exit" => I::Exit,
         "panic" => I::Panic,
         "array_with_capacity" => I::ArrayWithCapacity,
@@ -30,9 +34,17 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_truncate" => I::ArrayTruncate,
         "array_move" => I::ArrayMove,
         "array_set_len" => I::ArraySetLen,
+        "array_reserve" => I::ArrayReserve,
+        "array_prefetch" => I::ArrayPrefetch,
+        "array_rotate_right" => I::ArrayRotateRight,
+        "array_rotate_left" => I::ArrayRotateLeft,
+        "array_swap_nested" => I::ArraySwapNested,
         "hash" => I::Hash,
         "eq" => I::Eq,
+        "key_eq" => I::KeyEq,
+        "includes_eq" => I::IncludesEq,
         "same" => I::Same,
+        "same_value" => I::SameValue,
         "clone" => I::Clone,
         "share" => I::Share,
         "transfer" => I::Transfer,
@@ -52,15 +64,27 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_data_ptr" => I::ArrayDataPtr,
         "json_stringify" => I::JsonStringify,
         "json_parse" => I::JsonParse,
+        "json_parse_rows" => I::JsonParseRows,
+        "json_parse_cursor" => I::JsonParseCursor,
+        "db_bind" => I::DbBind,
+        "read_rows" => I::ReadRows,
+        "read_row" => I::ReadRow,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
+        "any_delete" => I::AnyDelete,
+        "any_tag" => I::AnyTag,
+        "any_to_number" => I::AnyToNumber,
+        "proxy_array_call" => I::ProxyArrayCall,
+        "proxy_array_hole" => I::ProxyArrayHole,
         "chan_receive" => I::ChanReceive,
         "chan_try_send" => I::ChanTrySend,
         "chan_try_receive" => I::ChanTryReceive,
         "generator_resume" => I::GeneratorResume,
         "generator_value" => I::GeneratorValue,
         "generator_return" => I::GeneratorReturn,
+        "generator_resume_with" => I::GeneratorResumeWith,
+        "generator_throw" => I::GeneratorThrow,
         "async_generator_resume" => I::AsyncGeneratorResume,
         "async_generator_value" => I::AsyncGeneratorValue,
         "async_generator_return" => I::AsyncGeneratorReturn,
@@ -108,9 +132,6 @@ impl FnCx<'_, '_> {
                 | Intrinsic::PromiseAll
                 | Intrinsic::PromiseRace
                 | Intrinsic::PromiseAny
-                | Intrinsic::GeneratorResume
-                | Intrinsic::GeneratorValue
-                | Intrinsic::GeneratorReturn
                 | Intrinsic::AsyncGeneratorResume
                 | Intrinsic::AsyncGeneratorValue
                 | Intrinsic::AsyncGeneratorReturn
@@ -119,6 +140,17 @@ impl FnCx<'_, '_> {
             ) => {
                 vec!["T".into(), "E".into()]
             }
+            (
+                true,
+                Intrinsic::GeneratorResume
+                | Intrinsic::GeneratorResumeWith
+                | Intrinsic::GeneratorThrow
+                | Intrinsic::GeneratorValue
+                | Intrinsic::GeneratorReturn,
+            ) => vec!["T".into(), "E".into(), "N".into()],
+            (true, Intrinsic::ReadRows | Intrinsic::ReadRow) => {
+                vec!["T".into(), "S".into()]
+            }
             (true, _) => vec!["T".into()],
         };
         Callable {
@@ -126,8 +158,10 @@ impl FnCx<'_, '_> {
             params: params.into_iter().map(|(t, m)| param(t, m, span)).collect(),
             ret,
             bounds: vec![vec![]; slot_names.len().max(1)],
+            constraints: vec![],
             slot_names,
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],
@@ -142,20 +176,40 @@ impl FnCx<'_, '_> {
         let arr = ty.array(t);
         let (usize_, f64_, str_, unit, bool_) = (ty.usize, ty.f64, ty.str_, ty.unit, ty.bool_);
         Some(match i {
+            I::SimdShuffle(simd, _) => {
+                let v = ty.intern(TyKind::Simd(simd));
+                (vec![(v, C), (v, C)], v, false)
+            }
             I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
             I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),
-            I::ArrayPop => (vec![(arr, M)], ty.option(t), true),
-            I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
+            I::ArrayPop => (
+                vec![(arr, M)],
+                ty.option_of(t, crate::hir::Nothing::Undefined),
+                true,
+            ),
+            I::ArraySwap | I::ArrayRotateRight | I::ArrayRotateLeft => {
+                (vec![(arr, M), (usize_, C), (usize_, C)], unit, true)
+            }
+            I::ArraySwapNested => {
+                let outer = ty.array(arr);
+                let at = (usize_, C);
+                (vec![(outer, M), at, at, at, at], unit, true)
+            }
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
-            I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),
+            I::ArrayTruncate | I::ArraySetLen | I::ArrayReserve => {
+                (vec![(arr, M), (usize_, C)], unit, true)
+            }
+            I::ArrayPrefetch => (vec![(arr, B), (usize_, C)], unit, true),
             I::ArrayMove => (
                 vec![(arr, M), (usize_, C), (arr, B), (usize_, C), (usize_, C)],
                 unit,
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
+            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue | I::LooseEq => {
+                (vec![(t, B), (t, B)], bool_, true)
+            }
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
             I::NeedsTransfer
@@ -163,7 +217,12 @@ impl FnCx<'_, '_> {
             | I::MayAlias
             | I::HoldsNull
             | I::FnCapturesNothing
-            | I::Truthy => (vec![(t, B)], bool_, true),
+            | I::Truthy
+            | I::IsNull
+            | I::IsNullish
+            | I::MayHoldPrimitive
+            | I::HoldsDynamic
+            | I::HoldsDynamicOrClass => (vec![(t, B)], bool_, true),
             I::NullAs => (vec![], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
@@ -174,8 +233,20 @@ impl FnCx<'_, '_> {
                 (vec![(f64_, C)], f64_, false)
             }
             I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
-            I::StrLen => (vec![(str_, B)], usize_, false),
+            I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
             I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
+            I::StrByteAt => {
+                let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+                (vec![(str_, B), (ty.u64, C)], u8_, false)
+            }
+            I::StrLoadU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C)], v, false)
+            }
+            I::StrLoadPartialU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C), (ty.u64, C)], v, false)
+            }
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
@@ -208,9 +279,15 @@ impl FnCx<'_, '_> {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
-        let (t0, e0) = (self.cx.ty.param(0), self.cx.ty.param(1));
-        let gen = self.cx.generator_ty(t0, e0);
+        let rwlock = self.cx.rwlock_ty();
+        let (t0, e0, n0) = (
+            self.cx.ty.param(0),
+            self.cx.ty.param(1),
+            self.cx.ty.param(2),
+        );
+        let gen = self.cx.generator_ty_next(t0, e0, n0);
         let agen = self.cx.async_generator_ty(t0, e0);
+        let any_ty = self.any_ty().unwrap_or(self.cx.ty.error);
         let ty = &mut self.cx.ty;
         let (t, e) = (ty.param(0), ty.param(1));
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
@@ -234,6 +311,11 @@ impl FnCx<'_, '_> {
             I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
+            I::AnyDelete => (vec![(any_ty, B), (str_, B)], ty.bool_, false),
+            I::AnyTag => (vec![(any_ty, B)], i64_, false),
+            I::AnyToNumber => (vec![(any_ty, B)], ty.f64, false),
+            I::ProxyArrayCall => (vec![(any_ty, B), (i64_, C)], i64_, false),
+            I::ProxyArrayHole => (vec![(any_ty, B), (i64_, C), (i64_, C)], i64_, false),
             I::SymbolStatic => {
                 let sym = ty.intern(TyKind::Symbol);
                 (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)
@@ -242,20 +324,48 @@ impl FnCx<'_, '_> {
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),
+            I::SharedRead => (vec![(shared, B)], t, true),
             I::SharedSet => (vec![(shared, B), (t, C)], unit, true),
             I::MutexNew => {
                 let m = mutex.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], m, true)
             }
-            I::MutexWith => (vec![(t, B)], ty.error, true),
+            I::MutexWith | I::LockRead => (vec![(t, B)], ty.error, true),
+            I::RwLockNew => {
+                let r = rwlock.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
+                (vec![(t, O)], r, true)
+            }
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),
+            I::JsonParseRows => {
+                let bytes = ty.intern(TyKind::Int(IntTy::U8));
+                let bytes = ty.array(bytes);
+                (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
+            }
+            I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
+            I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
+            // `<T, S>`: the row type and the source's type.
+            I::ReadRows => {
+                let rows = ty.array(t);
+                (vec![(e, B)], ty.option(rows), true)
+            }
+            I::ReadRow => (vec![(e, B)], ty.option(t), true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
             }
             I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
+            // `(g, value: N)`: the value is borrowed; the resumed `yield` takes its own copy.
+            I::GeneratorResumeWith => {
+                let n = ty.param(2);
+                (vec![(gen, PassMode::BorrowMut), (n, B)], ty.bool_, true)
+            }
+            // `(g, error: any)`: the result code (0 done, 1 yielded, 3 not caught).
+            I::GeneratorThrow => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(gen, PassMode::BorrowMut), (any_ty, B)], u32_, true)
+            }
             I::GeneratorValue => (vec![(gen, PassMode::BorrowMut)], t, true),
             I::GeneratorReturn => (vec![(gen, PassMode::BorrowMut)], unit, true),
             I::AsyncGeneratorResume => {

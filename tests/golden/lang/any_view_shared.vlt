@@ -1,0 +1,45 @@
+// check: no leaks
+// A view (#1485) put in `shared(new Mutex(...))`, or stored into a `Mutex`'s value in `with`,
+// while its object is still used here is a copy there: the tasks' writes go to the copy, and
+// converting the object here again gives a view of this thread's object.
+type Item = { name: string; price: number };
+type Holder = { item: Item | null };
+
+const tracked = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+async function bump(m: shared<Mutex<Item>>): Promise<number> {
+  return m.with((v) => {
+    v.price = v.price + 1;
+    return v.price;
+  });
+}
+
+async function main(): Promise<void> {
+  const a: any = new Product();
+  for (let i = 0; i < 3; i++) {
+    const m = shared(new Mutex<Item>(a as Item));
+    const r = await spawn(bump(m.clone()));
+    console.log(r, m.with((v) => v.price), (a as Item).price);
+  }
+  const h = shared(new Mutex<Holder>({ item: null }));
+  for (let i = 0; i < 3; i++) {
+    h.with((s) => {
+      s.item = a as Item;
+    });
+    (a as Item).price = 40 + i;
+    console.log(h.with((s) => s.item?.price ?? 0), (a as Item).price);
+  }
+
+  const junk: any[] = [];
+  for (let i = 0; i < 1000; i++) {
+    junk.push({ name: "x" + i, price: i });
+  }
+  const w = a as Item;
+  console.log(w.name, w.price, tracked.name, junk.length);
+}

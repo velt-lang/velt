@@ -1,0 +1,38 @@
+// `f.call(o)` of a function value cast to a function type and read from `o` (sigx's
+// `(toJSON as () => unknown).call(value)`), and `f.bind(o)` of a function-valued field read from
+// `o` (sigx's `(result as { dispose: () => void }).dispose.bind(result)`): the function keeps the
+// object it was read from, which is the `this` they pass. Node prints the same.
+interface Holder {
+  n: number;
+  toJSON?: unknown;
+}
+
+function enc(value: Holder): unknown {
+  const toJSON = (value as { toJSON?: unknown }).toJSON;
+  if (typeof toJSON === "function") {
+    return (toJSON as () => unknown).call(value);
+  }
+  return value.n;
+}
+
+console.log(enc({ n: 1, toJSON: (): unknown => "lit" }), enc({ n: 2 }));
+
+let count = 0;
+const res = {
+  dispose: (): void => {
+    count++;
+  },
+};
+const userDispose = (res as { dispose: () => void }).dispose.bind(res);
+userDispose();
+userDispose();
+const plain = res.dispose.bind(null);
+plain();
+console.log(count);
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+const bound = add.bind(undefined);
+console.log(bound(2, 3), add.call(null, 4, 5));

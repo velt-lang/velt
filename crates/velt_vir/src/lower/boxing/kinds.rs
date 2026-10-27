@@ -49,7 +49,7 @@ impl Cx<'_> {
                 hir::Def::Adt(_) if self.holds_mutex(t, 0) => ShareKind::Object,
                 _ => self.value_kind(t),
             },
-            TyKind::Option(_) | TyKind::Tuple(_) | TyKind::Result(..) => self.value_kind(t),
+            TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => self.value_kind(t),
             _ => ShareKind::Plain,
         }
     }
@@ -87,7 +87,7 @@ impl Cx<'_> {
         seen.push(t);
         match self.kind(t) {
             TyKind::Tuple(_) => out.push(t),
-            TyKind::Option(x) => self.collect_in_place(x, out, seen),
+            TyKind::Option(x, _) => self.collect_in_place(x, out, seen),
             TyKind::Result(a, b) => {
                 self.collect_in_place(a, out, seen);
                 self.collect_in_place(b, out, seen);
@@ -113,12 +113,20 @@ impl Cx<'_> {
         }
     }
 
-    /// A value type: `Value` when some part owns resources, else `Plain`.
+    /// A value type: `Value` when some part owns resources or is a reference type not counted
+    /// yet (a tuple holding an object type whose fields are assigned: sharing the tuple shares
+    /// that object, so the next pass counts it), else `Plain`.
     fn value_kind(&mut self, t: TyId) -> ShareKind {
         if self.needs_drop(t) {
-            ShareKind::Value
-        } else {
-            ShareKind::Plain
+            return ShareKind::Value;
+        }
+        let parts = self.part_types(t);
+        match parts
+            .into_iter()
+            .any(|p| matches!(self.share_kind(p), ShareKind::Object | ShareKind::Value))
+        {
+            true => ShareKind::Value,
+            false => ShareKind::Plain,
         }
     }
 }

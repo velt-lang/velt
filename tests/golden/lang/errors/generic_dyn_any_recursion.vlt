@@ -1,0 +1,23 @@
+// A conversion from `unknown` in generic code that instantiates itself with a growing type
+// argument: the instantiation cycle is reported (#943), as without the generic method a subclass
+// overrides, and the check of conversions to interfaces ends.
+class A {
+  m<T>(x: T): T {
+    return x;
+  }
+}
+
+class B extends A {
+  override m<T>(x: T): T {
+    return x;
+  }
+}
+
+function f<T>(u: unknown, n: number): T {
+  if (n > 0) return f<T[]>([u], n - 1)[0];
+  return u as T;
+}
+
+function main(): void {
+  console.log(f<number>(1, 2), new B().m(3));
+}

@@ -96,6 +96,9 @@ pub(super) struct State {
     pub(super) maps: Vec<Option<MapData>>,
     free_maps: Vec<MapId>,
     refs: Vec<Option<usize>>,
+    /// A word kept with each `WeakRef` slot for the compiler (the descriptor of an `object`
+    /// target, so `deref()` can rebuild the dynamic value); 0 when not given.
+    ref_words: Vec<u64>,
     free_refs: Vec<RefId>,
 }
 
@@ -104,6 +107,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     maps: Vec::new(),
     free_maps: Vec::new(),
     refs: Vec::new(),
+    ref_words: Vec::new(),
     free_refs: Vec::new(),
 });
 
@@ -218,15 +222,29 @@ impl State {
     }
 
     pub(super) fn get(&self, m: MapId, key: *mut u8) -> Option<u64> {
+        untagged(key);
         self.map(m).entries.get(&(key as usize)).map(|e| e.value)
     }
 
     /// Inserts or replaces an entry; returns the values to release.
     pub(super) fn set(&mut self, m: MapId, key: *mut u8, value: u64) -> Vec<(ReleaseFn, u64)> {
+        let key_trace = self.map(m).key_trace;
+        self.set_traced(m, key, value, key_trace)
+    }
+
+    /// [`State::set`] with the key's own trace glue (`key_trace`) instead of the map's: the
+    /// keys of a map whose key type is dynamic (`WeakMap<object, V>`) have different types.
+    pub(super) fn set_traced(
+        &mut self,
+        m: MapId,
+        key: *mut u8,
+        value: u64,
+        key_trace: Option<TraceFn>,
+    ) -> Vec<(ReleaseFn, u64)> {
+        untagged(key);
         let old = self.delete(m, key).unwrap_or_default();
         let k = key as usize;
         let map = self.map(m);
-        let key_trace = map.key_trace;
         let members = match map.value_trace {
             // SAFETY: a nonzero value of a map with value glue is a live counted object, owned
             // by the map from here on.
@@ -245,6 +263,7 @@ impl State {
 
     /// Removes `key`'s entry from `m`; returns its value to release (`None`: there was no entry).
     pub(super) fn delete(&mut self, m: MapId, key: *mut u8) -> Option<Vec<(ReleaseFn, u64)>> {
+        untagged(key);
         let k = key as usize;
         let entry = self.map_mut(m).entries.remove(&k)?;
         if let Some(node) = self.nodes.get_mut(&k) {
@@ -301,22 +320,27 @@ impl State {
         Some(old)
     }
 
-    pub(super) fn new_ref(&mut self, obj: *mut u8) -> RefId {
+    /// A `WeakRef` to `obj`. Bit 0 of `obj` may be set (a typed proxy, whose counted object is
+    /// `obj` with the bit clear): the slot keeps it, so `deref` gives the same word back.
+    pub(super) fn new_ref(&mut self, obj: *mut u8, word: u64) -> RefId {
         let r = match self.free_refs.pop() {
             Some(r) => {
                 self.refs[r as usize] = Some(obj as usize);
+                self.ref_words[r as usize] = word;
                 r
             }
             None => {
                 if self.refs.is_empty() {
                     // Id 0 is never a `WeakRef` slot (as for maps).
                     self.refs.push(None);
+                    self.ref_words.push(0);
                 }
                 self.refs.push(Some(obj as usize));
+                self.ref_words.push(word);
                 (self.refs.len() - 1) as RefId
             }
         };
-        self.node(obj as usize, None).refs.push(r);
+        self.node(obj as usize & !TAG, None).refs.push(r);
         r
     }
 
@@ -324,15 +348,21 @@ impl State {
         match self.refs[r as usize] {
             Some(obj) => {
                 // SAFETY: a set slot names a live object (`forget` clears it first).
-                unsafe { *rc_word(obj as *mut u8) += 1 };
+                unsafe { *rc_word((obj & !TAG) as *mut u8) += 1 };
                 obj as *mut u8
             }
             None => std::ptr::null_mut(),
         }
     }
 
+    /// The word given when `r` was made.
+    pub(super) fn ref_word(&self, r: RefId) -> u64 {
+        self.ref_words.get(r as usize).copied().unwrap_or(0)
+    }
+
     pub(super) fn drop_ref(&mut self, r: RefId) {
         if let Some(obj) = self.refs[r as usize].take() {
+            let obj = obj & !TAG;
             if let Some(node) = self.nodes.get_mut(&obj) {
                 remove_one(&mut node.refs, &r);
             }
@@ -340,6 +370,20 @@ impl State {
         }
         self.free_refs.push(r);
     }
+}
+
+/// Bit 0 of a `WeakRef`'s target word: set for a typed proxy (`new_ref`).
+const TAG: usize = 1;
+
+/// A map key or a released object is a counted object's address: never a typed proxy's tagged
+/// word (the compiler passes its `Proxy` object), which would name no object here. A `WeakRef`
+/// slot is the only place the tag is kept (`new_ref`).
+#[inline]
+pub(super) fn untagged(obj: *mut u8) {
+    assert!(
+        obj as usize & TAG == 0,
+        "ICE: a tagged proxy word {obj:p} reached the weak table"
+    );
 }
 
 fn remove_one<T: PartialEq>(v: &mut Vec<T>, x: &T) {

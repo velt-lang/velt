@@ -1,0 +1,15 @@
+// check: no leaks
+// A closure created inside another closure assigns a captured promise. A promise is a shared
+// value (#212), so the variable lives in a shared cell like any other: `main` awaits the promise
+// the inner closure stored (as in Node).
+async function main() {
+  let p: Promise<number> = Promise.resolve(1);
+  const f = () => {
+    const g = () => {
+      p = Promise.resolve(2);
+    };
+    g();
+  };
+  f();
+  console.log(await p);
+}

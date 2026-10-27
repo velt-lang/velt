@@ -26,10 +26,14 @@ impl FnLower<'_, '_> {
             .enumerate()
             .rev()
             .find_map(|(i, s)| match s.kind {
-                ScopeKind::Try { handler, slot, ty } => Some((i, handler, slot, ty)),
+                ScopeKind::Try { handler, slot, ty } => Some(Some((i, handler, slot, ty))),
+                ScopeKind::Uncaught => Some(None),
                 _ => None,
             });
-        if let Some((depth, handler, slot, ty)) = handler {
+        if let Some(None) = handler {
+            return self.uncaught_error(err, from);
+        }
+        if let Some(Some((depth, handler, slot, ty))) = handler {
             let err = self.widen_error(err, from, ty);
             self.store(Place::local(slot), err);
             self.emit_drops_from(depth + 1);
@@ -41,12 +45,29 @@ impl FnLower<'_, '_> {
         };
         let err = self.widen_error(err, from, to);
         self.write_err(err);
+        let saved = self.save_throw_loc(0);
         self.emit_drops_from(0);
+        self.restore_throw_loc(saved);
         if self.asyncx.is_some() && !self.dead() {
             self.finish_poll_err();
         } else {
             self.exit_return(unit());
         }
+    }
+
+    /// An error that leaves a module state initializer (`ScopeKind::Uncaught`): print
+    /// `Uncaught …` and end the process with 1.
+    fn uncaught_error(&mut self, err: Operand, from: TyId) {
+        let vt = self.cx.ty(from);
+        let p = match vt {
+            Ty::Unit => Place::local(self.temp(Ty::U8)),
+            _ => Place::local(self.copy_to_temp(err, vt)),
+        };
+        self.report_uncaught(&p, from);
+        if vt != Ty::Unit {
+            self.drop_glue(p, from);
+        }
+        self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
     }
 
     /// Write `Err(err)` through the out-pointer (`ret_ty` is the declared or implied Result).
@@ -93,18 +114,41 @@ impl FnLower<'_, '_> {
         if self.cx.locs.is_none() || self.dead() {
             return;
         }
-        let suffix = if self.in_std() {
-            String::new()
-        } else {
-            self.panic_suffix()
-        };
-        let at = if suffix.is_empty() {
+        let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+        let at = if self.in_std() || !tracked && self.panic_suffix().is_empty() {
             cint(0, Ty::Ptr)
         } else {
-            let id = self.cx.static_str_object(&suffix);
-            Operand::Const(vir::Const::Static(id), Ty::Ptr)
+            self.panic_at()
         };
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
+    }
+
+    /// Before the `finally` blocks of scopes `depth..` run on the way out of an error: the
+    /// location of that error, which a `throw` caught inside one of them would overwrite (the
+    /// per-thread slot holds only the last throw). `None` when no `finally` runs or without
+    /// source locations. The saved location is a local, so it survives an `await` in the
+    /// `finally`, after which the task may run on another thread.
+    fn save_throw_loc(&mut self, depth: usize) -> Option<vir::Local> {
+        if self.cx.locs.is_none() || self.dead() {
+            return None;
+        }
+        let runs_finally =
+            (self.scopes[depth..].iter()).any(|s| matches!(s.kind, ScopeKind::Finally(Some(_))));
+        if !runs_finally {
+            return None;
+        }
+        let p = self.temp(Ty::Ptr);
+        self.call_rt(Rt::ThrowLoc, vec![], Some(Place::local(p)));
+        Some(p)
+    }
+
+    /// After the `finally` blocks: put back the location [`FnLower::save_throw_loc`] saved.
+    fn restore_throw_loc(&mut self, saved: Option<vir::Local>) {
+        if let Some(p) = saved {
+            if !self.dead() {
+                self.call_rt(Rt::SetThrowLoc, vec![Operand::Copy(Place::local(p))], None);
+            }
+        }
     }
 
     /// On the error path of a call in user code: if the error came out of the standard library
@@ -113,8 +157,8 @@ impl FnLower<'_, '_> {
         if self.cx.locs.is_none() || self.dead() || self.in_std() {
             return;
         }
-        let suffix = self.panic_suffix();
-        if suffix.is_empty() {
+        let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+        if !tracked && self.panic_suffix().is_empty() {
             return;
         }
         let p = self.temp(Ty::Ptr);
@@ -130,8 +174,7 @@ impl FnLower<'_, '_> {
         let (set_bb, done) = (self.new_block(), self.new_block());
         self.branch(unset, set_bb, done);
         self.switch_to(set_bb);
-        let id = self.cx.static_str_object(&suffix);
-        let at = Operand::Const(vir::Const::Static(id), Ty::Ptr);
+        let at = self.panic_at();
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
         self.goto(done);
         self.switch_to(done);

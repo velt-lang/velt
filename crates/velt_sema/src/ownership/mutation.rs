@@ -21,7 +21,7 @@
 //!   modes; an interface method's receiver / params are modified if any implementation (or the
 //!   default) modifies them.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnKind};
@@ -37,15 +37,18 @@ pub(super) fn apply(
     d: DefId,
     f: &mut FnDef,
     ev: &Evidence,
-    moved: &HashSet<LocalId>,
+    moved: &FxHashSet<LocalId>,
 ) -> bool {
     let ncap = f.captures.len();
     let mut changed = false;
     for p in &f.params {
         let l = p.local;
         let local = &mut f.body.locals[l.0 as usize];
-        let written =
-            ev.mutated.contains(&l) || ev.weak.contains(&l) || ev.reassigned.contains_key(&l);
+        // What a closure nested in this one changes counts too, for `modified_params`.
+        let written = ev.mutated.contains(&l)
+            || ev.weak.contains(&l)
+            || ev.reassigned.contains_key(&l)
+            || cx.frozen_reads && ev.modified.contains(&l);
         // A change for the fixpoint: callers passing this closure / function read `mutable`
         // (`super::patch`, callback rule), and so does an enclosing body's evidence.
         if written && !local.mutable {
@@ -62,17 +65,42 @@ pub(super) fn apply(
         info.is_async || info.is_generator,
     );
     let has_this = info.this.is_some();
+    // `modified_params` only matters to a program that reads a `shared` (`evidence`).
+    let frozen = cx.frozen_reads;
+    let this_modified = has_this && ev.modified.contains(&f.params[0].local);
+    if this_modified && cx.fn_info(d).modified_params & 1 == 0 {
+        cx.fn_info_mut(d).modified_params |= 1;
+        changed = true;
+    }
     if has_this && ev.mutated.contains(&f.params[0].local) {
-        let t = cx.fn_info_mut(d).this.as_mut().expect("ICE: this");
+        let info = cx.fn_info_mut(d);
+        if frozen && info.modified_params & 1 == 0 {
+            info.modified_params |= 1;
+            changed = true;
+        }
+        let t = info.this.as_mut().expect("ICE: this");
         if t.mode == PassMode::Borrow {
             t.mode = PassMode::BorrowMut;
+            changed = true;
+        }
+    }
+    let first = ncap + usize::from(has_this);
+    // What the body changes of each param, whatever its mode (an `async` function's and a
+    // generator's keep their arguments).
+    for (k, p) in f.params[first..].iter().enumerate() {
+        let bit = 1u64
+            .checked_shl((k + usize::from(has_this)) as u32)
+            .unwrap_or(0);
+        let modified = ev.mutated.contains(&p.local) || ev.modified.contains(&p.local);
+        let info = cx.fn_info_mut(d);
+        if frozen && modified && info.modified_params & bit == 0 {
+            info.modified_params |= bit;
             changed = true;
         }
     }
     if kind == FnKind::Closure || is_async {
         return changed;
     }
-    let first = ncap + usize::from(has_this);
     let mut soft = vec![];
     for (k, p) in f.params[first..].iter().enumerate() {
         let (mut mutated, moved) = (ev.mutated.contains(&p.local), moved.contains(&p.local));
@@ -166,8 +194,8 @@ impl Dispatch {
     }
 
     /// Method → the groups it belongs to.
-    pub(super) fn membership(&self) -> HashMap<DefId, Vec<usize>> {
-        let mut out: HashMap<DefId, Vec<usize>> = HashMap::new();
+    pub(super) fn membership(&self) -> FxHashMap<DefId, Vec<usize>> {
+        let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
         for (g, group) in self.groups.iter().enumerate() {
             let (Group::Vtable(methods) | Group::Iface { methods, .. }) = group;
             for &m in methods {
@@ -178,7 +206,7 @@ impl Dispatch {
     }
 
     /// Method or interface → the groups whose joined modes a call through it reads.
-    pub(super) fn slots(&self) -> HashMap<DefId, Vec<usize>> {
+    pub(super) fn slots(&self) -> FxHashMap<DefId, Vec<usize>> {
         let mut out = self.membership();
         for (g, group) in self.groups.iter().enumerate() {
             if let Group::Iface { iface, .. } = group {
@@ -213,8 +241,8 @@ impl Dispatch {
 
 /// Methods in the same vtable slot of a class and its base classes (union-find over vtables).
 fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
-    let mut parent: HashMap<DefId, DefId> = HashMap::new();
-    fn find(parent: &HashMap<DefId, DefId>, mut d: DefId) -> DefId {
+    let mut parent: FxHashMap<DefId, DefId> = FxHashMap::default();
+    fn find(parent: &FxHashMap<DefId, DefId>, mut d: DefId) -> DefId {
         while let Some(&p) = parent.get(&d) {
             if p == d {
                 break;
@@ -245,7 +273,7 @@ fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
     let mut members: Vec<DefId> = parent.keys().chain(parent.values()).copied().collect();
     members.sort_unstable();
     members.dedup();
-    let mut groups: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    let mut groups: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
     for m in members {
         groups.entry(find(&parent, m)).or_default().push(m);
     }
@@ -283,7 +311,7 @@ fn join_group(cx: &mut Ctx, group: &[DefId], changed: &mut Vec<DefId>) {
 
 /// Every interface method slot with its implementations (in impl order) and default.
 fn iface_slots(cx: &Ctx) -> Vec<Group> {
-    let mut impls: HashMap<DefId, Vec<&[DefId]>> = HashMap::new();
+    let mut impls: FxHashMap<DefId, Vec<&[DefId]>> = FxHashMap::default();
     for im in &cx.impls {
         impls.entry(im.iface).or_default().push(&im.methods);
     }
@@ -324,7 +352,13 @@ fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -
     .chain(m.params.iter().map(|p| p.mode))
     .collect();
     for &method in methods {
-        join_into(&mut join, &modes_of(cx, method));
+        let mut modes = modes_of(cx, method);
+        // A generic closure implementing a generic function type (`crate::generic_fns`): its
+        // environment stands for `this`.
+        if cx.fn_info(method).kind == crate::defs::FnKind::Closure {
+            modes.insert(0, PassMode::Borrow);
+        }
+        join_into(&mut join, &modes);
     }
     let DefInfo::Iface(info) = &mut cx.info[iface.0 as usize] else {
         unreachable!("ICE: iface")

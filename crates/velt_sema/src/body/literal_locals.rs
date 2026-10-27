@@ -30,7 +30,7 @@
 //! `recheck`). A candidate used both ways stays a number: the uses as `T` are then type errors,
 //! which get a note pointing at the use as a number.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -43,14 +43,14 @@ use crate::hir::{self, BinOp, DefId, ExprKind as H, LocalId, TyId, UnOp};
 #[derive(Default, Clone)]
 pub(crate) struct LiteralLocals {
     /// Types decided by an earlier check of this body, by the local's declaration span.
-    pub decided: HashMap<Span, TyId>,
+    pub decided: FxHashMap<Span, TyId>,
     /// The candidates of this check, by declaration span: an index into `parent` / `uses`.
-    index: HashMap<Span, usize>,
+    index: FxHashMap<Span, usize>,
     /// Union-find: candidates that are used together get one type.
     parent: Vec<usize>,
     uses: Vec<Uses>,
     /// Integer literals checked as numbers (they may be `T` instead).
-    int_literals: HashSet<Span>,
+    int_literals: FxHashSet<Span>,
 }
 
 /// The uses of one candidate (merged into its class's root).
@@ -356,7 +356,7 @@ impl FnCx<'_, '_> {
         let Some(cands) = self.scan(h).filter(|c| !c.is_empty()) else {
             return;
         };
-        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.ty.is_int(core) {
             self.literal.use_int(&cands, core, h.span);
         } else if self.cx.ty.is_float(core) {

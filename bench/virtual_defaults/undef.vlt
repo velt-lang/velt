@@ -1,0 +1,30 @@
+class B {
+  m(a: number, b: number = 1): number {
+    return a + b;
+  }
+}
+
+class D extends B {
+  override m(a: number, b: number = 2): number {
+    return a - b;
+  }
+}
+
+class E extends D {
+  override m(a: number, b: number = 3): number {
+    return a * 0.5 + b;
+  }
+}
+
+const ys: B[] = [new B(), new D(), new E()];
+
+function pick(i: number): number | undefined {
+  return (i & 1) === 0 ? undefined : i;
+}
+
+let s = 0;
+const t0 = Date.now();
+for (let i = 0; i < 200000000; i++) {
+  s += ys[i % 3].m(i, undefined);
+}
+console.log(s, "ms", Date.now() - t0);

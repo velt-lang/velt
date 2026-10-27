@@ -1,11 +1,19 @@
 //! Type-argument inference: match a generic signature type (whose `Param(i)` are the callee's
 //! type parameters, "slots") against the type of an argument / the expected type.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
-use crate::hir::{DefId, ImplDef, TyId, TyKind};
+use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
+
+mod ext_exists;
+mod ext_impls;
+
+pub(crate) use ext_exists::ExistsKey;
+
+/// A found impl: its index, the interface arguments and the type it is for (`Ctx::find_impl`).
+pub(crate) type FoundImpl = (u32, Vec<TyId>, TyId);
 
 impl Ctx<'_> {
     /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
@@ -16,7 +24,27 @@ impl Ctx<'_> {
     pub fn match_context(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
         self.matching_context = true;
         self.match_ty(pat, actual, slots);
+        self.match_through_impl(pat, actual, slots);
         self.matching_context = false;
+    }
+
+    /// A class instance where an interface it implements is expected (`new Set()` as an
+    /// `Iterable<number>`): the implementation's interface arguments, in the class's, match
+    /// the expected ones.
+    pub fn match_through_impl(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
+        let (TyKind::Adt(..), TyKind::Dyn(iface, want)) =
+            (self.ty.kind(pat).clone(), self.ty.kind(actual).clone())
+        else {
+            return;
+        };
+        if self.class_of(pat).is_none() || self.dynamic(actual).is_some() {
+            return;
+        }
+        if let Some((_, have, _)) = self.find_impl(pat, iface) {
+            for (h, w) in have.iter().zip(&want) {
+                self.match_ty(*h, *w, slots);
+            }
+        }
     }
 
     fn context_slot_ok(&self, actual: TyId) -> bool {
@@ -44,6 +72,17 @@ impl Ctx<'_> {
             (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) if d == d2 => {
                 self.match_all(&ps, &as_, slots)
             }
+            // Two brands of one primitive: through their object parts (`InjectionToken<T>`).
+            (TyKind::Adt(d, _), TyKind::Adt(..))
+                if self.generic_brands.contains(&d)
+                    && self.brand_base(pat).is_some()
+                    && self.brand_base(pat) == self.brand_base(actual) =>
+            {
+                match (self.brand_tag(pat), self.brand_tag(actual)) {
+                    (Some(p), Some(a)) => self.match_ty(p, a, slots),
+                    _ => false,
+                }
+            }
             (TyKind::Adt(..), _) if self.union_def(pat).is_some() => {
                 self.match_union_member(pat, actual, slots)
             }
@@ -68,29 +107,39 @@ impl Ctx<'_> {
                 None => false,
             },
             (TyKind::Array(p), TyKind::Array(a))
-            | (TyKind::Option(p), TyKind::Option(a))
+            | (TyKind::Option(p, _), TyKind::Option(a, _))
             | (TyKind::Shared(p), TyKind::Shared(a)) => self.match_ty(p, a, slots),
             (TyKind::Promise(p, pe), TyKind::Promise(a, ae)) => {
                 let x = self.match_ty(p, a, slots);
                 self.match_error(pe, ae, slots) && x
             }
-            (TyKind::Option(p), _) => self.match_ty(p, actual, slots),
+            (TyKind::Option(p, _), _) => self.match_ty(p, actual, slots),
             (TyKind::Result(p1, p2), TyKind::Result(a1, a2))
             | (TyKind::Map(p1, p2), TyKind::Map(a1, a2)) => {
                 let x = self.match_ty(p1, a1, slots);
                 self.match_ty(p2, a2, slots) && x
             }
             (TyKind::Tuple(ps), TyKind::Tuple(as_)) => self.match_all(&ps, &as_, slots),
+            (TyKind::Op(TyOp::Intersect, ps), TyKind::Op(TyOp::Intersect, as_))
+                if ps.len() == as_.len() =>
+            {
+                self.match_all(&ps, &as_, slots)
+            }
+            (TyKind::Op(TyOp::Intersect, parts), _) => {
+                self.match_intersection(&parts, actual, slots)
+            }
             (
                 TyKind::FnPtr {
                     params: pp,
                     ret: pr,
                     throws: pt,
+                    ..
                 },
                 TyKind::FnPtr {
                     params: ap,
                     ret: ar,
                     throws: at,
+                    ..
                 },
             ) => {
                 let x = self.match_all(&pp, &ap, slots);
@@ -99,6 +148,217 @@ impl Ctx<'_> {
             }
             _ => pat == actual,
         }
+    }
+
+    /// A deferred intersection `T & { … }` against an object type (#350). The object parts' fields
+    /// match the argument's fields of the same names first (`$set: (v: T) => void` of
+    /// `Signal<T>` against a `Signal<{ n: number }>` binds `T = { n: number }`); a type parameter
+    /// part still unbound then takes the whole argument, as TypeScript infers it from an object
+    /// literal (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against
+    /// `T & { id: string }`), or, for an argument whose type an intersection made, the
+    /// intersection of its parts that are not parts of the pattern (`T = A` for an
+    /// `A & { id: string }`, as TypeScript infers it).
+    fn match_intersection(
+        &mut self,
+        parts: &[TyId],
+        actual: TyId,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        // `Signal<T & object>`: the nested intersection's parts are parts of this one, and an
+        // `object` part binds nothing.
+        let mut flat = vec![];
+        for &p in parts {
+            match self.ty.kind(p) {
+                TyKind::Op(TyOp::Intersect, ps) => flat.extend(ps.iter().copied()),
+                _ => flat.push(p),
+            }
+        }
+        let all = flat.len();
+        flat.retain(|&p| self.dynamic(p) != Some(crate::any::Dynamic::Object));
+        // `T & object` against a class instance, an array or a `Map`: `T` is the argument, as
+        // TypeScript infers it.
+        if let [p] = flat[..] {
+            if let TyKind::Param(i) = *self.ty.kind(p) {
+                let i = i as usize;
+                if flat.len() < all
+                    && !self.is_object_type(actual)
+                    && self.is_object_ty(actual)
+                    && !self.ty.has_error(actual)
+                {
+                    if i < slots.len() && slots[i].is_none() {
+                        slots[i] = Some(actual);
+                    }
+                    return i >= slots.len() || slots[i] == Some(actual);
+                }
+            }
+        }
+        if let Some((ifaces, object)) = self.meet_parts(actual) {
+            return self.match_iface_intersection(&flat, ifaces, object, slots);
+        }
+        // A brand (`Brand<string>` against `T & { __b?: true }`) gives `T` its primitive, and a
+        // class instance (`new C()` against `T & { id?: string }`) the class, as TypeScript
+        // infers them.
+        // A brand's tag gives the pattern's object parts their fields (`InjectionToken<T>`,
+        // `symbol & { __type?: T }`, against `symbol & { __type?: number }` binds `T = number`).
+        if let Some(tag) = self.brand_tag(actual) {
+            let have = self.public_fields(tag);
+            for &p in &flat {
+                if !self.is_object_type(p) {
+                    continue;
+                }
+                for f in self.public_fields(p) {
+                    if let Some(a) = have.iter().find(|a| a.name == f.name) {
+                        self.match_ty(f.ty, a.ty, slots);
+                    }
+                }
+            }
+        }
+        let whole = match self.brand_base(actual) {
+            Some(base) => Some(base),
+            None if self.class_of(actual).is_some() && !self.ty.has_error(actual) => Some(actual),
+            None => None,
+        };
+        if let Some(w) = whole {
+            let params: Vec<usize> = flat
+                .iter()
+                .filter_map(|&p| match self.ty.kind(p) {
+                    TyKind::Param(i) => Some(*i as usize),
+                    _ => None,
+                })
+                .collect();
+            match params[..] {
+                [i] => {
+                    if i < slots.len() && slots[i].is_none() {
+                        slots[i] = Some(w);
+                    }
+                    return i >= slots.len() || slots[i] == Some(w);
+                }
+                // No type parameter part: the brand matched through its tag.
+                [] if self.brand_tag(actual).is_some() => return true,
+                _ => {}
+            }
+        }
+        if !self.is_object_type(actual) {
+            return false;
+        }
+        let parts = &flat[..];
+        let fields = self.public_fields(actual);
+        let mut ok = true;
+        for &p in parts {
+            if !self.is_object_type(p) {
+                continue;
+            }
+            for f in self.public_fields(p) {
+                if let Some(a) = fields.iter().find(|a| a.name == f.name) {
+                    ok &= self.match_ty(f.ty, a.ty, slots);
+                }
+            }
+        }
+        for &p in parts {
+            if let TyKind::Param(i) = self.ty.kind(p) {
+                let i = *i as usize;
+                if i < slots.len() && slots[i].is_none() && !self.ty.has_error(actual) {
+                    slots[i] = Some(self.unmatched_parts(parts, actual));
+                }
+            }
+        }
+        ok
+    }
+
+    /// A deferred intersection's `parts` against an interface made of an intersection
+    /// (`crate::synth_ifaces`) of the interface values `ifaces` and the object type `object`:
+    /// the object parts' fields match its object part's, and a type parameter part takes
+    /// the rest (`T = Named` for a `Named & { $set }` against `T & { $set }`).
+    fn match_iface_intersection(
+        &mut self,
+        parts: &[TyId],
+        ifaces: Vec<TyId>,
+        object: Option<TyId>,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        let fields = object.map_or(vec![], |o| self.public_fields(o));
+        let mut ok = true;
+        let mut covered: Vec<String> = vec![];
+        for &p in parts {
+            if !self.is_object_type(p) {
+                continue;
+            }
+            for f in self.public_fields(p) {
+                if let Some(a) = fields.iter().find(|a| a.name == f.name) {
+                    ok &= self.match_ty(f.ty, a.ty, slots);
+                    covered.push(f.name);
+                }
+            }
+        }
+        let mut rest: Vec<TyId> = ifaces.into_iter().filter(|i| !parts.contains(i)).collect();
+        let left: Vec<_> = fields
+            .into_iter()
+            .filter(|f| !covered.contains(&f.name))
+            .collect();
+        if !left.is_empty() {
+            rest.push(self.anon_type_with(&left, 0));
+        }
+        let Some((&first, others)) = rest.split_first() else {
+            return ok;
+        };
+        let mut acc = first;
+        for &o in others {
+            match self.meet(acc, o, 0, 0) {
+                Ok(m) => acc = m,
+                Err(_) => return false,
+            }
+        }
+        for &p in parts {
+            if let TyKind::Param(i) = self.ty.kind(p) {
+                let i = *i as usize;
+                if i < slots.len() && slots[i].is_none() {
+                    slots[i] = Some(acc);
+                }
+            }
+        }
+        ok
+    }
+
+    /// `actual` without the parts of the intersection that made it which are parts of the
+    /// pattern `parts` too; `actual` when no intersection made it, or nothing is left.
+    fn unmatched_parts(&mut self, parts: &[TyId], actual: TyId) -> TyId {
+        let Some(declared) = self.type_level.intersection_parts.get(&actual).cloned() else {
+            return actual;
+        };
+        let all = declared.len();
+        let rest: Vec<TyId> = declared
+            .into_iter()
+            .filter(|&q| !parts.iter().any(|&p| self.same_object(p, q)))
+            .collect();
+        // No part of the pattern is a part of the argument (or every one is): the whole argument.
+        let Some((&first, others)) = rest.split_first().filter(|_| rest.len() < all) else {
+            return actual;
+        };
+        let mut acc = first;
+        for &o in others {
+            match self.meet(acc, o, 0, 0) {
+                Ok(m) => acc = m,
+                Err(_) => return actual,
+            }
+        }
+        acc
+    }
+
+    /// Are `a` and `b` one object type by structure: the same type, or object types (an
+    /// interface's or written out) with the same fields, each of the same type and optionality?
+    fn same_object(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b {
+            return true;
+        }
+        if !self.is_object_type(a) || !self.is_object_type(b) {
+            return false;
+        }
+        let (fa, fb) = (self.public_fields(a), self.public_fields(b));
+        fa.len() == fb.len()
+            && fa.iter().all(|f| {
+                fb.iter()
+                    .any(|g| g.name == f.name && g.ty == f.ty && g.optional == f.optional)
+            })
     }
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other
@@ -221,17 +481,44 @@ impl Ctx<'_> {
         ty: TyId,
         iface: crate::hir::DefId,
     ) -> Option<(u32, Vec<TyId>, TyId)> {
+        match self.dynamic_takes(iface, ty) {
+            Some(true) => return self.any_impl().map(|i| (i, vec![], ty)),
+            Some(false) => return None,
+            None => {}
+        }
+        if let Some(found) = self.own_impl(ty, iface) {
+            return Some(found);
+        }
+        if !self.ext_impls.is_empty() {
+            if let Some(found) = self.find_ext_impl(ty, iface) {
+                return Some(found);
+            }
+        }
+        if self.field_only.contains_key(&iface) {
+            return self.field_only_impl(ty, iface);
+        }
+        self.synth_impl(ty, iface)
+    }
+
+    /// The impl of `iface` declared for `ty` or its nearest base class implementing it (not an
+    /// `extend … implements` block's, infer/ext_impls.rs).
+    pub(crate) fn own_impl(&mut self, ty: TyId, iface: DefId) -> Option<(u32, Vec<TyId>, TyId)> {
         self.impl_index.extend(&self.impls);
+        let ext = !self.ext_impls.is_empty();
         let mut cur = Some(ty);
         let mut guard = 0;
         while let Some(t) = cur {
             // The first impl (in `impls` order) that fits wins: a non-generic impl fits exactly
             // its own type, so only generic impls before it need matching.
             let (exact, generic) = self.impl_index.candidates(iface, t);
+            let exact = exact.filter(|e| !ext || !self.ext_impls.contains_key(e));
             for i in generic
                 .into_iter()
                 .take_while(|&i| exact.is_none_or(|e| i < e))
             {
+                if ext && self.ext_impls.contains_key(&i) {
+                    continue;
+                }
                 if let Some(found) = self.try_impl(i, t) {
                     return Some(found);
                 }
@@ -242,14 +529,11 @@ impl Ctx<'_> {
             guard += 1;
             cur = if guard > 64 { None } else { self.base_of(t) };
         }
-        if self.field_only.contains_key(&iface) {
-            return self.field_only_impl(ty, iface);
-        }
         None
     }
 
     /// `(impl index, interface args, t)` if impl `i` is for type `t`.
-    fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
+    pub(crate) fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
         let imp = &self.impls[i as usize];
         let (pat, n, iargs) = (imp.ty, imp.generics as usize, imp.iface_args.clone());
         let mut slots = vec![None; n];
@@ -302,12 +586,74 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            return declared
+            if declared
+                .iter()
+                .any(|x| x == b || self.iface_ancestors(x).contains(b))
+            {
+                return true;
+            }
+            // Through a blanket `extend<T extends …> T implements I` whose bounds it has.
+            return self
+                .blanket_bounds(ty, bounds)
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
-        self.impl_args(ty, b.iface)
-            .is_some_and(|args| args == b.args)
+        if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
+            // An interface value satisfies the interfaces its interface extends (#1368); a
+            // generic method of the bound is called through its table's instantiations (#943).
+            if self.extends_iface(&Bound { iface: d, args }, b) {
+                return true;
+            }
+        }
+        if self.ext_impls.is_empty() {
+            return self
+                .impl_args(ty, b.iface)
+                .is_some_and(|args| args == b.args);
+        }
+        // `extend` impls check their bounds in this scope (`fitting_impl`).
+        let saved = std::mem::replace(&mut self.impl_scope, bounds.to_vec());
+        let ok = self
+            .impl_args(ty, b.iface)
+            .is_some_and(|args| args == b.args);
+        self.impl_scope = saved;
+        ok
+    }
+
+    /// Does interface `b`, or one it extends, declare a generic method?
+    pub(crate) fn has_generic_method(&mut self, b: &Bound) -> bool {
+        let mut todo = vec![b.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            seen += 1;
+            if seen > 64 {
+                return true;
+            }
+            let generic = self
+                .iface(x.iface)
+                .is_some_and(|i| i.methods.iter().any(|m| m.generics.len() > 0));
+            if generic {
+                return true;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
+    }
+
+    /// Does the interface `from` extend `to`, directly or through its parents (or is it `to`)?
+    pub(crate) fn extends_iface(&mut self, from: &Bound, to: &Bound) -> bool {
+        let mut todo = vec![from.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            if &x == to {
+                return true;
+            }
+            seen += 1;
+            if seen > 64 {
+                return false;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
     }
 }
 
@@ -316,13 +662,13 @@ impl Ctx<'_> {
 #[derive(Default)]
 pub(crate) struct ImplIndex {
     indexed: usize,
-    by_iface: HashMap<DefId, IfaceImpls>,
+    by_iface: FxHashMap<DefId, IfaceImpls>,
 }
 
 #[derive(Default)]
 struct IfaceImpls {
     /// Non-generic impls: the type → its first impl (the only type such an impl fits).
-    exact: HashMap<TyId, u32>,
+    exact: FxHashMap<TyId, u32>,
     /// Generic impls, in order.
     generic: Vec<u32>,
 }

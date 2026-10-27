@@ -1,7 +1,7 @@
 //! Terminators: jumps, branches, switches, returns, calls (direct, extern, indirect) and
 //! `unreachable` (VIR only places it after noreturn calls and on paths lowering proved dead).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
@@ -67,7 +67,7 @@ impl Emitter<'_> {
         let t = format!("i{}", int_bits(int_ty));
         // Case values are compared at the value's width: (possibly negative) keys are
         // reduced to their bit pattern, and must stay distinct after that.
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut arms = String::new();
         for (k, target) in cases {
             let key = int_literal(int_ty, *k);
@@ -104,14 +104,44 @@ impl Emitter<'_> {
     ) -> CodegenResult<()> {
         let (params, ret) = self.callee_signature(callee)?;
         let mut values = Vec::with_capacity(args.len());
+        let mut raw = Vec::with_capacity(args.len());
         let mut types = Vec::with_capacity(args.len());
         for a in args {
             let (v, ty) = self.scalar(a)?;
             values.push(format!("{} {v}", abi_type(ty)?));
+            raw.push(v);
             types.push(ty);
         }
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
+        }
+        if let Some(atomic) = self.atomic_call(callee) {
+            // An atomic instruction in place of the call (atomic.rs).
+            let result = self.atomic(atomic, &params, ret, &raw)?;
+            if let (Some(dest), Some(result)) = (dest, result) {
+                let loc = self.place(dest)?;
+                if loc.ty() != ret && loc.ty() != Ty::Unit {
+                    bail!(
+                        "atomic gives {ret:?} but destination has type {:?}",
+                        loc.ty()
+                    );
+                }
+                self.write(loc, Val::Scalar(result))?;
+            }
+            let next = self.block(next)?;
+            self.line(format!("br label {next}"));
+            return Ok(());
+        }
+        if self.own_extension_check(callee) {
+            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330): it runs only where
+            // the CPU has it, so the check is true and the emulation behind it is dead code.
+            if let Some(dest) = dest {
+                let loc = self.place(dest)?;
+                self.write(loc, Val::Scalar("1".into()))?;
+            }
+            let next = self.block(next)?;
+            self.line(format!("br label {next}"));
+            return Ok(());
         }
         let target = match self.math_intrinsic(callee, &params, ret) {
             Some(name) => name,
@@ -120,7 +150,10 @@ impl Emitter<'_> {
                 None => self.call_target(callee)?,
             },
         };
-        let text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
+        let mut text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
+        if self.enters_gated(callee) {
+            text.push_str(" noinline");
+        }
         if ret == Ty::Unit {
             self.line(text);
         } else {
@@ -139,6 +172,34 @@ impl Emitter<'_> {
         let next = self.block(next)?;
         self.line(format!("br label {next}"));
         Ok(())
+    }
+
+    /// Whether `callee` is a function gated on another CPU target than this one's (#1330). Such a
+    /// call stays a call, as in `velt_opt`: where the gated function's features are the
+    /// caller's too (`+sha2` on arm64), LLVM would otherwise inline it into ordinary code.
+    fn enters_gated(&self, callee: &Callee) -> bool {
+        let Callee::Func(id) = callee else {
+            return false;
+        };
+        self.program
+            .funcs
+            .get(id.0 as usize)
+            .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
+    }
+
+    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`.
+    fn own_extension_check(&self, callee: &Callee) -> bool {
+        let Callee::Extern(id) = callee else {
+            return false;
+        };
+        let Some(e) = self.program.externs.get(id.0 as usize) else {
+            return false;
+        };
+        matches!(
+            velt_vir::simd::SimdCall::of_symbol(&e.symbol),
+            Some(velt_vir::simd::SimdCall::Has(ext))
+                if self.function.target == Some(ext) && crate::simd::has_ext(self.simd, ext)
+        )
     }
 
     fn callee_signature(&self, callee: &Callee) -> CodegenResult<(Vec<Ty>, Ty)> {
@@ -171,6 +232,17 @@ impl Emitter<'_> {
                 self.intrinsics.need(d.to_string());
             }
             return Some(name.to_string());
+        }
+        if let Some((name, definitions, want_params, want_ret)) =
+            crate::simd::helper(symbol, self.simd)
+        {
+            if params != want_params || ret != want_ret {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d);
+            }
+            return Some(name);
         }
         if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
             if params != want_params || ret != want_ret {

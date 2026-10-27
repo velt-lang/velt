@@ -2,141 +2,224 @@
 //! also inside an arrow function's body) becomes the nested generic function
 //! `function id<T>(x: T) { return x; }`, which `collect::nested` hoists like any nested
 //! declaration. Each call instantiates it, as for a local generic function; like one it
-//! captures no locals, and a use as a value needs a function type to instantiate it at.
+//! captures no locals, and a use as a value needs a function type to instantiate it at. One that
+//! uses a local of an enclosing function stays a generic closure (`body::expr::generic_values`).
+//! A local arrow constant naming itself (`super::recursive`) becomes a nested function the same
+//! way, without the generic arrow's restrictions.
 
+use rustc_hash::FxHashSet;
 use velt_common::Span;
 use velt_syntax::ast::{self, ItemKind as I, StmtKind as S};
 
 use super::arrow_function;
+use super::recursive::recursive_arrow;
+use super::typed::{typed_function, GenericFnTypes};
 use crate::ast_walk::{children, children_mut};
 
 /// Does a body or initializer in `item` declare a local generic arrow constant?
-pub(super) fn item_has_local(item: &ast::Item) -> bool {
+pub(super) fn item_has_local(item: &ast::Item, t: &GenericFnTypes) -> bool {
     match &item.kind {
-        I::Function(f) => fn_has(f),
-        I::Struct(t) | I::Class(t) => {
-            t.fields
+        I::Function(f) => fn_has(f, t),
+        I::Struct(d) | I::Class(d) => {
+            d.fields
                 .iter()
                 .filter_map(|f| f.default.as_ref())
-                .any(expr_has)
-                || t.constructor.as_ref().is_some_and(fn_has)
-                || t.methods.iter().any(|m| fn_has(&m.decl))
+                .any(|x| expr_has(x, t))
+                || d.constructor.as_ref().is_some_and(|x| fn_has(x, t))
+                || d.methods.iter().any(|m| fn_has(&m.decl, t))
         }
-        I::Extend(e) => e.methods.iter().any(|m| fn_has(&m.decl)),
+        I::Extend(e) => e.methods.iter().any(|m| fn_has(&m.decl, t)),
         I::Interface(i) => i
             .methods
             .iter()
             .filter_map(|m| m.body.as_ref())
-            .any(block_has),
-        I::Var(v) => v.init.as_ref().is_some_and(expr_has),
+            .any(|x| block_has(x, t)),
+        I::Var(v) => v.init.as_ref().is_some_and(|x| expr_has(x, t)),
+        I::Augment(a) => a.items.iter().any(|x| item_has_local(x, t)),
+        I::Namespace(n) => n.items.iter().any(|x| item_has_local(x, t)),
         I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => false,
     }
 }
 
-fn fn_has(f: &ast::FnDecl) -> bool {
+fn fn_has(f: &ast::FnDecl, t: &GenericFnTypes) -> bool {
     f.sig
         .params
         .iter()
         .filter_map(|p| p.default.as_ref())
-        .any(expr_has)
-        || block_has(&f.body)
+        .any(|x| expr_has(x, t))
+        || block_has(&f.body, t)
 }
 
-fn block_has(b: &ast::Block) -> bool {
-    b.stmts.iter().any(stmt_has)
+fn block_has(b: &ast::Block, t: &GenericFnTypes) -> bool {
+    b.stmts.iter().any(|x| stmt_has(x, t))
 }
 
-fn stmt_has(s: &ast::Stmt) -> bool {
+fn stmt_has(s: &ast::Stmt, t: &GenericFnTypes) -> bool {
     match &s.kind {
-        S::Var(v) => arrow_function(v).is_some() || v.init.as_ref().is_some_and(expr_has),
-        S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e),
-        S::If { cond, then, els } => {
-            expr_has(cond) || block_has(then) || els.as_deref().is_some_and(stmt_has)
+        S::Var(v) => {
+            arrow_function(v).is_some()
+                || recursive_arrow(v).is_some()
+                || t.may_declare(v)
+                || v.init.as_ref().is_some_and(|x| expr_has(x, t))
         }
-        S::While { cond, body } | S::DoWhile { body, cond } => expr_has(cond) || block_has(body),
+        S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e, t),
+        S::If { cond, then, els } => {
+            expr_has(cond, t)
+                || block_has(then, t)
+                || els.as_deref().is_some_and(|x| stmt_has(x, t))
+        }
+        S::While { cond, body } | S::DoWhile { body, cond } => {
+            expr_has(cond, t) || block_has(body, t)
+        }
         S::For {
             init,
             cond,
             update,
             body,
         } => {
-            init.as_deref().is_some_and(stmt_has)
-                || cond.as_ref().is_some_and(expr_has)
-                || update.as_ref().is_some_and(expr_has)
-                || block_has(body)
+            init.as_deref().is_some_and(|x| stmt_has(x, t))
+                || cond.as_ref().is_some_and(|x| expr_has(x, t))
+                || update.as_ref().is_some_and(|x| expr_has(x, t))
+                || block_has(body, t)
         }
-        S::ForOf { iter, body, .. } => expr_has(iter) || block_has(body),
-        S::Block(b) => block_has(b),
-        S::Labeled { body, .. } => stmt_has(body),
+        S::ForOf { iter, body, .. } => expr_has(iter, t) || block_has(body, t),
+        S::Block(b) => block_has(b, t),
+        S::Labeled { body, .. } => stmt_has(body, t),
         S::Switch {
             discriminant,
             cases,
         } => {
-            expr_has(discriminant)
-                || cases
-                    .iter()
-                    .any(|c| c.test.as_ref().is_some_and(expr_has) || c.body.iter().any(stmt_has))
+            expr_has(discriminant, t)
+                || cases.iter().any(|c| {
+                    c.test.as_ref().is_some_and(|x| expr_has(x, t))
+                        || c.body.iter().any(|x| stmt_has(x, t))
+                })
         }
         S::Try {
             body,
             catch,
             finally,
         } => {
-            block_has(body)
-                || catch.as_ref().is_some_and(|(_, c)| block_has(c))
-                || finally.as_ref().is_some_and(block_has)
+            block_has(body, t)
+                || catch.as_ref().is_some_and(|(_, c)| block_has(c, t))
+                || finally.as_ref().is_some_and(|x| block_has(x, t))
         }
-        S::Item(item) => item_has_local(item),
+        S::Item(item) => item_has_local(item, t),
         S::Return(None) | S::Break(_) | S::Continue(_) | S::Empty => false,
     }
 }
 
-fn expr_has(e: &ast::Expr) -> bool {
+fn expr_has(e: &ast::Expr, t: &GenericFnTypes) -> bool {
     let nested = match &e.kind {
         ast::ExprKind::Arrow {
             body: ast::ArrowBody::Block(b),
             ..
-        } => block_has(b),
-        ast::ExprKind::Function(d) => fn_has(d),
+        } => block_has(b, t),
+        ast::ExprKind::Function(d) => fn_has(d, t),
         ast::ExprKind::Object(props) => props
             .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Method(d) if fn_has(d))),
+            .any(|p| matches!(p, ast::ObjectProp::Method(d) if fn_has(d, t))),
         _ => false,
     };
     if nested {
         return true;
     }
     let mut found = false;
-    children(e, &mut |c| found = found || expr_has(c));
+    children(e, &mut |c| found = found || expr_has(c, t));
     found
 }
 
 /// Rewrites local generic arrow constants into nested functions, collecting the name spans of
 /// the functions it creates.
-#[derive(Default)]
-pub(super) struct Rewriter {
+pub(super) struct Rewriter<'t, 'm> {
     pub lifted: Vec<Span>,
+    /// The module of the item being rewritten.
+    pub module: usize,
+    types: &'t GenericFnTypes<'m>,
+    /// Where the outermost function (or initializer) being rewritten names something it does
+    /// not declare (a module-level name): a name an arrow in it takes from its surroundings
+    /// anywhere else is bound by an enclosing function (by scope, as `velt_syntax::scope`
+    /// resolves names: a local shadowing a module-level one is a local).
+    outer_free: Option<FxHashSet<Span>>,
+    /// The names the outermost code uses as values somewhere (not only as the callee of a
+    /// call): a generic arrow constant of such a name stays a value (`captures`).
+    values: FxHashSet<String>,
 }
 
-impl Rewriter {
+impl<'t, 'm> Rewriter<'t, 'm> {
+    pub(super) fn new(types: &'t GenericFnTypes<'m>) -> Self {
+        Rewriter {
+            lifted: vec![],
+            module: 0,
+            types,
+            outer_free: None,
+            values: FxHashSet::default(),
+        }
+    }
+
+    /// Runs `f` with `root` (a function or initializer) as the outermost code, unless one
+    /// encloses it already.
+    fn rooted<T>(&mut self, root: impl FnOnce() -> ast::Expr, f: impl FnOnce(&mut Self) -> T) -> T {
+        if self.outer_free.is_some() {
+            return f(self);
+        }
+        let root = root();
+        let names = velt_syntax::scope::free_in_expr(&root)
+            .into_iter()
+            .map(|id| id.span)
+            .collect();
+        self.outer_free = Some(names);
+        let (types, module) = (self.types, self.module);
+        self.values = value_uses(&root, &|t| types.fixed_fn(module, t));
+        let out = f(self);
+        self.outer_free = None;
+        self.values.clear();
+        out
+    }
+
+    /// Does generic arrow constant `v` use a local of an enclosing function, or is it used as a
+    /// value? Then it stays a generic closure (`body::expr::generic_values`): a nested generic
+    /// function captures nothing, and is a new value at each use.
+    fn captures(&self, v: &ast::VarDecl) -> bool {
+        let (Some(outer), Some(init)) = (&self.outer_free, &v.init) else {
+            return false;
+        };
+        let own = match &v.pattern.kind {
+            ast::PatternKind::Ident(n) => n.name.as_str(),
+            _ => "",
+        };
+        if self.values.contains(own) {
+            return true;
+        }
+        velt_syntax::scope::free_in_expr(init)
+            .iter()
+            .any(|id| id.name != own && id.name != "this" && !outer.contains(&id.span))
+    }
+
     /// Rewrite every local generic arrow constant in `item`.
     pub(super) fn item(&mut self, item: &mut ast::Item) {
         match &mut item.kind {
-            I::Function(f) => self.func(f),
+            I::Function(f) => {
+                let root = f.clone();
+                self.rooted(|| expr_of(root), |r| r.func(f))
+            }
             I::Struct(t) | I::Class(t) => {
                 for e in t.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
                     self.expr(e);
                 }
                 if let Some(c) = &mut t.constructor {
-                    self.func(c);
+                    let root = c.clone();
+                    self.rooted(|| expr_of(root), |r| r.func(c));
                 }
                 for m in &mut t.methods {
-                    self.func(&mut m.decl);
+                    let root = m.decl.clone();
+                    self.rooted(|| expr_of(root), |r| r.func(&mut m.decl));
                 }
             }
             I::Extend(e) => {
                 for m in &mut e.methods {
-                    self.func(&mut m.decl);
+                    let root = m.decl.clone();
+                    self.rooted(|| expr_of(root), |r| r.func(&mut m.decl));
                 }
             }
             I::Interface(i) => {
@@ -146,9 +229,12 @@ impl Rewriter {
             }
             I::Var(v) => {
                 if let Some(e) = &mut v.init {
-                    self.expr(e);
+                    let root = e.clone();
+                    self.rooted(|| root, |r| r.expr(e));
                 }
             }
+            I::Augment(a) => a.items.iter_mut().for_each(|i| self.item(i)),
+            I::Namespace(n) => n.items.iter_mut().for_each(|i| self.item(i)),
             I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => {}
         }
     }
@@ -169,8 +255,26 @@ impl Rewriter {
     /// `s`, a statement of a block: the constant itself becomes a nested function.
     fn stmt(&mut self, s: &mut ast::Stmt) {
         if let S::Var(v) = &s.kind {
-            if let Some(f) = arrow_function(v) {
+            let typed = || {
+                self.types
+                    .may_declare(v)
+                    .then(|| typed_function(v, self.module, self.types))
+                    .flatten()
+            };
+            let lifted = match self.captures(v) {
+                true => None,
+                false => arrow_function(v).or_else(typed),
+            };
+            if let Some(f) = lifted {
                 self.lifted.push(f.sig.name.span);
+                let item = ast::Item {
+                    kind: I::Function(f),
+                    exported: false,
+                    span: s.span,
+                };
+                s.kind = S::Item(Box::new(item));
+            } else if let Some(f) = recursive_arrow(v) {
+                // A nested function, which may capture locals (`crate::nested_closures`).
                 let item = ast::Item {
                     kind: I::Function(f),
                     exported: false,
@@ -272,4 +376,56 @@ impl Rewriter {
         }
         children_mut(e, &mut |c| self.expr(c));
     }
+}
+
+/// Function `f` as an expression, for its free names.
+fn expr_of(f: ast::FnDecl) -> ast::Expr {
+    let span = f.sig.span;
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Function(Box::new(f)),
+        span,
+    }
+}
+
+/// The names `root` uses as values: those of identifiers that are not only callees of calls,
+/// or the initializers of constants of a function type of fixed types (`const asNumber: (x:
+/// number) => number = id`, also through an alias, which instantiates the function).
+fn value_uses(root: &ast::Expr, fixed: &dyn Fn(&ast::TypeExpr) -> bool) -> FxHashSet<String> {
+    struct Uses<'a, 'f> {
+        all: rustc_hash::FxHashMap<&'a str, usize>,
+        called: rustc_hash::FxHashMap<&'a str, usize>,
+        fixed: &'f dyn Fn(&ast::TypeExpr) -> bool,
+    }
+    impl<'a> velt_syntax::visit::Visit<'a> for Uses<'a, '_> {
+        fn var_decl(&mut self, v: &'a ast::VarDecl) {
+            let fixed = v.ty.as_ref().is_some_and(|t| (self.fixed)(t));
+            if let (true, Some(ast::ExprKind::Ident(id))) =
+                (fixed, v.init.as_ref().map(|e| &e.kind))
+            {
+                *self.called.entry(&id.name).or_default() += 1;
+            }
+        }
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::Ident(id) => *self.all.entry(&id.name).or_default() += 1,
+                ast::ExprKind::Call { callee, .. } => {
+                    if let ast::ExprKind::Ident(id) = &callee.kind {
+                        *self.called.entry(&id.name).or_default() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut u = Uses {
+        all: Default::default(),
+        called: Default::default(),
+        fixed,
+    };
+    velt_syntax::visit::walk_expr(root, &mut u);
+    (u.all.into_iter())
+        .filter(|(n, k)| u.called.get(n).copied().unwrap_or(0) < *k)
+        .map(|(n, _)| n.to_string())
+        .collect()
 }

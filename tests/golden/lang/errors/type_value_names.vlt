@@ -1,0 +1,66 @@
+// A name that is both a type and a value: each meaning is used only where it fits, and the
+// declarations TypeScript keeps apart are the only ones that may share a name.
+import type { guid as OnlyType } from "../_type_value_names_lib";
+
+type Id = string;
+const Id = 1;
+const a: Id = Id; // the constant is a number, the type a string
+
+function f(): void {}
+
+let b: f = f; // a function is not a type
+
+const c = OnlyType(); // imported with `import type`
+
+enum Color {
+  Red,
+}
+
+export const Color = 2; // an enum is a type and a value already
+
+type Twice = string;
+const Twice = "x";
+
+interface Twice {
+  n: number;
+}
+
+interface Shape {
+  r: number;
+}
+
+class Shape {
+  r = 1;
+}
+
+console.log(a, b, c, Twice);
+
+// A name imported with `import type` and exported again, or re-exported with `export type`,
+// stays a type: calling it is an error (TypeScript's TS1361 and TS1362).
+import { guid as relayed, labelled as relayedFn } from "../_type_value_names_type_relay";
+import { guid as typeOnly } from "../_type_value_names_type_re";
+const r: relayed = "r";
+const t: typeOnly = "t";
+console.log(r, t, relayed(), relayedFn("x"), typeOnly());
+
+// In a function body, as at module level: two types, a class and a type, an interface and a
+// type, or two functions of one name are an error (TS2300, TS2393).
+function block(): void {
+  type A = number;
+  type A = string;
+  class B {}
+  type B = number;
+  interface C {
+    c: number;
+  }
+  type C = { c: number };
+  function D(): number {
+    return 1;
+  }
+  function D(): number {
+    return 2;
+  }
+  console.log(D());
+}
+
+block();

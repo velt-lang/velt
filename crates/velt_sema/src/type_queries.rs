@@ -33,6 +33,9 @@ pub(crate) struct SigQueries<'m> {
     /// Those being filled now, each with the name of the parameter (or function) whose type is
     /// being resolved: a query reaching one of them is a cycle (TS2502).
     pub filling_sigs: Vec<(DefId, String)>,
+    /// The name spans of the parameters declared with a read-only array type (`xs: readonly
+    /// string[]`): an argument for one may be a copy (`widen_fresh::readonly_array_arg`).
+    pub readonly_params: rustc_hash::FxHashSet<velt_common::Span>,
 }
 
 impl Ctx<'_> {
@@ -138,6 +141,11 @@ impl Ctx<'_> {
                         None => self.ty.error,
                     };
                 }
+                // `const K = Symbol("k")` / `Symbol.for("k")` is a symbol (TypeScript's
+                // `unique symbol`), known without checking the initializer.
+                if init.is_some_and(symbol_init) {
+                    return self.ty.intern(TyKind::Symbol);
+                }
                 if !self.bodies_ok {
                     return self.query_needs_body(name, "constant", span);
                 }
@@ -190,7 +198,16 @@ impl Ctx<'_> {
             crate::collect::sigs::fill_pending(self, d);
         }
         let f = self.fn_info(d);
-        if f.generics.len() > 0 {
+        // Generic only over what its callbacks throw (`setTimeout<E>(task: () => Promise<void,
+        // E>, ms)`): the function type with those errors left out, as TypeScript's
+        // declarations of such functions have no type parameters.
+        let n = f.generics.len();
+        let errors_only = n > 0
+            && f.params
+                .iter()
+                .all(|p| !self.mentions_beyond_errors(p.ty, 0));
+        let errors_only = errors_only && !self.mentions_beyond_errors(f.ret, 0);
+        if n > 0 && !errors_only {
             self.error(
                 Diagnostic::error(
                     format!("`typeof {name}` of a generic function is not supported yet (#936)"),
@@ -231,6 +248,17 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         if !self.bodies_ok {
+            // Outside a signature being resolved (an interface or class field), from the
+            // declaration alone; a signature has its own order and cycle errors (`sig_fill`).
+            let resolving = self.sigq.filling_sigs.iter().any(|f| f.0 == d);
+            if !self.sigq.sig_fill && !resolving {
+                self.sigq.filling_sigs.push((d, name.to_string()));
+                let t = self.declared_fn_type(d);
+                self.sigq.filling_sigs.pop();
+                if let Some(t) = t {
+                    return t;
+                }
+            }
             return self.query_needs_body(name, "function", span);
         }
         let f = self.fn_info(d);
@@ -240,12 +268,75 @@ impl Ctx<'_> {
             _ => crate::body::returns::ret_of(self, d, span),
         };
         let never = self.ty.never;
-        let throws = crate::throws::throws_now(self, d, &[]).unwrap_or(never);
+        let targs = vec![never; self.fn_info(d).generics.len()];
+        let params = params.iter().map(|&p| self.subst(p, &targs)).collect();
+        let ret = self.subst(ret, &targs);
+        let throws = crate::throws::throws_now(self, d, &targs).unwrap_or(never);
+        let rest = crate::body::defaults::has_rest(self, d);
         self.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest,
         })
+    }
+
+    /// The type of function `d` from its declaration alone, before signatures are resolved
+    /// (`typeof f` in an interface field): a function with a written result and plain
+    /// parameters, not generic, async or a generator, with no `throws` written (its function
+    /// type allows no error, as one written out would). `None` for any other.
+    fn declared_fn_type(&mut self, d: DefId) -> Option<TyId> {
+        let f = self.fn_info(d);
+        let (module, Some(FnSource::Decl(decl))) = (f.module, f.source) else {
+            return None;
+        };
+        let sig = &decl.sig;
+        let plain = sig
+            .params
+            .iter()
+            .all(|p| !p.rest && !p.optional && p.default.is_none());
+        if !sig.generics.is_empty() || sig.is_async || sig.is_generator || !plain {
+            return None;
+        }
+        if sig.throws.is_some() || sig.this_param.is_some() {
+            return None;
+        }
+        let ret = sig.ret.as_ref()?;
+        let env = TyEnv::new(module, &[]);
+        let params: Vec<TyId> = sig
+            .params
+            .iter()
+            .map(|p| self.resolve_type(&p.ty, &env))
+            .collect();
+        let ret = self.resolve_type(ret, &env);
+        if params.contains(&self.ty.error) || ret == self.ty.error {
+            return None;
+        }
+        let throws = self.ty.never;
+        Some(self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: false,
+        }))
+    }
+
+    /// Does `t` mention a type parameter other than as an error type (a function type's
+    /// `throws`, a promise's rejection type)?
+    fn mentions_beyond_errors(&self, t: TyId, depth: u32) -> bool {
+        if depth > 32 {
+            return true;
+        }
+        let m = |x: TyId| self.mentions_beyond_errors(x, depth + 1);
+        match self.ty.kind(t) {
+            TyKind::Param(_) | TyKind::Op(..) => true,
+            TyKind::FnPtr { params, ret, .. } => params.iter().any(|p| m(*p)) || m(*ret),
+            TyKind::Promise(v, _) => m(*v),
+            TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.iter().any(|x| m(*x)),
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => m(*x),
+            TyKind::Map(a, b) | TyKind::Result(a, b) => m(*a) || m(*b),
+            _ => false,
+        }
     }
 
     /// A query whose answer needs a body checked, before collection is finished: a free
@@ -283,13 +374,15 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         match fields.into_iter().find(|f| f.name == seg.name) {
-            Some(f) if f.optional => self.ty.option(f.ty),
+            Some(f) if f.optional && self.dynamic(f.ty).is_none() => self.ty.option(f.ty),
             Some(f) => f.ty,
             None => {
-                self.err(
-                    format!("no field `{}` on type `{shown}`", seg.name),
-                    seg.span,
-                );
+                if !crate::collect::exports::member_maybe_dropped(self, ty, &seg.name) {
+                    self.err(
+                        format!("no field `{}` on type `{shown}`", seg.name),
+                        seg.span,
+                    );
+                }
                 self.ty.error
             }
         }
@@ -304,29 +397,91 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> TyId {
         let ty = self.resolve_type(inner, env);
+        let ty = self.subst(ty, &env.args);
         if ty == self.ty.error {
             return ty;
         }
+        // `keyof any` is every key type, `string | number | symbol`, as in TypeScript.
+        if self.dynamic(ty) == Some(crate::any::Dynamic::Any) {
+            let (s, n, y) = (self.ty.str_, self.ty.f64, self.ty.intern(TyKind::Symbol));
+            return self.union_of(&[s, n, y], false, t.span);
+        }
+        if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
+        {
+            if !self.defer_param_form() {
+                // The parameter as written (`keyof T`), not its internal name.
+                let shown = match &inner.kind {
+                    ast::TypeExprKind::Named { path, args }
+                        if path.len() == 1 && args.is_empty() =>
+                    {
+                        path[0].name.clone()
+                    }
+                    _ => self.display(ty),
+                };
+                self.err(
+                    format!("`keyof {shown}` on a type parameter is not supported yet (#350)"),
+                    t.span,
+                );
+            }
+            return self.ty.error;
+        }
         let shown = self.display(ty);
+        // A union's keys are the keys every member has (TypeScript).
+        if let Some(members) = self.union_members(ty) {
+            let mut common: Option<Vec<TyId>> = None;
+            for m in members {
+                let Some(fs) = self.plain_fields(m).filter(|_| self.is_object_value(m)) else {
+                    self.err(
+                        format!("`keyof {shown}` is not supported yet (#936): `keyof` works on object types"),
+                        t.span,
+                    );
+                    return self.ty.error;
+                };
+                let TyKind::Adt(d, _) = *self.ty.kind(m) else {
+                    return self.ty.error;
+                };
+                let mut names = vec![];
+                for f in fs {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    names.push(k);
+                }
+                common = Some(match common {
+                    None => names,
+                    Some(c) => c.into_iter().filter(|n| names.contains(n)).collect(),
+                });
+            }
+            let keys: Vec<TyId> = common.unwrap_or_default();
+            return match keys.len() {
+                0 => self.ty.never,
+                1 => keys[0],
+                _ => self.union_of(&keys, false, t.span),
+            };
+        }
         match self.ty.kind(ty).clone() {
             TyKind::Adt(d, args) if Some(d) == self.prelude_adt("Record") => {
                 if args[0] != self.ty.str_ {
                     return args[0];
                 }
-                self.err(
-                    format!("`keyof {shown}` (`string | number` in TypeScript) is not supported yet (#936)"),
-                    t.span,
-                );
-                self.ty.error
+                // A string index signature takes number keys too (TypeScript).
+                let (s, n) = (self.ty.str_, self.ty.f64);
+                self.union_of(&[s, n], false, t.span)
             }
-            TyKind::Adt(d, _) if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon) => {
+            TyKind::Adt(d, _)
+                if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon)
+                    || self.field_only_of.contains_key(&d) =>
+            {
                 let Some(fields) = self.object_fields("keyof", ty, None, t.span) else {
                     return self.ty.error;
                 };
-                let keys: Vec<TyId> = fields
-                    .into_iter()
-                    .map(|f| self.lit_type(crate::hir::LitValue::Str(f.name)))
-                    .collect();
+                let mut keys: Vec<TyId> = vec![];
+                for f in fields {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    keys.push(k);
+                }
                 match keys.len() {
                     0 => self.ty.never,
                     1 => keys[0],
@@ -366,10 +521,21 @@ impl Ctx<'_> {
             return f;
         }
         match self.ty.kind(f).clone() {
-            TyKind::FnPtr { params, ret, .. } => match name {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => match name {
                 "ReturnType" => ret,
                 // A parameter already reported (a cycle): no tuple with an error inside.
                 _ if params.contains(&self.ty.error) => self.ty.error,
+                // `(...xs: T[]) => R`: the rest parameter's array is the parameter list.
+                _ if rest && params.len() == 1 => params[0],
+                _ if rest => {
+                    self.err(
+                        "variadic tuple types (`[a: A, ...rest: T[]]`, the `Parameters` of a function type with a rest parameter after others) are not supported yet",
+                        t.span,
+                    );
+                    self.ty.error
+                }
                 _ => self.ty.intern(TyKind::Tuple(params)),
             },
             TyKind::Param(_) => {
@@ -392,6 +558,21 @@ impl Ctx<'_> {
 }
 
 /// The literal a constant's initializer is (`"a"`, `4`, `-1`, `true`), as a literal type.
+/// Is `e` a call of `Symbol(…)` or `Symbol.for(…)`?
+fn symbol_init(e: &ast::Expr) -> bool {
+    let ast::ExprKind::Call { callee, .. } = &e.kind else {
+        return false;
+    };
+    match &callee.kind {
+        ast::ExprKind::Ident(i) => i.name == "Symbol",
+        ast::ExprKind::Member { object, prop, .. } => {
+            prop.name == "for"
+                && matches!(&object.kind, ast::ExprKind::Ident(i) if i.name == "Symbol")
+        }
+        _ => false,
+    }
+}
+
 fn literal_init(e: &ast::Expr) -> Option<ast::SignedLit> {
     match &e.kind {
         ast::ExprKind::Lit(
@@ -417,5 +598,14 @@ fn literal_init(e: &ast::Expr) -> Option<ast::SignedLit> {
         },
         ast::ExprKind::Paren(inner) => literal_init(inner),
         _ => None,
+    }
+}
+
+impl Ctx<'_> {
+    /// An anonymous object type or a field-only interface's (whose keys are its fields).
+    fn is_object_value(&self, t: TyId) -> bool {
+        matches!(self.ty.kind(t), TyKind::Adt(d, _)
+            if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Anon)
+                || self.field_only_of.contains_key(d))
     }
 }

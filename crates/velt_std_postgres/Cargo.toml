@@ -1,0 +1,26 @@
+[package]
+name = "velt_std_postgres"
+version.workspace = true
+edition.workspace = true
+description = "std/postgres's driver: a crate on the native SDK only (velt_native), linked into the runtime"
+
+[dependencies]
+velt_native = { path = "../velt_native", features = ["tokio"] }
+velt_text = { path = "../velt_text", features = ["sdk"] }
+velt_tls = { path = "../velt_tls" }
+tokio-postgres = { version = "0.7.18", default-features = false }
+postgres-protocol = "0.6.12"
+bytes = "1.12.1"
+tokio = { version = "1.53.1", default-features = false, features = ["io-util", "sync"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
+parking_lot = "0.12.5"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+socket2 = "0.6.5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+# The wire tests drive futures on a current-thread runtime.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "io-util", "sync", "macros"] }

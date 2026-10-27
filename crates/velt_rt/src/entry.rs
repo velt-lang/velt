@@ -16,9 +16,12 @@
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
 pub fn init() {
+    crate::cpu::init();
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();
+    crate::io::init_stdout();
+    crate::native::embed();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::claim_faults();
@@ -52,17 +55,39 @@ pub(crate) fn die_of_broken_pipe() -> ! {
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     init();
     let code = velt_main();
-    // Servers and pending promises keep a program alive after `main` returns, but not after it
-    // failed (an uncaught error, or an exit code): like Node, which exits on an uncaught
-    // exception whatever is still listening.
+    finish(code)
+}
+
+/// `main` cannot finish (`async main` waits for a promise nothing can settle any more, and
+/// nothing else can happen, task/quiet.rs): end the program as if it had returned, as Node exits
+/// with `main`'s promise pending; with Node's warning and exit code 13 when it waits at a
+/// top-level `await` (top_level_await.rs).
+pub(crate) fn exit_unfinished() -> ! {
+    std::process::exit(finish(crate::top_level_await::unfinished_exit_code()))
+}
+
+/// What happens once `main` returned `code`: the program's end (returns its exit code).
+fn finish(code: i32) -> i32 {
+    // A synchronous `main` is done with the module state: tasks may take it now.
+    crate::task::local::module_release_outside();
+    // The promises it handed to tasks go on in a task of their own.
+    crate::task::local::outside_done();
+    // Servers, timers and tasks that can still make progress keep a program alive after `main`
+    // returns, but not after it failed (an uncaught error, or an exit code): like Node, which
+    // exits on an uncaught exception whatever is still listening.
     if code == 0 {
-        crate::task::runtime::wait_for_keep_alive();
-        crate::str::stats::settle(|| crate::task::runtime::alive_tasks() > 0);
+        crate::task::runtime::wait_for_the_end();
+        crate::str::stats::settle(crate::task::runtime::tasks_may_run);
+        // The leak counters see what module state holds as freed. Otherwise it is kept to the
+        // end, as in Node, where nothing runs at exit.
+        if crate::str::stats::counting() {
+            crate::task::local::module_drop_at_exit();
+        }
         // Nothing receives any more: drop the values still queued in channels. Not on a failing
         // exit: tasks may still be running then, and drop glue runs user code.
         let left = crate::task::channel::drop_abandoned_items();
         crate::str::stats::channel_leftovers(left);
-        crate::str::stats::freeze(|| crate::task::runtime::alive_tasks() > 0);
+        crate::str::stats::freeze(crate::task::runtime::tasks_may_run);
     }
     crate::io::flush_stdout();
     crate::str::stats::report();
@@ -106,6 +131,8 @@ pub unsafe extern "C" fn velt_rt_start(
     argv: *const *const std::ffi::c_char,
     entry: extern "C" fn() -> i32,
 ) -> std::ffi::c_int {
+    #[cfg(feature = "mimalloc")]
+    crate::mem::configure();
     #[cfg(unix)]
     // SAFETY: the caller passes `argc` valid NUL-terminated strings in `argv`.
     crate::process::set_args(args_from_c(argc, argv));

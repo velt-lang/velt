@@ -1,11 +1,12 @@
 //! Integer representation of JS numbers (design #525: step 1's int32 slice, step 2's
-//! intraprocedural analysis).
+//! intraprocedural analysis, step 5's local arrays).
 //!
 //! A JS `number` is a double, so lowering computes it as `f64`. Where the result is provably
 //! identical, this pass stores it as an `i32` or `i64` instead:
 //! - **Facts** (`fact`, `flow`, `refine`): an interval, integrality, NaN and `-0` for every
 //!   numeric local at every point, refined by branch conditions (and through copies of the
-//!   compared values) and widened at loop heads. An array's length is below 2^53, and a
+//!   compared values) and widened at loop heads. An array's length is at most 2^53 - 3 (enforced
+//!   lower still, `velt_vir::MAX_ARRAY_LEN`), and a
 //!   parameter every call sets to a constant starts with that constant's facts (`params`).
 //!   A counter (`n++` from a whole constant) is bounded by the trip counts of the loops
 //!   around its steps (`counter`).
@@ -20,10 +21,14 @@
 //!   32-bit values become `i32` (step 1). Other reads convert back exactly.
 //! - **Guarded sums** (`int32`): ToInt32 of a sum the facts cannot bound adds as integers
 //!   behind a cheap range check.
+//! - **Arrays** (`arrays`, step 5): the elements of a `number[]` that never leaves the function
+//!   have facts too (a fixpoint over its stores); when they are whole, never NaN or `-0` and
+//!   within ±2^53, the elements are stored as `i64`, and narrowing reads them as integers.
 //!
 //! Without the pass the program computes the same values with doubles; the reference
 //! interpreter checks that (`tests.rs`, `tests/random.rs`).
 
+mod arrays;
 mod counter;
 mod fact;
 mod flow;
@@ -97,6 +102,8 @@ pub(crate) struct Env<'p> {
     float_index: Vec<bool>,
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,
+    /// Per aggregate, its field types: the type of a value read from a field.
+    field_tys: std::rc::Rc<[Vec<Ty>]>,
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
     /// Number formatters and their integer twins (`print`).
@@ -117,10 +124,15 @@ impl<'p> Env<'p> {
             .iter()
             .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
             .map(|i| AggId(i as u32));
+        let field_tys = aggs
+            .iter()
+            .map(|a| a.fields.iter().map(|f| f.0).collect())
+            .collect();
         Env {
             externs,
             float_index,
             array,
+            field_tys,
             params: params::of(funcs, statics),
             formatters: print::pairs(externs),
         }
@@ -152,38 +164,59 @@ impl<'p> Env<'p> {
 /// Narrow the number locals of `func`; returns whether anything changed.
 pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     let mut changed = false;
-    if let Some(flow) = analyse(env, func) {
+    let (flow, mut elements) = analyse(env, func);
+    if let Some(flow) = flow {
         if simplify::run(env, &flow, func) {
             changed = true;
         }
     }
     if changed {
         crate::simplify_cfg::run(func);
+        // Simplifying keeps every value the function stores, so the elements' facts hold
+        // while the groups stay the same.
+        if !arrays::useful_groups(env, func).same(&elements.groups) {
+            elements = analyse(env, func).1;
+        }
     }
-    if let Some(flow) = analyse(env, func) {
-        let plan = narrow::plan(env, &flow, func);
-        changed |= rewrite::apply(env, func, &plan);
-    }
+    changed |= arrays::choose(env, func, &elements, |f| narrow_locals(env, f, &elements));
     changed |= int32::guarded_sums(env, func);
     changed
+}
+
+/// Narrow the locals of `func` (the plan and rewrite of `run`), its elements' facts `elements`
+/// (computed before `arrays` retyped any); returns whether anything changed.
+fn narrow_locals(env: &Env, func: &mut Function, elements: &arrays::Elements) -> bool {
+    let tracked = tracked(env, func, &elements.groups);
+    if tracked.is_empty() && !constant_to_int32(env, func) {
+        return false;
+    }
+    let Some(flow) = Flow::compute(func, env, &tracked, elements.per_local()) else {
+        return false;
+    };
+    let plan = narrow::plan(env, &flow, func);
+    rewrite::apply(env, func, &plan)
 }
 
 /// The `f64` locals of `func` inside loops that stay `f64`, each with the reason
 /// (`velt build --report numbers`).
 pub(crate) fn unnarrowed(env: &Env, func: &Function) -> Vec<Unnarrowed> {
-    match analyse(env, func) {
+    match analyse(env, func).0 {
         Some(flow) => report::unnarrowed(env, &flow, func),
         None => vec![],
     }
 }
 
-/// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big).
-fn analyse(env: &Env, func: &Function) -> Option<Flow> {
-    let tracked = tracked(env, func);
+/// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big), and
+/// for the elements of its arrays.
+fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
+    let groups = arrays::useful_groups(env, func);
+    let tracked = tracked(env, func, &groups);
     if tracked.is_empty() && !constant_to_int32(env, func) {
-        return None;
+        return (None, arrays::Elements::unknown(groups));
     }
-    Flow::compute(func, env, &tracked)
+    let (elements, flow) = arrays::Elements::of(env, func, &tracked, groups);
+    let flow = flow.or_else(|| Flow::compute(func, env, &tracked, elements.per_local()));
+    (flow, elements)
 }
 
 /// Does `func` take ToInt32 of a constant (`simplify` folds it without tracking anything)?
@@ -199,9 +232,10 @@ fn numeric(ty: Ty) -> bool {
 }
 
 /// Register-like `f64` locals, `i64` locals set from 32-bit values, the arguments of the calls
-/// `simplify` folds, and everything flowing into them or compared with them; then the
-/// booleans comparing any of these.
-fn tracked(env: &Env, func: &Function) -> Vec<Local> {
+/// `simplify` folds, the values stored into and loaded from the elements of `groups`
+/// (`arrays`), and everything flowing into them or compared with them; then the booleans
+/// comparing any of these.
+fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
     let usage = Usage::of(func);
     let n = func.locals.len();
     let reg = |l: Local| usage.is_register(l) && numeric(func.locals[l.0 as usize].ty);
@@ -220,7 +254,15 @@ fn tracked(env: &Env, func: &Function) -> Vec<Local> {
             }
         });
         if !d.proj.is_empty() {
+            if groups.of_element(d).is_some() {
+                seeds.extend(locals);
+            }
             continue;
+        }
+        if let Rvalue::Use(Operand::Copy(p)) = rv {
+            if groups.of_element(p).is_some() {
+                seeds.push(d.local);
+            }
         }
         if let Rvalue::Binary(op, ..) = rv {
             if flow::is_comparison(*op) {
@@ -323,5 +365,7 @@ pub(crate) fn run_program(program: &mut velt_vir::vir::Program) -> bool {
     changed
 }
 
+#[cfg(test)]
+mod arrays_tests;
 #[cfg(test)]
 mod tests;

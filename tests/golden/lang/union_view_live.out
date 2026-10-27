@@ -1,0 +1,37 @@
+idle null
+sw idle
+not pending idle
+1
+pending null
+sw other false
+2
+ready 42
+sw ready 41
+has 41
+not pending ready
+3
+errored boom true
+sw other true
+has 41
+not pending errored
+4
+errored true false
+idle
+after await ready true
+ready 8
+sw ready 7
+has 7
+not pending ready
+5
+ready 2
+sw ready 1
+has 1
+not pending ready
+7
+ready 8
+sw ready 7
+has 7
+not pending ready
+6
+ready
+pending pending false true

@@ -1,0 +1,10 @@
+// A conversion that copies an object's fields (#650, #651) is an error when values of the
+// converted-to type are `Set` or `Map` keys, which compare objects by identity (#1257): Node
+// finds the one original object and prints `true`.
+type A = { a: number };
+type AB = { a: number; b: number };
+const s: AB = JSON.parse('{"a":1,"b":2}');
+const v: A = s;
+const seen = new Set<A>();
+seen.add(v);
+console.log(seen.has(s));

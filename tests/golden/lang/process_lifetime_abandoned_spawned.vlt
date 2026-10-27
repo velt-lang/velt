@@ -1,0 +1,13 @@
+// A task awaiting a promise whose `resolve` was dropped waits forever without ending the
+// program or stopping other work: the timer still fires, and the program ends with exit code 0
+// once nothing else can happen, as in Node (#1366).
+async function stuck() {
+  await new Promise<void>((resolve) => {});
+  console.log("never");
+}
+
+async function main() {
+  spawn(stuck());
+  await new Promise<void>((r) => setTimeout(() => r(), 50));
+  console.log("timer still runs");
+}

@@ -60,7 +60,7 @@ function totalStock(p: Product): i64 {
   return n;
 }
 
-function cleanTags(tags: string[] | null): string[] {
+function cleanTags(tags: string[] | null | undefined): string[] {
   const out: string[] = [];
   if (tags == null) {
     return out;

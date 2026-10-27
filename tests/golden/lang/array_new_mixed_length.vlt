@@ -1,0 +1,7 @@
+// `new Array(n)` with an `n` that may be a number or another value: JS decides at run time
+// between `n` elements and one; Velt asks for the test to be written.
+function make(n: number | string): number[] {
+  return new Array(n).fill(7);
+}
+
+console.log(make(2));

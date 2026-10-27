@@ -13,7 +13,7 @@ pub(crate) mod record;
 mod snapshot;
 mod types;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::OnceLock;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
@@ -22,6 +22,7 @@ use crate::hir::TyId;
 use crate::SourceModule;
 
 pub use defref::{DefKind, DefRef};
+pub(crate) use display::named_param;
 pub use effects::Mutation;
 pub use types::{FieldView, LiteralKind, NamedKind, NamedType, TypeRef, TypeView};
 
@@ -47,21 +48,21 @@ pub struct Analysis {
     /// Exported prelude items (visible everywhere).
     prelude: Vec<(String, DefRef)>,
     /// Module index of each file.
-    files: HashMap<FileId, usize>,
+    files: FxHashMap<FileId, usize>,
     /// Type of each local / constant / field definition (by declaration span).
-    def_types: HashMap<Span, (TyId, u32)>,
+    def_types: FxHashMap<Span, (TyId, u32)>,
     /// Per file with a JSX runtime: its intrinsic tags.
-    jsx_tags: HashMap<FileId, JsxTags>,
+    jsx_tags: FxHashMap<FileId, JsxTags>,
     /// Per file: the fields of its JSX runtime's `JSX.IntrinsicAttributes` besides `key`.
-    jsx_common: HashMap<FileId, JsxTags>,
+    jsx_common: FxHashMap<FileId, JsxTags>,
     /// Inferred throws and mutation of each named function (by declaring identifier).
-    effects: HashMap<Span, effects::Effects>,
+    effects: FxHashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
     /// Exact span → first index in `types`, built on the first [`Analysis::type_of`].
-    type_index: OnceLock<HashMap<Span, usize>>,
+    type_index: OnceLock<FxHashMap<Span, usize>>,
     /// Exact span → first index in `refs`, built on the first [`Analysis::def_of`].
-    ref_index: OnceLock<HashMap<Span, usize>>,
+    ref_index: OnceLock<FxHashMap<Span, usize>>,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
@@ -93,8 +94,11 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = crate::overloads::rewrite(modules);
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
-    let new_cx = |held_borrows: bool| {
+    let closures = crate::nested_closures::rewrite(modules);
+    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
+    let new_cx = |held_borrows: bool, seeds: &crate::throws::FnTypeSeeds, last: bool| {
         let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+        cx.fn_sites = crate::throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         if let Some(l) = &lifted {
@@ -105,20 +109,41 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
+        }
         cx.ide = Some(Box::default());
         if !modules.is_empty() {
             crate::analyze_bodies(&mut cx);
+            crate::global_this::drop_site_errors(&mut cx);
         }
         if let Some(o) = &overloaded {
             crate::overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
         cx
     };
-    let mut cx = new_cx(true);
+    // As in `crate::check_with`: the error types of function types written without `throws`.
+    let mut seeds = crate::throws::FnTypeSeeds::default();
+    let mut cx = new_cx(true, &seeds, false);
+    if let Some(s) = cx.fn_sites.doubted(crate::error_count(&cx) > 0) {
+        seeds = s;
+        cx = new_cx(true, &seeds, false);
+    }
     // As in `crate::check_with`: borrowing in held closures never rejects a program.
-    let retried = crate::retry_sharing(&cx);
-    if retried {
-        cx = new_cx(false);
+    let (mut rounds, mut retried) = (0, false);
+    loop {
+        if let Some(grown) = cx.fn_sites.grown() {
+            rounds += 1;
+            seeds = grown;
+            cx = new_cx(!retried, &seeds, rounds == crate::FN_SITE_ROUNDS);
+        } else if !retried && crate::retry_sharing(&cx) {
+            retried = true;
+            cx = new_cx(false, &seeds, rounds == crate::FN_SITE_ROUNDS);
+        } else {
+            break;
+        }
     }
     (snapshot::build(cx), retried)
 }
@@ -160,7 +185,8 @@ impl Analysis {
     /// recorded wins, as with [`Analysis::def_at`].
     pub fn def_of(&self, span: Span) -> Option<DefRef> {
         let index = self.ref_index.get_or_init(|| {
-            let mut index = HashMap::with_capacity(self.refs.len());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.refs.len(), Default::default());
             for (i, (s, _)) in self.refs.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }

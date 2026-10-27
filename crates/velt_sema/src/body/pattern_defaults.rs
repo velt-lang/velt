@@ -1,8 +1,12 @@
 //! Defaults in destructuring declarations (`const { a = 1, b } = opts;`, `const [x = 0] = xs;`).
 //! A declaration whose pattern has a default anywhere is rewritten into plain declarations
 //! through hidden temporaries, each checked before the next is built, so field and element types
-//! are known: a field's default applies when it is `null` (`opts.a ?? 1`), an array element's
-//! when the array is too short (`#t.length > 0 ? #t[0] : 0`), where JS reads `undefined`.
+//! are known. As in JavaScript, a default applies where the value is `undefined`: a field's
+//! when it is `undefined` or, for an optional field, absent (`opts.a ?? 1`; a declared
+//! `T | null` field keeps its `null`, also an optional one, `a?: T | null`, which is tested
+//! with its presence flag: `"a" in opts ? opts.a : 1`), an array element's when the array is too short
+//! (`#t.length > 0 ? #t[0] : 0`) or the element is `undefined`
+//! (`(#t.length > 0 ? #t[0] : undefined) ?? 0`), and a tuple element's when it is `undefined`.
 //! A non-array iterable is first collected into a second temporary holding the values the
 //! pattern needs (`consume.rs`).
 
@@ -33,31 +37,69 @@ impl FnCx<'_, '_> {
     ) {
         match &pattern.kind {
             P::Object { fields, rest } => {
-                if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
-                }
                 let tmp = self.temp_decl(init, out);
-                for (key, sub) in fields {
-                    let field = member(&tmp, key.clone());
-                    let (sub, value) = match self.split_default(sub, &tmp, key) {
-                        Some((inner, Some(d))) => (inner, nullish(field, d)),
-                        Some((inner, None)) => (inner, field),
-                        None => (sub, field),
-                    };
-                    self.decl_with_defaults(kind, sub, value, out);
+                if self
+                    .temp_ty(&tmp)
+                    .is_some_and(|t| self.cx.dynamic(t).is_some())
+                {
+                    return self.any_pattern_decls(kind, pattern, &tmp, out);
                 }
+                // `const { 0: a, length } = xs` of an array or a tuple (`index_keys.rs`).
+                if self.index_key_decls(kind, fields, rest.as_ref(), &tmp, out) {
+                    return;
+                }
+                self.object_decls(kind, fields, rest.as_ref(), &tmp, out);
             }
             P::Array { elems, rest } => {
                 let tmp = self.temp_decl(init, out);
+                if self
+                    .temp_ty(&tmp)
+                    .is_some_and(|t| self.cx.dynamic(t).is_some())
+                {
+                    return self.any_pattern_decls(kind, pattern, &tmp, out);
+                }
                 if self.is_tuple_value(&tmp) {
                     // A tuple always has its elements: the defaults never apply.
                     return self.tuple_decl(kind, pattern, tmp, out);
                 }
                 let tmp = self.collected_temp(tmp, rest.is_none().then_some(elems.len()), out);
+                let undefined_elems = self.temp_ty(&tmp).is_some_and(|t| {
+                    let elem = match self.cx.ty.kind(t) {
+                        hir::TyKind::Array(e) => *e,
+                        _ => return false,
+                    };
+                    self.has_undefined(elem)
+                });
+                let dynamic_elems = self.temp_ty(&tmp).is_some_and(|t| {
+                    matches!(self.cx.ty.kind(t), hir::TyKind::Array(e) if self.cx.dynamic(*e).is_some())
+                });
                 for (k, sub) in elems.iter().enumerate() {
+                    // A hole reads nothing (`[, , c = 0] = xs` of a shorter array).
+                    if matches!(sub.kind, P::Wildcard) {
+                        continue;
+                    }
                     let elem = index(&tmp, k);
                     let value = match &sub.kind {
+                        // An `any` element holding `undefined` takes the default too.
+                        P::Default { pattern, value } if dynamic_elems => {
+                            let cond = longer_than(&tmp, k);
+                            let undefined = mk(E::Lit(ast::Lit::Undefined), elem.span);
+                            let read = cond_expr(cond, elem.clone(), undefined);
+                            let d = (**value).clone();
+                            let d = if matches!(d.kind, E::Lit(ast::Lit::Undefined)) {
+                                read
+                            } else {
+                                cond_expr(is_undefined(&read), as_any(d), read)
+                            };
+                            (pattern.as_ref(), d)
+                        }
+                        // An element that may be `undefined` takes the default then too.
+                        P::Default { pattern, value } if undefined_elems => {
+                            let cond = longer_than(&tmp, k);
+                            let undefined = mk(E::Lit(ast::Lit::Undefined), elem.span);
+                            let read = cond_expr(cond, elem, undefined);
+                            (pattern.as_ref(), nullish(read, (**value).clone()))
+                        }
                         P::Default { pattern, value } => {
                             let cond = longer_than(&tmp, k);
                             (pattern.as_ref(), cond_expr(cond, elem, (**value).clone()))
@@ -93,6 +135,40 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `kind { k1: p1, k2 = d, ...rest } = tmp;` key by key, each binding declared from
+    /// `tmp.k` (with its default), then the rest. `tmp` is a variable or a path of fields: the
+    /// hidden temporary of a pattern with defaults or a rest, or the value a method pattern
+    /// takes apart (`property_pattern.rs`).
+    pub(super) fn object_decls(
+        &mut self,
+        kind: VarKind,
+        fields: &[(ast::Ident, Pattern)],
+        rest: Option<&ast::Ident>,
+        tmp: &Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        for (key, sub) in fields {
+            let field = member(tmp, key.clone());
+            let (sub, value) = match self.split_default(sub, tmp, key) {
+                Some((inner, Applies::WhenNothing(d))) => (inner, nullish(field, d)),
+                Some((inner, Applies::WhenAbsent(d))) => {
+                    (inner, cond_expr(has_key(key, tmp), field, d))
+                }
+                Some((inner, Applies::WhenUndefined(d))) => (
+                    inner,
+                    cond_expr(is_undefined(&field), as_any(d), field.clone()),
+                ),
+                Some((inner, Applies::Never)) => (inner, field),
+                None => (sub, field),
+            };
+            self.decl_with_defaults(kind, sub, value, out);
+        }
+        if let Some(r) = rest {
+            let taken: Vec<String> = fields.iter().map(|(k, _)| k.name.clone()).collect();
+            self.object_rest_decl(kind, r, &taken, tmp, out);
+        }
+    }
+
     /// `const #dN = init;`: the hidden temporary a pattern is taken apart from.
     fn temp_decl(&mut self, init: Expr, out: &mut Vec<hir::Stmt>) -> Expr {
         self.temp_with(init, None, out)
@@ -108,7 +184,7 @@ impl FnCx<'_, '_> {
         self.temp_with(init.clone(), Some(ty.clone()), out)
     }
 
-    fn temp_with(
+    pub(crate) fn temp_with(
         &mut self,
         init: Expr,
         ty: Option<ast::TypeExpr>,
@@ -128,28 +204,136 @@ impl FnCx<'_, '_> {
         mk(E::Ident(name), span)
     }
 
-    /// `{ a = d }` on field `key` of temporary `tmp`: the inner pattern, and the default when
-    /// the field can be `null`. On a field that is never `null` the default never applies (TS
-    /// accepts it too).
+    /// `{ a = d }` on field `key` of temporary `tmp`: the inner pattern, and when the default
+    /// applies. On a field that is never `undefined` or absent it never does (TS accepts it
+    /// too).
     fn split_default<'p>(
         &mut self,
         sub: &'p Pattern,
         tmp: &Expr,
         key: &ast::Ident,
-    ) -> Option<(&'p Pattern, Option<Expr>)> {
+    ) -> Option<(&'p Pattern, Applies)> {
         let P::Default { pattern, value } = &sub.kind else {
             return None;
         };
         let ty = self.temp_ty(tmp)?;
-        let nullable = self
-            .field_of(ty, &key.name)
-            .is_some_and(|(_, t)| self.cx.ty.opt_payload(t).is_some());
-        Some((pattern, nullable.then(|| (**value).clone())))
+        // An optional field's `null` is its absence (JavaScript's `undefined`) in this phase,
+        // unless it is declared `a?: T | null`: that one keeps a presence flag, and its `null`
+        // is a value the default must not replace.
+        let optional = |cx: &crate::ctx::Ctx, i: u32| match cx.ty.kind(ty) {
+            hir::TyKind::Adt(d, _) => cx.adt(*d).and_then(|a| {
+                let f = a.fields.get(i as usize).filter(|f| f.optional)?;
+                let flag = crate::anon::has_presence(&cx.ty, a.kind, f);
+                Some((flag, cx.ty.opt_payload(f.declared).is_some()))
+            }),
+            _ => None,
+        };
+        let default = || (**value).clone();
+        let applies = match self.field_of(ty, &key.name) {
+            // An `any` field holding `undefined` (also an absent `a?: any`).
+            Some((_, t)) if self.cx.dynamic(t).is_some() => Applies::WhenUndefined(default()),
+            Some((i, t)) => match (self.cx.ty.nothing_of(t), optional(self.cx, i)) {
+                (Some(n), _) if n.has_undefined() => Applies::WhenNothing(default()),
+                (Some(_), Some((true, _))) => Applies::WhenAbsent(default()),
+                // A class keeps no presence flag: its `a?: T | null` cannot tell an unset
+                // field from one set to `null`.
+                (Some(_), Some((false, true))) => {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            format!(
+                                "a default for `{}`, an optional class field declared `T | null`, is not supported yet (#930)",
+                                key.name
+                            ),
+                            value.span,
+                        )
+                        .with_note(
+                            "the default applies when the field is unset but not when it is `null`, and a class field does not keep the two apart yet",
+                        )
+                        .with_note(format!(
+                            "read the field and apply the default yourself: `{}.{} ?? …` replaces both",
+                            "obj", key.name
+                        )),
+                    );
+                    Applies::Never
+                }
+                (Some(_), Some((false, false))) => Applies::WhenNothing(default()),
+                _ => Applies::Never,
+            },
+            // A `Record` (or index signature) key reads `V | undefined`.
+            None if self.record_args(ty).is_some() => Applies::WhenNothing(default()),
+            None => Applies::Never,
+        };
+        Some((pattern, applies))
     }
 
-    /// `kind [a, b = d] = tmp;` on a tuple: an ordinary destructuring without the defaults.
+    /// Can a value of type `t` be `undefined`?
+    pub(super) fn has_undefined(&self, t: hir::TyId) -> bool {
+        self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+    }
+
+    /// `kind [a, b = d] = tmp;` on a tuple: an ordinary destructuring without the defaults,
+    /// except for elements that may be `undefined` (`b = tmp[1] ?? d`). A tuple always has its
+    /// elements, so a default directly on one applies only then; when one does, or an element's
+    /// own pattern has defaults, numeric keys or an object rest (`[i, { a = 5 }]`,
+    /// `[i, { 0: c }]`), each element is taken apart from `tmp[k]` on its own.
     fn tuple_decl(&mut self, kind: VarKind, p: &Pattern, tmp: Expr, out: &mut Vec<hir::Stmt>) {
         let span = p.span;
+        let tuple_ty = self.temp_ty(&tmp);
+        let elem_tys = match tuple_ty.map(|t| self.cx.ty.kind(t).clone()) {
+            Some(hir::TyKind::Tuple(ts)) => ts,
+            _ => vec![],
+        };
+        if let P::Array { elems, rest } = &p.kind {
+            let applies = elems.iter().enumerate().any(|(k, e)| {
+                matches!(e.kind, P::Default { .. })
+                    && elem_tys.get(k).is_some_and(|t| self.has_undefined(*t))
+            });
+            let nested = elems.iter().any(|e| {
+                let inner = match &e.kind {
+                    P::Default { pattern, .. } => pattern,
+                    _ => e,
+                };
+                has_default(inner)
+                    || super::object_rest::has_object_rest(inner)
+                    || super::index_keys::has_index_key(inner)
+            });
+            if applies || nested {
+                if rest.is_some() || elems.len() > elem_tys.len() {
+                    // What an ordinary pattern reports, without taking it apart again.
+                    let shown = tuple_ty.map(|t| self.cx.display(t)).unwrap_or_default();
+                    self.cx.err(
+                        format!("pattern does not match the tuple type `{shown}`"),
+                        span,
+                    );
+                    let reported = mk(E::Ident(ident(crate::body::REPORTED, span)), span);
+                    let names = rest.iter().map(|r| pat(P::Ident(r.clone()), r.span));
+                    for sub in elems.iter().cloned().chain(names) {
+                        self.decl_with_defaults(
+                            kind,
+                            &without_defaults(&sub),
+                            reported.clone(),
+                            out,
+                        );
+                    }
+                    return;
+                }
+                for (k, sub) in elems.iter().enumerate() {
+                    if matches!(sub.kind, P::Wildcard) {
+                        continue;
+                    }
+                    let elem = index(&tmp, k);
+                    let (sub, value) = match &sub.kind {
+                        P::Default { pattern, value } if self.has_undefined(elem_tys[k]) => {
+                            (pattern.as_ref(), nullish(elem, (**value).clone()))
+                        }
+                        P::Default { pattern, .. } => (pattern.as_ref(), elem),
+                        _ => (sub, elem),
+                    };
+                    self.decl_with_defaults(kind, sub, value, out);
+                }
+                return;
+            }
+        }
         let v = VarDecl {
             kind,
             pattern: without_defaults(p),
@@ -195,13 +379,26 @@ impl FnCx<'_, '_> {
     }
 
     /// The type of a temporary declared by `temp_decl`.
-    fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
+    pub(super) fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
         let E::Ident(name) = &tmp.kind else {
             return None;
         };
         let local = self.lookup_local(&name.name, name.span)?;
         Some(self.f.locals[local.0 as usize].ty)
     }
+}
+
+/// When an object pattern's default (the expression inside) applies to its field.
+enum Applies {
+    /// Never: the field always has a value, or is a declared `T | null`.
+    Never,
+    /// When the field is `undefined`, or the `null` that stands for an absent optional field:
+    /// `field ?? default`.
+    WhenNothing(Expr),
+    /// When the optional field (`a?: T | null`) is absent: `"a" in tmp ? field : default`.
+    WhenAbsent(Expr),
+    /// When the `any` field holds `undefined`: `field === undefined ? default : field`.
+    WhenUndefined(Expr),
 }
 
 /// `p` with every default removed (`[a, b = 1]` → `[a, b]`).
@@ -224,7 +421,7 @@ fn without_defaults(p: &Pattern) -> Pattern {
     pat(kind, p.span)
 }
 
-fn mk(kind: E, span: Span) -> Expr {
+pub(super) fn mk(kind: E, span: Span) -> Expr {
     Expr {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -232,7 +429,7 @@ fn mk(kind: E, span: Span) -> Expr {
     }
 }
 
-fn pat(kind: P, span: Span) -> Pattern {
+pub(super) fn pat(kind: P, span: Span) -> Pattern {
     Pattern {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -240,7 +437,7 @@ fn pat(kind: P, span: Span) -> Pattern {
     }
 }
 
-fn ident(name: &str, span: Span) -> ast::Ident {
+pub(super) fn ident(name: &str, span: Span) -> ast::Ident {
     ast::Ident {
         name: name.to_string(),
         span,
@@ -294,13 +491,64 @@ fn call(callee: Expr, args: Vec<Expr>) -> Expr {
     )
 }
 
+/// The callee of `#undefined_or(value, default)`: `value`, or `default` where it is
+/// `undefined` (not `null`, which a default never replaces). The name can't be written in
+/// source; sema checks the call as `FnCx::undefined_or`.
+pub(crate) const UNDEFINED_OR: &str = "#undefined_or";
+
+/// A destructuring default: `#undefined_or(lhs, rhs)`; `lhs` itself for a default of
+/// `undefined` (a destructuring assignment binds its places so, `assign_pattern.rs`).
 fn nullish(lhs: Expr, rhs: Expr) -> Expr {
+    if matches!(rhs.kind, E::Lit(ast::Lit::Undefined)) {
+        return lhs;
+    }
     let span = lhs.span;
+    call(
+        mk(E::Ident(ident(UNDEFINED_OR, span)), span),
+        vec![lhs, rhs],
+    )
+}
+
+/// `e as any`: a default for an `any` place is an `any` too, as in TypeScript.
+fn as_any(e: Expr) -> Expr {
+    let span = e.span;
+    let ty = ast::TypeExpr {
+        kind: ast::TypeExprKind::Named {
+            path: vec![ident("any", span)],
+            args: vec![],
+        },
+        span,
+    };
+    mk(
+        E::Cast {
+            expr: Box::new(e),
+            ty,
+        },
+        span,
+    )
+}
+
+/// `e === undefined`
+fn is_undefined(e: &Expr) -> Expr {
+    let span = e.span;
     mk(
         E::Binary {
-            op: ast::BinaryOp::Nullish,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
+            op: ast::BinaryOp::StrictEq,
+            lhs: Box::new(e.clone()),
+            rhs: Box::new(mk(E::Lit(ast::Lit::Undefined), span)),
+        },
+        span,
+    )
+}
+
+/// `"key" in tmp`
+fn has_key(key: &ast::Ident, tmp: &Expr) -> Expr {
+    let span = tmp.span;
+    mk(
+        E::Binary {
+            op: ast::BinaryOp::In,
+            lhs: Box::new(mk(E::Lit(ast::Lit::Str(key.name.clone())), key.span)),
+            rhs: Box::new(tmp.clone()),
         },
         span,
     )

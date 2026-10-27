@@ -1,0 +1,21 @@
+// Identity of a proxiable object type (#1485): `indexOf` and `includes` over `Item[]` (the
+// `===` glue), in a program that converts a proxy (an `any`) to `Item`, so every
+// comparison tests the tag. bench/proxy/proxy_identity.sh runs it.
+type Item = { id: number; name: string };
+
+const items: Item[] = [];
+for (let i = 0; i < 200; i++) {
+  items.push({ id: i, name: "item" + i });
+}
+let total = 0;
+for (let round = 0; round < 10000; round++) {
+  for (let i = 0; i < 200; i++) {
+    total += items.indexOf(items[(i * 7 + round) % 200]);
+  }
+  if (items.includes(items[round % 200])) {
+    total += 1;
+  }
+}
+const p = new Proxy({ id: -1, name: "proxy" }, {}) as Item;
+items.push(p);
+console.log(total, items.indexOf(p), items.includes(p));

@@ -1,0 +1,115 @@
+// `f32x4` and `f64x2`: arithmetic, comparisons with NaN, `min`/`max` as `Math.min`/`Math.max`
+// (NaN wins, -0 is below +0), reinterpretation as integers.
+
+import { i32x4, u32x4, u64x2, f32x4, f64x2 } from "velt:simd";
+
+function show4(what: string, v: f32x4) {
+  console.log(what, v.lane(0), v.lane(1), v.lane(2), v.lane(3));
+}
+
+function show2(what: string, v: f64x2) {
+  console.log(what, v.lane(0), v.lane(1));
+}
+
+function f32s() {
+  const a: f32[] = [1.5, -2, 0.25, 9];
+  const b: f32[] = [0.5, 4, -8, 16];
+  const va = f32x4.load(a);
+  const vb = f32x4.load(b);
+  show4("add", va.add(vb));
+  show4("sub", va.sub(vb));
+  show4("mul", va.mul(vb));
+  show4("div", va.div(vb));
+  show4("neg", va.neg());
+  show4("abs", va.neg().abs());
+  show4("sqrt", vb.abs().sqrt());
+  show4("min", va.min(vb));
+  show4("max", va.max(vb));
+  console.log("sum", va.sum(), f32x4.splat(0.5).sum());
+  console.log("lt", va.lt(vb).bitmask(), "ge", va.ge(vb).bitmask(), "first", va.gt(vb).first());
+  show4("select", f32x4.select(va.lt(vb), va, vb));
+  show4("withLane", va.withLane(3, -1));
+
+  const nan = f32x4.splat(NaN as f32).withLane(0, 1);
+  const one = f32x4.splat(1);
+  console.log("NaN eq", nan.eq(nan).bitmask(), "ne", nan.ne(nan).bitmask());
+  console.log("NaN lt", nan.lt(one).bitmask(), "ge", nan.ge(one).bitmask());
+  const least = nan.min(one);
+  console.log(
+    "min NaN",
+    least.lane(0),
+    Number.isNaN(least.lane(1)),
+    Number.isNaN(one.max(nan).lane(3)),
+  );
+  const zeros = f32x4.splat(0).min(f32x4.splat(-0));
+  const largest = f32x4.splat(-0).max(f32x4.splat(0));
+  console.log("min -0", 1 / zeros.lane(0), "max", 1 / largest.lane(0));
+
+  console.log("bits", one.asU32x4().lane(0), one.neg().asI32x4().lane(1), one.asU8x16().lane(3));
+  show4("from bits", u32x4.splat(0x40490fdb).asF32x4());
+
+  show4("zipLow", va.zipLow(vb));
+  show4("zipHigh", va.zipHigh(vb));
+  const ints: i32[] = [-7, 0, 16777217, 2147483647];
+  show4("i32 toF32x4", i32x4.load(ints).toF32x4());
+  show4("u32 toF32x4", u32x4.splat(4294967295).withLane(0, 3).toF32x4());
+  const wide: f32[] = [-1.9, 2.5, 3e9, -3e9];
+  const whole = f32x4.load(wide).toI32x4();
+  console.log("toI32x4", whole.lane(0), whole.lane(1), whole.lane(2), whole.lane(3));
+  const natural = f32x4.load(wide).toU32x4();
+  console.log("toU32x4", natural.lane(0), natural.lane(1), natural.lane(2), natural.lane(3));
+  console.log("NaN toI32x4", nan.toI32x4().lane(1), nan.toU32x4().lane(1));
+  const ends = f32x4.splat(Infinity as f32).withLane(1, -Infinity as f32);
+  console.log(
+    "Infinity",
+    ends.toI32x4().lane(0),
+    ends.toI32x4().lane(1),
+    ends.toU32x4().lane(0),
+    ends.toU32x4().lane(1),
+  );
+  // Halfway between two floats: to the even one, 2^24 + 2 and 2^32.
+  show4("ties", u32x4.splat(16777219).withLane(1, 4294967168).toF32x4());
+
+  show4("index", f32x4.index());
+  show4("loadPartial", f32x4.loadPartial(b, 2));
+  show4("loadPartial at the end", f32x4.loadPartial(b, 4));
+  const short: f32[] = [7, 7, 7];
+  va.storePartial(short, 1);
+  console.log("storePartial", short[0], short[1], short[2]);
+
+  const out: f32[] = [0, 0, 0, 0, 0, 0];
+  va.store(out, 1);
+  console.log("store", out[0], out[1], out[4], out[5]);
+}
+
+function f64s() {
+  const a: f64[] = [1.5, -1e300];
+  const b: f64[] = [-0.5, 1e300];
+  const va = f64x2.load(a);
+  const vb = f64x2.load(b);
+  show2("add", va.add(vb));
+  show2("sub", va.sub(vb));
+  show2("mul", va.mul(vb));
+  show2("div", va.div(vb));
+  show2("neg", va.neg());
+  show2("abs", va.abs());
+  show2("sqrt", f64x2.splat(2).sqrt());
+  show2("min", va.min(vb));
+  show2("max", va.max(vb));
+  console.log("sum", va.sum());
+  console.log("lt", va.lt(vb).bitmask(), "le", va.le(va).bitmask(), "count", va.gt(vb).count());
+  show2("select", f64x2.select(va.gt(vb), va, vb));
+  show2("zipLow", va.zipLow(vb));
+  show2("zipHigh", va.zipHigh(vb));
+  show2("index", f64x2.index());
+  show2("loadPartial", f64x2.loadPartial(a, 1));
+  const nan = f64x2.splat(NaN).withLane(1, 2);
+  console.log("NaN eq", nan.eq(nan).bitmask(), "any", nan.ne(nan).any(), "all", nan.ne(nan).all());
+  console.log("bits", f64x2.splat(1).asU64x2().lane(0), f64x2.splat(-2).asI64x2().lane(1));
+  show2("from bits", u64x2.splat(0x400921fb54442d18).asF64x2());
+}
+
+function main() {
+  f32s();
+  f64s();
+}

@@ -14,8 +14,10 @@ use crate::backend::Backend;
 use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
-/// Stack for the pipeline thread (reserved, not committed, until used).
-const PIPELINE_STACK_BYTES: usize = 256 << 20;
+mod pipeline;
+mod recover;
+
+use pipeline::on_pipeline_thread;
 
 /// What to build and how.
 #[derive(Clone, Debug, Default)]
@@ -220,6 +222,17 @@ fn load_stage(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<loader::Loaded, BuildError> {
+    let loaded = load_modules(sess, opts, scope)?;
+    sess.stop_if_errors()?;
+    Ok(loaded)
+}
+
+/// Load and parse the program, recovering from syntax errors (they are in the session).
+fn load_modules(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<loader::Loaded, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -229,6 +242,7 @@ fn load_stage(
             .map(|g| g as &dyn loader::PackageResolver),
         root_source: opts.root_source.clone(),
         overlay: None,
+        std_root_as_std: false,
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,
@@ -239,7 +253,6 @@ fn load_stage(
     )
     .map_err(BuildError::Failed)?;
     sess.record("parse", t);
-    sess.stop_if_errors()?;
     Ok(loaded)
 }
 
@@ -302,7 +315,14 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // only, and their optimizations stay as they are.
         debug_info: !opts.release && opts.debug_vars && line_info,
     };
-    let mut program = velt_vir::lower_with(&hir, &lower_opts);
+    let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
+        Ok(p) => p,
+        Err(diags) => {
+            sess.diagnostics.extend(diags);
+            sess.stop_if_errors()?;
+            return Err(BuildError::Ice("lowering reported no errors".into()));
+        }
+    };
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
@@ -374,7 +394,7 @@ pub fn check_with(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(), BuildError> {
-    on_pipeline_thread(|| check_program(sess, opts, scope).map(drop))
+    on_pipeline_thread(|| recover::check_recovering(sess, opts, scope))
 }
 
 /// [`check_with`] for a lint of the checked modules (`velt check --ts-compat`): the loaded
@@ -389,26 +409,6 @@ pub fn check_for_lint(
         let loaded = load_stage(sess, opts, scope)?;
         let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
         Ok((loaded, checked))
-    })
-}
-
-/// Run a pipeline stage on the dedicated large-stack thread.
-fn on_pipeline_thread<T: Send>(
-    stage: impl FnOnce() -> Result<T, BuildError> + Send,
-) -> Result<T, BuildError> {
-    std::thread::scope(|s| {
-        let spawned = std::thread::Builder::new()
-            .name("velt-compile".into())
-            .stack_size(PIPELINE_STACK_BYTES)
-            .spawn_scoped(s, stage);
-        match spawned {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(e) => Err(BuildError::Failed(format!(
-                "cannot start the compiler thread: {e}"
-            ))),
-        }
     })
 }
 

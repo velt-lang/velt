@@ -1,0 +1,11 @@
+prim obj prim prim obj
+num other other num other other
+str notstr str notstr notstr
+obj prim obj prim obj
+5 6 o s
+undef def def
+fn nofn fn nofn
+1 1 0 0
+str str other other
+n
+x

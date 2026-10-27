@@ -1,8 +1,8 @@
-// A timer callback that is a function value whose closure owns a WeakRef: the timer's task
-// would run it on another thread, so handing it over panics.
+// A timer callback that is a function value whose closure owns a WeakRef: the callback runs on
+// the task that created the timer (#1315), so the WeakRef stays on its task and derefs as in Node.
 import { setTimeout } from "velt:timers";
 class V { n: number; constructor(n: number) { this.n = n; } }
-async function tick(r: WeakRef<V>): Promise<void> { const x = r.deref(); console.log(x === null ? -1 : x.n); }
+async function tick(r: WeakRef<V>): Promise<void> { const x = r.deref(); console.log(x === undefined ? -1 : x.n); }
 function task(keep: V): () => Promise<void> { const r = new WeakRef(keep); return () => tick(r); }
 async function main() {
   const keep = new V(7);

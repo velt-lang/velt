@@ -1,0 +1,22 @@
+// `import * as M` next to a local `namespace M` conflicts (TypeScript's TS2440): both are
+// namespaces. A type import merges with a namespace of the same name instead (no error).
+import { N } from "./_namespace_import_conflict_lib.vlt";
+import type { P } from "./_namespace_import_conflict_lib.vlt";
+import * as M from "./_namespace_import_conflict_lib.vlt";
+import { Q as R } from "./_namespace_import_conflict_lib.vlt";
+
+namespace N {
+  export type T = string;
+}
+namespace P {
+  export type T = string;
+}
+namespace M {
+  export type T = string;
+}
+namespace R {
+  export type T = string;
+}
+
+const a: N.T = "which";
+console.log(a);

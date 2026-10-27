@@ -1,0 +1,15 @@
+// A member of an `unknown` needs narrowing first (TS18046 in `tsc --strict`), also for a
+// compound assignment or an update; on an `any` they run as in JavaScript.
+class P {
+  x: number = 1;
+}
+function main(): void {
+  const a: any = new P();
+  a.x = 2;
+  a.x += 1;
+  a.x++;
+  const u: unknown = new P();
+  console.log(u.x);
+  u.x = 3;
+  u.x += 1;
+}

@@ -172,3 +172,54 @@ fn programs_without_weak_collections_have_no_weak_capable_types() {
     );
     assert!(w.is_empty(), "{w:?}");
 }
+
+/// A method called on a module `let` it may reassign keeps its receiver alive with a share, which
+/// counts the class (#1188). A method that only changes its own fields is held the same way:
+/// deciding soundly that a method cannot reach module state also has to follow every dispose
+/// hook a drop may run, so every direct method call on a module state receiver is held for now.
+#[test]
+fn a_module_let_receiver_is_held_for_the_call() {
+    for method in [
+        "plain(): number { this.n++; return this.n; }",
+        "plain(): number { touch(); return this.n; }",
+    ] {
+        let c = counted(&format!(
+            "class P {{ n = 1; {method} }}
+             let cur = new P();
+             function touch(): void {{ cur = new P(); }}
+             function main() {{ touch(); console.log(cur.plain()); }}"
+        ));
+        assert!(c.iter().any(|t| t == "class P"), "{method}: {c:?}");
+    }
+}
+
+#[test]
+fn proxy_hooks_leave_a_plain_object_type_uncounted() {
+    // A program that makes a proxy tests a value that may be a typed proxy for one first
+    // (`Intrinsic::IsTypedProxy`): `for...in`, `in`, `Object.hasOwn` and `Object.keys` of a plain
+    // `Props` neither share it nor take it as an `any`, so neither `Props` nor the keys'
+    // `string[]` is counted.
+    let c = counted(
+        r#"interface Props { a: number; b: number; c: number }
+         function main() {
+           const mk = (): any => new Proxy({}, {});
+           mk();
+           const xs: Props[] = [];
+           for (let i = 0; i < 3; i++) {
+             xs.push({ a: i, b: 2, c: 3 });
+           }
+           let s = 0;
+           const q = xs[0];
+           for (const k in xs[0]) s += k.length;
+           for (const k in q) s += k.length;
+           if ("a" in q) s += 1;
+           if (Object.hasOwn(q, "b")) s += 1;
+           s += Object.keys(q).length;
+           console.log(s);
+         }"#,
+    );
+    assert!(
+        !c.iter().any(|t| t.contains("f64") || t == "string[]"),
+        "{c:?}"
+    );
+}

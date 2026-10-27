@@ -41,8 +41,14 @@ const THRESHOLDS: [f64; 9] = [
 /// `s.charCodeAt(i)` past the inline ASCII path (`velt_rt_str_char_code_at`).
 const CHAR_CODE_AT: &str = "velt_rt_str_char_code_at";
 
-/// The largest array length: an array of 2^53 elements would not fit in memory.
-const ARRAY_LEN_MAX: i128 = (1 << 53) - 1;
+/// The largest array length `numrep` assumes: 2^53 - 3. Arrays are enforced to hold at most
+/// `velt_vir::MAX_ARRAY_LEN` (2^52 - 1) elements wherever a buffer is sized, so this holds; it is
+/// just low enough that an index running to the length inclusive (`i <= xs.length`,
+/// `i < xs.length + 1`) stays below 2^53 with room for its next step, and no lower, so the sum
+/// of two indexes may still pass 2^53 and keeps the representation it had (a tighter bound
+/// would narrow `i + j` used only as a double, which adds conversions: spectral-norm).
+const ARRAY_LEN_MAX: i128 = (1 << 53) - 3;
+const _: () = assert!(velt_vir::MAX_ARRAY_LEN as i128 <= ARRAY_LEN_MAX);
 
 /// A fact per tracked local.
 pub(super) type State = Vec<Fact>;
@@ -56,16 +62,26 @@ pub(super) struct Flow {
     entry: Vec<Option<State>>,
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
+    /// Per aggregate, its field types (`Env::field_tys`).
+    field_tys: std::rc::Rc<[Vec<Ty>]>,
     /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
     /// facts wherever it changes.
     caps: Vec<Option<Fact>>,
     /// Predecessors of each block.
     preds: Vec<Vec<usize>>,
+    /// Per local: facts about the array elements it points at (`arrays`).
+    elems: Vec<Option<Fact>>,
 }
 
 impl Flow {
-    /// Analyse `func`, tracking `tracked`. `None` when the function is too big.
-    pub fn compute(func: &Function, env: &Env, tracked: &[Local]) -> Option<Flow> {
+    /// Analyse `func`, tracking `tracked`, with `elems` the facts about the array elements each
+    /// pointer local reaches (`arrays`; may be empty). `None` when the function is too big.
+    pub fn compute(
+        func: &Function,
+        env: &Env,
+        tracked: &[Local],
+        elems: Vec<Option<Fact>>,
+    ) -> Option<Flow> {
         if tracked.len().saturating_mul(func.blocks.len()) > MAX_CELLS {
             return None;
         }
@@ -82,8 +98,10 @@ impl Flow {
             tys,
             entry: vec![None; func.blocks.len()],
             array: env.array,
+            field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
             preds: crate::map_probe::region::predecessors(func),
+            elems,
         };
         flow.solve(func, env);
         // Counters are bounded by the trip counts the first solution proves.
@@ -143,6 +161,17 @@ impl Flow {
                 })
             }
             Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
+            Operand::Copy(p)
+                if matches!(p.proj[..], [Proj::Deref(_)])
+                    && self
+                        .elems
+                        .get(p.local.0 as usize)
+                        .copied()
+                        .flatten()
+                        .is_some() =>
+            {
+                self.elems[p.local.0 as usize]
+            }
             Operand::Copy(p) => {
                 let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
                     Some(velt_vir::vir::Proj::Deref(t)) => *t,
@@ -151,6 +180,22 @@ impl Flow {
                 (ty.is_int() || ty.is_float()).then(|| Fact::top(ty))
             }
         }
+    }
+
+    /// The type of the value at place `p`, if its projections are well-formed.
+    fn place_ty(&self, func: &Function, p: &Place) -> Option<Ty> {
+        let mut ty = func.locals.get(p.local.0 as usize)?.ty;
+        for proj in &p.proj {
+            ty = match (proj, ty) {
+                (Proj::Deref(t), Ty::Ptr) => *t,
+                (Proj::Cast(id), _) => Ty::Agg(*id),
+                (Proj::Field(n), Ty::Agg(id)) => {
+                    *self.field_tys.get(id.0 as usize)?.get(*n as usize)?
+                }
+                _ => return None,
+            };
+        }
+        Some(ty)
     }
 
     /// Is `p` the length of an array (field 1 of the arrays' aggregate)?
@@ -172,8 +217,19 @@ impl Flow {
 
     /// Facts about the value of `rv`, assigned to a local of type `ty`.
     pub fn rvalue(&self, st: &State, func: &Function, rv: &Rvalue, ty: Ty) -> Fact {
-        let arg = |op: &Operand| self.operand(st, func, op);
-        let optype = |op: &Operand| operand_ty(func, op);
+        // A field read (`len & mask`) is any value of the field's type: its fact and type
+        // together, here only (other users of `operand` and `operand_ty` see no fact for it).
+        let field = |op: &Operand| match op {
+            Operand::Copy(p) if !p.proj.is_empty() && operand_ty(func, op) == Ty::Unit => {
+                self.place_ty(func, p).filter(|t| t.is_int())
+            }
+            _ => None,
+        };
+        let arg = |op: &Operand| {
+            self.operand(st, func, op)
+                .or_else(|| field(op).map(Fact::top))
+        };
+        let optype = |op: &Operand| field(op).unwrap_or_else(|| operand_ty(func, op));
         let f = match rv {
             Rvalue::Use(op) => arg(op),
             Rvalue::Cast(op, to) => arg(op).map(|a| fact::cast(optype(op), *to, a)),

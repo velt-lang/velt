@@ -1,0 +1,35 @@
+// Helper of `type_value_names`: names declared both as a type and as a value.
+function makeId(): string {
+  return "id-1";
+}
+
+// sigx's `models/index.ts`: a type and a constant named `guid`.
+export type guid = string;
+
+export const guid = makeId;
+
+// An interface and a function of one name (no merging: two meanings).
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export function Point(x: number, y: number): Point {
+  return { x, y };
+}
+
+// Exported through a list.
+type Pair = { a: number; b: number };
+
+const Pair = (a: number, b: number): Pair => ({ a, b });
+
+export { Pair };
+
+// Only the type is exported; the constant stays private.
+export type Label = string;
+
+const Label = "private";
+
+export function labelled(l: Label): Label {
+  return Label + ":" + l;
+}

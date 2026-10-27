@@ -6,7 +6,7 @@
 mod common;
 
 use common::hir_walk::{adt, func};
-use common::programs::{err_src, load_src, ok_src};
+use common::programs::{err_src, ok_src};
 use velt_sema::hir::{Def, FieldDef, Program, TyId, TyKind};
 
 /// The types of `f`'s parameters in `src` (which declares `function f(…)`).
@@ -77,7 +77,7 @@ fn a_nullable_instance_of_a_nullable_parameter_has_one_null() {
     let (p, t) =
         params("type N<T> = T | null; function f(a: N<string | null>, b: string | null) {}");
     assert_eq!(t[0], t[1]);
-    let TyKind::Option(inner) = p.types.kind(t[0]) else {
+    let TyKind::Option(inner, _) = p.types.kind(t[0]) else {
         panic!("not nullable");
     };
     assert!(matches!(p.types.kind(*inner), TyKind::Str));
@@ -92,25 +92,25 @@ fn required_clears_only_the_optional_flag() {
     let fs = fields(&p, t[0]);
     assert!(fs.iter().all(|f| !f.optional));
     assert!(
-        matches!(p.types.kind(fs[0].ty), TyKind::Option(_)),
+        matches!(p.types.kind(fs[0].ty), TyKind::Option(..)),
         "a keeps its written null"
     );
     assert!(matches!(p.types.kind(fs[1].ty), TyKind::Float(_)));
-    assert!(matches!(p.types.kind(fs[2].ty), TyKind::Option(_)));
+    assert!(matches!(p.types.kind(fs[2].ty), TyKind::Option(..)));
 }
 
 #[test]
-fn only_nullable_optional_fields_of_object_types_keep_presence() {
+fn optional_fields_of_object_types_keep_presence() {
     let (p, t) = params(
         "type U = { a?: string | null; b?: string; c: string | null };
          function f(x: U, y: Partial<U>) {}",
     );
     let presence: Vec<bool> = fields(&p, t[0]).iter().map(|f| f.presence).collect();
-    assert_eq!(presence, [true, false, false]);
+    assert_eq!(presence, [true, true, false]);
     let presence: Vec<bool> = fields(&p, t[1]).iter().map(|f| f.presence).collect();
     assert_eq!(
         presence,
-        [true, false, true],
+        [true, true, true],
         "Partial makes `c` optional over `string | null`"
     );
     let p =
@@ -121,13 +121,13 @@ fn only_nullable_optional_fields_of_object_types_keep_presence() {
 #[test]
 fn optional_and_nullable_fields_are_different_types() {
     let (_, t) = params(
-        "function f(a: { a?: string }, b: { a: string | null }, c: { a?: string | null }) {}",
+        "function f(a: { a?: string }, b: { a: string | undefined }, c: { a?: string | null }) {}",
     );
     assert_ne!(t[0], t[1]);
     assert_ne!(t[0], t[2]);
     assert_ne!(t[1], t[2]);
     let msg = err_src(
-        "function f(y: { a: string | null }) { const x: { a?: string } = y; console.log(x); }
+        "function f(y: { a: string | undefined }) { const x: { a?: string } = y; console.log(x); }
          function main() {}",
     );
     assert!(
@@ -175,25 +175,15 @@ fn substitution_goes_through_the_canonicalizing_ctx_methods() {
     );
 }
 
-/// The advice of the `in` error for an optional field names the field as code that compiles:
-/// `o["a b"]` for a key that is not an identifier, and the label counts the other stores.
+/// An optional field keeps an absent key apart from one holding `undefined` (#930 phase 2), so
+/// `in` on it is fine wherever a value that may be `undefined` is stored, also under a key that
+/// is not an identifier (this was an error while an optional field was `T | null`).
 #[test]
-fn the_undefined_store_advice_writes_a_quoted_key_as_an_index() {
-    let l = load_src(
+fn in_on_an_optional_field_that_may_hold_undefined_is_accepted() {
+    ok_src(
         "type B = { kind: string; \"a b\"?: string };
          function mk(v?: string): B { return { kind: \"k\", \"a b\": v }; }
          function set(o: B, v?: string) { o[\"a b\"] = v; }
          function main() { const o = mk(); set(o); console.log(\"a b\" in o); }",
     );
-    let (p, d) = l.check();
-    assert!(p.is_none(), "expected an error");
-    let notes: Vec<String> = d.iter().flat_map(|d| d.notes.clone()).collect();
-    let notes = notes.join(
-        "
-",
-    );
-    assert!(notes.contains("`if (v != null) o[\"a b\"] = v`"), "{notes}");
-    assert!(notes.contains("`o[\"a b\"] != null`"), "{notes}");
-    let r = l.render(&d);
-    assert!(r.contains("is stored here, and in 1 other place"), "{r}");
 }

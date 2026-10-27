@@ -64,7 +64,8 @@ impl FnLower<'_, '_> {
         let counted = self.cx.counted(cty);
         let mut owner = None;
         if counted {
-            self.retain(Operand::Copy(Place::local(object)));
+            let c = self.count_ptr(Operand::Copy(Place::local(object)), cty);
+            self.retain_of(c, cty);
             self.own_temp(object, cty);
         } else if let Some(&(at, aty)) = hops.iter().rev().find(|(_, t)| self.cx.counted(*t)) {
             // A pointer held directly in a variable outside a cell survives the right-hand
@@ -75,7 +76,8 @@ impl FnLower<'_, '_> {
                     proj: bp.proj[..at].to_vec(),
                 };
                 let anc = self.copy_to_temp(Operand::Copy(anc), Ty::Ptr);
-                self.retain(Operand::Copy(Place::local(anc)));
+                let c = self.count_ptr(Operand::Copy(Place::local(anc)), aty);
+                self.retain_of(c, aty);
                 self.own_temp(anc, aty);
                 owner = Some((anc, at));
             }

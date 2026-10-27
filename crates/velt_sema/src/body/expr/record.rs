@@ -2,16 +2,18 @@
 //! with TypeScript's object syntax. `K` is `string` (an *open* record: keys may be missing) or a
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!
-//! - `r[k]`, `r.name`: `r.__get(k)` (`V | null`) on open records, `r.__at(k)` (`V`) on closed
+//! - `r[k]`, `r.name`: `r.__get(k)` (`V | undefined`) on open records, `r.__at(k)` (`V`) on closed
 //!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
-//! - `r[k] = v`: `r.__set(k, v)`; `r[k] ??= v` and, on closed records, `r[k] op= v` and
-//!   `++`/`--` are `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects
-//!   (like setters). On open records the arithmetic forms are errors (`record_compound.rs`).
+//! - `r[k] = v`: `r.__set(k, v)`; on closed records `r[k] op= v` and `++`/`--` are
+//!   `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects (like
+//!   setters). On open records the arithmetic forms are errors (`record_compound.rs`).
+//!   `r[k] ??= v`, `||=` and `&&=` read the key once and store only when it does not decide the
+//!   result, on open and closed records (`record_logical.rs`).
 //! - `delete r[k]`: `r.__delete(k)` (open records only).
 //! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
 //!   t.__extend(spread); t }` (`record_literal.rs`).
 //! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
-//!   null`), but cannot start empty (except from a spread) or lose a key.
+//!   undefined`), but cannot start empty (except from a spread) or lose a key.
 //!
 //! Inside the class itself (`this.entries`) none of this applies. The calls and the rule
 //! against writing them by hand are in `record_call.rs`; key types in `crate::record_keys`.
@@ -31,6 +33,8 @@ impl FnCx<'_, '_> {
     /// `(K, V)` if `t` is the prelude's `Record<K, V>` and the record syntax applies here (not
     /// inside the class's own methods).
     pub(crate) fn record_args(&self, t: TyId) -> Option<(TyId, TyId)> {
+        // A record with named members next to its index signature is that record.
+        let t = self.cx.record_view(t).map_or(t, |(base, _)| base);
         let TyKind::Adt(d, args) = self.cx.ty.kind(t) else {
             return None;
         };
@@ -127,8 +131,8 @@ impl FnCx<'_, '_> {
         false
     }
 
-    /// `target = value` / `target op= value` where `target` is `obj[key]` / `obj.name` of a
-    /// record (`obj` checked).
+    /// `target = value` / `target op= value` (`op` not logical) where `target` is `obj[key]` /
+    /// `obj.name` of a record (`obj` checked).
     #[allow(clippy::too_many_arguments)] // target parts + assignment parts
     pub(super) fn record_assign(
         &mut self,
@@ -143,9 +147,8 @@ impl FnCx<'_, '_> {
         let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
-        // `r[k] ??= v` is defined for a missing key (`r.__set(k, r[k] ?? v)`).
-        let arithmetic = op.filter(|o| *o != ast::BinaryOp::Nullish);
-        if let (Some(bop), None) = (arithmetic, self.record_keys(k)) {
+        let named = self.record_view_key(obj.ty, &key);
+        if let (Some(bop), None, false) = (op, self.record_keys(k), named) {
             let sym = format!("{}=", super::ops::op_str(bop));
             self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
             self.check_args_loose(std::slice::from_ref(value));
@@ -160,6 +163,12 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "assign to a key of") {
             self.check_args_loose(std::slice::from_ref(value));
             return self.error_expr(span);
+        }
+        if let (None, Some(m)) = (op, self.record_view_key_ty(obj.ty, &key)) {
+            // A required named member takes a value of its declared type (`r.items = []`).
+            let h = self.expr(value, Some(m), Want::Move);
+            let h = self.coerce(h, m);
+            return self.record_set_checked(obj, key, h, span);
         }
         let value = match op {
             None => value.clone(),
@@ -180,7 +189,15 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
-        self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span)
+        let set = self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span);
+        // The key holds a value now: `r[k]` reads it until the next change (`key_narrow`).
+        self.unnarrow_fields(target);
+        if op.is_none() && self.cx.ty.nothing_of(v).is_none() {
+            if let Some(t) = self.field_token(target) {
+                self.narrow(&crate::body::narrow::Fact::NonNull(t));
+            }
+        }
+        set
     }
 
     /// `r[k]++` / `--r.name` (not used as a value): `r.__set(k, r[k] + 1)`.
@@ -198,8 +215,10 @@ impl FnCx<'_, '_> {
         } else {
             ast::BinaryOp::Sub
         };
+        let (_, key) = record_parts(target);
+        let named = self.record_view_key(obj.ty, &key);
         if let Some((k, v)) = self.record_args(obj.ty) {
-            if self.record_keys(k).is_none() {
+            if self.record_keys(k).is_none() && !named {
                 self.open_record_compound(obj.ty, v, target, opname, bop, None);
                 return self.error_expr(span);
             }
@@ -247,6 +266,9 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         };
+        if let Some(h) = self.dynamic_delete(object, &key, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let Some((k, _)) = self.record_args(obj.ty) else {
             if !self.cx.ty.is_bottom(obj.ty) {
@@ -272,6 +294,7 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "delete a key of") {
             return self.error_expr(span);
         }
+        self.unnarrow_fields(operand);
         self.record_call_keyed(obj, "__delete", key, &[], span)
     }
 }

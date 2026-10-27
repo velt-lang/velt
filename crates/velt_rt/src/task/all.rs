@@ -26,13 +26,13 @@
 //! buffer, which nobody else knows is (partly) initialized. `velt_rt_all_with_drop` takes a drop
 //! function for one result and runs it on exactly those slots when the join is dropped early.
 
-use super::leaf::new_leaf;
+use super::coop::{consume_budget, has_budget_remaining, yield_now};
+use super::leaf::new_inner_leaf;
 use super::{raw_cx, SendPtr, VeltFut, FUT_RESULT_OFFSET, READY};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::task::coop::{consume_budget, has_budget_remaining};
 
 /// Drops one result value in place: `void result_drop(void* slot)`.
 pub type ResultDropFn = unsafe extern "C" fn(slot: *mut u8);
@@ -59,7 +59,7 @@ impl Future for Child {
         }
         let f = self.fut.0;
         // SAFETY: `f` is a live VeltFut owned by this child.
-        if unsafe { ((*f).poll)(f, raw_cx(cx)) } != READY {
+        if unsafe { ((*f).poll)(f, raw_cx(cx).ptr()) } != READY {
             return Poll::Pending;
         }
         // SAFETY: the result slot holds `size` bytes; `dst` is the caller's results[i].
@@ -220,7 +220,7 @@ unsafe fn new_join<const REJECT: bool>(
         },
         complete: false,
     };
-    new_leaf(async move {
+    new_inner_leaf(async move {
         let mut set = set;
         while let Some(i) = set.next().await {
             // SAFETY: child `i` just wrote its result slot; byte 0 is the `Result` tag. (Only
@@ -237,7 +237,7 @@ unsafe fn new_join<const REJECT: bool>(
             }
             consume_budget().await;
             if !has_budget_remaining() {
-                tokio::task::yield_now().await;
+                yield_now().await;
             }
         }
         finished.disarm();
@@ -250,6 +250,7 @@ mod tests {
     //! quadratic join directly observable (the ABI tests use the shared multi-thread runtime).
 
     use super::*;
+    use crate::task::leaf::new_leaf;
     use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, PENDING};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -264,7 +265,7 @@ mod tests {
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
             // SAFETY: an owned, live heap future; freed once READY.
             unsafe {
-                if velt_rt_fut_poll(self.0 .0, raw_cx(cx)) == PENDING {
+                if velt_rt_fut_poll(self.0 .0, raw_cx(cx).ptr()) == PENDING {
                     return Poll::Pending;
                 }
                 velt_rt_fut_drop(self.0 .0);

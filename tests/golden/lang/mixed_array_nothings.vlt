@@ -1,0 +1,17 @@
+// check: no leaks
+// Array literals with no type from context mixing `null`, `undefined`, nested arrays and spread
+// arrays of other element types: an array of the union, as TypeScript infers it (#1275).
+function main(): void {
+  const m: (number | string)[] = [1, "a"];
+  const a = [1, null];
+  const b = [null, 1];
+  const c = ["u", undefined];
+  const n = [[1], ["a"]];
+  const sp = [...m, true];
+  const both = [null, undefined, 2];
+  const only = [null, undefined];
+  console.log(a, b, c, n, sp, both, only);
+  console.log(a[1] === null, c[1] === undefined, n.length, sp.length, typeof sp[2]);
+  const x: any = [null, undefined, 1];
+  console.log(x);
+}

@@ -10,8 +10,8 @@ use crate::body::places::is_place;
 use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
-use crate::defs::{FnKind, ThrowSrc};
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
+use crate::defs::{DefInfo, FnKind, ThrowSrc};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 impl FnCx<'_, '_> {
@@ -33,19 +33,24 @@ impl FnCx<'_, '_> {
                     .with_note("mark the enclosing function or arrow `async`"),
             );
         }
-        let hint = self.hint(exp).map(|t| self.cx.ty.promise(t));
-        self.direct_await = super::promise_new::awaited_new_promise(inner);
-        let h = self.expr(inner, hint, Want::Move);
-        self.direct_await = None;
+        // `await null`: the value as the result expects it (`await_value.rs`).
+        let hint = match super::await_value::nothing_lit(inner) {
+            true => exp,
+            false => self.hint(exp).map(|t| self.cx.ty.promise(t)),
+        };
+        let h = self.top_level_operand(span, |fx| fx.expr(inner, hint, Want::Move));
         self.awaited_using_shares(&h);
-        let h = match self.await_union(h, span) {
+        let awaited = self.await_union_with(h, span, &mut |s, read, p| s.awaiting(read, p, span));
+        let h = match awaited {
             Ok(done) => return done,
             Err(h) => h,
         };
         self.await_throws(&h);
+        let plain = self.awaits_as_value(h.ty);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,
             TyKind::Error | TyKind::Never => self.cx.ty.error,
+            _ if plain => return self.await_plain(h, span),
             _ => {
                 let found = self.cx.display(h.ty);
                 self.cx.error(
@@ -55,16 +60,14 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
-        self.mk(H::Await(Box::new(h)), ty, span)
+        self.awaiting(h, ty, span)
     }
 
     /// The value of `yield a` in an async generator yielding `t`: a promise is awaited, as in
     /// JS (its rejection is thrown at the `yield`; docs/reference/functions.md "Async
     /// generators").
     pub(crate) fn yielded_awaiting(&mut self, a: &ast::Expr, t: TyId) -> hir::Expr {
-        self.direct_await = super::promise_new::awaited_new_promise(a);
         let h = self.expr(a, Some(t), Want::Move);
-        self.direct_await = None;
         let h = match self.cx.ty.kind(h.ty).clone() {
             TyKind::Promise(v, _) if !matches!(self.cx.ty.kind(t), TyKind::Promise(..)) => {
                 self.awaited_using_shares(&h);
@@ -77,9 +80,145 @@ impl FnCx<'_, '_> {
         self.coerce(h, t)
     }
 
+    /// The value `e` returned from an async function whose result type is `ret` (not itself a
+    /// promise): a promise (`return Promise.resolve(x)`, `return fetchIt()`) or a union holding
+    /// one (`return fn()` with `fn: () => T | Promise<T>`) is adopted, as in JS (issue #1148).
+    /// JS settles the function's promise as the returned one only after every enclosing scope
+    /// is left (`finally` blocks, `using` disposal, closing the iterator of a `for…of`), and
+    /// one microtask later than `return await` would. So the promise is stored and the scopes
+    /// are left (a `break` out of the loop `wrap_adopted` puts around the body); after it the
+    /// function takes one step and returns the awaited promise. A plain value of a union is
+    /// returned at once, as `return 5` adds no steps in JS.
+    pub(crate) fn async_returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        let h = self.expr(e, Some(ret), Want::Move);
+        if self.in_place_misuse(e, &h, ret) {
+            return self.error_expr(e.span);
+        }
+        let span = h.span;
+        // The promise is awaited after the enclosing `try` statements are left: what it
+        // rejects with is thrown from the function, not into their `catch` blocks.
+        let tries = std::mem::take(&mut self.f.tries);
+        let h = match self.cx.ty.kind(h.ty) {
+            TyKind::Promise(..) => {
+                self.await_throws(&h);
+                self.f.adopt_stmt = true;
+                Ok(self.adopt(h, ret, span))
+            }
+            _ => self.await_union_with(h, span, &mut |s, read, _| s.adopt(read, ret, span)),
+        };
+        self.f.tries = tries;
+        match h {
+            Ok(h) if h.ty == self.cx.ty.never => h,
+            Ok(h) | Err(h) => self.coerce(h, ret),
+        }
+    }
+
+    /// `{ <adopted> = p; break <adopt>; }`: stores the returned promise `p` for the function to
+    /// await once its scopes are left (`async_returned`); records how it is returned then.
+    pub(crate) fn adopt(&mut self, p: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
+        let (pty, unit, never) = (p.ty, self.cx.ty.unit, self.cx.ty.never);
+        let payload = self.cx.ty.promise_payload(pty).unwrap_or(self.cx.ty.error);
+        let slot_ty = self.cx.ty.option(pty);
+        let slot = self.new_local("<adopted>", slot_ty, true, span, LocalKind::Temp);
+        let bind = self.new_local("<adopted>", pty, false, span, LocalKind::Bind);
+        // After the scopes: one step (`await Promise.resolve()`), then `await p`.
+        let hop = match self.cx.prelude.get("promiseResolveVoid").cloned() {
+            Some(Item::Def(d)) => {
+                let mut report = |s: &mut Self, _: &str, expected: TyId, found: &hir::Expr| {
+                    s.report_mismatch(expected, found);
+                };
+                let call = self.call_checked(d, vec![], span, &mut report);
+                Some(self.mk(H::Await(Box::new(call)), unit, span))
+            }
+            _ => None,
+        };
+        let read = self.mk(H::Local(bind, hir::UseMode::Move), pty, span);
+        let awaited = self.mk(H::Await(Box::new(read)), payload, span);
+        let awaited = self.coerce(awaited, ret);
+        let stmts = hop
+            .into_iter()
+            .map(|h| hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            })
+            .collect();
+        let value = self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: Some(Box::new(awaited)),
+                span,
+            }),
+            ret,
+            span,
+        );
+        self.f
+            .adopted
+            .push(crate::body::Adopted { slot, bind, value });
+        let which = self.adopt_which(span);
+        let i32_ = self.cx.ty.i32;
+        let site = self.mk(
+            H::Lit(hir::Lit::Int(self.f.adopted.len() as u128)),
+            i32_,
+            span,
+        );
+        let which = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+        let mark = self.mk(
+            H::Assign {
+                place: Box::new(which),
+                value: Box::new(site),
+            },
+            unit,
+            span,
+        );
+        let place = self.mk(H::Local(slot, hir::UseMode::BorrowMut), slot_ty, span);
+        let some = self.mk(H::WrapSome(Box::new(p)), slot_ty, span);
+        let store = self.mk(
+            H::Assign {
+                place: Box::new(place),
+                value: Box::new(some),
+            },
+            unit,
+            span,
+        );
+        let stmts = vec![
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(store),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(mark),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Break(Some(crate::body::ADOPT_LABEL.to_string())),
+                span,
+            },
+        ];
+        self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: None,
+                span,
+            }),
+            never,
+            span,
+        )
+    }
+
+    /// The function's `<adopt_which>` local: which stored promise is adopted (`Frame::adopt_which`).
+    pub(crate) fn adopt_which(&mut self, span: Span) -> LocalId {
+        if let Some(w) = self.f.adopt_which {
+            return w;
+        }
+        let i32_ = self.cx.ty.i32;
+        let w = self.new_local("<adopt_which>", i32_, true, span, LocalKind::Temp);
+        self.f.adopt_which = Some(w);
+        w
+    }
+
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
-    pub(super) fn await_throws(&mut self, h: &hir::Expr) {
+    pub(crate) fn await_throws(&mut self, h: &hir::Expr) {
         if let H::Call {
             callee: Callee::Def(d, targs),
             ..
@@ -127,7 +266,25 @@ impl FnCx<'_, '_> {
             callee: Callee::Def(d, ck.type_args),
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        // The reasons `allSettled` reports are values: their type as written, without the
+        // traps' error-set variables (`coerce_vars.rs`).
+        self.written_trap_vars(h)
+    }
+
+    /// In the root file's top-level statements, outside any function (`renderAll();` there is
+    /// Node's way to start the program's async work: it runs to the end before the program
+    /// exits, as a dropped promise does; `module_scripts::is_root_script`)? The generated
+    /// function's name has an empty span; a `main` the file declares is an ordinary function.
+    fn at_root_top_level(&self) -> bool {
+        let generated = self.body_def.is_some_and(|d| {
+            matches!(self.cx.info.get(d.0 as usize), Some(DefInfo::Fn(f))
+                if f.name_span.lo == f.name_span.hi)
+        });
+        self.outer.is_empty()
+            && (self.fn_name == "main" || self.fn_name == velt_syntax::SCRIPT_MAIN)
+            && generated
+            && crate::module_scripts::is_root_script(self.cx, self.module)
     }
 
     /// `f();` where `f()` is a promise: an error (a dropped promise's result and errors would be
@@ -146,7 +303,7 @@ impl FnCx<'_, '_> {
                 ..
             }
         );
-        if !promise || spawned {
+        if !promise || spawned || self.is_promise_callback_call(e, h) || self.at_root_top_level() {
             return;
         }
         let mut d = Diagnostic::error(
@@ -309,6 +466,7 @@ impl FnCx<'_, '_> {
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
             self.no_spawned_generators(&e);
+            self.spawned_promises(&e);
             if let H::Call { args, .. } = &mut e.kind {
                 if let [p] = args.as_mut_slice() {
                     self.hand_on_spawned_callee(p);
@@ -326,7 +484,9 @@ impl FnCx<'_, '_> {
             TyKind::FnPtr { params, ret, .. }
                 if params.is_empty() && self.cx.ty.promise_payload(ret).is_some() =>
             {
-                self.intrinsic(Intrinsic::Spawn, vec![f], ret, span)
+                let e = self.intrinsic(Intrinsic::Spawn, vec![f], ret, span);
+                self.spawned_promises(&e);
+                e
             }
             TyKind::Error => self.error_expr(span),
             _ => {
@@ -581,7 +741,7 @@ pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>
     }
 }
 
-fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
+pub(crate) fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;
     loop {

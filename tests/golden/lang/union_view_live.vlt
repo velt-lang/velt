@@ -1,0 +1,160 @@
+// check: no leaks
+// A union view (#1410, sigx's `AsyncState<T>`): one wide object whose `state` getter changes is
+// cast to a union of interfaces (`impl as State<T>`); every discriminant test, `switch` and
+// field read goes through its getters, so the union sees the object change, as in Node. Narrowed
+// reads check the value against the member the test selected. Expected output: Node's.
+type StateName = "idle" | "pending" | "ready" | "errored";
+
+interface Base<T> {
+  refresh(): number;
+}
+
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+  readonly error: null;
+}
+
+interface Pending<T> extends Base<T> {
+  readonly state: "pending";
+  readonly value: null;
+  readonly hasValue: false;
+  readonly error: null;
+}
+
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+  readonly error: null;
+}
+
+type Presence<T> =
+  | { readonly value: T; readonly hasValue: true }
+  | { readonly value: null; readonly hasValue: false };
+type Errored<T> = Base<T> & { readonly state: "errored"; readonly error: Error } & Presence<T>;
+type State<T> = Idle<T> | Pending<T> | Ready<T> | Errored<T>;
+
+interface Impl<T> {
+  readonly state: StateName;
+  readonly value: T | null;
+  readonly hasValue: boolean;
+  readonly error: Error | null;
+  refresh(): number;
+}
+
+interface Handle<T> {
+  cell: State<T>;
+  set(st: StateName, v: T | null, has: boolean, e: Error | null): void;
+}
+
+function cell<T>(): Handle<T> {
+  let st: StateName = "idle";
+  let data: T | null = null;
+  let has = false;
+  let err: Error | null = null;
+  let n = 0;
+  const impl: Impl<T> = {
+    get state() {
+      return st;
+    },
+    get value() {
+      return data;
+    },
+    get hasValue() {
+      return has;
+    },
+    get error() {
+      return err;
+    },
+    refresh() {
+      n++;
+      return n;
+    },
+  };
+  return {
+    cell: impl as State<T>,
+    set(s: StateName, v: T | null, h: boolean, e: Error | null): void {
+      st = s;
+      data = v;
+      has = h;
+      err = e;
+    },
+  };
+}
+
+function show(c: State<number>): void {
+  if (c.state === "ready") {
+    console.log("ready", c.value + 1);
+  } else if (c.state === "errored") {
+    console.log("errored", c.error.message, c.hasValue);
+  } else {
+    console.log(c.state, c.value);
+  }
+  switch (c.state) {
+    case "idle":
+      console.log("sw idle");
+      break;
+    case "ready":
+      console.log("sw ready", c.value);
+      break;
+    default:
+      console.log("sw other", c.hasValue);
+  }
+  if (c.hasValue) {
+    console.log("has", c.value);
+  }
+  if (c.state !== "pending") {
+    console.log("not pending", c.state);
+  }
+  console.log(c.refresh());
+}
+
+function generic<T>(c: State<T>): string {
+  const s = c.state;
+  return `${s} ${c.hasValue} ${c.error === null}`;
+}
+
+const h = cell<number>();
+show(h.cell);
+h.set("pending", null, false, null);
+show(h.cell);
+h.set("ready", 41, true, null);
+show(h.cell);
+h.set("errored", 41, true, new Error("boom"));
+show(h.cell);
+console.log(generic<number>(h.cell));
+
+// The same object, read again after it changed, through a closure and after an await.
+const read = (): string => h.cell.state;
+h.set("idle", null, false, null);
+console.log(read());
+
+async function later(): Promise<void> {
+  await Promise.resolve();
+  console.log("after await", h.cell.state, h.cell.hasValue);
+}
+
+const p = later();
+h.set("ready", 7, true, null);
+await p;
+show(h.cell);
+
+// Literal-built members and a view in one array, and one variable.
+const lit: State<number> = {
+  state: "ready",
+  value: 1,
+  hasValue: true,
+  error: null,
+  refresh: () => 7,
+};
+const all: State<number>[] = [lit, h.cell];
+for (const s of all) {
+  show(s);
+}
+let one: State<number> = lit;
+console.log(one.state);
+one = h.cell;
+h.set("pending", null, false, null);
+console.log(one.state, generic<number>(one));

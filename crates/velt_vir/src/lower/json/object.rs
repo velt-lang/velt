@@ -34,7 +34,7 @@ impl FnLower<'_, '_> {
             .map(|(f, t)| {
                 (
                     f.name.clone(),
-                    matches!(self.cx.kind(*t), TyKind::Option(_)),
+                    matches!(self.cx.kind(*t), TyKind::Option(..)),
                 )
             })
             .collect();
@@ -89,14 +89,25 @@ impl FnLower<'_, '_> {
         self.json_skip_member(r, ctx, key, head, fail);
         self.switch_to(end);
         for (i, (name, nullable)) in fields.iter().enumerate() {
+            // The prelude `Error`'s `#name` (the only private field sema lets decoding reach):
+            // its default, as no key fills it.
+            if name == "#name" && matches!(self.cx.kind(tys[i]), TyKind::Str) {
+                let v = self.str_lit("Error");
+                let f = self.field_place(place, ty, i as u32);
+                self.assign(f, Rvalue::Use(v));
+                continue;
+            }
             if !nullable {
                 // A required symbol-keyed member is never filled: the decode fails.
                 let shown = velt_sema::property_order::symbol_key(name);
                 self.json_require(ctx, seen, i as u32, shown.as_deref().unwrap_or(name), fail);
             }
-            // `a?: T | null`: present when its key was there, `null` included.
+            // `a?: T`: present when its key was there and its value is not the option's own
+            // nothing (`undefined`): a JSON `null` for an `a?: T` leaves the field absent, and
+            // one for an `a?: T | null` is a present `null`.
             if let Some(slot) = self.cx.presence_slot(ty, i as u32) {
-                let mut f = self.field_place(place, ty, i as u32);
+                let fp = self.field_place(place, ty, i as u32);
+                let mut f = fp.clone();
                 if let Some(crate::vir::Proj::Field(x)) = f.proj.last_mut() {
                     *x = slot;
                 }
@@ -105,8 +116,11 @@ impl FnLower<'_, '_> {
                     Ty::U64,
                     Rvalue::Binary(BinOp::BitAnd, s, cint(1i128 << i, Ty::U64)),
                 );
-                let set =
+                let seen_key =
                     self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
+                let is_some = self.option_is_some(&fp, tys[i]);
+                let set =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, seen_key, is_some));
                 self.assign(f, Rvalue::Use(set));
             }
         }

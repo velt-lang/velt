@@ -16,15 +16,20 @@
 
 mod checks;
 mod conventions;
+mod fn_flows;
+mod fn_types;
 mod groups;
 mod infer;
 mod inits;
 mod sets;
+mod vars;
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
+pub(crate) use fn_types::FnSites;
+pub(crate) use fn_types::FnTypeSeeds;
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
@@ -37,7 +42,9 @@ use crate::hir::{DefId, TyId};
 #[derive(Default)]
 struct Visited {
     /// Functions whose bodies' sources are counted (in their own generic context).
-    fns: HashSet<DefId>,
+    fns: FxHashSet<DefId>,
+    /// Entries of `Ctx::provisional_slots` counted.
+    provisional: FxHashSet<usize>,
     inits: InitsSeen,
 }
 
@@ -69,6 +76,7 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
     for s in srcs {
         let t = match s {
             ThrowSrc::Direct(t, _) => Some(*t),
+            ThrowSrc::Indirect(t, site, _) => cx.indirect_error(*t, *site),
             ThrowSrc::Call(g, targs, _) => {
                 let t = def_now(cx, *g, visited);
                 subst_error(cx, t, targs)
@@ -103,9 +111,11 @@ pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -
     let Some(a) = cx.adt(d) else {
         return vec![];
     };
+    let redefined = a.redefined.iter().flat_map(|r| r.throws.iter().cloned());
     let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
         .iter()
         .flat_map(|f| f.default_throws.iter().cloned())
+        .chain(redefined)
         .collect();
     own.iter()
         .map(|s| s.used_at(span, |t| cx.subst(t, args)))
@@ -122,6 +132,17 @@ fn def_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     let f = cx.try_fn(d)?;
     if let Some(decl) = f.declared_throws {
         return decl.ty;
+    }
+    if cx.throw_groups().group_of(d).is_some() {
+        // Object literals may add members to its group (`body::literal_hosts`).
+        let f = cx.fn_info(d);
+        let name = f
+            .name
+            .rsplit(['.', ':'])
+            .next()
+            .unwrap_or(&f.name)
+            .to_string();
+        crate::body::literal_hosts::ensure_named(cx, &name);
     }
     let Some(g) = cx.throw_groups().group_of(d) else {
         return own_now(cx, d, visited);
@@ -150,9 +171,21 @@ fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
     if let Some(b) = group.bound {
         return b.decl.ty;
     }
+    // The methods of object literals being checked, not yet implementations (read before any
+    // body is checked here: one may add an implementation, which renumbers the groups).
+    let mut provisional: Vec<Vec<ThrowSrc>> = vec![];
+    for (k, (i, s, srcs)) in cx.provisional_slots.clone().into_iter().enumerate() {
+        if cx.throw_groups().slot_group(i, s) == Some(g) && visited.provisional.insert(k) {
+            provisional.push(srcs);
+        }
+    }
     let mut acc = None;
     for m in group.members {
         let t = own_now(cx, m, visited).filter(|t| !cx.mentions_params(*t));
+        acc = cx.join_errors(acc, t);
+    }
+    for srcs in provisional {
+        let t = srcs_now_in(cx, &srcs, visited).filter(|t| !cx.mentions_params(*t));
         acc = cx.join_errors(acc, t);
     }
     acc
@@ -166,8 +199,19 @@ fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Opt
     if let Some(t) = foreign_bound_slot(cx, iface, slot) {
         return t.ok().flatten();
     }
-    let g = cx.throw_groups().slot_group(iface, slot)?;
-    group_now(cx, g, visited)
+    // Object literals may add implementations of the slot (`body::literal_hosts`).
+    if let Some(name) = slot_name(cx, iface, slot) {
+        crate::body::literal_hosts::ensure_named(cx, &name);
+    }
+    let now = match cx.throw_groups().slot_group(iface, slot) {
+        Some(g) => group_now(cx, g, visited),
+        None => None,
+    };
+    // Implementations found after a body read the slot, in the previous check.
+    match cx.slot_hint(iface, slot) {
+        Some(h) => cx.join_errors(now, Some(h)),
+        None => now,
+    }
 }
 
 /// A slot without a `throws` clause whose dispatch group is bounded by a clause in another
@@ -204,6 +248,18 @@ pub(crate) fn foreign_bound_slot(
         .iter()
         .all(|e| e.1 == first && !e.1.is_some_and(|t| cx.mentions_params(t)));
     Some(if agree { Ok(first) } else { Err(errors) })
+}
+
+/// The member name of slot `slot` of `iface`: a method's (a setter's without `set `), or a
+/// field's (the slots after the methods).
+fn slot_name(cx: &Ctx, iface: DefId, slot: u32) -> Option<String> {
+    let i = cx.iface(iface)?;
+    let slot = slot as usize;
+    let name = match i.methods.get(slot) {
+        Some(m) => m.name.strip_prefix("set ").unwrap_or(&m.name),
+        None => &i.fields.get(slot - i.methods.len())?.name,
+    };
+    Some(name.to_string())
 }
 
 /// The `throws` clause of interface method `slot` of `iface` (in the interface's terms, also

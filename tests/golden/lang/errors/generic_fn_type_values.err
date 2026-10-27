@@ -1,0 +1,2 @@
+generic_fn_type_values.vlt:7:15: error: mismatched types
+  = note: a value of `<T>(T) => T` takes any type arguments at each call; a function of fixed types (`(f64) => f64`) is not one: pass a generic function, or a closure that works for every type

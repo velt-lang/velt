@@ -27,10 +27,10 @@ no count traffic. No benchmark shares a value, so every benchmark keeps its repr
 value". `Intrinsic::Clone` stays and means **deep copy**: `x.clone()`, and async closures'
 captures (§6).
 
-- **Shared values** (`Ctx::is_shared_value`): everything that is not Copy and holds no promise
-  (strings, objects, arrays, maps, closures, interface values). Structs and object literals are
-  objects and never Copy (checkpoint D). A promise has one owner: using a promise variable after
-  handing it on stays ``use of moved value``.
+- **Shared values** (`Ctx::is_shared_value`): everything that is not Copy (strings, objects,
+  arrays, maps, closures, interface values, promises). Structs and object literals are
+  objects and never Copy (checkpoint D). A share of a promise is another holder of the same
+  future (`velt_rt_fut_share`, rt_abi_async.md §1.2, #212).
 - **Soft moves for every shared value** (`ownership/shares.rs`, generalizing stage 1's strings):
   a move stays a move where the place is dead and becomes a share where it is used again
   (`moves` dataflow → `clone_reused`) or cannot be moved from (`validate`: borrowed params,
@@ -50,7 +50,12 @@ captures (§6).
   caller whose variable is dead hands it over for free, and only a caller that uses its variable
   again pays one count increment.
 - `==` / `!=` on non-primitive types is `Intrinsic::Same` (JS `===`, §7); `__intrinsic_eq` stays
-  structural (`deepEqual`, `assertEq`, `Map` keys).
+  structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
+  (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
+  `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
+  key counts it (boxing/), so its pointer is the object wherever the map moves it. A type
+  declared with `struct` is a value type there: its keys compare and hash by content, field
+  by field (#641).
 
 ## 3. Lowering: representation
 
@@ -70,7 +75,7 @@ shares lower once. `ShareKind` (boxing/kinds.rs):
 | struct / object literal that is assigned somewhere (`AdtDef::assigned`), has `[Symbol.dispose]` or holds a `Mutex` | count + 1 | boxed like arrays (`Ptr` to the fields) |
 | other struct / object literal, `T \| null`, unions, tuples | field-wise share (`Glue::Share`) | parts as needed; an object type compared by identity is boxed instead |
 | function value | env count + 1 (heap envs are always counted; a frame env is copied to the heap) | — |
-| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data, copy immutable data) | — |
+| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data; data never changed in place, such as an object literal of methods, is shared part by part in a new box, so its methods keep the variables they captured) | — |
 | `shared<T>` | its own atomic count | — |
 | `Promise` | never shared (sema) | — |
 
@@ -111,12 +116,42 @@ shares. A variable held in a shared cell (`LocalDef::boxed`, shared with the esc
 that capture it) is like a counted container: a call of the closure may replace what it holds,
 so by-reference `const`s, destructured bindings and `for...of` loops over a place rooted in it
 are stabilized the same way (#819); so are destructured bindings by reference of a counted value
-itself (`const { a } = o`). A destructured binding of a value stored inline (a string, tuple,
-object literal or union, bound by reference) refers to a share of it held by the scope; the
-parts that can be changed in place are counted first, so writes through the binding
+itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const`
+evaluated once) is such a cell too, one every function reaches. A place inside a slot is
+stabilized the same way. So is the slot itself when a call may change what it holds: when some
+code reassigns it (one walk over the program finds those), or when what it holds can be
+changed in place. That is an array (or an optional one), which any function may empty or grow
+(`XS.length = 0`, `splice`, `push`) while a loop, a callback method or a callee walks it, and a
+struct, class, object or tuple with a part that owns something, which a call may replace
+(`REG.items = []`) while a method borrows it through `this` or a callee through a parameter.
+Such a type is counted, as for a variable in a cell, so `for...of` over it, its callback
+methods, methods and functions it is passed to share what they borrow from it. Other slots
+nothing reassigns keep their value while a call runs: maps re-read their entries every step of
+a loop and pass shares to callbacks, so `const seen = new Map<string, number>()` stays
+uncounted. A value held in the slot (not
+behind a counted object) is shared like an array element, since any callee may replace it there
+and drop it (#1161). A virtual call's receiver is stabilized like a class method's. A program
+without module state is unaffected, apart from that receiver. The function value of a
+call through a function value is kept alive the same way when it is read from such a place (a
+field or element reached through a counted object, or a variable in a shared cell): the call
+runs on a share of it, dropped after the statement, since the function may replace its holder
+(`this.f = …`) and so drop its own environment while it runs (#1146); one read from a variable
+or parameter of the caller needs nothing. A destructured binding of a value stored inline (a
+string, tuple, object literal or union, bound by reference) refers to a share of it held by the
+scope; the parts that can be changed in place are counted first, so writes through the binding
 (`t[1] = 7`) still reach the original. Every stabilized borrow is a fact: a container that
 becomes counted makes the values borrowed through it counted too, so uncounted values stay
 reachable only through unique owners.
+
+A method's receiver (`this`) is kept alive for the call the same way when the method may
+replace the place it is read from (receiver.rs, #1188): `cur.bump()` where `bump` calls a
+function that assigns `cur = new State()`, `holder.shape.area()` where an override replaces
+`holder.shape`. Virtual calls and direct method calls stabilize the receiver like an argument
+(`stable_borrow`, with the module state rules above). An interface call holds a receiver read
+from a field or element reached through a counted object, a variable in a shared cell or a
+module state slot (the rule of the function value above): the method is only known at run time.
+The held receiver is a share (its class counted), dropped after the statement. A receiver in a
+variable, a parameter or `this` is passed as before.
 
 ### 3.4 `noalias`, `readonly` and exclusivity
 `noalias` (and, for borrowed params, `readonly`) is set only when `Cx::unique_refs` holds: the
@@ -132,7 +167,10 @@ The runtime sees unboxed layouts. A top-level boxed argument is passed as its po
 an argument or result whose layout contains boxed parts crosses as an unboxed *view*
 (arguments, owning nothing) or is boxed after the call (results, `adopt_foreign`), also for the
 result slot of an awaited runtime leaf future. Arrays of boxed elements in extern signatures are
-not supported (none exist).
+not supported (none exist). The `velt_simd_*` helpers, which are inlined and only read an
+array's header, get a boxed array's header in place instead of a view: after inlining, a copy
+would be read again after every element store (the LLVM backend's alias tags describe headers
+and elements, not copies of them).
 
 ## 4. `.clone()`
 `x.clone()` is a deep copy of any value (structuredClone-like): fresh boxes all the way down
@@ -274,7 +312,11 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   calls through virtual and interface methods are assumed to store any argument into any
   argument they modify; summaries cover direct calls only. A resource without `clone()`
   stored into the value from a captured variable stays shared with the variable (it cannot
-  be copied, and a callback cannot move what it captured even though `with` calls it once).
-- `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
-  (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances
-  compare by identity.
+  be copied, and such a callback keeps its reference capture). A callback written at the call
+  takes along by move a variable only it reads and the program does not use afterwards
+  (ownership/locked/moves.rs): transferred before the lock, released under it, so what it
+  stores into the value needs no copy. Other captures are still copied at a call that may
+  store a part of them, whatever the call then stores.
+- `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
+  arrays, by identity). Object keys compare by identity (#1257, see §7); `struct` keys by
+  content (#641).

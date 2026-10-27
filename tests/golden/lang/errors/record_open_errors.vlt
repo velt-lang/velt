@@ -14,12 +14,18 @@ function main() {
   counts[k] **= 2;
   const names: Record<string, string> = {};
   names["x"] += "!";
-  const flags: Record<string, bool> = {};
-  flags["on"] &&= true;
   for (const key of counts) {
     console.log(key);
   }
   console.log(Object.values({}));
-  counts["a"] ||= 1;
-  names["x"] &&= "y";
+  // Used as a value: the same messages as the statements above.
+  const kf = (): string => "a";
+  const v = (names[kf()] += "2");
+  const w = (counts[k] += 1);
+  console.log(v, w);
+  // Values that may be `null` already: the message names `null` once.
+  const maybe: Record<string, string | null> = {};
+  maybe["m"] += "!";
+  console.log(maybe);
+  console.log(Object.entries({}));
 }

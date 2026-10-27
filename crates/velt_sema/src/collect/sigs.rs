@@ -1,9 +1,9 @@
 //! Phase 3: signatures of functions, methods, constructors, interface methods (+ default
 //! bodies) and `extend` blocks.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::declare::{fn_placeholder, generic_names, ASYNC_DISPOSE, DISPOSE};
@@ -45,7 +45,7 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
             _ => {}
         }
     }
-    let mut used = HashSet::new();
+    let mut used = FxHashSet::default();
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
@@ -104,7 +104,10 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
         if let Some(f) = cx.sigq.filling_sigs.last_mut() {
             f.1.clone_from(&p.name.name);
         }
-        let ty = cx.resolve_type(&p.ty, env);
+        let mut ty = cx.resolve_type(&p.ty, env);
+        if p.rest && !rest_param_type(cx, p.ty.span, ty) {
+            ty = cx.ty.error;
+        }
         if out.iter().any(|q| q.name == p.name.name) {
             cx.err(
                 format!(
@@ -121,6 +124,10 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
             );
         }
         let mode = declared_mode(cx, ty);
+        if crate::body::is_readonly_array(&p.ty) {
+            cx.sigq.readonly_params.insert(p.name.span);
+        }
+        cx.note_written_type(p.name.span, p.ty.span);
         out.push(ParamSig {
             name: p.name.name.clone(),
             span: p.name.span,
@@ -132,16 +139,44 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
     out
 }
 
+/// A rest parameter's type must be an array type: `T[]`, `readonly T[]` or an alias of one
+/// (TypeScript's TS2370 otherwise). One typed by a type parameter (`...args: A` with
+/// `A extends unknown[]`) is not supported yet. False after reporting an error at `at` (the
+/// written type). Closures' rest parameters are checked the same way.
+pub(crate) fn rest_param_type(cx: &mut Ctx, at: Span, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Array(_) | TyKind::Error => return true,
+        TyKind::Param(_) => cx.error(
+            Diagnostic::error(
+                "a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)",
+                at,
+            )
+            .with_note("Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)"),
+        ),
+        _ => cx.err(
+            "a rest parameter must have an array type (`...xs: T[]`)",
+            at,
+        ),
+    }
+    false
+}
+
 /// Resolve `sig` into the placeholder `d`; generics = `owner` generics followed by the fn's own.
 fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: usize) {
     let mut generics = owner.clone();
     for g in &sig.generics {
         generics.push(&g.name.name);
     }
-    let env = TyEnv::new(module, &generics.names);
-    let own_bounds = resolve_bounds(cx, &sig.generics, &env);
+    let mut env = TyEnv::new(module, &generics.names);
+    env.this_ty = cx.fn_info(d).this_type();
+    let own = resolve_bounds(cx, &sig.generics, &env);
     generics.bounds.truncate(owner.len());
-    generics.bounds.extend(own_bounds);
+    generics.bounds.extend(own.bounds);
+    if !own.constraints.is_empty() || !generics.constraints.is_empty() {
+        generics.constraints.resize(owner.len(), None);
+        generics.constraints.extend(own.constraints);
+        generics.constraints.resize(generics.len(), None);
+    }
     if sig.generics.iter().any(|g| g.default.is_some()) {
         let mut defaults = generics.defaults.clone();
         defaults.resize(owner.len(), None);
@@ -149,6 +184,12 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         generics.defaults = defaults;
     }
     let kind = cx.fn_info(d).kind;
+    // `function f(this: T, ...)`: `this` is a leading parameter (`body::expr::this_param`).
+    if let (Some(t), FnKind::Free | FnKind::Closure) = (&sig.this_param, kind) {
+        let ty = cx.resolve_type(t, &env);
+        let resumable = sig.is_async || sig.is_generator;
+        cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
+    }
     let mut ps = params(cx, &sig.params, &env);
     if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
         f.1.clone_from(&sig.name.name);
@@ -330,7 +371,7 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         generics: &generics,
         self_ty,
     };
-    let mut methods: HashMap<String, MethodRef> = HashMap::new();
+    let mut methods: FxHashMap<String, MethodRef> = FxHashMap::default();
     let instance: Vec<&str> = decl
         .methods
         .iter()
@@ -554,7 +595,9 @@ fn method_generics(
         own.push(&g.name.name);
     }
     let env = TyEnv::new(module, &names);
-    own.bounds = super::shapes::resolve_bounds(cx, gs, &env);
+    let b = super::shapes::resolve_bounds(cx, gs, &env);
+    own.bounds = b.bounds;
+    own.constraints = b.constraints;
     (own, env)
 }
 
@@ -592,15 +635,28 @@ fn default_method<'m>(
     def
 }
 
-fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut HashSet<String>) {
+fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut FxHashSet<String>) {
     let mut generics = generic_names(&e.generics);
     let env = TyEnv::new(m, &generics.names);
-    generics.bounds = resolve_bounds(cx, &e.generics, &env);
+    let b = resolve_bounds(cx, &e.generics, &env);
+    if b.constraints.iter().any(Option::is_some) {
+        let at = e
+            .generics
+            .iter()
+            .zip(&b.constraints)
+            .find(|(_, c)| c.is_some());
+        if let Some((g, Some(c))) = at {
+            let tn = cx.display(*c);
+            let span = g.bounds.last().map_or(g.name.span, |t| t.span);
+            cx.err(format!("`{tn}` is not an interface"), span);
+        }
+    }
+    generics.bounds = b.bounds;
     let target = cx.resolve_type(&e.target, &env);
     let saved = std::mem::replace(&mut cx.display_params, generics.names.clone());
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
     cx.display_params = saved;
-    let mut methods = HashMap::new();
+    let mut methods = FxHashMap::default();
     for meth in &e.methods {
         let name = &meth.decl.sig.name;
         let key = cx.method_key(m, name, meth.is_setter);
@@ -638,10 +694,16 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         };
         methods.insert(key, r);
     }
+    let implements = e
+        .implements
+        .iter()
+        .filter_map(|t| super::shapes::iface_bound(cx, t, &env).map(|b| (b, t.span)))
+        .collect();
     cx.extensions.push(Extension {
         generics,
         target,
         methods,
+        implements,
     });
 }
 

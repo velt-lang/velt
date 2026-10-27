@@ -12,6 +12,7 @@
 use super::all::ResultDropFn;
 use super::compiled::{with_state_store, Compiled, OwnedStore};
 use super::local::Locals;
+use super::runtime::JoinHandle;
 use super::{context, raw_cx, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use crate::panic::ThrowLoc;
 use std::ffi::c_void;
@@ -19,7 +20,6 @@ use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::task::JoinHandle;
 
 /// Largest result a joinable task may produce; larger results must be boxed by the compiler.
 pub const MAX_RESULT_SIZE: u64 = 256;
@@ -59,7 +59,7 @@ impl Future for FutBody {
         ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: an owned, live heap future.
-            match unsafe { ((*f).poll)(f, raw_cx(cx)) } {
+            match unsafe { ((*f).poll)(f, raw_cx(cx).ptr()) } {
                 READY => Poll::Ready(()),
                 _ => Poll::Pending,
             }
@@ -78,8 +78,9 @@ impl TaskBody for FutBody {
 
 impl Drop for FutBody {
     fn drop(&mut self) {
+        let f = self.fut.0;
         // SAFETY: owned; after READY its result was already moved into the task output.
-        unsafe { ((*self.fut.0).drop)(self.fut.0) }
+        self.locals.drop_with(|| unsafe { ((*f).drop)(f) });
     }
 }
 
@@ -150,7 +151,7 @@ struct JoinObj<const R: usize> {
     /// is dropped with this instead of the task's `result_drop`, which reports an error as an
     /// unhandled rejection.
     quiet: Option<Option<ResultDropFn>>,
-    /// The result was moved into `result` (the tokio handle must not be polled again).
+    /// The result was moved into `result` (the handle must not be polled again).
     claimed: bool,
 }
 
@@ -172,7 +173,7 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
 }
 
 unsafe extern "C" fn join_drop<const R: usize>(f: *mut VeltFut) {
-    // Dropping the tokio JoinHandle detaches the task (it keeps running, like an unawaited
+    // Dropping the JoinHandle detaches the task (it keeps running, like an unawaited
     // spawned promise); tokio then drops its output, which disposes of an unclaimed result (and
     // reports an error in it, unless the handle was handled).
     let obj = Box::from_raw(f as *mut JoinObj<R>);
@@ -307,6 +308,7 @@ pub unsafe extern "C" fn velt_rt_spawn_transfer(
     result_drop: Option<ResultDropFn>,
     result_transfer: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::read_mode::refuse_tasks_in_read();
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
         let body =
@@ -323,6 +325,7 @@ pub unsafe extern "C" fn velt_rt_spawn_fut(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::read_mode::refuse_tasks_in_read();
     spawn_sized(
         FutBody {
             fut: SendPtr(f),
@@ -342,6 +345,7 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
     state_size: u64,
     state_align: u64,
 ) {
+    crate::read_mode::refuse_tasks_in_read();
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
         spawn_body::<_, 0>(

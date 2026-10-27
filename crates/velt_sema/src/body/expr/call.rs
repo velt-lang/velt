@@ -22,8 +22,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        if optional {
+        if optional && !self.is_method_member(callee) {
             return self.optional_chain(callee, span, |s, f| s.call_value(f, args, span));
+        }
+        if let Some(h) = self.checked_key_call(callee, type_args, args, span) {
+            return h;
         }
         if let Some(callee) = self.without_namespace(callee) {
             return self.call(&callee, type_args, args, false, exp, span);
@@ -34,7 +37,22 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.math_minmax_call(callee, args, span) {
+            return h;
+        }
+        if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
+            return h;
+        }
+        if let Some(h) = self.dynamic_number_test(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
+            return h;
+        }
+        if let Some(h) = self.object_builtin_call(callee, type_args, args, exp, span) {
+            return h;
+        }
+        if let Some(h) = self.call_apply(callee, type_args, args, exp, span) {
             return h;
         }
         if let Some(h) = self.json_stringify_layout(callee, type_args, args, span) {
@@ -56,6 +74,15 @@ impl FnCx<'_, '_> {
                 }
                 self.named_call(id, type_args, args, exp, span)
             }
+            // `it.return(undefined)`: TypeScript's `return(value)` takes the generator's return
+            // value; Velt's `return()` has none, and `undefined` is what leaving it out passes.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } if self.iteration_return_undefined(object, prop, args) => {
+                self.member_call(object, prop, *optional, type_args, &[], exp, span)
+            }
             ast::ExprKind::Member {
                 object,
                 prop,
@@ -76,15 +103,58 @@ impl FnCx<'_, '_> {
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
-                    _ => self.expr(callee, None, Want::Borrow),
+                    _ => self.receiver_expr(callee),
                 };
-                self.call_value(f, args, span)
+                self.call_value_with(f, type_args, args, exp, span)
             }
         }
     }
 
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
+    /// #1144)?
+    fn iteration_return_undefined(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> bool {
+        let [arg] = args else {
+            return false;
+        };
+        if prop.name != "return" || crate::body::narrow::nothing_word(arg) != Some("undefined") {
+            return false;
+        }
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        let d = match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => *d,
+            _ => return false,
+        };
+        const PROTOCOL: [&str; 7] = [
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "IteratorObject",
+        ];
+        PROTOCOL
+            .iter()
+            .any(|n| matches!(self.cx.prelude.get(*n), Some(Item::Def(p)) if *p == d))
+    }
+
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.
@@ -114,8 +184,8 @@ impl FnCx<'_, '_> {
                     self.error_expr(span)
                 }
                 _ => {
-                    let f = self.ident_expr(id, None, Want::Borrow);
-                    self.call_value(f, args, span)
+                    let f = self.with_payload_at(id.span, |s| s.ident_expr(id, None, Want::Borrow));
+                    self.call_value_with(f, type_args, args, exp, span)
                 }
             },
             _ => self.builtin_call(id, type_args, args, exp, span),
@@ -130,19 +200,17 @@ impl FnCx<'_, '_> {
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
         let js_api = self.is_js_api(d);
-        let rest = f.source.is_some_and(|s| {
-            crate::body::defaults::fn_sig_ast(s)
-                .params
-                .last()
-                .is_some_and(|p| p.rest)
-        });
+        let positions = js_numbers && super::numbers::is_simd_method(&f.name);
+        let rest = crate::body::defaults::has_rest(self.cx, d);
         let mut c = Callable {
             what,
             params: f.params.clone(),
             ret,
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
+            constraints: f.generics.constraints.clone(),
             js_numbers,
+            positions,
             js_api,
             rest,
             defaults: f.generics.defaults.clone(),
@@ -192,6 +260,11 @@ impl FnCx<'_, '_> {
         for (i, t) in type_args.iter().enumerate() {
             slots[start + i] = Some(self.resolve(t));
         }
+        let spans = type_args
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (start + i, t.span));
+        self.explicit_type_spans = Some((span, spans.collect()));
         for k in start + type_args.len()..slots.len() {
             let Some(Some(d)) = defaults.get(k) else {
                 break;
@@ -212,6 +285,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.takes_this(d) {
+            return self.this_fn_call(d, name, None, type_args, args, exp, span);
+        }
+        self.check_gated_call(d, name, span);
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
@@ -238,12 +315,37 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
-        let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
+        let f = match self.dynamic_apply(f, args, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
+        let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
+        // A generic function value: a call of its interface's one method (`crate::generic_fns`).
+        if let Some(g) = self.cx.generic_sig(f.ty) {
+            let s = super::iface_call::IfaceSlot {
+                on_param: false,
+                iface: g.iface,
+                iface_args: g.args,
+                slot: 0,
+                method: g.method,
+                rest: g.rest,
+            };
+            return self.iface_call(f, s, &[], args, None, span);
+        }
+        // A function with properties (#921): a call of the function it holds.
+        if self.cx.is_callable_object(f.ty) {
+            return match self.call_of_callable(f, span) {
+                Some(f) => self.call_value(f, args, span),
+                None => self.error_expr(span),
+            };
+        }
+        let (params, ret, throws, rest) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,
                 ret,
                 throws,
-            } => (params, ret, throws),
+                rest,
+            } => (params, ret, throws, rest),
             TyKind::Error | TyKind::Never => {
                 self.check_args_loose(args);
                 return self.error_expr(span);
@@ -265,6 +367,14 @@ impl FnCx<'_, '_> {
         // `const f = (x, y = 1) => …; f(2)`: the closure's defaults fill in left-out arguments.
         let closure = match &f.kind {
             H::Local(l, _) => self.f.closure_consts.get(l).copied(),
+            // A module-level `const` holding the closure, called from a function.
+            H::Global(g) => match self.cx.global(*g) {
+                Some(g) if !g.mutable => match g.init.as_ref().map(|i| &i.kind) {
+                    Some(H::Closure(c)) => Some(*c),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         };
         let mut ps = vec![];
@@ -276,9 +386,23 @@ impl FnCx<'_, '_> {
             } else {
                 PassMode::Borrow
             };
-            let default = closure
+            let mut default = closure
                 .and_then(|d| self.cx.fn_info(d).params.get(i))
                 .and_then(|p| p.default.clone());
+            // A rest parameter without arguments is the empty array; an optional one
+            // (`(a?: number) => R`) is `undefined`.
+            if rest && i + 1 == params.len() {
+                default = Some(self.mk(H::ArrayLit(vec![]), *ty, span));
+            } else if default.is_none()
+                && matches!(self.cx.ty.kind(*ty), TyKind::Option(_, n) if n.has_undefined())
+            {
+                default = Some(self.mk(H::Lit(hir::Lit::Null), *ty, span));
+            } else if default.is_none() && i >= args.len() && self.cx.dynamic(*ty).is_some() {
+                // A left-out argument of a dynamic type is `undefined`, as for a function whose
+                // value the context typed without its `?` (`const g = d` for `d(x?: any)`).
+                let undefined = hir::Nothing::Undefined;
+                default = Some(self.dynamic_nothing(undefined, *ty, span));
+            }
             ps.push(ParamSig {
                 name: format!("arg{i}"),
                 span,
@@ -293,14 +417,22 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: vec![],
             bounds: vec![],
+            constraints: vec![],
             js_numbers: false,
+            positions: false,
             js_api: false,
-            rest: false,
+            rest,
             defaults: vec![],
         };
         let ck = self.check_call(&c, vec![], args, None, span);
         if throws != self.cx.ty.never {
             self.throw_src(crate::defs::ThrowSrc::Direct(throws, span));
+        }
+        // Through a function type written without `throws` in a user module, it may throw what
+        // is stored into the type (`throws::fn_types`).
+        if !self.cx.scopes[self.module].is_std {
+            let site = self.site_of_value(&f);
+            self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
         }
         let mut f = f;
         set_place_mode(&mut f, UseMode::Borrow);
@@ -312,7 +444,7 @@ impl FnCx<'_, '_> {
     }
 
     #[allow(clippy::too_many_arguments)] // mirrors `obj.prop<T>(args)` plus the checking context
-    fn member_call(
+    pub(super) fn member_call(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
@@ -341,19 +473,35 @@ impl FnCx<'_, '_> {
                     s.check_args_loose(args);
                     return s.error_expr(span);
                 }
-                s.method_call_on(recv, prop, type_args, args, None, span)
+                s.exempt_cast_receiver(object, &recv);
+                let call = s.method_call_on(recv, prop, type_args, args, None, span);
+                s.clear_cast_receiver();
+                call
             });
         }
         let recv = match &object.kind {
             ast::ExprKind::Super => return self.super_method_call(prop, args, exp, span),
-            _ => self.expr(object, None, Want::Borrow),
+            _ => {
+                // A narrowed union that may hold a view stays the union (`union_view`).
+                self.view_receiver = super::member::is_name(object);
+                let recv = self.receiver_expr(object);
+                self.view_receiver = false;
+                recv
+            }
         };
         if self.record_internal_call(&recv, prop) {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        let recv = match self.optional_fn_member_call(object, recv, prop, args, span) {
+            Ok(call) => return call,
+            Err(recv) => recv,
+        };
+        let recv = self.nullable_helper_receiver(recv, &prop.name);
         let r = self.in_place_receiver(object, recv);
+        self.exempt_cast_receiver(object, &r.recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
+        self.clear_cast_receiver();
         self.after_receiver(r.before, call)
     }
 
@@ -387,7 +535,11 @@ impl FnCx<'_, '_> {
         if self.is_local_name(&id.name) {
             return None;
         }
-        match self.lookup_item(&id.name, id.span) {
+        let item = self.lookup_item(&id.name, id.span);
+        if let Some(simd) = self.simd_type_named(&id.name, item) {
+            return self.simd_static_call(simd, id, prop, type_args, args, exp, span);
+        }
+        match item {
             Some(Item::Def(d)) if self.cx.enum_info(d).is_some() => {
                 Some(self.variant_value(d, prop, args, exp, span))
             }
@@ -440,9 +592,25 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
-        let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
+        // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
+        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (std's
+        // `JSON.__parseFromContext`).
+        let from_context = type_args.is_empty()
+            && prop.name == "parse"
+            && cname == "JSON"
+            && self.cx.declared_in_std(d);
+        let lookup = match from_context {
+            true => "__parseFromContext",
+            false => prop.name.as_str(),
+        };
+        let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
+            // A static field holding a function value: a call of what it holds.
+            Err(false) if self.static_fn_field(d, prop) => {
+                return self.static_field_call(d, prop, args, span);
+            }
             Err(instance) => {
                 let what = match instance {
                     true => "an instance method",
@@ -539,14 +707,18 @@ impl FnCx<'_, '_> {
 
     /// The function running static method `m` with `this` being class `this_class`: `m`, or its
     /// copy for that subclass when `m` uses `this` (`collect::static_this`).
-    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+    /// A copy used is recorded (`Ctx::copy_uses`).
+    pub(crate) fn static_def_for(&mut self, m: DefId, this_class: DefId) -> DefId {
         match self.cx.static_this.get(&m) {
-            Some(&declaring) if declaring != this_class => self
-                .cx
-                .static_copies
-                .get(&(m, this_class))
-                .copied()
-                .unwrap_or(m),
+            Some(&declaring) if declaring != this_class => {
+                match self.cx.static_copies.get(&(m, this_class)).copied() {
+                    Some(copy) => {
+                        self.cx.copy_uses.push((self.body_def, copy));
+                        copy
+                    }
+                    None => m,
+                }
+            }
             _ => m,
         }
     }

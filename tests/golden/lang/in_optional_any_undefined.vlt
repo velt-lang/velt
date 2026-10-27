@@ -1,0 +1,14 @@
+// check: no leaks
+// `"k" in o` on an optional `any` field holding `undefined` (given in a literal, from a dynamic
+// value, or written later) finds the key, as Node does: the field keeps a presence flag (#1319).
+interface Cell { value: number; extra?: any }
+function has(x: Cell | null): boolean { return !!x && "extra" in x; }
+function main() {
+  const a: Cell = { value: 1, extra: undefined };
+  const u: any = undefined;
+  const b: Cell = { value: 2, extra: u };
+  const c: Cell = { value: 3 };
+  c.extra = undefined;
+  const d = { value: 4 } as Cell;
+  console.log(has(a), has(b), has(c), has(d), "extra" in a);
+}

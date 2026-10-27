@@ -1,0 +1,21 @@
+// `import.meta`: the module's `file:` URL, path and directory, as in Node (fixed while compiling:
+// they name the source file).
+const url = import.meta.url;
+console.log(typeof import.meta.url === "string" ? import.meta.url.slice(0, 5) : "other");
+console.log(url.startsWith("file:///"), url.includes("\\"));
+console.log(url.slice(url.lastIndexOf("/") + 1).split(".")[0]);
+const { filename, dirname } = import.meta;
+console.log(filename.startsWith(dirname), filename.length > dirname.length);
+console.log(filename.slice(dirname.length + 1).split(".")[0]);
+
+function where(): string {
+  return import.meta.url.split("/").pop() ?? "";
+}
+console.log(where().split(".")[0]);
+
+// `import.meta` as a value of its own is the same object.
+const meta = import.meta;
+function metaOf() {
+  return import.meta;
+}
+console.log(meta.url === import.meta.url, metaOf().dirname === dirname, typeof meta);

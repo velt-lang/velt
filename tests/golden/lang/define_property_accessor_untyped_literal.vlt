@@ -1,0 +1,36 @@
+// An accessor that `Object.defineProperty` defines on an object literal written without a type
+// (#922), as sigx's `computed` does: reads call the getter the call gave.
+function computed<T>(read: () => T, writable: boolean) {
+  let reads = 0;
+  const readValue = (): T => {
+    reads++;
+    return read();
+  };
+  const computedObj = {
+    label: "computed",
+    get value(): T {
+      return readValue();
+    },
+  };
+  if (writable) {
+    Object.defineProperty(computedObj, "value", {
+      get(): T {
+        console.log("defined getter");
+        return readValue();
+      },
+      set(newValue: T) {
+        console.log("set", newValue);
+      },
+      enumerable: true,
+      configurable: false,
+    });
+  }
+  return { obj: computedObj, reads: () => reads };
+}
+let base = 2;
+const c = computed(() => base * 10, true);
+console.log(c.obj.value, c.obj.label);
+base = 7;
+console.log(c.obj.value, c.reads());
+const r = computed(() => base + 1, false);
+console.log(r.obj.value, r.reads());

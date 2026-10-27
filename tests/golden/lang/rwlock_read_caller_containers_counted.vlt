@@ -1,0 +1,63 @@
+// `rwlock_read_caller_containers` where a `read` callback calls a function value, so every type
+// the value reaches is counted: a read still changes the caller's containers (pushes, slots,
+// fields, a `Map`, a `Set`, `splice`, `concat`, a loop over a captured `Set`), and a function
+// given the caller's array to change (`swapEnds`). What it replaces there, also an element a
+// reader still holds, is freed only after the read.
+class Item {
+  v: i64 = 0;
+  tags: string[] = [];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class St {
+  items: Item[] = [new Item(1), new Item(2), new Item(3)];
+}
+
+function swapEnds(a: Item[]) {
+  const t = a[0];
+  a[0] = a[a.length - 1];
+  a[a.length - 1] = t;
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const bump = (x: i64): i64 => x + 1;
+  console.log(rw.read((s) => bump(s.items[0].v)));
+  const pts: i64[] = [];
+  const out: Item[] = [new Item(0)];
+  const byV = new Map<i64, Item>();
+  const seen = new Set<Item>();
+  seen.add(new Item(4));
+  let all: Item[] = [];
+  rw.read((s) => {
+    pts.push(bump(s.items[1].v));
+    out.push(new Item(5));
+    out[0].tags.push("t");
+    for (const it of s.items) {
+      byV.set(it.v, it);
+    }
+    let sum: i64 = 0;
+    for (const o of seen) {
+      sum += o.v;
+    }
+    pts.push(sum);
+    all = all.concat(s.items);
+    swapEnds(out);
+  });
+  for (let i = 0; i < 50; i++) {
+    rw.read((s) => {
+      let c: i64 = 0;
+      for (const o of seen) {
+        c += o.v;
+      }
+      return c;
+    });
+  }
+  rw.read((s) => {
+    out.splice(0, 1);
+  });
+  console.log(pts.join(","), out.length, out[0].v, out[0].tags.length, byV.size, all.length);
+  rw.read((s) => console.log(s.items.length, s.items[0].v));
+}

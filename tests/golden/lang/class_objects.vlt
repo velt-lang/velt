@@ -1,0 +1,83 @@
+// Classes as plain values (#926): `x.constructor` of an `unknown` narrowed to `object` (or of an
+// `any`) compared with class names, as sigx's `isCollection` does, a subclass instance seen
+// through its base, the same object for every instantiation of a generic class, classes kept in
+// a `Set<unknown>`, and `typeof` of one. Node prints the same.
+class Base {}
+
+class Derived extends Base {}
+
+function isCollection(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const ctor = value.constructor;
+  return ctor === Set || ctor === Map || ctor === WeakSet || ctor === WeakMap;
+}
+
+function isIterableCollection(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const ctor = value.constructor;
+  return ctor === Set || ctor === Map;
+}
+
+function kind(v: unknown): string {
+  if (!v || typeof v !== "object") {
+    return "primitive";
+  }
+  const ctor = v.constructor;
+  if (ctor === Derived) {
+    return "derived";
+  }
+  if (ctor === Base) {
+    return "base";
+  }
+  if (ctor === Set) {
+    return "set";
+  }
+  return "other";
+}
+
+function ctorOf(v: unknown): unknown {
+  if (!v || typeof v !== "object") {
+    return undefined;
+  }
+  return v.constructor;
+}
+
+const weak = new WeakMap<object, number>();
+console.log(
+  isCollection(new Set<number>()),
+  isCollection(new Map<string, number>()),
+  isCollection(weak),
+);
+console.log(
+  isCollection(new WeakSet<object>()),
+  isCollection({}),
+  isCollection([1]),
+  isCollection(3),
+);
+console.log(
+  isIterableCollection(new Set<string>()),
+  isIterableCollection(weak),
+  isIterableCollection(null),
+);
+const b: Base = new Derived();
+console.log(
+  kind(new Base()),
+  kind(b),
+  kind(new Set<boolean>()),
+  kind({ a: 1 }),
+  kind(new Date(0)),
+  kind("s"),
+);
+console.log(
+  ctorOf(new Set<number>()) === ctorOf(new Set<string>()),
+  ctorOf({}) === Set,
+  typeof ctorOf(new Base()),
+);
+const known = new Set<unknown>([Set, Map]);
+console.log(known.has(ctorOf(new Map<number, number>())), known.has(ctorOf(new Base())));
+const anyV: any = new Derived();
+console.log(anyV.constructor === Derived, anyV.constructor !== Base, anyV.constructor.name);

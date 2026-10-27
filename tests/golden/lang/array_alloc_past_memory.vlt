@@ -1,0 +1,9 @@
+// An array whose buffer is larger than memory (2^51 + 64 bytes, within the length limit) stops
+// the program with the allocator's error, on every target: on wasm32 the 64-bit byte size is
+// refused, never truncated to its low 32 bits (64 bytes here, which `fill` would overrun).
+// Node stops earlier, at JS's 2^32 - 1 elements (`RangeError: Invalid array length`).
+function main() {
+  console.log("before");
+  const xs = new Array<number>(2 ** 48 + 8).fill(0);
+  console.log(xs.length);
+}

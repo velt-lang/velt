@@ -1,0 +1,12 @@
+// check: no leaks
+// `for (k in o)` and `for (x of xs)` may assign a variable declared before the loop, as in
+// JavaScript; it keeps the last value after the loop.
+function main() {
+  let k = "";
+  for (k in { a: 1, b: 2 }) {
+    console.log(k);
+  }
+  let x = 0;
+  for (x of [3, 4]) {}
+  console.log(k, x);
+}

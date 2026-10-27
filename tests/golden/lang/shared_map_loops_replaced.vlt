@@ -1,0 +1,123 @@
+// check: no leaks
+// A loop over a map read out of a `shared` keeps the box it started with alive while the body
+// (or another task, at an `await`) gives the handle another box, as JavaScript keeps the old
+// map: over the map, its `values()` and `keys()`, a `shared<Map>` itself, and in an `async`
+// function.
+class Item {
+  v: number;
+  name: string;
+  constructor(v: number) {
+    this.v = v;
+    this.name = `item${v}`;
+  }
+}
+
+class Store {
+  m: Map<string, Item> = new Map<string, Item>();
+}
+
+function mk(n: number): Store {
+  const s = new Store();
+  for (let i = 0; i < n; i++) {
+    s.m.set(`k${i}`, new Item(i));
+  }
+  return s;
+}
+
+function mkMap(n: number): Map<string, Item> {
+  const m = new Map<string, Item>();
+  for (let i = 0; i < n; i++) {
+    m.set(`k${i}`, new Item(i));
+  }
+  return m;
+}
+
+function churn(): number {
+  let t = 0;
+  for (let i = 0; i < 50; i++) {
+    t += mk(20).m.size;
+  }
+  return t;
+}
+
+let G = shared(mk(100));
+let W = shared(mkMap(100));
+let S = shared(mk(100));
+
+function reset(): void {
+  G = shared(mk(1));
+  churn();
+}
+
+function resetW(): void {
+  W = shared(mkMap(1));
+  churn();
+}
+
+function entries(): number {
+  let t = 0;
+  for (const [k, v] of G.m) {
+    t += v.v + k.length;
+    if (v.v == 3) {
+      reset();
+    }
+  }
+  return t;
+}
+
+function values(): number {
+  let t = 0;
+  for (const v of G.m.values()) {
+    t += v.v + v.name.length;
+    if (v.v == 3) {
+      reset();
+    }
+  }
+  return t;
+}
+
+function keys(): number {
+  let t = 0;
+  for (const k of G.m.keys()) {
+    t += k.length;
+    if (k == "k3") {
+      reset();
+    }
+  }
+  return t;
+}
+
+function wholeMap(): number {
+  let t = 0;
+  for (const [k, v] of W) {
+    if (v.v == 10) {
+      resetW();
+    }
+    t += v.v + k.length;
+  }
+  return t;
+}
+
+async function walkField(): Promise<number> {
+  let t = 0;
+  for (const [k, v] of S.m) {
+    if (v.v == 10) {
+      await Promise.resolve(0);
+    }
+    t += v.v + k.length;
+  }
+  return t;
+}
+
+async function main() {
+  console.log(entries(), G.m.size);
+  G = shared(mk(100));
+  console.log(values(), G.m.size);
+  G = shared(mk(100));
+  console.log(keys(), G.m.size);
+  console.log(wholeMap(), W.size);
+  const walk = walkField();
+  S = shared(mk(1));
+  churn();
+  console.log(await walk, S.m.size);
+}

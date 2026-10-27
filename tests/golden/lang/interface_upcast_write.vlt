@@ -1,0 +1,49 @@
+// Writes through an interface value converted from another interface (#941): the source
+// interface gets setters too, and a getter with a setter takes the write.
+
+interface A {
+  x: number;
+  y: number;
+  f(): number;
+}
+
+interface B {
+  x: number;
+  f(): number;
+}
+
+class K implements A {
+  x = 1;
+  y = 2;
+  f() {
+    return this.x;
+  }
+}
+
+const ka: A = new K();
+const kb: B = ka;
+kb.x = 5;
+console.log(ka.x, kb.x, kb.f());
+
+interface Named {
+  name: string;
+  hi(): string;
+}
+
+let store = "a";
+const o = {
+  get name() {
+    return store;
+  },
+  set name(v: string) {
+    store = v + "!";
+  },
+  hi() {
+    return "hi " + this.name;
+  },
+};
+const s: Named = o;
+for (let i = 0; i < 1000; i++) {
+  s.name = "n" + i;
+}
+console.log(s.name, s.hi(), o.name);

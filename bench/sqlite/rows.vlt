@@ -2,6 +2,7 @@
 // server challenge) on an in-memory database of the same shape. `feed` reads 20 posts of about
 // 200 characters and writes them as JSON; `post` reads one post by primary key. Prints the bytes
 // written, so runs can be compared. Usage: rows [feed|post|both] [rounds]
+// rust/ is the same program on rusqlite + serde_json.
 
 import { open } from "velt:sqlite";
 import { args } from "velt:process";

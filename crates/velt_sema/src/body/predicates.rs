@@ -22,7 +22,7 @@ use super::narrow::Fact;
 use super::FnCx;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnSource};
-use crate::hir::{self, DefId, ExprKind as H, LocalId, PatKind as P, TyId, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, LocalId, PatKind as P, TyId, TyKind, UseMode};
 use crate::resolve::TyEnv;
 
 /// A predicate call whose result narrows a local (`Frame::checked_predicates`).
@@ -59,7 +59,8 @@ impl FnCx<'_, '_> {
         callee: &ast::Expr,
         args: &[ast::Expr],
     ) -> Option<CheckedPredicate> {
-        let (target, index) = self.predicate_of(callee)?;
+        let (target, index) = self.predicate_of(callee, false)?;
+        let target = target?;
         let arg = args.get(index)?;
         // The variable itself (not `(x = next())`): the check reads it again after the call.
         if !is_plain_name(arg) {
@@ -104,7 +105,7 @@ impl FnCx<'_, '_> {
             .union_members(target)
             .unwrap_or_else(|| vec![target])
             .into_iter()
-            .map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+            .map(|t| self.cx.ty.core(t).unwrap_or(t))
             .collect();
         let parts = self.cx.union_members(u).unwrap_or_else(|| vec![u]);
         let mut holds: Vec<TyId> = vec![];
@@ -116,7 +117,7 @@ impl FnCx<'_, '_> {
                 .filter(|m| m == w || Some(*m) == base)
                 .collect();
             if found.is_empty() {
-                return None;
+                return self.unrelated_predicate_facts(l, nullable, u, target, &parts);
             }
             holds.extend(found);
         }
@@ -251,17 +252,95 @@ impl FnCx<'_, '_> {
         Some(self.bool_match(read, yes, span))
     }
 
-    /// The type predicate's type and parameter index of the function `callee` names.
-    fn predicate_of(&mut self, callee: &ast::Expr) -> Option<(TyId, usize)> {
-        let ast::ExprKind::Ident(id) = &callee.kind else {
+    /// The facts that hold after the expression statement `e` when it is a call of an
+    /// assertion function (`asserts v is T`, `asserts v`) on a local: what a `true` result of
+    /// the predicate `v is T` (or of the test `v`) gives.
+    pub(super) fn assertion_facts(&mut self, e: &ast::Expr) -> Option<CheckedPredicate> {
+        let ast::ExprKind::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } = &e.kind
+        else {
             return None;
         };
-        if self.is_local_name(&id.name) {
+        let (target, index) = self.predicate_of(callee, true)?;
+        let arg = args.get(index)?;
+        if !is_plain_name(arg) {
             return None;
         }
-        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
-            return None;
+        let when_true = match target {
+            None => self.narrowing(arg).0,
+            Some(target) => {
+                let (l, nullable, u) = self.local_with_members(arg)?;
+                match self.cx.class_of(target) {
+                    Some((class, _)) => self.class_facts(arg, class).0,
+                    None => self.predicate_type_facts(l, nullable, u, target)?.0,
+                }
+            }
         };
+        let local = self.named_local(arg)?;
+        if when_true.is_empty() {
+            return None;
+        }
+        let name = match &callee.kind {
+            ast::ExprKind::Ident(id) => id.name.clone(),
+            _ => String::new(),
+        };
+        let ty = match target {
+            Some(t) => self.cx.display(t),
+            None => "truthy".into(),
+        };
+        Some(CheckedPredicate {
+            local,
+            when_true,
+            when_false: vec![],
+            name,
+            ty,
+        })
+    }
+
+    /// After the call of assertion function `p` (at `span`): checks that its local is what the
+    /// assertion says (a `TypeError` when the function returned although it is not, as for a
+    /// predicate that answers wrongly), and narrows it for the rest of the block.
+    pub(super) fn assertion_checked(
+        &mut self,
+        p: CheckedPredicate,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        if let Some(test) = self.fact_test(p.local, &p.when_true, span) {
+            let msg = format!(
+                "TypeError: the assertion function `{}` returned for a value that is not {}",
+                p.name,
+                match p.ty.as_str() {
+                    "truthy" => "truthy".to_string(),
+                    t => format!("`{t}`"),
+                }
+            );
+            let msg = self.str_lit(&msg, span);
+            let never = self.cx.ty.never;
+            let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+            let unit = self.unit_expr(span);
+            let kind = H::If {
+                cond: Box::new(test),
+                then: Box::new(unit),
+                els: Box::new(fail),
+            };
+            let check = self.mk(kind, self.cx.ty.unit, span);
+            out.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(check),
+                span,
+            });
+        }
+        p.when_true.iter().for_each(|f| self.narrow(f));
+    }
+
+    /// The type predicate's type (`None` for `asserts v`) and parameter index of the function
+    /// `callee` names: of a predicate `v is T`, or with `asserts` of an assertion.
+    fn predicate_of(&mut self, callee: &ast::Expr, asserts: bool) -> Option<(Option<TyId>, usize)> {
+        let d = self.predicate_fn(callee)?;
         let (decl, module) = match &self.cx.info[d.0 as usize] {
             DefInfo::Fn(f) => match f.source {
                 Some(FnSource::Decl(decl)) => (decl, f.module),
@@ -271,12 +350,15 @@ impl FnCx<'_, '_> {
         };
         let ast::TypeExprKind::Predicate {
             param,
-            ty: Some(ty),
-            asserts: false,
+            ty,
+            asserts: a,
         } = &decl.sig.ret.as_ref()?.kind
         else {
             return None;
         };
+        if *a != asserts || (ty.is_none() && !asserts) {
+            return None;
+        }
         if !decl.sig.generics.is_empty() {
             return None;
         }
@@ -285,11 +367,122 @@ impl FnCx<'_, '_> {
             .params
             .iter()
             .position(|p| p.name.name == param.name)?;
+        let Some(ty) = ty else {
+            return Some((None, index));
+        };
         // Resolved again here (its errors were reported with the signature), quietly.
         let mark = crate::body::recheck::Mark::here(self.cx);
         let t = self.cx.resolve_type(ty, &TyEnv::new(module, &[]));
         mark.rollback(self.cx);
-        (!self.cx.ty.has_error(t)).then_some((t, index))
+        (!self.cx.ty.has_error(t)).then_some((Some(t), index))
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The condition `c` of `if (g(x))` (`cond` in the source), where `g` is a type predicate
+    /// whose type has only primitive members and `x` a local of a type parameter's type, as
+    /// `g(x) && MayHoldPrimitive(x)` (hir_encodings.md "Type predicates on a type parameter"):
+    /// an instantiation of the function with an object type for that parameter does not lower
+    /// the branch (issue #1251). Any other condition is `c` itself.
+    pub(super) fn primitive_guard(&mut self, cond: &ast::Expr, c: hir::Expr) -> hir::Expr {
+        let ast::ExprKind::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } = &cond.kind
+        else {
+            return c;
+        };
+        let Some((Some(target), index)) = self.predicate_of(callee, false) else {
+            return c;
+        };
+        let Some(l) = args.get(index).and_then(|a| self.named_local(a)) else {
+            return c;
+        };
+        let ty = self.local_ty(l);
+        if !matches!(self.cx.ty.kind(ty), TyKind::Param(_)) || !self.cx.primitive_only(target) {
+            return c;
+        }
+        let (b, span) = (self.cx.ty.bool_, c.span);
+        let probe = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+        let may = self.intrinsic(hir::Intrinsic::MayHoldPrimitive, vec![probe], b, span);
+        self.cx.primitive_guards = true;
+        let kind = H::Logical {
+            op: hir::LogicOp::And,
+            lhs: Box::new(c),
+            rhs: Box::new(may),
+        };
+        self.mk(kind, b, span)
+    }
+}
+
+impl crate::ctx::Ctx<'_> {
+    /// Does every value of `t` hold a primitive (string, number, boolean, bigint, symbol,
+    /// `null`, `undefined`, a literal or a brand of one)?
+    pub(crate) fn primitive_only(&mut self, t: TyId) -> bool {
+        let t = self.ty.core(t).unwrap_or(t);
+        if let Some(members) = self.union_members(t) {
+            return members.into_iter().all(|m| self.primitive_only(m));
+        }
+        match self.ty.kind(t) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(_)
+            | TyKind::Symbol
+            | TyKind::Never => true,
+            // A brand is its base (a primitive, or a record viewed with named members).
+            _ => self.brand_base(t).is_some_and(|b| self.primitive_only(b)),
+        }
+    }
+
+    /// Is every value of `t` an object (a struct, class, object type, array, tuple, map or
+    /// function type), never a primitive? What `MayHoldPrimitive` is `false` for once `t` is
+    /// a type argument; `t` may still mention type parameters inside.
+    pub(crate) fn object_only(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => {
+                self.adt(*d).is_some() && self.brand_base(t).is_none_or(|b| self.object_only(b))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The function `callee` names: a module-level function `f`, or a static method `C.m` of a
+    /// class (`ArrayBuffer.isView`).
+    fn predicate_fn(&mut self, callee: &ast::Expr) -> Option<DefId> {
+        let (id, method) = match &callee.kind {
+            ast::ExprKind::Ident(id) => (id, None),
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } => match &object.kind {
+                ast::ExprKind::Ident(id) => (id, Some(prop)),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if self.is_local_name(&id.name) {
+            return None;
+        }
+        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
+            return None;
+        };
+        let Some(m) = method else {
+            return Some(d);
+        };
+        let r = self.cx.adt(d)?.methods.get(&m.name)?;
+        r.is_static.then_some(r.def)
     }
 }
 

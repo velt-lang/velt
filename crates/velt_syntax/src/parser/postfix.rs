@@ -4,7 +4,7 @@
 
 use super::{Fail, PResult, Parser, Ternary};
 use crate::ast::*;
-use crate::lexer::{Kw, Tok};
+use crate::lexer::{Kw, Tok, TplPart};
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_postfix(&mut self) -> PResult<Expr> {
@@ -25,22 +25,35 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Tok::QuestionDot => self.parse_optional_chain(e)?,
-                Tok::LParen => ExprKind::Call {
-                    callee: Box::new(e),
-                    type_args: vec![],
-                    args: self.parse_args()?,
-                    optional: false,
-                },
-                Tok::LBracket if self.at_well_known_key() => ExprKind::Member {
-                    object: Box::new(e),
-                    prop: self.parse_symbol_key()?,
-                    optional: false,
-                },
-                Tok::LBracket => ExprKind::Index {
-                    index: Box::new(self.parse_index()?),
-                    object: Box::new(e),
-                    optional: false,
-                },
+                Tok::LParen => {
+                    self.warn_continuation();
+                    ExprKind::Call {
+                        callee: Box::new(e),
+                        type_args: vec![],
+                        args: self.parse_args()?,
+                        optional: false,
+                    }
+                }
+                Tok::LBracket if self.at_well_known_key() => {
+                    self.warn_continuation();
+                    ExprKind::Member {
+                        object: Box::new(e),
+                        prop: self.parse_symbol_key()?,
+                        optional: false,
+                    }
+                }
+                Tok::LBracket => {
+                    self.warn_continuation();
+                    ExprKind::Index {
+                        index: Box::new(self.parse_index()?),
+                        object: Box::new(e),
+                        optional: false,
+                    }
+                }
+                Tok::Template(_, TplPart::NoSub | TplPart::Head) => {
+                    self.reject_tagged_template();
+                    return Err(Fail);
+                }
                 Tok::Lt if matches!(e.kind, ExprKind::Ident(_) | ExprKind::Member { .. }) => {
                     match self.try_generic_call_args()? {
                         Some((type_args, args)) => ExprKind::Call {
@@ -52,7 +65,9 @@ impl<'a> Parser<'a> {
                         None => break,
                     }
                 }
-                Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
+                // A restricted production: after a line break, `++` / `--` is the prefix
+                // operator of the next line's statement.
+                Tok::PlusPlus | Tok::MinusMinus if !self.line_break_before() => ExprKind::Update {
                     op: self.bump_update_op(),
                     prefix: false,
                     target: Box::new(e),
@@ -225,13 +240,18 @@ impl<'a> Parser<'a> {
         is_ternary
     }
 
-    fn can_start_expr(t: Tok) -> bool {
+    /// Can `t` be the first token of an expression? Every token `parse_unary_inner` and
+    /// `parse_primary` accept (a contextual word such as `undefined`, `delete` or `super` is a
+    /// `Tok::Ident`); keep the three in step.
+    pub(super) fn can_start_expr(t: Tok) -> bool {
         match t {
             Tok::Ident
             | Tok::Int(_)
             | Tok::Float(_)
             | Tok::Str(_)
             | Tok::Template(..)
+            | Tok::Regex(_)
+            | Tok::PrivateName
             | Tok::Lt
             | Tok::JsxLt
             | Tok::LParen
@@ -252,9 +272,13 @@ impl<'a> Parser<'a> {
                             | Kw::Null
                             | Kw::This
                             | Kw::New
+                            | Kw::Function
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
+                            | Kw::Import
+                            | Kw::Typeof
+                            | Kw::Void
                     )
             }
             _ => false,
@@ -277,6 +301,21 @@ impl<'a> Parser<'a> {
     fn parse_elems_in(&mut self, close: Tok) -> PResult<Vec<Expr>> {
         let mut out = Vec::new();
         while !self.at(close) {
+            // A hole of an array literal (`[a, , b]`): an identifier with no name
+            // (`crate::ARRAY_HOLE`), which prints as nothing.
+            if close == Tok::RBracket && self.at(Tok::Comma) {
+                let at = self.cur_lo();
+                let id = Ident {
+                    name: crate::ARRAY_HOLE.into(),
+                    span: velt_common::Span::new(self.file, at, at),
+                };
+                out.push(self.mk_expr(
+                    ExprKind::Ident(id),
+                    velt_common::Span::new(self.file, at, at),
+                ));
+                self.bump();
+                continue;
+            }
             out.push(self.parse_elem()?);
             if !self.eat(Tok::Comma) {
                 break;

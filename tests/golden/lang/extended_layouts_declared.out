@@ -1,0 +1,6 @@
+{ type: 'a', dom: null } { type: 1, dom: 2 }
+{ type: 'a', dom: null }
+{"type":"a","dom":null}
+{ type: 'b', dom: 'x', _ns: true, _cb: [Function (anonymous)] }
+{"type":"b","dom":"x","_ns":true}
+42 true

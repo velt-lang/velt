@@ -12,7 +12,7 @@
 //! earlier) are checked by the transfer itself, which panics instead of releasing the
 //! resource twice.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -113,8 +113,8 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
 /// passes its parameter on to one of those (`enqueue(ch, x)` calling `ch.send(x)`) hands it
 /// over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
 /// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
-fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> HashMap<DefId, Vec<usize>> {
-    let mut out: HashMap<DefId, Vec<usize>> = HashMap::new();
+fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> FxHashMap<DefId, Vec<usize>> {
+    let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
     // (function, callee, argument index, parameter index): the parameter is passed on as is.
     let mut passes: Vec<(DefId, DefId, usize, usize)> = vec![];
     for &d in fns {
@@ -357,7 +357,7 @@ fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, Str
             return;
         }
         E::Call {
-            callee: Callee::Intrinsic(Intrinsic::MutexNew),
+            callee: Callee::Intrinsic(Intrinsic::MutexNew | Intrinsic::RwLockNew),
             args,
         }
         | E::AdtLit { fields: args, .. }

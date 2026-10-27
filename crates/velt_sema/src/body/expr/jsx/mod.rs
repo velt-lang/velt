@@ -30,7 +30,6 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H};
-pub(crate) use component_call::{check_prop_copies, Adapter};
 pub(crate) use provider::Provider;
 
 impl FnCx<'_, '_> {

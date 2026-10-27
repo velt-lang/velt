@@ -2,7 +2,7 @@
 //! the type definitions (so queries work after checking is done): `Map<string, i64>`, `Point`,
 //! `{ x: i64 }`, `(x: i64) => string`, generic parameters by their declared names.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -26,7 +26,11 @@ pub(crate) struct Names {
     pub table: TyTable,
     pub defs: Vec<TypeName>,
     /// Type alias names of structural types (`Ctx::alias_names`).
-    pub aliases: HashMap<TyId, String>,
+    pub aliases: FxHashMap<TyId, String>,
+    /// Every type alias's name, by `Ctx::aliases` index (deferred types, `TyKind::Op`).
+    pub alias_decls: Vec<String>,
+    /// Every deferred form written outside an alias, as written (`TyOp::Inline`).
+    pub inline_forms: Vec<String>,
 }
 
 impl Names {
@@ -36,6 +40,14 @@ impl Names {
             table: cx.ty.table.clone(),
             defs,
             aliases: cx.alias_names.clone(),
+            alias_decls: cx
+                .aliases
+                .iter()
+                .map(|a| a.decl.name.name.clone())
+                .collect(),
+            inline_forms: (cx.type_level.inline.forms.iter())
+                .map(|f| f.shown.clone())
+                .collect(),
         }
     }
 
@@ -64,32 +76,68 @@ impl Names {
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "unknown".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.table.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => format!("({})[]", self.show(*e, param)),
+                TyKind::Option(..) | TyKind::FnPtr { .. } => {
+                    format!("({})[]", self.show(*e, param))
+                }
                 _ => format!("{}[]", self.show(*e, param)),
             },
             TyKind::Map(k, v) => with_args("Map", &[*k, *v]),
             TyKind::Tuple(ts) => format!("[{}]", list(ts)),
-            TyKind::Option(x) => format!("{} | null", self.show(*x, param)),
+            TyKind::Option(x, n) => format!("{}{}", self.show(*x, param), n.suffix()),
             TyKind::Result(a, b) => with_args("Result", &[*a, *b]),
             TyKind::Promise(x, e) if matches!(self.table.kind(*e), TyKind::Never) => {
                 with_args("Promise", &[*x])
             }
             TyKind::Promise(x, e) => with_args("Promise", &[*x, *e]),
             TyKind::Shared(x) => with_args("shared", &[*x]),
+            TyKind::Op(crate::hir::TyOp::Alias(a), args) => {
+                let name = self.alias_decls.get(*a as usize).map_or("unknown", |n| n);
+                with_args(name, args)
+            }
+            TyKind::Op(crate::hir::TyOp::Intersect, args) => args
+                .iter()
+                .map(|t| self.show(*t, param))
+                .collect::<Vec<_>>()
+                .join(" & "),
+            TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => "Error".to_string(),
+            TyKind::Op(crate::hir::TyOp::Spread, args) => {
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|t| format!("...{}", self.show(*t, param)))
+                    .collect();
+                format!("{{ {} }}", parts.join(", "))
+            }
+            TyKind::Op(crate::hir::TyOp::Inline(i), _) => {
+                (self.inline_forms.get(*i as usize)).map_or_else(|| "unknown".into(), |s| s.clone())
+            }
+            TyKind::Op(crate::hir::TyOp::Convert(_), args) => args
+                .iter()
+                .map(|t| self.show(*t, param))
+                .collect::<Vec<_>>()
+                .join(" as "),
             TyKind::FnPtr {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
                 let ps: Vec<String> = params
                     .iter()
                     .enumerate()
-                    .map(|(i, p)| format!("arg{i}: {}", self.show(*p, param)))
+                    .map(|(i, p)| {
+                        let dots = if *rest && i + 1 == params.len() {
+                            "..."
+                        } else {
+                            ""
+                        };
+                        format!("{dots}arg{i}: {}", self.show(*p, param))
+                    })
                     .collect();
                 let th = match self.table.kind(*throws) {
                     TyKind::Never => String::new(),
@@ -153,9 +201,9 @@ fn type_name(d: &DefInfo) -> TypeName {
         DefInfo::Adt(a) if a.kind == crate::hir::AdtKind::Anon => {
             TypeName::Anon(a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect())
         }
-        DefInfo::Adt(a) => TypeName::Named(a.name.clone()),
-        DefInfo::Enum(e) => TypeName::Named(e.name.clone()),
-        DefInfo::Iface(i) => TypeName::Named(i.name.clone()),
+        DefInfo::Adt(a) => TypeName::Named(crate::namespaces::written(&a.name).into_owned()),
+        DefInfo::Enum(e) => TypeName::Named(crate::namespaces::written(&e.name).into_owned()),
+        DefInfo::Iface(i) => TypeName::Named(crate::namespaces::written(&i.name).into_owned()),
         // Function values display with their parameter names (the IDE records a
         // `TyKind::Closure(def)` type for closures and named functions used as values).
         DefInfo::Fn(f) => {

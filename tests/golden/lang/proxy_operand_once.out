@@ -1,0 +1,12 @@
+keys ["a"] ownKeys, gopd a 1
+in a false has a 1
+in b true has b 1
+hasOwn b true gopd b 1
+hasOwnProperty a true gopd a 1
+plain keys ["a","b"]  0
+gopd a
+body a
+gopd b
+gopd c
+body c
+getP calls 1

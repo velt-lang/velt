@@ -6,14 +6,14 @@
 //! All dynamic calls use the *borrow ABI*: aggregates by pointer, the caller keeps ownership of
 //! every argument; entries that need adapting (owned params, env param) are thunks (glue/thunk.rs).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
-use super::{cint, ice, FnLower, ThunkKind, Work};
-use crate::vir::{self, Operand, Proj, Rvalue, Ty};
+use super::{cfunc, cint, ice, FnLower, ThunkKind, Work};
+use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 impl super::Cx<'_> {
     /// Unify a (possibly generic) pattern type with a concrete type, binding `Param(i)`.
@@ -37,7 +37,7 @@ impl super::Cx<'_> {
             }
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => self.match_all(xs, ys, binds),
             (TyKind::Array(x), TyKind::Array(y))
-            | (TyKind::Option(x), TyKind::Option(y))
+            | (TyKind::Option(x, _), TyKind::Option(y, _))
             | (TyKind::Shared(x), TyKind::Shared(y)) => self.match_ty(*x, *y, binds),
             (TyKind::Result(a, b), TyKind::Result(c, d))
             | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
@@ -47,7 +47,12 @@ impl super::Cx<'_> {
         }
     }
 
-    fn match_all(&self, xs: &[TyId], ys: &[TyId], binds: &mut Vec<Option<TyId>>) -> bool {
+    pub(super) fn match_all(
+        &self,
+        xs: &[TyId],
+        ys: &[TyId],
+        binds: &mut Vec<Option<TyId>>,
+    ) -> bool {
         xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.match_ty(*x, *y, binds))
     }
 
@@ -76,7 +81,7 @@ impl super::Cx<'_> {
     }
 
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
-    fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
+    pub(super) fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
         let mut out = vec![ty];
         let mut cur = ty;
         while let TyKind::Adt(d, args) = self.kind(cur) {
@@ -95,34 +100,13 @@ impl super::Cx<'_> {
     /// since programs may hold thousands of impls of one interface).
     pub(super) fn impls_of(&mut self, iface: DefId) -> Rc<[u32]> {
         let index = self.iface_impls.get_or_insert_with(|| {
-            let mut by_iface: HashMap<DefId, Vec<u32>> = HashMap::new();
+            let mut by_iface: FxHashMap<DefId, Vec<u32>> = FxHashMap::default();
             for (i, imp) in self.hir.impls.iter().enumerate() {
                 by_iface.entry(imp.iface).or_default().push(i as u32);
             }
             by_iface.into_iter().map(|(k, v)| (k, v.into())).collect()
         });
         index.get(&iface).cloned().unwrap_or_else(|| Rc::from([]))
-    }
-
-    /// The impl of `iface<iargs>` for concrete `ty` (or a base class of it): its index.
-    pub(super) fn find_impl(&mut self, iface: DefId, iargs: &[TyId], ty: TyId) -> u32 {
-        let impls = self.impls_of(iface);
-        for cand in self.self_and_bases(ty) {
-            for &i in impls.iter() {
-                let imp = &self.hir.impls[i as usize];
-                let mut binds = vec![None; imp.generics as usize];
-                if self.match_ty(imp.ty, cand, &mut binds)
-                    && imp.iface_args.len() == iargs.len()
-                    && self.match_all(&imp.iface_args, iargs, &mut binds)
-                {
-                    return i;
-                }
-            }
-        }
-        ice(format_args!(
-            "no impl of interface for type `{}`",
-            self.type_name(ty)
-        ))
     }
 
     /// Method `slot` of impl `index` for concrete `ty`: the def and its type args. A default
@@ -153,6 +137,13 @@ impl super::Cx<'_> {
             let mut args: Vec<TyId> = iface_args.iter().map(|&a| self.subst(a, &targs)).collect();
             args.push(implementor);
             (method, args)
+        } else if targs.is_empty() && self.fn_def(method).generics > 0 {
+            // A method of a generic class in an implementation for one instance of it (sema's
+            // `synth_ifaces`): the class's arguments, as its own table has them.
+            match self.fn_def(method).self_ty.map(|t| self.kind(t)) {
+                Some(TyKind::Adt(..)) => (method, self.method_targs(method, implementor)),
+                _ => (method, targs),
+            }
         } else {
             (method, targs)
         }
@@ -192,6 +183,27 @@ impl FnLower<'_, '_> {
         )
     }
 
+    /// Call `target(argv…)`, lowered already (`params`: their VIR types).
+    pub(super) fn call_code(
+        &mut self,
+        target: Operand,
+        argv: Vec<Operand>,
+        mut params: Vec<Ty>,
+        ret: TyId,
+        throws: Option<TyId>,
+    ) -> Operand {
+        let abi = self.cx.ret_abi(ret, throws);
+        if abi.out.is_some() {
+            params.push(Ty::Ptr);
+        }
+        let callee = vir::Callee::Ptr {
+            target,
+            params,
+            ret: abi.ret,
+        };
+        self.finish_call(callee, argv, ret, throws)
+    }
+
     /// Call `target(first, args…)` with the borrow ABI; `modes` are the callee's param modes
     /// (`this` first) when known; `transfer`: the call starts a spawned task (its arguments are
     /// copied for it, transfer.rs).
@@ -227,7 +239,31 @@ impl FnLower<'_, '_> {
         ty: TyId,
         transfer: bool,
     ) -> Operand {
+        if !transfer {
+            if let Some(v) = self.proxy_field_call(f, args, ty) {
+                return v;
+            }
+        }
         let fty = self.sub(f.ty);
+        let throws = match self.cx.kind(fty) {
+            TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),
+            _ => None,
+        };
+        // Another member of this closure's recursive closure group, only ever called: its
+        // code with this closure's env (frame_envs.rs).
+        if let (hir::ExprKind::Local(l, _), Some(env), false) = (&f.kind, self.self_env, transfer) {
+            if let Some(&def) = self.direct_siblings.get(l) {
+                let code = self.cx.func(Work::Fn(def, self.targs.clone()));
+                let env = Operand::Copy(Place::local(env));
+                let ret = self.sub(ty);
+                return self.call_ptr(cfunc(code), env, args, None, (ret, throws, false));
+            }
+        }
+        if !transfer {
+            if let Some(v) = self.call_known_fn(f, args, ty, throws) {
+                return v;
+            }
+        }
         let fv = match transfer {
             // A spawned call: the callee's state takes its captures from the environment (an
             // async closure copies them, or shares a resource that cannot be copied,
@@ -238,6 +274,15 @@ impl FnLower<'_, '_> {
                 let v = self.consume(f);
                 let v = self.transfer_value(v, fty);
                 self.own_value(v, fty)
+            }
+            // A function value read from a holder another reference reaches (a field of a
+            // counted object, an element, a shared cell): the call may replace it there
+            // (`this.f = …` in the function itself), which would drop its environment while it
+            // runs. It runs on a share instead, dropped after the statement.
+            false if self.callee_replaceable(f) => {
+                let v = self.expr(f);
+                let s = self.share_value(v, fty);
+                self.own_value(s, fty)
             }
             false => self.expr(f),
         };
@@ -251,12 +296,30 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
-        let throws = match self.cx.kind(fty) {
-            TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),
-            _ => None,
-        };
         // The callee is unknown: every non-Copy argument is a plain borrow.
         self.call_ptr(code, env, args, None, (ret, throws, transfer))
+    }
+
+    /// Is the function value `e` read from a place the call may replace: one reached through a
+    /// counted object (a field, an element), or rooted in a variable held in a shared cell or a
+    /// module `let`'s slot? A variable of this function or a parameter, and anything inside them
+    /// stored inline, is reached by no other reference, so the callee cannot replace it.
+    pub(super) fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => self.info[l.0 as usize].in_cell,
+            // A module `let`: every function reaches its slot, the callee too (when some code
+            // reassigns it), and may replace what lies inside any slot.
+            K::Global(d) => self.slot_reassigned(*d),
+            K::Field { base, .. } | K::Index { base, .. } => {
+                let bty = self.sub(base.ty);
+                self.cx.counted(bty) || self.callee_replaceable(base) || self.rooted_in_slot(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.callee_replaceable(base)
+            }
+            _ => false,
+        }
     }
 
     /// Load the vtable pointer of the class object `obj` (of static class type `cls`).

@@ -46,6 +46,18 @@ impl FnLower<'_, '_> {
         (p, tys[k])
     }
 
+    /// The place of field `index` of the `ty` value at `place` for an object pattern: on a
+    /// proxiable type a typed proxy or a view (any_view.rs) reads it through `__get`, as
+    /// `place.f` does (`proxy_read_at`; the value is borrowed from a slot of the scope).
+    fn pat_field(&mut self, place: &Place, ty: TyId, index: u32) -> Place {
+        if !self.cx.proxiable(ty) || self.is_unit_field(ty, index) {
+            return self.field_place(place, ty, index);
+        }
+        let hop = self.retained_hop(place, ty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+        self.proxy_read_at(&ptr, ty, index)
+    }
+
     fn cond_jump(&mut self, ok: Operand, fail: BlockId) {
         let next = self.new_block();
         self.branch(ok, next, fail);
@@ -73,7 +85,7 @@ impl FnLower<'_, '_> {
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
-                    let fp = self.field_place(place, ty, *i);
+                    let fp = self.pat_field(place, ty, *i);
                     self.test_pat(p, &fp, fty, fail);
                 }
             }
@@ -134,7 +146,14 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
-    fn test_variant(&mut self, v: u32, args: &[Pat], place: &Place, ty: TyId, fail: BlockId) {
+    pub(super) fn test_variant(
+        &mut self,
+        v: u32,
+        args: &[Pat],
+        place: &Place,
+        ty: TyId,
+        fail: BlockId,
+    ) {
         let tag = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
                 let disc = self.cx.enum_def(d).variants[v as usize].discriminant;
@@ -185,7 +204,8 @@ impl FnLower<'_, '_> {
         // Parts of a counted value have other owners: moving bindings inside it take shares of
         // them (a binding of the whole value just takes it over).
         let outer = self.share_binds;
-        self.share_binds |= self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
+        self.share_binds |=
+            !self.frozen_binds && self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
         self.bind_parts(pat, place, ty, register);
         self.share_binds = outer;
     }
@@ -193,11 +213,15 @@ impl FnLower<'_, '_> {
     fn bind_parts(&mut self, pat: &Pat, place: &Place, ty: TyId, register: bool) {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
+                if self.init_local(*id) {
+                    let by_ref = matches!(mode, UseMode::Borrow | UseMode::BorrowMut);
+                    self.declare_init_binding(*id, pat.ty, by_ref);
+                }
                 let moving = *mode == UseMode::Move;
                 if self.info[id.0 as usize].cell {
                     return self.bind_cell(*id, moving, register, place);
                 }
-                if *mode == UseMode::Borrow && self.stable_binds {
+                if *mode == UseMode::Borrow && self.stable_binds && !self.frozen_binds {
                     return self.bind_share(*id, place);
                 }
                 self.bind_local(*id, moving && register, moving, place)
@@ -214,7 +238,7 @@ impl FnLower<'_, '_> {
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
-                    let fp = self.field_place(place, ty, *i);
+                    let fp = self.pat_field(place, ty, *i);
                     self.bind_pat(p, &fp, fty, register);
                 }
             }
@@ -333,6 +357,9 @@ impl FnLower<'_, '_> {
 
     /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).
     fn bind_rest(&mut self, r: hir::LocalId, place: &Place, ty: TyId, skip: usize) {
+        if self.init_local(r) {
+            self.declare_init_binding(r, ty, false);
+        }
         let Some(l) = self.info[r.0 as usize].vir else {
             return;
         };
@@ -397,8 +424,13 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// [`Self::drop_rest`] of an object pattern, or of a field moved out of a struct, class or
+    /// tuple (`moved_field_pat`: a tuple's elements are its fields).
     fn drop_rest_fields(&mut self, place: Place, ty: TyId, fields: &[(u32, Pat)]) {
-        let tys = self.cx.adt_field_tys(ty);
+        let tys = match self.cx.kind(ty) {
+            TyKind::Tuple(tys) => tys,
+            _ => self.cx.adt_field_tys(ty),
+        };
         for (i, fty) in tys.into_iter().enumerate() {
             let fp = self.field_place(&place, ty, i as u32);
             match fields.iter().find(|(j, _)| *j as usize == i) {
@@ -463,7 +495,7 @@ impl FnLower<'_, '_> {
         if self.sub(p.ty) == ty {
             return (place.clone(), ty);
         }
-        let TyKind::Option(inner) = self.cx.kind(ty) else {
+        let TyKind::Option(inner, _) = self.cx.kind(ty) else {
             ice("Some pattern")
         };
         (self.some_payload(place, ty), inner)

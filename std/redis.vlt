@@ -40,10 +40,10 @@ import {
 } from "velt:redis/pubsub";
 import { setArgs, withPairs } from "velt:redis/args";
 
-declare async function velt_rt_redis_connect(url: string, ca: string): Promise<IoResult<u64>>;
-declare async function velt_rt_redis_duplicate(c: u64): Promise<IoResult<u64>>;
-declare function velt_rt_redis_close(c: u64);
-declare async function velt_rt_redis_command(c: u64, args: string[]): Promise<IoResult<RawReply>>;
+declare async function velt_std_redis__connect(url: string, ca: string): Promise<IoResult<u64>>;
+declare async function velt_std_redis__duplicate(c: u64): Promise<IoResult<u64>>;
+declare function velt_std_redis__close(c: u64);
+declare async function velt_std_redis__command(c: u64, args: string[]): Promise<IoResult<RawReply>>;
 
 export type RedisReply = Reply_;
 export type RedisReplyKind = ReplyKind_;
@@ -95,7 +95,7 @@ function unwrapHandle(r: IoResult<u64>): u64 {
 }
 
 async function run(handle: u64, args: string[]): Promise<RawReply> {
-  return checkReply(await velt_rt_redis_command(handle, args));
+  return checkReply(await velt_std_redis__command(handle, args));
 }
 
 /** A connection (a Copy handle; see the module header). */
@@ -350,7 +350,7 @@ export struct RedisClient {
 
   /** A new, separate connection to the same server (for blocking commands). */
   async duplicate(): Promise<RedisClient> {
-    return RedisClient { handle: unwrapHandle(await velt_rt_redis_duplicate(this.handle)) };
+    return RedisClient { handle: unwrapHandle(await velt_std_redis__duplicate(this.handle)) };
   }
 
   /**
@@ -358,13 +358,13 @@ export struct RedisClient {
    * nothing.
    */
   close() {
-    velt_rt_redis_close(this.handle);
+    velt_std_redis__close(this.handle);
   }
 }
 
 /** Connects to `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS). */
 export async function connect(url: string, opts: RedisConnectOptions = {}): Promise<RedisClient> {
-  return RedisClient { handle: unwrapHandle(await velt_rt_redis_connect(url, opts.ca ?? "")) };
+  return RedisClient { handle: unwrapHandle(await velt_std_redis__connect(url, opts.ca ?? "")) };
 }
 
 /**

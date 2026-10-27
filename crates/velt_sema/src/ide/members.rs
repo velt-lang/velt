@@ -3,7 +3,7 @@
 //! generic space — inherited ones substituted —, static members, `extend` blocks) and displayed
 //! for a concrete receiver type at query time.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{FileId, Span};
 
@@ -77,12 +77,12 @@ struct Extension {
 }
 
 pub(super) struct Members {
-    pub types: HashMap<DefId, TypeMembers>,
+    pub types: FxHashMap<DefId, TypeMembers>,
     /// Declaration span of each type definition (for `DefRef` → `DefId`).
-    by_span: HashMap<Span, DefId>,
+    by_span: FxHashMap<Span, DefId>,
     extensions: Vec<Extension>,
     /// The prelude's `Error` and the classes that extend it.
-    pub errors: HashSet<DefId>,
+    pub errors: FxHashSet<DefId>,
 }
 
 /// A type definition's raw members: instance, static, and what it is.
@@ -92,7 +92,7 @@ type RawType = (DefId, Vec<Raw>, Vec<Raw>, TypeKind, bool);
 pub(super) struct RawMembers {
     types: Vec<RawType>,
     extensions: Vec<(TyId, usize, Vec<Raw>)>,
-    errors: HashSet<DefId>,
+    errors: FxHashSet<DefId>,
 }
 
 pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
@@ -164,7 +164,7 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
             .map(DefId)
             .filter(|d| cx.class_extends(*d, error))
             .collect(),
-        None => HashSet::new(),
+        None => FxHashSet::default(),
     };
     RawMembers {
         types,
@@ -360,8 +360,8 @@ impl RawMembers {
                 })
                 .collect()
         };
-        let mut types = HashMap::new();
-        let mut by_span = HashMap::new();
+        let mut types = FxHashMap::default();
+        let mut by_span = FxHashMap::default();
         for (d, inst, stat, kind, is_std) in self.types {
             // The first definition with a span wins: a field-only interface's struct shares
             // the interface's.
@@ -481,7 +481,7 @@ fn show_shape(an: &Analysis, s: &Shape, param: &dyn Fn(u32) -> String) -> String
 /// `T | null` and `shared<T>` offer the members of `T`.
 fn strip(table: &TyTable, ty: TyId) -> TyId {
     match table.kind(ty) {
-        TyKind::Option(t) | TyKind::Shared(t) => strip(table, *t),
+        TyKind::Option(t, _) | TyKind::Shared(t) => strip(table, *t),
         _ => ty,
     }
 }
@@ -501,7 +501,7 @@ fn bind(table: &TyTable, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) ->
             None => false,
         },
         (TyKind::Array(p), TyKind::Array(a))
-        | (TyKind::Option(p), TyKind::Option(a))
+        | (TyKind::Option(p, _), TyKind::Option(a, _))
         | (TyKind::Shared(p), TyKind::Shared(a)) => bind(table, *p, *a, slots),
         (TyKind::Map(p1, p2), TyKind::Map(a1, a2))
         | (TyKind::Promise(p1, p2), TyKind::Promise(a1, a2))

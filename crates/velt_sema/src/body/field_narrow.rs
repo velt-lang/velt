@@ -29,7 +29,10 @@ pub(crate) struct FieldToken {
 impl FnCx<'_, '_> {
     /// The token of field path `e` (`x.a.b` on a local `x`), created when missing.
     pub(crate) fn field_token(&mut self, e: &ast::Expr) -> Option<LocalId> {
-        let (root, path) = self.field_path(e)?;
+        // A nullable module variable (`global_narrow`), for an assignment to it.
+        let Some((root, path)) = self.field_path(e, true) else {
+            return self.nullable_global(e);
+        };
         if let Some(t) = self.find_token(root, &path) {
             return Some(t);
         }
@@ -39,27 +42,177 @@ impl FnCx<'_, '_> {
         Some(token)
     }
 
-    /// `h`, the value of `object.prop`, as its payload if a condition proved it non-null.
+    /// `h`, the value of `object.prop`, as its payload if a condition proved it non-null, and
+    /// as the union member a `typeof` test narrowed it to. A read narrowed to several members
+    /// (or to members but not past its `null`) where `exp` is not its declared type reads as
+    /// the union of those members (`string | undefined` of `string | (() => string) |
+    /// undefined` after `typeof x.f === "function"` returned).
     pub(crate) fn narrowed_field(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
         h: hir::Expr,
         want: Want,
+        exp: Option<TyId>,
     ) -> hir::Expr {
-        let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
+        if self.f.field_tokens.is_empty() {
             return h;
-        };
-        let Some((root, path)) = self.member_path(object, prop) else {
-            return h;
-        };
-        match self.find_token(root, &path) {
-            Some(t) if self.is_narrowed(t) => {
-                let span = h.span;
-                self.checked_unwrap(h, payload, want, span)
-            }
-            _ => h,
         }
+        let payload = self.present_payload(h.ty);
+        let union = self.cx.union_members(payload.unwrap_or(h.ty));
+        if payload.is_none() && union.is_none() {
+            return h;
+        }
+        let Some((root, path)) = self.member_path(object, prop, false) else {
+            return h;
+        };
+        let Some(t) = self.find_token(root, &path) else {
+            return h;
+        };
+        // A field path of a local (not of a module variable, without a `r[k]` key).
+        let local_path =
+            self.token_global_ty(root).is_none() && !path.iter().any(|p| p.starts_with('\0'));
+        let allowed = self.allowed_members(t);
+        let member = match (&union, allowed.as_deref()) {
+            (Some(ms), Some(&[v])) => Some((v, ms[v as usize])),
+            _ => None,
+        };
+        // The members a test left, when they are some but not all of them and the read is a
+        // value whose expected type is not the field's own.
+        let test = self.field_test == Some(h.span);
+        let some = match (&union, allowed) {
+            (Some(ms), Some(vs)) if vs.len() < ms.len() && want != Want::BorrowMut && !test => {
+                Some((ms.clone(), vs))
+            }
+            _ => None,
+        };
+        let base_mode = match want {
+            Want::BorrowMut => hir::UseMode::BorrowMut,
+            _ => hir::UseMode::Borrow,
+        };
+        let span = h.span;
+        // A read that does not need the payload (`console.log(o.f)`, a test operand) reads the
+        // field as it is: a call may have cleared it (`checked_copies`).
+        let raw = self.raw_read == Some(span)
+            || (self.is_narrowed(t) && !self.needs_payload(span, exp, want, local_path, h.ty));
+        if payload.is_some() && raw {
+            return h;
+        }
+        // A `typeof` narrowing to one member is not needed where the field fits as it is.
+        if payload.is_none()
+            && member.is_some()
+            && !self.needs_payload(span, exp, want, local_path, h.ty)
+        {
+            return h;
+        }
+        let h = match payload {
+            Some(payload) if self.is_narrowed(t) => {
+                let mode = match member {
+                    Some(_) => base_mode,
+                    None => self.use_mode(payload, want),
+                };
+                // Each `UnwrapSome` of a field place checks it again (`checked_unwrap`).
+                self.unwrap_present(h, mode, span)
+            }
+            // `x.f !== undefined` on a `T | null | undefined` field: its `T | null`.
+            Some(_) if self.is_three_state(h.ty) && self.excludes(t, hir::Nothing::Undefined) => {
+                let mid = self
+                    .cx
+                    .ty
+                    .opt_payload(h.ty)
+                    .expect("ICE: option without a payload");
+                return self.checked_unwrap(h, mid, want, span);
+            }
+            Some(_) => {
+                return match some {
+                    Some((ms, vs)) if exp != Some(h.ty) => {
+                        self.narrowed_option_read(h, &ms, vs, span)
+                    }
+                    _ => h,
+                };
+            }
+            None => h,
+        };
+        if let (None, Some((ms, vs))) = (member, some) {
+            if exp != Some(h.ty) {
+                return self.narrowed_union_read(h, &ms, vs, span);
+            }
+            return h;
+        }
+        match member {
+            // `typeof x.f === "string"` (#1264): lowering checks the variant again, as a call
+            // since the test may have changed the field.
+            Some((variant, m)) => {
+                let mode = self.use_mode(m, want);
+                let kind = H::UnwrapVariant {
+                    expr: Box::new(h),
+                    variant,
+                    mode,
+                };
+                self.mk(kind, m, span)
+            }
+            None => h,
+        }
+    }
+
+    /// The operand `e` of a type test (`typeof e`, `e instanceof C`, `e === lit`), checked: a
+    /// narrowed field reads as it is (`FnCx::field_test`).
+    pub(crate) fn type_test_operand(&mut self, e: &ast::Expr) -> hir::Expr {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let outer = self.field_test.replace(inner.span);
+        let h = self.expr(e, None, Want::Borrow);
+        self.field_test = outer;
+        h
+    }
+
+    /// The `U | null` (or `| undefined`) field read `h` that a test narrowed to the members
+    /// `vs` of `U` (`ms`), but not past its nothing: as the union of those members, with it.
+    fn narrowed_option_read(
+        &mut self,
+        h: hir::Expr,
+        ms: &[TyId],
+        vs: Vec<u32>,
+        span: Span,
+    ) -> hir::Expr {
+        let sub: Vec<TyId> = vs.iter().map(|v| ms[*v as usize]).collect();
+        let (Some(n), false) = (self.cx.ty.nothing_of(h.ty), sub.is_empty()) else {
+            return h;
+        };
+        let core = match sub.as_slice() {
+            [one] => *one,
+            _ => self.cx.union_of(&sub, false, span),
+        };
+        let target = self.cx.ty.option_of(core, n);
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.option_to_option_narrowed(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
+    }
+
+    /// The union field read `h` that a test narrowed to its members `vs` (of `ms`, two or
+    /// more): as the union of those members.
+    fn narrowed_union_read(
+        &mut self,
+        h: hir::Expr,
+        ms: &[TyId],
+        vs: Vec<u32>,
+        span: Span,
+    ) -> hir::Expr {
+        let sub: Vec<TyId> = vs.iter().map(|v| ms[*v as usize]).collect();
+        if sub.len() < 2 {
+            return h;
+        }
+        let target = self.cx.union_of(&sub, false, span);
+        if self.cx.union_def(target).is_none() {
+            return h;
+        }
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.retag_live(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
     }
 
     /// `h`, the value of `object.prop`, as the subclass an `instanceof` test narrowed it to.
@@ -69,12 +222,14 @@ impl FnCx<'_, '_> {
         prop: &ast::Ident,
         h: hir::Expr,
     ) -> hir::Expr {
-        let token = self
-            .member_path(object, prop)
-            .and_then(|(root, path)| self.find_token(root, &path));
+        let found = self.member_path(object, prop, false);
+        let module = found
+            .as_ref()
+            .is_some_and(|(root, _)| self.token_global_ty(*root).is_some());
+        let token = found.and_then(|(root, path)| self.find_token(root, &path));
         match token {
             Some(t) if self.f.mutable_tests.contains(&t) => {
-                self.f.unnarrowed_reads.push(h.span);
+                self.f.unnarrowed_reads.push((h.span, module));
                 h
             }
             Some(t) => {
@@ -96,15 +251,22 @@ impl FnCx<'_, '_> {
     /// A note for a failed member access on `recv` (at `span`) if `recv` is a field that an
     /// `instanceof` test could not narrow.
     pub(crate) fn unnarrowed_note(&self, span: Span) -> Option<&'static str> {
-        self.f.unnarrowed_reads.contains(&span).then_some(
-            "`instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local",
-        )
+        let (_, module) = self.f.unnarrowed_reads.iter().find(|(s, _)| *s == span)?;
+        Some(match module {
+            true => "`instanceof` does not narrow a field of a module variable: a call between the test and this read may assign the variable; copy the field into a local and test the local",
+            false => "`instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local",
+        })
     }
 
     /// The token and the type (as narrowed so far) of `e` when it is a path of `readonly` class
     /// fields of a local (`node.left.right`), and not of a union type.
     pub(crate) fn readonly_field_path(&mut self, e: &ast::Expr) -> Option<(LocalId, TyId)> {
-        let (root, path) = self.field_path(e)?;
+        let (root, path) = self.field_path(e, true)?;
+        // A module variable may be reassigned by any call before the read, which is not
+        // checked again (`global_narrow`).
+        if self.token_global_ty(root).is_some() {
+            return None;
+        }
         let mut t = self.narrowed_local_ty(root);
         for k in 0..path.len() {
             let (d, _) = self.cx.class_of(t)?;
@@ -124,17 +286,47 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        let u = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let u = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.union_def(u).is_some() {
             return None;
         }
         Some((self.field_token(e)?, t))
     }
 
+    /// `e instanceof C` on a field path that is not all `readonly` (or not of classes), whose
+    /// type is a nullable `C` (`o.next instanceof A` with `next?: A | null`): when true, the
+    /// field is not null. Reads of it are checked again where they happen, as after `!= null`.
+    pub(crate) fn nullable_instance_field(
+        &mut self,
+        e: &ast::Expr,
+        class: hir::DefId,
+    ) -> Option<LocalId> {
+        let (root, path) = self.field_path(e, true)?;
+        let mut t = self.narrowed_local_ty(root);
+        for name in &path {
+            let t0 = self.cx.ty.core(t).unwrap_or(t);
+            t = self.cx.field_seen_from(t0, name, None)?.1;
+        }
+        let p = self.cx.ty.core(t)?;
+        let yes = matches!(
+            self.instance_kind(p, class),
+            Ok(super::expr::downcast::Instance::Yes)
+        );
+        yes.then(|| self.field_token(e)).flatten()
+    }
+
     /// The type local `l` reads as here (null, union member and subclass narrowing applied).
     fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
-        let mut t = self.local_ty(l);
-        if let Some(p) = self.cx.ty.opt_payload(t) {
+        let t = match self.token_global_ty(l) {
+            Some(t) => t,
+            None => self.local_ty(l),
+        };
+        self.narrowed_as(l, t)
+    }
+
+    /// `t`, the type of local or field token `l`, as narrowed here.
+    fn narrowed_as(&mut self, l: LocalId, mut t: TyId) -> TyId {
+        if let Some(p) = self.cx.ty.core(t) {
             if !self.is_narrowed(l) {
                 return t;
             }
@@ -152,10 +344,39 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `typeof x.f === tag` on field path `e` of a local (#1264): its token, whether its type is
+    /// nullable, the type without the nothings, and the nothings.
+    pub(super) fn field_with_members(
+        &mut self,
+        e: &ast::Expr,
+    ) -> Option<(LocalId, bool, TyId, Option<hir::Nothing>)> {
+        let (root, path) = self.field_path(e, true)?;
+        let mut t = self.narrowed_local_ty(root);
+        for k in 0..path.len() {
+            if k > 0 {
+                if let Some(token) = self.find_token(root, &path[..k]) {
+                    t = self.narrowed_as(token, t);
+                }
+            }
+            let owner = self.name_owner(&path[k]);
+            (_, t) = self.cx.field_seen_from(t, &path[k], owner)?;
+        }
+        let token = self.field_token(e)?;
+        let nothing = self.cx.ty.nothing_of(t);
+        Some(match self.cx.ty.core(t) {
+            Some(p) => (token, true, p, nothing),
+            None => (token, false, t, nothing),
+        })
+    }
+
     /// Assigning field path `e` (or its root local) drops the narrowing of it and every path
     /// below it.
     pub(crate) fn unnarrow_fields(&mut self, e: &ast::Expr) {
-        let Some((root, path)) = self.field_path(e) else {
+        let Some((root, path)) = self.field_path(e, false) else {
+            // Assigning a module variable drops its narrowing and its field paths'.
+            if let Some(t) = self.existing_global_token(e) {
+                self.unnarrow(t);
+            }
             return;
         };
         let hit: Vec<LocalId> = self
@@ -168,6 +389,28 @@ impl FnCx<'_, '_> {
         for t in hit {
             self.unnarrow(t);
         }
+    }
+
+    /// A loop may run its body again after it writes a field path (`o.v = 5`, `delete r[k]`):
+    /// the narrowing of what `s` writes does not hold inside (or after) it (#1280).
+    pub(crate) fn unnarrow_written_in(&mut self, s: &ast::Stmt) {
+        if self.f.field_tokens.is_empty() {
+            return;
+        }
+        let mut paths = vec![];
+        super::assigned::written_paths(s, &mut paths);
+        for p in paths {
+            self.unnarrow_fields(p);
+        }
+    }
+
+    /// The token of field path `e` if a test in this function made one.
+    pub(crate) fn existing_field_token(&mut self, e: &ast::Expr) -> Option<LocalId> {
+        if self.f.field_tokens.is_empty() {
+            return None;
+        }
+        let (root, path) = self.field_path(e, false)?;
+        self.find_token(root, &path)
     }
 
     /// The tokens of the field paths rooted at local `l`.
@@ -192,26 +435,36 @@ impl FnCx<'_, '_> {
     }
 
     /// (root local, field names) of `x.a.b` or `x["a"].b` (no `?.`, no calls or other indexes;
-    /// parentheses ok).
-    fn field_path(&mut self, e: &ast::Expr) -> Option<(LocalId, Vec<String>)> {
+    /// parentheses ok). The root may be the token of a module variable (`global_narrow`),
+    /// made when `create` (for a test) and missing.
+    fn field_path(&mut self, e: &ast::Expr, create: bool) -> Option<(LocalId, Vec<String>)> {
         if let ast::ExprKind::Paren(inner) = &e.kind {
-            return self.field_path(inner);
+            return self.field_path(inner, create);
         }
-        // `x["a"]` (a constant key) is the same path as `x.a`.
-        let (object, prop) = super::expr::member::member_view(e)?;
-        self.member_path(object, &prop)
+        // `x["a"]` (a constant key) is the same path as `x.a`; `x[k]` has `k` on it
+        // (`key_narrow`).
+        let (object, prop) = match super::expr::member::member_view(e) {
+            Some(found) => found,
+            None => self.keyed_view(e)?,
+        };
+        self.member_path(object, &prop, create)
     }
 
     fn member_path(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
+        create: bool,
     ) -> Option<(LocalId, Vec<String>)> {
         let (root, mut path) = match &object.kind {
             ast::ExprKind::Member { .. }
             | ast::ExprKind::Index { .. }
-            | ast::ExprKind::Paren(_) => self.field_path(object)?,
-            _ => (self.named_local(object)?, vec![]),
+            | ast::ExprKind::Paren(_) => self.field_path(object, create)?,
+            _ => match self.named_local(object) {
+                Some(l) => (l, vec![]),
+                None if create => (self.global_token(object)?, vec![]),
+                None => (self.existing_global_token(object)?, vec![]),
+            },
         };
         path.push(prop.name.clone());
         Some((root, path))

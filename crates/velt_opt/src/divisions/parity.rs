@@ -3,7 +3,7 @@
 //! bits). Spectral-norm's `((i + j) * (i + j + 1)) / 2` computes `i + j` twice, so equal
 //! expressions over unchanged locals get the same value number.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{BinOp, Const, Local, Operand, Rvalue, Stmt, Ty};
 
@@ -26,8 +26,8 @@ enum Expr {
 /// Value numbers of one block, filled statement by statement.
 pub(super) struct Parity<'a> {
     usage: &'a Usage,
-    local: HashMap<Local, Vn>,
-    known: HashMap<Expr, Vn>,
+    local: FxHashMap<Local, Vn>,
+    known: FxHashMap<Expr, Vn>,
     exprs: Vec<Expr>,
     /// Known trailing zero bits per value number.
     zeros: Vec<u32>,
@@ -38,8 +38,8 @@ impl<'a> Parity<'a> {
     pub fn new(usage: &'a Usage) -> Self {
         Parity {
             usage,
-            local: HashMap::new(),
-            known: HashMap::new(),
+            local: FxHashMap::default(),
+            known: FxHashMap::default(),
             exprs: vec![],
             zeros: vec![],
         }

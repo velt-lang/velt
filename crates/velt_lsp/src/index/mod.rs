@@ -79,7 +79,10 @@ pub fn item_names(item: &ast::Item) -> Vec<&ast::Ident> {
         ast::ItemKind::Enum(e) => vec![&e.name],
         ast::ItemKind::TypeAlias(a) => vec![&a.name],
         ast::ItemKind::Var(v) => pattern_idents(&v.pattern),
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) => vec![],
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => vec![],
     }
 }
 
@@ -239,7 +242,12 @@ pub fn imports(
         .items
         .iter()
         .filter_map(|item| match &item.kind {
-            ast::ItemKind::Import(import) if !item.exported => Some(import),
+            // Not the import the parser adds for `import.meta`, which the source does not have.
+            ast::ItemKind::Import(import)
+                if !item.exported && !velt_syntax::is_synthesized_import(import) =>
+            {
+                Some(import)
+            }
             _ => None,
         })
         .flat_map(|import| import.names.iter().map(move |n| (import, n)))

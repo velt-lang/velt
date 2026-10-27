@@ -103,7 +103,7 @@ unsafe fn new_race(
 
 /// If `f` is a race, mark each of its children to transfer its result with `transfer`
 /// (`velt_rt_fut_transfer`): the winner's result is a child's. Whether `f` was one.
-pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: ResultDropFn) -> bool {
+pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) -> bool {
     let race = race_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
     if !std::ptr::fn_addr_eq((*f).poll.0, race) {
         return false;

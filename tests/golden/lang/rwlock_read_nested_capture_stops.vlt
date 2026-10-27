@@ -1,0 +1,20 @@
+// A closure made inside a `read` callback captures the reader's variables, and they may hold the
+// store's objects: here a `Map` the lock holds, reached through a destructured copy of a
+// literal. Its `set` stops the program as any reader's write to the store does.
+class St {
+  m: Map<i64, i64> = new Map<i64, i64>();
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  console.log("before");
+  rw.read((s) => {
+    const b = { m: s.m };
+    const { m } = b;
+    const ks: i64[] = [1];
+    ks.forEach((k) => {
+      m.set(k, 2);
+    });
+  });
+  rw.read((s) => console.log(s.m.size));
+}

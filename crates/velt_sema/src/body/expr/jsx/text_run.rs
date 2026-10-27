@@ -91,7 +91,7 @@ impl FnCx<'_, '_> {
         if let H::Lit(hir::Lit::Str(s)) = &h.kind {
             return s.is_empty();
         }
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         members.iter().any(|m| self.cx.typeof_tag(*m) == "string")
     }

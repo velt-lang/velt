@@ -1,0 +1,21 @@
+// check: no leaks
+// A synchronous `main` that starts promises (#846, #1297): they run until their first `await`
+// when created, and the callbacks and microtasks they queue run once `main` returns, as in Node.
+async function load(): Promise<number> {
+  return 1;
+}
+
+async function work(name: string): Promise<void> {
+  console.log("start", name);
+  await load();
+  console.log("after await", name);
+}
+
+function main(): void {
+  load().then((v) => console.log("got", v));
+  const p = work("direct");
+  Promise.resolve().then(() => console.log("then"));
+  queueMicrotask(() => console.log("micro"));
+  setTimeout(() => console.log("timeout"), 1);
+  console.log("main end");
+}

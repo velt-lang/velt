@@ -40,7 +40,7 @@ interface AsyncIterable<T, E = never> {
 
 They live in `std/prelude/iter.vlt`.
 
-- The done case has no `value` (Velt has no `undefined`), and there is no `TReturn`.
+- The done case has no `value` (an `undefined` there is a later phase of #930), and there is no `TReturn`.
   `IteratorResult<T>` is an ordinary discriminated union on a `bool` literal field; `if (r.done)`
   and `if (!r.done)` narrow it (sema `body/narrow.rs`: a member access tested for truthiness on
   a union local whose discriminant values are all `bool` literals), and a union of `bool`
@@ -220,9 +220,10 @@ function* range(n: i64): Generator<i64> {
   like Node. A generator's state cannot be copied, so sema rejects every deep copy of a value
   holding one (`known.rs` `holds_generator`, `body/generators.rs` `no_generator_copy`):
   `clone()`, an argument (or receiver) of a spawned call, a value sent on a std `Channel`, and
-  a capture of an async closure (whose state copies its captures when it runs), each with
-  "a generator cannot be copied" / "... cannot be passed to another task" / "an async closure
-  cannot capture the generator `g`". A generator coerced to an interface value at the spawned
+  a capture of an async closure that may run on another thread (whose state copies its
+  captures when it runs; `ownership/local_async` decides, and a local one shares the
+  generator), each with "a generator cannot be copied" / "... cannot be passed to another
+  task" / "an async closure that may run on another thread cannot capture the generator `g`". A generator coerced to an interface value at the spawned
   call itself (`spawn(sum(gen()))` with `sum(it: Iterable<T>)`) is caught too (the argument's
   `ToDyn` operand). An interface value made earlier is not looked into: one backed by a
   generator that reaches a spawned task still panics at run time (`a generator cannot be
@@ -482,8 +483,8 @@ two-argument `IteratorResult<T, TReturn>` exist.
 
 ### Mechanism: `extend` blocks implement `Iterable`
 
-`extend` blocks cannot list `implements` (retroactive `implements` is planned, classes.md
-"extend"), so, as `compareTo` makes a type `Comparable` (`collect/comparable.rs`), an `extend`
+Besides `extend X implements Iterable<T>` (classes.md "extend … implements"), as `compareTo`
+makes a type `Comparable` (`collect/comparable.rs`), an `extend`
 block defining `[Symbol.iterator](): Iterator<T, E>` makes its target implement `Iterable<T, E>`,
 and one defining `[Symbol.asyncIterator](): AsyncIterator<T, E>` makes it an `AsyncIterable<T,
 E>` (`collect/iterable.rs`: an entry in `Program::impls`, generic when the block is). The rule
@@ -604,9 +605,15 @@ and narrowing are checked as usual:
   <array#N> }
 ```
 
-- **Spread** (`expr/spread.rs`): an array literal whose spread sources are all arrays is built
-  exactly as before (one allocation of the summed lengths, element loops). An iterable source
-  pushes from such a loop at its position (array sources are still evaluated first). A rest
+- **Spread** (`expr/spread_array.rs`): an array literal whose spread sources are all arrays is
+  built exactly as before (one allocation of the summed lengths, element loops). An iterable
+  source pushes from such a loop at its position. An array source that is not a place is
+  evaluated before the allocation unless that moves it past an element with effects, or moves
+  its effects past an element that reads a variable or a field (`[n, ...bump()]`): those
+  elements are then evaluated before it, in order. After an iterable, or after a spread of a
+  place that it could change (`[...xs, ...f()]`), it is evaluated at its position and left out
+  of the allocation's size, so everything runs in written order (`expr/eval_effects.rs` tells
+  what can move). A rest
   parameter's arguments are packed into an array literal (`pack_rest`), so `f(...gen())` and
   `Math.max(...values())` need nothing else. Mistyped values (`[...numbers()]` as `string[]`)
   are reported once, without the loop.

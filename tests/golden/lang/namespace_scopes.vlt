@@ -1,0 +1,42 @@
+// Names inside namespaces as TypeScript resolves them: an unexported member is visible only in
+// its own block, a nested namespace does not hide a type of the same name, and namespace
+// members inside conditional, mapped and template literal types.
+type A = string;
+namespace N {
+  type A = number;
+  export type X = A;
+}
+namespace N {
+  export type Y = A; // the outer `A`: `N`'s `A` is not exported
+}
+
+type B = { x: number };
+namespace Outer {
+  export namespace B {
+    export type T = string;
+  }
+  export type Q = B; // the type `B`, not the namespace
+  export type R = B.T;
+}
+
+namespace Kinds {
+  export type Yes = "yes";
+  export type No = "no";
+  export type Name = "click";
+  export type Box<T> = { v: T };
+  export type IsString<T> = T extends string ? Yes : No;
+  export type Boxed<T> = { [K in keyof T]: Box<T[K]> };
+  export type Event = `on${Name}`;
+  export type Unbox<T> = T extends Box<infer U> ? U : never;
+}
+
+const x: N.X = 1;
+const y: N.Y = "y";
+const q: Outer.Q = { x: 2 };
+const r: Outer.R = "r";
+const yes: Kinds.IsString<string> = "yes";
+const no: Kinds.IsString<number> = "no";
+const boxed: Kinds.Boxed<{ a: number }> = { a: { v: 3 } };
+const ev: Kinds.Event = "onclick";
+const n: Kinds.Unbox<Kinds.Box<number>> = 4;
+console.log(x, y, q.x, r, yes, no, boxed.a.v, ev, n);

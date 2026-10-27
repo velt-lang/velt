@@ -17,6 +17,7 @@ impl<'a> Printer<'a> {
             Lit::Bool(true) => "true".into(),
             Lit::Bool(false) => "false".into(),
             Lit::Null => "null".into(),
+            Lit::Undefined => "undefined".into(),
         }
     }
 
@@ -65,6 +66,17 @@ impl<'a> Printer<'a> {
                         *is_async,
                         Some(doc),
                     ),
+                    // `{ a = 1 }` (a shorthand default in an assignment target), which the
+                    // parser gives as `a: a = 1` with the assignment starting at the key.
+                    ExprKind::Assign {
+                        op: None,
+                        target,
+                        value: dflt,
+                    } if value.span.lo == key.span.lo
+                        && matches!(&target.kind, ExprKind::Ident(t) if t.name == key.name) =>
+                    {
+                        cat![doc, " = ", self.expr(dflt)]
+                    }
                     // `*name(params) { body }` / `async *name()`, which the parser gives as a
                     // property holding a generator function whose span starts before the name.
                     ExprKind::Function(f) if method => {
@@ -80,12 +92,79 @@ impl<'a> Printer<'a> {
                         };
                         self.fn_decl(&f, "")
                     }
+                    // `get name() { body }` / `set name(v) { body }`, which the parser gives as
+                    // a call of `__object_get` / `__object_set` (callee span: the keyword) of
+                    // the accessor as an arrow.
+                    ExprKind::Call { callee, args, .. } if self.accessor_kw(callee).is_some() => {
+                        let kw = self.accessor_kw(callee).expect("ICE: checked above");
+                        match args.as_slice() {
+                            [Expr {
+                                kind:
+                                    ExprKind::Arrow {
+                                        type_params,
+                                        params,
+                                        ret,
+                                        throws,
+                                        body,
+                                        is_async,
+                                    },
+                                ..
+                            }] => self.arrow(
+                                type_params,
+                                params,
+                                (ret.as_ref(), throws.as_ref()),
+                                body,
+                                *is_async,
+                                Some(cat![kw, " ", doc]),
+                            ),
+                            _ => self.property(doc, value),
+                        }
+                    }
                     _ => self.property(doc, value),
                 }
             }
             ObjectProp::Shorthand(key) => self.prop_key(key),
-            ObjectProp::Spread(value) => cat!["...", self.expr(value)],
+            ObjectProp::Spread(value) => match self.computed_entry(value) {
+                // `[key]: value`, which the parser gives as a spread of a call of
+                // `__computed_key` whose callee's span is the bracketed key.
+                Some((key, v)) => {
+                    let key = cat!["[", self.expr(key), "]"];
+                    self.property(key, v)
+                }
+                None => cat!["...", self.expr(value)],
+            },
             ObjectProp::Method(f) => self.fn_decl(f, ""),
+        }
+    }
+
+    /// `"get"` / `"set"` if `callee` is the `__object_get` / `__object_set` of an accessor
+    /// (its span is the keyword, not a written name).
+    fn accessor_kw(&self, callee: &Expr) -> Option<&'static str> {
+        let ExprKind::Ident(f) = &callee.kind else {
+            return None;
+        };
+        let raw = slice(self.src, callee.span);
+        match f.name.as_str() {
+            velt_syntax::ast::OBJECT_GET_FN if raw == "get" => Some("get"),
+            velt_syntax::ast::OBJECT_SET_FN if raw == "set" => Some("set"),
+            _ => None,
+        }
+    }
+
+    /// The key and value of `[key]: value` (a computed key known only at run time), if `e` is
+    /// the call the parser writes it as (not a written `__computed_key(...)`).
+    fn computed_entry<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+        let ExprKind::Call { callee, args, .. } = &e.kind else {
+            return None;
+        };
+        match (&callee.kind, args.as_slice()) {
+            (ExprKind::Ident(f), [key, value])
+                if f.name == velt_syntax::ast::COMPUTED_KEY_FN
+                    && slice(self.src, callee.span).starts_with('[') =>
+            {
+                Some((key, value))
+            }
+            _ => None,
         }
     }
 
@@ -94,19 +173,43 @@ impl<'a> Printer<'a> {
         self.assignment(key, ":", value)
     }
 
-    /// Was property name `key` written as a string literal (`"a-b"`)?
+    /// Was property name `key` written as a string literal (`"a-b"`) or a template (`` [`a-b`] ``)?
     pub(super) fn quoted(&self, key: &Ident) -> bool {
-        slice(self.src, key.span).starts_with(['"', '\''])
+        slice(self.src, key.span).starts_with(['"', '\'', '`'])
     }
 
-    /// A property name as written: identifier, or string literal (in house quotes).
+    /// A property name as written: identifier, string literal (in house quotes), or a template
+    /// without substitutions in its brackets (`` [`a-b`] ``, kept as written: its escapes are in
+    /// the source only), with the brackets of a string or number literal written in brackets
+    /// (`["k"]: T`, `[7]: 1`), which the parser gives as the plain name.
     pub(super) fn prop_key(&self, key: &Ident) -> Doc {
-        let raw = slice(self.src, key.span);
-        if raw.starts_with(['"', '\'']) {
-            text(string_literal(raw))
-        } else {
-            text(key.name.clone())
+        let before = self.src[..key.span.lo as usize].trim_end();
+        let after = self.src[key.span.hi as usize..].trim_start();
+        let template = slice(self.src, key.span).starts_with('`');
+        if before.ends_with('[')
+            && after.starts_with(']')
+            && !key.name.starts_with('[')
+            && !template
+        {
+            return cat!["[", self.plain_prop_key(key), "]"];
         }
+        self.plain_prop_key(key)
+    }
+
+    /// [`Self::prop_key`] without the brackets.
+    fn plain_prop_key(&self, key: &Ident) -> Doc {
+        let raw = slice(self.src, key.span);
+        let printed = if raw.starts_with(['"', '\'']) {
+            string_literal(raw)
+        } else if raw.starts_with('`') {
+            format!("[{raw}]")
+        } else if raw.starts_with(|c: char| c.is_ascii_digit()) {
+            // A numeric name (`7`, `0x10`) as written.
+            raw.to_string()
+        } else {
+            key.name.clone()
+        };
+        text(printed)
     }
 }
 

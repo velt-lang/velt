@@ -29,7 +29,14 @@ pub fn resolve_module(
         Some(file) => ModuleRef::Relative {
             file: vpm::relpath::normalize(&file),
         },
-        None => resolve_spec(spec, dir).ok()?,
+        None => {
+            let classified = resolve_spec(spec, dir);
+            let mut npm = vpm::npm::NpmResolver::default();
+            match super::npm_module(&mut npm, packages, importer, spec, &classified) {
+                Some(found) => ModuleRef::Relative { file: found.ok()? },
+                None => classified.ok()?,
+            }
+        }
     };
     let in_std = std_root.is_some_and(|std| file_key(importer).starts_with(file_key(std)));
     let origin = match std_root {

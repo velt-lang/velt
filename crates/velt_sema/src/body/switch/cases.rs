@@ -69,7 +69,8 @@ impl FnCx<'_, '_> {
                 if let Some(values) = self.cx.discriminant_values(obj.ty, &prop.name) {
                     self.rec_discriminant(prop, obj.ty);
                     let local = self.named_local(object);
-                    return self.scrut(obj, ScrutKind::Discriminant(values), local, what, pre);
+                    let s = self.scrut(obj, ScrutKind::Discriminant(values), local, what, pre);
+                    return self.view_keyed(s, prop, pre);
                 }
                 let h = self.member_of(obj, prop, Want::Borrow, disc.span);
                 self.value_scrut(h, None, what, pre)
@@ -101,6 +102,32 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `switch (s.kind)` on a union that may hold a view (`crate::union_views`): the value
+    /// matched is the discriminant read (through the view's getter for a view), each slot's
+    /// pattern the one on that value; the slots still narrow `s` in the case bodies.
+    fn view_keyed(&mut self, mut s: Scrut, prop: &ast::Ident, pre: &mut Vec<hir::Stmt>) -> Scrut {
+        let ScrutKind::Discriminant(values) = &s.kind else {
+            return s;
+        };
+        if self.cx.union_view(s.expr.ty).is_none() {
+            return s;
+        }
+        let values = values.clone();
+        let span = s.expr.span;
+        let key = match self.union_field(s.expr.clone(), prop, Want::Borrow, span) {
+            Ok(k) => k,
+            Err(_) => return s,
+        };
+        let ty = key.ty;
+        for slot in &mut s.slots {
+            if let Some(v) = slot.variant {
+                slot.pat = self.view_key_pat(ty, &values[v as usize], span);
+            }
+        }
+        s.expr = self.place_scrutinee(key, pre);
+        s
+    }
+
     /// A value scrutinee: a union, an enum or a plain value.
     fn value_scrut(
         &mut self,
@@ -111,7 +138,7 @@ impl FnCx<'_, '_> {
     ) -> Scrut {
         // A branded value is compared as its primitive (`case "admin":` on a `UserId`).
         let h = self.unbrand(h);
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let kind = if self.cx.union_def(inner).is_some() {
             ScrutKind::Union
         } else {
@@ -209,14 +236,14 @@ impl FnCx<'_, '_> {
     /// Slots of a union / nullable / `typeof` scrutinee: `null` first, then the live members.
     fn member_slots(&mut self, s: &hir::Expr, kind: &ScrutKind) -> (Vec<Slot>, bool) {
         let live = self.narrowed_live(s);
-        let inner = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
         let is_union = self.cx.union_def(inner).is_some();
         let mut out = vec![];
         let mut partial = false;
         for (k, (pat, member)) in self.member_patterns(s.ty, s.span).into_iter().enumerate() {
-            let has_null = self.cx.ty.opt_payload(s.ty).is_some();
+            let nothings = self.nothing_arms(s.ty).len();
             let variant = match (member, is_union) {
-                (Some(_), true) => Some((k - usize::from(has_null)) as u32),
+                (Some(_), true) => Some((k - nothings) as u32),
                 _ => None,
             };
             if variant.is_some_and(|v| live.as_ref().is_some_and(|l| !l.contains(&v))) {

@@ -1,0 +1,40 @@
+// `...rest` in object patterns (#1200): the rest has no field the pattern names (TypeScript's
+// TS2339), and what Velt can't take the rest of yet is an error: a type parameter, an interface
+// with methods, a record with a closed key type.
+interface Shape {
+  kind: string;
+  size: number;
+}
+
+interface Named {
+  name: string;
+  greet(): string;
+}
+
+function f(s: Shape): number {
+  const { kind, ...rest } = s;
+  console.log(kind);
+  return rest.kind.length;
+}
+
+function g<T extends Shape>(t: T): void {
+  const { kind, ...rest } = t;
+  console.log(kind, rest);
+}
+
+function h(n: Named): void {
+  const { name, ...rest } = n;
+  console.log(name, rest);
+}
+
+function k(r: Record<"a" | "b", number>): void {
+  const { a, ...rest } = r;
+  console.log(a, rest);
+}
+
+function main() {
+  f({ kind: "sq", size: 2 });
+  g({ kind: "sq", size: 2 });
+  h({ name: "n", greet: () => "hi" });
+  k({ a: 1, b: 2 });
+}

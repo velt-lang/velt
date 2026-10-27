@@ -33,42 +33,64 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod arrow_scans;
+mod assign_ends;
+mod assign_narrow;
 pub(crate) mod assigned;
+mod checked_copies;
 mod closure_assigned;
+pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
-mod defaults;
+pub(crate) mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
+mod for_any;
 mod for_await;
+pub(crate) mod for_in_proxy;
 mod for_iter;
 mod for_map;
+mod gated;
 mod generators;
+mod global_narrow;
+mod index_keys;
+mod key_narrow;
+mod late_consts;
+pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod chain_facts;
+mod literal_patterns;
 mod locals;
 mod loops;
+pub(crate) mod moved_const;
 pub(crate) mod narrow;
+mod narrow_generic;
 mod nested_pattern;
+mod object_rest;
 mod param_patterns;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod predicate_unrelated;
 mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
+mod readonly_arrays;
 pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
+pub(crate) use readonly_arrays::is_readonly_array;
+pub(crate) use readonly_arrays::{is_readonly_type, NUMBER_RECORD};
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
 mod using;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -78,7 +100,12 @@ use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
-pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use driver::{
+    check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,
+    promise_in_state,
+};
+pub(crate) use expr::REPORTED;
+pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +147,11 @@ pub(crate) struct LoopCx {
     pub needs_label: bool,
     /// Label given to the HIR loop when the source has none but one is needed.
     pub synth_label: String,
+    /// The number of scopes open where the entry starts.
+    pub depth: usize,
+    /// For a `switch`: the narrowing state at each `break` that leaves it, folded into the
+    /// scopes open at the `switch` (`switch::case_bodies` joins them).
+    pub break_states: Vec<locals::NarrowState>,
 }
 
 impl LoopCx {
@@ -135,13 +167,18 @@ impl LoopCx {
 
 #[derive(Default, Clone)]
 pub(crate) struct Scope {
-    pub names: HashMap<String, LocalId>,
+    pub names: FxHashMap<String, LocalId>,
     /// Option locals narrowed to their payload inside this scope.
     pub narrowed: Vec<LocalId>,
+    /// `T | null | undefined` locals known not to hold this nothing inside this scope.
+    pub excluded: Vec<(LocalId, crate::hir::Nothing)>,
     /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
     pub classes: Vec<(LocalId, TyId)>,
+    /// Union locals that hold the member they are narrowed to because it was assigned to them
+    /// (never a view, `crate::union_views`).
+    pub held: Vec<LocalId>,
     /// Facts not assumed inside this scope: their locals are assigned by closures
     /// (`closure_assigned`).
     pub refused: Vec<(LocalId, closure_assigned::Refused)>,
@@ -160,12 +197,34 @@ pub(crate) struct CaptureCx {
     /// The variable was narrowed where the closure was created, and the closure body starts
     /// from that narrowing (so the body must not assign it).
     pub narrowed: bool,
+    /// That narrowing: it holds in the whole body, also past branches that started before the
+    /// capture was made (`FnCx::restore_narrowing`).
+    pub start: locals::Narrowing,
 }
+
+/// A promise an async function returns (`expr::tasks`, `async_returned`): the `return` stores
+/// it in `slot` (`T | null`) and leaves the body's scopes with `break` [`ADOPT_LABEL`]; then
+/// `value` (reading `bind`, the promise moved out of `slot`) is returned.
+#[derive(Clone)]
+pub(crate) struct Adopted {
+    pub slot: LocalId,
+    pub bind: LocalId,
+    pub value: hir::Expr,
+}
+
+/// The label of the loop around the body of an async function that returns a promise.
+pub(crate) const ADOPT_LABEL: &str = "<adopt>";
 
 /// Per-function checking state; closures push a new frame (the enclosing one is saved).
 #[derive(Clone)]
 pub(crate) struct Frame {
     pub kind: FnKind,
+    /// The CPU extension this function is gated on (`__intrinsic_target`, `body::gated`): it
+    /// may call the gated functions of that target. A closure's frame starts without it.
+    pub target: Option<crate::hir::CpuTarget>,
+    /// The checks of CPU extensions that hold where the code being checked runs: the `then`
+    /// branches of the `if (u32x4.hasShaArm())` being checked, innermost last.
+    pub cpu_guards: Vec<crate::hir::CpuTarget>,
     pub locals: Vec<LocalDef>,
     pub kinds: Vec<LocalKind>,
     pub scopes: Vec<Scope>,
@@ -182,32 +241,95 @@ pub(crate) struct Frame {
     /// annotation: as in TypeScript, the value its body or a `return` gives is evaluated and
     /// dropped (`(s: string) => void` takes `(s) => out.push(s)` whatever `push` returns).
     pub discards_value: bool,
+    /// An arrow whose result type nothing expected fills (no function type is expected, or it
+    /// is a promise callback): an end never reached and no `return` give `never`, as in
+    /// TypeScript. Inferred for a type argument (`xs.map((x) => { throw e; })`) it stays `void`.
+    pub never_end: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// The program's top-level statements (the root file's generated `async main`): its
+    /// `await`s tell the runtime where they wait (`expr/top_level_await.rs`); the top-level
+    /// `await`s whose operand is being checked (innermost last).
+    pub top_level: bool,
+    pub top_level_outer: Vec<Span>,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
+    /// none).
+    pub next_ty: Option<TyId>,
+    /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
+    /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
+    pub catch_depth: u32,
     /// Body of a named generator function expression: its name (not in scope there).
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
+    /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
+    /// once the body's scopes are left (`wrap_adopted`; issue #1148).
+    pub adopted: Vec<Adopted>,
+    /// Class values pending as `const`s at the start of their blocks (`expr::ctor_locals`).
+    pub class_lets: Vec<expr::ctor_locals::ClassLet>,
+    /// The scopes of the statement lists being checked (`stmts_into`), outermost first.
+    pub stmt_lists: Vec<usize>,
+    /// Which of `adopted` was stored last (`i + 1`; `0` for none): every store writes it, so a
+    /// `return p` cancelled by a `finally` (`continue`, `break`, another `return`) is not
+    /// adopted, as in JS.
+    pub adopt_which: Option<LocalId>,
+    /// The `return` being checked stores a promise to adopt: it becomes that statement.
+    pub adopt_stmt: bool,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
     /// `break`/`continue` there cannot target a loop outside it).
     pub finally_loops: Option<usize>,
     /// Spans (`lo`, `hi`) of the `yield`s about to be checked whose value is unused: those
     /// that are, or end, an expression statement (`generators.rs`, `stmt_yields`).
-    pub stmt_yields: std::collections::HashSet<(u32, u32)>,
+    pub stmt_yields: rustc_hash::FxHashSet<(u32, u32)>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
     /// `using` variables passed to an async call (receiver or argument), not yet soft moves:
     /// only a directly awaited call may share one (`expr::tasks`, `using_share`).
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
-    pub await_using: std::collections::HashSet<LocalId>,
+    pub await_using: rustc_hash::FxHashSet<LocalId>,
+    /// Marks of locals: [`READONLY`] for one declared with a read-only array or collection type,
+    /// which the body may not write to (`readonly_arrays.rs`), [`NUMBER_RECORD`] for one declared
+    /// with a number-keyed record type (`expr::number_records`).
+    pub local_marks: FxHashMap<LocalId, u8>,
+    /// What the position of an assignment used as a value expects (`assign_value`): a
+    /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
+    /// it (`dynamic_write`).
+    pub assign_hint: Option<TyId>,
+    /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
+    /// `readonly_arrays.rs`).
+    pub readonly_exempt: Option<LocalId>,
+    /// A method call written `(x as T).m()` with `T` read-only (`readonly_arrays.rs`).
+    pub readonly_cast_recv: bool,
+    /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
+    /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
+    pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
-    pub closure_consts: std::collections::HashMap<LocalId, DefId>,
+    pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
+    /// `const g: G = id`: the named generic function each such local holds, instantiated where
+    /// the local is used as a function of fixed types (`expr::generic_conversions`).
+    pub named_fns: rustc_hash::FxHashMap<LocalId, DefId>,
+    /// The property writes after the declaration being checked, which a cast of a function to
+    /// a callable object type there takes as members (`expr::callables`, #921).
+    pub callable_writes: Option<expr::PendingWrites>,
+    /// Variables made functions with properties by `Object.assign(f, { … })`, with the call's
+    /// span (`expr::callables`).
+    pub assign_targets: Vec<(LocalId, Span)>,
+    /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
+    /// them another `this` is not supported yet (`call_apply`).
+    pub method_values: rustc_hash::FxHashSet<LocalId>,
+    /// `const` locals declared with a property read of a variable (`const f = (o as T).m`), with
+    /// that variable: `f.call(o)` runs `f` on the object it keeps while nothing assigns `o`
+    /// (`call_apply`).
+    pub member_reads: rustc_hash::FxHashMap<LocalId, LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
+    /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
+    /// rethrowing it throws what they throw (`expr::errors`).
+    pub caught: Vec<(LocalId, Vec<ThrowSrc>)>,
     pub uncaught: Vec<ThrowSrc>,
     /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
     /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
@@ -226,15 +348,24 @@ pub(crate) struct Frame {
     pub stmt_depth: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
+    /// Module variables that conditions narrow (`global_narrow`).
+    pub global_tokens: Vec<global_narrow::GlobalToken>,
     /// `const`s bound by reference (`const_borrow`).
-    pub const_refs: std::collections::HashSet<LocalId>,
+    pub const_refs: rustc_hash::FxHashSet<LocalId>,
     /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
     /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
     pub mutable_tests: Vec<LocalId>,
-    pub unnarrowed_reads: Vec<Span>,
+    /// With whether the field is one of a module variable's (`global_narrow`).
+    pub unnarrowed_reads: Vec<(Span, bool)>,
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
-    pub closure_assigned: HashMap<String, Span>,
+    pub closure_assigned: FxHashMap<String, Span>,
+    /// Untyped locals initialized from a narrowed module variable or field path: nullable,
+    /// with a null check fact whose reads are checked (`checked_copies`).
+    pub checked_copies: rustc_hash::FxHashSet<LocalId>,
+    /// Where this function's own code last assigns each variable (`assign_ends`): closures
+    /// created before that do not see the variable's narrowing.
+    pub assign_ends: FxHashMap<String, u32>,
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
@@ -243,23 +374,38 @@ pub(crate) struct Frame {
     pub truthy_returns: bool,
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
-    pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    pub const_lits: FxHashMap<LocalId, velt_syntax::ast::SignedLit>,
     /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
     /// capturing groups and the flags of the regex each such local holds (`regex_args`).
-    pub regex_consts: HashMap<LocalId, (usize, String)>,
+    pub regex_consts: FxHashMap<LocalId, (usize, String)>,
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
-    pub untyped_lets: HashMap<LocalId, Span>,
+    pub untyped_lets: FxHashMap<LocalId, Span>,
+    /// `let x: T;` without an initializer that a closure assigns (`closure_assigned`): held as
+    /// a `T | undefined` that starts `undefined`, and read through a check
+    /// ([`FnCx::late_let_read`]).
+    pub late_lets: rustc_hash::FxHashSet<LocalId>,
+    /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
+    /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
+    /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
+    pub destructured_discriminants: FxHashMap<LocalId, Vec<(bool, LocalId)>>,
     /// Calls of type predicates (`isFoo(x)`) whose conditions narrow a local: by the call's
     /// span (`lo`, `hi`), the local and the facts it establishes when the call returns `true`
     /// and `false`. The call checks them at run time (`predicates::predicate_checked`).
-    pub checked_predicates: HashMap<(u32, u32), predicates::CheckedPredicate>,
+    pub checked_predicates: FxHashMap<(u32, u32), predicates::CheckedPredicate>,
+    /// Recursive closure groups declared in this frame, or the one whose member it checks
+    /// (`closure_group`).
+    pub groups: closure_group::GroupFrame,
+    /// `const`s used by closures in their own initializer (`late_consts`).
+    pub late: late_consts::LateFrame,
 }
 
 impl Frame {
     pub fn new(kind: FnKind, ret: Option<TyId>) -> Self {
         Frame {
             kind,
+            target: None,
+            cpu_guards: vec![],
             locals: vec![],
             kinds: vec![],
             scopes: vec![Scope::default()],
@@ -270,17 +416,38 @@ impl Frame {
             captures: vec![],
             escaping: false,
             discards_value: false,
+            never_end: false,
             is_async: false,
+            top_level: false,
+            top_level_outer: vec![],
             yield_ty: None,
+            next_ty: None,
+            catch_depth: 0,
             fn_expr_name: None,
             finally_depth: 0,
+            adopted: vec![],
+            class_lets: vec![],
+            stmt_lists: vec![],
+            adopt_which: None,
+            adopt_stmt: false,
             finally_loops: None,
             stmt_yields: Default::default(),
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
+            local_marks: Default::default(),
+            assign_hint: None,
+            readonly_exempt: None,
+            readonly_cast_recv: false,
+            as_const_tuples: Default::default(),
             closure_consts: Default::default(),
+            named_fns: Default::default(),
+            callable_writes: None,
+            assign_targets: vec![],
+            method_values: Default::default(),
+            member_reads: Default::default(),
             tries: vec![],
+            caught: vec![],
             uncaught: vec![],
             super_ok: false,
             super_called: false,
@@ -289,18 +456,32 @@ impl Frame {
             before_super: false,
             stmt_depth: 0,
             field_tokens: vec![],
+            global_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
-            closure_assigned: HashMap::new(),
+            closure_assigned: FxHashMap::default(),
+            checked_copies: Default::default(),
+            assign_ends: FxHashMap::default(),
             int_returns_number: false,
-            checked_predicates: HashMap::new(),
+            checked_predicates: FxHashMap::default(),
             truthy_returns: false,
-            const_lits: HashMap::new(),
-            regex_consts: HashMap::new(),
-            untyped_lets: HashMap::new(),
+            const_lits: FxHashMap::default(),
+            regex_consts: FxHashMap::default(),
+            untyped_lets: FxHashMap::default(),
+            late_lets: Default::default(),
+            destructured_discriminants: FxHashMap::default(),
+            groups: Default::default(),
+            late: Default::default(),
         }
     }
+}
+
+/// What an `undefined` would be given for (`FnCx::optional_slots`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptionalSlot {
+    Param,
+    Field,
 }
 
 pub(crate) struct FnCx<'a, 'm> {
@@ -309,6 +490,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Generic params in scope (for annotations inside the body).
     pub env: TyEnv,
     pub bounds: Vec<Vec<Bound>>,
+    /// Type bounds of the generic params in scope (`Generics::constraints`).
+    pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
@@ -327,21 +510,39 @@ pub(crate) struct FnCx<'a, 'm> {
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
-    /// The span of a `new Promise` that is the operand of the `await` being checked.
-    pub direct_await: Option<Span>,
     /// The arrow being checked is an argument of a JS API function called from user code
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
+    /// its own (`FnState::never_end`).
+    pub promise_callback: bool,
+    /// The value being checked fills slot `.1` of interface `.0` in an object literal implementing
+    /// it, and is written at `.2` (`expr/iface_object.rs`): a closure written there records
+    /// what it throws for the slot before its error type is computed.
+    pub literal_slot: Option<(DefId, u32, Span)>,
+    /// The object-literal method written at `.0` takes the object it is called on, of type
+    /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
+    pub method_this: Option<(Span, TyId)>,
+    /// The property read written at this span is the value of an object-literal property
+    /// (`expr/literal_this.rs` `stored_value`).
+    pub stored_prop: Option<Span>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
+    /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand
+    /// side with effects.
+    pub held_recheck: Vec<expr::assign_paths::HeldRecheck>,
     /// The span of the call being checked when its function or receiver has effects
     /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
     pub callee_effects: Option<Span>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// An arrow whose rest parameter is checked as an ordinary last parameter holding the
+    /// packed arguments (`expr/rest_shapes.rs`).
+    pub packed_rest: Option<Span>,
     /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
     pub task_callback: Option<Span>,
     /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
@@ -356,16 +557,50 @@ pub(crate) struct FnCx<'a, 'm> {
     /// closure it becomes is recorded in `Ctx::thread_adapters`.
     pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
-    /// members it was tried against and the types it could see (`expr/closure.rs`).
-    pub member_choices: HashMap<(Span, Vec<TyId>, u64), TyId>,
+    /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
+    pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
+    /// What scans of each arrow's syntax found (`arrow_scans`).
+    pub arrow_scans: arrow_scans::ArrowScans,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
+    /// The arrow (by span) that an adapter outside any body calls in place, and the function
+    /// type it is checked as (`callback::immediate_wrapper`).
+    pub immediate_hint: Option<(Span, TyId)>,
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
+    /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
+    pub weak_key_args: bool,
+    /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
+    pub proxy_keys_inner: bool,
+    /// The explicit type arguments of the call about to be checked (at the first span): the
+    /// slot each fills and its span, where a type bound it breaks is reported (`tsc` TS2344).
+    pub explicit_type_spans: Option<(Span, Vec<(usize, Span)>)>,
+    /// Where a value is given for an optional parameter (or one with a default) or an optional
+    /// field: an `undefined` there is a limit of this phase of #930, not a type error
+    /// (`expr/lit.rs` `optional_slot_error`).
+    pub optional_slots: Vec<(Span, OptionalSlot)>,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
+    /// the variable as it is, without the check `checked_narrowed_read` adds.
+    pub raw_read: Option<Span>,
+    /// Reads that need the payload of a narrowed module variable, field path or checked copy:
+    /// receivers, callees, operands of arithmetic and comparisons, spreads (`global_narrow`).
+    pub payload_spans: Vec<Span>,
+    /// Reads whose value is used as it is (`"a" + x`): not taken as a payload.
+    pub as_is_spans: Vec<Span>,
+    /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
+    /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the
+    /// members left (`field_narrow`).
+    pub field_test: Option<Span>,
+    /// A narrowed field read is being converted to the union of the members left
+    /// (`field_narrow`): a member ruled out means the field changed since the test.
+    pub field_retag: bool,
+    /// The expression being checked is the object of a member read (`body::expr::union_view`).
+    pub view_receiver: bool,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -375,6 +610,16 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A list is being checked for a fold: lists inside it are not tried (each try may check
     /// its rows twice).
     pub jsx_list_trial: bool,
+    /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
+    /// result is `this` itself, which such a method may return.
+    pub this_calls: rustc_hash::FxHashSet<Span>,
+    /// The member of a recursive closure group whose arrow is about to be checked: group,
+    /// member and its definition.
+    pub pending_member: Option<(usize, usize, DefId)>,
+    /// Checking the body of an interface adapter's method (`expr/iface_adapt.rs`): an `unknown`
+    /// converts to a typed value checked at run time, and a function value to another function
+    /// type through an adapting arrow.
+    pub adapting: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -384,6 +629,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             module,
             env,
             bounds: vec![],
+            constraints: vec![],
             fn_name: String::new(),
             owner: None,
             body_def: None,
@@ -392,24 +638,44 @@ impl<'a, 'm> FnCx<'a, 'm> {
             generic_arrow: false,
             f: frame,
             outer: vec![],
-            direct_await: None,
             std_callback: None,
+            promise_callback: false,
+            literal_slot: None,
+            method_this: None,
+            stored_prop: None,
             call_temps: vec![],
+            held_recheck: Vec::new(),
             callee_effects: None,
             void_task: None,
+            packed_rest: None,
             task_callback: None,
             thread_task: None,
             thread_callback: None,
             await_body: None,
             thread_adapter: None,
-            member_choices: HashMap::new(),
+            member_choices: FxHashMap::default(),
+            arrow_scans: Default::default(),
             detached: false,
+            immediate_hint: None,
             collect_iterable_args: false,
+            weak_key_args: false,
+            proxy_keys_inner: false,
+            explicit_type_spans: None,
+            optional_slots: vec![],
             refused_reads: vec![],
+            raw_read: None,
+            payload_spans: vec![],
+            as_is_spans: vec![],
+            field_test: None,
+            field_retag: false,
+            view_receiver: false,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,
             jsx_list_trial: false,
+            this_calls: Default::default(),
+            pending_member: None,
+            adapting: false,
         }
     }
 

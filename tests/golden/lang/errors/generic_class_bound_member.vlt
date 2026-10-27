@@ -1,0 +1,4 @@
+// A member of a type parameter bounded by a class type is not read through `any` (as one
+// bounded by an array or primitive type is): members of a class are resolved statically.
+function sz<T extends Map<string, number>>(x: T): number { return x.size; }
+console.log(sz(new Map<string, number>()));

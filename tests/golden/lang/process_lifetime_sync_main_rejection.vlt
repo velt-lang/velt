@@ -1,0 +1,19 @@
+// A rejection nobody handles in a task spawned by a synchronous `main` is reported, with exit
+// code 1, as Node reports an unhandled rejection (#1366).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number> {
+  if (n > 0) {
+    throw new Bad("bad " + n);
+  }
+  return n;
+}
+
+async function use(p: Promise<number, Bad>): Promise<void> {
+  console.log(await p);
+}
+
+function main() {
+  console.log("main start");
+  spawn(use(make(3)));
+}

@@ -1,0 +1,21 @@
+// check: no leaks
+// The errors of two different traps meet in `Promise.allSettled`: each reason converts to
+// `unknown` (in a `for` loop and in an array `map`) and is told apart with `instanceof`.
+class E1 extends Error {}
+class E2 extends Error {}
+function make(): any {
+  return new Proxy({ a: 1 } as any, {
+    get(t, k, r) { if (k === "g") { throw new E1("get"); } return Reflect.get(t, k, r); },
+    set(t, k, v, r) { if (k === "s") { throw new E2("set"); } return Reflect.set(t, k, v, r); },
+  });
+}
+async function rd(p: any): Promise<number> { return p.g; }
+async function wr(p: any): Promise<number> { p.s = 1; return 1; }
+function label(e: unknown): string { return e instanceof E1 ? "E1" : e instanceof E2 ? "E2" : "other"; }
+async function run(): Promise<void> {
+  const p = make();
+  const rs = await Promise.allSettled([rd(p), wr(p)]);
+  for (const x of rs) { if (x.status === "rejected") { console.log(label(x.reason)); } }
+  console.log(rs.map((x) => x.status === "rejected" ? label(x.reason) : "ok").join(" "));
+}
+run();

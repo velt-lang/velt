@@ -8,7 +8,7 @@
 //! a hint to use an arrow function. For that message, every nested definition records the names
 //! bound in its enclosing functions (`Ctx::nested_locals`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -26,6 +26,13 @@ pub(crate) struct NestedItem {
     pub item: Item,
 }
 
+/// A body walked for nested items: a function's, or a module constant's initializer.
+#[derive(Clone, Copy)]
+enum Body<'m> {
+    Block(&'m ast::Block),
+    Expr(&'m ast::Expr),
+}
+
 /// Something found while walking a body (without descending into nested items).
 enum Found<'m> {
     Item(&'m ast::Item, Span),
@@ -33,7 +40,7 @@ enum Found<'m> {
 }
 
 pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
-    let mut used = HashSet::new();
+    let mut used = FxHashSet::default();
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
@@ -47,7 +54,7 @@ pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
                 }
                 _ => None,
             };
-            item_bodies(cx, m, item, &qual, &[], class, defs, &mut used);
+            item_bodies(cx, m, item, &qual, (&[], &[]), class, defs, &mut used);
         }
     }
 }
@@ -58,36 +65,62 @@ fn item_name(item: &ast::Item) -> Option<&str> {
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => &t.name.name,
         ast::ItemKind::Interface(i) => &i.name.name,
         ast::ItemKind::Extend(_) => "extend",
+        // Its initializer's arrows may declare items too (`const g = () => { function f() {} }`).
+        ast::ItemKind::Var(v) => match &v.pattern.kind {
+            ast::PatternKind::Ident(id) => &id.name,
+            _ => "const",
+        },
         _ => return None,
     })
 }
 
 /// Every function body of `item` (named `qual`), each checked for nested items. `class`: the
-/// class or struct whose body the bodies are in (`item` itself, or one enclosing it).
+/// class or struct whose body the bodies are in (`item` itself, or one enclosing it); `outer`:
+/// the locals and the type parameters of the functions enclosing `item`.
 #[allow(clippy::too_many_arguments)] // the item, where it sits, and the shared collections
 fn item_bodies<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     item: &'m ast::Item,
     qual: &str,
-    outer: &[String],
+    (outer, tparams): (&[String], &[String]),
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
-    let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block)> = vec![];
+    let mut bodies: Vec<(String, &'m [ast::Param], Body<'m>, Vec<String>)> = vec![];
+    let names = |gs: &[&'m [ast::GenericParam]]| -> Vec<String> {
+        let own = gs
+            .iter()
+            .flat_map(|g| g.iter())
+            .map(|g| g.name.name.clone());
+        tparams.iter().cloned().chain(own).collect()
+    };
     match &item.kind {
-        ast::ItemKind::Function(f) => bodies.push((qual.to_string(), &f.sig.params, &f.body)),
+        ast::ItemKind::Function(f) => bodies.push((
+            qual.to_string(),
+            &f.sig.params,
+            Body::Block(&f.body),
+            names(&[&f.sig.generics]),
+        )),
+        ast::ItemKind::Var(v) => {
+            if let Some(init) = &v.init {
+                bodies.push((qual.to_string(), &[], Body::Expr(init), names(&[])));
+            }
+        }
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
             for meth in &t.methods {
                 let q = format!(
                     "{qual}.{}",
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
+                let gs = names(&[&t.generics, &meth.decl.sig.generics]);
+                bodies.push((q, &meth.decl.sig.params, Body::Block(&meth.decl.body), gs));
             }
             if let Some(c) = &t.constructor {
-                bodies.push((format!("{qual}.constructor"), &c.sig.params, &c.body));
+                let gs = names(&[&t.generics]);
+                let body = Body::Block(&c.body);
+                bodies.push((format!("{qual}.constructor"), &c.sig.params, body, gs));
             }
         }
         ast::ItemKind::Extend(e) => {
@@ -96,7 +129,8 @@ fn item_bodies<'m>(
                     "{qual}.{}",
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
+                let gs = names(&[&meth.decl.sig.generics]);
+                bodies.push((q, &meth.decl.sig.params, Body::Block(&meth.decl.body), gs));
             }
         }
         ast::ItemKind::Interface(i) => {
@@ -108,15 +142,16 @@ fn item_bodies<'m>(
                             cx.method_key(m, &meth.sig.name, meth.is_setter)
                         ),
                         &meth.sig.params,
-                        b,
+                        Body::Block(b),
+                        names(&[&meth.sig.generics]),
                     ));
                 }
             }
         }
         _ => {}
     }
-    for (q, params, body) in bodies {
-        fn_body(cx, m, &q, params, body, outer, class, defs, used);
+    for (q, params, body, gs) in bodies {
+        fn_body(cx, m, &q, params, body, (outer, &gs), class, defs, used);
     }
 }
 
@@ -126,14 +161,17 @@ fn fn_body<'m>(
     m: usize,
     qual: &str,
     params: &'m [ast::Param],
-    body: &'m ast::Block,
-    outer: &[String],
+    body: Body<'m>,
+    (outer, tparams): (&[String], &[String]),
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
     let mut found = vec![];
-    walk_block(body, &mut |f| found.push(f));
+    match body {
+        Body::Block(b) => walk_block(b, &mut |f| found.push(f)),
+        Body::Expr(e) => walk_expr(e, &mut |f| found.push(f)),
+    }
     if !found.iter().any(|f| matches!(f, Found::Item(..))) {
         return;
     }
@@ -150,6 +188,7 @@ fn fn_body<'m>(
             locals.push(n.to_string());
         }
     }
+    let block_start = cx.nested.len();
     for f in found {
         let Found::Item(item, scope) = f else {
             continue;
@@ -158,6 +197,7 @@ fn fn_body<'m>(
             continue;
         };
         reject_nested_overloads(cx, item);
+        reject_nested_statics(cx, item);
         let mut q = format!("{qual}::{name}");
         let mut k = 2;
         while !used.insert(q.clone()) {
@@ -168,6 +208,10 @@ fn fn_body<'m>(
             continue;
         };
         let mut inner_class = class;
+        if let Item::Alias(a) = it {
+            // It may name the enclosing functions' type parameters (`type I = R & { … }`).
+            cx.aliases[a as usize].outer = tparams.to_vec();
+        }
         if let Item::Def(d) = it {
             defs.push(d);
             cx.nested_locals.insert(d, locals.clone());
@@ -181,6 +225,7 @@ fn fn_body<'m>(
                 inner_class = Some(d);
             }
         }
+        cx.nested_clash(block_start, (m, scope), ident, it);
         cx.nested.push(NestedItem {
             module: m,
             lo: scope.lo,
@@ -188,7 +233,7 @@ fn fn_body<'m>(
             name: ident.name.clone(),
             item: it,
         });
-        item_bodies(cx, m, item, &q, &locals, inner_class, defs, used);
+        item_bodies(cx, m, item, &q, (&locals, tparams), inner_class, defs, used);
     }
 }
 
@@ -197,6 +242,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
     let what = match &item.kind {
         ast::ItemKind::Function(f) => return Some(&f.sig.name.name),
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => return Some(&t.name.name),
+        ast::ItemKind::Interface(i) if !i.call_sigs.is_empty() => "interfaces with call signatures",
         ast::ItemKind::Interface(i) => return Some(&i.name.name),
         ast::ItemKind::Enum(e) => return Some(&e.name.name),
         ast::ItemKind::TypeAlias(a) => return Some(&a.name.name),
@@ -204,6 +250,8 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
         ast::ItemKind::ExternFn(_) => "`declare function` declarations",
         ast::ItemKind::Extend(_) => "`extend` blocks",
         ast::ItemKind::Var(_) => "module constants",
+        ast::ItemKind::Augment(_) => "`declare global` and `declare module` blocks",
+        ast::ItemKind::Namespace(_) => "namespaces",
     };
     cx.err(format!("{what} must be at the module level"), item.span);
     None
@@ -379,6 +427,37 @@ fn reject_nested_overloads(cx: &mut Ctx, item: &ast::Item) {
         cx.err(
             "overloads of a function or class declared inside a function are not supported yet: declare it at module level",
             sig.name.span,
+        );
+    }
+}
+
+/// A class declared inside a function or block with a `static {}` block or a `static` field
+/// that is not `readonly`: JavaScript runs those each time the declaration runs, while Velt
+/// hoists the class and its statics to the module, evaluated once.
+fn reject_nested_statics(cx: &mut Ctx, item: &ast::Item) {
+    let (ast::ItemKind::Class(t) | ast::ItemKind::Struct(t)) = &item.kind else {
+        return;
+    };
+    let name = &t.name.name;
+    for f in t.fields.iter().filter(|f| f.is_static) {
+        let block = f.name.name.starts_with("<static block ");
+        if !block && f.readonly {
+            continue;
+        }
+        let what = match block {
+            true => "a `static {}` block".to_string(),
+            false => format!(
+                "the static field `{}`, which is not `readonly`,",
+                f.name.name
+            ),
+        };
+        cx.error(
+            velt_common::Diagnostic::error(
+                format!("class `{name}` is declared inside a function or block, so {what} is not supported yet"),
+                f.name.span,
+            )
+            .with_note("JavaScript evaluates a class's statics each time its declaration runs; Velt evaluates them once, for the whole program")
+            .with_note(format!("declare `{name}` at module level, or make the field `static readonly`")),
         );
     }
 }

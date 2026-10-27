@@ -1,0 +1,2 @@
+call_signatures.vlt:23:15: error: mismatched types
+call_signatures.vlt:10:3: error: intersections of function types (overloads) are not supported

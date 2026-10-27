@@ -18,7 +18,7 @@ impl<const N: usize> Future for Await<N> {
         let f = self.0 .0;
         // SAFETY: an owned, live channel future; freed once READY.
         unsafe {
-            if velt_rt_fut_poll(f, raw_cx(cx)) == PENDING {
+            if velt_rt_fut_poll(f, raw_cx(cx).ptr()) == PENDING {
                 return Poll::Pending;
             }
             let mut out = [0u8; N];
@@ -51,7 +51,7 @@ fn receive(h: Key<Chan>) -> impl Future<Output = Option<u64>> + Send {
 }
 
 fn run<F: Future<Output = ()> + Send + 'static>(f: F) {
-    crate::task::runtime::handle().block_on(async { tokio::spawn(f).await.expect("test task") });
+    crate::task::runtime::runtime().block_on(async { tokio::spawn(f).await.expect("test task") });
 }
 
 #[test]

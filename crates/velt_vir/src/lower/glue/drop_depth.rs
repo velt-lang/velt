@@ -20,7 +20,7 @@
 //! - The drop of a closure env whose captures lead to a function value: every chain through
 //!   closures passes through an env, so classes and structs need not count function values.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -52,7 +52,7 @@ impl Cx<'_> {
         chain: Option<&Chain>,
     ) -> bool {
         !chain.is_some_and(|c| c.loops_over(f))
-            && self.leads_to(t, Some(ty), false, &mut HashSet::new())
+            && self.leads_to(t, Some(ty), false, &mut FxHashSet::default())
     }
 
     /// Can dropping a struct, enum or object type value of `ty` nest another drop of a `ty`
@@ -62,7 +62,7 @@ impl Cx<'_> {
             return false;
         }
         let parts = self.part_types(ty);
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         parts
             .into_iter()
             .any(|p| self.leads_to(p, Some(ty), false, &mut seen))
@@ -71,7 +71,7 @@ impl Cx<'_> {
     /// Can dropping a value of `t` run drop glue chosen at run time, a function value's
     /// included?
     pub(in crate::lower) fn drop_runs_unknown(&mut self, t: TyId) -> bool {
-        self.leads_to(t, None, true, &mut HashSet::new())
+        self.leads_to(t, None, true, &mut FxHashSet::default())
     }
 
     /// Does the drop of `t` reach a value of type `target`, or drop glue chosen at run time
@@ -81,7 +81,7 @@ impl Cx<'_> {
         t: TyId,
         target: Option<TyId>,
         fns: bool,
-        seen: &mut HashSet<TyId>,
+        seen: &mut FxHashSet<TyId>,
     ) -> bool {
         if Some(t) == target {
             return true;
@@ -90,7 +90,7 @@ impl Cx<'_> {
             return false;
         }
         match self.kind(t) {
-            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => {
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => {
                 self.leads_to(e, target, fns, seen)
             }
             TyKind::Map(k, v) => {
@@ -196,6 +196,11 @@ impl FnLower<'_, '_> {
     /// The `Glue::Drop` body of `ty` for the value at `*p`, bracketed when it can nest.
     pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_drop_split(&place, done);
+            done
+        });
         if !self.cx.value_drop_reenters(ty) {
             self.drop_expand(&place, ty);
         } else if self.cx.boxed(ty) {
@@ -203,6 +208,10 @@ impl FnLower<'_, '_> {
         } else {
             let at = place.clone();
             self.bracket(|lw| lw.queue_value(at, ty), |lw| lw.drop_expand(&place, ty));
+        }
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
         }
         self.terminate(Terminator::Return(unit()));
     }
@@ -218,10 +227,14 @@ impl FnLower<'_, '_> {
         self.when(nn, done);
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
-        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        let glue = cfunc(
+            self.cx
+                .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
+        );
         let q = p.clone();
         let weak = self.cx.weak_capable(ty);
-        self.release_as(p, weak, |lw| {
+        self.release_of(p, ty, weak, |lw| {
             let boxed = q.clone();
             lw.bracket(
                 |lw| lw.call_rt(Rt::DropQueue, vec![boxed, glue], None),
@@ -238,7 +251,11 @@ impl FnLower<'_, '_> {
     /// Queue the `ty` value at `place`: a boxed value is its box pointer (its reference moves
     /// to the queue); any other value moves to a heap box of its own.
     fn queue_value(&mut self, place: Place, ty: TyId) {
-        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        let glue = cfunc(
+            self.cx
+                .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
+        );
         if self.cx.boxed(ty) {
             let b = Operand::Copy(place);
             return self.call_rt(Rt::DropQueue, vec![b, glue], None);

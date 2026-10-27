@@ -6,8 +6,8 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::later_each;
-use super::{ice, unit, FnLower, Work};
+use super::view_unswitch_plain::FLOAT_INDEX;
+use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -32,7 +32,10 @@ impl FnLower<'_, '_> {
             },
             hir::Callee::Indirect(f) => self.call_indirect(f, args, ty, transfer),
             hir::Callee::Virtual { slot } => self.call_virtual(*slot, args, ty, transfer),
-            hir::Callee::Dyn { slot } => self.call_dyn(*slot, args, ty, transfer),
+            hir::Callee::Dyn {
+                slot,
+                method_type_args,
+            } => self.call_dyn(*slot, method_type_args, args, ty, transfer),
             hir::Callee::ParamMethod {
                 iface,
                 iface_args,
@@ -43,6 +46,11 @@ impl FnLower<'_, '_> {
                     .first()
                     .unwrap_or_else(|| ice("method call without receiver"));
                 let recv_ty = self.sub(recv.ty);
+                if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
+                    // An interface value instantiating a type parameter bound by an
+                    // interface its interface is or extends (#1368): through its table.
+                    return self.call_dyn(slot, method_type_args, args, ty, transfer);
+                }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
                 // A generic method's own type args follow its owner's.
@@ -63,18 +71,98 @@ impl FnLower<'_, '_> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
-        let fid = match self.panic_loc() {
-            Some(at) if self.cx.tracks_caller(def) => {
-                self.cx.func(Work::Tracked(def, targs.clone(), at))
+        // Frozen counted arguments go to an instance that neither changes nor counts them.
+        let frozen = self.frozen_mask(&modes, args, pre.len());
+        let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
+        // A large caller-tracking callee, or any called from an instance that takes its own
+        // caller's location, takes the location as its last argument (track_caller.rs).
+        let arg_loc = super::srcloc::ARG_LOC;
+        let by_arg = at.is_some_and(|l| l == arg_loc || self.cx.tracks_by_arg(def));
+        let at = if by_arg { Some(arg_loc) } else { at };
+        let loc_arg = by_arg.then(|| self.panic_at());
+        // A direct call: the callee runs in this function's mode (`Work::Checked`).
+        let work = match (frozen, at) {
+            (0, Some(at)) => Work::Tracked(def, targs.clone(), at),
+            (0, None) => Work::Fn(def, targs.clone()),
+            (mask, at) => {
+                let fns = self.known_fns_of(&modes, args, pre.len());
+                Work::Frozen(def, targs.clone(), mask, at, fns)
             }
-            _ => self.cx.func_for(def, targs.clone()),
         };
+        // A method of what a `read` callback captured (the caller's `push`, `set`, `add`), or a
+        // function changing it, runs by the counts outside read mode, freeing after the reads
+        // (`LkMode::Deferred`): what it is given to keep is counted the same way, or a copy of
+        // what may be the store's (caller_stores.rs `keep_for_caller`), and its result is handed
+        // to the reader (`hand_to_reader`). A result read mode could not take over (an object
+        // outside the lock set holding lock-set objects, as an iterator) leaves the call in
+        // read mode.
+        let changes_captured = pre.is_empty()
+            && args.iter().zip(&modes).enumerate().any(|(i, (a, m))| {
+                (i == 0 && f.self_ty.is_some() || *m == PassMode::BorrowMut)
+                    && self.captured_root(a)
+            });
+        let rty = self.cx.subst(ret, &targs);
+        let plain = changes_captured && (!self.needs_drop(rty) || self.hand_ok(rty));
+        let mode = match plain {
+            true => LkMode::Deferred,
+            false => self.mode,
+        };
+        let fid = self.cx.func_direct(work, mode);
+        // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
+        let sup = std::mem::take(&mut self.super_call);
+        if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
+            let rty = self.sub(args[0].ty);
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
+                self.proxy_recv = Some((def, targs.clone()));
+            }
+        }
         let mut argv = pre;
-        argv.extend(self.lower_args(args, &modes, true));
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares.
+        let how = match self.cx.quiet(def) {
+            true => Stabilize::Facts,
+            false => Stabilize::Share,
+        };
+        // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
+        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+            self.note_quiet_call(fid, def);
+        }
+        let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
+        let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
+        let kept = match plain {
+            true => self.kept_args_of(args, &modes),
+            false => 0,
+        };
+        let kept = std::mem::replace(&mut self.kept_args, kept);
+        let handed = std::mem::take(&mut self.kept_handed);
+        let drops = std::mem::take(&mut self.kept_drops);
+        argv.extend(self.lower_args(args, &modes, how));
+        argv.extend(loc_arg);
+        let handed = std::mem::replace(&mut self.kept_handed, handed);
+        let drops = std::mem::replace(&mut self.kept_drops, drops);
+        self.kept_args = kept;
+        self.args_to_caller = to_caller;
+        self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
-        self.finish_call(vir::Callee::Func(fid), argv, ret, throws)
+        let view_sort = self.view_sort_branch(def, &targs, &argv);
+        let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let Some(join) = view_sort {
+            self.goto(join);
+            self.switch_to(join);
+        }
+        if plain && self.needs_drop(ret) {
+            self.hand_to_reader(&r, ret);
+        }
+        for (v, t, was) in handed {
+            self.hand_back(&v, t, was);
+        }
+        for (p, t, m) in drops {
+            let mode = std::mem::replace(&mut self.mode, m);
+            self.drop_glue(p, t);
+            self.mode = mode;
+        }
+        r
     }
 
     /// Externs use the same mapping as Velt functions: aggregates by pointer (read-only borrow),
@@ -116,11 +204,23 @@ impl FnLower<'_, '_> {
         };
         let never = self.cx.is_never(x.ret);
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
+        let mut bufs = vec![];
         let argv = match foreign {
-            true => self.foreign_args(&x.params, args),
-            false => self.lower_args(args, &modes, false),
+            true => self.foreign_args(&x.params, args, false, &mut bufs),
+            false => self.lower_args(args, &modes, Stabilize::No),
         };
-        self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
+        let fut = self.finish_call(vir::Callee::Extern(id), argv, x.ret, None);
+        self.free_foreign_bufs(bufs);
+        let rt = self.sub(x.ret);
+        let adopt = x.is_async && {
+            let slot = self.cx.promise_slot(rt);
+            self.cx.foreign_differs(slot)
+        };
+        match adopt {
+            // The result slot is foreign: every use of the promise sees it adopted.
+            true => self.adopt_foreign_promise(fut, rt),
+            false => fut,
+        }
     }
 
     /// A synchronous extern whose signature mentions boxed values: arguments as foreign views,
@@ -135,7 +235,12 @@ impl FnLower<'_, '_> {
                 s => Some(s),
             })
             .collect();
-        let mut argv = self.foreign_args(&x.params, args);
+        // The SIMD helpers are inlined, synchronous, and only read an array's header: they get
+        // the header where it is instead of a copy, so after inlining nothing reads the copy
+        // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
+        let in_place = x.symbol.starts_with("velt_simd_");
+        let mut bufs = vec![];
+        let mut argv = self.foreign_args(&x.params, args, in_place, &mut bufs);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -150,6 +255,7 @@ impl FnLower<'_, '_> {
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
         let dest = out.filter(|_| ret != Ty::Unit).map(Place::local);
         self.call(vir::Callee::Extern(id), argv, dest, never);
+        self.free_foreign_bufs(bufs);
         let Some(o) = out else { return unit() };
         let rt = self.sub(x.ret);
         let vt = self.cx.ty(rt);
@@ -158,8 +264,16 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(native), rt)
     }
 
-    /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership).
-    fn foreign_args(&mut self, params: &[TyId], args: &[hir::Expr]) -> Vec<Operand> {
+    /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership); the
+    /// buffers of array views go to `bufs`, to free once the extern returned. `in_place`: an
+    /// array is passed as its own header rather than a view of it.
+    fn foreign_args(
+        &mut self,
+        params: &[TyId],
+        args: &[hir::Expr],
+        in_place: bool,
+        bufs: &mut Vec<super::foreign::ForeignBuf>,
+    ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
             let v = self.expr(a);
@@ -168,7 +282,10 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     let vt = self.cx.ty(p);
                     let place = self.operand_place(v, vt);
-                    let view = self.foreign_view(&place, p);
+                    let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
+                        true => self.content(&place, p),
+                        false => self.foreign_view(&place, p, bufs),
+                    };
                     argv.push(self.addr(view));
                 }
                 _ => argv.push(v),
@@ -177,58 +294,99 @@ impl FnLower<'_, '_> {
         argv
     }
 
-    /// Arguments of a direct call per the callee's modes. `user_code`: the callee may run user
-    /// code (not a runtime extern), so borrows through counted objects are stabilized.
+    /// Arguments of a direct call per the callee's modes, borrows through counted objects
+    /// stabilized as `how` says.
     pub(super) fn lower_args(
         &mut self,
         args: &[hir::Expr],
         modes: &[PassMode],
-        user_code: bool,
+        how: Stabilize,
     ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
         }
-        let mut argv = vec![];
-        let later = later_each(args);
+        let mut argv: Vec<Operand> = vec![];
+        let later = self.later_each(args);
         let outer = self.start_borrows();
+        let mut recv = self.proxy_recv.take();
+        let kept = std::mem::take(&mut self.kept_args);
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            self.owner_write = false;
+            if *mode == PassMode::BorrowMut {
+                // Held inline in an object (caller_stores.rs).
+                self.owner_barrier(a);
+            }
+            if i < 64 && kept >> i & 1 == 1 {
+                let v = self.keep_mut_arg(a);
+                argv.push(v);
+                continue;
+            }
+            if i == 1 {
+                if let (Some(r), Some(v)) = (recv.take(), argv.first()) {
+                    self.proxy_recv_lowered(r, &v.clone());
+                }
+            }
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
                 }
+                (Ty::Agg(_), PassMode::Borrow) if self.is_table(a) => {
+                    // A table to a param that only reads it: its read-only data (#1334).
+                    let place = self
+                        .table_read(a)
+                        .unwrap_or_else(|| ice("table without data"));
+                    argv.push(self.addr(place));
+                }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
-                    let v = match user_code {
-                        true => self.stable_borrow(a, &args[i + 1..]),
-                        false => self.borrowed_arg(a),
+                    let v = match how {
+                        Stabilize::Share => self.stable_borrow(a, &args[i + 1..]),
+                        Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
+                        Stabilize::No => self.borrowed_arg(a),
                     };
-                    // A value the callee modifies stays where it is (it may only be shared).
+                    // A value the callee modifies stays where it is (it may only be shared). A
+                    // frozen one changes for nobody, and is not counted (frozen.rs).
                     let v = match mode {
-                        PassMode::Borrow => self.hold(v, a.ty, later),
+                        PassMode::Borrow if !self.frozen_root(a) => self.hold(v, a.ty, later),
                         _ => v,
                     };
                     argv.push(self.operand_addr(v, t));
                 }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
                     // A fresh copy the callee now owns (Owned) or only reads (Copy structs).
-                    let v = self.consume(a);
+                    let v = match mode {
+                        PassMode::Owned => self.owned_arg(a),
+                        _ => self.consume(a),
+                    };
                     let tmp = self.copy_to_temp(v, t);
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, PassMode::Owned) => {
-                    let v = self.consume(a);
+                    let v = self.owned_arg(a);
                     argv.push(self.hold_owned(v, a.ty, later));
                 }
                 (_, m) => {
                     let v = match m {
-                        PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            let v = self.stable_borrow(a, &args[i + 1..]);
-                            self.hold(v, a.ty, later)
+                        PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
+                            let share = how == Stabilize::Share;
+                            let v = self.stable_borrow_as(a, &args[i + 1..], share);
+                            // A frozen one changes for nobody, and is not counted (frozen.rs);
+                            // a number read out of one is still read now, before a later
+                            // argument may free its box (a copy counts nothing).
+                            let number = super::place::number(self.vty(a.ty));
+                            match self.frozen_root(a) && !number {
+                                true => v,
+                                false => self.hold(v, a.ty, later),
+                            }
                         }
                         _ => self.expr_held(a, later),
                     };
                     argv.push(v);
                 }
             }
+        }
+        self.owner_write = false;
+        if let (Some(r), Some(v)) = (recv, argv.first()) {
+            self.proxy_recv_lowered(r, &v.clone());
         }
         self.finish_borrows(outer);
         argv
@@ -249,12 +407,21 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
-            let v = if is_moved(a) {
+            // A table (a module constant of number literals, #1334) to a param that only reads it:
+            // its read-only data, not a new array (sema rejects every use that could write or
+            // keep a table, and an array with `cap == 0` owns no buffer to free).
+            let table = match (mode, transfer) {
+                (Some(PassMode::Borrow), false) if self.is_table(a) => self.table_read(a),
+                _ => None,
+            };
+            let v = if let Some(p) = table {
+                Operand::Copy(p)
+            } else if is_moved(a) {
                 let v = self.consume(a);
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
@@ -267,8 +434,10 @@ impl FnLower<'_, '_> {
                     self.finish_borrows(Vec::new());
                 }
                 match mode {
-                    // A value the callee modifies stays where it is.
+                    // A value the callee modifies stays where it is; a frozen one changes for
+                    // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
+                    _ if self.frozen_root(a) && !super::place::number(t) => v,
                     _ => self.hold(v, a.ty, later),
                 }
             };
@@ -404,4 +573,15 @@ fn is_copy_read(a: &hir::Expr) -> bool {
                 ..
             }
     )
+}
+
+/// How a direct call's borrowed arguments are kept alive (stabilize.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stabilize {
+    /// The callee may run user code: borrows through counted objects are shared or retained.
+    Share,
+    /// A quiet callee (quiet.rs): the same facts recorded, no shares.
+    Facts,
+    /// A runtime extern: plain borrows.
+    No,
 }

@@ -6,9 +6,9 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::type_tests::LitEq;
-use crate::body::narrow::{is_null, typeof_compare};
+use crate::body::narrow::{is_null, nothing_word, typeof_compare};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 
 /// Literal-ish expression whose type is decided by context (`1`, `-2.5`, `(1 + 2)`).
 pub(crate) fn untyped(e: &ast::Expr) -> bool {
@@ -32,7 +32,17 @@ pub(crate) fn is_comparison(op: ast::BinaryOp) -> bool {
     use ast::BinaryOp as B;
     matches!(
         op,
-        B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq | B::And | B::Or | B::Nullish
+        B::Eq
+            | B::NotEq
+            | B::StrictEq
+            | B::StrictNotEq
+            | B::Lt
+            | B::LtEq
+            | B::Gt
+            | B::GtEq
+            | B::And
+            | B::Or
+            | B::Nullish
     )
 }
 
@@ -47,6 +57,8 @@ pub(crate) fn op_str(op: ast::BinaryOp) -> &'static str {
         B::Pow => "**",
         B::Eq => "==",
         B::NotEq => "!=",
+        B::StrictEq => "===",
+        B::StrictNotEq => "!==",
         B::Lt => "<",
         B::LtEq => "<=",
         B::Gt => ">",
@@ -73,8 +85,8 @@ pub(crate) fn hir_binop(op: ast::BinaryOp) -> Option<BinOp> {
         B::Div => BinOp::Div,
         B::Rem => BinOp::Rem,
         B::Pow => BinOp::Pow,
-        B::Eq => BinOp::Eq,
-        B::NotEq => BinOp::NotEq,
+        B::Eq | B::StrictEq => BinOp::Eq,
+        B::NotEq | B::StrictNotEq => BinOp::NotEq,
         B::Lt => BinOp::Lt,
         B::LtEq => BinOp::LtEq,
         B::Gt => BinOp::Gt,
@@ -112,6 +124,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if op == ast::UnaryOp::Void {
+            return self.void_expr(operand, exp, span);
+        }
         let exp = self.hint(exp);
         // A union expected (`string | i64`): its one number member.
         let exp = exp.map(|t| {
@@ -122,6 +137,7 @@ impl FnCx<'_, '_> {
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
+            ast::UnaryOp::Void => unreachable!("ICE: `void` handled above"),
             ast::UnaryOp::Neg => {
                 let int_exp = num_exp.is_some_and(|t| self.cx.ty.is_int(t));
                 let inner = match &operand.kind {
@@ -140,9 +156,12 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {
                         self.lit(l, num_exp, operand.span, true)
                     }
-                    _ => self.expr(operand, num_exp, Want::Borrow),
+                    _ => self.payload_expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 self.literal_use_arith(&inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
@@ -154,8 +173,11 @@ impl FnCx<'_, '_> {
                 (hir::UnOp::Neg, inner)
             }
             ast::UnaryOp::Plus => {
-                let mut inner = self.expr(operand, num_exp, Want::Borrow);
+                let mut inner = self.payload_expr(operand, num_exp, Want::Borrow);
                 inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 if !self.cx.ty.is_numeric(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
@@ -165,8 +187,11 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::Not => return self.not_expr(operand, span),
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
-                let inner = self.expr(operand, int_exp, Want::Borrow);
+                let inner = self.payload_expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 self.literal_use_number(&inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner) {
@@ -217,6 +242,35 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The operands of `lhs op rhs`, checked. Arithmetic and comparisons use the payload of a
+    /// narrowed operand (`checked_copies`), except that `+` with a string converts the other
+    /// operand as it is (`"a" + s` gives `"anull"` after a call cleared `s`). The string must
+    /// be one for sure: `s + t` with both narrowed reads both payloads. A branch of a ternary
+    /// operand is one too (`"a" + (c ? s : "z")`).
+    fn checked_operands(
+        &mut self,
+        op: ast::BinaryOp,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        hint: Option<TyId>,
+    ) -> (hir::Expr, hir::Expr) {
+        if !self.has_breakable_narrowing() {
+            return self.operands(lhs, rhs, hint, Want::Borrow);
+        }
+        let concat = op == ast::BinaryOp::Add;
+        let lc = self.value_may_read_cleared(lhs);
+        let rc = self.value_may_read_cleared(rhs);
+        let lhs_as_is = concat && lc && !rc && self.string_operand(rhs);
+        let rhs_as_is = concat && rc && !lc && self.string_operand(lhs);
+        let marks = (self.as_is_spans.len(), self.payload_spans.len());
+        self.mark_value(lhs, lhs_as_is);
+        self.mark_value(rhs, rhs_as_is);
+        let r = self.operands(lhs, rhs, hint, Want::Borrow);
+        self.as_is_spans.truncate(marks.0);
+        self.payload_spans.truncate(marks.1);
+        r
+    }
+
     pub(crate) fn binary(
         &mut self,
         op: ast::BinaryOp,
@@ -226,6 +280,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
+        // `===` is `==` except against `null` / `undefined` (`null_compare`).
+        let strict = op.is_strict();
+        let op = op.loose();
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
             B::In => {
@@ -238,8 +295,11 @@ impl FnCx<'_, '_> {
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
-                let other = if is_null(rhs) { lhs } else { rhs };
-                return self.null_compare(other, op == B::Eq, span);
+                let (other, word) = match nothing_word(rhs) {
+                    Some(w) => (lhs, w),
+                    None => (rhs, nothing_word(lhs).unwrap_or("null")),
+                };
+                return self.null_compare(other, word, strict, op == B::Eq, span);
             }
             B::Eq | B::NotEq => {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
@@ -263,8 +323,34 @@ impl FnCx<'_, '_> {
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
+            // `==` compares the value as it is.
+            None if !matches!(op, B::Eq | B::NotEq) => self.checked_operands(op, lhs, rhs, hint),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
+        // a call, a capture).
+        if self.cx.maybe_dynamic(l.ty) || self.cx.maybe_dynamic(r.ty) {
+            return match op {
+                B::Eq | B::NotEq => self.dynamic_eq(l, r, strict, op == B::NotEq, span),
+                B::Add => self.dynamic_concat(l, r, span),
+                B::Lt | B::LtEq | B::Gt | B::GtEq if self.no_unknown_operand(&l, &r) => {
+                    let bop = hir_binop(op).expect("ICE: a comparison is a binary op");
+                    self.dynamic_relational(bop, l, r, span)
+                }
+                B::Sub
+                | B::Mul
+                | B::Div
+                | B::Rem
+                | B::Pow
+                | B::BitAnd
+                | B::BitOr
+                | B::BitXor
+                | B::Shl
+                | B::Shr
+                | B::UShr => self.dynamic_arith(op, l, r, span),
+                _ => self.dynamic_operator(op_str(op), &l, &r, span),
+            };
+        }
         // Branded values are operands as their primitives.
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
@@ -274,6 +360,26 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        // `a == b` on `T | null | undefined` values: `null == undefined`, as in JavaScript.
+        if !strict && matches!(op, B::Eq | B::NotEq) {
+            let (l, r) = match self.loose_three_state_eq(l, r, op == B::NotEq, span) {
+                Ok(h) => return h,
+                Err(lr) => *lr,
+            };
+            return self.binary_checked(op, l, r, span);
+        }
+        self.binary_checked(op, l, r, span)
+    }
+
+    /// The rest of [`binary`](Self::binary) once the operands are checked and converted.
+    pub(crate) fn binary_checked(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        use ast::BinaryOp as B;
         // Literal types take part in operators as their base type (`c.kind + "!"`).
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))
@@ -294,6 +400,7 @@ impl FnCx<'_, '_> {
             self.literal_operands(op, &l, &r);
             (l, r)
         };
+        let (l, r) = self.std_int_operands(l, r);
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
@@ -315,6 +422,9 @@ impl FnCx<'_, '_> {
             return self.concat(l, r, span);
         }
         if matches!(op, B::Eq | B::NotEq) && !self.primitive_eq(t) {
+            if self.prototype_operands(l.ty, r.ty) {
+                return self.prototype_eq(l, r, op == B::NotEq, span);
+            }
             crate::body::pure_init::check_identity(self.cx, [&l, &r]);
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
@@ -347,8 +457,29 @@ impl FnCx<'_, '_> {
         r: hir::Expr,
     ) -> (hir::Expr, hir::Expr) {
         let t = &self.cx.ty;
+        if t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+            return (l, r);
+        }
+        // `T | null | undefined` against a `T | null` or `T | undefined` (or those two against
+        // each other): both as the option holding every nothing either does (#1218).
+        if let (Some(a), Some(b)) = (t.nothing_of(l.ty), t.nothing_of(r.ty)) {
+            if a == b {
+                return (l, r);
+            }
+            let to = if a == Nothing::Both {
+                l.ty
+            } else if b == Nothing::Both {
+                r.ty
+            } else {
+                let core = t.core(l.ty).unwrap_or(l.ty);
+                self.cx.ty.option_of(core, Nothing::Both)
+            };
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            let r = self.try_coerce(r, to).unwrap_or_else(|r| r);
+            return (l, r);
+        }
         let nullable = |x: TyId| t.opt_payload(x).is_some();
-        if nullable(l.ty) == nullable(r.ty) || t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+        if nullable(l.ty) == nullable(r.ty) {
             return (l, r);
         }
         if nullable(l.ty) {
@@ -389,7 +520,7 @@ impl FnCx<'_, '_> {
     /// and `number`, #741): the member side converts to the union, so the two compare like two
     /// union values: equal only when they hold the same member with equal values, as `===` in
     /// JS (no coercion: the string `"3"` never equals the number `3`).
-    fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+    pub(super) fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
         let union = |s: &Self, t: TyId| s.cx.union_def(t).is_some();
         if l.ty == r.ty || self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return (l, r);
@@ -417,12 +548,23 @@ impl FnCx<'_, '_> {
     /// `a === b` between an interface value and a class or struct value (or a base and a
     /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
     /// does (an interface value points at the object itself), so the two compare by identity.
-    fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+    pub(super) fn identity_operands(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
         let object = |s: &Self, t: TyId| {
-            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            let t = s.cx.ty.core(t).unwrap_or(t);
             s.cx.union_def(t).is_none()
                 && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
         };
+        // `xs === ys` of an `unknown[]` and an `any[]`: one type (`Ctx::same_but_any_unknown`).
+        if self.cx.same_but_any_unknown(r.ty, l.ty) {
+            let to = l.ty;
+            return match self.try_coerce(r, to) {
+                Ok(r) | Err(r) => (l, r),
+            };
+        }
         if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
             return (l, r);
         }
@@ -469,7 +611,7 @@ impl FnCx<'_, '_> {
     /// (#365): the object behind an interface value, and the function value itself (each
     /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(self.cx.ty.kind(t), TyKind::Unit)
+        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_))
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.
@@ -486,12 +628,48 @@ impl FnCx<'_, '_> {
             return None;
         }
         let t = if lt == self.cx.ty.never { rt } else { lt };
-        if !self.compatible(t, rt) {
+        if !self.compatible(t, rt) && !self.cx.same_ty(t, rt) {
+            // `o.k * 2` with `o.k: number | undefined`: the operand that may be a nothing is
+            // the problem, not the other one's type (TypeScript's TS18048).
+            // `a` is `b` with `null`, `undefined` or both (`T | null | undefined`): which.
+            let nothing = |s: &Self, a: TyId, b: TyId| {
+                let (mut core, mut null, mut undefined) = (a, false, false);
+                while let Some(n) = s.cx.ty.nothing_of(core) {
+                    null |= n.has_null();
+                    undefined |= n.has_undefined();
+                    core = s.cx.ty.opt_payload(core)?;
+                }
+                (core == b && core != a).then_some((null, undefined))
+            };
+            if let Some((n, at, nt)) = (nothing(self, t, rt).map(|n| (n, span, t)))
+                .or_else(|| nothing(self, rt, t).map(|n| (n, r.span, rt)))
+                .filter(|_| !matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq))
+            {
+                let (word, test) = match n {
+                    (true, true) => ("`null` or `undefined`", "`!= null`"),
+                    (false, _) => ("`undefined`", "`!== undefined`"),
+                    (true, false) => ("`null`", "`!== null`"),
+                };
+                let shown = self.cx.display(nt);
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("an operand may be {word}: its type is `{shown}`"),
+                        at,
+                    )
+                    .with_note(format!(
+                        "check it first ({test}), or give a default with `??`"
+                    )),
+                );
+                return None;
+            }
             let (e, f) = (self.cx.display(t), self.cx.display(rt));
             let mut d = Diagnostic::error("mismatched types", r.span)
                 .with_note(format!("expected {e}, found {f}"));
             if let Some(note) = self.number_note(t, rt) {
                 d = d.with_note(note);
+            }
+            if is_comparison(op) && self.cx.is_ctor_type(t) && self.cx.is_ctor_type(rt) {
+                d = d.with_note(super::ctor_values::TWO_SIGNATURES_NOTE);
             }
             if op == B::Add && (t == self.cx.ty.str_ || rt == self.cx.ty.str_) {
                 d = d.with_note(
@@ -509,21 +687,56 @@ impl FnCx<'_, '_> {
             B::Add => ty.is_numeric(t) || t == ty.str_,
             B::Sub | B::Mul | B::Div | B::Rem | B::Pow => ty.is_numeric(t),
             B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => ty.is_int(t),
-            B::Eq | B::NotEq => self.equatable(t),
+            B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq => self.equatable(t),
             B::Lt | B::LtEq | B::Gt | B::GtEq => ty.is_numeric(t) || t == ty.str_,
             B::And | B::Or | B::Nullish | B::In => false,
         };
         if !ok {
             let tn = self.cx.display(t);
-            self.cx.err(
-                format!(
-                    "cannot apply binary operator `{}` to type `{tn}`",
-                    op_str(op)
-                ),
-                span,
+            let message = format!(
+                "cannot apply binary operator `{}` to type `{tn}`",
+                op_str(op)
             );
+            let mut d = Diagnostic::error(message, span);
+            if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
+                d = d.with_note(simd_method_note(op));
+            }
+            self.cx.error(d);
             return None;
         }
         Some(t)
+    }
+}
+
+/// What to write instead of operator `op` on SIMD values, which have methods only.
+fn simd_method_note(op: ast::BinaryOp) -> String {
+    use ast::BinaryOp as B;
+    let (method, comparison) = match op {
+        B::Add => ("add", false),
+        B::Sub => ("sub", false),
+        B::Mul => ("mul", false),
+        B::Div => ("div", false),
+        B::BitAnd => ("and", false),
+        B::BitOr => ("or", false),
+        B::BitXor => ("xor", false),
+        B::Shl => ("shl", false),
+        B::Shr | B::UShr => ("shr", false),
+        B::Eq | B::StrictEq => ("eq", true),
+        B::NotEq | B::StrictNotEq => ("ne", true),
+        B::Lt => ("lt", true),
+        B::LtEq => ("le", true),
+        B::Gt => ("gt", true),
+        B::GtEq => ("ge", true),
+        B::Rem | B::Pow | B::And | B::Or | B::Nullish | B::In => {
+            return "SIMD values have methods instead of operators, and none for this one".into()
+        }
+    };
+    if comparison {
+        format!(
+            "SIMD values are compared lane by lane with a method, which gives a mask: \
+             `a.{method}(b).all()` or `a.{method}(b).any()`"
+        )
+    } else {
+        format!("SIMD values have methods instead of operators: `a.{method}(b)`")
     }
 }

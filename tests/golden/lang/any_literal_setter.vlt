@@ -1,0 +1,71 @@
+// A write through `any` or `Reflect.set` to an object literal's setter runs the setter (#1538),
+// and a read runs the getter: written in the literal, or added by `Object.defineProperty`.
+
+let stored = 1;
+const o = {
+  get value(): number {
+    return stored;
+  },
+  set value(v: number) {
+    stored = v;
+  },
+};
+console.log(Reflect.set(o, "value", 5), stored);
+(o as any).value = 7;
+console.log(stored, o.value, (o as any).value);
+
+const ro = {
+  get value(): number {
+    return stored * 10;
+  },
+};
+console.log((ro as any).value);
+
+let held = "a";
+const d = {
+  get name(): string {
+    return held;
+  },
+};
+Object.defineProperty(d, "name", {
+  get(): string {
+    return held;
+  },
+  set(v: string) {
+    held = v + "!";
+  },
+});
+(d as any).name = "b";
+console.log(held, d.name, (d as any).name);
+
+function box<T>(first: T) {
+  let v = first;
+  return {
+    get value(): T {
+      return v;
+    },
+    set value(x: T) {
+      v = x;
+    },
+  };
+}
+const bx = box(1);
+(bx as any).value = 3;
+console.log(bx.value, Reflect.get(bx, "value"));
+
+// The setter's field is no property of its own: keys, `for...in`, printing and JSON see one
+// `value` (a setter alone is left out of JSON).
+const both: any = o;
+console.log(Object.keys(both).join(","), Object.keys(ro as any).join(","));
+for (const k in both) {
+  console.log("key", k);
+}
+const only = {
+  tag: "s",
+  set value(x: number) {
+    stored = x;
+  },
+};
+console.log(both, ro as any, only as any);
+console.log(JSON.stringify(both), JSON.stringify(ro as any), JSON.stringify(only as any));
+console.log(Object.keys(only as any).join(","), (only as any).value);

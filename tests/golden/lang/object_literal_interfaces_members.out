@@ -1,0 +1,8 @@
+RangeError true false
+TypeError false true
+f
+g
+3
+5
+TypeError member
+SyntaxError table

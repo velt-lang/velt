@@ -1,0 +1,2 @@
+any_unknown.vlt:5:21: error: an `unknown` value must be narrowed before use
+any_unknown.vlt:9:15: error: an `unknown` value must be narrowed before use

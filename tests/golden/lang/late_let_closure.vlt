@@ -1,0 +1,50 @@
+// check: no leaks
+// A `let x: T;` without an initializer that a closure assigns: TypeScript does not check reads
+// of it in closures (or `x!`), and Velt holds it so that each read checks it was assigned.
+function cached(compute: () => number): () => number {
+  let value: number;
+  let fresh = true;
+  const refresh = (): void => {
+    const next = compute();
+    const changed = fresh || next !== value;
+    value = next;
+    fresh = false;
+    if (changed) console.log("changed to", value);
+  };
+  return () => {
+    refresh();
+    return value;
+  };
+}
+
+class Entry {
+  key: string;
+  constructor(key: string) {
+    this.key = key;
+  }
+}
+
+function run(f: () => void): void {
+  f();
+}
+
+function main(): void {
+  let n = 1;
+  const get = cached(() => n);
+  console.log(get(), get());
+  n = 2;
+  console.log(get());
+
+  let entry!: Entry;
+  run(() => {
+    entry = new Entry("k");
+  });
+  console.log(entry.key);
+
+  let p: string[];
+  const invoke = () => {
+    p = ["a", "b"];
+  };
+  invoke();
+  console.log(p!.length, p!);
+}

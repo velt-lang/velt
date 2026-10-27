@@ -1,0 +1,32 @@
+// Spread arguments and array spreads in a loop: pure operands (a variable, a constant, a
+// literal), whose evaluation order needs nothing, and calls before a spread, whose sources are
+// then evaluated in written order.
+function sum(...xs: number[]): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function pair(i: number): number[] {
+  return [i, i + 1];
+}
+
+function twice(i: number): number {
+  return i * 2;
+}
+
+function main() {
+  const base = [1, 2, 3];
+  let total = 0;
+  for (let i = 0; i < 200000; i++) {
+    total += sum(i, ...base, 4);
+    const a = [i, ...base, ...pair(i)];
+    total += a.length;
+    total += sum(twice(i), ...pair(i), twice(i + 1));
+    const b = [twice(i), ...pair(i), 5];
+    total += b[b.length - 1];
+  }
+  console.log(total);
+}

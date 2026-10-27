@@ -1,0 +1,19 @@
+// check: no leaks
+// A member read and a method call through `k!` on a module `let k: T | null`, then `k` cleared
+// (after the read, or by the method itself): the value read stays alive for its use and is freed
+// once (#1188, #1161). Identical to Node.
+class Killer {
+  label: string = "k" + String(1);
+  kill(): string { clearK(); return this.label + " killed"; }
+}
+let k: Killer | null = new Killer();
+function clearK(): void { k = null; }
+
+function main(): void {
+  console.log(k!.label);
+  k = null;
+  console.log(k);
+  k = new Killer();
+  console.log(k!.kill());
+  console.log(k);
+}

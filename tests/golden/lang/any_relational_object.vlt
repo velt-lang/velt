@@ -1,0 +1,12 @@
+// `<` between an object held in an `any` and another value: the object is converted with
+// `ToPrimitive` (`valueOf` / `toString`), as in JavaScript: `[2]` is "2", `{}` is
+// "[object Object]" (NaN as a number), a `Date` is its time.
+function less(a: any, b: any): boolean {
+  return a < b;
+}
+
+function main(): void {
+  console.log(less(1, 2));
+  console.log(less({ v: 1 }, 2), less([2], 10), less([2], "10"), less("a", ["b"]));
+  console.log(less(new Date(5), 6), less(new Date(5), new Date(4)));
+}

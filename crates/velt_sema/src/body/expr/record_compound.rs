@@ -1,9 +1,9 @@
 //! Compound assignment (`r[k] += v`, `r[k]++`) on an *open* record (`Record<string, V>`, or a
 //! type-parameter key): reading a key that may be missing gives `V | null`, and JavaScript's
 //! `undefined + 1` (`NaN`) has no counterpart, so these are errors with a fix-it that says what
-//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1` (for `&&=` and `||=` on values other than
-//! `bool`, which have no `&&` and `||`, the `??=` or `if` form that says what it meant). `r[k] ??= v`
-//! stays allowed (it is defined for a missing key). Closed records always have every key and keep the compound forms.
+//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1`. `r[k] ??= v`, `||=` and `&&=` stay
+//! allowed (they are defined for a missing key: `record_logical.rs`). Closed records always have
+//! every key and keep the compound forms.
 //!
 //! Also the other record misuse whose fix-it names the record as written: `for...of` over a
 //! record, which TypeScript code writes over `Object.keys(r)` or `Object.entries(r)`.
@@ -26,7 +26,11 @@ impl FnCx<'_, '_> {
         bop: ast::BinaryOp,
         value: Option<&ast::Expr>,
     ) {
-        let (rn, vn) = (self.cx.display(rec), self.cx.display(v));
+        let (rn, mut vn) = (self.cx.display(rec), self.cx.display(v));
+        // A missing key reads as `null`, which a `V` that has a nothing value already names.
+        if self.cx.ty.nothing_of(v).is_none() {
+            vn.push_str(" | null");
+        }
         let place = expr_text(target).unwrap_or_else(|| "r[k]".to_string());
         let rhs = value
             .and_then(expr_text)
@@ -38,9 +42,7 @@ impl FnCx<'_, '_> {
         } else {
             None
         };
-        let logical = matches!(bop, ast::BinaryOp::And | ast::BinaryOp::Or);
         let fix = match start {
-            _ if logical => self.logical_record_fix(v, &place, &rhs, bop),
             Some(s) => format!(
                 "say what a missing key starts from: `{place} = ({place} ?? {s}) {} {rhs}`",
                 op_str(bop)
@@ -52,7 +54,7 @@ impl FnCx<'_, '_> {
         self.cx.error(
             velt_common::Diagnostic::error(
                 format!(
-                    "cannot use `{op}` on a key of a `{rn}`: the key may be missing, so `{place}` is `{vn} | null`"
+                    "cannot use `{op}` on a key of a `{rn}`: the key may be missing, so `{place}` is `{vn}`"
                 ),
                 target.span,
             )
@@ -62,25 +64,6 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// The fix-it for `place &&= rhs` / `place ||= rhs` on an open record with values `v`. Only
-    /// `bool` has `&&` and `||` (numbers and strings are never truthy or falsy), so for other
-    /// values it names what the JavaScript form is used for: setting a missing or a present key.
-    fn logical_record_fix(&self, v: TyId, place: &str, rhs: &str, bop: ast::BinaryOp) -> String {
-        if v == self.cx.ty.bool_ {
-            return format!(
-                "say what a missing key counts as: `{place} = ({place} ?? false) {} {rhs}`",
-                op_str(bop)
-            );
-        }
-        if bop == ast::BinaryOp::Or {
-            format!("to set `{place}` only when the key is missing, use `{place} ??= {rhs}`")
-        } else {
-            format!(
-                "to set `{place}` only when the key is present, write `if ({place} != null) {place} = {rhs}`"
-            )
-        }
-    }
-
     /// `for (... of r)` where `r` (`iter`) is the record type `rec`: records are not iterable.
     pub(crate) fn record_not_iterable(&mut self, rec: TyId, iter: &ast::Expr) {
         let rn = self.cx.display(rec);
@@ -98,10 +81,12 @@ impl FnCx<'_, '_> {
 }
 
 /// The source form of a simple expression (a variable, `this`, a member or index path, a
-/// literal), for fix-its; `None` for anything else.
+/// literal), for fix-its; `None` for anything else, including a temporary the compiler made
+/// (`<…>`) in place of a part of the written target.
 fn expr_text(e: &ast::Expr) -> Option<String> {
     use ast::ExprKind as A;
     Some(match &e.kind {
+        A::Ident(id) if id.name.starts_with('<') => return None,
         A::Ident(id) => id.name.clone(),
         A::This => "this".to_string(),
         A::Paren(x) => expr_text(x)?,

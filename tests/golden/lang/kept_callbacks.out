@@ -1,0 +1,18 @@
+140
+cleanup aa#1 1
+cleanup b#1 1
+cleanup aa#2 2
+230
+ppp direct one 11
+ppp listen one 11
+ppp later one
+ppp wrapped one
+ppp bus 12
+ppp relay 2
+invalidate 1 11
+ppp listen two 11
+ppp later two
+ppp wrapped two
+ppp bus 13
+ppp relay 4
+invalidate 2 11

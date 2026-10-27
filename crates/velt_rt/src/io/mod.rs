@@ -5,6 +5,8 @@
 //! idle, and at every newline when stdout is an interactive terminal. stderr is unbuffered: each
 //! call formats into a small local buffer and writes it in one go.
 
+#[cfg(test)]
+mod exit_tests;
 pub mod stats;
 mod stdout;
 pub mod tty;
@@ -23,7 +25,8 @@ pub fn flush_stdout() {
     stdout::flush();
 }
 
-/// Best-effort flush for panic/abort paths: never blocks.
+/// Flush for panic and fatal-error paths: waits for another thread's write a bounded time only,
+/// never forever (see [`stdout::try_flush`]).
 pub fn try_flush_stdout() {
     #[cfg(test)]
     if capture::active() {
@@ -32,16 +35,25 @@ pub fn try_flush_stdout() {
     stdout::try_flush();
 }
 
+/// Called by the runtime's start-up, before the program runs: see [`stdout::init_mode`].
+pub fn init_stdout() {
+    stdout::init_mode();
+}
+
 /// Called after every poll of a compiled future by the runtime: makes this thread's output visible
-/// in order before the task can continue on another thread.
+/// in order before the task can continue on another thread, then sends the socket writes the poll
+/// deferred (`TcpStream.writeLater`, net/later.rs).
 pub fn publish_thread_output() {
     stdout::publish_local();
+    crate::net::later::flush_due();
 }
 
 /// Called before this task hands work to another one, ahead of the change the other task sees:
 /// spawning a task, a channel send or close, a receive that frees room in a bounded channel,
 /// settling a `new Promise`, aborting a signal, a child leaving a task group, releasing a
-/// keep-alive reference (the last one lets the program exit). What this thread printed so far
+/// keep-alive reference (the last one lets the program exit), and sending on a socket (a TCP
+/// connect, write, shutdown or close, a UDP datagram, a `fetch` request, a server's response or
+/// body chunk), whose peer is often a task of the same program. What this thread printed so far
 /// becomes visible before anything the other task prints, which may run on another worker at once.
 pub fn publish_before_handoff() {
     stdout::publish_if_buffered();

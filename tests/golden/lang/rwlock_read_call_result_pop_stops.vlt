@@ -1,0 +1,23 @@
+// A reader popping from a plain array of a store object reached through `at` stops the program.
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [0];
+  kids: Item[] = [];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+  m: Map<string, Item> = new Map<string, Item>();
+}
+function main() {
+  const st = new St();
+  st.m.set("a", st.items[1]);
+  const rw = shared(new RwLock<St>(st));
+  const n = rw.read((s) => {
+    s.items.at(1)!.nums.pop();
+    return s.items[1].nums.length;
+  });
+  console.log(n);
+}

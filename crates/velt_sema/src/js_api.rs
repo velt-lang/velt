@@ -1,13 +1,19 @@
 //! The JS API the standard library provides (`body::expr::numbers::is_js_api`): user code sees
 //! its integer results as `number`, like TypeScript.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 
+/// The prelude modules that are Velt's own API, JS having no counterpart: the ordering protocol
+/// (`compareTo`, classes.md) and the integer bit counts. Their integer results stay integers in
+/// user code (`x.trailingZeros()` indexes an array as it is). A Velt-only prelude method goes in
+/// one of them, or in a new module listed here.
+const VELT_PRELUDE: &[&str] = &["std/prelude/compare", "std/prelude/bits"];
+
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
-    /// library provides? Everything in a prelude module is. In a module the prelude's globals
+    /// library provides? Everything in a prelude module is, but for `VELT_PRELUDE`. In a module the prelude's globals
     /// re-export from (`velt:fetch` and its submodules such as `std/fetch/response`, `velt:url`,
     /// `velt:task`), the methods are (of the re-exported classes and the classes they use), and
     /// the top-level functions the globals re-export (`fetch`), but not its other functions:
@@ -24,11 +30,11 @@ impl<'m> Ctx<'m> {
         local.contains('.') || names.contains(local)
     }
 
-    fn js_api_modules(&self) -> &HashMap<usize, Option<HashSet<String>>> {
+    fn js_api_modules(&self) -> &FxHashMap<usize, Option<FxHashSet<String>>> {
         let modules = self.modules;
         self.js_api_modules.get_or_init(|| {
             // For each module path a global re-exports from: the names it re-exports.
-            let mut reexported: HashMap<&str, HashSet<String>> = HashMap::new();
+            let mut reexported: FxHashMap<&str, FxHashSet<String>> = FxHashMap::default();
             for g in modules
                 .iter()
                 .filter(|g| g.is_std && g.path.starts_with("std/prelude/global/"))
@@ -45,16 +51,18 @@ impl<'m> Ctx<'m> {
                     names.extend(imp.names.iter().map(|n| n.name.name.clone()));
                 }
             }
-            let mut out = HashMap::new();
+            let mut out = FxHashMap::default();
             for (i, m) in modules.iter().enumerate() {
                 if !m.is_std {
                     continue;
                 }
                 if m.path.starts_with("std/prelude/") {
-                    out.insert(i, None);
+                    if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".vlt")) {
+                        out.insert(i, None);
+                    }
                     continue;
                 }
-                let names: HashSet<String> = reexported
+                let names: FxHashSet<String> = reexported
                     .iter()
                     .filter(|(g, _)| m.path == **g || m.path.starts_with(&format!("{g}/")))
                     .flat_map(|(_, n)| n.iter().cloned())

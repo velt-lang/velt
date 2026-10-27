@@ -191,6 +191,12 @@ impl VisitMut for TypeMap<'_> {
                 .iter_mut()
                 .chain(method_type_args.iter_mut())
                 .for_each(|t| *t = (self.0)(*t)),
+            E::Call {
+                callee: Callee::Dyn {
+                    method_type_args, ..
+                },
+                ..
+            } => method_type_args.iter_mut().for_each(|t| *t = (self.0)(*t)),
             _ => {}
         }
     }
@@ -223,6 +229,71 @@ pub(crate) fn remap_locals(b: &mut Block, map: &[LocalId]) {
     block(b, &mut Remap(map));
 }
 
+/// [`remap_locals`] over one expression tree.
+pub(crate) fn remap_expr_locals(e: &mut Expr, map: &[LocalId]) {
+    expr(e, &mut Remap(map));
+}
+
+/// Per local id: its type (`None`: no `let` or pattern gives one) and whether it is assigned.
+#[derive(Default)]
+struct Declared(Vec<(Option<TyId>, bool)>);
+
+impl Declared {
+    fn at(&mut self, l: LocalId) -> &mut (Option<TyId>, bool) {
+        let i = l.0 as usize;
+        if self.0.len() <= i {
+            self.0.resize(i + 1, (None, false));
+        }
+        &mut self.0[i]
+    }
+}
+
+impl VisitMut for Declared {
+    fn stmt(&mut self, s: &mut Stmt) {
+        if let S::Let {
+            local,
+            init: Some(e),
+        } = &s.kind
+        {
+            self.at(*local).0 = Some(e.ty);
+        }
+    }
+
+    fn expr(&mut self, e: &mut Expr) {
+        if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+            if let E::Local(l, _) = place.kind {
+                self.at(l).1 = true;
+            }
+        }
+    }
+
+    fn pat(&mut self, p: &mut Pat) {
+        if let PatKind::Binding(l, _) = p.kind {
+            self.at(l).0 = Some(p.ty);
+        }
+    }
+
+    fn local(&mut self, l: &mut LocalId) {
+        self.at(*l);
+    }
+}
+
+/// The locals of `e`, an expression checked outside any function body
+/// (`body::driver::detached`: a field initializer, a parameter's default). They are all its own
+/// temporaries (a `Record` literal's, ...), numbered from 0 in a frame no body has, so the body
+/// `e` is placed in must give them locals of its own. Per local: its type (`None`: no `let` or
+/// pattern gives one) and whether it is assigned. Empty: `e` has none.
+///
+/// The type comes from the `let` or binding pattern that declares the local, so a `let`
+/// without an initializer or a `catch` local (typed by neither) would come back as `None`, and
+/// `FnCx::adopt_detached` would give it the error type. Sema does not produce either in an
+/// initializer or default today (hir_encodings.md, field defaults).
+pub(crate) fn detached_locals(e: &mut Expr) -> Vec<(Option<TyId>, bool)> {
+    let mut d = Declared::default();
+    expr(e, &mut d);
+    d.0
+}
+
 struct Exprs<'a>(&'a mut dyn FnMut(&mut Expr));
 
 impl VisitMut for Exprs<'_> {
@@ -234,4 +305,66 @@ impl VisitMut for Exprs<'_> {
 /// Visit every expression of a block (pre-order, including nested blocks and match arms).
 pub(crate) fn exprs_mut(b: &mut Block, f: &mut dyn FnMut(&mut Expr)) {
     block(b, &mut Exprs(f));
+}
+
+/// [`exprs_mut`] over one expression tree.
+pub(crate) fn exprs_in(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
+    expr(e, &mut Exprs(f));
+}
+
+/// The `if` statements of `b` whose condition is `g(x) && MayHoldPrimitive(x)` (a type
+/// predicate on a value of a type parameter's type, hir_encodings.md "Type predicates on a type
+/// parameter"): for every expression in the `then` block of one, a bit per type parameter
+/// (`param_of` of the probe's type) whose instantiation with an object type drops it.
+/// Expressions are keyed by address: the caller visits `b` again without changing it.
+pub(crate) fn primitive_guards(
+    b: &mut Block,
+    param_of: &dyn Fn(TyId) -> Option<u32>,
+) -> rustc_hash::FxHashMap<*const Expr, u64> {
+    struct Guards<'a> {
+        param_of: &'a dyn Fn(TyId) -> Option<u32>,
+        out: rustc_hash::FxHashMap<*const Expr, u64>,
+    }
+    impl VisitMut for Guards<'_> {
+        fn stmt(&mut self, s: &mut Stmt) {
+            let S::If { cond, then, .. } = &mut s.kind else {
+                return;
+            };
+            let Some(p) = guard_param(cond).and_then(|t| (self.param_of)(t)) else {
+                return;
+            };
+            let Some(bit) = 1u64.checked_shl(p) else {
+                return;
+            };
+            let out = &mut self.out;
+            exprs_mut(then, &mut |e: &mut Expr| {
+                *out.entry(e as *const Expr).or_default() |= bit;
+            });
+        }
+    }
+    let mut g = Guards {
+        param_of,
+        out: Default::default(),
+    };
+    block(b, &mut g);
+    g.out
+}
+
+/// The probe type of a condition `g(x) && MayHoldPrimitive(x)`.
+pub(crate) fn guard_param(cond: &Expr) -> Option<TyId> {
+    let E::Logical {
+        op: crate::hir::LogicOp::And,
+        rhs,
+        ..
+    } = &cond.kind
+    else {
+        return None;
+    };
+    match &rhs.kind {
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::MayHoldPrimitive),
+            args,
+        } => args.first().map(|a| a.ty),
+        _ => None,
+    }
 }

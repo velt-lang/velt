@@ -1,0 +1,2 @@
+object_copy_boxed_tuple.vlt:4:44: error: mismatched types
+  = note: expected { value: any; done: boolean }, found { value: [f64, string]; done: boolean }

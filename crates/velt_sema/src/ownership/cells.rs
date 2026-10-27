@@ -8,7 +8,7 @@
 //! closure capturing them (transitively) — and turns moves out of them into shares or copies:
 //! a cell is never moved from, since a closure may still read it.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -30,8 +30,8 @@ use super::soft::{is_moved_place, make_share};
 /// declares can: each time the pattern binds, it gets a cell of its own (#799).
 pub(crate) fn box_cells(
     cx: &mut Ctx,
-    boxed: &HashMap<DefId, HashSet<LocalId>>,
-    per_iteration: &HashSet<(DefId, LocalId)>,
+    boxed: &FxHashMap<DefId, FxHashSet<LocalId>>,
+    per_iteration: &FxHashSet<(DefId, LocalId)>,
 ) {
     let mut work: Vec<(DefId, LocalId)> = boxed
         .iter()
@@ -40,9 +40,12 @@ pub(crate) fn box_cells(
     if work.is_empty() {
         return;
     }
+    // Smallest first (`pop` takes the last): the errors come in definition order, not in the
+    // hash map's.
+    work.sort_unstable_by(|a, b| b.cmp(a));
     let parents = enclosing_fns(cx);
     let mut threaded = None;
-    let mut done = HashSet::new();
+    let mut done = FxHashSet::default();
     while let Some((d, l)) = work.pop() {
         if !done.insert((d, l)) {
             continue;
@@ -132,7 +135,12 @@ fn boxable_local(cx: &mut Ctx, d: DefId, l: LocalId) -> bool {
 /// Was a closure created in `p` that captures `outer` already reported for modifying it
 /// (`crate::ownership::local_async`, which counts the closures created inside it)? Then the
 /// threaded case says nothing more.
-fn reported_threaded(cx: &Ctx, parents: &HashMap<DefId, DefId>, p: DefId, outer: LocalId) -> bool {
+fn reported_threaded(
+    cx: &Ctx,
+    parents: &FxHashMap<DefId, DefId>,
+    p: DefId,
+    outer: LocalId,
+) -> bool {
     let Some(Def::Fn(f)) = &cx.defs[p.0 as usize] else {
         return false;
     };
@@ -157,8 +165,8 @@ fn reported_threaded(cx: &Ctx, parents: &HashMap<DefId, DefId>, p: DefId, outer:
 pub(crate) fn unshareable_nested(
     cx: &mut Ctx,
     vars: &[(DefId, LocalId)],
-    writers: &HashMap<DefId, HashSet<LocalId>>,
-    own: &HashMap<DefId, HashSet<LocalId>>,
+    writers: &FxHashMap<DefId, FxHashSet<LocalId>>,
+    own: &FxHashMap<DefId, FxHashSet<LocalId>>,
 ) {
     let parents = enclosing_fns(cx);
     let why = Unshareable::PerIteration;
@@ -266,8 +274,8 @@ pub(crate) fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> 
 }
 
 /// Per closure: the function that creates it.
-pub(super) fn enclosing_fns(cx: &mut Ctx) -> HashMap<DefId, DefId> {
-    let mut out = HashMap::new();
+pub(super) fn enclosing_fns(cx: &mut Ctx) -> FxHashMap<DefId, DefId> {
+    let mut out = FxHashMap::default();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;

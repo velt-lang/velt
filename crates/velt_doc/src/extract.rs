@@ -247,7 +247,11 @@ fn declared_name(item: &Item) -> Option<&String> {
             ast::PatternKind::Ident(name) => &name.name,
             _ => return None,
         },
-        ItemKind::Extend(_) | ItemKind::Import(_) | ItemKind::ExternFn(_) => return None,
+        ItemKind::Extend(_)
+        | ItemKind::Import(_)
+        | ItemKind::ExternFn(_)
+        | ItemKind::Augment(_)
+        | ItemKind::Namespace(_) => return None,
     })
 }
 
@@ -327,13 +331,21 @@ impl Source<'_> {
             ItemKind::Var(v) => self.constant(v, doc)?,
             ItemKind::Extend(e) => {
                 let target = p.ty(&e.target);
+                let implements: Vec<String> = e.implements.iter().map(|t| p.ty(t)).collect();
+                let implements = match implements.is_empty() {
+                    true => String::new(),
+                    false => format!(" implements {}", implements.join(", ")),
+                };
                 DocItem {
-                    signature: format!("extend{} {target}", p.generics(&e.generics)),
+                    signature: format!("extend{} {target}{implements}", p.generics(&e.generics)),
                     members: self.methods(&e.methods),
                     ..leaf(Kind::Extension, &target, &e.generics, doc)
                 }
             }
-            ItemKind::Import(_) | ItemKind::ExternFn(_) => return None,
+            ItemKind::Import(_)
+            | ItemKind::ExternFn(_)
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => return None,
         })
     }
 
@@ -396,6 +408,12 @@ impl Source<'_> {
             i.methods
                 .iter()
                 .map(|m| self.member_fn(Kind::Method, &m.sig)),
+        );
+        // Call signatures, as `(x: T): R`.
+        members.extend(
+            i.call_sigs
+                .iter()
+                .map(|s| self.member_fn(Kind::Method, &s.sig)),
         );
         DocItem {
             signature: self.printer.type_header(

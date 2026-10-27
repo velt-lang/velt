@@ -9,7 +9,10 @@
 //! thread than the one that threw it (`async main` runs on a worker, a spawned task's handle is
 //! awaited anywhere), so finished tasks carry the slot to whoever takes their result
 //! ([`ThrowLoc`]). Each poll of a task starts with an empty slot, so a task that threw nothing in
-//! its last poll hands over no location and leaves the taker's own in place. Known limits (the
+//! its last poll hands over no location and leaves the taker's own in place. Started promises
+//! carry it the same way: a promise that rejects keeps where it threw (task/local/node/loc.rs)
+//! and hands it to whoever claims or reports the rejection, on whichever thread and in
+//! whichever poll that is; so does a shared promise's hub (task/shared.rs). Known limits (the
 //! slot is "the last throw on this thread", not part of the error value): a task that throws,
 //! then awaits before its error leaves it (in a `finally`), reports no location; and a task that
 //! threw and caught an error in its last poll hands that location to a taker that is itself
@@ -27,7 +30,15 @@ pub const PANIC_EXIT_CODE: i32 = 101;
 pub fn panic_message(msg: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(msg.len() + 8);
     out.extend_from_slice(b"panic: ");
-    out.extend_from_slice(msg);
+    // A member key naming a symbol the program made is U+FFFF and `Symbol(desc)` (the
+    // compiler's spelling, UTF-8 `EF BF BF` first): the message shows `Symbol(desc)`, as
+    // Node's does.
+    let mut rest = msg;
+    while let Some(i) = rest.windows(3).position(|w| w == [0xef, 0xbf, 0xbf]) {
+        out.extend_from_slice(&rest[..i]);
+        rest = &rest[i + 3..];
+    }
+    out.extend_from_slice(rest);
     out.push(b'\n');
     out
 }
@@ -99,6 +110,9 @@ pub(crate) struct ThrowLoc(*const VeltStr);
 unsafe impl Send for ThrowLoc {}
 
 impl ThrowLoc {
+    /// No location.
+    pub(crate) const NONE: ThrowLoc = ThrowLoc(std::ptr::null());
+
     /// This thread's location (of the last `throw` here).
     pub(crate) fn current() -> ThrowLoc {
         ThrowLoc(velt_rt_throw_loc())
@@ -121,6 +135,59 @@ impl ThrowLoc {
     pub(crate) fn clear() {
         velt_rt_set_throw_loc(std::ptr::null());
     }
+
+    /// This thread's location, which is forgotten (one thread-local access).
+    pub(crate) fn take() -> ThrowLoc {
+        ThrowLoc(THROW_LOC.with(|c| c.replace(std::ptr::null())))
+    }
+
+    /// Make it this thread's location and return the one it replaces.
+    pub(crate) fn replace(self) -> ThrowLoc {
+        ThrowLoc(THROW_LOC.with(|c| c.replace(self.0)))
+    }
+
+    /// Is a location recorded?
+    pub(crate) fn is_known(self) -> bool {
+        !self.0.is_null()
+    }
+}
+
+/// The thread reporting an uncaught error ([`velt_rt_uncaught_report`]); 0: none.
+static REPORTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+thread_local! {
+    /// Its address tells the threads apart for [`REPORTER`].
+    static THREAD_MARK: u8 = const { 0 };
+}
+
+/// An uncaught error is about to be reported (`Uncaught …`), which ends the process: as in Node,
+/// only the first one is. Tasks on other workers may fail at the same time (two spawned tasks
+/// that reject, a task and `main`): their reports would follow the first before the process is
+/// gone, so a thread that comes second waits here until the reporting thread ends the process.
+/// The reporting thread itself goes on (an error reported while dropping the first one's
+/// values ends the process the same way).
+#[no_mangle]
+pub extern "C" fn velt_rt_uncaught_report() {
+    if !may_report(THREAD_MARK.with(|m| m as *const u8 as usize)) {
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
+/// May the thread marked `me` report an uncaught error: it is the first to, or reports again?
+fn may_report(me: usize) -> bool {
+    use std::sync::atomic::Ordering;
+    match REPORTER.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(first) => first == me,
+    }
+}
+
+/// Nobody reported yet (tests).
+#[cfg(test)]
+fn reset_uncaught_report() {
+    REPORTER.store(0, std::sync::atomic::Ordering::Release);
 }
 
 #[no_mangle]
@@ -146,6 +213,18 @@ mod tests {
             .unwrap();
         super::velt_rt_set_throw_loc(std::ptr::null());
         assert!(super::velt_rt_throw_loc().is_null());
+    }
+
+    #[test]
+    fn only_the_first_thread_reports_an_uncaught_error() {
+        // The only test that reports (marks are thread-local addresses, never 1 or 2).
+        super::reset_uncaught_report();
+        assert!(super::may_report(1));
+        // The reporting thread may report again (an error while dropping the first one's
+        // values); another one may not.
+        assert!(super::may_report(1));
+        assert!(!super::may_report(2));
+        super::reset_uncaught_report();
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! union, so a trial check of the argument finds it ([`FnCx::infer_union_error`]); one nothing
 //! fixes is `never` (`args::default_slots`).
 
+use rustc_hash::FxHashSet;
 use velt_syntax::ast;
 
 use super::args::as_arrow;
@@ -40,16 +41,17 @@ impl FnCx<'_, '_> {
         if self.thread_task == Some(arg.span) || self.thread_callback == Some(arg.span) {
             return None;
         }
-        let fn_ty = self.cx.ty.opt_payload(pty).unwrap_or(pty);
+        let fn_ty = self.cx.ty.core(pty).unwrap_or(pty);
         let TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
         };
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         let members = self.cx.union_members(inner)?;
         let (promises, values): (Vec<TyId>, Vec<TyId>) = members
             .iter()
@@ -70,6 +72,7 @@ impl FnCx<'_, '_> {
                     params: params.clone(),
                     ret: error,
                     throws: error,
+                    rest,
                 });
                 let expected = self.cx.subst_known(open, known);
                 let found = self.closure(a, Some(expected), false).ty;
@@ -88,6 +91,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest,
                 });
                 (trial, found)
             }
@@ -103,6 +107,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest,
                 });
                 (trial, h.ty)
             }
@@ -130,52 +135,95 @@ pub(super) fn occurs_plain(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> bool {
     param_uses(cx, t, k).1
 }
 
+/// `Some(true)` when type parameter `k` is a member of union `t` (`T | string`, `T | null`)
+/// and occurs nowhere else in it, `Some(false)` when `t` doesn't mention `k`, `None` when it
+/// occurs some other way.
+pub(super) fn union_member_only(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> Option<bool> {
+    let is_k = |cx: &crate::ctx::Ctx, m: TyId| matches!(cx.ty.kind(m), TyKind::Param(p) if *p == k);
+    let core = cx.ty.opt_payload(t).unwrap_or(t);
+    let members = match cx.union_members(core) {
+        Some(ms) => ms,
+        None if cx.ty.opt_payload(t).is_some() => vec![core],
+        None => return (!occurs_plain(cx, t, k)).then_some(false),
+    };
+    let mut member = false;
+    for m in members {
+        if is_k(cx, m) {
+            member = true;
+        } else if occurs_plain(cx, m, k) {
+            return None;
+        }
+    }
+    Some(member)
+}
+
 /// (occurs as an error type, occurs elsewhere) for type parameter `k` in `t`. A union is
 /// looked at through its members (its type arguments don't say where `k` sits).
 fn param_uses(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> (bool, bool) {
     let mut acc = (false, false);
-    let mut add = |(e, p): (bool, bool)| {
-        acc.0 |= e;
-        acc.1 |= p;
-    };
-    let error_pos = |cx: &mut crate::ctx::Ctx, e: TyId| match cx.ty.kind(e) {
-        TyKind::Param(n) if *n == k => (true, false),
-        _ => param_uses(cx, e, k),
+    param_uses_in(cx, t, k, &mut FxHashSet::default(), &mut acc);
+    acc
+}
+
+/// [`param_uses`] of `t` added to `acc`. Each type is looked at once (`seen`): a recursive
+/// union (`type Tree = string | Tree[]`) has itself among its members' parts, and what a type
+/// holds doesn't depend on where it sits (only `k` itself does, in an error position).
+fn param_uses_in(
+    cx: &mut crate::ctx::Ctx,
+    t: TyId,
+    k: u32,
+    seen: &mut FxHashSet<TyId>,
+    acc: &mut (bool, bool),
+) {
+    if !seen.insert(t) {
+        return;
+    }
+    let mut walk = |cx: &mut crate::ctx::Ctx, x: TyId, acc: &mut (bool, bool)| {
+        param_uses_in(cx, x, k, seen, acc)
     };
     if let Some(members) = cx.union_def(t).and_then(|_| cx.union_members(t)) {
         for m in members {
-            add(param_uses(cx, m, k));
+            walk(cx, m, acc);
         }
-        return acc;
+        return;
     }
+    // `k` as an error type (a promise's `E`, a function type's `throws`).
+    let error_pos =
+        |cx: &crate::ctx::Ctx, e: TyId| matches!(cx.ty.kind(e), TyKind::Param(n) if *n == k);
     match cx.ty.kind(t).clone() {
-        TyKind::Param(n) => add((false, n == k)),
+        TyKind::Param(n) => acc.1 |= n == k,
         TyKind::Promise(v, e) => {
-            add(param_uses(cx, v, k));
-            add(error_pos(cx, e));
+            walk(cx, v, acc);
+            match error_pos(cx, e) {
+                true => acc.0 = true,
+                false => walk(cx, e, acc),
+            }
         }
         TyKind::FnPtr {
             params,
             ret,
             throws,
+            ..
         } => {
             for p in params {
-                add(param_uses(cx, p, k));
+                walk(cx, p, acc);
             }
-            add(param_uses(cx, ret, k));
-            add(error_pos(cx, throws));
+            walk(cx, ret, acc);
+            match error_pos(cx, throws) {
+                true => acc.0 = true,
+                false => walk(cx, throws, acc),
+            }
         }
         TyKind::Adt(_, xs) | TyKind::Dyn(_, xs) | TyKind::Tuple(xs) => {
             for x in xs {
-                add(param_uses(cx, x, k));
+                walk(cx, x, acc);
             }
         }
-        TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => add(param_uses(cx, x, k)),
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => walk(cx, x, acc),
         TyKind::Map(a, b) | TyKind::Result(a, b) => {
-            add(param_uses(cx, a, k));
-            add(param_uses(cx, b, k));
+            walk(cx, a, acc);
+            walk(cx, b, acc);
         }
         _ => {}
     }
-    acc
 }

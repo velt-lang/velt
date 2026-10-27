@@ -22,7 +22,7 @@ fn array_literals_index_and_intrinsics() {
         .any(|e| matches!(&e.kind, E::Index { index, .. } if matches!(index.kind, E::Cast(_)))));
     let r = err_src("function main() { const xs = []; }");
     assert!(r.contains("cannot infer the element type of `[]`"), "{r}");
-    let r = err_src("function main() { const xs = [1, \"a\"]; }");
+    let r = err_src("function main() { const xs: number[] = [1, \"a\"]; }");
     assert!(r.contains("mismatched types"), "{r}");
     let r = err_src("function main() { const xs = [1]; xs[\"a\"]; }");
     assert!(r.contains("array index must be an integer"), "{r}");
@@ -137,7 +137,7 @@ fn narrowing_by_null_tests() {
         );
     }
     let r = err_src("function f(x: i64 | null): i64 { return x + 1; } function main() {}");
-    assert!(r.contains("mismatched types"), "{r}");
+    assert!(r.contains("an operand may be `null`"), "{r}");
     let r = err_src("function f(x: string | null): usize { return x.length; } function main() {}");
     assert!(r.contains("may be null"), "{r}");
     let r = err_src("function f(x: i64 | null): i64 { if (x != null) { x = null; return x; } return 0; } function main() {}");
@@ -151,7 +151,7 @@ fn narrowing_by_null_tests() {
 fn nullish_and_optional_chaining() {
     let p = ok_src(
         "class N { v: i64 = 1; next: N | null = null; get(): i64 { return this.v; } }
-         function main() { const n: N | null = new N(); console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs: i64[] | null = [1]; console.log(xs?.[0]); }",
+         function main() { const n = new N() as N | null; console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs = [1] as i64[] | null; console.log(xs?.[0]); }",
     );
     let main = func(&p, "main");
     let matches = exprs(main)
@@ -159,13 +159,8 @@ fn nullish_and_optional_chaining() {
         .filter(|e| matches!(e.kind, E::Match { .. }))
         .count();
     assert!(matches >= 6, "{matches}");
-    let r = err_src("function main() { const x = 5; console.log(x ?? 1); }");
-    assert!(
-        r.contains("`??` needs a `T | null` value on the left"),
-        "{r}"
-    );
-    let r = err_src("function main() { const x = 5; console.log(x == null); }");
-    assert!(r.contains("is never null"), "{r}");
+    // On a value that is never null, as in TS: the value itself, and `false` (#1203).
+    ok_src("function main() { const x = 5; console.log(x ?? 1, x == null, x != undefined); }");
 }
 
 #[test]
@@ -332,11 +327,64 @@ fn closures_and_function_values_carry_error_types() {
     let p =
         ok_src("function f(x: i64): i64 { throw \"x\"; } function main() { const g = f; g(1); }");
     assert!(func(&p, "main").throws.is_some());
+    // A function type written without `throws` throws what is stored into it (#1154).
+    let p = ok_src(
+        "class A extends Error {} function run(f: () => void) { f(); }
+         function main() { run(() => { throw new A(\"x\"); }); }",
+    );
+    assert!(
+        func(&p, "run").throws.is_some(),
+        "a call through `f` throws"
+    );
+    assert!(func(&p, "main").throws.is_some());
+    let p = ok_src(
+        "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
+    );
+    assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
+    // Per site: a function type of the same shape written elsewhere throws nothing more, and
+    // the errors follow the values stored from one site into another.
+    let p = ok_src(
+        "class A extends Error {}
+         class Box { cb: () => void; constructor(cb: () => void) { this.cb = cb; } }
+         function run(f: () => void) { const b = new Box(f); b.cb(); }
+         function other(g: () => void) { g(); }
+         function main() { run(() => { throw new A(\"x\"); }); other(() => {}); }",
+    );
+    assert!(func(&p, "run").throws.is_some(), "through the field");
+    assert!(func(&p, "other").throws.is_none(), "another site");
+    // Only `Error` classes are inferred: a thrown string is still reported.
     let r = err_src(
         "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
     );
     assert!(
         r.contains("but the function type it is used as does not allow throwing"),
+        "{r}"
+    );
+    // The errors come through other function types and through untyped `let`s.
+    let p = ok_src(
+        "class A extends Error {}
+         let s1: (n: i64) => i64 = (n) => n;
+         let s0: (s: string) => i64 = (s) => s1(1);
+         function main() {
+           let f = () => {};
+           f = () => { throw new A(\"x\"); };
+           s1 = (n) => { throw new A(\"y\"); };
+           try { f(); s0(\"a\"); } catch (e) {}
+         }",
+    );
+    assert!(func(&p, "main").throws.is_none(), "caught");
+    // Diagnostics show such a type as written, without what it may throw.
+    let r =
+        err_src("function main() { let g: (n: i64) => void = (n) => {}; const s: string = g; }");
+    assert!(r.contains("found (i64) => void"), "{r}");
+    assert!(!r.contains("throws"), "{r}");
+    // A written `throws` clause still bounds what may be stored.
+    let r = err_src(
+        "class A extends Error {} function run(f: () => void throws A) { f(); }
+         function main() { try { run(() => { throw \"x\"; }); } catch (e) {} }",
+    );
+    assert!(
+        r.contains("but the function type it is used as allows only `A`"),
         "{r}"
     );
 }
@@ -385,6 +433,28 @@ fn printing_and_formatting() {
 }
 
 #[test]
+fn constant_text_is_joined_at_compile_time() {
+    // A module constant built from constant text is one literal, not a concatenation at each
+    // use; text that is not constant is still joined at run time.
+    let p = ok_src(
+        "const BASE = \"SELECT a FROM t\"; const ONE = `${BASE} WHERE id = ?`; const TWO = ONE + \" LIMIT 1\"; function show(n: string) { console.log(TWO, `${BASE}${n}`); } function main() { show(\"x\"); }",
+    );
+    let init = p.defs.iter().find_map(|d| match d {
+        Def::Global(g) if g.name == "TWO" => Some(&g.init),
+        _ => None,
+    });
+    assert!(
+        matches!(&init.map(|i| &i.kind), Some(E::Lit(velt_sema::hir::Lit::Str(s))) if s == "SELECT a FROM t WHERE id = ? LIMIT 1"),
+        "{init:?}"
+    );
+    let concats = calls(func(&p, "show"))
+        .iter()
+        .filter(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::StrConcat)))
+        .count();
+    assert_eq!(concats, 1);
+}
+
+#[test]
 fn shared_values() {
     let p = ok_src("function main() { const s = shared(\"x\"); }");
     assert!(calls(func(&p, "main"))
@@ -427,4 +497,41 @@ fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
     ok_src(&format!(
         "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
     ));
+}
+
+#[test]
+fn typeof_of_a_function_generic_over_errors_only() {
+    // Its function type leaves the errors out, as TypeScript declares it (`typeof setTimeout`).
+    let p = ok_src(
+        "class A extends Error {}
+         function run<E>(f: () => void throws E): i64 { try { f(); } catch (e) {} return 1; }
+         function main() {
+           const n: ReturnType<typeof run> = run(() => { throw new A(\"x\"); });
+           let t: ReturnType<typeof setTimeout> | null = null;
+           t = setTimeout(() => { throw new A(\"y\"); }, 1);
+           console.log(n);
+         }",
+    );
+    assert!(
+        func(&p, "main").throws.is_none(),
+        "timer errors are uncaught"
+    );
+    let r = err_src("function id<T>(x: T): T { return x; } function main() { let f: typeof id; }");
+    assert!(
+        r.contains("of a generic function is not supported yet"),
+        "{r}"
+    );
+}
+
+#[test]
+fn unknown_names_in_initializers_are_reported_once() {
+    // An initializer of a function type outside a function body (a field, a module constant)
+    // naming an unknown value: one report each, not one per check of the name.
+    let r = err_src(
+        "class K { h: () => void = nope; }
+const m: () => number = nope2;
+function main() {}",
+    );
+    assert_eq!(r.matches("cannot find `nope`").count(), 1, "{r}");
+    assert_eq!(r.matches("cannot find `nope2`").count(), 1, "{r}");
 }

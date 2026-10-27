@@ -4,7 +4,7 @@
 //! the handle and substituted lazily, so viewing the fields of `Box<Map<K, V>>` sees the map, and
 //! recursive types are no problem.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use velt_common::Span;
@@ -43,7 +43,7 @@ pub enum TypeView {
     Void,
     /// `never`.
     Never,
-    /// `T | null`.
+    /// `T | null`, and `T | undefined` (issue #930, phase 1).
     Nullable(TypeRef),
     /// `T[]`.
     Array(TypeRef),
@@ -120,7 +120,8 @@ impl Analysis {
             // The first record: desugarings check synthetic expressions with the span of the
             // expression they stand for after it (`const { a = 1 } = p` reads `p.a` at `p`'s
             // span).
-            let mut index = HashMap::with_capacity(self.types.len());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.types.len(), Default::default());
             for (i, (s, _, _)) in self.types.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }
@@ -158,7 +159,7 @@ impl Analysis {
             TyKind::Unit => TypeView::Void,
             TyKind::Never => TypeView::Never,
             TyKind::Literal(v) => TypeView::Literal(literal_kind(v)),
-            TyKind::Option(x) => TypeView::Nullable(here(*x)),
+            TyKind::Option(x, _) => TypeView::Nullable(here(*x)),
             TyKind::Array(x) => TypeView::Array(here(*x)),
             TyKind::Tuple(xs) => TypeView::Tuple(list(xs)),
             TyKind::Map(k, v) => TypeView::Map(here(*k), here(*v)),
@@ -167,7 +168,11 @@ impl Analysis {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => TypeView::Fn,
             TyKind::Adt(d, args) | TyKind::Dyn(d, args) => self.view_def(*d, &list(args)),
             TyKind::Param(_) => TypeView::Param(self.show_type(&t)),
-            TyKind::Error | TyKind::Result(..) | TyKind::Symbol => TypeView::Other,
+            TyKind::Error
+            | TyKind::Result(..)
+            | TyKind::Symbol
+            | TyKind::Simd(_)
+            | TyKind::Op(..) => TypeView::Other,
         }
     }
 

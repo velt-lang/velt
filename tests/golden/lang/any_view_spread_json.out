@@ -1,0 +1,14 @@
+lamp 5 true
+chair 12 wood
+lamp 30
+12 chair 1
+lamp 12
+31 31
+{"name":"lamp","price":31,"stock":4}
+{"name":"chair","price":12,"tags":["wood"],"legs":4}
+{"item":{"name":"lamp","price":31,"stock":4},"list":[{"name":"chair","price":12,"tags":["wood"],"legs":4},{"name":"lamp","price":31,"stock":4}]}
+get toJSON
+get name
+get price
+{"name":"proxy","price":1}
+[{"name":"table","price":99},{"name":"lamp","price":31,"stock":4}]

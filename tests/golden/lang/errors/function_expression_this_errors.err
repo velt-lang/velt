@@ -1,0 +1,1 @@
+function_expression_this_errors.vlt:8:13: error: 'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)

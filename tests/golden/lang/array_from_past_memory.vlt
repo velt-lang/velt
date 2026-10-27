@@ -1,0 +1,9 @@
+// `Array.from({ length: n }, f)` with a buffer larger than memory (2^51 + 8 bytes): the
+// allocator's error, on every target (wasm32 never truncates the size to 8 bytes, which the
+// loop would overrun). Node stops at JS's 2^32 - 1 elements (`RangeError: Invalid array
+// length`).
+function main() {
+  console.log("before");
+  const xs = Array.from({ length: 2 ** 48 + 1 }, (_, i) => i);
+  console.log(xs.length);
+}

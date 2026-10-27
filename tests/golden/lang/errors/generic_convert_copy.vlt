@@ -1,0 +1,21 @@
+// Conversions in generic bodies that an instantiation cannot make as TypeScript does (#350): a
+// `T & { tag }` used as `T` or as its `{ tag }` part is a copy of those fields at an
+// instantiation where `T` lacks `tag`, which is an error once the program could tell the copy
+// from the original (comparing it with `===`, writing a field); spreading a `T` that is a
+// number is an error too.
+type Tagged<T> = T & { tag: string };
+
+function unwrap<T>(s: Tagged<T>): T {
+  return s;
+}
+function tagPart<T>(s: Tagged<T>): { tag: string } {
+  return s;
+}
+function spreadNum<T>(t: T): T {
+  return { ...t };
+}
+
+const x: Tagged<{ a: number }> = { a: 1, tag: "t" };
+const part = tagPart(x);
+part.tag = "changed";
+console.log(unwrap(x) === x, part.tag, spreadNum(5));

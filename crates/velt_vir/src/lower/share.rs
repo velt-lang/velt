@@ -10,7 +10,6 @@ use velt_sema::hir::{TyId, TyKind};
 use super::boxing::ShareKind;
 use super::glue::SLOT_SHARE;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{unit, FnLower, Glue, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -37,14 +36,11 @@ impl FnLower<'_, '_> {
                     self.assign(dst, Rvalue::Use(Operand::Copy(src)));
                 }
             }
-            ShareKind::Str => {
-                let (s, d) = (self.addr(src), self.addr(dst));
-                self.call_rt(Rt::StrClone, vec![s, d], None);
-            }
+            ShareKind::Str => self.str_share(src, dst),
             ShareKind::Object => self.share_object(src, dst, ty),
             ShareKind::Value => {
                 let (s, d) = (self.addr(src), self.addr(dst));
-                let f = self.cx.func(Work::Glue(Glue::Share, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Share, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![s, d], None, false);
             }
             ShareKind::Closure => self.share_closure(&src, &dst),
@@ -61,7 +57,8 @@ impl FnLower<'_, '_> {
         if self.cx.counted(ty) {
             let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(src)));
             self.assign(dst, Rvalue::Use(p.clone()));
-            self.retain(p);
+            let c = self.count_ptr(p, ty);
+            self.retain_of(c, ty);
         } else if self.cx.is_class(ty) {
             // Placeholder for this pass: the class is counted in the next one.
             self.cx.facts.unmet = true;
@@ -127,14 +124,31 @@ impl FnLower<'_, '_> {
     }
 
     /// `Glue::DynShare`: the data pointer of another reference to an interface value's data. A
-    /// counted value (class object, boxed value) is retained; a value that is never changed in
-    /// place gets a copy of its own; anything else is recorded so the next pass counts it.
+    /// counted value (class object, boxed value) is retained; a function value or a value that
+    /// is never changed in place gets a new box holding a share of it (part by part); anything
+    /// else is recorded so the next pass counts it.
     pub(super) fn dyn_share_body(&mut self, data: vir::Local, ty: TyId) {
         self.cx.note_share(ty);
         let d = Operand::Copy(Place::local(data));
         let out = if self.cx.counted(ty) {
-            self.retain(d.clone());
+            let c = self.count_ptr(d.clone(), ty);
+            self.retain_of(c, ty);
             d
+        } else if matches!(
+            self.cx.share_kind(ty),
+            ShareKind::Closure | ShareKind::Value
+        ) {
+            // A new box with a share of the function value: the same environment, so the
+            // function keeps its identity (a clone would build another environment). A value
+            // never changed in place (an object literal of methods) is shared part by part the
+            // same way: its methods' captured variables stay the ones the literal captured (a
+            // deep copy would give a call its own copy of a captured array, #1310).
+            let vt = self.cx.ty(ty);
+            let b = self.alloc(vt);
+            let src = self.deref_param(data, ty);
+            let bp = self.operand_place(b.clone(), Ty::Ptr);
+            self.share_into(src, proj(&bp, Proj::Deref(vt)), ty);
+            b
         } else {
             if self.cx.share_kind(ty) == ShareKind::Object {
                 self.cx.facts.unmet = true;
@@ -150,7 +164,7 @@ impl FnLower<'_, '_> {
         let d = self.deref_param(dst, ty);
         self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.share_option(&s, &d, ty, e),
+            TyKind::Option(e, _) => self.share_option(&s, &d, ty, e),
             TyKind::Adt(..) if self.is_enum(ty) => self.share_variants(&s, &d, ty),
             TyKind::Result(..) => self.share_variants(&s, &d, ty),
             _ => {

@@ -10,10 +10,22 @@
 //! edge *grows* when that argument is more than the bare parameter (`T[]`, `Box<T>`). A program
 //! has finitely many instantiations iff no growing edge lies on a cycle, i.e. inside one
 //! strongly connected component. Instantiations come from direct calls (`Callee::Def`), closures
-//! (which share their enclosing function's parameters) and the methods a constructed or
-//! dynamically converted class runs ([`crate::dispatch`]).
+//! (which share their enclosing function's parameters), the methods a constructed or
+//! dynamically converted class runs ([`crate::dispatch`]) and method calls through a type
+//! parameter (`s.area<V>(…)`, `s: S`): those run the implementing method of whatever type `S`
+//! becomes, so they instantiate the method of every implementation of the interface (its
+//! owner's parameters come from inside `S`, which does not grow them; its own from the call's
+//! type arguments). A generic method called on an interface value does the same.
+//!
+//! A growing edge is allowed when its call lies in the `then` block of an `if` whose type
+//! predicate rules out objects for the edge's own source parameter (`if (isPrimitive(x))`,
+//! `x: T`; hir_encodings.md "Type predicates on a type parameter") and the grown argument is an
+//! object type (issue #1251): such a branch is not lowered for an instance whose `T` is an
+//! object, so the edge only fires from types that may be primitives, and a growing edge never
+//! makes one. If every growing edge of a component is allowed, its instantiations are finite.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 use velt_common::{Diagnostic, Span};
 
@@ -21,6 +33,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::Dispatch;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
+use crate::inst_sites::ParamCall;
 use crate::types::collect_params;
 use crate::visit;
 
@@ -36,6 +49,8 @@ enum Site {
     /// A class value built or converted to an interface: its methods are instantiated with the
     /// type's arguments.
     Object(TyId),
+    /// A method call through a type parameter.
+    Param(ParamCall),
 }
 
 /// An edge of the expansion graph and the call that makes it.
@@ -46,6 +61,9 @@ struct Edge {
     callee: DefId,
     targs: Vec<TyId>,
     span: Span,
+    /// The call is only lowered for instances whose source parameter may hold a primitive and
+    /// it makes the target an object type (module docs).
+    allowed: bool,
 }
 
 /// Reports every call that instantiates a generic function with ever-growing type arguments
@@ -58,10 +76,10 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
     }
     let graph = Graph::new(&edges);
     let comp = graph.components();
-    let mut reported: HashSet<Span> = HashSet::new();
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
     for (i, e) in edges.iter().enumerate() {
         let (a, b) = (graph.index[&e.from], graph.index[&e.to]);
-        if e.grows && comp[a] == comp[b] && reported.insert(e.span) {
+        if e.grows && !e.allowed && comp[a] == comp[b] && reported.insert(e.span) {
             let back = graph.path(&edges, b, a, &comp);
             report(cx, &edges, i, &back);
         }
@@ -71,15 +89,27 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
 
 /// The instantiation sites of every generic function body (a function without type parameters
 /// cannot be part of a growing cycle).
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span)>)> {
+/// The instantiation sites of each generic body, with the type parameters whose primitive guard
+/// encloses each (a bit each).
+type Sites = Vec<(DefId, Vec<(Site, Span, u64)>)>;
+
+/// Each site comes with its guard bits ([`Sites`]).
+fn collect(cx: &mut Ctx) -> Sites {
     let mut out = vec![];
+    let tys = &cx.ty;
+    let param_of = |t: TyId| match tys.kind(t) {
+        TyKind::Param(p) => Some(*p),
+        _ => None,
+    };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         if f.generics == 0 {
             continue;
         }
         let mut sites = vec![];
+        let guards = visit::primitive_guards(&mut f.body.block, &param_of);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             let site = match &e.kind {
                 E::Call {
                     callee: Callee::Def(d, targs),
@@ -88,20 +118,59 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span)>)> {
                 E::Closure(c) => Site::Closure(*c),
                 E::New { .. } => Site::Object(e.ty),
                 E::ToDyn { expr, .. } => Site::Object(expr.ty),
+                E::Call {
+                    callee:
+                        Callee::ParamMethod {
+                            iface,
+                            slot,
+                            method_type_args,
+                            ..
+                        },
+                    args,
+                } => {
+                    let Some(recv) = args.first() else { return };
+                    Site::Param(ParamCall {
+                        recv: recv.ty,
+                        iface: *iface,
+                        slot: *slot,
+                        margs: method_type_args.clone(),
+                    })
+                }
+                // A generic method called on an interface value runs the method of every
+                // implementation, as a call through a type parameter may.
+                E::Call {
+                    callee:
+                        Callee::Dyn {
+                            slot,
+                            method_type_args,
+                        },
+                    args,
+                } if !method_type_args.is_empty() => {
+                    let Some(recv) = args.first() else { return };
+                    let TyKind::Dyn(iface, _) = tys.kind(recv.ty) else {
+                        return;
+                    };
+                    Site::Param(ParamCall {
+                        recv: recv.ty,
+                        iface: *iface,
+                        slot: *slot,
+                        margs: method_type_args.clone(),
+                    })
+                }
                 _ => return,
             };
-            sites.push((site, e.span));
+            sites.push((site, e.span, guard));
         });
         out.push((DefId(i as u32), sites));
     }
     out
 }
 
-fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span)>)>) -> Vec<Edge> {
+fn edges(cx: &mut Ctx, sites: Sites) -> Vec<Edge> {
     let mut dispatch = Dispatch::default();
     let mut out = vec![];
     for (f, list) in sites {
-        for (site, span) in list {
+        for (site, span, guard) in list {
             let calls = match site {
                 Site::Call(g, targs) => vec![(g, targs)],
                 Site::Closure(c) => {
@@ -109,9 +178,10 @@ fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span)>)>) -> Vec<Edge> {
                     vec![(c, (0..n).map(|p| cx.ty.param(p)).collect())]
                 }
                 Site::Object(t) => object_calls(cx, &mut dispatch, t),
+                Site::Param(p) => param_calls(cx, &p),
             };
             for (g, targs) in calls {
-                call_edges(cx, f, g, &targs, span, &mut out);
+                call_edges(cx, (f, g), &targs, span, guard, &mut out);
             }
         }
     }
@@ -129,12 +199,63 @@ fn object_calls(cx: &mut Ctx, dispatch: &mut Dispatch, t: TyId) -> Vec<(DefId, V
     calls
 }
 
-fn call_edges(cx: &Ctx, f: DefId, g: DefId, targs: &[TyId], span: Span, out: &mut Vec<Edge>) {
+/// The methods a call through a type parameter may run, with type arguments in terms of the
+/// caller's parameters: the one of the receiver's implementation if that is known, else the
+/// method of every implementation, its owner's parameters standing for parts of the receiver.
+fn param_calls(cx: &mut Ctx, p: &ParamCall) -> Vec<(DefId, Vec<TyId>)> {
+    if !matches!(cx.ty.kind(p.recv), TyKind::Param(_)) {
+        if let Some(call) = p.resolve(cx) {
+            return vec![call];
+        }
+    }
+    let mut out = vec![];
+    for imp in cx.impls.iter().filter(|i| i.iface == p.iface) {
+        let Some(&m) = imp.methods.get(p.slot as usize) else {
+            continue;
+        };
+        let is_default = cx
+            .iface(p.iface)
+            .and_then(|i| i.methods.get(p.slot as usize))
+            .is_some_and(|d| d.default == Some(m));
+        // A generic closure (`body::expr::generic_values`) runs at the type arguments of the
+        // function that made it, which reach it where it is made (`Site::Closure`), then the
+        // call's: those stand for nothing here.
+        if let TyKind::Closure(c) = *cx.ty.kind(imp.ty) {
+            let own = generics(cx, c).saturating_sub(p.margs.len() as u32) as usize;
+            let mut targs = vec![cx.ty.error; own];
+            targs.extend(p.margs.iter().copied());
+            out.push((m, targs));
+            continue;
+        }
+        let owner = if is_default {
+            imp.iface_args.len() + 1
+        } else {
+            imp.generics as usize
+        };
+        let mut targs = vec![p.recv; owner];
+        targs.extend(p.margs.iter().copied());
+        out.push((m, targs));
+    }
+    out
+}
+
+/// The edges of a call from `f` to `g` (`guard`: the bits of the parameters whose primitive
+/// guard encloses it).
+fn call_edges(
+    cx: &Ctx,
+    (f, g): (DefId, DefId),
+    targs: &[TyId],
+    span: Span,
+    guard: u64,
+    out: &mut Vec<Edge>,
+) {
     for (j, t) in targs.iter().enumerate() {
         let mut ps = vec![];
         collect_params(&cx.ty, *t, &mut ps);
+        let object = cx.object_only(*t);
         for p in ps {
             let bare = matches!(cx.ty.kind(*t), TyKind::Param(q) if *q == p);
+            let guarded = 1u64.checked_shl(p).is_some_and(|b| guard & b != 0);
             out.push(Edge {
                 from: (f, p),
                 to: (g, j as u32),
@@ -142,6 +263,7 @@ fn call_edges(cx: &Ctx, f: DefId, g: DefId, targs: &[TyId], span: Span, out: &mu
                 callee: g,
                 targs: targs.to_vec(),
                 span,
+                allowed: !bare && guarded && object,
             });
         }
     }
@@ -156,7 +278,7 @@ fn generics(cx: &Ctx, d: DefId) -> u32 {
 
 /// The expansion graph as adjacency lists over dense node indices.
 struct Graph {
-    index: HashMap<Node, usize>,
+    index: FxHashMap<Node, usize>,
     /// Outgoing edges (indices into the edge list) per node.
     out: Vec<Vec<usize>>,
     /// Target node per edge.
@@ -166,7 +288,7 @@ struct Graph {
 impl Graph {
     fn new(edges: &[Edge]) -> Graph {
         let mut g = Graph {
-            index: HashMap::new(),
+            index: FxHashMap::default(),
             out: vec![],
             to: vec![],
         };
@@ -243,7 +365,7 @@ impl Graph {
 
     /// The edges of a shortest path from `from` to `to` inside their component.
     fn path(&self, edges: &[Edge], from: usize, to: usize, comp: &[usize]) -> Vec<usize> {
-        let mut via: HashMap<usize, usize> = HashMap::new();
+        let mut via: FxHashMap<usize, usize> = FxHashMap::default();
         let mut queue = VecDeque::from([from]);
         while let Some(v) = queue.pop_front() {
             if v == to {
@@ -276,7 +398,29 @@ fn report(cx: &mut Ctx, edges: &[Edge], i: usize, back: &[usize]) {
     let names = generic_names(cx, caller);
     let args: Vec<String> = e.targs.iter().map(|t| cx.display_in(*t, &names)).collect();
     let grown = cx.display_in(e.targs[e.to.1 as usize], &names);
-    let (f, g) = (fn_name(cx, caller), fn_name(cx, callee));
+    let (f, mut g) = (fn_name(cx, caller), fn_name(cx, callee));
+    // A generic closure called through a generic function value (`param_calls`): its own type
+    // arguments, the ones the call gives.
+    let own = (cx.impls.iter())
+        .find(|i| *cx.ty.kind(i.ty) == TyKind::Closure(callee))
+        .and_then(|i| cx.iface(i.iface))
+        .and_then(|i| i.methods.first())
+        .map(|m| m.generics.len());
+    let value = own.is_some();
+    let args: Vec<String> = match own {
+        Some(n) => {
+            g = format!("a generic function value made in `{g}`");
+            let k = e.targs.len().saturating_sub(n);
+            (e.targs[k..].iter())
+                .map(|t| cx.display_in(*t, &names))
+                .collect()
+        }
+        None => args,
+    };
+    let g_called = match value {
+        true => g.clone(),
+        false => format!("`{g}`"),
+    };
     let own = format!("{f}<{}>", names.join(", "));
     // A call from a closure is its enclosing function calling.
     let (fq, gq) = (enclosing_fn(cx, caller), enclosing_fn(cx, callee));
@@ -297,14 +441,20 @@ fn report(cx: &mut Ctx, edges: &[Edge], i: usize, back: &[usize]) {
             [] => String::new(),
             ts => format!(" through `{}`", ts.join("`, `")),
         };
-        format!("`{f}` calls `{g}` with `{grown}`, which calls `{f}` again{via}")
+        format!("`{f}` calls {g_called} with `{grown}`, which calls `{f}` again{via}")
     };
     cx.error(
         Diagnostic::error(
-            format!(
-                "instantiating `{g}<{}>` from `{own}` grows without end",
-                args.join(", ")
-            ),
+            match value {
+                true => format!(
+                    "instantiating {g} at `<{}>` from `{own}` grows without end",
+                    args.join(", ")
+                ),
+                false => format!(
+                    "instantiating `{g}<{}>` from `{own}` grows without end",
+                    args.join(", ")
+                ),
+            },
             e.span,
         )
         .with_note(format!(

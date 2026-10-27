@@ -18,6 +18,15 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.new_through_value(class, args, span) {
+            return h;
+        }
+        if let Some(c) = self.proxy_class_name(class) {
+            return self.new_expr(&c, args, exp, span);
+        }
+        if let Some(h) = self.proxy_new_any(class, args, span) {
+            return h;
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
@@ -63,6 +72,11 @@ impl FnCx<'_, '_> {
                 let mut ps = self.cx.fn_info(c).params.clone();
                 for p in &mut ps {
                     p.ty = self.cx.subst(p.ty, &oargs);
+                    // An inherited constructor's defaults are in its class's terms too
+                    // (`class S extends Set<string>`: `values: T[] = []`, issue #1096).
+                    if let Some(e) = p.default.as_mut().filter(|_| owner != d) {
+                        crate::visit::map_expr_types(e, &mut |t| self.cx.subst(t, &oargs));
+                    }
                 }
                 ctor_args = oargs;
                 (ps, format!("the constructor of `{cname}`"))
@@ -80,12 +94,20 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            constraints: names.constraints,
             js_numbers: false,
+            positions: false,
             js_api: false,
-            rest: false,
+            rest: ctor.is_some_and(|c| crate::body::defaults::has_rest(self.cx, c)),
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);
+        self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
+        // A type bound an explicit type argument breaks is reported there (`tsc` TS2344).
+        if let ast::TypeExprKind::Named { args: targs, .. } = &class.kind {
+            let spans = targs.iter().enumerate().map(|(i, t)| (i, t.span));
+            self.explicit_type_spans = Some((span, spans.collect()));
+        }
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends
@@ -124,12 +146,14 @@ impl FnCx<'_, '_> {
             type_args: ck.type_args,
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        self.proxy_new(d, h, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
     /// (`class`: which)? JavaScript requires an object (TS2344 / TS2345 for a primitive); Velt
-    /// takes class instances, object types and arrays. Reports the error if not.
+    /// takes class instances, object types, arrays, `object` and interface values. Reports the
+    /// error if not.
     fn weak_key_type(&mut self, k: TyId, class: &str, span: Span) -> bool {
         let what = match class {
             "WeakRef" => "the target of a `WeakRef`",
@@ -152,10 +176,28 @@ impl FnCx<'_, '_> {
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Option(_) => true,
+            | TyKind::Option(..) => true,
             _ => false,
         };
         let tn = self.cx.display(k);
+        match self.cx.dynamic(k) {
+            // `object` (issue #926): the types converted to it become weak-capable; a value
+            // that is not a counted object is checked where it is used (`TypeError`).
+            Some(crate::any::Dynamic::Object) => return true,
+            Some(crate::any::Dynamic::Function) => {
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("`{tn}` as {what} is not supported yet (#926)"),
+                        span,
+                    )
+                    .with_note("use `object`, or the class or object type of the values it holds"),
+                );
+                return false;
+            }
+            // An interface value: keyed by the object it holds (velt_vir weak_object.rs).
+            None if matches!(self.cx.ty.kind(k), TyKind::Dyn(..)) => return true,
+            _ => {}
+        }
         let d = match primitive {
             true => Diagnostic::error(
                 format!("type `{tn}` does not satisfy the constraint `object`"),
@@ -169,7 +211,7 @@ impl FnCx<'_, '_> {
                 span,
             )
             .with_note(
-                "use a class instance, an object type or an array (unions, tuples, structs, function and interface values are not supported yet, #823)",
+                "use a class instance, an object type, an array or an interface (unions, tuples, structs and function values are not supported yet, #823)",
             ),
         };
         self.cx.error(d);
@@ -233,8 +275,12 @@ impl FnCx<'_, '_> {
             .join(".");
         let item = self.lookup_type_path(path);
         let Some(Item::Def(d)) = item else {
-            self.cx
-                .err(format!("cannot find class `{name}` in this scope"), t.span);
+            let msg = format!("cannot find class `{name}` in this scope");
+            match item {
+                // Not reported when its import was not (`Ctx::poisoned`).
+                None => self.cx.not_found(msg, &name, t.span),
+                Some(_) => self.cx.err(msg, t.span),
+            }
             return None;
         };
         let Some(a) = self.cx.adt(d) else {

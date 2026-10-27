@@ -3,11 +3,12 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+pub(crate) use super::member_keys::{literal_key, member_view};
+
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::defs::Bound;
-use crate::hir::{self, AdtKind, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
+use crate::hir::{self, AdtKind, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 use crate::ide::record::Target;
 
 fn base_mode(want: Want) -> UseMode {
@@ -34,70 +35,6 @@ impl FnCx<'_, '_> {
         self.cx.field_seen_from(t, name, owner)
     }
 
-    /// `x.field` on an interface value or bounded generic: a call of the field's getter slot
-    /// (see `collect::getters`); the result is an owned copy / clone.
-    fn iface_field(
-        &mut self,
-        mut obj: hir::Expr,
-        prop: &ast::Ident,
-        want: Want,
-        span: Span,
-    ) -> Result<hir::Expr, hir::Expr> {
-        let (bounds, on_param) = match self.cx.ty.kind(obj.ty) {
-            TyKind::Dyn(d, args) => (
-                vec![Bound {
-                    iface: *d,
-                    args: args.clone(),
-                }],
-                false,
-            ),
-            TyKind::Param(n) => (
-                self.bounds.get(*n as usize).cloned().unwrap_or_default(),
-                true,
-            ),
-            _ => return Err(obj),
-        };
-        for b in bounds {
-            let Some(i) = self.cx.iface(b.iface) else {
-                continue;
-            };
-            let Some(idx) = i.fields.iter().position(|f| f.name == prop.name) else {
-                continue;
-            };
-            let (fty, slot) = (i.fields[idx].ty, (i.methods.len() + idx) as u32);
-            self.cx
-                .rec_ref(prop.span, Target::Field(b.iface, idx as u32));
-            let fty = self.cx.subst(fty, &b.args);
-            if want == Want::BorrowMut {
-                self.cx.err(
-                    format!(
-                        "cannot modify `{}` through an interface or generic value",
-                        prop.name
-                    ),
-                    prop.span,
-                );
-                return Ok(self.error_expr(span));
-            }
-            set_place_mode(&mut obj, UseMode::Borrow);
-            let callee = if on_param {
-                Callee::ParamMethod {
-                    iface: b.iface,
-                    iface_args: b.args.clone(),
-                    slot,
-                    method_type_args: vec![],
-                }
-            } else {
-                Callee::Dyn { slot }
-            };
-            let kind = H::Call {
-                callee,
-                args: vec![obj],
-            };
-            return Ok(self.mk(kind, fty, span));
-        }
-        Err(obj)
-    }
-
     /// `obj.prop` as a field place used per `want`.
     pub(crate) fn field_access(
         &mut self,
@@ -113,14 +50,22 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(obj.ty) {
             return None;
         }
+        let obj = self.without_trap_vars(obj);
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
+            // `null` for a `T | null`, `undefined` for a `T | undefined`.
+            let what = self.cx.ty.nothing_of(obj.ty).map_or("null", |n| n.word());
             self.cx.error(
-                Diagnostic::error(format!("value of type `{tn}` may be null"), obj.span)
+                Diagnostic::error(format!("value of type `{tn}` may be {what}"), obj.span)
                     .with_note(format!("use `?.{}` or check `!= null` first", prop.name)),
             );
             return None;
         }
+        // `x.f = v` on an `any` (reads were handled by `member_value`).
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return Some(h),
+            Err(obj) => obj,
+        };
         let mut obj = match self.iface_field(obj, prop, want, span) {
             Ok(call) => return Some(call),
             Err(obj) => obj,
@@ -131,6 +76,8 @@ impl FnCx<'_, '_> {
                 Err(o) => obj = o,
             }
         }
+        let renamed = self.ctor_member(obj.ty, prop); // `C.name` of a class value
+        let prop = renamed.as_ref().unwrap_or(prop);
         let Some((index, fty)) = self.field_of(obj.ty, &prop.name) else {
             self.no_field(obj.ty, obj.span, prop);
             return None;
@@ -152,45 +99,9 @@ impl FnCx<'_, '_> {
         ))
     }
 
-    fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
-        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
-            return;
-        }
-        if self.has_setter(t, &prop.name) {
-            return self.cx.err(
-                format!("cannot read `{}`: it has a setter but no getter", prop.name),
-                prop.span,
-            );
-        }
-        let tn = self.cx.display(t);
-        let mut d = Diagnostic::error(
-            format!(
-                "no field `{}` on type `{tn}`",
-                self.cx.shown_name(&prop.name)
-            ),
-            prop.span,
-        );
-        if self.adt_of(t).is_some() {
-            d = d.with_note(
-                "objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys",
-            );
-        }
-        if let Some(note) = self.narrowing_note(t) {
-            d = d.with_note(note);
-        }
-        if let Some(note) = self.unnarrowed_note(obj) {
-            d = d.with_note(note);
-        }
-        if self.method_exists(t, &prop.name) {
-            d = d.with_note(match self.cx.key_spelling(&prop.name) {
-                Some(key) => format!("`{key}` is a method: call it with `o{key}()`"),
-                None => format!(
-                    "`{}` is a method: call it with `.{}()`",
-                    prop.name, prop.name
-                ),
-            });
-        }
-        self.cx.error(d);
+    /// Is `length` of a `t` the intrinsic length of a string or array?
+    pub(super) fn has_length(&self, t: TyId) -> bool {
+        t == self.cx.ty.str_ || self.cx.ty.array_elem(t).is_some()
     }
 
     pub(crate) fn member(
@@ -256,7 +167,7 @@ impl FnCx<'_, '_> {
                     let mut d = Diagnostic::error(msg, span);
                     if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
                     {
-                        d = d.with_note(process_note(&prop.name));
+                        d = d.with_note(super::process::process_note(&prop.name));
                     }
                     self.cx.error(d);
                     return self.error_expr(span);
@@ -271,10 +182,13 @@ impl FnCx<'_, '_> {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
-                    if let Some(h) = self.static_field(d, prop, want, span) {
+                    if let Some(h) = self.inherited_static_field(d, prop, want, span) {
                         return h;
                     }
                     if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
+                        return h;
+                    }
+                    if let Some(h) = self.class_name_read(d, prop, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {
@@ -293,14 +207,21 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
-        let obj = self.expr(object, None, Want::Borrow);
+        // A union local narrowed to one member is read as the union here, so that a view it may
+        // hold is read through its getters (`union_view`).
+        self.view_receiver = want != Want::BorrowMut && is_name(object);
+        let obj = self.receiver_expr(object);
+        self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            if self.stored_method_read(object, prop, obj.ty, span) {
+                return self.error_expr(span);
+            }
             return self.method_value(obj, object, prop, exp, span);
         }
         let r = self.in_place_receiver(object, obj);
         let h = self.member_of(r.recv, prop, want, span);
         let h = self.after_receiver(r.before, h);
-        let h = self.narrowed_field(object, prop, h, want);
+        let h = self.narrowed_field(object, prop, h, want, exp);
         self.downcast_field(object, prop, h)
     }
 
@@ -324,22 +245,60 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         if self.record_args(obj.ty).is_some() {
-            return self.record_read(obj, super::record::RecordKey::Name(prop), span);
+            return self.record_member_read(obj, prop, span);
         }
         let obj = self.unbrand(obj);
         let obj = self.widen_literal_receiver(obj, &prop.name);
+        // `s.length` on a `shared<string>` or `shared<T[]>`: the length of the value inside.
+        let obj = match self.cx.ty.kind(obj.ty) {
+            TyKind::Shared(t) if prop.name == "length" && self.has_length(*t) => {
+                self.frozen_view(obj, Some("length"))
+            }
+            _ => obj,
+        };
         if prop.name == "length" {
             let t = obj.ty;
             if t == self.cx.ty.str_ {
                 return self.intrinsic(Intrinsic::StrLen, vec![obj], self.cx.ty.usize, span);
             }
             if self.cx.ty.array_elem(t).is_some() {
+                self.array_used_in_place(&obj);
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
+        // `s.f` on a `shared<T>` of an object type with a field or getter `f`: the value
+        // inside's (#36). A getter is a call on it, refused where it may modify it, as a method
+        // is (`ownership/patch.rs`).
+        let shared = match self.cx.ty.kind(obj.ty) {
+            TyKind::Shared(t) => Some(*t),
+            _ => None,
+        };
+        let obj = match shared {
+            Some(t) if self.field_of(t, &prop.name).is_some() || self.has_getter(t, &prop.name) => {
+                self.frozen_view(obj, Some(&prop.name))
+            }
+            _ => obj,
+        };
+        if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
+            return self.error_expr(span);
+        }
+        let obj = self.without_trap_vars(obj);
+        let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,
+            Err(obj) => obj,
+        };
+        let obj = match self.bound_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.form_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
             Err(obj) => obj,
         };
         match self.field_access(obj, prop, want, span) {
@@ -353,21 +312,39 @@ impl FnCx<'_, '_> {
         object: &ast::Expr,
         index: &ast::Expr,
         optional: bool,
+        exp: Option<TyId>,
         want: Want,
         span: Span,
     ) -> hir::Expr {
         if optional {
-            return self.optional_chain(object, span, |s, v| s.index_of(v, index, want, span));
+            return self.optional_chain(object, span, |s, v| {
+                if want != Want::BorrowMut {
+                    s.array_used_in_place(&v);
+                }
+                s.index_of(v, index, want, span)
+            });
         }
         if let Some(h) = self.process_env_index(object, index, span) {
+            return h;
+        }
+        if let Some(h) = self.symbol_record_read(object, index, span) {
             return h;
         }
         if let Some(h) = self.keyed_read(object, index, want, span) {
             return h;
         }
-        let obj = self.expr(object, None, Want::Borrow);
+        if let Some(h) = self.generic_key_index(object, index, want, span) {
+            return h;
+        }
+        let obj = self.receiver_expr(object);
+        if want != Want::BorrowMut {
+            self.array_used_in_place(&obj);
+        }
         let r = self.in_place_receiver(object, obj);
-        let h = self.index_of(r.recv, index, want, span);
+        let h = match self.checked_array_read(r.recv, index, exp, want, span) {
+            Ok(h) => h,
+            Err(recv) => self.index_of(recv, index, want, span),
+        };
         let h = self.after_receiver(r.before, h);
         // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
         match self.single_key(index) {
@@ -376,9 +353,14 @@ impl FnCx<'_, '_> {
                     name,
                     span: index.span,
                 };
-                let h = self.narrowed_field(object, &prop, h, want);
+                let h = self.narrowed_field(object, &prop, h, want, exp);
                 self.downcast_field(object, &prop, h)
             }
+            // `r[k]` with a `const` key (`key_narrow`).
+            None if !self.f.field_tokens.is_empty() => match self.key_prop(index) {
+                Some(prop) => self.narrowed_field(object, &prop, h, want, exp),
+                None => h,
+            },
             None => h,
         }
     }
@@ -395,7 +377,7 @@ impl FnCx<'_, '_> {
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
-            TyKind::Option(inner) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            TyKind::Option(inner, _) | TyKind::Shared(inner) => self.has_fields(inner, name),
             _ => false,
         }
     }
@@ -407,6 +389,21 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let obj = match self.dynamic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.generic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match matches!(self.cx.ty.kind(obj.ty), TyKind::Shared(_)) {
+            true => match self.shared_indexed(obj, index, want, span) {
+                Ok(obj) => obj,
+                Err(e) => return e,
+            },
+            false => obj,
+        };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.
         if let Some(key) = self.symbol_key_of(index) {
@@ -416,7 +413,7 @@ impl FnCx<'_, '_> {
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
-                self.record_read(obj, super::record::RecordKey::Index(index), span)
+                self.record_index_read(obj, index, span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
             // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
@@ -426,6 +423,14 @@ impl FnCx<'_, '_> {
                     span,
                 };
                 self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
+            // `xs[i]` on a typed array: `xs.__index(i)` (`indexers`).
+            TyKind::Adt(..)
+                if self.has_indexer(t)
+                    && literal_key(index).is_none()
+                    && self.symbol_key_of(index).is_none() =>
+            {
+                self.indexer_read(obj, index, span)
             }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
@@ -470,14 +475,12 @@ impl FnCx<'_, '_> {
                 }
                 self.member_of(obj, &prop, want, span)
             }
+            // `obj(os)[key(ks, 0)]` in a generic body: a key known only per instantiation.
+            TyKind::Param(_) if want != Want::BorrowMut && literal_key(index).is_none() => {
+                self.param_key_read(obj, index, span)
+            }
             _ => {
-                let tn = self.cx.display(t);
-                let mut d =
-                    Diagnostic::error(format!("cannot index a value of type `{tn}`"), obj.span);
-                if self.cx.class_of(t).is_some() {
-                    d = d.with_note("use a method such as `m.get(key)`");
-                }
-                self.cx.error(d);
+                self.cannot_index(&obj);
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
             }
@@ -513,14 +516,6 @@ impl FnCx<'_, '_> {
                 d = d.with_note(note);
             }
             self.cx.error(d);
-        }
-        // A promise element can be replaced in place (`arr[i] = p`) or read in place
-        // (`console.log(arr[i])`), not moved out: that would leave a hole, and it can't be
-        // copied. (Binding it by reference is checked in `borrowed_const`.)
-        let rejected = want == Want::Move && self.cx.holds_promise(elem);
-        if rejected {
-            self.promise_out_of_array(elem, span);
-            return self.error_expr(span);
         }
         set_place_mode(&mut obj, base_mode(want));
         let mode = self.use_mode(elem, want);
@@ -569,7 +564,18 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `(v as Record<symbol, unknown>)[KEY]` is `symbol_record_read`'s; nothing else is.
+        if self.symbol_record_elsewhere(ty, span) {
+            self.expr(expr, None, Want::Borrow);
+            return self.error_expr(span);
+        }
         let target = self.resolve(ty);
+        if let Some(h) = self.callable_cast(expr, target, span) {
+            return h;
+        }
+        if let Some(h) = self.fn_as_generic(expr, (target, ty), want, span) {
+            return h;
+        }
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
@@ -580,6 +586,9 @@ impl FnCx<'_, '_> {
         // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
         let inner = self.expr(expr, hint, Want::Borrow);
+        if self.cx.dynamic(inner.ty).is_some() {
+            return self.cast_dynamic(inner, target);
+        }
         // `id as string`: a brand's value as its primitive.
         let inner = match self.cx.brand_base(inner.ty) == Some(target) {
             true => return self.unbrand(inner),
@@ -623,13 +632,55 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.fn_through_top(expr, target, want) {
+            return h;
+        }
+        if let Some(h) = self.empty_as_deferred(expr, target, span) {
+            return h;
+        }
         let inner = self.expr(expr, Some(target), want);
-        match self.try_coerce(inner, target) {
+        if self.cx.dynamic(inner.ty).is_some() {
+            if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
+                return h;
+            }
+        }
+        // `x as object` of an unbounded `T` (issue #926): checked at run time.
+        let coerced = self
+            .object_view_cast(inner, target, span)
+            .or_else(|h| self.try_coerce(h, target))
+            .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.param_as_object_part(h, target))
+            .or_else(|h| self.narrowing_assertion(h, target, span))
+            .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.array_view_cast(h, target, span))
+            .or_else(|h| self.generic_assertion(h, target));
+        match coerced {
             Ok(h) => h,
             Err(h) => {
+                let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));
+                if let (Some(from), Some(to)) = nothings {
+                    if !from.within(to) && !self.cx.ty.has_error(h.ty) {
+                        // TypeScript keeps the value (`undefined` stays `undefined`); the type
+                        // `T | null | undefined` that could hold it comes with phase 1b.
+                        let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                        self.cx.error(
+                            Diagnostic::error(
+                                format!("a cast from `{s}` to `{d}` is not supported yet (#930)"),
+                                span,
+                            )
+                            .with_note(format!(
+                                "the value would stay `{}`, which `{d}` cannot hold yet; convert it instead (`x ?? {}`)",
+                                from.word(),
+                                to.word()
+                            )),
+                        );
+                        return self.error_expr(span);
+                    }
+                }
                 if !self.cx.ty.has_error(h.ty) {
                     let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                    let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    let diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    let mut diag = self.cx.with_layout_note(diag, target);
                     if self.cx.has_literal_member(target) {
                         diag = diag.with_note(
                             "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
@@ -692,30 +743,8 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
-/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
-/// `env` (`super::process`); the rest is in `velt:process`.
-fn process_note(name: &str) -> String {
-    match name {
-        "stdout" | "stderr" => format!(
-            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
-        ),
-        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
-                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
-                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
-            .to_string(),
-        "cwd" | "chdir" => {
-            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
-        }
-        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
-              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
-              `velt:process`"
-            .to_string(),
-    }
-}
-
 /// The type of `x as const` (the parser's `const` type name).
-pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+pub(crate) fn is_as_const(ty: &ast::TypeExpr) -> bool {
     matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
 }
 
@@ -732,37 +761,11 @@ pub(super) fn untyped_int(e: &ast::Expr) -> bool {
     }
 }
 
-/// `o.name` or `o["name"]` (a constant key, which reads the same field): the object and the
-/// name. `None` for `?.` and other expressions.
-pub(crate) fn member_view(e: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
+/// Is `e` a name (in parentheses or not)?
+pub(crate) fn is_name(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Member {
-            object,
-            prop,
-            optional: false,
-        } => Some((object, prop.clone())),
-        ast::ExprKind::Index {
-            object,
-            index,
-            optional: false,
-        } => Some((
-            object,
-            ast::Ident {
-                name: literal_key(index)?,
-                span: index.span,
-            },
-        )),
-        _ => None,
-    }
-}
-
-/// The key of `o["name"]` / `` o[`name`] ``: a string literal (a template without
-/// substitutions).
-pub(crate) fn literal_key(index: &ast::Expr) -> Option<String> {
-    match &index.kind {
-        ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
-        ast::ExprKind::Template { quasis, exprs } if exprs.is_empty() => quasis.first().cloned(),
-        ast::ExprKind::Paren(inner) => literal_key(inner),
-        _ => None,
+        ast::ExprKind::Ident(_) => true,
+        ast::ExprKind::Paren(inner) => is_name(inner),
+        _ => false,
     }
 }

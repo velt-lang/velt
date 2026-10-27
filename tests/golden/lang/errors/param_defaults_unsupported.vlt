@@ -18,14 +18,6 @@ function h({ p }: { p: number }, q: number = p + 1): number {
   return p + q;
 }
 
-// A rest parameter of an object-literal method: the error names the method, and nothing else is
-// reported for it.
-const o = {
-  sum(...xs: number[]): number {
-    return xs.length;
-  },
-};
-
 function main() {
-  console.log(g({}), h({ p: 3 }), o.sum(1, 2));
+  console.log(g({}), h({ p: 3 }));
 }

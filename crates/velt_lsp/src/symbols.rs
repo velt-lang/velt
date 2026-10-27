@@ -38,6 +38,8 @@ impl Builder<'_> {
             vec![self.symbol(name, kind, item.span, Some(detail), children)]
         };
         match &item.kind {
+            // The top-level statements of a file that declares its own `main` (#1567).
+            ast::ItemKind::Function(f) if f.sig.name.name == velt_syntax::SCRIPT_MAIN => vec![],
             ast::ItemKind::Function(f) => one(&f.sig.name, SymbolKind::FUNCTION, vec![]),
             ast::ItemKind::ExternFn(sig) => one(&sig.name, SymbolKind::FUNCTION, vec![]),
             ast::ItemKind::Class(t) => one(&t.name, SymbolKind::CLASS, self.type_members(t)),
@@ -58,7 +60,11 @@ impl Builder<'_> {
             ast::ItemKind::TypeAlias(t) => one(&t.name, SymbolKind::TYPE_PARAMETER, vec![]),
             ast::ItemKind::Var(v) => self.globals(item, v),
             ast::ItemKind::Extend(ext) => self.extend(item, ext),
-            ast::ItemKind::Import(_) => vec![],
+            ast::ItemKind::Namespace(n) => {
+                let children = n.items.iter().flat_map(|i| self.item(i)).collect();
+                one(&n.name, SymbolKind::NAMESPACE, children)
+            }
+            ast::ItemKind::Import(_) | ast::ItemKind::Augment(_) => vec![],
         }
     }
 

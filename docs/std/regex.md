@@ -10,7 +10,7 @@ by `.` or a negated class yet (#377 phase 5), and an empty match steps over a wh
 pair (JavaScript without the `u` flag stops between its halves; #401).
 
 - `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d u v` are accepted and change
-  nothing). Throws `RegExpError` for an invalid pattern, or an unknown or repeated flag.
+  nothing). Throws `RegExpError` (a `SyntaxError`, as in JS) for an invalid pattern, or an unknown or repeated flag.
   Fields: `source`, `flags`, `global`, `sticky`, `groupCount`, `lastIndex` (a `number`, as in
   JS).
 - `test(s, from?)`, `exec(s, from?): RegExpMatch | null`.
@@ -23,7 +23,8 @@ pair (JavaScript without the `u` flag stops between its halves; #401).
   not take part, where JS gives `undefined`); `limit` 0 means no limit.
 - `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
   holding a `RegExp` can be copied for another task, `spawn` or a channel).
-- `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)`,
+- `RegExpMatch { index; end; value; captures: (string | null)[]; names }` (`index` and `end`
+  are `number`s, as JS's `m.index`), with `group(n)`,
   `named(name)` and `substitute(s, repl)` (`repl` expanded for the match). `m[n]` is group `n`
   (`m[0]` the match), `""` for a group that did not take part.
 
@@ -44,11 +45,15 @@ A string's `replace`, `replaceAll`, `match`, `matchAll`, `search` and `split` ta
 
 A replacer function gets the match, then each group, then the match's offset (a `number`) and
 the string, as in JS, and may take fewer parameters. A group that did not take part is `""`
-(JS: `undefined`), `null` for a parameter declared optional (`(m, p1?: string) => …`), or the
-parameter's default (`(m, p1 = "none") => …`); the parameters are variables the function may
-assign. The offset and the string follow the groups, so the number of groups must be known when
-compiling: the regex is a literal, or a `const` or `readonly` field initialized with one (or with
-`new RegExp` of string literals). For another regex (a parameter, a `let`), a replacer taking
+(JS: `undefined`), `null` for a parameter declared optional (`(m, p1?: string) => …`) or typed
+`string | null`, `undefined` for one typed `string | undefined` (as in JS), or the parameter's
+default (`(m, p1 = "none") => …`); the parameters are variables the function may assign. The
+offset and the string follow the groups, so the number of groups must be known when compiling:
+the regex is a literal, or a `const` or `readonly` field initialized with one (or with
+`new RegExp` of string literals, or of a template literal whose holes are numbers, booleans,
+`const`s of one string (counted as written), or string literal types without `(`, `)`, `[`,
+`]`, `\` or `?`: `` new RegExp(`<${tag}(\\s[^>]*)?>`) `` with `tag: "html" | "body"`). For
+another regex (a parameter, a `let`), a replacer taking
 more than the match is a compile error; take the match only, or use the regex's `exec`. For
 `matchAll` and `replaceAll`, such a regex without `g` is a compile error, and another regex
 without it panics like JS's `TypeError`.

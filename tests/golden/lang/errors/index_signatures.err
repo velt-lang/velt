@@ -1,6 +1,3 @@
-index_signatures.vlt:5:22: error: a `number` index signature is not supported yet (#937)
-  = note: use an array, a `Map<number, V>`, or a `string` key (`{ [key: string]: V }`)
+index_signatures.vlt:5:22: error: an integer index signature is not supported yet (#937)
 index_signatures.vlt:6:15: error: a named member (`name`) next to an index signature is not supported yet (#937)
-  = note: an object type with only an index signature is a `Record<string, V>`; with named members, each would need its own type (and an optional one `undefined`, #930)
 index_signatures.vlt:7:20: error: an index signature's key must be `string` or `number`; found `boolean`
-  = note: for a fixed set of keys, write `Record<K, V>` or an object type

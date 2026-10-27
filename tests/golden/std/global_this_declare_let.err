@@ -1,0 +1,2 @@
+global_this_declare_let.vlt:8:1: error: `globalThis.__LK__` has no type: no site asserts one
+global_this_declare_let.vlt:9:13: error: `globalThis.__CK__` has no type: no site asserts one

@@ -20,7 +20,6 @@ use crate::ide::record::Target;
 pub(super) enum ComponentFn {
     /// A named function (`Card`, `ui.Card`), written as `callee`.
     Named {
-        def: DefId,
         callee: ast::Expr,
         takes_props: bool,
     },
@@ -108,7 +107,7 @@ impl FnCx<'_, '_> {
             self.not_component(&tag, name.span(), why);
             return self.error_expr(el.span);
         }
-        let Some(value) = self.component_value(c.func, expected, props.ty, el, &tag) else {
+        let Some(value) = self.component_value(c.func, expected, el, &tag) else {
             return self.error_expr(el.span);
         };
         let identity = self.str_lit(&c.identity, name.span());
@@ -165,9 +164,7 @@ impl FnCx<'_, '_> {
             // `if (v != null) { names.push(n); values.push(v); }`
             let mut s = e.value;
             let payload = self
-                .cx
-                .ty
-                .opt_payload(s.ty)
+                .present_payload(s.ty)
                 .expect("ICE: an attribute that may be absent is nullable");
             let (l, mode) = self.option_binding(&s, payload, "<attr>", true);
             if mode == UseMode::Move {
@@ -191,12 +188,12 @@ impl FnCx<'_, '_> {
             let some = self.pat(hir::PatKind::Binding(l, mode), payload, e.span);
             let arms = vec![
                 hir::Arm {
-                    pat: self.pat(hir::PatKind::Some(Box::new(some)), sty, e.span),
+                    pat: self.present_pat(some, sty, e.span),
                     guard: None,
                     body,
                 },
                 hir::Arm {
-                    pat: self.pat(hir::PatKind::None, sty, e.span),
+                    pat: self.nothing_pat(sty, e.span),
                     guard: None,
                     body: none,
                 },
@@ -379,7 +376,6 @@ impl FnCx<'_, '_> {
         };
         Some(Component {
             func: ComponentFn::Named {
-                def,
                 callee,
                 takes_props: c.params.len() == 1,
             },

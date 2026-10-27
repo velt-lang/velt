@@ -1,0 +1,11 @@
+// `import.meta` is an object in TypeScript: it can be passed where an object type with some of
+// its fields is expected. Output compared with Node.
+function url(p: { readonly url: string }): string {
+  return p.url;
+}
+
+function where(p: { dirname: string; main: boolean }): string {
+  return `${p.main} ${p.dirname.length > 0}`;
+}
+
+console.log(url(import.meta) === import.meta.url, where(import.meta));

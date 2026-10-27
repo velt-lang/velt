@@ -1,0 +1,9 @@
+// An array holds at most 2^52 - 1 elements (JS: 2^32 - 1; the reference's "Length limit"), so
+// a buffer for 2^52 of them is a `RangeError` before anything is allocated. Node throws its
+// `RangeError: Invalid array length` here too.
+function main() {
+  console.log("before");
+  const n = 2 ** 52;
+  const xs = new Array<number>(n).fill(0);
+  console.log(xs.length);
+}

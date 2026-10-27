@@ -5,6 +5,8 @@
 //! (+ `verify`) and before `velt_codegen_cl::emit_object`.
 //!
 //! Passes (one module each; every pass keeps the VIR invariants from `vir.rs`):
+//! - `gated_clones`: before the rounds, a gated function's calls of ordinary callees that check
+//!   its CPU extension go to clones gated on it, where the check is `true` (#1330).
 //! - `inline`: bottom-up inlining of small / called-once direct callees.
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive
@@ -22,6 +24,8 @@
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
+//! - `module_state`: once the rounds are done, a function asks the runtime for the module state
+//!   block once per slot range rather than at every access to a module-level `let` (#1571).
 //! - `map_probe`: once the rounds are done, a `Map` probe (`lookup`, the key's string hash)
 //!   that repeats an earlier one on the same map and an equal key reuses its result, so an
 //!   inlined `m.set(k, (m.get(k) ?? 0) + 1)` probes once (#563).
@@ -32,7 +36,8 @@
 //!   locals) and in debug builds, `f64` locals whose values are provably whole numbers within
 //!   ±2^53 (intervals, integrality, NaN and `-0` facts, branch refinement, widening) become
 //!   `i32`/`i64` locals computed with integer operations, and `i64` locals that only hold 32-bit
-//!   values become `i32` (design #525, steps 1 and 2).
+//!   values become `i32` (design #525, steps 1 and 2); a `number[]` that never leaves its
+//!   function and only holds such values stores its elements as `i64` (#1599, step 5).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
@@ -61,10 +66,12 @@ mod dead_funcs;
 mod divisions;
 mod frame_slots;
 mod fresh;
+mod gated_clones;
 mod heap_sroa;
 mod inline;
 mod locals;
 mod map_probe;
+mod module_state;
 mod noalias;
 mod numrep;
 mod scc;
@@ -145,6 +152,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
         }
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));
+            t.time("gated_clones", || gated_clones::run(program));
             numrep::declare_formatters(&mut program.externs);
             // Once before inlining as well: an array is still one value there, whose length
             // bounds the index loops over it (`numrep` knows a length is below 2^53); after
@@ -169,6 +177,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             }
             let allocator = heap_sroa::Allocator::find(program);
             let probes = map_probe::Probes::find(program);
+            let lookups = module_state::Lookups::find(program);
             let env = numrep::Env::of(
                 &program.externs,
                 &program.funcs,
@@ -176,6 +185,9 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.statics,
             );
             for func in &mut program.funcs {
+                if t.time("module_state", || module_state::run(lookups, func)) {
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
                 if t.time("map_probe", || map_probe::run(&program.aggs, &probes, func)) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));

@@ -1,0 +1,4 @@
+type_level_deferred.vlt:14:10: error: mismatched types
+type_level_deferred.vlt:18:12: error: no field `title` on type `PropsAccessor<T>`
+type_level_deferred.vlt:21:22: error: mismatched types
+type_level_deferred.vlt:22:46: error: mismatched types

@@ -15,7 +15,8 @@
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
 //! the place they borrow from. The non-Copy params of closures and of named functions used as
 //! values may alias each other (calls through a function value don't check their arguments
-//! against each other), so there they count as one place. Guarantees for code generation: during a call, memory reachable
+//! against each other), so there they count as one place, unless their types cannot be one
+//! value (instances of unrelated classes, an array and a class instance). Guarantees for code generation: during a call, memory reachable
 //! from a `BorrowMut` parameter is not reachable from any other parameter (including the
 //! captures of a closure argument), and `Borrow` parameters may alias each other but never a
 //! `BorrowMut` or `Owned` one.
@@ -25,7 +26,7 @@ mod let_borrow;
 mod this_alias;
 mod uses;
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -78,39 +79,297 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
+        let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
             locals: &f.body.locals,
             aliases,
             held: &held,
+            soft: &soft,
             errors: vec![],
+            shares: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
         errors.extend(checker.errors);
+        let shares = checker.shares;
+        // A closure that modifies or takes over what it captured keeps its conflict: the call
+        // would see it change under the borrow.
+        let (mut kept, mut conflicts) = (vec![], vec![]);
+        for (c, outer, err) in shares {
+            match modifies_capture(cx, c, outer, 0) {
+                true => conflicts.push(err),
+                false => kept.push((c, outer)),
+            }
+        }
+        errors.extend(conflicts);
+        let shares = kept;
         cx.diags.extend(errors);
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        for (c, outer) in shares {
+            share_capture(cx, c, outer);
+        }
+    }
+}
+
+/// Does closure `c` modify or take over what it captured of enclosing variable `outer`? Through
+/// the captured name or any name for (a part of) it: a binding initialized from it (`const a =
+/// cap`, `const row = cap[0]`, destructuring), the elements of a loop or the bindings of a
+/// `match` over it (unless each is an object of its own: a class instance, an interface or
+/// `any` value), a share of it passed anywhere, or a closure it creates. Unknown cases count as
+/// modifying.
+fn modifies_capture(cx: &Ctx, c: DefId, outer: LocalId, depth: u32) -> bool {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return true;
+    };
+    let Some(cap) = f.captures.iter().find(|k| k.outer == outer) else {
+        return false;
+    };
+    if depth > 8 {
+        return true;
+    }
+    let mut block = f.body.block.clone();
+    // The names for the capture, until no binding adds one.
+    let mut aliases = Aliasing {
+        cx,
+        f,
+        names: FxHashSet::from_iter([cap.inner]),
+        inits: FxHashSet::default(),
+        grew: false,
+    };
+    loop {
+        aliases.grew = false;
+        visit::block(&mut block, &mut aliases);
+        if !aliases.grew {
+            break;
+        }
+    }
+    if aliases
+        .names
+        .iter()
+        .any(|l| f.body.locals[l.0 as usize].mutable)
+    {
+        return true;
+    }
+    let mut scan = Changes {
+        cx,
+        names: &aliases.names,
+        inits: &aliases.inits,
+        depth,
+        hit: false,
+    };
+    visit::block(&mut block, &mut scan);
+    scan.hit
+}
+
+/// The local at the root of place `e`, through shares and conversions (`None` for a value that
+/// is not a place, or a copy: `clone()`).
+fn alias_root(e: &Expr) -> Option<LocalId> {
+    let mut x = e;
+    loop {
+        match &x.kind {
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } if args.len() == 1 => x = &args[0],
+            E::Upcast(inner) | E::Downcast(inner) | E::WrapSome(inner) | E::Cast(inner) => {
+                x = inner
+            }
+            E::Field { base, .. }
+            | E::Index { base, .. }
+            | E::UnwrapSome(base, _)
+            | E::UnwrapVariant { expr: base, .. } => x = base,
+            E::Local(l, _) => return Some(*l),
+            _ => return None,
+        }
+    }
+}
+
+/// Collects the names for a capture (`modifies_capture`).
+struct Aliasing<'a, 'm> {
+    cx: &'a Ctx<'m>,
+    f: &'a FnDef,
+    names: FxHashSet<LocalId>,
+    /// Spans of the initializers that bind a name (a share there is that name's).
+    inits: FxHashSet<Span>,
+    grew: bool,
+}
+
+impl Aliasing<'_, '_> {
+    fn from(&mut self, init: &Expr) -> bool {
+        alias_root(init).is_some_and(|l| self.names.contains(&l))
+    }
+
+    fn bind(&mut self, l: LocalId) {
+        let ty = self.f.body.locals[l.0 as usize].ty;
+        let own = self.cx.class_of(ty).is_some() || matches!(self.cx.ty.kind(ty), TyKind::Dyn(..));
+        if !own && self.names.insert(l) {
+            self.grew = true;
+        }
+    }
+
+    fn bind_pat(&mut self, p: &Pat) {
+        let mut ls = vec![];
+        pat_locals(p, &mut ls);
+        for l in ls {
+            self.bind(l);
+        }
+    }
+}
+
+impl VisitMut for Aliasing<'_, '_> {
+    fn stmt(&mut self, s: &mut Stmt) {
+        match &s.kind {
+            S::Let {
+                local,
+                init: Some(init),
+            } if self.from(init) => {
+                self.inits.insert(init.span);
+                self.bind(*local);
+            }
+            S::LetPat { pat, init } if self.from(init) => {
+                self.inits.insert(init.span);
+                self.bind_pat(pat);
+            }
+            S::ForOf { binding, iter, .. } if self.from(iter) => self.bind_pat(binding),
+            _ => {}
+        }
+    }
+
+    fn expr(&mut self, e: &mut Expr) {
+        if let E::Match { scrutinee, arms } = &e.kind {
+            if self.from(scrutinee) {
+                for a in arms {
+                    self.bind_pat(&a.pat);
+                }
+            }
+        }
+    }
+}
+
+/// Finds a change through one of the names (`modifies_capture`).
+struct Changes<'a, 'm> {
+    cx: &'a Ctx<'m>,
+    names: &'a FxHashSet<LocalId>,
+    inits: &'a FxHashSet<Span>,
+    depth: u32,
+    hit: bool,
+}
+
+impl VisitMut for Changes<'_, '_> {
+    fn expr(&mut self, e: &mut Expr) {
+        let named = |x: &Expr| alias_root(x).is_some_and(|l| self.names.contains(&l));
+        match &e.kind {
+            E::Local(l, UseMode::BorrowMut | UseMode::Move) if self.names.contains(l) => {
+                self.hit = true
+            }
+            E::Field {
+                mode: UseMode::BorrowMut | UseMode::Move,
+                ..
+            }
+            | E::Index {
+                mode: UseMode::BorrowMut | UseMode::Move,
+                ..
+            }
+            | E::UnwrapSome(_, UseMode::BorrowMut | UseMode::Move)
+            | E::UnwrapVariant {
+                mode: UseMode::BorrowMut | UseMode::Move,
+                ..
+            } if named(e) => self.hit = true,
+            // Another reference to it, kept anywhere but a name the scan follows.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                ..
+            } if named(e) && !self.inits.contains(&e.span) => self.hit = true,
+            E::Closure(nc) => {
+                for &l in self.names.iter() {
+                    if modifies_capture(self.cx, *nc, l, self.depth + 1) {
+                        self.hit = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The variables pattern `p` binds.
+fn pat_locals(p: &Pat, out: &mut Vec<LocalId>) {
+    match &p.kind {
+        PatKind::Binding(l, _) => out.push(*l),
+        PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
+            ps.iter().for_each(|p| pat_locals(p, out))
+        }
+        PatKind::Array { elems, .. } => elems.iter().for_each(|p| pat_locals(p, out)),
+        PatKind::Adt { fields } => fields.iter().for_each(|(_, p)| pat_locals(p, out)),
+        PatKind::Some(p) => pat_locals(p, out),
+        _ => {}
+    }
+}
+
+/// Closure `c` shares enclosing variable `outer` instead of taking it over.
+fn share_capture(cx: &mut Ctx, c: DefId, outer: LocalId) {
+    if let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] {
+        for cap in f.captures.iter_mut().filter(|cap| cap.outer == outer) {
+            cap.share = true;
+        }
     }
 }
 
 /// Closures and functions used as values: their non-Copy declared params may alias each other,
 /// so they all stand for the first one.
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
-    let mut out = Aliases::new();
+    let mut out = Aliases::default();
     let info = cx.fn_info(d);
     let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
     if !as_value {
         return out;
     }
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
-    let mut shared: Option<LocalId> = None;
-    for p in &f.params[first..] {
-        if cx.is_copy(p.ty) {
-            continue;
+    // Params that may be the same value (directly or through another, `any`) are one place.
+    let params: Vec<(LocalId, crate::hir::TyId)> = f.params[first..]
+        .iter()
+        .filter(|p| !cx.is_copy(p.ty))
+        .map(|p| (p.local, p.ty))
+        .collect();
+    let mut set: Vec<usize> = (0..params.len()).collect();
+    fn find(set: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while set[r] != r {
+            r = set[r];
         }
-        let root = *shared.get_or_insert(p.local);
-        out.insert(p.local, Place { root, proj: vec![] });
+        set[i] = r;
+        r
+    }
+    for i in 0..params.len() {
+        for j in 0..i {
+            if may_be_same_value(cx, params[i].1, params[j].1) {
+                let (ri, rj) = (find(&mut set, i), find(&mut set, j));
+                set[ri.max(rj)] = ri.min(rj);
+            }
+        }
+    }
+    for i in 0..params.len() {
+        let root = params[find(&mut set, i)].0;
+        out.insert(params[i].0, Place { root, proj: vec![] });
     }
     out
+}
+
+/// Can one value be of type `a` and of type `b` at once (so params of those types may be the
+/// same object)? Not instances of two classes neither of which extends the other, nor an array
+/// and a class instance; anything else (object types, which are structural, interfaces, `any`,
+/// type parameters, unions) may be.
+fn may_be_same_value(cx: &Ctx, a: crate::hir::TyId, b: crate::hir::TyId) -> bool {
+    if a == b {
+        return true;
+    }
+    let class = |t: crate::hir::TyId| cx.class_of(t).map(|(d, _)| d);
+    match (class(a), class(b)) {
+        (Some(x), Some(y)) => cx.class_extends(x, y) || cx.class_extends(y, x),
+        (Some(_), None) => !matches!(cx.ty.kind(b), TyKind::Array(_)),
+        (None, Some(_)) => !matches!(cx.ty.kind(a), TyKind::Array(_)),
+        (None, None) => true,
+    }
 }
 
 struct Checker<'a, 'm> {
@@ -118,8 +377,13 @@ struct Checker<'a, 'm> {
     locals: &'a [LocalDef],
     aliases: Aliases,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
-    held: &'a HashMap<LocalId, DefId>,
+    held: &'a FxHashMap<LocalId, DefId>,
+    /// The function's soft moves (`FnInfo::soft_moves`).
+    soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
+    /// Captures that may share their variable ([`share_borrowed_captures`]), with the error
+    /// to report if the closure modifies it.
+    shares: Vec<(DefId, LocalId, Diagnostic)>,
 }
 
 /// The argument uses of one call: `(direct, nested)` per argument.
@@ -153,7 +417,16 @@ impl Checker<'_, '_> {
 
     /// `held`: the call runs a non-escaping closure held in a local, whose borrowed captures
     /// are passed along with the arguments (the first entry of the uses).
-    fn check_call(&mut self, args: &mut [Expr], mutex_with: bool, held: Option<(DefId, Span)>) {
+    ///
+    /// `key_only`: the call is a collection's `has`, `get` or `delete`, whose key argument (the
+    /// last) the callee only compares by identity ([`identity_key_call`]).
+    fn check_call(
+        &mut self,
+        args: &mut [Expr],
+        mutex_with: bool,
+        held: Option<(DefId, Span)>,
+        key_only: bool,
+    ) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
         if let Some((c, span)) = held {
@@ -180,10 +453,110 @@ impl Checker<'_, '_> {
                 u.access = Access::Unique;
             }
         }
+        if key_only && held.is_none() && uses.len() == 2 {
+            drop_key_through_receiver(&mut uses);
+        }
+        let shared = share_borrowed_captures(&mut uses);
         if let Some(d) = first_conflict(&uses) {
             self.errors.push(d);
+        } else if !shared.is_empty() {
+            // The conflict the shares resolve, for a closure that turns out to modify.
+            for &(i, k, ..) in &shared {
+                uses[i].0[k].access = Access::Move;
+            }
+            if let Some(err) = first_conflict(&uses) {
+                for (_, _, c, outer) in shared {
+                    self.shares.push((c, outer, err.clone()));
+                }
+            }
         }
     }
+}
+
+/// Is `callee` a `has`, `get` or `delete` of `Map`, `Set`, `WeakMap` or `WeakSet`? Their key
+/// is compared by identity when it is an object (a number, `bool` or string is copied, so it is
+/// no use here): the callee reads its address, never what it points to.
+fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
+    const METHODS: [&str; 4] = [
+        "std/prelude/map::Map.",
+        "std/collections/set::Set.",
+        "std/prelude/weak::WeakMap.",
+        "std/prelude/weak::WeakSet.",
+    ];
+    let Callee::Def(d, _) = callee else {
+        return false;
+    };
+    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+        return false;
+    };
+    METHODS.iter().any(|m| {
+        f.name
+            .strip_prefix(m)
+            .is_some_and(|n| matches!(n, "has" | "get" | "delete"))
+    })
+}
+
+/// Is a key of type `t` compared by identity (a class instance, an object, an interface value,
+/// an array or a function)? Not a value `struct`, whose fields are compared, nor a tuple.
+fn by_identity(cx: &Ctx, t: crate::hir::TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| match a.kind {
+            crate::hir::AdtKind::Class | crate::hir::AdtKind::Anon => true,
+            // A fields-only interface; not a Velt `struct`, a value type.
+            crate::hir::AdtKind::Struct => a.decl.is_none(),
+        }),
+        TyKind::Dyn(..) | TyKind::Array(_) | TyKind::FnPtr { .. } => true,
+        _ => false,
+    }
+}
+
+/// `link.dep.subs.delete(effect)` with `link` an element of `effect.deps`: the receiver is
+/// reached through the borrowed key, but the callee reads only the key's address, so the
+/// key's borrow of the object (a strict prefix of the receiver's place) is no use of the
+/// receiver. A key inside the receiver (`for (const x of s) s.delete(x)`) keeps its use.
+fn drop_key_through_receiver(uses: &mut ArgUses) {
+    let receiver: Vec<Place> = uses[0].0.iter().map(|u| u.place.clone()).collect();
+    uses[1].0.retain(|k| {
+        let through = receiver
+            .iter()
+            .any(|r| k.place.proj.len() < r.proj.len() && k.place.overlaps(r));
+        !(k.access == Access::Shared && k.capture.is_none() && through)
+    });
+}
+
+/// A closure argument that takes over a variable another argument of the call only borrows
+/// (`derive(parts, () => parts.length)`) shares it instead, as JavaScript refers to one value
+/// from both: the call's borrow stays valid, and the variable stays the caller's. Not when an
+/// argument may modify the variable, or takes it over too. Returns the captures to share, with
+/// where their uses are (argument, index).
+fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, LocalId)> {
+    let mut out = vec![];
+    for i in 0..uses.len() {
+        for k in 0..uses[i].0.len() {
+            let u = &uses[i].0[k];
+            let Some((c, outer)) = u.capture else {
+                continue;
+            };
+            if u.access != Access::Move || !u.place.proj.is_empty() || u.place.root != outer {
+                continue;
+            }
+            let others = (uses.iter().enumerate())
+                .filter(|(j, _)| *j != i)
+                .flat_map(|(_, (direct, nested))| direct.iter().chain(nested))
+                .filter(|w| w.place.overlaps(&u.place));
+            let mut borrowed = false;
+            let mut only_borrows = true;
+            for w in others {
+                borrowed = true;
+                only_borrows &= w.access == Access::Shared;
+            }
+            if borrowed && only_borrows {
+                uses[i].0[k].access = Access::Shared;
+                out.push((i, k, c, outer));
+            }
+        }
+    }
+    out
 }
 
 fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
@@ -275,6 +648,7 @@ impl VisitMut for Checker<'_, '_> {
                     if !*consume {
                         let text = place_text(self.cx, self.locals, iter);
                         let col = self.collector();
+                        iteration::share_moved_iterated(&col, &p, self.soft, body);
                         let hit =
                             iteration::modified_while_iterating(&col, &p, &text, iter.span, body);
                         self.errors.extend(hit);
@@ -302,11 +676,17 @@ impl VisitMut for Checker<'_, '_> {
                 }
             }
             E::Call { callee, args } => {
-                let mutex_with = matches!(callee, Callee::Intrinsic(Intrinsic::MutexWith));
+                let mutex_with = matches!(
+                    callee,
+                    Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+                );
                 let held = self.collector().held_call(callee).map(|c| (c, e.span));
-                self.check_call(args, mutex_with, held);
+                let key_only = args.len() == 2
+                    && by_identity(self.cx, args[1].ty)
+                    && identity_key_call(self.cx, callee);
+                self.check_call(args, mutex_with, held, key_only);
             }
-            E::New { args, .. } => self.check_call(args, false, None),
+            E::New { args, .. } => self.check_call(args, false, None, false),
             _ => {}
         }
     }
