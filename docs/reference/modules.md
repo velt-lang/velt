@@ -195,15 +195,21 @@ console.log(id, p.x + p.y, make()); // id-1 3 id-1
   that stays private exports only the type). `import { guid }`, `export { guid }`,
   `export { guid } from "…"`, `export * from "…"` and `import * as m` (`m.guid` as a type and as
   a value) carry both meanings; `import type { guid }` and `export type { guid }` only the type.
+  A name a module exports only as a type (with `export type { x }`, or `export { x }` of a name
+  it imports with `import type`) is a type for its importers too: using it as a value is an
+  error, as in TypeScript (TS1361, TS1362).
 - The same holds in a function body (`type Range = [number, number]` next to `const Range =
   …`), and a value does not hide a type of the same name declared further out (a local `const
-  guid` in a function with `const g: guid` still means the module's type), nor a type a value.
+  guid` in a function with `const g: guid` still means the module's type), nor a type a value
+  (a module's `type Map = …` leaves the global `Map` visible to `new Map()`).
 - A type used as a value is ``` `T` is a type, not a value ```, and a value used as a type
   ``` `f` is a value, not a type ``` (TypeScript's TS2749) with the hint `typeof f`.
 - Classes, structs and enums are a type and a value already: another declaration of their name
   is an error (as TypeScript's TS2567 for enums; TypeScript merges an interface into a class of
   its name, Velt doesn't, [Interfaces](classes.md#interfaces)). Two type declarations (an alias
-  and an interface) or two values of one name are an error too.
+  and an interface) or two values of one name are an error too, in a function body as at the
+  top level (two functions of one name in one block included: TypeScript's TS2393, where Node
+  would run the last one).
 
 ## Namespaces
 
