@@ -118,6 +118,28 @@ impl FnCx<'_, '_> {
         self.object_view_cast(h, t, span).ok()
     }
 
+    /// `t`, a literal's own interface, as the bound `b` of a type parameter
+    /// (`T extends { v: number }`) that it does not satisfy as it is: the bound's interface,
+    /// when the literal has each of its members (a getter fills a field, a setter takes its
+    /// writes), as TypeScript lets the literal's type satisfy the bound. `None` otherwise.
+    pub(crate) fn literal_as_bound(
+        &mut self,
+        t: TyId,
+        b: &crate::defs::Bound,
+        in_scope: &[Vec<crate::defs::Bound>],
+    ) -> Option<TyId> {
+        let TyKind::Dyn(id, args) = self.cx.ty.kind(t).clone() else {
+            return None;
+        };
+        if !self.cx.literal_ifaces.contains(&id)
+            || self.cx.satisfies(t, b, in_scope)
+            || !self.cx.iface_upcast((id, &args), (b.iface, &b.args))
+        {
+            return None;
+        }
+        Some(self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone())))
+    }
+
     /// Is `t` the own interface of a literal with accessors or methods using `this`?
     fn is_literal_iface(&self, t: TyId) -> bool {
         matches!(self.cx.ty.kind(t), TyKind::Dyn(id, _) if self.cx.literal_ifaces.contains(id))
