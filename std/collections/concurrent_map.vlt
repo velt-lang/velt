@@ -226,9 +226,10 @@ export class ConcurrentMap {
    * Looks up `keys` (at most 64) together into `values`: where bit `i` of the result is set,
    * `values[i]` is the value of `keys[i]` (`values` grows to `keys.length` if shorter; its other
    * elements are unspecified). Unlike `BTreeMap.getMany`, which returns a new array, it fills the
-   * caller's, so a loop of batches allocates nothing. Faster than one `get` per key when the map is larger than the caches: the keys
-   * descend the tree in lockstep, and each prefetches its next node while the others search
-   * theirs, so their cache misses overlap. Panics with a RangeError for more than 64 keys.
+   * caller's, so a loop of batches allocates nothing. Faster than one `get` per key when the map
+   * is larger than the caches: the keys descend the tree in lockstep, and each prefetches its next
+   * node while the others search theirs, so their cache misses overlap. Panics with a RangeError
+   * for more than 64 keys.
    */
   getManyInto(keys: u64[], values: u64[]): u64 {
     if (keys.length > 64) {
