@@ -400,14 +400,7 @@ impl FnCx<'_, '_> {
             hs.push(h);
         }
         let (def, type_args) = self.anon_def(&fields);
-        // `{ list: [] as Promise<T>[] }`: the field's type is written in its value, where its
-        // sites are (`throws::promise_sites`).
-        for (i, (_, value)) in ps.iter().enumerate() {
-            if let Some(t) = (*value).and_then(crate::throws::written_init_type) {
-                let at = (def, i as u32);
-                self.cx.fn_sites.anon_written.entry(at).or_insert(t.span);
-            }
-        }
+        self.note_anon_written(def, ps.iter().map(|(_, v)| *v));
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {
             def,

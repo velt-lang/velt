@@ -197,3 +197,20 @@ impl crate::body::FnCx<'_, '_> {
         (e, true)
     }
 }
+
+impl crate::body::FnCx<'_, '_> {
+    /// `{ list: [] as Promise<T>[] }`: the type of a field of anonymous object type `def` is
+    /// written in its value, where its sites are.
+    pub(crate) fn note_anon_written<'e>(
+        &mut self,
+        def: crate::hir::DefId,
+        values: impl Iterator<Item = Option<&'e ast::Expr>>,
+    ) {
+        for (i, value) in values.enumerate() {
+            if let Some(t) = value.and_then(written_init_type) {
+                let at = (def, i as u32);
+                self.cx.fn_sites.anon_written.entry(at).or_insert(t.span);
+            }
+        }
+    }
+}
