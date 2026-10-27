@@ -533,6 +533,9 @@ impl FnCx<'_, '_> {
             // `this.f()` in a static method: the class it was called on.
             return Some(self.this_static_call(this, declaring, prop, type_args, args, exp, span));
         }
+        if let Some(h) = self.primitive_namespace_call(object, prop, type_args, args, exp, span) {
+            return Some(h);
+        }
         let ast::ExprKind::Ident(id) = &object.kind else {
             return None;
         };
@@ -553,9 +556,6 @@ impl FnCx<'_, '_> {
             Some(item) => {
                 let d = self.companion_class(&id.name, item)?;
                 Some(self.static_call(d, prop, type_args, args, exp, span))
-            }
-            None if crate::types::velt_only_type_name(&id.name) || id.name == "string" => {
-                self.primitive_static_call(id, prop, type_args, args, exp, span)
             }
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))

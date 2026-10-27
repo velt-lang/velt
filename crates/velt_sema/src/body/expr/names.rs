@@ -252,6 +252,17 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             None => {
+                if let Some((t, _)) = self.this_primitive() {
+                    // In a static of `extend f64`: only `this.f()` / `this.f` (`primitive_statics`).
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("`this` in a static method of `extend {t}` can only call or read its statics"),
+                            span,
+                        )
+                        .with_note(format!("write `this.f()` or `{t}.f()`")),
+                    );
+                    return self.error_expr(span);
+                }
                 self.cx.err(
                     "`this` is only available inside methods and constructors",
                     span,

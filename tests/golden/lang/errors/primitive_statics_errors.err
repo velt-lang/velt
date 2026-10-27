@@ -1,4 +1,8 @@
-primitive_statics_errors.vlt:14:19: error: `u64.double` is an instance method: call it on a value (`x.double(…)`)
-primitive_statics_errors.vlt:15:19: error: `i32` has no static method `nothing`
+primitive_statics_errors.vlt:19:19: error: `u64.double` is an instance method: call it on a value (`x.double(…)`)
+primitive_statics_errors.vlt:20:19: error: `i32` has no static method `nothing`
 declare one in an `extend i32 { static nothing(…) { … } }` block
-primitive_statics_errors.vlt:16:13: error: cannot find `f64` in this scope
+primitive_statics_errors.vlt:21:13: error: cannot find `f64` in this scope
+primitive_statics_errors.vlt:22:17: error: `u64` has no static method `nope`
+declare one in an `extend u64 { static nope(…) { … } }` block
+primitive_statics_errors.vlt:12:15: error: `this` in a static method of `extend u64` can only call or read its statics
+write `this.f()` or `u64.f()`

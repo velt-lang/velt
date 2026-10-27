@@ -4,6 +4,13 @@ extend f64 {
   static half(x: f64): f64 {
     return x / 2;
   }
+  // `this` in a static is the type: `this.half` is `f64.half`.
+  static quarter(x: f64): f64 {
+    return this.half(this.half(x));
+  }
+  static halves(xs: f64[]): f64[] {
+    return xs.map(this.half);
+  }
   static parseOr(s: string, fallback: f64): f64 {
     const n = Number(s);
     return Number.isNaN(n) ? fallback : n;
@@ -32,6 +39,9 @@ extend bool {
   static parse(s: string): bool {
     return s == "true";
   }
+  static parseAll(xs: string[]): bool[] {
+    return xs.map((x) => this.parse(x));
+  }
 }
 
 console.log(f64.half(3));
@@ -40,3 +50,8 @@ const w = u64.fromParts(1, 2);
 console.log(w, w.high());
 console.log(string.repeatJoin("ab", 3, "-"));
 console.log(bool.parse("true"), bool.parse("no"));
+
+// Through `this`, as values and with an optional call.
+console.log(f64.quarter(10), f64.halves([2, 4]), bool.parseAll(["true", "x"]));
+const half = f64.half;
+console.log(half(7), [1, 3].map(f64.half), f64.half?.(9));
