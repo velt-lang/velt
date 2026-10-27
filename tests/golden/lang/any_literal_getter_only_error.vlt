@@ -1,0 +1,12 @@
+// A write through `any` to an object literal's getter that has no setter is Node's strict-mode
+// `TypeError` (#1538). Velt stops the program with it (a write through `any` that fails is not
+// catchable yet, #924); before, the write reached the field holding the getter.
+const ro = {
+  get value(): number {
+    return 1;
+  },
+};
+const a: any = ro;
+console.log(a.value);
+a.value = 2;
+console.log("not reached");

@@ -165,7 +165,8 @@ impl FnLower<'_, '_> {
             return None;
         }
         let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
-        (throws.is_none() || self.is_proxy(owner)).then_some(())?;
+        (throws.is_none() || self.literal_accessor(owner, m) || self.is_proxy(owner))
+            .then_some(())?;
         let (ret, _) = self.cx.call_sig(f);
         let ret = self.cx.subst(ret, &targs);
         if !self.cx.any_boxable(ret) {
@@ -466,13 +467,7 @@ impl FnLower<'_, '_> {
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
-            let fields: Vec<String> = self
-                .cx
-                .adt_def(d)
-                .fields
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
+            let fields = self.member_fields(d);
             for (i, name) in fields.iter().enumerate() {
                 if name.starts_with('#') {
                     continue;
@@ -691,13 +686,7 @@ impl FnLower<'_, '_> {
         };
         self.any_subclass_dispatch(Glue::AnyCall, ty, d, &[data, key, argv, argc, out]);
         let vp = self.any_value_place(data, ty);
-        let fields: Vec<String> = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
+        let fields = self.member_fields(d);
         for (i, name) in fields.iter().enumerate() {
             if name.starts_with('#') {
                 continue;

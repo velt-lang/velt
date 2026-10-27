@@ -1,0 +1,4 @@
+s1 true:1 true:2 | s2 true:1 | 1 2
+s1  | s2 true:1 | 0 1 0
+true 1 false
+0 0 0

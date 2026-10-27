@@ -2246,8 +2246,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   Through a variable or parameter declared with one, a string key that is not a number's
   name is an error, as in TypeScript: `r["abc"]` (TS7015), `r.abc` (TS2339) and `{ a: v }` as
   its initializer (TS2353); `r["1"]` and `r["1.5"]` are keys. A number index works on any
-  `string`-keyed record. A type parameter given `number` as a
-  record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
+  `string`-keyed record. A `string | symbol` index on a `string`-keyed record (a proxy trap's
+  property, `(obj as Record<string, any>)[key]`) reads the entry for a string and `undefined`
+  for a symbol, which is never one of its keys (TypeScript accepts this read where narrowing
+  leaves `key` a `string`; Velt accepts it for any `string | symbol` key). A type parameter
+  given `number` as a record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
   `undefined`, as a value of the record's value type (`unknown` must be narrowed before use, as
@@ -3014,6 +3017,15 @@ one object type member (`VNode | string | null`) converts an object that is no `
 way. In a program without proxies, and into a class or an interface with methods, an object of
 another type stays a `TypeError`.
 
+An object literal with a getter (`{ get value() { … } }`, the value of its own interface)
+asserted to an object type that declares only fields (`obj as Computed<T>` with
+`interface Computed<T> { readonly value: T }`) is, in a program that makes proxies, a view of
+the literal too (#1510): each read of `value` runs the getter at that moment, and a write runs
+its setter (one written in the literal or added by `Object.defineProperty`), as Node's one
+object does. Each field of the type must be a field or a getter of the literal, of a type that
+converts to or from the field's. In a program without proxies such a cast is an error, since a
+copy would keep the getter's value once.
+
 ```ts
 type Item = { name: string; price: number };
 
@@ -3129,7 +3141,16 @@ Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` an
 with a `string`, `number` or `any` key. The value is converted to the member's type with the
 same check as above (a value of another type stops with its `TypeError`, and the member keeps
 its old value) and stored in the object itself, so every other reference to it sees the write;
-a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
+a setter is called with it, also an object literal's (`set value(v)` written in it or added by
+`Object.defineProperty`; a read runs its getter), and `Reflect.set(o, "value", v)` does the
+same. Such a literal held by an `any` prints its accessors as Node does (`value: [Getter]`,
+`[Setter]`, `[Getter/Setter]`), `JSON.stringify` writes what its getters return, and
+`Object.keys` and `for...in` list each property once. Writing a property that has only a getter
+stops with Node's `TypeError: Cannot set property value of #<Object> which has only a getter`.
+**Known differences:** these stops can't be caught (as for the other failed writes through
+`any`, #924), `Reflect.set` stops the same way where Node returns `false`, and an error the
+accessor itself throws ends the process as uncaught when the accessor runs through `any` or a
+view (as a trap's error does through a typed proxy, #1174). A `Record<string, V>` takes any key, adding the ones it lacks, as
 in Node; an array takes its elements inside its length, an element at its length (it grows by
 one, as `a[a.length] = v` does in Node) and a shorter `length`, which drops the elements past it
 (a length that is not a whole number from 0 up is Node's `RangeError: Invalid array length`). The

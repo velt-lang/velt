@@ -73,10 +73,15 @@ impl FnLower<'_, '_> {
                     let tys = self.cx.adt_field_tys(t);
                     let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
                     let anon = a.kind == hir::AdtKind::Anon;
+                    // An object literal's accessors: a getter's result is written as an `any`.
+                    let accessors: Vec<String> = (self.accessor_props(d).into_iter())
+                        .map(|a| a.field)
+                        .collect();
                     names
                         .iter()
                         .zip(tys)
                         .filter(|(n, _)| !velt_sema::property_order::is_hidden_key(n))
+                        .filter(|(n, _)| !accessors.contains(n))
                         .all(|(n, f)| {
                             if anon && matches!(self.cx.kind(f), TyKind::Unit) {
                                 *void = Some(n.clone());
