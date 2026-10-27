@@ -17,10 +17,11 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
+use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower};
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 /// When a read of a `shared<T>` in its box retains the box for the statement. While the value or
 /// a part of it is read there, code may run that gives the variable or object holding the handle
@@ -48,21 +49,36 @@ impl FnLower<'_, '_> {
             (I::SharedAdd, [s, n]) => {
                 let (cell, vt) = self.shared_cell(s);
                 let n = self.expr(n);
-                let n = self.cast_to(n, vt, Ty::I64);
-                let r = self.rt_scalar(Rt::AtomicAdd, vec![cell, n]);
-                self.cast_to(r, Ty::I64, vt)
+                let n = self.cast_to(n, vt, Ty::U64);
+                let n = self.rvalue_temp(Ty::U64, Rvalue::Use(n));
+                // `add` gives the new value; the instruction, the previous one.
+                let add = AtomicCall::Rmw {
+                    op: Rmw::Add,
+                    bits: 64,
+                    order: Order::SeqCst,
+                };
+                let old = self.atomic_call(add, vec![cell, n.clone()]);
+                let r = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, old, n));
+                self.cast_to(r, Ty::U64, vt)
             }
             (I::SharedGet, [s]) => {
                 let (cell, vt) = self.shared_cell(s);
-                let r = self.rt_scalar(Rt::AtomicLoad, vec![cell]);
-                self.cast_to(r, Ty::I64, vt)
+                let load = AtomicCall::Load {
+                    bits: 64,
+                    order: Order::SeqCst,
+                };
+                let r = self.atomic_call(load, vec![cell]);
+                self.cast_to(r, Ty::U64, vt)
             }
             (I::SharedSet, [s, v]) => {
                 let (cell, vt) = self.shared_cell(s);
                 let v = self.expr(v);
-                let v = self.cast_to(v, vt, Ty::I64);
-                self.call_rt(Rt::AtomicStore, vec![cell, v], None);
-                crate::lower::unit()
+                let v = self.cast_to(v, vt, Ty::U64);
+                let store = AtomicCall::Store {
+                    bits: 64,
+                    order: Order::SeqCst,
+                };
+                self.atomic_call(store, vec![cell, v])
             }
             (I::SharedRead, [s]) => self.shared_read(s),
             (I::MutexNew | I::RwLockNew, [x]) => self.mutex_new(x, ty),
@@ -73,12 +89,6 @@ impl FnLower<'_, '_> {
                 args.len()
             )),
         }
-    }
-
-    fn rt_scalar(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
-        let d = self.temp(r.sig().2);
-        self.call_rt(r, args, Some(Place::local(d)));
-        Operand::Copy(Place::local(d))
     }
 
     /// Address of the value cell of a `shared<int>` receiver, and the int's VIR type.
@@ -100,7 +110,7 @@ impl FnLower<'_, '_> {
 
     /// The value inside the `shared<T>` that `s` evaluates to, in its box, retained for the
     /// statement as `hold` says ([`BoxHold`]; one atomic count change).
-    fn shared_value(&mut self, s: &hir::Expr, hold: BoxHold) -> (Place, TyId) {
+    pub(in crate::lower) fn shared_value(&mut self, s: &hir::Expr, hold: BoxHold) -> (Place, TyId) {
         let sty = self.sub(s.ty);
         let TyKind::Shared(inner) = self.cx.kind(sty) else {
             ice("SharedRead of a non-shared value")

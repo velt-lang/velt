@@ -231,6 +231,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
+        // Lowering the body may build other functions first: their params are not these.
+        let unique = std::mem::take(&mut lw.cx.declared_unique);
         // Bit `i`: `params[i]`, whose leading entries are the captures (bound to their inner
         // locals).
         lw.frozen = (0..f.params.len().min(64))
@@ -269,6 +271,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let c = lw.cx.instance_symbol("", &k.targs);
             symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
         }
+        lw.cx.declared_unique = unique;
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
         func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
@@ -319,7 +322,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     true => None,
                     false => Some(p.mode),
                 };
-                attrs.push(self.cx.param_attrs(mode, ty, shape, decl.mutable));
+                let a = self.cx.param_attrs(mode, ty, shape, decl.mutable);
+                if a.noalias || a.frozen {
+                    self.cx.note_unique_param(attrs.len(), ty);
+                }
+                attrs.push(a);
                 self.new_local(pt, Some(decl.name.clone()))
             });
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);

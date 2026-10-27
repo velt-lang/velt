@@ -201,6 +201,7 @@ impl Interp<'_> {
             "velt_rt_drop_state" => return Ok(self.drop_state()),
             "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
             "velt_rt_drop_drain" => self.drop_drain()?,
+            m if m.starts_with("velt_atomic_") => return Ok(self.atomic(m, a)),
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }

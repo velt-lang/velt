@@ -1,0 +1,4 @@
+const_used_before_declaration_errors.vlt:6:9: error: type annotation needed for `o`: a closure written before it uses it
+write its type, e.g. `const o: T = …`
+const_used_before_declaration_errors.vlt:17:11: error: `a` is used by a closure written before its declaration, which is not supported yet for a destructuring declaration
+const_used_before_declaration_errors.vlt:23:7: error: `later` is used by a closure written before its declaration, which is not supported yet for a `let` without an initializer

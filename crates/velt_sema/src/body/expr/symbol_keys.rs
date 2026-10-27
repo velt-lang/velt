@@ -203,6 +203,14 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
+        if matches!(key, InKey::Symbol(_)) {
+            // `KEY in r` on a string-keyed record: its symbol table, tested at run time.
+            let str_ = self.cx.ty.str_;
+            let t = self.trial_expr(rhs).ty;
+            if self.record_args(t).is_some_and(|(k, _)| k == str_) {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
         if matches!(key, InKey::Str(_)) {
             if self.typed_proxy_once(rhs) {
                 // `"k" in f()` of a typed proxy: the operand once, then as below.
@@ -298,7 +306,14 @@ impl FnCx<'_, '_> {
                                 kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
                                 span: lhs.span,
                             };
-                            self.record_call(obj, "__has", &[lit], span)
+                            // A record's accessors too, in a program that defines them.
+                            let keyed = self.cx.objects.record_accessors
+                                && self.has_record_method("__hasKeyed");
+                            let has = match keyed {
+                                true => "__hasKeyed",
+                                false => "__has",
+                            };
+                            self.record_call(obj, has, &[lit], span)
                         }
                         _ => self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
                     };

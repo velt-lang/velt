@@ -33,6 +33,7 @@ mod any;
 mod any_iface_sites;
 mod assigned_fields;
 mod ast_walk;
+mod atomic_copies;
 mod body;
 mod brands;
 mod call_sigs;
@@ -108,6 +109,7 @@ mod timings;
 mod ts_protocol;
 mod type_defaults;
 mod type_level;
+mod type_meanings;
 mod type_queries;
 mod type_reach;
 mod types;
@@ -322,6 +324,9 @@ fn check_timed(
     let ctor_reads = modules
         .iter()
         .any(|m| !m.is_std && reads_constructor(&m.ast));
+    let record_accessors = modules
+        .iter()
+        .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -344,6 +349,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.record_accessors = record_accessors;
         cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
@@ -616,6 +622,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     timings::pass("ownership::clone_reused", || {
         ownership::clone_reused(cx, &moved.reused)
     });
+    timings::pass("atomic_copies::check", || atomic_copies::check(cx));
     timings::pass("ownership::box_cells", || {
         ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
     });

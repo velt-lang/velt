@@ -41,7 +41,8 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (i, d) in self.cx.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = d else { continue };
-            if !f.name.starts_with("std/prelude/") || f.params.len() != 2 {
+            let std_fn = f.name.starts_with("std/prelude/") || f.name.starts_with("std/record/");
+            if !std_fn || f.params.len() != 2 {
                 continue;
             }
             let Some((_, short)) = f.name.rsplit_once("::") else {
@@ -136,6 +137,54 @@ impl FnLower<'_, '_> {
         }
         self.any_drop_args(argv, 0, argc);
         self.ret_status(ST_NOT_FN);
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The `AnyCall` slot body of a `Record<string, V>`: the prelude's functions named
+    /// `__anyRec_<name>` (`<name>` starts with `__`, which no record key the program calls
+    /// through `any` is meant to reach), each given the record and the arguments; any other
+    /// name is not supported yet, as before.
+    pub(super) fn any_record_call(
+        &mut self,
+        (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
+        ty: TyId,
+    ) {
+        let keys = &self.cx.boxing.any_call_keys;
+        let methods: Vec<(String, DefId)> = self
+            .builtin_methods("__anyRec_")
+            .into_iter()
+            .filter(|(name, _)| name.starts_with("__") && keys.contains(name))
+            .collect();
+        let Some((k, v)) = self.prelude_record(ty) else {
+            crate::lower::ice("a record");
+        };
+        if !matches!(self.cx.kind(k), TyKind::Str) || methods.is_empty() {
+            self.any_drop_args(argv, 0, argc);
+            return self.ret_status(ST_UNSUPPORTED);
+        }
+        let outp = self.any_out(out);
+        let any = self.cx.any_ty();
+        let rest = self.cx.intern(TyKind::Array(any));
+        for (name, def) in methods {
+            if self.cx.fn_def(def).generics != 1 {
+                continue;
+            }
+            let next = self.on_key(key, &name);
+            let this = self.any_this(data, ty);
+            let args = vec![self.any_rest_arg(argv, argc, 0, rest)];
+            let r = Ready {
+                def,
+                targs: vec![v],
+                ret: any,
+                throws: None,
+            };
+            self.any_invoke(&r, this, args, &outp);
+            self.ret_status(ST_OK);
+            self.switch_to(next);
+        }
+        self.any_drop_args(argv, 0, argc);
+        self.ret_status(ST_UNSUPPORTED);
     }
 }
 

@@ -285,9 +285,18 @@ impl FnLower<'_, '_> {
         let dst = proj(&np, Proj::Deref(Ty::Agg(oa)));
         self.assign(dst, Rvalue::Use(Operand::Copy(src)));
         let tys = self.cx.adt_field_tys(ty);
+        // A record's copy has its own enumerable string keys only, as JavaScript's structured
+        // clone (`structuredClone`, a value sent to another task) makes it: not its symbol keys
+        // or accessors (fields 2 and 3, std/record/symbols.vlt).
+        let record = self.prelude_record(ty).is_some();
         for (i, t) in tys.into_iter().enumerate() {
-            let sp = self.field_place(&Place::local(obj), ty, i as u32);
             let dp = self.field_place(&np, ty, i as u32);
+            if record && i >= 2 {
+                let none = self.none_value(t);
+                self.assign(dp, Rvalue::Use(none));
+                continue;
+            }
+            let sp = self.field_place(&Place::local(obj), ty, i as u32);
             self.clone_into(sp, dp, t);
         }
         // A copy of a view is the view of the copy of its object (any_view.rs).

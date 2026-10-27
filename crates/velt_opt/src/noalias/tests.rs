@@ -9,6 +9,7 @@ use velt_vir::vir::{AggId, BinOp, Callee, ParamAttrs, Program};
 const NOALIAS: ParamAttrs = ParamAttrs {
     noalias: true,
     readonly: false,
+    frozen: false,
     nonnull: true,
     dereferenceable: 24,
 };

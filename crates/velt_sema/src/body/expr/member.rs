@@ -207,6 +207,9 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
+        if let Some(h) = self.narrowed_dynamic_member(object, prop, want, span) {
+            return h;
+        }
         // A union local narrowed to one member is read as the union here, so that a view it may
         // hold is read through its getters (`union_view`).
         self.view_receiver = want != Want::BorrowMut && is_name(object);
@@ -405,9 +408,10 @@ impl FnCx<'_, '_> {
             false => obj,
         };
         let t = obj.ty;
-        // `o[KEY]` with a symbol constant: the member the symbol names.
+        // `o[KEY]` with a symbol constant: the member the symbol names (a record's symbol
+        // table, `record_index_read`, holds its symbol keys).
         if let Some(key) = self.symbol_key_of(index) {
-            if self.has_fields(t, &key) {
+            if self.has_fields(t, &key) && self.record_args(t).is_none() {
                 return self.symbol_index(obj, key, index, want, span);
             }
         }
@@ -638,7 +642,20 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.empty_as_deferred(expr, target, span) {
             return h;
         }
+        // A narrowed `any` / `unknown` converts as the value it holds, which TypeScript allows
+        // where the narrowed type would not cast (`isComponent(t)`, then `t as Function`).
+        let path = matches!(
+            expr.kind,
+            ast::ExprKind::Ident(_) | ast::ExprKind::Member { .. }
+        );
+        let saved = std::mem::replace(&mut self.dynamic_raw, path.then_some(expr.span));
+        // An arrow asserted to a function type returns what it may (`returns::returned`).
+        let arrow = super::object_builtins::strip_parens(expr);
+        let asserted = matches!(arrow.kind, ast::ExprKind::Arrow { .. })
+            && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
+        let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let inner = self.expr(expr, Some(target), want);
+        (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
                 return h;

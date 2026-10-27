@@ -262,7 +262,7 @@ impl FnCx<'_, '_> {
         }
         match self
             .cx
-            .lookup_item_at(self.module, &path[0].name, path[0].span)
+            .lookup_type_item_at(self.module, &path[0].name, path[0].span)
         {
             Some(crate::ctx::Item::Alias(a)) => {
                 test(self, &self.cx.aliases[a as usize].decl.ty, depth + 1)

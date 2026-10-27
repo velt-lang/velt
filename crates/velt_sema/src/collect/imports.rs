@@ -17,6 +17,7 @@ use super::exports::{
     all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
 };
 use crate::ctx::Ctx;
+use crate::type_meanings::{type_key, type_only_key};
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
@@ -64,7 +65,8 @@ fn exported_item(
     imp: &ast::Import,
     n: &ast::ImportName,
 ) -> Option<crate::ctx::Item> {
-    if let Some(it) = export_of(cx, t, &n.name.name) {
+    let found = export_of(cx, t, &n.name.name);
+    if let Some(it) = found.or_else(|| export_of(cx, t, &type_key(&n.name.name))) {
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
     }
@@ -155,16 +157,41 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
             return;
         }
     }
-    let Some(it) = exported_item(cx, m, t, imp, n) else {
-        return;
+    // A name that is both a type and a value in `t` (`crate::type_meanings`): both meanings,
+    // or with `import type` the type alone.
+    // A name `t` exports only as a type (`export type { x }`) binds as with `import type`; the
+    // value meaning, if any, is kept under the local's type-only key for the error.
+    let ty = export_of(cx, t, &type_key(&n.name.name));
+    let value_only = export_of(cx, t, &type_only_key(&n.name.name));
+    let plain = export_of(cx, t, &n.name.name);
+    let type_only = n.type_only || value_only.is_some();
+    let it = match (ty, plain, value_only) {
+        (Some(ty), _, _) if n.type_only => ty,
+        (_, None, Some(v)) => v,
+        _ => match exported_item(cx, m, t, imp, n) {
+            Some(it) => it,
+            None => return,
+        },
     };
+    cx.rec_item(n.name.span, Some(it));
     let local = bound_name(n);
     if !define(cx, m, local) {
         return;
     }
-    cx.scopes[m].items.insert(local.name.clone(), it);
-    if n.type_only {
-        cx.scopes[m].type_only.insert(local.name.clone());
+    let scope = &mut cx.scopes[m];
+    scope.items.insert(local.name.clone(), it);
+    if type_only {
+        scope.type_only.insert(local.name.clone());
+        if !n.type_only {
+            scope.via_export_type.insert(local.name.clone());
+        }
+        let value = value_only.or(plain.filter(|_| ty.is_some()));
+        if let Some(v) = value.filter(|&v| v != it) {
+            scope.items.insert(type_only_key(&local.name), v);
+        }
+    } else if let Some(ty) = ty.filter(|&ty| ty != it) {
+        scope.items.insert(type_key(&local.name), ty);
+        scope.type_keys = true;
     }
 }
 
@@ -208,9 +235,9 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
     }
     cx.scopes[m].namespaces.insert(ns.name.clone(), t);
     for (name, it) in all_exports(cx, t).iter() {
-        cx.scopes[m]
-            .items
-            .insert(format!("{}.{name}", ns.name), *it);
+        let scope = &mut cx.scopes[m];
+        scope.type_keys |= crate::type_meanings::of_type_key(name).is_some();
+        scope.items.insert(format!("{}.{name}", ns.name), *it);
     }
     super::exports::namespace_bound(cx, m, &ns.name);
 }

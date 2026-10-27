@@ -319,6 +319,34 @@ impl FnCx<'_, '_> {
         } else {
             name
         };
+        // `[KEY]` with a symbol constant: an entry of the record's symbol table.
+        let computed =
+            matches!(p, ast::ObjectProp::KeyValue(w, _) if crate::symbols::is_computed_key(w));
+        if k == self.cx.ty.str_
+            && computed
+            && name
+                .name
+                .starts_with(crate::property_order::SYMBOL_KEY_PREFIX)
+        {
+            let ast::ObjectProp::KeyValue(written, value) = p else {
+                return None;
+            };
+            let inner = written.name.trim_start_matches('[').trim_end_matches(']');
+            let sym = synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: inner.to_string(),
+                    span: written.span,
+                }),
+                written.span,
+            );
+            let key = RecordKey::Index(&sym);
+            return Some(match pre {
+                Some(h) => self.record_set_checked(recv, key, h, span),
+                None => {
+                    self.record_call_keyed(recv, "__set", key, std::slice::from_ref(value), span)
+                }
+            });
+        }
         if self.record_keys(k).is_some() && !self.record_has_key(k, &name.name, name.span) {
             return None;
         }

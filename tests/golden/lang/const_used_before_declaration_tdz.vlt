@@ -1,0 +1,10 @@
+// A closure written before the `const` it reads, called before the declaration ran: Node's
+// `ReferenceError` (the temporal dead zone, #1142).
+function tooEarly(): void {
+  const early = (): number => later * 2;
+  console.log("calling early");
+  console.log(early());
+  const later = 21;
+}
+
+tooEarly();

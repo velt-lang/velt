@@ -8,16 +8,24 @@
 //! - frame pointers preserved on all targets: an Apple ABI requirement, and cheap elsewhere
 //!   (Cranelift already keeps them in non-leaf functions) so profilers/debuggers can walk the
 //!   stack on ELF/Mach-O, where no `.eh_frame` is emitted yet.
+//! - the CPU (`--cpu`, `crate::cpu`): x86_64 code is for `cpu::DEFAULT_X86_CPU` unless another
+//!   one is asked for.
 
 use cranelift_codegen::isa::{self, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
 use target_lexicon::{Architecture, BinaryFormat, DeploymentTarget, OperatingSystem, Triple};
 
-use crate::CodegenResult;
+use crate::{cpu, CodegenResult};
 
-/// Build the ISA for `target` (empty / `native` / `host` = detect the host).
+/// Build the ISA for `target` (empty / `native` / `host` = detect the host) and CPU `cpu`
+/// (`None`: `native` for a native target, else `cpu::DEFAULT_X86_CPU` on x86_64).
 /// `jit` forces non-PIC code, as required by `cranelift-jit`.
-pub(crate) fn make_isa(target: &str, optimize: bool, jit: bool) -> CodegenResult<OwnedTargetIsa> {
+pub(crate) fn make_isa(
+    target: &str,
+    cpu: Option<&str>,
+    optimize: bool,
+    jit: bool,
+) -> CodegenResult<OwnedTargetIsa> {
     let target = target.trim();
     let native = target.is_empty() || target == "native" || target == "host";
     let triple = if native {
@@ -31,9 +39,16 @@ pub(crate) fn make_isa(target: &str, optimize: bool, jit: bool) -> CodegenResult
     check_supported(&triple)?;
     let mut isa_builder =
         isa::lookup(triple).map_err(|e| format!("codegen: unsupported target `{target}`: {e}"))?;
-    if native {
-        cranelift_native::infer_native_flags(&mut isa_builder)
-            .map_err(|e| format!("codegen: host is not supported: {e}"))?;
+    let cpu = cpu.or(native.then_some("native"));
+    if let Some(c) = cpu {
+        cpu::check_cpu(target, c).map_err(|e| format!("codegen: {e}"))?;
+    }
+    cpu::configure(&mut isa_builder, cpu)?;
+    if jit && matches!(isa_builder.triple().architecture, Architecture::Aarch64(_)) {
+        // The host's flags sign return addresses on macOS (pointer authentication), and stack
+        // walks through JIT frames then stop on some Apple CPUs: JIT code keeps the host's
+        // instructions but plain return addresses, as before it used the host's flags.
+        set(&mut isa_builder, "sign_return_address", "false")?;
     }
     let triple = isa_builder.triple().clone();
     check_supported(&triple)?;
@@ -79,7 +94,7 @@ fn with_macos_platform(mut triple: Triple) -> Triple {
     triple
 }
 
-fn set(flags: &mut settings::Builder, name: &str, value: &str) -> CodegenResult<()> {
+fn set(flags: &mut impl Configurable, name: &str, value: &str) -> CodegenResult<()> {
     flags
         .set(name, value)
         .map_err(|e| format!("codegen: cannot set `{name}={value}`: {e}"))

@@ -28,8 +28,12 @@ pub(crate) struct ModuleScope {
     pub namespaces: FxHashMap<String, usize>,
     /// Names bound by `import type` (types only: using one as a value is an error).
     pub type_only: FxHashSet<String>,
+    /// Of those, the names their module exports only as types (`export type { x }`).
+    pub via_export_type: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
+    /// Some name has a type key (`crate::type_meanings`).
+    pub type_keys: bool,
 }
 
 /// The classes below a class, deepest first, each with the method its vtable calls at a slot
@@ -48,6 +52,8 @@ pub(crate) struct Ctx<'m> {
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
+    /// Some prelude name has a type key (`crate::type_meanings`).
+    pub prelude_type_keys: bool,
     pub aliases: Vec<AliasInfo<'m>>,
     /// The names of type aliases without parameters that are read-only array or collection types
     /// and number-keyed record types, directly or through other such aliases
@@ -430,6 +436,7 @@ impl<'m> Ctx<'m> {
                 })
                 .collect(),
             prelude: FxHashMap::default(),
+            prelude_type_keys: false,
             aliases: vec![],
             marked_aliases: Default::default(),
             bad_key_sites: vec![],
@@ -717,28 +724,35 @@ impl<'m> Ctx<'m> {
     }
 
     /// Name lookup at module level: own items and imports, then the prelude.
+    /// A module-level name that is only a type does not hide a prelude value of its name
+    /// (`type Map = …` next to `new Map()`, `crate::type_meanings`).
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
-        self.scopes[module]
-            .items
-            .get(name)
-            .or_else(|| self.prelude.get(name))
-            .copied()
+        let own = self.scopes[module].items.get(name).copied();
+        let Some(it) = own else {
+            return self.prelude.get(name).copied();
+        };
+        match self.meaning(it) {
+            crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),
+            _ => own,
+        }
     }
 
     /// Name lookup at a source position of `module`: the innermost nested item whose block
     /// contains `at`, then module level.
+    /// A nested type that is only a type (an interface, a type alias) does not hide a value of
+    /// its name further out (`crate::type_meanings`).
     pub fn lookup_item_at(&self, module: usize, name: &str, at: Span) -> Option<Item> {
         let file = self.modules[module].file;
-        let nested = self
+        let mut nested = self
             .nested
             .iter()
             .filter(|n| n.module == module && n.name == name && at.file == file)
             .filter(|n| n.lo <= at.lo && at.hi <= n.hi)
-            .min_by_key(|n| n.hi - n.lo);
-        match nested {
-            Some(n) => Some(n.item),
-            None => self.lookup_item(module, name),
+            .peekable();
+        if nested.peek().is_none() {
+            return self.lookup_item(module, name);
         }
+        self.nested_value_item(nested.collect(), module, name)
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves

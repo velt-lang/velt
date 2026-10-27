@@ -67,6 +67,7 @@ velt:redis = ../std/redis.md
 velt:regex = ../std/regex.md
 velt:sqlite = ../std/sqlite.md
 velt:stdin = ../std/stdin.md
+velt:sync = ../std/sync.md
 velt:timers = ../std/timers.md
 velt:udp = ../std/udp.md
 velt:url = ../std/url.md

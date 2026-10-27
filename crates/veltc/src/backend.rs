@@ -45,6 +45,16 @@ impl Backend {
         }
     }
 
+    /// The x86 features this backend's code for `cpu` on `target` uses (the start-up check's
+    /// mask, `driver/cpu_check.rs`): for a CPU name, Cranelift's preset of it or what clang
+    /// enables for it.
+    pub fn required_features(self, target: &str, cpu: Option<&str>) -> Result<u32, String> {
+        match self {
+            Backend::Cranelift => velt_codegen_cl::required_features(target, cpu),
+            Backend::Llvm => velt_codegen_llvm::required_features(target, cpu),
+        }
+    }
+
     /// Generate the object files for `program`, appending the time of the backend's steps to
     /// `timings` where it reports them (LLVM: printing the IR, then clang). Cranelift makes one
     /// object; LLVM one per codegen unit (`units`, see `velt_codegen_llvm::emit_objects_timed`).

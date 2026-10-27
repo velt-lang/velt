@@ -97,12 +97,14 @@ fn attributes_follow_pass_modes() {
     let mutable = ParamAttrs {
         noalias: true,
         readonly: false,
+        frozen: false,
         nonnull: true,
         dereferenceable: 24,
     };
     let shared = ParamAttrs {
         noalias: false,
         readonly: true,
+        frozen: true,
         ..mutable
     };
     let out = ParamAttrs {
@@ -114,6 +116,7 @@ fn attributes_follow_pass_modes() {
     let object = |noalias| ParamAttrs {
         noalias,
         readonly: !noalias,
+        frozen: !noalias,
         nonnull: true,
         dereferenceable: 8,
     };
@@ -131,4 +134,66 @@ fn attributes_follow_pass_modes() {
 fn modified_class_param_is_seen_by_the_caller() {
     let out = run(&program());
     assert_eq!(out.stdout, "[ 1 ]\ndone\n5\n5\n[ 7 ]\n");
+}
+
+/// A borrowed param holding one of the prelude's `Mutex`, `RwLock` or `Atomic` in its own memory
+/// is never `readonly`: the runtime writes a lock's word, and an `Atomic`'s methods write its
+/// word, through a borrow. A plain struct of the same shape stays `readonly`. One holding an
+/// `Atomic` is still `frozen` (only the atomic's word changes); one holding a `Mutex` is not
+/// (the value it guards changes in place).
+#[test]
+fn borrowed_locks_and_atomics_are_not_readonly() {
+    let mut pb = PB::new();
+    let t = pb.t;
+    let mut tys = vec![];
+    for name in [
+        "std/prelude/sync::Mutex",
+        "std/prelude/sync::Atomic",
+        "Plain",
+    ] {
+        let d = pb.declare();
+        let ty = pb.adt_ty(d, vec![]);
+        let mut ad = adt(
+            name,
+            AdtKind::Struct,
+            vec![("w", t.i64, None), ("v", t.i64, None)],
+        );
+        ad.opaque = name.starts_with("std/");
+        pb.set_def(d, Def::Adt(ad));
+        tys.push((d, ty));
+    }
+    let mut peeks = vec![];
+    for (i, &(_, ty)) in tys.iter().enumerate() {
+        let mut f = FB::new(&format!("peek{i}"), t.unit);
+        let x = f.param("x", ty, PassMode::Borrow);
+        f.immutable(x);
+        let body = vec![se(print(vec![field(f.bw(x), 1, U::Copy, t.i64)], t))];
+        peeks.push(pb.add_fn(f.build(body)));
+    }
+    let mut f = FB::new("main", t.unit);
+    let mut body = vec![];
+    for (&(d, ty), &peek) in tys.iter().zip(&peeks) {
+        let l = f.local("x", ty);
+        body.push(let_(l, adt_lit(d, vec![int(0, t.i64), int(1, t.i64)], ty)));
+        body.push(se(call(peek, vec![f.bw(l)], t.unit)));
+    }
+    pb.add_main(f.build(body));
+    let v = lower_ok(&pb.finish());
+    let attr = |sym: &str| {
+        let f = v.funcs.iter().find(|f| f.symbol.contains(sym)).expect(sym);
+        f.param_attrs.first().copied().unwrap_or_default()
+    };
+    let readonly = |sym: &str| attr(sym).readonly;
+    assert!(
+        !readonly("peek0"),
+        "a Mutex param is written by the runtime"
+    );
+    assert!(
+        !readonly("peek1"),
+        "an Atomic param is written by its methods"
+    );
+    assert!(readonly("peek2"), "a plain struct param is only read");
+    assert!(!attr("peek0").frozen, "a Mutex's value changes in place");
+    assert!(attr("peek1").frozen, "only an Atomic's word changes");
+    assert!(attr("peek2").frozen, "a plain struct param does not change");
 }

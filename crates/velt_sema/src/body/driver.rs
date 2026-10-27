@@ -280,6 +280,13 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
             stored = true;
         }
     }
+    // A constant holding an `Atomic` is one word the program changes in place (atomics.md):
+    // evaluated at each use, every use would change a new one.
+    if let (Some(_), false) = (&init, stored) {
+        if !cx.modules[module].is_std && ty != cx.ty.error && cx.holds_atomic(ty) {
+            stored = true;
+        }
+    }
     if let (Some(i), false) = (&init, stored) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
         let cycles = cx.global_cycles;

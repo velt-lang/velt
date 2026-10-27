@@ -291,6 +291,12 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         return;
     };
     if !f.is_async || f.is_generator {
+        // A plain closure whose promise leaves its task (`const go = () => work(c)` with
+        // `spawn(go())`): the promise holds what the closure passed on from its captures.
+        let (generator, ret) = (f.is_generator, f.ret);
+        if !local && !generator && matches!(cx.ty.kind(ret), TyKind::Promise(..)) {
+            report_atomics(cx, c, why, true);
+        }
         return;
     }
     if local {
@@ -299,6 +305,57 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
     }
     report_mutated(cx, c, why, "async closure");
     report_generators(cx, c, why);
+    report_atomics(cx, c, why, false);
+}
+
+/// A non-local async closure copies what it captured for each call (and a plain closure's
+/// promise carries what the closure passed on), so a captured value holding an `Atomic` (outside
+/// a `shared`) would be changed in a copy the task that created it never sees: report it. A closure literal spawned where it is written is reported by the boundary
+/// check instead, which names the variable used again (`boundary.rs`).
+fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>, plain: bool) {
+    let closure = cx.def_spans.get(c.0 as usize).copied();
+    if let (Some(at), Some(w)) = (closure, why) {
+        if w.boundary == Boundary::Spawn
+            && at.file == w.span.file
+            && w.span.lo <= at.lo
+            && at.hi <= w.span.hi
+        {
+            return;
+        }
+    }
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return;
+    };
+    let caps: Vec<(TyId, String, velt_common::Span)> = f
+        .captures
+        .iter()
+        .map(|cap| &f.body.locals[cap.inner.0 as usize])
+        .map(|l| (l.ty, l.name.clone(), l.span))
+        .collect();
+    for (ty, name, at) in caps {
+        if cx.atomic_value(ty).is_some() || !cx.holds_atomic(ty) {
+            continue;
+        }
+        let tn = cx.display(ty);
+        let mut d = Diagnostic::error(
+            match plain {
+                true => format!("a closure whose promise may run on another thread captures `{name}`, whose `{tn}` holds an `Atomic`"),
+                false => format!("an async closure that may run on another thread captures `{name}`, whose `{tn}` holds an `Atomic`"),
+            },
+            at,
+        );
+        if let Some(w) = why {
+            let label = reaches(cx, &w);
+            d = d.with_label(w.span, label);
+        }
+        cx.error(d.with_note(format!(
+            "{}, and changes to the copy's atomics would not reach `{name}`: share it so every task changes the same atomics: `const {name} = shared(new {tn}(…))`",
+            match plain {
+                true => "the promise it returns goes to the other task with a copy of what the closure passed on",
+                false => "such a closure copies what it captured for each call",
+            }
+        )));
+    }
 }
 
 /// A non-local async closure copies what it captured for each call, and a generator's state

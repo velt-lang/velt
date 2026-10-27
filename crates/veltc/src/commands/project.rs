@@ -73,6 +73,11 @@ impl Project {
         Err(missing_entry_message(&self.root, &self.manifest))
     }
 
+    /// The package's `build.cpu`.
+    pub fn build_cpu(&self) -> Option<String> {
+        self.manifest.build.as_ref()?.cpu.clone()
+    }
+
     /// `<root>/target/velt`, where package builds put their outputs.
     pub fn target_dir(&self) -> PathBuf {
         self.root.join("target").join("velt")

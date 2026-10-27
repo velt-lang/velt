@@ -74,7 +74,7 @@ pub fn emit_object_timed(
     opts: &CodegenOptions,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<u8>, String> {
-    let triple = target::normalize(&opts.target)?;
+    let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let start = Instant::now();
     let ir = checked_ir(program, &triple, opts.optimize)?;
     timings.push(("ir", start.elapsed()));
@@ -98,7 +98,7 @@ pub fn emit_objects_timed(
     units: Option<usize>,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<Vec<u8>>, String> {
-    let triple = target::normalize(&opts.target)?;
+    let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let count = if triple.is_wasm() {
         1
     } else {
@@ -169,11 +169,30 @@ fn parallel<T: Sync, R: Send>(
     done.into_iter().map(|(_, r)| r).collect()
 }
 
-/// The program as textual LLVM IR for `target` (empty / `native` / `host` = the host triple);
-/// what `velt build --emit llvm` prints. Needs no clang.
+/// The program as textual LLVM IR for `target` (empty / `native` / `host` = the host triple) and
+/// its default CPU. Needs no clang.
 pub fn emit_ir(program: &vir::Program, target: &str) -> Result<String, String> {
     let triple = target::normalize(target)?;
     checked_ir(program, &triple, false)
+}
+
+/// The program as textual LLVM IR for `opts.target` and `opts.cpu`, as clang compiles it for an
+/// object (unoptimized): what `velt build --emit llvm` prints.
+pub fn emit_ir_for(program: &vir::Program, opts: &CodegenOptions) -> Result<String, String> {
+    let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
+    checked_ir(program, &triple, false)
+}
+
+/// The x86 features code from this backend for `cpu` on `target` uses, as a mask over
+/// `velt_codegen_cl::X86_FEATURES` (`None`: the default CPU), which the start-up check checks:
+/// the level's for a level, the host's for `native`, and for a CPU name what clang enables for
+/// it (`-march=`), which is not always what Cranelift's preset of that name does.
+pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String> {
+    match (velt_codegen_cl::level_features(target, cpu)?, cpu) {
+        (Some(mask), _) => Ok(mask),
+        (None, Some(cpu)) => clang::x86_features(&target::normalize(target)?.triple, cpu),
+        (None, None) => Err("ICE: the default CPU is a level".into()),
+    }
 }
 
 /// Verify `program` and print its module (`optimized` only marks the debug compile unit).

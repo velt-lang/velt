@@ -64,6 +64,7 @@ impl FnCx<'_, '_> {
             (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
                 Ok(self.unbox_dynamic(h, exp))
             }
+            (Some(_), None) if self.dynamic_option(exp) => self.dynamic_to_dynamic_option(h, exp),
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
@@ -664,23 +665,6 @@ impl FnCx<'_, '_> {
     pub(crate) fn any_ty(&mut self) -> Option<TyId> {
         let defs = self.cx.any?;
         Some(self.cx.ty.intern(TyKind::Dyn(defs.any, vec![])))
-    }
-
-    /// The variable of this function `e` names, when its type is `any` or `unknown`.
-    pub(crate) fn own_dynamic_local(&mut self, e: &velt_syntax::ast::Expr) -> Option<LocalId> {
-        use velt_syntax::ast::ExprKind as A;
-        let name = match &e.kind {
-            A::Paren(x) => return self.own_dynamic_local(x),
-            A::Ident(i) => i.name.as_str(),
-            _ => return None,
-        };
-        let l = self
-            .f
-            .scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.names.get(name).copied())?;
-        self.cx.dynamic(self.local_ty(l)).map(|_| l)
     }
 
     /// `s === null` / `s == undefined` (`word`) on a dynamic value `s`.

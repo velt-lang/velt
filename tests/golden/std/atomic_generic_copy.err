@@ -1,0 +1,11 @@
+atomic_generic_copy.vlt:18:13: error: an `Atomic<u64>` cannot be copied or shared, but the generic code called here shares one
+  = note: a generic function or method that shares its values (`slice`, `filter`, `concat`, a `Map` of them) was called with `Atomic`s; keep them in place and read them with `.load()`
+
+atomic_generic_copy.vlt:25:18: error: this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics would not reach the shared value
+  = note: use it in place (`s.items[i].count.add(1)`, `for (const x of s.items)`), or pass it to a function that only reads or calls its methods
+
+atomic_generic_copy.vlt:26:17: error: this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics would not reach the shared value
+  = note: use it in place (`s.items[i].count.add(1)`, `for (const x of s.items)`), or pass it to a function that only reads or calls its methods
+
+atomic_generic_copy.vlt:27:16: error: this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics would not reach the shared value
+  = note: use it in place (`s.items[i].count.add(1)`, `for (const x of s.items)`), or pass it to a function that only reads or calls its methods

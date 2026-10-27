@@ -104,14 +104,33 @@ impl Emitter<'_> {
     ) -> CodegenResult<()> {
         let (params, ret) = self.callee_signature(callee)?;
         let mut values = Vec::with_capacity(args.len());
+        let mut raw = Vec::with_capacity(args.len());
         let mut types = Vec::with_capacity(args.len());
         for a in args {
             let (v, ty) = self.scalar(a)?;
             values.push(format!("{} {v}", abi_type(ty)?));
+            raw.push(v);
             types.push(ty);
         }
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
+        }
+        if let Some(atomic) = self.atomic_call(callee) {
+            // An atomic instruction in place of the call (atomic.rs).
+            let result = self.atomic(atomic, &params, ret, &raw)?;
+            if let (Some(dest), Some(result)) = (dest, result) {
+                let loc = self.place(dest)?;
+                if loc.ty() != ret && loc.ty() != Ty::Unit {
+                    bail!(
+                        "atomic gives {ret:?} but destination has type {:?}",
+                        loc.ty()
+                    );
+                }
+                self.write(loc, Val::Scalar(result))?;
+            }
+            let next = self.block(next)?;
+            self.line(format!("br label {next}"));
+            return Ok(());
         }
         if self.own_extension_check(callee) {
             // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330): it runs only where

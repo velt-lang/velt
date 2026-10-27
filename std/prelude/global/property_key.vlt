@@ -1,0 +1,2 @@
+// Global (loaded when a module names it): TypeScript's `PropertyKey` (velt:record/symbols).
+export { PropertyKey } from "velt:record/symbols";

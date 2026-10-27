@@ -60,9 +60,14 @@ impl FnCx<'_, '_> {
     fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         // The property writes a cast took as members (#921).
         let mut taken: Vec<usize> = vec![];
+        // `const`s that closures written before them use (`forward_consts`).
+        let forward = super::forward_consts::find(stmts);
         for (i, s) in stmts.iter().enumerate() {
             if taken.contains(&i) {
                 continue;
+            }
+            if forward.iter().any(|f| f.first == i) {
+                self.forward_declare(stmts, &forward, i, out);
             }
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {

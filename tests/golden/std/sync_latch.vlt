@@ -1,0 +1,65 @@
+// check: no leaks
+// velt:sync's `VersionLatch` (optimistic lock coupling, bbtree's latch word) and `Backoff`, on
+// one thread: what each operation answers in each state.
+import { Backoff, VersionLatch } from "velt:sync";
+
+const l = VersionLatch.create();
+const v = l.readVersion();
+console.log("unheld", v, l.tryReadVersion(), l.isUnchanged(v));
+console.log(
+  "tryLockAt",
+  l.tryLockAt(v),
+  "unchanged while held",
+  l.isUnchanged(v),
+  l.tryReadVersion(),
+);
+console.log("held twice", l.tryLockAt(v), l.tryLockExclusive());
+l.unlockExclusive(v);
+const v2 = l.readVersion();
+console.log(
+  "next version",
+  v2 > v,
+  "stale version takes nothing",
+  l.tryLockAt(v),
+  l.isUnchanged(v),
+);
+l.lockShared();
+l.lockShared();
+console.log(
+  "shared: version kept",
+  l.isUnchanged(v2),
+  l.readVersion() == v2,
+  "writer kept out",
+  l.tryLockAt(v2),
+  l.tryLockExclusive(),
+);
+l.unlockShared();
+l.unlockShared();
+const h = l.lockExclusive();
+console.log("exclusive at", h == v2);
+l.unlockExclusive(h);
+console.log("versions grow", l.readVersion() > v2);
+
+// Latches in place in an array, as a concurrent tree keeps one per node.
+const nodes: VersionLatch[] = [];
+for (let i = 0; i < 3; i++) {
+  nodes.push(VersionLatch.create());
+}
+const held = nodes[1].lockExclusive();
+console.log(
+  "per node",
+  nodes[0].tryReadVersion(),
+  nodes[1].tryReadVersion(),
+  nodes[2].tryReadVersion(),
+);
+nodes[1].unlockExclusive(held);
+console.log("after", nodes[1].tryReadVersion() != null);
+
+const b = Backoff.create();
+let rounds = 0;
+while (!b.completed) {
+  b.snooze();
+  rounds++;
+}
+b.snooze();
+console.log("backoff spins", rounds, "rounds before it yields");

@@ -11,6 +11,12 @@
 //!   (`m.with(...)` writes its lock word through a shared borrow) or the body writes the param
 //!   (`LocalDef::mutable`: closure params, params handed to function values). Not `noalias`:
 //!   two `Borrow` params may point to the same value;
+//! - the same `Borrow` params → `frozen` also when the value holds an `Atomic` (but no `Mutex`
+//!   or `RwLock`): nothing writes the object during the call but `Atomic` methods, which change
+//!   only the atomic's word, so `velt_opt` reads the other fields once (`frozen` pass), even
+//!   around atomic operations, fences and calls (docs/internals/design/atomics.md);
+//! - neither `noalias` nor `frozen` for a type whose values module state can reach
+//!   ([`Cx::unfreeze_module_reach`]), see below;
 //! - the out-pointer of an aggregate / `Result` return → `noalias` (always a fresh caller temp);
 //! - every pointer to a value → `nonnull` + `dereferenceable(size)`;
 //! - a poll function's frame → `nonnull` + `dereferenceable(frame size)` ([`Cx::poll_param_attrs`]).
@@ -22,14 +28,24 @@
 //! variable twice, an overlapping place (`a` / `a.child`), a `for...of` binding, a capture, or
 //! a binding of an array element (`const x = xs[i]`, an alias of `xs`). Sema's exclusivity
 //! check rejects each of these when the callee may modify the object, function values and
-//! virtual / interface calls included (unknown callees count as modifying), there is no
-//! mutable module state, and no function can return a reference into its arguments (moving
-//! out of a field or element is an error). So during the call, the object behind a `BorrowMut`
-//! param is reached through that param only (`noalias`), and nothing writes the object behind
-//! a `Borrow` param (`readonly`). This is the argument that already covered `this`. With shared
-//! references (semantics stage 2) it holds exactly for the classes the program never shares:
-//! counted ones (and values borrowed inside counted objects) get neither attribute
-//! (`Cx::unique_refs`).
+//! virtual / interface calls included (unknown callees count as modifying), and no function
+//! can return a reference into its arguments (moving out of a field or element is an error).
+//! So during the call, the object behind a `BorrowMut` param is reached through that param
+//! only (`noalias`), and nothing writes the object behind a `Borrow` param (`readonly`). This
+//! is the argument that already covered `this`. With shared references (semantics stage 2) it
+//! holds exactly for the classes the program never shares: counted ones (and values borrowed
+//! inside counted objects) get neither attribute (`Cx::unique_refs`).
+//!
+//! **Module state** is the exception the call site cannot see: a module-level `const` / `let`,
+//! a `static` field or an imported module's variable (each a module state slot) may hold the
+//! argument, and any function the call reaches may write it through that variable
+//! (`cfg.limit = 10` while `count(cfg)` reads `c.limit`). `readonly` still holds (it promises
+//! only that the callee writes nothing through the param itself), but `noalias` and `frozen`
+//! do not. So once a lowering pass is complete, every param that got one of them and whose
+//! type a value in module state can be or contain (through fields, elements, other classes of
+//! its hierarchy, and what interface and function values in it may hold) loses both. A
+//! program without module state, or whose module state holds only numbers and strings, keeps
+//! them all.
 //!
 //! `Owned` / `Copy` aggregates get no `noalias`: calls through the borrow ABI (thunks, vtables)
 //! may hand the callee the caller's own value instead of a copy.
@@ -79,7 +95,9 @@ impl Cx<'_> {
             // A counted object may be written through a share of the param (`const o = p;
             // o.x = 1`), a pointer derived from it: not read-only then.
             Some(PassMode::Borrow) => {
-                attrs.readonly = !written && !self.holds_mutex(ty, 0) && self.unique_refs(ty)
+                let unchanged = !written && self.unique_refs(ty);
+                attrs.readonly = unchanged && !self.holds_mutex(ty, 0, true);
+                attrs.frozen = unchanged && !self.holds_mutex(ty, 0, false);
             }
             _ => {}
         }
@@ -106,20 +124,24 @@ impl Cx<'_> {
             nonnull: true,
             dereferenceable: u64::from(self.size_align(ty).0),
             readonly: false,
+            frozen: false,
         }
     }
 
-    /// Does a value of `ty` (a class: its object) contain a `Mutex` in its own memory? Values
+    /// Does a value of `ty` (a class: its object) contain a `Mutex` or an `Atomic` (which a
+    /// borrowed param's method changes, docs/internals/design/atomics.md) in its own memory? Values
     /// behind pointers (arrays, other objects, `shared`) don't count: writes to them are not
-    /// writes through the param. `depth` guards against pathological nesting.
-    pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32) -> bool {
+    /// writes through the param. `atomic` false: only a `Mutex` or `RwLock` counts. `depth`
+    /// guards against pathological nesting.
+    pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32, atomic: bool) -> bool {
         if depth > 32 {
             return true;
         }
         if let TyKind::Adt(d, _) = self.kind(ty) {
             if let hir::Def::Adt(a) = self.hir.def(d) {
+                let name = self.type_name(ty);
                 if a.kind != AdtKind::Class
-                    && matches!(self.type_name(ty).as_str(), "Mutex" | "RwLock")
+                    && (matches!(name.as_str(), "Mutex" | "RwLock") || atomic && name == "Atomic")
                 {
                     return true;
                 }
@@ -130,6 +152,6 @@ impl Cx<'_> {
         }
         self.part_types(ty)
             .into_iter()
-            .any(|p| self.holds_mutex(p, depth + 1))
+            .any(|p| self.holds_mutex(p, depth + 1, atomic))
     }
 }

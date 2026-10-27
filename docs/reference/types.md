@@ -26,7 +26,9 @@ function's `return`s ([Return types](functions.md#return-types)), and everything
 inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
 alias may refer to itself only when it is an object type, or an intersection of object types,
 written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
-fields ([Intersection types](#intersection-types)). `any` and `unknown` hold a value of any
+fields ([Intersection types](#intersection-types)). An alias or interface may share its name
+with a constant or function, as in TypeScript ([Types and values of one
+name](modules.md#types-and-values-of-one-name)). `any` and `unknown` hold a value of any
 type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
 ([`velt:json`](../std/json.md)).
 
@@ -436,8 +438,10 @@ whole program, made while compiling (module constants are otherwise evaluated at
 reading it costs no call; `Symbol.for(k)` at run time gives that same symbol for its key. A symbol `Symbol(...)` makes at run time lives
 until the program ends. A symbol brand added with `Object.defineProperty(o, KEY, …)` is an
 optional symbol-keyed field of `o`'s type ([`Object` built-ins](#object-built-ins)).
-**Planned**: `PropertyKey` (`string | symbol`) for `Reflect` and proxies
-([#823](https://github.com/velt-lang/velt/issues/823)).
+A record holds symbol keys made at run time too (see `Record<K, V>` in
+[Objects, arrays, tuples and maps](#objects-arrays-tuples-and-maps)).
+`PropertyKey` is TypeScript's `string | number | symbol`; a proxy trap's key is a
+`string | symbol`.
 
 ## SIMD vectors
 
@@ -2268,10 +2272,31 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   Through a variable or parameter declared with one, a string key that is not a number's
   name is an error, as in TypeScript: `r["abc"]` (TS7015), `r.abc` (TS2339) and `{ a: v }` as
   its initializer (TS2353); `r["1"]` and `r["1.5"]` are keys. A number index works on any
-  `string`-keyed record. A `string | symbol` index on a `string`-keyed record (a proxy trap's
-  property, `(obj as Record<string, any>)[key]`) reads the entry for a string and `undefined`
-  for a symbol, which is never one of its keys (TypeScript accepts this read where narrowing
-  leaves `key` a `string`; Velt accepts it for any `string | symbol` key). A type parameter
+  `string`-keyed record. A `string`-keyed record also holds symbol keys, in a table of its
+  own as in Node, made when the first symbol key is written (a record without symbol keys pays
+  nothing for it): `Record<string | symbol, V>` and `Record<PropertyKey, V>` are
+  `Record<string, V>`. `r[s]`, `r[s] = v`, `r[s] ??= v`, `delete r[s]`, `s in r` and
+  `Object.hasOwn(r, s)` take a symbol `s` (a module constant, a well-known symbol such as
+  `Symbol.iterator`, or one made at run time), a `string | symbol` key or a `PropertyKey`
+  (`string | number | symbol`, also a union of literals; a number is its string), and a symbol constant
+  is a key of a record literal (`{ [KEY]: v }`). `Object.keys`, `Object.values`,
+  `Object.entries`, `for...in` and `JSON.stringify` skip the symbol keys;
+  `Object.getOwnPropertySymbols(r)` lists them in insertion order, `Reflect.ownKeys(r)` lists the
+  string keys (array indices first) and then the symbols, and a spread copies them, as in Node.
+  `Object.defineProperty(r, k, { get, set, configurable })` defines an accessor under a string
+  or symbol key, not enumerable (the listings above skip it, `Reflect.ownKeys` lists it after
+  the entries of its kind); reads, writes, `in` and `delete` run or test it, a write without a
+  setter and a `delete` or redefinition of an accessor that is not configurable are Node's
+  `TypeError`. `Object.defineProperty(r, k, { value, enumerable: true, writable: true,
+  configurable: true })` writes an entry; an enumerable accessor and other attributes are not
+  supported yet. `Object.getOwnPropertyDescriptor(r, k)` describes an entry (`{ value,
+  writable: true, enumerable: true, configurable: true }`) or an accessor (`{ get, set,
+  enumerable: false, configurable }`), or is `undefined`. `console.log` writes the symbol keys
+  after the string keys as Node 26 does (`{ a: 1, Symbol(k): 2 }`). In a program with proxies,
+  a proxy whose target is a record forwards symbol keys to its symbol table through `Reflect`,
+  and indexing an `any` with a `symbol` key reads, writes and tests it there. The methods for
+  symbol keys and accessors are loaded only by a program that mentions symbols, property
+  definitions, `Proxy` or `Reflect` (std/record/symbols.vlt). A type parameter
   given `number` as a record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
@@ -3865,6 +3890,25 @@ with TypeScript's rules:
   `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
   `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
   `null` or `undefined`, as in JavaScript.
+- A field path of type `any` or `unknown` (or a union that is `unknown`, `string | Function`)
+  narrows as a variable does: after `typeof vnode.type === "string"`, `vnode.type` is a
+  `string` there. A type predicate (`isRef(x): x is Ref`) narrows an `unknown` variable or
+  field path to its type where it returned `true` (an `any` reads its members as it is); the
+  read converts the value held, checked at run time as `x as Ref` is. A member of it
+  (`x.__key`) is read from the value held, as an `any` reads it, and converted to the
+  member's type, so a function with properties held there reads too; an assertion (`x as
+  Function`) converts the value held, not the narrowed type. A method
+  of it called in place (`x.run()`) is read the same way. A predicate that returns `true` for a
+  value that is not a `Ref` stops with a `TypeError` where the value is read (TypeScript reads
+  what is there, `undefined` for a missing field).
+- A `T | null` or `T | undefined` at `T = unknown` (or `any`) takes an `unknown` as it is, as
+  TypeScript reads it as `unknown`: a getter `get value() { return read(); }` of an
+  `Impl<unknown>` whose `value` is `T | null` returns what `read()` returns, `undefined`
+  included.
+- An arrow without a written result type asserted to a function type (`(() => { … return
+  cache.get(key); }) as Use<T>`) may return an `any` or `unknown`: TypeScript compares the
+  result it infers with the asserted one, and Velt converts the value as `cache.get(key) as T`
+  does, checked at run time.
 - `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` give the
   name of the constructor of the value held, as in JavaScript: its class's (a subclass's when
   converted through its base), `"Object"` for an object literal or a record, `"Array"`,

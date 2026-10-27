@@ -479,6 +479,10 @@ impl FnCx<'_, '_> {
                 call
             });
         }
+        // `t.m(…)` on a narrowed `unknown`: the member read from the value held, called.
+        if let Some(f) = self.narrowed_dynamic_member(object, prop, Want::Borrow, span) {
+            return self.call_value(f, args, span);
+        }
         let recv = match &object.kind {
             ast::ExprKind::Super => return self.super_method_call(prop, args, exp, span),
             _ => {
@@ -639,7 +643,10 @@ impl FnCx<'_, '_> {
             *slot = Some(a);
         }
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
-        let ck = self.check_call(&c, slots, args, exp, span);
+        let mut ck = self.check_call(&c, slots, args, exp, span);
+        if let Some(h) = self.atomic_call(def, &mut ck.args, ck.ret, span) {
+            return h;
+        }
         self.note_async_args(def, &ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {

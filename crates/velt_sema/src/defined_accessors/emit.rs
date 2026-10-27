@@ -221,6 +221,11 @@ impl Found {
             return Err(None);
         }
         let decl = self.decls.get(&d.object).ok_or(None)?;
+        // A record (`Record<K, V>`, an index signature) holds accessors of its own (sema's
+        // `record_props.rs`).
+        if decl.ty.as_ref().is_some_and(is_record_type) {
+            return Err(None);
+        }
         let (o, k) = (&d.object, &d.key);
         if let Some(f) = [&d.get, &d.set]
             .into_iter()
@@ -690,6 +695,16 @@ fn takes_this(f: &ast::Expr) -> bool {
             .params
             .first()
             .is_some_and(|p| ast::is_method_this(&p.name)),
+        _ => false,
+    }
+}
+
+/// Is `t` a record type as written: `Record<K, V>` or an object type with only an index
+/// signature?
+fn is_record_type(t: &ast::TypeExpr) -> bool {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, .. } => path.len() == 1 && path[0].name == "Record",
+        ast::TypeExprKind::IndexSig { fields, .. } => fields.is_empty(),
         _ => false,
     }
 }

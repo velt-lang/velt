@@ -50,6 +50,7 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            "--cpu" => b.cpu = Some(take_cpu(inline.as_deref(), &mut it)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
                 "numbers" => b.report_numbers = true,
                 other => {
@@ -101,7 +102,7 @@ pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--backend" | "--report") => i += 2,
+            Some("--target" | "--cpu" | "--backend" | "--report") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }
@@ -134,6 +135,22 @@ pub(super) fn take_value(
             .map(|v| v.to_string_lossy().into_owned())
             .ok_or_else(|| format!("`{name}` expects a value")),
     }
+}
+
+/// `--cpu`'s value, which is not a source file: `velt build --cpu a.vlt` lacks the CPU.
+pub(super) fn take_cpu(
+    inline: Option<&str>,
+    it: &mut impl Iterator<Item = OsString>,
+) -> Result<String, String> {
+    let cpu = take_value(inline, it, "--cpu")?;
+    let file =
+        [".vlt", ".ts", ".tsx"].iter().any(|e| cpu.ends_with(e)) || cpu.contains(['/', '\\']);
+    if file {
+        return Err(format!(
+            "`--cpu` expects a CPU name (such as `x86-64-v3` or `native`), not the file `{cpu}`"
+        ));
+    }
+    Ok(cpu)
 }
 
 fn set_input(slot: &mut Option<PathBuf>, p: PathBuf) -> Result<(), String> {
@@ -207,6 +224,15 @@ mod tests {
             p(&["run", "--json", "a.vlt"]).is_err(),
             "only `build` prints JSON"
         );
+        let b = build(&["build", "a.vlt", "--cpu", "x86-64-v3"]);
+        assert_eq!(b.cpu.as_deref(), Some("x86-64-v3"));
+        assert_eq!(
+            build(&["build", "--cpu=native"]).cpu.as_deref(),
+            Some("native")
+        );
+        let err = p(&["build", "--cpu", "a.vlt"]).unwrap_err();
+        assert!(err.contains("not the file `a.vlt`"), "{err}");
+        assert!(p(&["run", "--cpu=src/main.vlt"]).is_err());
         let b = build(&["build", "a.vlt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");
         match p(&["run", "--target", "wasm32-wasip1", "a.vlt"]).unwrap() {

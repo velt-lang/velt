@@ -35,4 +35,4 @@ pub mod yank;
 pub use graph::PackageGraph;
 pub use install::{install, InstallOptions, Installed};
 pub use locations::Locations;
-pub use manifest::{Dependency, DetailedDependency, Manifest, Package};
+pub use manifest::{BuildConfig, Dependency, DetailedDependency, Manifest, Package};

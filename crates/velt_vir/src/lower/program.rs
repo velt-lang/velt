@@ -48,6 +48,8 @@ impl<'h> Cx<'h> {
             work_map: FxHashMap::default(),
             queue: VecDeque::new(),
             iface_glues: vec![],
+            unique_params: vec![],
+            declared_unique: vec![],
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
@@ -74,6 +76,11 @@ impl<'h> Cx<'h> {
             cur_mode: super::LkMode::Plain,
             cur_own: false,
             nothing_clashes: vec![],
+            atomic_copies: vec![],
+            user_site: velt_common::Span::DUMMY,
+            fn_sites: Default::default(),
+            share_sites: Default::default(),
+            share_from: Default::default(),
             map_fields: 0,
         }
     }
@@ -179,6 +186,9 @@ impl<'h> Cx<'h> {
         let id = FuncId(self.funcs.len() as u32);
         self.funcs.push(None);
         self.work_map.insert(work.clone(), id);
+        if self.user_site != velt_common::Span::DUMMY {
+            self.fn_sites.insert(id, self.user_site);
+        }
         self.queue.push_back((id, work));
         id
     }
@@ -191,6 +201,8 @@ impl<'h> Cx<'h> {
         }
         let outer = self.cur_def;
         self.cur_def = work_def(work).or(outer);
+        let site = self.fn_sites.get(&fid).copied();
+        let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
@@ -212,6 +224,8 @@ impl<'h> Cx<'h> {
         };
         self.cur_mode = outer_mode;
         self.cur_def = outer;
+        self.user_site = outer_site;
+        self.bind_unique_params(fid);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }

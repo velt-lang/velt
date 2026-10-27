@@ -82,11 +82,11 @@ async function main() {
   console.log(got.join(", "), "|", await done.receive());
   await early.close();
 
-  const flood = await connectWebSocket(`${base}/flood`);
+  const floodWs = await connectWebSocket(`${base}/flood`);
   let next = 0;
   let inOrder = true;
   let last = "";
-  for await (const m of flood) {
+  for await (const m of floodWs) {
     if (m.text.length > 100) {
       inOrder =
         inOrder && m.text.startsWith(`${next}:`) && m.text.length == BIG + `${next}:`.length;
@@ -96,19 +96,19 @@ async function main() {
     }
   }
   console.log("flood:", next, "in order:", inOrder, "then:", last, "|", await done.receive());
-  await flood.close();
+  await floodWs.close();
 
-  const crowd = await connectWebSocket(`${base}/crowd`);
+  const crowdWs = await connectWebSocket(`${base}/crowd`);
   const seen: i64[] = [0, 0, 0, 0];
   let perTask = true;
-  for await (const m of crowd) {
+  for await (const m of crowdWs) {
     const parts = m.text.split(":");
     const task = parseInt(parts[0], 10) as i64;
     perTask = perTask && (parseInt(parts[1], 10) as i64) == seen[task];
     seen[task] += 1;
   }
   console.log("crowd:", seen, "each task in order:", perTask, "|", await done.receive());
-  await crowd.close();
+  await crowdWs.close();
 
   // A send after the close frame was queued is refused, and so is one on a released handle.
   const late = await connectWebSocket(`${base}/quiet`);

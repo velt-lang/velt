@@ -1546,6 +1546,20 @@ show();
   arrow, when the arrow is called). A closure created inside such a closure shares the
   constant too. In Velt this is a
   panic, which `catch` does not intercept.
+- A closure written before the declaration of a `const` or `let` of its block may use it too,
+  as in JavaScript, where the variable is in scope in its whole block: `const effectFn = () =>
+  { runJob(); }; const runJob = () => { … };`, or `queueMicrotask(() => stop());` above `const
+  stop = () => { … };`. A closure there names the later variable even where an outer function
+  or constant has the same name. The variable is treated as above from the first statement
+  using it to its declaration: closures created in between share it, and one reading it before
+  the declaration ran stops with the same `ReferenceError`. When the statements in between only
+  create values (closures, literals, objects of those), no closure can run before the
+  declaration, and the program has no such check. Without an annotation, the type is the
+  initializer's, checked as if the closures were not there yet. Not supported yet, an error
+  even where an outer name is the same: a destructuring declaration (`const { a } = o;`) or a
+  `let` without a value (`let x: T;`) used so (``…which is not supported yet for a
+  destructuring declaration``); declare the variable by itself with its value. A class declared
+  in a function body cannot use the function's variables at all, before or after it.
 - An object holding a closure that captures the object is a reference cycle, which reference
   counting does not free: each such object stays allocated until the program exits (one per
   constant initialized, for instance one per component created). Break the cycle when the

@@ -343,6 +343,7 @@ impl Supervisor {
         let mut opts =
             build_options(&self.args.build).map_err(|e| (BuildError::Failed(e), None))?;
         let target = opts.target();
+        opts.cpu = crate::commands::cpu::for_running_here(opts.cpu.take(), &target, opts.release);
         let default = OutputPaths::new(&opts.input, opts.output.as_deref(), Emit::Exe, &target);
         let versions = self.versions.get_or_insert_with(|| {
             let stem = default

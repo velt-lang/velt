@@ -228,6 +228,14 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
                 lanes.bits() / 8
             ))
         }
+        // A load that may race with other threads' atomic stores: LLVM gives such a load
+        // `undef` lanes, which `freeze` pins to some value, so nothing after it (a compare, a
+        // branch) is undefined. No alias tag: the words are atomics, written untagged.
+        Op::LoadOptimistic => {
+            let p = element(b, lane, 0);
+            let v = b.inst(format!("load {ty}, ptr {p}, align {}", lanes.bits() / 8));
+            b.inst(format!("freeze {ty} {v}"))
+        }
         Op::WithLane => {
             let x = b.arg(0, &ty);
             b.inst(format!("insertelement {ty} {x}, {lane} %a2, i64 %a1"))
@@ -468,6 +476,22 @@ mod tests {
         assert!(text.contains("alwaysinline"), "{text}");
         assert!(helper("velt_simd_u8x16_mul", Arch::Wasm).is_none());
         assert!(helper("velt_rt_math_sqrt", Arch::Wasm).is_none());
+    }
+
+    /// An optimistic load is a plain vector load whose lanes are frozen, so a lane another
+    /// thread was writing is some value and nothing after it is undefined; and it carries no
+    /// alias tag, since the words are atomics, which are written untagged.
+    #[test]
+    fn optimistic_loads_freeze_their_lanes() {
+        for arch in [Arch::Neon, Arch::Sse2, Arch::Wasm] {
+            let (_, definitions, params, ret) =
+                helper("velt_simd_u64x2_load_optimistic", arch).unwrap();
+            assert_eq!((params, ret), (vec![Ty::Ptr, Ty::U64], Ty::V128));
+            let text = definitions.last().unwrap();
+            let load = text.lines().find(|l| l.contains("load <2 x i64>"));
+            assert!(load.is_some_and(|l| !l.contains("!tbaa")), "{text}");
+            assert!(text.contains("freeze <2 x i64>"), "{text}");
+        }
     }
 
     #[test]

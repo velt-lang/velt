@@ -19,6 +19,7 @@ declare function velt_simd_i32x4_fits(xs: i32[], at: u64): bool;
 declare function velt_simd_i32x4_splat(x: i32): i32x4;
 declare function velt_simd_i32x4_index(): i32x4;
 declare function velt_simd_i32x4_load(from: i32[], at: u64): i32x4;
+declare function velt_simd_i32x4_load_optimistic(from: Atomic<i32>[], at: u64): i32x4;
 declare function velt_simd_i32x4_store(v: i32x4, to: i32[], at: u64);
 declare function velt_simd_i32x4_load_partial(from: i32[], at: u64, count: u64): i32x4;
 declare function velt_simd_i32x4_store_partial(v: i32x4, to: i32[], at: u64, count: u64);
@@ -70,6 +71,21 @@ extend i32x4 {
       panic("RangeError: i32x4.load: range is out of bounds");
     }
     return velt_simd_i32x4_load(from, at as u64);
+  }
+
+  /**
+   * The 4 words of `from` starting at `at`, read while other threads may be changing them:
+   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * read is that word; a lane a thread was writing is some value, never undefined behaviour,
+   * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
+   * `load` is, where reading the words one by one takes 4 atomic loads. Panics with a
+   * RangeError unless all 4 are inside the array.
+   */
+  static loadOptimistic(from: Atomic<i32>[], at: usize = 0): i32x4 {
+    if (from.length < 4 || at > from.length - 4) {
+      panic("RangeError: i32x4.loadOptimistic: range is out of bounds");
+    }
+    return velt_simd_i32x4_load_optimistic(from, at as u64);
   }
 
   /**
@@ -313,6 +329,7 @@ declare function velt_simd_u32x4_fits(xs: u32[], at: u64): bool;
 declare function velt_simd_u32x4_splat(x: u32): u32x4;
 declare function velt_simd_u32x4_index(): u32x4;
 declare function velt_simd_u32x4_load(from: u32[], at: u64): u32x4;
+declare function velt_simd_u32x4_load_optimistic(from: Atomic<u32>[], at: u64): u32x4;
 declare function velt_simd_u32x4_store(v: u32x4, to: u32[], at: u64);
 declare function velt_simd_u32x4_load_partial(from: u32[], at: u64, count: u64): u32x4;
 declare function velt_simd_u32x4_store_partial(v: u32x4, to: u32[], at: u64, count: u64);
@@ -362,6 +379,21 @@ extend u32x4 {
       panic("RangeError: u32x4.load: range is out of bounds");
     }
     return velt_simd_u32x4_load(from, at as u64);
+  }
+
+  /**
+   * The 4 words of `from` starting at `at`, read while other threads may be changing them:
+   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * read is that word; a lane a thread was writing is some value, never undefined behaviour,
+   * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
+   * `load` is, where reading the words one by one takes 4 atomic loads. Panics with a
+   * RangeError unless all 4 are inside the array.
+   */
+  static loadOptimistic(from: Atomic<u32>[], at: usize = 0): u32x4 {
+    if (from.length < 4 || at > from.length - 4) {
+      panic("RangeError: u32x4.loadOptimistic: range is out of bounds");
+    }
+    return velt_simd_u32x4_load_optimistic(from, at as u64);
   }
 
   /**
@@ -595,6 +627,7 @@ declare function velt_simd_i64x2_fits(xs: i64[], at: u64): bool;
 declare function velt_simd_i64x2_splat(x: i64): i64x2;
 declare function velt_simd_i64x2_index(): i64x2;
 declare function velt_simd_i64x2_load(from: i64[], at: u64): i64x2;
+declare function velt_simd_i64x2_load_optimistic(from: Atomic<i64>[], at: u64): i64x2;
 declare function velt_simd_i64x2_store(v: i64x2, to: i64[], at: u64);
 declare function velt_simd_i64x2_load_partial(from: i64[], at: u64, count: u64): i64x2;
 declare function velt_simd_i64x2_store_partial(v: i64x2, to: i64[], at: u64, count: u64);
@@ -639,6 +672,21 @@ extend i64x2 {
       panic("RangeError: i64x2.load: range is out of bounds");
     }
     return velt_simd_i64x2_load(from, at as u64);
+  }
+
+  /**
+   * The 2 words of `from` starting at `at`, read while other threads may be changing them:
+   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * read is that word; a lane a thread was writing is some value, never undefined behaviour,
+   * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
+   * `load` is, where reading the words one by one takes 2 atomic loads. Panics with a
+   * RangeError unless all 2 are inside the array.
+   */
+  static loadOptimistic(from: Atomic<i64>[], at: usize = 0): i64x2 {
+    if (from.length < 2 || at > from.length - 2) {
+      panic("RangeError: i64x2.loadOptimistic: range is out of bounds");
+    }
+    return velt_simd_i64x2_load_optimistic(from, at as u64);
   }
 
   /**
@@ -841,6 +889,7 @@ declare function velt_simd_u64x2_fits(xs: u64[], at: u64): bool;
 declare function velt_simd_u64x2_splat(x: u64): u64x2;
 declare function velt_simd_u64x2_index(): u64x2;
 declare function velt_simd_u64x2_load(from: u64[], at: u64): u64x2;
+declare function velt_simd_u64x2_load_optimistic(from: Atomic<u64>[], at: u64): u64x2;
 declare function velt_simd_u64x2_store(v: u64x2, to: u64[], at: u64);
 declare function velt_simd_u64x2_load_partial(from: u64[], at: u64, count: u64): u64x2;
 declare function velt_simd_u64x2_store_partial(v: u64x2, to: u64[], at: u64, count: u64);
@@ -884,6 +933,21 @@ extend u64x2 {
       panic("RangeError: u64x2.load: range is out of bounds");
     }
     return velt_simd_u64x2_load(from, at as u64);
+  }
+
+  /**
+   * The 2 words of `from` starting at `at`, read while other threads may be changing them:
+   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * read is that word; a lane a thread was writing is some value, never undefined behaviour,
+   * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
+   * `load` is, where reading the words one by one takes 2 atomic loads. Panics with a
+   * RangeError unless all 2 are inside the array.
+   */
+  static loadOptimistic(from: Atomic<u64>[], at: usize = 0): u64x2 {
+    if (from.length < 2 || at > from.length - 2) {
+      panic("RangeError: u64x2.loadOptimistic: range is out of bounds");
+    }
+    return velt_simd_u64x2_load_optimistic(from, at as u64);
   }
 
   /**

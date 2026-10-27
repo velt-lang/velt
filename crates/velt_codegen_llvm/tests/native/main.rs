@@ -4,6 +4,7 @@
 //! after `velt_opt`. Also checks that the IR compiles for every supported target triple.
 //! Skipped (with a note) when clang or rustc is unavailable.
 
+mod atomics;
 #[path = "../../../velt_opt/tests/common/mod.rs"]
 mod common;
 #[path = "../../../velt_opt/tests/corpus/mod.rs"]
@@ -138,6 +139,7 @@ fn vtable_relocations_on_every_target() {
         let opts = velt_codegen_llvm::CodegenOptions {
             target: triple.into(),
             optimize: false,
+            cpu: None,
         };
         let obj = velt_codegen_llvm::emit_object(&program, &opts)
             .unwrap_or_else(|e| panic!("{triple}: {e}"));
@@ -174,6 +176,7 @@ fn every_target_compiles() {
                 let opts = velt_codegen_llvm::CodegenOptions {
                     target: triple.into(),
                     optimize,
+                    cpu: None,
                 };
                 let obj = velt_codegen_llvm::emit_object(&program, &opts)
                     .unwrap_or_else(|e| panic!("{name} for {triple}: {e}"));
@@ -207,6 +210,7 @@ fn codegen_units_compile_for_every_target() {
             let opts = velt_codegen_llvm::CodegenOptions {
                 target: triple.into(),
                 optimize,
+                cpu: None,
             };
             let objects =
                 velt_codegen_llvm::emit_objects_timed(&program, &opts, Some(3), &mut vec![])
@@ -296,6 +300,7 @@ fn cross_unit_references_need_no_got() {
             let opts = velt_codegen_llvm::CodegenOptions {
                 target: triple.into(),
                 optimize,
+                cpu: None,
             };
             let objects =
                 velt_codegen_llvm::emit_objects_timed(&program, &opts, Some(3), &mut vec![])

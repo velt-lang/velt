@@ -313,6 +313,9 @@ impl FnCx<'_, '_> {
         );
         let mut all = vec![recv];
         all.extend(ck.args);
+        if let Some(h) = self.atomic_call(def, &mut all, ck.ret, span) {
+            return h;
+        }
         self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {
             callee: Callee::Def(def, ck.type_args),
