@@ -2253,7 +2253,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   nothing for it): `Record<string | symbol, V>` and `Record<PropertyKey, V>` are
   `Record<string, V>`. `r[s]`, `r[s] = v`, `r[s] ??= v`, `delete r[s]`, `s in r` and
   `Object.hasOwn(r, s)` take a symbol `s` (a module constant, a well-known symbol such as
-  `Symbol.iterator`, or one made at run time) or a `string | symbol` key, and a symbol constant
+  `Symbol.iterator`, or one made at run time), a `string | symbol` key or a `PropertyKey`
+  (`string | number | symbol`, also a union of literals; a number is its string), and a symbol constant
   is a key of a record literal (`{ [KEY]: v }`). `Object.keys`, `Object.values`,
   `Object.entries`, `for...in` and `JSON.stringify` skip the symbol keys;
   `Object.getOwnPropertySymbols(r)` lists them in insertion order, `Reflect.ownKeys(r)` lists the
