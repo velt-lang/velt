@@ -20,6 +20,17 @@ impl Ctx<'_> {
         if t == self.ty.never || depth > 32 {
             return;
         }
+        // `E | null` is `E` and `null`: sets of thrown values stay flat.
+        if let TyKind::Option(p, n) = *self.ty.kind(t) {
+            if p != self.ty.never {
+                self.collect_error_members(p, out, depth + 1);
+                let null = self.ty.intern(TyKind::Option(self.ty.never, n));
+                if !out.contains(&null) {
+                    out.push(null);
+                }
+                return;
+            }
+        }
         match self.union_members(t) {
             Some(ms) => {
                 for m in ms {

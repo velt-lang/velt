@@ -33,6 +33,17 @@ pub(crate) enum Portable {
     Option(Box<Portable>, Nothing),
 }
 
+impl Portable {
+    /// How many types it is made of.
+    fn size(&self) -> usize {
+        match self {
+            Portable::Leaf(_) => 1,
+            Portable::Def(_, _, args) => 1 + args.iter().map(Portable::size).sum::<usize>(),
+            Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
+        }
+    }
+}
+
 /// What each site throws, by the span of its written function type.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FnTypeSeeds {
@@ -383,7 +394,7 @@ impl Ctx<'_> {
             if !self.is_error_class(m) && self.is_trap_site(site, used_as) {
                 return false;
             }
-            match self.port(m, 0) {
+            match self.port_thrown(m) {
                 Some(p) => members.push(p),
                 None => return false,
             }
@@ -564,6 +575,14 @@ impl Ctx<'_> {
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => all(xs, ys),
             _ => false,
         }
+    }
+
+    /// `t` as a [`Portable`] type kept in an inferred error set: as in JavaScript any thrown
+    /// value (`null`, a string, a class, `Error | null`), but only a small type, since the sets
+    /// reach every call through their sites.
+    pub(super) fn port_thrown(&self, t: TyId) -> Option<Portable> {
+        let p = self.port(t, 0)?;
+        (p.size() <= 8).then_some(p)
     }
 
     /// `t` as a [`Portable`] type, for the seeds of another check.

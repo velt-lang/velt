@@ -113,7 +113,7 @@ impl Ctx<'_> {
         }
         let mut members = vec![];
         for m in self.error_members(err) {
-            match self.port(m, 0) {
+            match self.port_thrown(m) {
                 Some(p) => members.push(p),
                 None => return false,
             }
