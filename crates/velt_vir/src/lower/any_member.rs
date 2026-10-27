@@ -148,6 +148,8 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(t) {
             TyKind::Unit => self.any_nothing_into(Nothing::Undefined, out),
+            // A literal type (zero-sized, `flag?: false`'s payload): the value its type names.
+            TyKind::Literal(l) => self.any_literal_into(&l, out),
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));

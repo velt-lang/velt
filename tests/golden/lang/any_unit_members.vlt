@@ -26,3 +26,13 @@ if (Math.random() > 2) {
     p.mode = "inline";
 }
 console.log(target.mode, log.length);
+
+// An optional literal member (`flag?: false`) written through a typed proxy: its payload is boxed
+// as `false` (the proxy's `set` glue failed VIR verification).
+type F = { flag?: false; n: number };
+const ft: F = { n: 1 };
+const fp = reactive(ft, log);
+if (Math.random() > 2) {
+    fp.flag = false;
+}
+console.log(ft.n, ft.flag);
