@@ -1,0 +1,8 @@
+void br DIV ns svg
+plain 1 function other
+"k1" 3 5 named n obj obj
+X 2 |  false named m | 
+null null true false object {"a":null}
+undefined undefined false true undefined {}
+s s false false string {"a":"s"}
+{ k: 3 } { k: 3 } false false object {"a":{"k":3}}

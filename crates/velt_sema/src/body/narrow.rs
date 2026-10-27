@@ -448,7 +448,10 @@ impl FnCx<'_, '_> {
             Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
             // A field path of a local (`typeof node.text === "string"`).
             None => match self.field_with_members(e) {
-                Some(found) => found,
+                Some(f) => match self.dynamic_field_typeof(f.0, f.2, tag) {
+                    Some(facts) => return facts,
+                    None => f,
+                },
                 None => return (vec![], vec![]),
             },
         };

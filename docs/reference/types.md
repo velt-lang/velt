@@ -3868,6 +3868,16 @@ with TypeScript's rules:
   `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
   `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
   `null` or `undefined`, as in JavaScript.
+- A field path of type `any` or `unknown` (or a union that is `unknown`, `string | Function`)
+  narrows as a variable does: after `typeof vnode.type === "string"`, `vnode.type` is a
+  `string` there. A type predicate (`isRef(x): x is Ref`) narrows an `unknown` variable or
+  field path to its type where it returned `true` (an `any` reads its members as it is); the
+  read converts the value held, checked at run time as `x as Ref` is, and an assertion (`x as
+  Function`) converts the value held, not the narrowed type.
+- A `T | null` or `T | undefined` at `T = unknown` (or `any`) takes an `unknown` as it is, as
+  TypeScript reads it as `unknown`: a getter `get value() { return read(); }` of an
+  `Impl<unknown>` whose `value` is `T | null` returns what `read()` returns, `undefined`
+  included.
 - `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` give the
   name of the constructor of the value held, as in JavaScript: its class's (a subclass's when
   converted through its base), `"Object"` for an object literal or a record, `"Array"`,
