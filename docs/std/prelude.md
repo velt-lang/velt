@@ -96,6 +96,20 @@ each; a code point that is not an integer from 0 to 0x10FFFF panics with JS's Ra
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Bit casts (not in JS): `x.toBits()` is the IEEE 754 bits of an `f64` as a `u64` (sign,
+  exponent, fraction), and `f64.fromBits(b)` the `f64` with the bits of a `u64` (Rust's
+  `to_bits` / `from_bits`); each is one move between registers. They keep every bit pattern,
+  NaN payloads and signalling NaNs included, so `f64.fromBits(b).toBits() == b` for every `b`.
+  The bits of a NaN made by arithmetic (`0 / 0`) or of the `NaN` constant are not specified:
+  they depend on the processor (`fff8000000000000` on x86-64, `7ff8000000000000` on AArch64), as
+  in Rust. `f32` has no bit casts yet.
+
+  ```ts
+  const x: f64 = -1.5;
+  console.log(x.toBits().toString(16)); // bff8000000000000
+  console.log(f64.fromBits(0x7ff0000000000000)); // Infinity
+  ```
+
 - Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
   over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
   one instruction each. They return a `usize`, in user code too, so the result indexes an array

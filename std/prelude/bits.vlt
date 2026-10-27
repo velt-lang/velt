@@ -7,6 +7,20 @@
 declare function velt_rt_math_clz64(x: u64): u64;
 declare function velt_rt_math_ctz64(x: u64): u64;
 declare function velt_rt_math_popcount64(x: u64): u64;
+// IEEE 754 bit casts (compiled inline: one move between registers).
+declare function velt_rt_math_f64_bits(x: f64): u64;
+declare function velt_rt_math_bits_f64(b: u64): f64;
+
+extend f64 {
+  /** The IEEE 754 bits of this double: sign, exponent, fraction (Rust's `f64::to_bits`). */
+  toBits(): u64 {
+    return velt_rt_math_f64_bits(this);
+  }
+  /** The double whose IEEE 754 bits these are (Rust's `f64::from_bits`; `x.toBits()` back). */
+  static fromBits(b: u64): f64 {
+    return velt_rt_math_bits_f64(b);
+  }
+}
 
 extend u64 {
   /** The zero bits above the highest set bit (64 for 0). */
