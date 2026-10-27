@@ -526,10 +526,8 @@ impl Ctx<'_> {
                     }
                 }
                 None => {
-                    // Only types another check can hold, and only `Error` classes for a proxy
-                    // trap (`fn_types::seed_fn_sites`).
-                    let trap = self.fn_sites.trap_vars.contains(&first);
-                    if self.port_thrown(m).is_none() || (trap && !self.is_error_class(m)) {
+                    // Only types another check can hold (`fn_types::seed_fn_sites`).
+                    if self.port_thrown(m).is_none() {
                         return false;
                     }
                     if !self.fn_sites.var_sets.members[r as usize].contains(&m) {

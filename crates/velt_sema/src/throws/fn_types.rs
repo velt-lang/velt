@@ -390,10 +390,6 @@ impl Ctx<'_> {
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
-            // A proxy trap throws only `Error` classes (`checks::clause_violation`).
-            if !self.is_error_class(m) && self.is_trap_site(site, used_as) {
-                return false;
-            }
             match self.port_thrown(m) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -640,36 +636,6 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
-    }
-
-    /// Is a closure stored at `site` (when known) as a value of `used_as` a trap of std/proxy's
-    /// `ProxyHandler`: that site, or (an object literal's method) a trap of its shape?
-    pub(crate) fn is_trap_site(&self, site: Option<Span>, used_as: TyId) -> bool {
-        let in_proxy =
-            |s: &Span| (self.modules.iter()).any(|m| m.file == s.file && m.path == "std/proxy");
-        match site {
-            Some(s) => in_proxy(&s),
-            None => (self.fn_sites.sites.iter())
-                .any(|(s, g)| in_proxy(s) && self.site_matches(*g, used_as, 0)),
-        }
-    }
-
-    /// Is `t` the prelude's `Error` or a class extending it?
-    pub(super) fn is_error_class(&mut self, t: TyId) -> bool {
-        let Some(root) = self.prelude_adt("Error") else {
-            return false;
-        };
-        let mut cur = t;
-        for _ in 0..64 {
-            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
-                return true;
-            }
-            match self.base_of(cur) {
-                Some(b) => cur = b,
-                None => return false,
-            }
-        }
-        false
     }
 
     /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
