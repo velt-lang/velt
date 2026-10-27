@@ -121,6 +121,6 @@ function main() {
 }
 ```
 
-Positioned reads run at the speed of the system call: random 4 KiB reads of a cached file take
-about as long as Rust's `FileExt::read_at` and half as long as Node's `fs.readSync`
-(`bench/fs/pread`).
+A call is the system call plus Node's argument checks: a `pread` declared directly costs the
+same instructions as Rust's `FileExt::read_at`, and `readSync`'s checks add about 22 per call
+(`bench/fs/pread`, bench/RESULTS.md).
