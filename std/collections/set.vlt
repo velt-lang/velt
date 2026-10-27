@@ -145,10 +145,12 @@ export class Set<T> implements Iterable<T> {
   }
 }
 
-/** `s.forEach(f)` through `any`: `f(value, value, s)` per element, in insertion order. */
-export function __anySet_forEach<T>(s: Set<T>, args: any[]): any {
+/**
+ * `s.forEach(f)` through `any`: `f(value, value, whole)` per element, in insertion order;
+ * `whole` is `s` as an `any` of its own class (a class extending `Set`, with its own members).
+ */
+export function __anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
   const f = __anyFnArg(args, 0);
-  const whole: any = s;
   s.forEach((x) => {
     const value: any = x;
     f(value, value, whole);

@@ -30,3 +30,7 @@ narrowed set sub z
 [ 20, 30 ]
 [ 3, 2, 1 ]
 [ 4, 4, 4, 4 ]
+S1 true s1 1 Ls1
+M2 true m2 1 Lm2
+Bag a true bag 2 Lbag
+Bag b true bag 2 Lbag

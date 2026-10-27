@@ -133,3 +133,37 @@ function chain(u: unknown): void {
 }
 
 chain([1, 2, 3]);
+
+// The collection passed to the callback is the receiver itself, with its own class's members,
+// also for a generic subclass.
+class S1 extends Set<number> {
+  tag = "s1";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const s1: any = new S1([1]);
+s1.forEach((v: any, k: any, s: any) => console.log("S1", s === s1, s.tag, s.size, s.label()));
+
+class M2<V> extends Map<string, V> {
+  tag = "m2";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const m2: any = new M2<number>([["x", 1]]);
+m2.forEach((v: any, k: any, m: any) => console.log("M2", m === m2, m.tag, m.size, m.label()));
+
+class Bag<T> extends Set<T> {
+  tag = "bag";
+  label(): string {
+    return "L" + this.tag;
+  }
+}
+
+const bag: any = new Bag<string>(["a", "b"]);
+bag.forEach(
+  (v: any, again: any, s: any) => console.log("Bag", v, s === bag, s.tag, s.size, s.label()),
+);

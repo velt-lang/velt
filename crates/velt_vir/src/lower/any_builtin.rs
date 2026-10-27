@@ -44,7 +44,8 @@ impl FnLower<'_, '_> {
             let std_fn = ["std/prelude/", "std/record/", "std/collections/"]
                 .iter()
                 .any(|r| f.name.starts_with(r));
-            if !std_fn || f.params.len() != 2 {
+            // `(value, args)`, or `(value, args, whole)` for a class's (`any_class_call`).
+            if !std_fn || !(2..=3).contains(&f.params.len()) {
                 continue;
             }
             let Some((_, short)) = f.name.rsplit_once("::") else {
@@ -106,7 +107,7 @@ impl FnLower<'_, '_> {
                 }
                 _ => self.builtin_this(data, ty, def),
             };
-            self.call_builtin(def, &targs, this, (argv, argc), &outp);
+            self.call_builtin(def, &targs, this, (argv, argc), &outp, None);
             self.switch_to(next);
         }
         for name in missing {
@@ -185,7 +186,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Call `def(this, args)`, the arguments packed into an `any[]`; its `any` result is the
-    /// call's (`ST_OK`).
+    /// call's (`ST_OK`). A `def` with a third parameter takes the receiver as an `any` of its
+    /// own type `whole` (a user class extending `Map`, with its own members), held at `data`.
     fn call_builtin(
         &mut self,
         def: DefId,
@@ -193,10 +195,19 @@ impl FnLower<'_, '_> {
         this: Operand,
         (argv, argc): (vir::Local, vir::Local),
         outp: &Place,
+        whole: Option<(vir::Local, TyId)>,
     ) {
         let any = self.cx.any_ty();
         let rest = self.cx.intern(TyKind::Array(any));
-        let args = vec![self.any_rest_arg(argv, argc, 0, rest)];
+        let mut args = vec![self.any_rest_arg(argv, argc, 0, rest)];
+        if let (Some((data, ty)), 3) = (whole, self.cx.fn_def(def).params.len()) {
+            let vp = self.any_value_place(data, ty);
+            let v = self.share_value(Operand::Copy(vp), ty);
+            let avt = self.cx.ty(any);
+            let slot = Place::local(self.temp(avt));
+            self.any_box_with(v, ty, &slot, false);
+            args.push((slot, any));
+        }
         let r = Ready {
             def,
             targs: targs.to_vec(),
@@ -258,7 +269,7 @@ impl FnLower<'_, '_> {
             }
             let next = self.on_key(key, &name);
             let this = self.builtin_this(data, ty, def);
-            self.call_builtin(def, &targs, this, (argv, argc), outp);
+            self.call_builtin(def, &targs, this, (argv, argc), outp, Some((data, ty)));
             self.switch_to(next);
         }
     }
