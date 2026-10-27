@@ -188,6 +188,7 @@ fn fn_body<'m>(
             locals.push(n.to_string());
         }
     }
+    let block_start = cx.nested.len();
     for f in found {
         let Found::Item(item, scope) = f else {
             continue;
@@ -224,6 +225,7 @@ fn fn_body<'m>(
                 inner_class = Some(d);
             }
         }
+        cx.nested_clash(block_start, (m, scope), ident, it);
         cx.nested.push(NestedItem {
             module: m,
             lo: scope.lo,

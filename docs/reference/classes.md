@@ -664,7 +664,9 @@ console.log(p.x + p.y); // 3
   them are exported or none (TS2395), and their `extends` lists are joined.
 - A member declared in two declarations is an error. TypeScript allows a repeated field of the
   same type, and makes a repeated method an overload.
-- An interface merges only with interfaces, not with a class, function or enum of its name.
+- An interface merges only with interfaces, not with a class or enum of its name. Next to a
+  function or constant of its name it is that name's type, the function its value
+  ([Types and values of one name](modules.md#types-and-values-of-one-name)).
 - `var NAME: T;` in `declare global` declares a build-time constant (see
   [`define`](../tooling/manifest.md#define)).
 - A namespace of types in `declare global` is declared in its module, as a `declare namespace`

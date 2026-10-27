@@ -1,0 +1,2 @@
+// Helper of `type_value_names`: `export *` carries both meanings.
+export * from "./_type_value_names_lib";

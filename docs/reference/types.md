@@ -26,7 +26,9 @@ function's `return`s ([Return types](functions.md#return-types)), and everything
 inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
 alias may refer to itself only when it is an object type, or an intersection of object types,
 written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
-fields ([Intersection types](#intersection-types)). `any` and `unknown` hold a value of any
+fields ([Intersection types](#intersection-types)). An alias or interface may share its name
+with a constant or function, as in TypeScript ([Types and values of one
+name](modules.md#types-and-values-of-one-name)). `any` and `unknown` hold a value of any
 type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
 ([`velt:json`](../std/json.md)).
 

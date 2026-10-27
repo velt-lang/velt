@@ -108,6 +108,7 @@ mod timings;
 mod ts_protocol;
 mod type_defaults;
 mod type_level;
+mod type_meanings;
 mod type_queries;
 mod type_reach;
 mod types;

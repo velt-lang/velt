@@ -228,7 +228,7 @@ impl Ctx<'_> {
         if path.len() != 1 {
             let name: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
             let name = name.join(".");
-            let item = self.lookup_path_at(env.module, path, t.span);
+            let item = self.lookup_type_path_at(env.module, path, t.span);
             if let (Some(item), Some(last)) = (item, path.last()) {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
@@ -303,7 +303,7 @@ impl Ctx<'_> {
         // `string`, …) cannot be declared.
         let shadowed = crate::types::velt_only_type_name(name)
             && self
-                .lookup_item_at(env.module, name, t.span)
+                .lookup_type_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
         // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
         // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
@@ -322,7 +322,7 @@ impl Ctx<'_> {
             }
             return p;
         }
-        let item = self.lookup_item_at(env.module, name, t.span);
+        let item = self.lookup_type_item_at(env.module, name, t.span);
         self.rec_item(path[0].span, item);
         if item.is_none() {
             if let Some(b) = self.resolve_builtin(t, name, args, env) {
@@ -567,7 +567,7 @@ impl Ctx<'_> {
                 i.decl.map(|x| (i.module, &x.generics[..])),
             ),
             _ => {
-                self.err(format!("`{name}` is not a type"), t.span);
+                self.value_as_type(name, t.span);
                 return self.ty.error;
             }
         };

@@ -1,0 +1,20 @@
+// A module's type named like a global value (`Map`, `Math`, `Error`, `Date`) leaves the global
+// value visible, as in TypeScript, where types and values are separate. Node prints the same.
+type Map = { k: string };
+type Math = { pi: number };
+
+interface Error {
+  extra?: string;
+}
+
+type Date = string;
+
+const m = new Map<string, number>();
+m.set("a", 1);
+const k: Map = { k: "x" };
+const pi: Math = { pi: 3 };
+const e = new Error("boom");
+const d: Date = "today";
+console.log(m.size, k.k, Math.max(1, pi.pi), e.message, d, new Date(0).getTime());
+
+export {};

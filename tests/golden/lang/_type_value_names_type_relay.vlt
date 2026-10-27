@@ -1,0 +1,4 @@
+// Helper of `errors/type_value_names`: names imported with `import type` and exported again
+// stay types.
+import type { guid, labelled } from "./_type_value_names_lib";
+export { guid, labelled };
