@@ -32,13 +32,38 @@ fn dangling(align: u64) -> *mut u8 {
     (if align == 0 { 1 } else { align }) as usize as *mut u8
 }
 
-/// Aborts like `handle_alloc_error`: the request cannot be satisfied.
+/// Stops the program: the request cannot be satisfied. With `handle_alloc_error`'s message, but
+/// as the runtime's other fatal errors do (exit status 101), the same on every target: a size
+/// past a 32-bit target's address space (`block_size`) is reported the same way as one the
+/// allocator refuses.
 #[cold]
-fn out_of_memory(size: u64, align: usize) -> ! {
-    match std::alloc::Layout::from_size_align(size as usize, align) {
-        Ok(l) => std::alloc::handle_alloc_error(l),
-        Err(_) => crate::panic::fatal("invalid allocation layout"),
+pub(crate) fn out_of_memory(size: u64, _align: usize) -> ! {
+    crate::panic::fatal(&format!("memory allocation of {size} bytes failed"))
+}
+
+/// The largest block a target can allocate: Rust's `Layout` limit, `isize::MAX` bytes.
+#[cfg_attr(target_pointer_width = "64", allow(dead_code))]
+const MAX_BLOCK: u64 = isize::MAX as u64;
+
+/// Whether a block of `size` bytes can exist on a target whose blocks hold at most `max` bytes.
+#[cfg_attr(target_pointer_width = "64", allow(dead_code))]
+#[inline(always)]
+fn block_fits(size: u64, max: u64) -> bool {
+    size <= max
+}
+
+/// `size` (generated code computes byte sizes in 64 bits) as this target's `usize`. On a 32-bit
+/// target (wasm32) a size past [`MAX_BLOCK`] is out of memory: truncated, a 2^32 + 8 byte
+/// request would get an 8-byte block. On a 64-bit target every size fits, and the allocator
+/// refuses one it cannot serve, so there is no compare on the `new` path.
+#[inline(always)]
+pub(crate) fn block_size(size: u64, align: usize) -> usize {
+    #[cfg(target_pointer_width = "32")]
+    if !block_fits(size, MAX_BLOCK) {
+        out_of_memory(size, align);
     }
+    let _ = align;
+    size as usize
 }
 
 /// The allocator entry points; each returns null when the request cannot be satisfied. Not in
@@ -115,7 +140,7 @@ pub extern "C" fn velt_rt_alloc(size: u64, align: u64) -> *mut u8 {
     if size == 0 {
         return dangling(align);
     }
-    let p = raw::alloc(size as usize, a);
+    let p = raw::alloc(block_size(size, a), a);
     if p.is_null() {
         out_of_memory(size, a);
     }
@@ -130,6 +155,13 @@ pub unsafe extern "C" fn velt_rt_realloc(
     align: u64,
     new_size: u64,
 ) -> *mut u8 {
+    // Generated code reallocates only to grow an array: past the limit on an array's buffer
+    // (rt_abi.md "Array length limit") it stops here, so growth stays one compare away from
+    // the limit without a check in every inlined `push`. `velt_rt_alloc`, on every `new`, has
+    // none.
+    if new_size > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
     if p.is_null() || old_size == 0 {
         return velt_rt_alloc(new_size, align);
     }
@@ -138,7 +170,7 @@ pub unsafe extern "C" fn velt_rt_realloc(
         return dangling(align);
     }
     let a = check_align(align);
-    let q = raw::realloc(p, old_size as usize, a, new_size as usize);
+    let q = raw::realloc(p, old_size as usize, a, block_size(new_size, a));
     if q.is_null() {
         out_of_memory(new_size, a);
     }
@@ -234,6 +266,18 @@ mod tests {
             let p = velt_rt_alloc(32, 8);
             drop(Vec::from_raw_parts(p, 0, 32));
         }
+    }
+
+    /// wasm32's blocks hold at most 2^31 - 1 bytes: a 64-bit size past that is refused, not
+    /// truncated (`Array.from({ length: 2 ** 29 + 1 }, f)` asks for 2^32 + 8 bytes).
+    #[test]
+    fn sizes_past_a_32_bit_target_are_refused() {
+        let max32 = i32::MAX as u64;
+        assert!(block_fits(max32, max32));
+        assert!(!block_fits(max32 + 1, max32));
+        assert!(!block_fits((1 << 32) + 8, max32));
+        assert!(!block_fits(crate::bytes::MAX_ARRAY_LEN, max32));
+        assert!(block_fits(crate::bytes::MAX_ARRAY_LEN, MAX_BLOCK));
     }
 
     #[test]

@@ -505,16 +505,14 @@ extend<T> Array<T> {
 
   /**
    * `xs.length = n`, as in JS: drops the elements from `n` on (`xs.length = 0` empties the
-   * array). Like JS, a length that is not a whole number from 0 to 2^32 - 1 (negative,
-   * fractional, `NaN`) panics with `RangeError: Invalid array length`. A larger `n` panics too:
-   * JS would add empty slots, which Velt has no value for (push the elements, or build the
-   * array with `new Array<T>(n).fill(v)`).
+   * array). A length that is not a whole number from 0 to 2^52 - 1, the most elements a Velt
+   * array holds (JS stops at 2^32 - 1), panics with `RangeError: Invalid array length`
+   * (`arrayLength`). A larger `n` than the array's length panics too: JS would add empty
+   * slots, which Velt has no value for (push the elements, or build the array with
+   * `new Array<T>(n).fill(v)`).
    */
   set length(n: number) {
-    if (!(n >= 0 && __intrinsic_trunc(n) == n && n <= 4294967295)) {
-      panic("RangeError: Invalid array length");
-    }
-    const len = n as usize;
+    const len = arrayLength(n);
     if (len > this.length) {
       panic(
         `cannot grow an array by setting its length (from ${this.length} to ${len}): JS would add empty slots, which Velt has no value for; push the elements instead`,
@@ -804,17 +802,42 @@ function clampPosition(pos: i64, len: usize): usize {
   return pos > n ? len : pos as usize;
 }
 
+// An array length `n` as JS's `ArrayCreate` and `length` setter take it: a whole number from 0
+// up (else `RangeError: Invalid array length`, as in Node), and at most 2^52 - 1, the most
+// elements a Velt array holds (JS stops at 2^32 - 1; past it, the limit's `RangeError`).
+function arrayLength(n: number): usize {
+  if (!(n >= 0 && __intrinsic_trunc(n) == n)) {
+    panic("RangeError: Invalid array length");
+  }
+  if (n > 4503599627370495) {
+    panic(
+      "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
+    );
+  }
+  return n as usize;
+}
+
 /**
  * `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
- * of `v` in one allocation.
+ * of `v` in one allocation. `n` is a length as `xs.length = n` takes it (`arrayLength`):
+ * `new Array(-1)`, `new Array(1.5)` and `new Array(NaN)` are a `RangeError`, as in Node.
  */
-export function __arrayFilled<T>(n: i64, v: T): T[] {
-  const len: usize = n > 0 ? n as usize : 0;
+export function __arrayFilled<T>(n: number, v: T): T[] {
+  const len = arrayLength(n);
   const out: T[] = __intrinsic_array_with_capacity(len);
   for (let i: usize = 0; i < len; i++) {
     out.push(__intrinsic_share(v));
   }
   return out;
+}
+
+/**
+ * `new Array<T>(x).fill(v)` with an `x` that is no number (sema `array_ctor`): as in JS, an
+ * array of the one element `x`, which `fill` replaces with `v`. Sema passes `x` (evaluated
+ * first, then dropped) and `[v]`.
+ */
+export function __arrayOne<X, U>(_x: X, a: U): U {
+  return a;
 }
 
 /** `Array.from({ length: n }, (_, i) => f(i))`: `f(i)` for each index, throwing what `f` throws. */

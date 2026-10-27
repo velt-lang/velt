@@ -4,6 +4,7 @@
 use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
+use super::max_elems;
 use crate::lower::array_view::{ViewFlush, ViewSync};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -435,6 +436,10 @@ impl FnLower<'_, '_> {
         self.branch(fits, ok, grow);
         self.switch_to(grow);
         let (stride, align) = self.stride(elem);
+        if stride == 0 {
+            // No buffer to refuse: `velt_rt_realloc` never sees zero-sized elements.
+            self.check_len(n.clone(), 0);
+        }
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);
         let args = vec![
@@ -468,6 +473,7 @@ impl FnLower<'_, '_> {
         self.branch(fits, ok, grow);
         self.switch_to(grow);
         let (stride, align) = self.stride(elem);
+        self.check_len(need.clone(), stride);
         let (stride, align) = (cint(stride as i128, Ty::U64), cint(align as i128, Ty::U64));
         let data = self.temp(Ty::Ptr);
         let size = self.rvalue_temp(
@@ -501,13 +507,28 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(ty);
         let data = self.temp(Ty::Ptr);
         self.assign(Place::local(data), Rvalue::Use(cint(0, Ty::Ptr)));
-        let nz = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, cap.clone(), cint(0, Ty::U64)),
+        // One unsigned compare tests both ends: `cap - 1 < limit` is `1 <= cap <= limit`. An
+        // empty capacity or one past the limit goes to the cold block that tells them apart.
+        let (stride, _) = self.stride(elem);
+        let limit = cint(i128::from(max_elems(stride)), Ty::U64);
+        let less = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Sub, cap.clone(), cint(1, Ty::U64)),
         );
-        let alloc_bb = self.new_block();
-        let join = self.new_block();
-        self.branch(nz, alloc_bb, join);
+        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, less, limit));
+        let (alloc_bb, other, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(fits, alloc_bb, other);
+        self.switch_to(other);
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, cap.clone(), cint(0, Ty::U64)),
+        );
+        let over = self.new_block();
+        self.branch(empty, join, over);
+        self.switch_to(over);
+        let f = self.cx.func(Work::ArrayTooLong);
+        self.call(vir::Callee::Func(f), vec![], None, false);
+        self.terminate(vir::Terminator::Unreachable);
         self.switch_to(alloc_bb);
         let p = self.alloc_elems(cap.clone(), elem);
         self.assign(Place::local(data), Rvalue::Use(p));
@@ -555,6 +576,12 @@ impl FnLower<'_, '_> {
         self.switch_to(grow_bb);
         full_hook(self, v.clone());
         let (stride, align) = self.stride(elem);
+        if stride == 0 {
+            // No buffer to refuse: `velt_rt_realloc` never sees zero-sized elements.
+            let next = Rvalue::Binary(BinOp::Add, len.clone(), cint(1, Ty::U64));
+            let next = self.rvalue_temp(Ty::U64, next);
+            self.check_len(next, 0);
+        }
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);
         let args = vec![

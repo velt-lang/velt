@@ -1,0 +1,2 @@
+`new Array(n)` with an `n` of type `string | f64`, which may or may not be a number: JS decides at run time between `n` elements and an array of the one element `n`, and Velt needs to know which
+narrow `n` first: `typeof n === "number" ? new Array<T>(n).fill(v) : [v]`

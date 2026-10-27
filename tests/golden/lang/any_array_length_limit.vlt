@@ -1,0 +1,8 @@
+// A `length` written through `any` past the most elements an array holds (2^52 - 1; JS stops
+// at 2^32 - 1): the limit's `RangeError`, as for `xs.length = n` on a typed array. Node throws
+// its `RangeError: Invalid array length` here too.
+const xs: any = [1, 2, 3];
+xs.length = 2;
+console.log(xs);
+xs.length = 2 ** 53;
+console.log("not reached");

@@ -1,0 +1,7 @@
+// `new Array(n)` with an `n` of a type parameter bounded by `string`: surely no number, so
+// the array holds that one element, as in JS, which `fill` replaces.
+function h<T extends string>(n: T): string[] {
+  return new Array<string>(n).fill("q");
+}
+
+console.log(h("abc"));

@@ -54,7 +54,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      never NaN, `-0` unobservable) prove the integer computes the same values
      ([design #525](https://github.com/velt-lang/velt/issues/525)). It runs after the two
      above, so the fields they turned into locals can become integers too, and once before the
-     inlining rounds, while an array is still one value whose length (below 2^53) bounds the
+     inlining rounds, while an array is still one value whose length (at most 2^53 - 3; enforced lower) bounds the
      loops over it. A parameter that every call sets to a constant takes that constant's facts.
      A `number[]` that never leaves its function (its data pointer, after `sroa`, is only
      offset, compared, grown and freed) and whose stores only ever write whole numbers within

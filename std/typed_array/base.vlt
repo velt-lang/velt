@@ -51,9 +51,11 @@ export function layout(
 ): Layout {
   if (typeof arg == "number") {
     const n = toIndex(arg);
-    // V8: a byte length beyond 2^53 - 1 is an invalid length (a smaller one that can't be
-    // allocated fails in `ArrayBuffer`).
-    if (n < 0 || (n as number) * (size as number) > 9007199254740991) {
+    // A byte length beyond 2^52 - 1 is an invalid length: the bytes are an array, which holds
+    // at most that many (V8 stops far earlier); a smaller one that can't be allocated fails in
+    // `ArrayBuffer`. A view of a buffer is shorter than the buffer, so every typed array's
+    // length is below 2^52 too, which `count()` says to the compiler.
+    if (n < 0 || (n as number) * (size as number) > 4503599627370495) {
       throw new RangeError(`Invalid typed array length: ${arg}`);
     }
     return {

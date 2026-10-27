@@ -430,6 +430,25 @@ the same block, still initialized up to `s`, with the lock still held. The compi
 instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
 [additive, #1571].
 
+## Array length limit [additive, #1572]
+
+An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
+buffer at most 2^52 - 1 bytes (`cap * size(T)`), so a byte size never wraps. Generated code
+checks it where it chooses a length (`velt_vir` `lower/array`: `with_capacity`, `reserve`, an
+array adopted from native code, and the growth of an array of zero-sized elements);
+`velt_rt_realloc`, which generated code calls only to grow an array, refuses a `new_size` past it
+(`velt_rt_alloc` does not check: it is on every `new`); the runtime checks the length in
+`VeltBytes::from_vec`, `VeltArray::from_vec` and `VeltStrArray::from_vec` before handing a Rust
+`Vec` over. Past it, both stop with
+`panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
+(exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
+at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
+below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
+against the limit too. A buffer within the limit that the target cannot allocate is out of
+memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+`velt_rt_bytes_concat`.
+
 ## Array methods on a proxy [additive, #823]
 
 ```c
@@ -520,7 +539,7 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 ## Memory [M1]
 | Symbol | Signature |
 |---|---|
-| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — aborts on OOM, never null for size > 0 |
+| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — never null for size > 0: a request it cannot satisfy stops the program with `panic: memory allocation of <size> bytes failed` (exit code 101; was an abort), as does `velt_rt_realloc`. On a 32-bit target (wasm32) a size past `isize::MAX` is such a request: the 64-bit size is never truncated |
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 

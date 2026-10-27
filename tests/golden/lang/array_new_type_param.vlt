@@ -1,0 +1,11 @@
+// `new Array(n)` with an `n` of a type parameter: one bounded by `number` would be a length,
+// but its values do not convert to `number` yet; an unbounded one may be a number or not.
+function bounded<T extends number>(n: T): number[] {
+  return new Array<number>(n).fill(8);
+}
+
+function unbounded<T>(n: T): number[] {
+  return new Array<number>(n).fill(8);
+}
+
+console.log(bounded(2), unbounded(2));

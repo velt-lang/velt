@@ -301,8 +301,12 @@ enum Work {
     /// the call site when it is given, and given closure literals for some function params:
     /// it calls their code directly (frozen.rs `KnownFn`).
     Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
-    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
+    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling;
+    /// `velt_rt_realloc` refuses a buffer past the array length limit).
     ArrayGrow,
+    /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
+    /// calls stay cold and small).
+    ArrayTooLong,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
