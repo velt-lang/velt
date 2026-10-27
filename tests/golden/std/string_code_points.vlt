@@ -1,0 +1,22 @@
+// `codePointAt` and `String.fromCodePoint` (#1678), checked against Node 26: pairs, lone surrogates
+// of either half, out-of-range positions (undefined), and lone halves joined by fromCodePoint.
+function show(s: string) {
+  const parts: string[] = [];
+  for (let i = 0; i <= s.length; i++) {
+    parts.push(String(s.codePointAt(i)));
+  }
+  console.log(s.length, parts.join(","));
+}
+function main() {
+  show("a😀b");
+  show("é日");
+  show(String.fromCodePoint(0x1f600, 0x41, 0xe9, 0x65e5));
+  show(String.fromCodePoint(0xd83d));
+  show(String.fromCodePoint(0xd83d, 0xde00));
+  show(String.fromCodePoint(0xdc00, 0x41));
+  show(String.fromCodePoint());
+  show(String.fromCodePoint(0, 0x10ffff));
+  console.log(String.fromCodePoint(0x1f600) == "😀", String.fromCodePoint(0xd83d, 0xde00) == "😀");
+  console.log(JSON.stringify(String.fromCodePoint(0xd800)), JSON.stringify(String.fromCodePoint(0xdfff, 0x61)));
+}
+
