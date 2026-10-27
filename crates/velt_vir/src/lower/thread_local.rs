@@ -1,7 +1,7 @@
 //! `ThreadLocal<T>` (std/prelude/sync.vlt): the `ThreadLocal*` intrinsics as `velt_tls_*` externs
 //! (crate::tls), which backends emit inline on thread-local storage they define. The receiver is
 //! the module constant holding the value (sema `thread_locals`): it is never evaluated; its
-//! `DefId` names the storage and its initializer's literal is the starting value.
+//! qualified name names the storage and its initializer's literal is the starting value.
 
 use velt_sema::hir::{self, ExprKind as K, Intrinsic, Lit, TyKind, UnOp};
 
@@ -32,7 +32,9 @@ impl FnLower<'_, '_> {
             t => t.scalar_size().unwrap_or(8) * 8,
         };
         let init = literal_word(&fields[0], vt, bits);
-        let (id, w) = (d.0, word(bits));
+        // Named by its qualified name, not its `DefId`: the same constant keeps its storage
+        // across `velt dev` versions in which other declarations come and go.
+        let (id, w) = (crate::tls::stable_id(&g.name), word(bits));
         match (i, args) {
             (Intrinsic::ThreadLocalGet, [_]) => {
                 let call = TlsCall::Get { id, bits, init };

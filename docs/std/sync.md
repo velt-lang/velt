@@ -186,7 +186,8 @@ Only a module `const` holds one, and `get` and `set` are called on that constant
 parameter or a copy of it is an error (``a `ThreadLocal` is read and written through the module
 constant that holds it``). A thread's value holds no object, since nothing drops it when the
 thread ends: keep objects in a structure indexed by a per-thread number. Programs reach the
-value through the platform's thread-local storage (a few instructions, a call on macOS);
+value through the platform's thread-local storage (a few instructions; a call on macOS and in
+Linux debug builds);
 `velt dev` and arm64 Windows debug builds use the operating system's thread keys (a call).
 
 ## `Backoff`

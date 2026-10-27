@@ -460,8 +460,9 @@ threads they are plain loads and stores. `velt_rt_thread_yield()`
 A module constant `new ThreadLocal<T>(init)` (std/prelude/sync.vlt; `T` a number type or `bool`,
 `init` a literal) is one value per thread. Lowering calls `velt_tls_get_<id>_<bits>_<init>`
 (`() -> uN`, this thread's value) and `velt_tls_set_<id>_<bits>_<init>` (`(uN)`): `id` is the
-constant's number in the program (decimal), `bits` 8, 16, 32 or 64, and `init` the starting word
-in lowercase hex. Values are passed as unsigned integers of the width, as for the atomics (a
+64-bit FNV-1a hash of the constant's qualified name (decimal; `velt_vir::tls::stable_id`, so it
+stays the same when other declarations change), `bits` 8, 16, 32 or 64, and `init` the starting
+word in lowercase hex. Values are passed as unsigned integers of the width, as for the atomics (a
 float's bits, a `bool` as 0 or 1). **No runtime defines them**: `velt_vir::tls` gives each
 symbol's meaning and VIR signature (`TlsCall`), and each backend implements them.
 
@@ -469,7 +470,7 @@ symbol's meaning and VIR signature (`TlsCall`), and each backend implements them
 |---|---|---|
 | LLVM (every target) | `@velt_tls_data_<id> = hidden thread_local(initialexec) global iN init`, defined by the unit that defines `velt_main` and declared by the others | a load or store through `llvm.threadlocal.address` |
 | Cranelift on ELF, Mach-O, x86-64 COFF | a thread-local data object `velt_tls_data_<id>` (`tls_model` `elf_gd`, `macho`, `coff`) | a load or store through `tls_value` |
-| Cranelift JIT (`velt dev`), arm64 COFF | an operating system thread key, made the first time it is used, in `velt_tls_key_<id>` (the key plus one) | a call of the extern, which the module defines on `pthread_getspecific`/`pthread_setspecific` (`TlsGetValue`/`TlsSetValue` on Windows); the key holds the word XOR `init`, so a thread that never set it reads `init` |
+| Cranelift JIT (`velt dev`), arm64 COFF | an operating system thread key, made the first time it is used, in `velt_tls_key_<id>` (the key plus one): defined by the object, or, in `velt dev`, a slot the session owns and every version imports, so all versions use one key | a call of the extern, which the module defines on `pthread_getspecific`/`pthread_setspecific` (`TlsGetValue`/`TlsSetValue` on Windows); the key holds the word XOR `init`, so a thread that never set it reads `init`. A failed key creation traps rather than use another key |
 
 LLVM strips thread-local globals to plain ones for single-threaded WebAssembly.
 

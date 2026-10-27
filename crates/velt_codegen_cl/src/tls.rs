@@ -30,7 +30,7 @@ pub(crate) fn native<M: Module>(module: &M) -> bool {
 /// The thread-local data object of `call`'s constant, declared and defined on first use.
 pub(crate) fn data<M: Module>(
     module: &mut M,
-    datas: &mut FxHashMap<u32, DataId>,
+    datas: &mut FxHashMap<u64, DataId>,
     call: TlsCall,
 ) -> CodegenResult<DataId> {
     if let Some(d) = datas.get(&call.id()) {
@@ -52,29 +52,39 @@ pub(crate) fn data<M: Module>(
 }
 
 /// Defines the extern `call` (symbol `symbol`, signature `sig`) as a function on the operating
-/// system's thread keys, for a module without thread-local storage.
+/// system's thread keys, for a module without thread-local storage. `shared`: the key slot is
+/// imported (a `velt dev` session owns one per constant for all its versions) rather than
+/// defined by this module.
 pub(crate) fn define_on_keys<M: Module>(
     module: &mut M,
     call_conv: CallConv,
-    keys: &mut FxHashMap<u32, DataId>,
+    keys: &mut FxHashMap<u64, DataId>,
     call: TlsCall,
     func: FuncId,
     sig: ir::Signature,
+    shared: bool,
 ) -> CodegenResult<()> {
     let windows = module.isa().triple().operating_system == OperatingSystem::Windows;
     let key = match keys.get(&call.id()) {
         Some(k) => *k,
         None => {
-            let sym = format!("velt_tls_key_{}", call.id());
+            let sym = velt_vir::tls::key_symbol(call.id());
+            let linkage = if shared {
+                Linkage::Import
+            } else {
+                Linkage::Local
+            };
             let k = module
-                .declare_data(&sym, Linkage::Local, true, false)
+                .declare_data(&sym, linkage, true, false)
                 .map_err(|e| format!("codegen: declaring `{sym}`: {e}"))?;
-            let mut desc = DataDescription::new();
-            desc.define_zeroinit(8);
-            desc.set_align(8);
-            module
-                .define_data(k, &desc)
-                .map_err(|e| format!("codegen: defining `{sym}`: {e}"))?;
+            if !shared {
+                let mut desc = DataDescription::new();
+                desc.define_zeroinit(8);
+                desc.set_align(8);
+                module
+                    .define_data(k, &desc)
+                    .map_err(|e| format!("codegen: defining `{sym}`: {e}"))?;
+            }
             keys.insert(call.id(), k);
             k
         }
@@ -90,8 +100,8 @@ pub(crate) fn define_on_keys<M: Module>(
     b.switch_to_block(entry);
     let slot_gv = module.declare_data_in_func(key, b.func);
     // An absolute address: cranelift-object cannot emit ADRP relocations for arm64 COFF (as
-    // `far_addresses` in function/).
-    if module.isa().triple().binary_format == BinaryFormat::Coff {
+    // `far_addresses` in function/), and an imported slot may be anywhere.
+    if shared || module.isa().triple().binary_format == BinaryFormat::Coff {
         if let ir::GlobalValueData::Symbol { colocated, .. } = &mut b.func.global_values[slot_gv] {
             *colocated = false;
         }
@@ -139,6 +149,9 @@ pub(crate) fn define_on_keys<M: Module>(
         .define_function(func, &mut ctx)
         .map_err(|e| format!("codegen: defining `{}`: {e}", call.symbol()))
 }
+
+/// The trap when the operating system has no thread key left for a `ThreadLocal`.
+const NO_KEY: ir::TrapCode = ir::TrapCode::unwrap_user(1);
 
 /// The operating system's thread-key functions, imported.
 struct OsKeys {
@@ -215,6 +228,9 @@ impl OsKeys {
     ) -> CodegenResult<ir::Value> {
         let key = if self.windows {
             let idx = Self::call(module, b, self.create, &[]).ok_or("ICE: TlsAlloc")?;
+            // TLS_OUT_OF_INDEXES: no key to use; stop rather than store into another one.
+            let none = b.ins().icmp_imm(IntCC::Equal, idx, -1);
+            b.ins().trapnz(none, NO_KEY);
             b.ins().uextend(types::I64, idx)
         } else {
             let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
@@ -225,7 +241,11 @@ impl OsKeys {
             let zero = b.ins().iconst(types::I64, 0);
             b.ins().stack_store(zero, ss, 0);
             let at = b.ins().stack_addr(types::I64, ss, 0);
-            Self::call(module, b, self.create, &[at, zero]);
+            let failed =
+                Self::call(module, b, self.create, &[at, zero]).ok_or("ICE: pthread_key_create")?;
+            // A nonzero result (EAGAIN: no keys left): the slot holds no key; stop rather than
+            // use key 0, which belongs to someone else.
+            b.ins().trapnz(failed, NO_KEY);
             let unsigned_long = matches!(
                 module.isa().triple().operating_system,
                 OperatingSystem::Darwin(_) | OperatingSystem::MacOSX(_)

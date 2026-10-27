@@ -46,7 +46,7 @@ pub(crate) struct Declarations {
     pub statics: Vec<DataId>,
     /// The thread-local data object of each `ThreadLocal` constant, by its id, where the ISA
     /// has thread-local storage (tls.rs).
-    pub tls: FxHashMap<u32, DataId>,
+    pub tls: FxHashMap<u64, DataId>,
     pub call_conv: CallConv,
 }
 
@@ -153,7 +153,10 @@ fn declare_all<M: Module>(
                 e.ret,
                 Linkage::Local,
             )?;
-            crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig)?;
+            // A `velt dev` version imports the session's key slot (dev/mod.rs), so every
+            // version of the program uses one key per constant.
+            let shared = matches!(naming, Naming::Dev(_));
+            crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig, shared)?;
             externs.push(Some(id));
             continue;
         }

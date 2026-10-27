@@ -4,8 +4,9 @@
 //! A module constant `new ThreadLocal<T>(init)` is one value per thread, of a number type or
 //! `bool`, which starts as `init` on every thread. Lowering calls `velt_tls_get_<id>_<bits>_<init>`
 //! to read this thread's value and `velt_tls_set_<id>_<bits>_<init>` to write it: `id` names the
-//! constant (unique in the program), `bits` is the value's width and `init` its starting word in
-//! hex. Values are passed as unsigned integers of that width, as the atomics' are. No runtime
+//! constant ([`stable_id`] of its qualified name, so it stays the same across edits of other
+//! declarations, which `velt dev` relies on), `bits` is the value's width and `init` its starting
+//! word in hex. Values are passed as unsigned integers of that width, as the atomics' are. No runtime
 //! function exists behind these symbols: a backend emits each call inline on thread-local storage
 //! it defines from the symbol (`velt_tls_data_<id>`, `bits` wide, starting as `init`), or, where it
 //! has no thread-local storage, defines the symbols itself as functions on the operating system's
@@ -17,9 +18,9 @@ use crate::vir::Ty;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TlsCall {
     /// `() -> word`: this thread's value.
-    Get { id: u32, bits: u32, init: u64 },
+    Get { id: u64, bits: u32, init: u64 },
     /// `(v)`: this thread's value becomes `v`.
-    Set { id: u32, bits: u32, init: u64 },
+    Set { id: u64, bits: u32, init: u64 },
 }
 
 impl TlsCall {
@@ -29,7 +30,7 @@ impl TlsCall {
         format!("velt_tls_{op}_{id}_{bits}_{init:x}")
     }
 
-    fn parts(self) -> (&'static str, u32, u32, u64) {
+    fn parts(self) -> (&'static str, u64, u32, u64) {
         match self {
             TlsCall::Get { id, bits, init } => ("get", id, bits, init),
             TlsCall::Set { id, bits, init } => ("set", id, bits, init),
@@ -42,7 +43,7 @@ impl TlsCall {
         let rest = symbol.strip_prefix("velt_tls_")?;
         let mut parts = rest.split('_');
         let op = parts.next()?;
-        let id: u32 = parts.next()?.parse().ok()?;
+        let id: u64 = parts.next()?.parse().ok()?;
         let bits: u32 = parts.next()?.parse().ok()?;
         let init = u64::from_str_radix(parts.next()?, 16).ok()?;
         if parts.next().is_some() || !matches!(bits, 8 | 16 | 32 | 64) {
@@ -59,8 +60,8 @@ impl TlsCall {
         (call.symbol() == symbol).then_some(call)
     }
 
-    /// The constant's number in the program.
-    pub fn id(self) -> u32 {
+    /// The constant's number: [`stable_id`] of its qualified name.
+    pub fn id(self) -> u64 {
         self.parts().1
     }
 
@@ -89,6 +90,20 @@ impl TlsCall {
     }
 }
 
+/// A constant's id: the 64-bit FNV-1a hash of its qualified name (`module::name`), stable across
+/// versions of a program, unlike its `DefId`.
+pub fn stable_id(qualified_name: &str) -> u64 {
+    qualified_name.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// The symbol of the slot holding a constant's operating-system thread key (plus one, 0 before
+/// it is made), where a backend uses the keys (crate docs).
+pub fn key_symbol(id: u64) -> String {
+    format!("velt_tls_key_{id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,7 +114,11 @@ mod tests {
             for init in [0, 1, 0x7f] {
                 for call in [
                     TlsCall::Get { id: 3, bits, init },
-                    TlsCall::Set { id: 70, bits, init },
+                    TlsCall::Set {
+                        id: u64::MAX,
+                        bits,
+                        init,
+                    },
                 ] {
                     assert_eq!(TlsCall::of_symbol(&call.symbol()), Some(call));
                 }
@@ -111,6 +130,13 @@ mod tests {
             init: u64::MAX,
         };
         assert_eq!(TlsCall::of_symbol(&top.symbol()), Some(top));
+    }
+
+    #[test]
+    fn ids_follow_the_name() {
+        assert_eq!(stable_id("app::calls"), stable_id("app::calls"));
+        assert_ne!(stable_id("app::calls"), stable_id("app::call"));
+        assert_ne!(stable_id("app::calls"), stable_id("lib::calls"));
     }
 
     #[test]

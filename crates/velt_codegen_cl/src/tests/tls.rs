@@ -8,7 +8,9 @@ use velt_vir::atomic::word;
 use velt_vir::tls::TlsCall;
 use velt_vir::vir::{Callee, Program, Rvalue, Terminator, Ty};
 
+use super::jit::{call_capturing, stub_symbols};
 use super::{copy_local, FuncBuilder, ProgramBuilder};
+use crate::{DevSession, Reload};
 
 /// (bits, starting word) per constant: zero, high bits of each width, a negative 32-bit value.
 const VALUES: [(u32, u64); 4] = [(8, 0x80), (32, 0xFFFF_FFFD), (64, 0), (64, u64::MAX)];
@@ -17,7 +19,7 @@ const VALUES: [(u32, u64); 4] = [(8, 0x80), (32, 0xFFFF_FFFD), (64, 0), (64, u64
 fn program() -> Program {
     let (mut pb, _) = ProgramBuilder::new();
     for (i, &(bits, init)) in VALUES.iter().enumerate() {
-        let id = i as u32 + 10;
+        let id = i as u64 + 10;
         let w = word(bits);
         let get = TlsCall::Get { id, bits, init };
         let ext = pb.ext(&get.symbol(), &[], w, false);
@@ -53,6 +55,8 @@ fn thread_keys_keep_one_value_per_thread() {
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     #[cfg(unix)]
     jb.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
+    #[cfg(windows)]
+    jb.symbol_lookup_fn(Box::new(crate::win_symbols::lookup));
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);
     }
@@ -97,4 +101,97 @@ fn thread_keys_keep_one_value_per_thread() {
         assert_eq!(get(i)(), mine, "constant {i} after another thread's set");
     }
     unsafe { module.free_memory() };
+}
+
+/// A `velt dev` program with a `ThreadLocal` (id 77, starting at 0): `setter` sets it to 5, and
+/// `answer` returns its value plus `value`; `main` calls both and prints the answer.
+fn dev_program(value: i64, helper: bool) -> Program {
+    use velt_vir::vir::{BinOp, Function, Place, Ty::*};
+    let (mut pb, rt) = ProgramBuilder::new();
+    let (get, set) = (
+        TlsCall::Get {
+            id: 77,
+            bits: 64,
+            init: 0,
+        },
+        TlsCall::Set {
+            id: 77,
+            bits: 64,
+            init: 0,
+        },
+    );
+    let get = pb.ext(&get.symbol(), &[], U64, false);
+    let set = pb.ext(&set.symbol(), &[U64], Unit, false);
+    // A function inserted first in the second version, shifting every `FuncId`.
+    if helper {
+        let mut fb = FuncBuilder::internal("helper", &[], I64);
+        let b = fb.block();
+        fb.term(b, Terminator::Return(super::int(1, I64)));
+        pb.add(fb.finish());
+    }
+    let mut fb = FuncBuilder::internal("setter", &[], Unit);
+    let b = fb.block();
+    let b = fb.call(b, Callee::Extern(set), vec![super::int(5, U64)], None);
+    fb.term(
+        b,
+        Terminator::Return(velt_vir::vir::Operand::Const(
+            velt_vir::vir::Const::Unit,
+            Unit,
+        )),
+    );
+    let setter = pb.add(fb.finish());
+    let mut fb = FuncBuilder::internal("answer", &[], I64);
+    let (w, r) = (fb.local(U64), fb.local(I64));
+    let b = fb.block();
+    let b = fb.call(b, Callee::Extern(get), vec![], Some(Place::local(w)));
+    fb.assign(b, r, Rvalue::Cast(copy_local(w), I64));
+    let sum = Rvalue::Binary(BinOp::Add, copy_local(r), super::int(value.into(), I64));
+    fb.assign(b, r, sum);
+    fb.term(b, Terminator::Return(copy_local(r)));
+    let answer = pb.add(fb.finish());
+    let mut fb = FuncBuilder::internal("main", &[], Unit);
+    let got = fb.local(I64);
+    let b = fb.block();
+    let b = fb.call(b, Callee::Func(setter), vec![], None);
+    let b = fb.call(b, Callee::Func(answer), vec![], Some(Place::local(got)));
+    let mut out = super::Out {
+        fb: &mut fb,
+        rt: &rt,
+        cur: b,
+    };
+    out.line(copy_local(got), I64);
+    let cur = out.cur;
+    fb.term(
+        cur,
+        Terminator::Return(velt_vir::vir::Operand::Const(
+            velt_vir::vir::Const::Unit,
+            Unit,
+        )),
+    );
+    let main = pb.add(fb.finish());
+    let (mut fb, b) = super::main_fb();
+    let cur = fb.call(b, Callee::Func(main), vec![], None);
+    let entry: Function = super::finish_main(fb, cur, 0);
+    pb.add(entry);
+    pb.p
+}
+
+/// Hot swap keeps one value per constant: after `answer` alone is swapped, the first version's
+/// `setter` and the new `answer` use the same key (205, not the new key's starting 0 + 200),
+/// also when the swap shifts every function id.
+#[test]
+fn hot_swap_keeps_one_value_per_constant() {
+    for helper in [false, true] {
+        let mut session = DevSession::new(&stub_symbols());
+        let loaded = session.load(&dev_program(100, false)).expect("load v1");
+        assert_eq!(call_capturing(loaded.main()), (0, "105\n".to_string()));
+        let outcome = session.reload(&dev_program(200, helper)).expect("reload");
+        assert!(matches!(outcome, Reload::Swapped { .. }), "{outcome:?}");
+        assert_eq!(call_capturing(loaded.main()), (0, "205\n".to_string()));
+        // Later versions make no new key: the slot the session made first is reused.
+        for v in [300, 400, 500] {
+            session.reload(&dev_program(v, helper)).expect("reload");
+        }
+        assert_eq!(call_capturing(loaded.main()), (0, "505\n".to_string()));
+    }
 }
