@@ -424,13 +424,19 @@ On an Intel i9-12900HK (7 interleaved runs, medians, the map's code at #1644's r
 | update | 16% faster | 7% faster | 3% faster | 1% slower |
 | 90% lookup, 10% update | 14% faster | 6% faster | 4% faster | 9% faster |
 
-On the M4 updates still trail. A lookup of a present key costs our map more CPU than bbtree's: with the
-map in cache, 18% more (the tag compare chain feeds the pair's load). An update is such a lookup
-plus a latch. Two Apple-specific findings shaped `add`. First, a line read shared and then
-written by a read-modify-write is fetched twice. So `add` takes the leaf with one `or` and adds
-to the home pair before reading its key, and that took updates from 42% slower to the numbers
-above. Second, putting home-slot checks into lookups made them slower: an unpredictable branch,
-and an extra line read for an absent key.
+After the leaf split stopped using `splice` and #1640's last fixes, the same reviewer measured the
+map ahead of bbtree in every row on that machine (7 interleaved runs, medians): insert 32–48%,
+lookup 24–77%, batched lookup 56–94%, update 13–58% and the mix 27–67% faster, from 1 to 8
+threads. Instructions per op on x86-64 then: insert 1,170 against 766, lookup 431 against 568,
+update 397 against 549.
+
+On the M4 updates still trailed in the last quiet measurement. A lookup of a present key costs our
+map more CPU than bbtree's: with the map in cache, 18% more (the tag compare chain feeds the pair's
+load). An update is such a lookup plus a latch. Two Apple-specific findings shaped `add`. First, a
+line read shared and then written by a read-modify-write is fetched twice. So `add` takes the leaf
+with one `or` and adds to the home pair before reading its key, and that took updates from 42%
+slower to the numbers above. Second, putting home-slot checks into lookups made them slower: an
+unpredictable branch, and an extra line read for an absent key.
 
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
 and unlinked), and giving room back (an emptied leaf is never reused, so keys moving to new
