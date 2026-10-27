@@ -64,6 +64,16 @@ pub(crate) fn make_isa(
     if jit {
         set(&mut flags, "use_colocated_libcalls", "false")?;
     }
+    // Thread-local storage where Cranelift has it for the format; the JIT (`cranelift-jit` has
+    // none) and arm64 COFF use the operating system's thread keys instead (tls.rs).
+    let tls = match (jit, triple.binary_format, &triple.architecture) {
+        (true, ..) => "none",
+        (false, BinaryFormat::Elf, _) => "elf_gd",
+        (false, BinaryFormat::Macho, _) => "macho",
+        (false, BinaryFormat::Coff, Architecture::X86_64) => "coff",
+        _ => "none",
+    };
+    set(&mut flags, "tls_model", tls)?;
     isa_builder
         .finish(settings::Flags::new(flags))
         .map_err(|e| format!("codegen: cannot build ISA for `{triple}`: {e}"))

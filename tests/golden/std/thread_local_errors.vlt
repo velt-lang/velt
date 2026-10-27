@@ -1,0 +1,22 @@
+// `ThreadLocal<T>`'s errors: what `T` can be, a starting value that is not a literal, and
+// `get`/`set` on anything but the module constant that holds one.
+
+const names = new ThreadLocal<string>("x");
+const start: u64 = 4;
+const fromVar = new ThreadLocal<u64>(start);
+const ok = new ThreadLocal<u64>(0);
+const copy = ok;
+
+function local(): u64 {
+  const mine = new ThreadLocal<u64>(1);
+  return mine.get();
+}
+
+function param(t: ThreadLocal<u64>): u64 {
+  return t.get();
+}
+
+function main() {
+  copy.set(2);
+  console.log(local(), param(ok), ok.get());
+}

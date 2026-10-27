@@ -774,6 +774,15 @@ literal or named function `f` that modifies its parameter once modes are inferre
 (`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
 mode (rt_abi_async.md §9.1).
 
+## `ThreadLocal<T>` (docs/internals/design/atomics.md; additive)
+
+`new ThreadLocal<T>(x)` is the prelude struct's `AdtLit` (`{ init: x }`), `T` a number type or
+`bool` and `x` a literal (a `Lit`, or `Unary(Neg, Lit)`). `tl.get()` and `tl.set(v)` are
+`Call { Intrinsic(ThreadLocalGet), [tl] }` and `Call { Intrinsic(ThreadLocalSet), [tl, v] }`,
+whose receiver is always `Global(d)` of a module `const` initialized by such an `AdtLit` (sema
+`thread_locals` reports any other). Lowering never evaluates the receiver: `d` names the value
+(`velt_tls_*` externs, rt_abi.md "Thread-local values") and the literal is its starting value.
+
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
 `new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,

@@ -146,6 +146,50 @@ An array of atomics inside a `shared` value never moves or shrinks while the val
 words are memory every thread may read and write in place, which no thread can free under
 another: what a lock-free structure needs.
 
+## `ThreadLocal<T>`
+
+`const depth = new ThreadLocal<u32>(0)` is one value per thread: every thread starts with the
+value given (a literal), `get()` reads this thread's and `set(v)` changes this thread's. `T` is a
+number type or `bool`. It is for code that keeps per-thread state, such as which slot of a
+shared table is this thread's, or a counter a thread updates without sharing its cache line.
+
+A task moves to another thread only at an `await`, so between two `await`s it reads its own
+writes. After an `await` it may be on another thread with another value: a value a task needs
+across an `await` belongs in a variable.
+
+```ts
+const calls = new ThreadLocal<u64>(0);
+
+function work(n: u64): u64 {
+  calls.set(calls.get() + 1);
+  return n * 2;
+}
+
+async function job(n: u64): Promise<u64> {
+  // No `await` between these: the task stays on one thread.
+  const before = calls.get();
+  work(n);
+  work(n);
+  return calls.get() - before;
+}
+
+async function main() {
+  const ps: Promise<u64>[] = [];
+  for (let i: u64 = 0; i < 4; i++) {
+    ps.push(spawn(job(i)));
+  }
+  console.log(await Promise.all(ps)); // [ 2, 2, 2, 2 ]
+}
+```
+
+Only a module `const` holds one, and `get` and `set` are called on that constant: a local, a
+parameter or a copy of it is an error (``a `ThreadLocal` is read and written through the module
+constant that holds it``). A thread's value holds no object, since nothing drops it when the
+thread ends: keep objects in a structure indexed by a per-thread number. Programs reach the
+value through the platform's thread-local storage (a few instructions; a call on macOS and in
+Linux debug builds);
+`velt dev` and arm64 Windows debug builds use the operating system's thread keys (a call).
+
 ## `Backoff`
 
 Waiting for another thread in a loop: `Backoff.create()`, then `snooze()` each time the loop

@@ -1,0 +1,14 @@
+thread_local_errors.vlt:4:19: error: `ThreadLocal<T>` needs a number type or `bool`, found `string`
+  = note: a thread's value is never dropped, so it holds no object: keep objects in a structure indexed by a per-thread number
+
+thread_local_errors.vlt:6:38: error: a `ThreadLocal`'s starting value must be a literal
+  = note: every thread starts with it, so the compiler stores it with the program: write a number or `true`/`false`
+
+thread_local_errors.vlt:12:10: error: a `ThreadLocal` is read and written through the module constant that holds it
+  = note: declare it as `const name = new ThreadLocal<T>(…)` at module level, and call `name.get()` and `name.set(v)`
+
+thread_local_errors.vlt:16:10: error: a `ThreadLocal` is read and written through the module constant that holds it
+  = note: declare it as `const name = new ThreadLocal<T>(…)` at module level, and call `name.get()` and `name.set(v)`
+
+thread_local_errors.vlt:20:3: error: a `ThreadLocal` is read and written through the module constant that holds it
+  = note: declare it as `const name = new ThreadLocal<T>(…)` at module level, and call `name.get()` and `name.set(v)`

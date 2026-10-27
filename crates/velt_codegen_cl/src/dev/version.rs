@@ -63,6 +63,8 @@ pub(crate) fn compile(
     }
     #[cfg(unix)]
     builder.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
+    #[cfg(windows)]
+    builder.symbol_lookup_fn(Box::new(crate::win_symbols::lookup));
     builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
     let built = build_module(&mut module, program, &Naming::Dev(names))?;

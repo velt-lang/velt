@@ -15,6 +15,7 @@ pub(crate) mod assign_paths;
 mod assign_pattern;
 mod atomic;
 mod bound_values;
+mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;

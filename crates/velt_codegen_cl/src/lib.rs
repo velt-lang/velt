@@ -36,7 +36,10 @@ mod function;
 mod isa;
 mod jit_memory;
 mod module;
+mod tls;
 mod unwind;
+#[cfg(windows)]
+mod win_symbols;
 
 #[cfg(test)]
 mod tests;

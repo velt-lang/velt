@@ -25,6 +25,10 @@ extern "C" {
     fn nearbyint(x: f64) -> f64;
     fn nearbyintf(x: f32) -> f32;
     fn fma(x: f64, y: f64, z: f64) -> f64;
+    fn pthread_key_create(key: *mut u64, dtor: *const c_void) -> i32;
+    fn pthread_key_delete(key: u64) -> i32;
+    fn pthread_getspecific(key: u64) -> *mut c_void;
+    fn pthread_setspecific(key: u64, v: *const c_void) -> i32;
     fn fmaf(x: f32, y: f32, z: f32) -> f32;
 }
 
@@ -32,6 +36,11 @@ extern "C" {
 pub(crate) fn lookup(name: &str) -> Option<*const u8> {
     let address = match name {
         "memcpy" => memcpy as *const u8,
+        // A `ThreadLocal`'s thread keys (tls.rs: the JIT has no thread-local storage).
+        "pthread_key_create" => pthread_key_create as *const u8,
+        "pthread_key_delete" => pthread_key_delete as *const u8,
+        "pthread_getspecific" => pthread_getspecific as *const u8,
+        "pthread_setspecific" => pthread_setspecific as *const u8,
         "memmove" => memmove as *const u8,
         "memset" => memset as *const u8,
         "memcmp" => memcmp as *const u8,
