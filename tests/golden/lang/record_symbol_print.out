@@ -1,0 +1,9 @@
+{ a: 1, Symbol(key): 2, Symbol(x y): 3, Symbol(): 4 }
+{ Symbol(key): 'v' }
+[ { Symbol(key): 'v' } ]
+{ nested: { Symbol(key): 'v' } }
+{} { a: 1, Symbol(key): 2, Symbol(x y): 3, Symbol(): 4 }
+[Object: null prototype] { z: true, Symbol(key): { deep: [ 1, 2 ] } }
+{ a: 1, Symbol(x y): 3, Symbol(): 4 }
+4 [ 'a' ] [ Symbol(Symbol.iterator), Symbol(Symbol.toStringTag) ]
+{ '[Symbol.foo]': 'x' } [ '[Symbol.foo]' ]

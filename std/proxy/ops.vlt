@@ -9,7 +9,7 @@
 // velt_sema's `symbols.rs`); sema passes both that name and the symbol itself, so a plain value
 // is read by the name, as before, and a proxy's trap sees the symbol, as in JavaScript.
 
-import { PropertyDescriptor, Proxy, ProxyHandler, Reflect } from "velt:proxy";
+import { PropertyDescriptor, Proxy, ProxyHandler, Reflect, __symbolKeyName } from "velt:proxy";
 
 /** `{ ...o }` of an `any` `o` into `r`: a proxy's enumerable own entries, else `__spreadAny`. */
 export function __spreadAnyProxy(r: Record<string, any>, o: any): void {
@@ -103,7 +103,51 @@ export function __anyGetSym(o: any, name: string, key: symbol): any {
   if (o instanceof Proxy) {
     return o.__get(key, recv);
   }
+  if (o instanceof Record) {
+    // A record's symbol table (std/record/reflect.vlt).
+    return o.__symGet(key);
+  }
   return o[name];
+}
+
+/**
+ * `o[k]` of an `any` `o` with a key that is a symbol or `string | symbol` at run time (held
+ * as an `any`): a symbol as `__anyGetSym`, with the member name it keys on a typed value.
+ */
+export function __anyGetKey(o: any, k: any): any {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return __anyGetSym(o, __symbolKeyName(s), s);
+  }
+  return o[k];
+}
+
+/** `o[k] = v` of an `any` `o` with a key as `__anyGetKey` takes it. */
+export function __anySetKey(o: any, k: any, v: any): void {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    __anySetSym(o, __symbolKeyName(s), s, v);
+    return;
+  }
+  o[k] = v;
+}
+
+/** `k in o` of an `any` `o` with a key as `__anyGetKey` takes it. */
+export function __anyHasKey(o: any, k: any): boolean {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return __anyHasSym(o, __symbolKeyName(s), s);
+  }
+  return k in o;
+}
+
+/** `delete o[k]` of an `any` `o` with a key as `__anyGetKey` takes it (strict code). */
+export function __anyDeleteKey(o: any, k: any): boolean {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return __anyDeleteSym(o, __symbolKeyName(s), s);
+  }
+  return Reflect.deleteProperty(o, k);
 }
 
 /** `o[KEY] = v` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
@@ -115,6 +159,10 @@ export function __anySetSym(o: any, name: string, key: symbol, v: any): void {
     }
     return;
   }
+  if (o instanceof Record) {
+    o.__symSet(key, v);
+    return;
+  }
   o[name] = v;
 }
 
@@ -123,6 +171,9 @@ export function __anyHasSym(o: any, name: string, key: symbol): boolean {
   if (o instanceof Proxy) {
     return o.__has(key);
   }
+  if (o instanceof Record) {
+    return o.__symHas(key) as boolean;
+  }
   return name in o;
 }
 
@@ -130,6 +181,9 @@ export function __anyHasSym(o: any, name: string, key: symbol): boolean {
 export function __anyDeleteSym(o: any, name: string, key: symbol): boolean {
   if (o instanceof Proxy) {
     return o.__delete(key);
+  }
+  if (o instanceof Record) {
+    return o.__symDelete(key) as boolean;
   }
   return __anyDelete(o, name);
 }

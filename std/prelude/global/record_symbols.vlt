@@ -1,0 +1,4 @@
+// Global, conditional (crates/veltc/src/loader/globals.rs): the symbol keys and the defined
+// accessors of a `Record` (velt:record/symbols), for a program that mentions one of these words.
+// load when std/prelude/record uses: symbol Symbol PropertyKey defineProperty getOwnPropertySymbols getOwnPropertyDescriptor ownKeys Proxy Reflect
+import "velt:record/symbols";

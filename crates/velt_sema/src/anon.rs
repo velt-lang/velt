@@ -54,6 +54,10 @@ pub(crate) struct ObjectState {
     pub frozen_defs: FxHashSet<DefId>,
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
+    /// The program defines accessors with `Object.defineProperty`, which a record may hold:
+    /// its record operations go through the `Keyed` methods (std/prelude/record.vlt), which
+    /// look at a record's accessors first.
+    pub record_accessors: bool,
     /// The program reads a `constructor` property (`body::expr::ctor_objects`).
     pub ctor_reads: bool,
     /// The program writes `{} as D` for an object type known per instantiation

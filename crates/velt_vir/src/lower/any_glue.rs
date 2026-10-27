@@ -675,6 +675,11 @@ impl FnLower<'_, '_> {
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
         }
+        if self.prelude_record(ty).is_some() {
+            // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
+            // `Reflect` does to a record's symbol keys); a record's function values come later.
+            return self.any_record_call((data, key, argv, argc, out), ty);
+        }
         let outp = self.any_out(out);
         // A record's function values (later).
         let adt = self

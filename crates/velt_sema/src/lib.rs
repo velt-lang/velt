@@ -324,6 +324,9 @@ fn check_timed(
     let ctor_reads = modules
         .iter()
         .any(|m| !m.is_std && reads_constructor(&m.ast));
+    let record_accessors = modules
+        .iter()
+        .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -346,6 +349,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.record_accessors = record_accessors;
         cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
