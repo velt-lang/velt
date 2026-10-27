@@ -1,0 +1,376 @@
+// The Velt package registry as a Cloudflare Worker (docs/tooling/registry-worker.md): the HTTP
+// protocol of vpm::remote, which `velt add`, `velt publish`, `velt yank`, `velt owner`,
+// `velt search` and `velt login` speak, over R2 (bucket `BLOBS`) and D1 (database `DB`), plus an
+// admin API for users. Reads (indexes, archives, owners, search) are public; writes need a
+// user's token, and for an existing package one of its owners (src/auth.vlt).
+
+import { serve } from "velt:http";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { CloudflareError, D1Database, R2Bucket } from "velt:cloudflare";
+import { Rejected } from "./archive";
+import { authorize, caller, hashToken, isOpen, newToken, requireAdmin } from "./auth";
+import { isValidPackageName, isValidUserName } from "./names";
+import {
+  checkNameVersion,
+  decode,
+  download,
+  downloadNative,
+  Registry,
+  text,
+  upload,
+  uploadNative,
+} from "./publish";
+import { compare, parse, Version } from "./semver";
+import { PackageVersionRow, Store } from "./store";
+
+/** One version in a package's `index.json` (vpm::registry::IndexEntry). */
+struct IndexEntry {
+  version: string;
+  checksum: string;
+  description?: string;
+  keywords: string[];
+  dependencies: Record<string, string>;
+  native_abi?: number;
+  native: Record<string, string>;
+  yanked: bool;
+}
+
+struct Index {
+  versions: IndexEntry[];
+}
+
+/** `GET /api/v1/<name>/index`. */
+async function index(r: Registry, name: string): Promise<Response, Rejected | CloudflareError> {
+  if (!isValidPackageName(name)) {
+    throw new Rejected(400, "invalid package name");
+  }
+  const rows = await r.store.versions(name);
+  if (rows.length == 0) {
+    return text(404, `no package \`${name}\``);
+  }
+  const versions: IndexEntry[] = [];
+  for (const row of rows) {
+    const entry: IndexEntry = {
+      version: row.version,
+      checksum: row.checksum,
+      keywords: decode<string[]>(row.keywords, "stored keywords"),
+      dependencies: decode<Record<string, string>>(row.dependencies, "stored dependencies"),
+      native: decode<Record<string, string>>(row.native, "stored native libraries"),
+      yanked: row.yanked != 0,
+    };
+    if (row.description != null) {
+      entry.description = row.description;
+    }
+    if (row.native_abi != null) {
+      entry.native_abi = row.native_abi;
+    }
+    versions.push(entry);
+  }
+  const doc: Index = { versions: versions };
+  return new Response(JSON.stringify(doc), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=30" },
+  });
+}
+
+/** `GET /api/v1/<name>/owners`: one owner per line. */
+async function listOwners(
+  r: Registry,
+  name: string,
+): Promise<Response, Rejected | CloudflareError> {
+  if (!isValidPackageName(name)) {
+    throw new Rejected(400, "invalid package name");
+  }
+  if (!(await r.store.isPublished(name))) {
+    return text(404, `no package \`${name}\``);
+  }
+  const owners = await r.store.owners(name);
+  return text(200, owners.map((o) => `${o}\n`).join(""));
+}
+
+/** `PUT` (`add`) or `DELETE /api/v1/<name>/owners/<user>`. */
+async function changeOwner(
+  r: Registry,
+  req: Request,
+  name: string,
+  user: string,
+  add: bool,
+  admin: bool,
+): Promise<Response, Rejected | CloudflareError> {
+  if (!isValidPackageName(name)) {
+    throw new Rejected(400, "invalid package name");
+  }
+  if (!isValidUserName(user)) {
+    throw new Rejected(
+      400,
+      `invalid user name \`${user}\` (use lowercase letters, digits, \`-\` and \`_\`, starting with a letter)`,
+    );
+  }
+  if (!admin) {
+    const who = await caller(req, r.store);
+    if (!(await r.store.isPublished(name))) {
+      return text(404, `no package \`${name}\``);
+    }
+    if (who == null) {
+      throw new Rejected(400, "this registry has no users, so packages have no owners");
+    }
+    await authorize(r.store, name, who);
+  } else if (!(await r.store.isPublished(name))) {
+    return text(404, `no package \`${name}\``);
+  }
+  const owners = await r.store.owners(name);
+  if (add) {
+    if (!(await r.store.isUser(user))) {
+      return text(404, `no user \`${user}\``);
+    }
+    await r.store.addOwner(name, user);
+  } else {
+    if (!owners.includes(user)) {
+      return text(404, `\`${user}\` is not an owner of \`${name}\``);
+    }
+    if (owners.length == 1 && !admin) {
+      return text(409, `\`${user}\` is the last owner of \`${name}\`; add another owner first`);
+    }
+    await r.store.removeOwner(name, user);
+  }
+  const now = await r.store.owners(name);
+  return text(200, `owners of \`${name}\`: ${now.join(", ")}\n`);
+}
+
+/** `PUT` / `DELETE /api/v1/<name>/<version>/yank`. */
+async function yank(
+  r: Registry,
+  req: Request,
+  name: string,
+  version: string,
+  yanked: bool,
+): Promise<Response, Rejected | CloudflareError> {
+  checkNameVersion(name, version);
+  const who = await caller(req, r.store);
+  await authorize(r.store, name, who);
+  if (!(await r.store.setYanked(name, version, yanked))) {
+    return text(404, `\`${name}\` ${version} is not published`);
+  }
+  return text(
+    200,
+    yanked ? `yanked \`${name}\` ${version}\n` : `unyanked \`${name}\` ${version}\n`,
+  );
+}
+
+/** One search hit (vpm::search::Hit). */
+struct Hit {
+  name: string;
+  version: string;
+  description?: string;
+  keywords: string[];
+}
+
+struct Answer {
+  packages: Hit[];
+}
+
+// How well one term matches a hit (lower is better): 2 a keyword equals it, 3 the name contains
+// it, 4 a keyword starts with it, 5 the description contains it; -1 when it doesn't match.
+function tier(hit: Hit, term: string): number {
+  if (hit.keywords.includes(term)) {
+    return 2;
+  }
+  if (hit.name.includes(term)) {
+    return 3;
+  }
+  for (const k of hit.keywords) {
+    if (k.startsWith(term)) {
+      return 4;
+    }
+  }
+  if ((hit.description ?? "").toLowerCase().includes(term)) {
+    return 5;
+  }
+  return -1;
+}
+
+/** `GET /api/v1/search?q=…` (vpm::search::search_local's ranking). */
+async function search(r: Registry, q: string): Promise<Response, Rejected | CloudflareError> {
+  const query = q.trim().toLowerCase();
+  const terms = query.split(" ").filter((t) => t != "");
+  // The version `velt add` picks: the newest stable one not yanked, else the newest pre-release.
+  const best: Map<string, PackageVersionRow> = new Map();
+  const bestVersion: Map<string, Version> = new Map();
+  for (const row of await r.store.allVersions()) {
+    const v = parse(row.version);
+    if (v == null || row.yanked != 0) {
+      continue;
+    }
+    const old = bestVersion.get(row.package);
+    const better =
+      old == null ||
+      (old.pre.length > 0 && v.pre.length == 0) ||
+      ((old.pre.length == 0) == (v.pre.length == 0) && compare(v, old) > 0);
+    if (better) {
+      best.set(row.package, row);
+      bestVersion.set(row.package, v);
+    }
+  }
+  const ranked: [number, number, Hit][] = [];
+  for (const [name, row] of best) {
+    const hit: Hit = {
+      name: name,
+      version: row.version,
+      keywords: decode<string[]>(row.keywords, "stored keywords"),
+    };
+    if (row.description != null) {
+      hit.description = row.description;
+    }
+    const tiers: number[] = [];
+    let all = true;
+    for (const t of terms) {
+      const tr = tier(hit, t);
+      if (tr < 0) {
+        all = false;
+      }
+      tiers.push(tr);
+    }
+    if (!all) {
+      continue;
+    }
+    let top = 3;
+    if (name == query) {
+      top = 0;
+    } else if (query != "" && name.startsWith(query)) {
+      top = 1;
+    } else if (tiers.length > 0) {
+      top = Math.min(...tiers);
+    }
+    ranked.push([top, tiers.filter((t) => t != top).length, hit]);
+  }
+  ranked.sort((a, b) => a[0] - b[0] || a[1] - b[1] || (a[2].name < b[2].name ? -1 : 1));
+  const answer: Answer = { packages: ranked.slice(0, 50).map((x) => x[2]) };
+  return new Response(JSON.stringify(answer), { headers: { "content-type": "application/json" } });
+}
+
+/** `GET /`: the package names. */
+async function listing(r: Registry): Promise<Response, CloudflareError> {
+  const names = await r.store.packageNames();
+  return text(
+    200,
+    `Velt package registry: ${names.length} packages\n${names.map((n) => `${n}\n`).join("")}`,
+  );
+}
+
+/** The admin API (`Authorization: Bearer <ADMIN_TOKEN>`): users and owners. */
+async function admin(
+  r: Registry,
+  req: Request,
+  parts: string[],
+): Promise<Response, Rejected | CloudflareError> {
+  requireAdmin(req);
+  const m = req.method;
+  if (parts.length >= 2 && parts[0] == "users") {
+    const user = parts[1];
+    if (!isValidUserName(user)) {
+      throw new Rejected(400, `invalid user name \`${user}\``);
+    }
+    if (parts.length == 2 && m == "POST") {
+      const token = newToken();
+      if (!(await r.store.addUser(user, hashToken(token)))) {
+        return text(
+          409,
+          `user \`${user}\` already exists (POST .../users/${user}/token makes a new token)`,
+        );
+      }
+      return text(201, `${token}\n`);
+    }
+    if (parts.length == 3 && parts[2] == "token" && m == "POST") {
+      const token = newToken();
+      if (!(await r.store.setToken(user, hashToken(token)))) {
+        return text(404, `no user \`${user}\``);
+      }
+      return text(200, `${token}\n`);
+    }
+    if (parts.length == 2 && m == "DELETE") {
+      if (!(await r.store.removeUser(user))) {
+        return text(404, `no user \`${user}\``);
+      }
+      return text(200, `removed user \`${user}\`\n`);
+    }
+  }
+  if (parts.length == 3 && parts[0] == "owners" && (m == "PUT" || m == "DELETE")) {
+    return await changeOwner(r, req, parts[1], parts[2], m == "PUT", true);
+  }
+  return text(404, "not found");
+}
+
+function parseUrl(text: string): URL throws Rejected {
+  try {
+    return new URL(text);
+  } catch (e) {
+    throw new Rejected(400, "invalid URL");
+  }
+}
+
+/** Answers one request. */
+async function route(
+  r: Registry,
+  req: Request,
+): Promise<Response, Rejected | CloudflareError | IoError | AbortError> {
+  const url = parseUrl(req.url);
+  const parts = url.pathname.split("/").filter((p: string) => p != "");
+  const m = req.method;
+  if (parts.length == 0 && m == "GET") {
+    return await listing(r);
+  }
+  if (parts.length < 3 || parts[0] != "api" || parts[1] != "v1") {
+    return text(404, "not found");
+  }
+  const rest = parts.slice(2);
+  const name = rest[0];
+  if (name == "_admin") {
+    return await admin(r, req, rest.slice(1));
+  }
+  if (rest.length == 1 && name == "search" && m == "GET") {
+    return await search(r, url.searchParams.get("q") ?? "");
+  }
+  if (rest.length == 2 && rest[1] == "index" && m == "GET") {
+    return await index(r, name);
+  }
+  if (rest.length == 2 && rest[1] == "owners" && m == "GET") {
+    return await listOwners(r, name);
+  }
+  if (rest.length == 3 && rest[1] == "owners" && (m == "PUT" || m == "DELETE")) {
+    return await changeOwner(r, req, name, rest[2], m == "PUT", false);
+  }
+  if (rest.length == 2 && m == "GET") {
+    return await download(r, name, rest[1]);
+  }
+  if (rest.length == 2 && m == "PUT") {
+    return await upload(r, req, name, rest[1]);
+  }
+  if (rest.length == 3 && rest[2] == "yank" && (m == "PUT" || m == "DELETE")) {
+    return await yank(r, req, name, rest[1], m == "PUT");
+  }
+  if (rest.length == 4 && rest[2] == "native" && m == "GET") {
+    return await downloadNative(r, name, rest[1], rest[3]);
+  }
+  if (rest.length == 4 && rest[2] == "native" && m == "PUT") {
+    return await uploadNative(r, req, name, rest[1], rest[3]);
+  }
+  return text(404, "not found");
+}
+
+async function main() {
+  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    try {
+      const r: Registry = {
+        store: new Store(D1Database.binding("DB")),
+        blobs: R2Bucket.binding("BLOBS"),
+      };
+      return await route(r, req);
+    } catch (e) {
+      if (e instanceof Rejected) {
+        return text(e.status, e.message);
+      }
+      console.error("registry: request failed:", e);
+      return text(500, `the registry failed: ${e}`);
+    }
+  });
+}

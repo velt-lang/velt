@@ -11,7 +11,8 @@ Everything ships in one `velt` binary.
 | [Formatter](fmt.md) | `velt fmt` |
 | [Editors](editors.md) | the language server and the VS Code extension |
 | [Debugging](debugging.md) | debug info, LLDB, GDB, Visual Studio, VS Code |
-| [WebAssembly](webassembly.md) | WASI and browser targets, the playground |
+| [WebAssembly](webassembly.md) | WASI and browser targets, Cloudflare Workers, the playground |
+| [A registry on Cloudflare Workers](registry-worker.md) | the package registry as a Worker: deploying, users, what it checks |
 | [Platforms and installation](platforms.md) | supported platforms, prerequisites, distributions |
 
 Testing is covered in the Book: [Testing](../book/testing.md).

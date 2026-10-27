@@ -1,0 +1,320 @@
+// Uploads and downloads (velt_registry/src/packages.rs). An upload is checked before anything
+// is stored: the caller and ownership, the archive's form, its content hash against
+// `X-Velt-Checksum`, and its `package.vlt` naming the package and version of the URL. R2 holds
+// the archives as uploaded (`packages/<name>/<version>`) and the native bundles
+// (`native/<name>/<version>/<target>`), each stored only if absent, so a published file is
+// never replaced; D1 records the version once its archive is stored.
+
+import { CloudflareError, R2Bucket } from "velt:cloudflare";
+import { IoError } from "velt:io";
+import { utf8DecodeLossy } from "velt:encoding";
+import { AbortError } from "velt:task";
+import { checksum, entries, Entry, Rejected } from "./archive";
+import { authorize, Caller, caller } from "./auth";
+import { read } from "./manifest";
+import { isValidPackageName, NATIVE_TARGETS, normalizedName } from "./names";
+import { parse } from "./semver";
+import { Store, VersionRow } from "./store";
+
+/** The largest upload accepted. */
+export const MAX_ARCHIVE = 64 * 1024 * 1024;
+
+/** The registry's storage. */
+export struct Registry {
+  store: Store;
+  blobs: R2Bucket;
+}
+
+/** A text response. */
+export function text(status: number, body: string): Response {
+  return new Response(body, {
+    status: status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+function archiveKey(name: string, version: string): string {
+  return `packages/${name}/${version}`;
+}
+
+function nativeKey(name: string, version: string, target: string): string {
+  return `native/${name}/${version}/${target}`;
+}
+
+/** Throws 400 unless `name` and `version` are a valid package name and version. */
+export function checkNameVersion(name: string, version: string) throws Rejected {
+  if (!isValidPackageName(name) || parse(version) == null) {
+    throw new Rejected(400, "invalid package name or version");
+  }
+}
+
+// The upload's body, at most `MAX_ARCHIVE` bytes.
+async function body(req: Request): Promise<u8[], Rejected | IoError | AbortError> {
+  const bytes = await req.bytes();
+  if (bytes.length > MAX_ARCHIVE) {
+    throw new Rejected(413, `the upload is larger than ${MAX_ARCHIVE} bytes`);
+  }
+  const out: u8[] = [];
+  for (const b of bytes) {
+    out.push(b as u8);
+  }
+  return out;
+}
+
+/** `JSON.parse<T>(text)`; a document that doesn't fit `T` is the 400 `what: why`. */
+export function decode<T>(text: string, what: string): T throws Rejected {
+  try {
+    return JSON.parse<T>(text);
+  } catch (e) {
+    throw new Rejected(400, `${what}: ${e.message}`);
+  }
+}
+
+/** `GET /api/v1/<name>/<version>`: the archive. */
+export async function download(
+  r: Registry,
+  name: string,
+  version: string,
+): Promise<Response, Rejected | CloudflareError> {
+  checkNameVersion(name, version);
+  const o = await r.blobs.get(archiveKey(name, version));
+  if (o == null) {
+    return text(404, `no \`${name}\` ${version}`);
+  }
+  return new Response(o.bytes(), { headers: { "content-type": "application/octet-stream" } });
+}
+
+/** `GET /api/v1/<name>/<version>/native/<target>`: a native bundle. */
+export async function downloadNative(
+  r: Registry,
+  name: string,
+  version: string,
+  target: string,
+): Promise<Response, Rejected | CloudflareError> {
+  checkNameVersion(name, version);
+  if (!NATIVE_TARGETS.includes(target)) {
+    throw new Rejected(400, "invalid package name, version or target");
+  }
+  const o = await r.blobs.get(nativeKey(name, version, target));
+  if (o == null) {
+    return text(404, `no ${target} native library for \`${name}\` ${version}`);
+  }
+  return new Response(o.bytes(), { headers: { "content-type": "application/octet-stream" } });
+}
+
+// The caller of a write to `name`, once allowed.
+async function writer(
+  r: Registry,
+  req: Request,
+  name: string,
+): Promise<Caller, Rejected | CloudflareError> {
+  const who = await caller(req, r.store);
+  await authorize(r.store, name, who);
+  return who;
+}
+
+/** `PUT /api/v1/<name>/<version>`: publish. */
+export async function upload(
+  r: Registry,
+  req: Request,
+  name: string,
+  version: string,
+): Promise<Response, Rejected | CloudflareError | IoError | AbortError> {
+  checkNameVersion(name, version);
+  const who = await writer(r, req, name);
+  const archive = await body(req);
+  // The manifest names the native crate's directory, whose files the archive may hold too.
+  const all = entries(archive, (p) => true);
+  let manifestFile: Entry | null = null;
+  for (const e of all) {
+    if (e.path == "package.vlt") {
+      manifestFile = e;
+    }
+    if (e.path == "velt.toml") {
+      throw new Rejected(
+        400,
+        "the archive has a `velt.toml`: publish it again with this velt, which writes `package.vlt`",
+      );
+    }
+  }
+  if (manifestFile == null) {
+    throw new Rejected(400, "the archive has no package.vlt");
+  }
+  const m = read(utf8DecodeLossy(manifestFile.bytes));
+  const nativeDir = m.native;
+  for (const e of all) {
+    const ok =
+      e.path == "package.vlt" ||
+      e.path.startsWith("src/") ||
+      (nativeDir != null && e.path.startsWith(`${nativeDir}/`));
+    if (!ok) {
+      throw new Rejected(400, `archive contains a disallowed path \`${e.path}\``);
+    }
+  }
+  const sum = checksum(all);
+  if (req.headers.get("x-velt-checksum") != sum) {
+    throw new Rejected(400, `checksum mismatch: the archive hashes to ${sum}`);
+  }
+  if (m.name != name || m.version != version) {
+    throw new Rejected(
+      400,
+      `the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`,
+    );
+  }
+  const norm = normalizedName(name);
+  if (!(await r.store.isPublished(name))) {
+    const other = await r.store.sameNormalized(name, norm);
+    if (other != null) {
+      throw new Rejected(
+        400,
+        `cannot publish \`${name}\`: the registry has \`${other}\`, and names that differ only in \`-\` and \`_\` count as the same; choose another name`,
+      );
+    }
+  }
+  if ((await r.store.version(name, version)) != null) {
+    throw new Rejected(
+      409,
+      `\`${name}\` ${version} is already published (bump \`version\` in package.vlt)`,
+    );
+  }
+  const stored = await r.blobs.put(archiveKey(name, version), archive, {
+    onlyIfAbsent: true,
+    contentType: "application/octet-stream",
+  });
+  if (stored == null) {
+    throw new Rejected(
+      409,
+      `\`${name}\` ${version} is already published (bump \`version\` in package.vlt)`,
+    );
+  }
+  const row: VersionRow = {
+    version: version,
+    checksum: sum,
+    description: m.description,
+    keywords: JSON.stringify(m.keywords),
+    dependencies: JSON.stringify(m.dependencies),
+    native: "{}",
+    native_abi: null,
+    yanked: 0,
+  };
+  try {
+    await r.store.publish(name, norm, who, row);
+  } catch (e) {
+    // Another upload of this version won the race: take the archive back.
+    await r.blobs.delete(archiveKey(name, version));
+    throw new Rejected(409, `\`${name}\` ${version} could not be recorded: ${e.message}`);
+  }
+  return text(201, `published \`${name}\` ${version}\n`);
+}
+
+/** `native.json` of a bundle (vpm::native::NativeMeta). */
+struct NativeMeta {
+  package: string;
+  version: string;
+  target: string;
+  abi: number;
+  shared: string;
+  import_lib?: string;
+  static?: string;
+  exports: Record<string, string>;
+}
+
+// The paths a native bundle may hold: `native.json`, and files directly in `shared/` or `static/`.
+function bundlePath(p: string): bool {
+  if (p == "native.json") {
+    return true;
+  }
+  for (const dir of ["shared/", "static/"]) {
+    if (p.startsWith(dir)) {
+      const file = p.slice(dir.length);
+      return file != "" && !file.includes("/");
+    }
+  }
+  return false;
+}
+
+/** `PUT /api/v1/<name>/<version>/native/<target>`: add a native bundle to a published version. */
+export async function uploadNative(
+  r: Registry,
+  req: Request,
+  name: string,
+  version: string,
+  target: string,
+): Promise<Response, Rejected | CloudflareError | IoError | AbortError> {
+  checkNameVersion(name, version);
+  if (!NATIVE_TARGETS.includes(target)) {
+    throw new Rejected(400, "invalid package name, version or target");
+  }
+  await writer(r, req, name);
+  const expected = req.headers.get("x-velt-checksum");
+  if (expected == null) {
+    throw new Rejected(400, "missing X-Velt-Checksum");
+  }
+  const bundle = await body(req);
+  const files = entries(bundle, bundlePath);
+  const sum = checksum(files);
+  if (sum != expected) {
+    throw new Rejected(400, `checksum mismatch: the bundle hashes to ${sum}`);
+  }
+  let metaText: string | null = null;
+  const paths: string[] = [];
+  for (const f of files) {
+    paths.push(f.path);
+    if (f.path == "native.json") {
+      metaText = utf8DecodeLossy(f.bytes);
+    }
+  }
+  if (metaText == null) {
+    throw new Rejected(400, "the bundle has no native.json");
+  }
+  const meta = decode<NativeMeta>(metaText, "native.json");
+  if (meta.package != name || meta.version != version || meta.target != target) {
+    throw new Rejected(
+      400,
+      `the upload is the native library of \`${meta.package} ${meta.version}\` for ${meta.target}, not of \`${name} ${version}\` for ${target}`,
+    );
+  }
+  const named: [string, string | undefined, string][] = [
+    ["shared", meta.shared, "shared/"],
+    ["import_lib", meta.import_lib, "shared/"],
+    ["static", meta.static, "static/"],
+  ];
+  for (const [key, path, dir] of named) {
+    if (path != undefined && (!path.startsWith(dir) || !paths.includes(path))) {
+      throw new Rejected(
+        400,
+        `the upload: \`${key} = "${path}"\` in native.json must name a file of the bundle under \`${dir}\``,
+      );
+    }
+  }
+  const prefix = `velt_${name.replaceAll("-", "_")}__`;
+  for (const exp of Object.keys(meta.exports)) {
+    if (!exp.startsWith(prefix)) {
+      throw new Rejected(400, `the upload: export \`${exp}\` must start with \`${prefix}\``);
+    }
+  }
+  const row = await r.store.version(name, version);
+  if (row == null) {
+    throw new Rejected(404, `\`${name}\` ${version} is not published`);
+  }
+  const native = decode<Record<string, string>>(row.native, "stored native libraries");
+  const existing = native[target];
+  if (existing != undefined) {
+    if (existing == sum) {
+      return text(201, `published the ${target} native library of \`${name}\` ${version}\n`);
+    }
+    throw new Rejected(
+      409,
+      `\`${name}\` ${version} already has a native library for ${target} (published libraries are never replaced; bump \`version\`)`,
+    );
+  }
+  const stored = await r.blobs.put(nativeKey(name, version, target), bundle, {
+    onlyIfAbsent: true,
+  });
+  if (stored == null) {
+    throw new Rejected(409, `\`${name}\` ${version} already has a native library for ${target}`);
+  }
+  native[target] = sum;
+  await r.store.addNative(name, version, JSON.stringify(native), meta.abi);
+  return text(201, `published the ${target} native library of \`${name}\` ${version}\n`);
+}

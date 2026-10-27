@@ -1,0 +1,11 @@
+import type { Package } from "velt:package";
+
+// The Velt package registry as a Cloudflare Worker (docs/tooling/registry-worker.md): the
+// protocol `velt` speaks to registries, over R2 (archives) and D1 (versions, users, owners).
+// Build it with `velt build --release --host workers`.
+export const pkg: Package = {
+  name: "registry-worker",
+  version: "0.1.0",
+  description: "The Velt package registry as a Cloudflare Worker",
+  keywords: ["registry", "cloudflare", "workers"],
+};

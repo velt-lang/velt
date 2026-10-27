@@ -198,4 +198,5 @@ Native libraries cannot be used for WebAssembly targets. Writing one: [the Book'
 chapter](../book/native-packages.md); the details: [native_abi.md](../internals/contracts/native_abi.md).
 
 **Not yet available**: a public package registry. Until there is one, share packages through a
-registry you serve yourself, or as path dependencies.
+registry you serve yourself (`velt registry serve`, or the
+[registry Worker](registry-worker.md) on Cloudflare), or as path dependencies.

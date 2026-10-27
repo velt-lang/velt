@@ -1,0 +1,116 @@
+// The archive `velt publish` uploads (vpm::archive): `VELTPKG1\n`, then per file its relative
+// path, a line break, its length in decimal, a line break and its bytes. Native bundles use the
+// same format with their own path rule. Only safe relative paths are accepted.
+
+import { sha256 } from "velt:crypto";
+import { hexEncode, utf8Decode, utf8Encode } from "velt:encoding";
+
+/** One file of an archive. */
+export struct Entry {
+  path: string;
+  bytes: u8[];
+}
+
+/** An upload that isn't acceptable; the message is shown to the publisher. */
+export class Rejected extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const MAGIC = "VELTPKG1\n";
+
+// The bytes of `data` from `start` up to the next line break, and where the next line starts.
+function line(data: u8[], start: number): [string, number] throws Rejected {
+  let end = start;
+  while (end < data.length && data[end] != 10) {
+    end++;
+  }
+  if (end >= data.length) {
+    throw new Rejected(400, "corrupt archive: missing newline");
+  }
+  try {
+    return [utf8Decode(data.slice(start, end)), end + 1];
+  } catch (e) {
+    throw new Rejected(400, "corrupt archive: bad path");
+  }
+}
+
+// No `\`, no `:`, and no empty, `.` or `..` segment.
+function safePath(path: string): bool {
+  if (path.includes("\\") || path.includes(":")) {
+    return false;
+  }
+  for (const seg of path.split("/")) {
+    if (seg == "" || seg == "." || seg == "..") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The files of `archive`, whose paths are safe and accepted by `allowed`. */
+export function entries(archive: u8[], allowed: (path: string) => bool): Entry[] throws Rejected {
+  const magic = utf8Encode(MAGIC);
+  if (archive.length < magic.length) {
+    throw new Rejected(400, "not a Velt package archive");
+  }
+  for (let i = 0; i < magic.length; i++) {
+    if (archive[i] != magic[i]) {
+      throw new Rejected(400, "not a Velt package archive");
+    }
+  }
+  const out: Entry[] = [];
+  let at = magic.length;
+  while (at < archive.length) {
+    const [path, afterPath] = line(archive, at);
+    const [len, afterLen] = line(archive, afterPath);
+    let n = 0;
+    if (len.length == 0 || len.length > 15) {
+      throw new Rejected(400, "corrupt archive: bad length");
+    }
+    for (let i = 0; i < len.length; i++) {
+      const d = len.charCodeAt(i) - 48;
+      if (d < 0 || d > 9) {
+        throw new Rejected(400, "corrupt archive: bad length");
+      }
+      n = n * 10 + d;
+    }
+    if (archive.length - afterLen < n) {
+      throw new Rejected(400, "corrupt archive: truncated file");
+    }
+    if (!safePath(path) || !allowed(path)) {
+      throw new Rejected(400, `archive contains a disallowed path \`${path}\``);
+    }
+    out.push({ path: path, bytes: archive.slice(afterLen, afterLen + n) });
+    at = afterLen + n;
+  }
+  return out;
+}
+
+/**
+ * The content checksum of `files` (vpm::archive::checksum_of): SHA-256 over each file, sorted by
+ * path, as its path, a zero byte, its length (u64, little-endian) and its bytes.
+ */
+export function checksum(files: Entry[]): string {
+  const sorted = files.toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const data: u8[] = [];
+  for (const f of sorted) {
+    for (const b of utf8Encode(f.path)) {
+      data.push(b);
+    }
+    data.push(0);
+    let len = f.bytes.length;
+    for (let i = 0; i < 8; i++) {
+      data.push((len % 256) as u8);
+      len = Math.floor(len / 256);
+    }
+    for (const b of f.bytes) {
+      data.push(b);
+    }
+  }
+  return `sha256:${hexEncode(sha256(data))}`;
+}

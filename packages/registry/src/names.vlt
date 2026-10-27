@@ -1,0 +1,85 @@
+// Package and user names, as vpm::manifest checks them: a registry keeps to the rules every
+// `velt` enforces, so nothing it stores is unreachable.
+
+/** Names no package may have. */
+const RESERVED: string[] = ["std"];
+/** First words whose native export prefix would be Velt's own (`velt_rt_`, …). */
+const NATIVE_PREFIXES: string[] = ["rt", "sig", "native"];
+
+/** The targets a native library may be published for (vpm::manifest::NATIVE_TARGETS). */
+export const NATIVE_TARGETS: string[] = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+];
+
+function isLower(c: string): bool {
+  return c >= "a" && c <= "z";
+}
+
+function isDigit(c: string): bool {
+  return c >= "0" && c <= "9";
+}
+
+/** A device name on Windows (`con`, `nul`, `com1`, …), in any case. */
+export function isWindowsDeviceName(name: string): bool {
+  const lower = name.toLowerCase();
+  if (lower == "con" || lower == "prn" || lower == "aux" || lower == "nul") {
+    return true;
+  }
+  return lower.length == 4 &&
+    (lower.startsWith("com") || lower.startsWith("lpt")) &&
+    isDigit(lower.slice(3));
+}
+
+/** Lowercase words of letters and digits joined by single `-` or `_`, not reserved. */
+export function isValidPackageName(name: string): bool {
+  if (
+    name.length == 0 ||
+    !isLower(name.slice(0, 1)) ||
+    RESERVED.includes(name) ||
+    isWindowsDeviceName(name)
+  ) {
+    return false;
+  }
+  for (const p of NATIVE_PREFIXES) {
+    if (name == p || name.startsWith(`${p}-`) || name.startsWith(`${p}_`)) {
+      return false;
+    }
+  }
+  let separator = false;
+  for (let i = 0; i < name.length; i++) {
+    const c = name.slice(i, i + 1);
+    const sep = c == "-" || c == "_";
+    if (!sep && !isLower(c) && !isDigit(c)) {
+      return false;
+    }
+    if (sep && separator) {
+      return false;
+    }
+    separator = sep;
+  }
+  return !separator;
+}
+
+/** `[a-z][a-z0-9_-]*`, not a Windows device name. */
+export function isValidUserName(name: string): bool {
+  if (name.length == 0 || !isLower(name.slice(0, 1)) || isWindowsDeviceName(name)) {
+    return false;
+  }
+  for (let i = 1; i < name.length; i++) {
+    const c = name.slice(i, i + 1);
+    if (!isLower(c) && !isDigit(c) && c != "-" && c != "_") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Names that differ only in `-` and `_` count as the same. */
+export function normalizedName(name: string): string {
+  return name.replaceAll("-", "_");
+}

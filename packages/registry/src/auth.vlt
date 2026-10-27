@@ -1,0 +1,94 @@
+// Who sends a request. A request names its user with `Authorization: Bearer <token>`; the
+// `users` table holds the SHA-256 of each token, never the token. A registry is **open**
+// (anyone may write, and packages have no owners) only when its `REGISTRY_OPEN` variable is
+// `"true"`: a public registry never is. Users are made through the admin API, which needs the
+// `ADMIN_TOKEN` secret.
+
+import { sha256Hex, timingSafeEqual } from "velt:crypto";
+import { hexEncode, utf8Encode } from "velt:encoding";
+import { CloudflareError, envVar, secureRandomBytes } from "velt:cloudflare";
+import { Rejected } from "./archive";
+import { Store } from "./store";
+
+/** The caller of a write: null on an open registry (anyone). */
+export type Caller = string | null;
+
+/** `sha256:<hex>` of a token, as the `users` table keeps it. */
+export function hashToken(token: string): string {
+  return `sha256:${sha256Hex(token)}`;
+}
+
+/** A new token: 32 random bytes in hex. */
+export function newToken(): string {
+  return hexEncode(secureRandomBytes(32));
+}
+
+/** Whether the registry is open (`REGISTRY_OPEN = "true"`). */
+export function isOpen(): bool {
+  return envVar("REGISTRY_OPEN") == "true";
+}
+
+// The bearer token of `req`, or "".
+function bearer(req: Request): string {
+  const h = req.headers.get("authorization") ?? "";
+  const space = h.indexOf(" ");
+  if (space < 0 || h.slice(0, space).toLowerCase() != "bearer") {
+    return "";
+  }
+  return h.slice(space + 1).trim();
+}
+
+/** The user sending `req`; throws 401 without a valid token (null: an open registry). */
+export async function caller(
+  req: Request,
+  store: Store,
+): Promise<Caller, Rejected | CloudflareError> {
+  if (isOpen()) {
+    return null;
+  }
+  const token = bearer(req);
+  const user = token == "" ? null : await store.userByToken(hashToken(token));
+  if (user == null) {
+    throw new Rejected(
+      401,
+      "a valid `Authorization: Bearer <token>` is required (your registry user's token)",
+    );
+  }
+  return user;
+}
+
+/** Throws 401 unless `req` carries the `ADMIN_TOKEN` secret. */
+export function requireAdmin(req: Request) throws Rejected {
+  const admin = envVar("ADMIN_TOKEN") ?? "";
+  const token = bearer(req);
+  const a = utf8Encode(admin);
+  const b = utf8Encode(token);
+  if (admin == "" || a.length != b.length || !timingSafeEqual(a, b)) {
+    throw new Rejected(401, "the admin API needs `Authorization: Bearer <ADMIN_TOKEN>`");
+  }
+}
+
+/** Throws 403 unless `caller` may change package `name`: an owner, or anyone for a new package. */
+export async function authorize(
+  store: Store,
+  name: string,
+  caller: Caller,
+): Promise<void, Rejected | CloudflareError> {
+  if (caller == null) {
+    return;
+  }
+  const owners = await store.owners(name);
+  if (owners.includes(caller) || (owners.length == 0 && !(await store.isPublished(name)))) {
+    return;
+  }
+  if (owners.length == 0) {
+    throw new Rejected(
+      403,
+      `\`${name}\` has no owners; an administrator assigns one through the admin API`,
+    );
+  }
+  throw new Rejected(
+    403,
+    `\`${caller}\` is not an owner of \`${name}\` (owners: ${owners.join(", ")})`,
+  );
+}

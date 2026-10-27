@@ -1,0 +1,118 @@
+// Semantic versions (semver.org 2.0): parsed to check what a URL or manifest names, and compared
+// to pick a package's newest version.
+
+/** A parsed version; `pre` is empty for a release. */
+export struct Version {
+  major: number;
+  minor: number;
+  patch: number;
+  pre: string[];
+  text: string;
+}
+
+function numeric(s: string): bool {
+  if (s.length == 0) {
+    return false;
+  }
+  for (let i = 0; i < s.length; i++) {
+    const c = s.slice(i, i + 1);
+    if (c < "0" || c > "9") {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A version core number: digits without a leading zero.
+function core(s: string): number | null {
+  if (!numeric(s) || (s.length > 1 && s.startsWith("0")) || s.length > 15) {
+    return null;
+  }
+  return Number(s);
+}
+
+function identifiers(s: string): string[] | null {
+  const parts = s.split(".");
+  for (const p of parts) {
+    if (p.length == 0) {
+      return null;
+    }
+    for (let i = 0; i < p.length; i++) {
+      const c = p.slice(i, i + 1);
+      const ok =
+        (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "-";
+      if (!ok) {
+        return null;
+      }
+    }
+  }
+  return parts;
+}
+
+/** `text` as a version, or null when it isn't one. */
+export function parse(text: string): Version | null {
+  let rest = text;
+  const plus = rest.indexOf("+");
+  if (plus >= 0) {
+    if (identifiers(rest.slice(plus + 1)) == null) {
+      return null;
+    }
+    rest = rest.slice(0, plus);
+  }
+  let pre: string[] = [];
+  const dash = rest.indexOf("-");
+  if (dash >= 0) {
+    const ids = identifiers(rest.slice(dash + 1));
+    if (ids == null) {
+      return null;
+    }
+    pre = ids;
+    rest = rest.slice(0, dash);
+  }
+  const parts = rest.split(".");
+  if (parts.length != 3) {
+    return null;
+  }
+  const major = core(parts[0]);
+  const minor = core(parts[1]);
+  const patch = core(parts[2]);
+  if (major == null || minor == null || patch == null) {
+    return null;
+  }
+  return { major: major, minor: minor, patch: patch, pre: pre, text: text };
+}
+
+function compareIds(a: string, b: string): number {
+  const an = numeric(a);
+  const bn = numeric(b);
+  if (an && bn) {
+    return Number(a) - Number(b);
+  }
+  if (an != bn) {
+    return an ? -1 : 1;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Negative when `a` comes before `b`, 0 when they are the same version, positive after. */
+export function compare(a: Version, b: Version): number {
+  if (a.major != b.major) {
+    return a.major - b.major;
+  }
+  if (a.minor != b.minor) {
+    return a.minor - b.minor;
+  }
+  if (a.patch != b.patch) {
+    return a.patch - b.patch;
+  }
+  if (a.pre.length == 0 || b.pre.length == 0) {
+    return b.pre.length - a.pre.length;
+  }
+  for (let i = 0; i < a.pre.length && i < b.pre.length; i++) {
+    const c = compareIds(a.pre[i], b.pre[i]);
+    if (c != 0) {
+      return c;
+    }
+  }
+  return a.pre.length - b.pre.length;
+}

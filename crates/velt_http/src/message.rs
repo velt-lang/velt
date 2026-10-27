@@ -156,6 +156,45 @@ pub fn read_request(r: &mut impl BufRead, max_body: usize) -> Result<Request, St
     })
 }
 
+/// A body in chunked transfer encoding (RFC 9112 §7.1): hex-sized chunks up to a zero-sized one,
+/// then trailer lines, which are skipped. A server may answer this way whatever the request.
+fn read_chunked(r: &mut impl BufRead, max: usize) -> Result<Vec<u8>, String> {
+    let mut body = vec![];
+    loop {
+        let mut line = String::new();
+        r.read_line(&mut line)
+            .map_err(|e| format!("cannot read HTTP body: {e}"))?;
+        let size = line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size, 16)
+            .map_err(|_| format!("invalid chunk size `{}`", line.trim()))?;
+        if size == 0 {
+            break;
+        }
+        if body.len() + size > max {
+            return Err(format!("body exceeds the limit of {max} bytes"));
+        }
+        let start = body.len();
+        body.resize(start + size, 0);
+        r.read_exact(&mut body[start..])
+            .map_err(|e| format!("cannot read HTTP body: {e}"))?;
+        let mut end = [0u8; 2];
+        r.read_exact(&mut end)
+            .map_err(|e| format!("cannot read HTTP body: {e}"))?;
+        if &end != b"\r\n" {
+            return Err("malformed chunked body: a chunk does not end with CRLF".into());
+        }
+    }
+    loop {
+        let mut trailer = String::new();
+        let n = r
+            .read_line(&mut trailer)
+            .map_err(|e| format!("cannot read HTTP body: {e}"))?;
+        if n == 0 || trailer.trim().is_empty() {
+            return Ok(body);
+        }
+    }
+}
+
 /// Read one response (the client side); bodies larger than `max_body` bytes are rejected.
 pub fn read_response(r: &mut impl BufRead, max_body: usize) -> Result<Response, String> {
     let head = read_head(r)?;
@@ -166,7 +205,11 @@ pub fn read_response(r: &mut impl BufRead, max_body: usize) -> Result<Response, 
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| format!("malformed status line `{line}`"))?;
     let headers = parse_headers(rest)?;
-    let body = if find_header(&headers, "content-length").is_some() {
+    let chunked = find_header(&headers, "transfer-encoding")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let body = if chunked {
+        read_chunked(r, max_body)?
+    } else if find_header(&headers, "content-length").is_some() {
         read_body(r, &headers, max_body)?
     } else {
         let mut body = vec![];
@@ -248,5 +291,17 @@ mod tests {
         assert_eq!(back.status, 404);
         assert_eq!(back.body_text(), "nope");
         assert_eq!(back.header("x-a"), Some("b"));
+    }
+
+    #[test]
+    fn chunked_response_bodies_are_decoded() {
+        let wire = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                     4;ext=1\r\n{\"a\"\r\n3\r\n:1}\r\n0\r\nX-Trailer: t\r\n\r\n";
+        let back = read_response(&mut &wire[..], 100).unwrap();
+        assert_eq!(back.body_text(), "{\"a\":1}");
+        let err = read_response(&mut &wire[..], 5).unwrap_err();
+        assert!(err.contains("exceeds the limit"), "{err}");
+        let bad = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+        assert!(read_response(&mut &bad[..], 100).is_err());
     }
 }

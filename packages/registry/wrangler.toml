@@ -1,0 +1,21 @@
+# The registry Worker (docs/tooling/registry-worker.md). Build it first:
+#   velt build --release --host workers
+# then `npx wrangler deploy` (or `npx wrangler dev` to run it locally).
+name = "velt-registry"
+main = "target/velt/worker.mjs"
+compatibility_date = "2026-10-01"
+
+[vars]
+# "true" lets anyone publish and turns owners off: for a private registry on a trusted network.
+REGISTRY_OPEN = "false"
+# ADMIN_TOKEN, which the admin API (users, owners) needs: `npx wrangler secret put ADMIN_TOKEN`.
+
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "velt-registry"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "velt-registry"
+database_id = "replace-with-the-id-wrangler-d1-create-prints"
+migrations_dir = "migrations"

@@ -411,6 +411,19 @@ The first slice (host imports, the target and glue, `serve()`) differs from the 
   (compiling the module, which Cloudflare does at deploy, instantiating it and running `main`),
   later ones about 30 µs, against the Free plan's 10 ms of CPU per request. workerd itself
   runs in no CI job yet.
+- **The registry (#1740) as built**: packages/registry is a Velt package that speaks today's
+  protocol (`vpm::remote`) rather than #1325's static one, so the `velt` client works with it
+  unchanged: archives and native bundles in R2 (stored only if absent), versions, users and
+  owners in D1, whose transactions replace the server's file lock; users through an admin API
+  with an `ADMIN_TOKEN` secret, tokens from the host's `crypto.getRandomValues`
+  (`velt:cloudflare`'s `secureRandomBytes`). It reads the uploaded `package.vlt` with a small
+  reader of its own (the literal turned into JSON) for the fields it stores. Tested with the
+  real client: crates/veltc/tests/registry_worker.rs serves it from node with fake R2 and D1, and
+  by hand under `wrangler dev`. Writing it found a client bug: `velt_http` couldn't read a
+  chunked response body, which it now decodes.
+- **`main` can't await a binding before `serve()`**: `velt_start` drives `main` with
+  `block_on`, which ends the program when only a host promise is pending. Timers work there
+  (`block_on` busy-waits for them), and handlers may await anything.
 - **The Rust added**: the stored handler, `velt_fetch` (a task per request, as the native
   server starts), `fetch_done`, `velt_turn`, the executor's `run_turn`, the string helpers
   above, and `velt_rt_http_serve`/`_server_*` on wasm (workers.rs, about 200 lines).

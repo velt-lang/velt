@@ -1,0 +1,225 @@
+// The registry's D1 tables (migrations/0001_init.sql): users, packages, owners and versions.
+// Archives and native bundles are in R2 (src/publish.vlt).
+
+import { CloudflareError, D1Database, D1Statement } from "velt:cloudflare";
+
+/** A version as the `versions` table holds it. */
+export struct VersionRow {
+  version: string;
+  checksum: string;
+  description: string | null;
+  /** JSON array. */
+  keywords: string;
+  /** JSON object. */
+  dependencies: string;
+  /** JSON object: target → checksum. */
+  native: string;
+  native_abi: number | null;
+  yanked: number;
+}
+
+/** A version of some package, for search. */
+export struct PackageVersionRow {
+  package: string;
+  version: string;
+  description: string | null;
+  keywords: string;
+  yanked: number;
+}
+
+struct Name {
+  name: string;
+}
+
+struct User {
+  user: string;
+}
+
+/** The registry's tables. */
+export class Store {
+  db: D1Database;
+
+  constructor(db: D1Database) {
+    this.db = db;
+  }
+
+  /** The user whose token hashes to `hash`, if any. */
+  async userByToken(hash: string): Promise<string | null, CloudflareError> {
+    const row = await this.db
+      .prepare("SELECT name FROM users WHERE token = ?")
+      .bind(hash)
+      .first<Name>();
+    return row == null ? null : row.name;
+  }
+
+  async isUser(name: string): Promise<bool, CloudflareError> {
+    return (await this.db
+      .prepare("SELECT name FROM users WHERE name = ?")
+      .bind(name)
+      .first<Name>()) !=
+      null;
+  }
+
+  /** Adds user `name` with token hash `hash`; false if the user exists. */
+  async addUser(name: string, hash: string): Promise<bool, CloudflareError> {
+    const r = await this.db
+      .prepare("INSERT OR IGNORE INTO users (name, token) VALUES (?, ?)")
+      .bind(name, hash)
+      .run();
+    return r.changes > 0;
+  }
+
+  /** Replaces user `name`'s token hash; false if there is no such user. */
+  async setToken(name: string, hash: string): Promise<bool, CloudflareError> {
+    return (await this.db
+      .prepare("UPDATE users SET token = ? WHERE name = ?")
+      .bind(hash, name)
+      .run()).changes >
+      0;
+  }
+
+  /** Removes user `name` and their ownerships; false if there is no such user. */
+  async removeUser(name: string): Promise<bool, CloudflareError> {
+    if (!(await this.isUser(name))) {
+      return false;
+    }
+    await this.db.batch([
+      this.db.prepare("DELETE FROM owners WHERE user = ?").bind(name),
+      this.db.prepare("DELETE FROM users WHERE name = ?").bind(name),
+    ]);
+    return true;
+  }
+
+  async isPublished(name: string): Promise<bool, CloudflareError> {
+    return (await this.db
+      .prepare("SELECT name FROM packages WHERE name = ?")
+      .bind(name)
+      .first<Name>()) !=
+      null;
+  }
+
+  /** A published package other than `name` whose name differs from it only in `-` and `_`. */
+  async sameNormalized(name: string, norm: string): Promise<string | null, CloudflareError> {
+    const row = await this.db
+      .prepare("SELECT name FROM packages WHERE norm = ? AND name != ?")
+      .bind(norm, name)
+      .first<Name>();
+    return row == null ? null : row.name;
+  }
+
+  async packageNames(): Promise<string[], CloudflareError> {
+    const rows = await this.db.prepare("SELECT name FROM packages ORDER BY name").all<Name>();
+    return rows.map((r) => r.name);
+  }
+
+  async owners(name: string): Promise<string[], CloudflareError> {
+    const rows = await this.db
+      .prepare("SELECT user FROM owners WHERE package = ? ORDER BY rowid")
+      .bind(name)
+      .all<User>();
+    return rows.map((r) => r.user);
+  }
+
+  async addOwner(name: string, user: string): Promise<void, CloudflareError> {
+    await this.db
+      .prepare("INSERT OR IGNORE INTO owners (package, user) VALUES (?, ?)")
+      .bind(name, user)
+      .run();
+  }
+
+  async removeOwner(name: string, user: string): Promise<void, CloudflareError> {
+    await this.db
+      .prepare("DELETE FROM owners WHERE package = ? AND user = ?")
+      .bind(name, user)
+      .run();
+  }
+
+  /** The versions of `name` in publication order. */
+  async versions(name: string): Promise<VersionRow[], CloudflareError> {
+    return await this.db
+      .prepare(
+        "SELECT version, checksum, description, keywords, dependencies, native, native_abi, yanked FROM versions WHERE package = ? ORDER BY seq",
+      )
+      .bind(name)
+      .all<VersionRow>();
+  }
+
+  async version(name: string, version: string): Promise<VersionRow | null, CloudflareError> {
+    return await this.db
+      .prepare(
+        "SELECT version, checksum, description, keywords, dependencies, native, native_abi, yanked FROM versions WHERE package = ? AND version = ?",
+      )
+      .bind(name, version)
+      .first<VersionRow>();
+  }
+
+  /** Every version of every package, for search. */
+  async allVersions(): Promise<PackageVersionRow[], CloudflareError> {
+    return await this.db
+      .prepare("SELECT package, version, description, keywords, yanked FROM versions")
+      .all<PackageVersionRow>();
+  }
+
+  /**
+   * Records a published version in one transaction: the package (new or not), its first owner
+   * when `claim` names one and it has none, and the version after the package's others.
+   */
+  async publish(
+    name: string,
+    norm: string,
+    claim: string | null,
+    row: VersionRow,
+  ): Promise<void, CloudflareError> {
+    const statements: D1Statement[] = [
+      this.db.prepare("INSERT OR IGNORE INTO packages (name, norm) VALUES (?, ?)").bind(name, norm),
+    ];
+    if (claim != null) {
+      statements.push(
+        this.db
+          .prepare(
+            "INSERT INTO owners (package, user) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM owners WHERE package = ?)",
+          )
+          .bind(name, claim, name),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          "INSERT INTO versions (package, version, seq, checksum, description, keywords, dependencies, native, native_abi, yanked) VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM versions WHERE package = ?), ?, ?, ?, ?, '{}', NULL, 0)",
+        )
+        .bind(
+          name,
+          row.version,
+          name,
+          row.checksum,
+          row.description,
+          row.keywords,
+          row.dependencies,
+        ),
+    );
+    await this.db.batch(statements);
+  }
+
+  async setYanked(name: string, version: string, yanked: bool): Promise<bool, CloudflareError> {
+    const r = await this.db
+      .prepare("UPDATE versions SET yanked = ? WHERE package = ? AND version = ?")
+      .bind(yanked ? 1 : 0, name, version)
+      .run();
+    return r.changes > 0;
+  }
+
+  /** Records native bundle `sum` for `target`, raising the version's `native_abi` to `abi`. */
+  async addNative(
+    name: string,
+    version: string,
+    native: string,
+    abi: number,
+  ): Promise<void, CloudflareError> {
+    await this.db
+      .prepare(
+        "UPDATE versions SET native = ?, native_abi = MAX(COALESCE(native_abi, 0), ?) WHERE package = ? AND version = ?",
+      )
+      .bind(native, abi, name, version)
+      .run();
+  }
+}

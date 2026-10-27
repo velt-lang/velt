@@ -1,0 +1,271 @@
+// The fields of an uploaded `package.vlt` the registry stores: name, version, description,
+// keywords, dependencies and the native library's directory and targets. A manifest is the one
+// `export const pkg: Package = { … }` of the file, an object literal of strings, numbers,
+// booleans, arrays and objects with comments and trailing commas (docs/tooling/manifest.md);
+// this turns that literal into JSON and reads it. `velt publish` checks the whole manifest with
+// velt's own reader before it uploads; these checks keep a registry that is sent anything else
+// consistent.
+
+import { Rejected } from "./archive";
+
+/** What the registry keeps of a manifest. */
+export struct Manifest {
+  name: string;
+  version: string;
+  description: string | null;
+  keywords: string[];
+  /** Dependency name → semver requirement. */
+  dependencies: Record<string, string>;
+  /** The native crate's directory, when the package has native code. */
+  native: string | null;
+  nativeTargets: string[];
+}
+
+const MAX_DESCRIPTION = 300;
+const MAX_KEYWORDS = 10;
+
+function bad(message: string): Rejected {
+  return new Rejected(400, `package.vlt: ${message}`);
+}
+
+function isIdentStart(c: string): bool {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || c == "$";
+}
+
+function isIdentPart(c: string): bool {
+  return isIdentStart(c) || (c >= "0" && c <= "9");
+}
+
+// The JSON of the object literal starting at `src[start]` (`{`).
+function literalToJson(src: string, start: number): string throws Rejected {
+  const tokens: string[] = [];
+  let i = start;
+  let depth = 0;
+  while (i < src.length) {
+    const c = src.slice(i, i + 1);
+    if (c == " " || c == "\t" || c == "\n" || c == "\r") {
+      i++;
+      continue;
+    }
+    if (src.slice(i, i + 2) == "//") {
+      const end = src.indexOf("\n", i);
+      i = end < 0 ? src.length : end;
+      continue;
+    }
+    if (src.slice(i, i + 2) == "/*") {
+      const end = src.indexOf("*/", i + 2);
+      if (end < 0) {
+        throw bad("unterminated comment");
+      }
+      i = end + 2;
+      continue;
+    }
+    if (c == "\"" || c == "'") {
+      let j = i + 1;
+      let text = "";
+      while (j < src.length && src.slice(j, j + 1) != c) {
+        if (src.slice(j, j + 1) == "\\") {
+          const next = src.slice(j + 1, j + 2);
+          text += next == "'" ? "'" : `\\${next}`;
+          j += 2;
+          continue;
+        }
+        const ch = src.slice(j, j + 1);
+        text += ch == "\"" ? "\\\"" : ch;
+        j++;
+      }
+      if (j >= src.length) {
+        throw bad("unterminated string");
+      }
+      tokens.push(`"${text}"`);
+      i = j + 1;
+      continue;
+    }
+    if (c == "{" || c == "[") {
+      depth++;
+      tokens.push(c);
+      i++;
+      continue;
+    }
+    if (c == "}" || c == "]") {
+      if (tokens.length > 0 && tokens[tokens.length - 1] == ",") {
+        tokens.pop();
+      }
+      tokens.push(c);
+      depth--;
+      i++;
+      if (depth == 0) {
+        return tokens.join("");
+      }
+      continue;
+    }
+    if (c == "," || c == ":") {
+      tokens.push(c);
+      i++;
+      continue;
+    }
+    if (isIdentStart(c)) {
+      let j = i + 1;
+      while (j < src.length && isIdentPart(src.slice(j, j + 1))) {
+        j++;
+      }
+      const word = src.slice(i, j);
+      const prev = tokens.length > 0 ? tokens[tokens.length - 1] : "";
+      if (word == "true" || word == "false" || word == "null") {
+        tokens.push(word);
+      } else if (prev == "{" || prev == ",") {
+        tokens.push(`"${word}"`);
+      } else {
+        throw bad(`\`${word}\` is not a value a manifest may hold`);
+      }
+      i = j;
+      continue;
+    }
+    if (c == "-" || (c >= "0" && c <= "9")) {
+      let j = i + 1;
+      while (j < src.length && "0123456789.eE+-".includes(src.slice(j, j + 1))) {
+        j++;
+      }
+      tokens.push(src.slice(i, j));
+      i = j;
+      continue;
+    }
+    throw bad(`unexpected \`${c}\``);
+  }
+  throw bad("the object is not closed");
+}
+
+function str(v: JsonValue | null, field: string): string | null throws Rejected {
+  if (v == null || v.isNull()) {
+    return null;
+  }
+  const s = v.asString();
+  if (s == null) {
+    throw bad(`\`${field}\` must be a string`);
+  }
+  return s;
+}
+
+function strings(v: JsonValue | null, field: string): string[] throws Rejected {
+  const out: string[] = [];
+  if (v == null) {
+    return out;
+  }
+  if (!v.isArray()) {
+    throw bad(`\`${field}\` must be an array of strings`);
+  }
+  for (let i = 0; i < v.len(); i++) {
+    const s = v.at(i)?.asString();
+    if (s == null) {
+      throw bad(`\`${field}\` must be an array of strings`);
+    }
+    out.push(s);
+  }
+  return out;
+}
+
+function checkDescription(text: string) throws Rejected {
+  if (text == "") {
+    throw bad("`description` is empty; remove the field instead");
+  }
+  if (Array.from(text).length > MAX_DESCRIPTION) {
+    throw bad(`\`description\` has more than ${MAX_DESCRIPTION} characters`);
+  }
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 32 || code == 127) {
+      throw bad(
+        "`description` must be one line (no line breaks, tabs or other control characters)",
+      );
+    }
+  }
+  if (text.trim() != text) {
+    throw bad("`description` starts or ends with whitespace");
+  }
+}
+
+function checkKeyword(k: string) throws Rejected {
+  let ok = k.length > 0 && k.length <= 32;
+  for (let i = 0; i < k.length && ok; i++) {
+    const c = k.slice(i, i + 1);
+    const alnum = (c >= "a" && c <= "z") || (c >= "0" && c <= "9");
+    ok = alnum || (i > 0 && c == "-");
+  }
+  if (!ok) {
+    throw bad(
+      `invalid keyword \`${k}\` (lowercase letters, digits and \`-\`, at most 32 characters)`,
+    );
+  }
+}
+
+/** Reads the manifest text of `package.vlt`. */
+export function read(src: string): Manifest throws Rejected {
+  const decl = src.indexOf("export const");
+  const eq = decl < 0 ? -1 : src.indexOf("=", decl);
+  const open = eq < 0 ? -1 : src.indexOf("{", eq);
+  if (open < 0) {
+    throw bad("no `export const pkg: Package = { … }`");
+  }
+  let v: JsonValue = JsonValue.of(null);
+  try {
+    v = JSON.parseValue(literalToJson(src, open));
+  } catch (e) {
+    throw bad(`not a manifest object: ${e.message}`);
+  }
+  const name = str(v.get("name"), "name");
+  const version = str(v.get("version"), "version");
+  if (name == null || version == null) {
+    throw bad("`name` and `version` are required");
+  }
+  const description = str(v.get("description"), "description");
+  if (description != null) {
+    checkDescription(description);
+  }
+  const keywords = strings(v.get("keywords"), "keywords");
+  if (keywords.length > MAX_KEYWORDS) {
+    throw bad(`at most ${MAX_KEYWORDS} keywords are allowed`);
+  }
+  for (const k of keywords) {
+    checkKeyword(k);
+  }
+  const dependencies: Record<string, string> = {};
+  const deps = v.get("dependencies");
+  if (deps != null && !deps.isNull()) {
+    if (!deps.isObject()) {
+      throw bad("`dependencies` must be an object");
+    }
+    for (const dep of deps.keys()) {
+      const spec = deps.get(dep);
+      let req: string | null = spec?.asString() ?? null;
+      if (req == null && spec != null && spec.isObject()) {
+        req = str(spec.get("version"), `dependencies.${dep}.version`);
+        if (req == null) {
+          throw bad(`dependency \`${dep}\` has only a \`path\`; add a \`version\` requirement`);
+        }
+      }
+      if (req == null) {
+        throw bad(`dependency \`${dep}\` must be a requirement or { version, path }`);
+      }
+      dependencies[dep] = req;
+    }
+  }
+  let native: string | null = null;
+  let targets: string[] = [];
+  const nat = v.get("native");
+  if (nat != null && !nat.isNull()) {
+    if (!nat.isObject()) {
+      throw bad("`native` must be an object");
+    }
+    native = str(nat.get("path"), "native.path") ?? "native";
+    targets = strings(nat.get("targets"), "native.targets");
+  }
+  return {
+    name: name,
+    version: version,
+    description: description,
+    keywords: keywords,
+    dependencies: dependencies,
+    native: native,
+    nativeTargets: targets,
+  };
+}

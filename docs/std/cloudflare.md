@@ -66,6 +66,10 @@ bucket_name = "registry-blobs"
   object of that name (`idFromName`); `stub.fetch(input, init)` sends it a request like the
   global `fetch`. The objects themselves are JavaScript classes for now.
 - **Cache**: `Cache.delete(url): bool` removes a cached response (false if there was none).
+- **Variables and secrets**: `envVar(name): string | null` reads a text variable (`[vars]`) or a
+  secret (`wrangler secret put`) of the Worker's `env`.
+- **Randomness**: `secureRandomBytes(n): u8[]` comes from the host's `crypto.getRandomValues`,
+  for tokens and keys (the WebAssembly runtime's own random numbers are not meant for secrets).
 
 Operations are asynchronous: each is one call to the Worker's binding, and the handler's task
 waits for it while other requests run.

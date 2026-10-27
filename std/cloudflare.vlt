@@ -15,6 +15,9 @@ import { fetchVia, RequestInit } from "velt:fetch";
 
 declare module "wasm:velt_cloudflare" {
   function binding(name: string): u32;
+  function env_var(name: string): string;
+  function has_env_var(name: string): bool;
+  function random_bytes(n: u32): u8[];
   function op_error(h: u32): string;
   function op_text(h: u32): string;
   function op_bytes(h: u32): u8[];
@@ -39,6 +42,19 @@ declare module "wasm:velt_cloudflare" {
   async function kv_list(ns: u32, prefix: string): Promise<u32>;
   function do_stub(ns: u32, name: string): u32;
   async function cache_delete(url: string): Promise<u32>;
+}
+
+/**
+ * The text variable or secret `name` of the Worker's `env` (`[vars]` in wrangler.toml,
+ * `wrangler secret put`), or null when it has none of that name.
+ */
+export function envVar(name: string): string | null {
+  return has_env_var(name) ? env_var(name) : null;
+}
+
+/** `n` cryptographically random bytes (`crypto.getRandomValues`), for tokens and keys. */
+export function secureRandomBytes(n: u32): u8[] {
+  return random_bytes(n);
 }
 
 /** An operation on a binding failed (the message is the host's). */

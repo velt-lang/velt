@@ -1,0 +1,3 @@
+# wrangler dev's local state, and the secrets it reads locally (ADMIN_TOKEN).
+.wrangler/
+.dev.vars

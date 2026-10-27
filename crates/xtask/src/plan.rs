@@ -60,7 +60,10 @@ const TOOLING: &[(&str, &[&str])] = &[
     // A separate binary; its tests run the launcher against fake releases.
     ("velt_launcher", &[]),
     // The Worker glue (js/velt_worker.mjs) and runtime: veltc's Workers test drives both.
-    ("velt_rt_wasm", &["wasm_goldens", "playground", "workers"]),
+    (
+        "velt_rt_wasm",
+        &["wasm_goldens", "playground", "workers", "registry_worker"],
+    ),
 ];
 
 /// Packages that compile or read a crate's sources by path, which the dependency graph doesn't
@@ -138,6 +141,8 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
     ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),
+    // packages/registry is the registry Worker, which `registry_worker` builds and drives.
+    ("packages/registry/", &[], &["registry_worker"]),
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),

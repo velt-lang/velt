@@ -367,6 +367,14 @@ function start(module, { write, outbound, caches, env }) {
         bindings.set(key, h);
         return h;
       },
+      has_env_var: (name) => (typeof env?.[str(name)] === "string" ? 1 : 0),
+      env_var: (name, out) => setStr(out, env?.[str(name)] ?? ""),
+      random_bytes(n, out) {
+        const b = new Uint8Array(n);
+        // getRandomValues fills at most 65536 bytes per call.
+        for (let i = 0; i < n; i += 65536) crypto.getRandomValues(b.subarray(i, Math.min(n, i + 65536)));
+        setBytes(out, b);
+      },
       op_error: (h, out) => setStr(out, handle(h).error),
       op_text: (h, out) => setStr(out, handle(h).text),
       op_bytes: (h, out) => setBytes(out, handle(h).bytes ?? new Uint8Array(0)),
