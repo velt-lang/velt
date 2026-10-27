@@ -10,3 +10,15 @@ other k
 grow 1 1
 grow 2 2
 grow 3 4
+captured a [ 1, 2 ]
+destructured 1 2 a
+[ '10', '21', '32' ]
+2 true
+default 1 0
+default 2 1
+default 3 2
+count 2
+nested 1 1
+nested 1 2
+nested 2 1
+nested 2 2

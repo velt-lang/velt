@@ -6,6 +6,7 @@
 // setter; printing and JSON show the literal as Node does.
 
 const brand = new WeakSet<object>();
+
 function mark<T extends object>(handle: T): T {
   brand.add(handle);
   return handle;
@@ -40,6 +41,7 @@ console.log(count.value);
 function id<T>(x: T): T {
   return x;
 }
+
 let reads = 0;
 const counter = id({
   step: 2,
@@ -75,6 +77,64 @@ lit.n = 10;
 console.log(lit.double);
 console.log(lit);
 console.log(JSON.stringify(lit));
+
+// Nested in a type parameter, stored as `object` / `unknown`, returned as `any`, with methods
+// using `this`; printed and written as JSON inside arrays and objects.
+function same<T>(x: T): T {
+  return x;
+}
+
+let k = 0;
+const nested = same(
+  same({
+    get v(): number {
+      return ++k;
+    },
+  }),
+);
+console.log(nested.v, nested.v);
+const asObj: object = {
+  get w(): number {
+    return 7;
+  },
+};
+console.log((asObj as any).w);
+const asUnknown: unknown = {
+  get u(): string {
+    return "u";
+  },
+};
+console.log((asUnknown as any).u);
+
+function retAny(): any {
+  return {
+    get r(): number {
+      return 3;
+    },
+  };
+}
+
+console.log(retAny().r);
+const withMethod = same({
+  base: 2,
+  twice() {
+    return this.base * 2;
+  },
+  get thrice(): number {
+    return this.base * 3;
+  },
+});
+console.log(withMethod.twice(), withMethod.thrice);
+const lit2 = {
+  a: 1,
+  get b(): number {
+    return this.a + 1;
+  },
+};
+console.log([lit2]);
+console.log({ inner: lit2 });
+console.log(JSON.stringify([lit2]), JSON.stringify(lit2, null, 2));
+console.log(String(JSON.stringify(same(lit2))));
 
 // A proxy makes this a program whose object types may hold views.
 const p = new Proxy({ x: 1 }, {});
