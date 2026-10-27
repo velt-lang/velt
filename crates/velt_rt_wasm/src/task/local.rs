@@ -82,6 +82,8 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<
     if super::shared::is_shared(f) {
         return super::shared::hand_over(f, transfer);
     }
+    // Its identity stays on this task (task/identity.rs).
+    super::identity::forget(f);
     if super::race::pass_transfer(f, transfer) {
         return;
     }

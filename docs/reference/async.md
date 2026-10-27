@@ -142,7 +142,13 @@ Promises behave like JavaScript's, at Rust's cost:
   `Set` / `Map` keys, as in Node, also once it is passed where a `Promise<unknown>` (or a
   promise with a wider error type) is expected: a `Set<Promise<unknown>>` counts a promise
   once however often it is added, and awaiting it anywhere handles its rejection for the set
-  too ([#1682](https://github.com/velt-lang/velt/issues/1682)). `p.then(f)` is another promise.
+  too, as handling any of its conversions does
+  ([#1682](https://github.com/velt-lang/velt/issues/1682)). `p.then(f)` is another promise.
+  Identity stays on the task that holds the promise: holders handed to another task (a `Set`
+  of promises passed to `spawn`) are other promises there, each its own, so a set moved to a
+  spawned task does not find its own elements; a promise converted for an argument of a
+  spawned call is not the promise it converts. On WebAssembly a converted promise reports its
+  rejection as its own (docs/tooling/webassembly.md).
   A shared promise is driven on the task that shares it:
   - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
     using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await

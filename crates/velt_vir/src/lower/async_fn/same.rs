@@ -42,18 +42,19 @@ impl FnLower<'_, '_> {
         let quiet = self
             .result_drop_fn(slot)
             .unwrap_or_else(|| cint(0, Ty::Ptr));
-        // Before `q` runs at all: it may finish in its first run, and give up its holder of `p`.
-        let alias = vec![w_op.clone(), held_op.clone(), quiet];
-        self.call_rt(Rt::FutAlias, alias, None);
-        self.call_rt(Rt::FutDrop, vec![held_op], None);
         if start {
             let drop = self.unclaimed_drop_fn(t);
             let start = match self.cx.promise_error(t) {
                 Some(_) => Rt::FutStartRejecting,
                 None => Rt::FutStart,
             };
-            self.call_rt(start, vec![w_op, drop], None);
+            self.call_rt(start, vec![w_op.clone(), drop], None);
         }
+        // After its start (which keeps no mark of a lazy node), while `held` still holds `p`:
+        // `q` may have finished in its first run and given up its own holder of `p`.
+        let alias = vec![w_op, held_op.clone(), quiet];
+        self.call_rt(Rt::FutAlias, alias, None);
+        self.call_rt(Rt::FutDrop, vec![held_op], None);
         self.owned_result(Some(w), t)
     }
 }

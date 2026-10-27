@@ -98,21 +98,24 @@ pub(super) unsafe fn waiting(set: *mut LocalSet) -> bool {
 /// # Safety
 /// `set` is the live set of the task being polled.
 pub(super) unsafe fn flush(set: *mut LocalSet) {
+    // In order, a batch at a time (a report may defer others): linear in their number.
     while !(*set).unhandled.is_empty() {
-        let f = (*set).unhandled.remove(0);
-        handled_elsewhere(f);
-        // The deferred node holds a reference; its result is still in the slot.
-        node::drop_result_now(f);
-        node::release(f);
+        for f in std::mem::take(&mut (*set).unhandled) {
+            handled_elsewhere(f);
+            // The deferred node holds a reference; its result is still in the slot.
+            node::drop_result_now(f);
+            node::release(f);
+        }
     }
     while !(*set).rejections.is_empty() {
-        let f = (*set).rejections.remove(0);
-        handled_elsewhere(f);
-        if node::rejection_unclaimed(f) {
-            // Reports the rejection and ends the process.
-            node::drop_result_now(f);
+        for f in std::mem::take(&mut (*set).rejections) {
+            handled_elsewhere(f);
+            if node::rejection_unclaimed(f) {
+                // Reports the rejection and ends the process.
+                node::drop_result_now(f);
+            }
+            node::release(f);
         }
-        node::release(f);
     }
 }
 

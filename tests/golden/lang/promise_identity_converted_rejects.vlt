@@ -1,0 +1,44 @@
+// A rejecting promise converted twice into a `Set<Promise<unknown, Error>>` and awaited through
+// the set's element (#1682): handled once there, and not reported through the other conversion.
+async function bad(m: string): Promise<string> {
+  await Promise.resolve();
+  throw new Error(m);
+}
+
+async function ok(): Promise<string> {
+  if (Date.now() < 0) throw new Error("never");
+  return "ok";
+}
+
+function track(s: Set<Promise<unknown, Error>>, p: Promise<unknown, Error>): boolean {
+  if (s.has(p)) return false;
+  s.add(p);
+  return true;
+}
+
+async function main() {
+  const s = new Set<Promise<unknown, Error>>();
+  const p = bad("boom");
+  const q = ok();
+  console.log(track(s, p), track(s, p), track(s, q), s.size);
+  try {
+    await p;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log(s.has(p), s.has(q), await q);
+  const r = bad("all");
+  const s2 = new Set<Promise<unknown, Error>>();
+  track(s2, r);
+  track(s2, r);
+  for (const x of s2) {
+    try {
+      await x;
+    } catch (e) {
+      console.log("all", (e as Error).message, s2.size);
+    }
+  }
+  console.log("end");
+}
+
+main();

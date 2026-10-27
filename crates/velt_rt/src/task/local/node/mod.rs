@@ -193,13 +193,23 @@ unsafe fn free(f: *mut VeltFut) {
     if fl & SET_REF != 0 {
         drop(Arc::from_raw(h.set));
     }
-    loc::forget(f, fl);
-    if fl & ALIASED != 0 {
-        crate::task::identity::release(f);
+    if fl & (LOC | ALIASED) != 0 {
+        forget_side_records(f, fl);
     }
     let l = layout(h.state_size);
     std::ptr::drop_in_place(&mut h.awaiter);
     std::alloc::dealloc((f as *mut u8).sub(HEAD), l);
+}
+
+/// The side records of node `f` (flags `fl`) go with it: where it threw (loc.rs), what it stood
+/// for (task/identity.rs; on any thread).
+#[cold]
+#[inline(never)]
+unsafe fn forget_side_records(f: *mut VeltFut, fl: u32) {
+    loc::forget(f, fl);
+    if fl & ALIASED != 0 {
+        crate::task::identity::release(f);
+    }
 }
 
 /// Drop one reference; the last one frees the node.
@@ -249,14 +259,16 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 
 unsafe extern "C" fn lazy_drop(f: *mut VeltFut) {
     let h = head(f);
-    forget_alias(f);
+    forget_alias(f, h.flags.load(Ordering::Relaxed));
     if h.owner.get() & OWNER_DONE == 0 {
         (h.drop)(state(f));
     }
     free(f);
 }
 
-/// Node `f` stands for another promise ([`ALIASED`]); false when `f` is not a node.
+/// Node `f` stands for another promise ([`ALIASED`]); false when `f` is not a node. A lazy node
+/// marked so is never started by `velt_rt_fut_start` ([`mark_started`] does not keep the bit);
+/// one that is given up first ends that (`velt_rt_fut_detach`).
 pub(super) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
     if !is_lazy(f) && !is_started(f) {
         return false;
@@ -266,15 +278,50 @@ pub(super) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
 }
 
 /// Does node `f` stand for another promise?
+#[inline(always)]
 pub(super) unsafe fn is_aliased(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Relaxed) & ALIASED != 0
 }
 
-/// The owner of node `f` drops it: it no longer stands for another promise.
-pub(super) unsafe fn forget_alias(f: *mut VeltFut) {
-    if head(f).flags.load(Ordering::Relaxed) & ALIASED != 0 {
-        crate::task::identity::forget(f);
+/// Flags `fl` of node `f` say it stands for another promise, which its owner drops (or gives to
+/// another task): it no longer does.
+#[inline(always)]
+pub(super) unsafe fn forget_alias(f: *mut VeltFut, fl: u32) {
+    if fl & ALIASED != 0 {
+        forget_alias_slow(f);
     }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn forget_alias_slow(f: *mut VeltFut) {
+    crate::task::identity::forget(f);
+}
+
+/// The owner of aliased node `f` takes or hands on its result: a claim of the promise it stands
+/// for (task/identity.rs).
+#[cold]
+#[inline(never)]
+pub(super) unsafe fn alias_claimed(f: *mut VeltFut) {
+    crate::task::identity::claimed(f);
+}
+
+/// The owner gives node `f` up or hands it to another task: it stands for nothing any more, and
+/// its record goes (task/identity.rs).
+#[inline(always)]
+pub(super) unsafe fn drop_alias(f: *mut VeltFut) {
+    let fl = head(f).flags.load(Ordering::Relaxed);
+    if fl & ALIASED != 0 {
+        drop_alias_slow(f);
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn drop_alias_slow(f: *mut VeltFut) {
+    crate::task::identity::forget(f);
+    crate::task::identity::release(f);
+    head(f).flags.fetch_and(!ALIASED, Ordering::Relaxed);
 }
 
 /// Turn lazy node `f` into a started node driven by the set `shared` (not counted yet: see
@@ -287,8 +334,7 @@ pub(super) unsafe fn mark_started(
     let h = head_mut(f);
     h.set = Arc::as_ptr(shared);
     h.result_drop = AtomicPtr::new(drop_fn_ptr(result_drop));
-    let aliased = h.flags.load(Ordering::Relaxed) & ALIASED;
-    h.flags.store(STARTED | aliased, Ordering::Relaxed);
+    h.flags.store(STARTED, Ordering::Relaxed);
     (*f).poll = started_poll;
     (*f).drop = started_drop;
 }

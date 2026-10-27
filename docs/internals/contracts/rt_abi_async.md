@@ -234,7 +234,14 @@ one (the same pointer once it is shared, so a hash taken before stays valid).
   promise through a view (`velt_rt_fut_views` around its creation), whose taking the result
   handles nothing; when the converted promise's rejection is unclaimed at the microtask
   checkpoint, it is reported only if no other holder of the promise took the result, and
-  dropped with `quiet_drop` otherwise. WebAssembly keeps identities but has no views: a
+  dropped with `quiet_drop` otherwise. Taking a converted promise's result (its owner, a
+  holder of it, a combinator) counts as taking the promise's, so every other conversion of it
+  is quiet too.
+- Identity stays on the task: a converted promise handed to another task
+  (`velt_rt_fut_transfer`) or given up (`velt_rt_fut_detach`) gives up its holder and record
+  there, on its own task, and a lazy marked node is never started by `velt_rt_fut_start`. A
+  holder handed over is its proxy's promise on the other task.
+- WebAssembly keeps identities but has no views: a
   converted promise's rejection is reported as its own there.
 
 ## 2. Tasks

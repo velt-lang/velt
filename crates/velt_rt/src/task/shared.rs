@@ -138,6 +138,11 @@ pub(super) fn claimed(h: &HubRef) -> bool {
     h.st.lock().claimed
 }
 
+/// Someone handled the promise of `h` through a converted promise standing for it.
+pub(super) fn mark_claimed(h: &HubRef) {
+    h.st.lock().claimed = true;
+}
+
 fn handle_layout(size: usize) -> Layout {
     Layout::from_size_align(FRONT + FUT_RESULT_OFFSET + size, 16)
         .unwrap_or_else(|_| crate::panic::fatal("invalid shared promise size"))

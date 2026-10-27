@@ -1,0 +1,52 @@
+// sigx's `Defer` collector with a load that rejects and is added twice (#1682): only the
+// collector's `.finally().catch()` handles the rejection, through the first converted promise;
+// the second, dropped at once, is the same promise, so nothing is reported.
+interface DeferCollector {
+  add(p: Promise<unknown, Error>): void;
+}
+function makeDefer(log: string[]): { collector: DeferCollector; pending: () => number } {
+  const state = { pending: 0 };
+  const tracked = new Set<Promise<unknown, Error>>();
+  const collector: DeferCollector = {
+    add(p) {
+      if (tracked.has(p)) return;
+      tracked.add(p);
+      queueMicrotask(() => {
+        state.pending++;
+        log.push(`+ ${state.pending}`);
+      });
+      void p
+        .finally(() => {
+          tracked.delete(p);
+          state.pending--;
+          log.push(`- ${state.pending} ${tracked.size}`);
+        })
+        .catch(() => {
+          log.push("rejected");
+        });
+    },
+  };
+  return { collector, pending: () => state.pending };
+}
+async function load(name: string, ok: boolean): Promise<string> {
+  await Promise.resolve();
+  if (!ok) throw new Error(`no ${name}`);
+  return name;
+}
+async function main() {
+  const log: string[] = [];
+  const d = makeDefer(log);
+  const a = load("a", true);
+  const b = load("b", false);
+  d.collector.add(a);
+  d.collector.add(a);
+  d.collector.add(b);
+  d.collector.add(b);
+  d.collector.add(a);
+  console.log("after add", d.pending());
+  console.log(await a);
+  await new Promise<void>((r) => setTimeout(() => r(), 0));
+  console.log(log.join(", "));
+  console.log("left", d.pending());
+}
+main();

@@ -30,6 +30,9 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
         }
     }
     h.owner.set(OWNER_DELIVERED);
+    if fl & super::ALIASED != 0 {
+        super::alias_claimed(f);
+    }
     // Its error, if it rejected, was thrown where the node says (loc.rs).
     super::loc::claim(f);
     READY
@@ -46,6 +49,9 @@ pub(in crate::task::local) unsafe fn poll_unadopted(f: *mut VeltFut, cx: *mut c_
 /// The owner of finished node `f` claims its result (a shared promise's hub, under its lock).
 pub(in crate::task::local) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     head(f).owner.set(OWNER_DELIVERED);
+    if super::is_aliased(f) {
+        super::alias_claimed(f);
+    }
 }
 
 /// Has started node `f` finished (its result is in the slot)?
@@ -119,9 +125,9 @@ unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
 /// drives it to completion and drops the result); a finished, unclaimed result is dropped here.
 pub(super) unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     let h = head(f);
-    super::forget_alias(f);
     // Finished: the set is done with the result, no need to tell it the owner is gone.
     let fl = h.flags.load(Ordering::Acquire);
+    super::forget_alias(f, fl);
     if fl & (ADOPTED | DONE) == ADOPTED {
         // Its leaves would wake this owner: let the set poll it (and re-register) instead.
         h.flags.fetch_and(!ADOPTED, Ordering::Relaxed);

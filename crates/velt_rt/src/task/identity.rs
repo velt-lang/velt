@@ -17,7 +17,10 @@
 //! it. The wrapper awaits that promise through a holder of its own, a view (shared.rs), whose
 //! taking the result handles nothing: so a wrapper's unhandled rejection is reported, when its
 //! task's microtask queue is drained, only if no other holder of the promise took the result
-//! (local/unhandled.rs), and dropped quietly otherwise. The record of that outlives the owner's
+//! (local/unhandled.rs), and dropped quietly otherwise. A claim of a converted promise (its
+//! owner awaits it, a combinator takes it, or a holder of it, a `then` or a `finally`, does)
+//! is a claim of the promise it stands for, as both are one promise in JS: so one converted
+//! promise handled makes every other one of the same promise quiet. The record of that outlives the owner's
 //! drop (the report comes after it): the node's free removes it.
 
 use std::collections::HashMap;
@@ -143,6 +146,15 @@ pub(crate) fn handled_elsewhere(f: *mut VeltFut) -> Option<Option<ResultDropFn>>
     let m = ALIASES.lock();
     let a = m.as_ref()?.get(&(f as usize))?;
     shared::claimed(&a.hub).then_some(a.quiet)
+}
+
+/// The owner of converted promise `f` took its result, or handed it to a handler: a claim of the
+/// promise it stands for (module docs).
+pub(crate) fn claimed(f: *mut VeltFut) {
+    let m = ALIASES.lock();
+    if let Some(a) = m.as_ref().and_then(|m| m.get(&(f as usize))) {
+        shared::mark_claimed(&a.hub);
+    }
 }
 
 /// `velt_rt_fut_views(1)`: the holders shared from now on are views, through which a converted
