@@ -18,7 +18,7 @@ use super::any_member::{SLOT_APPLY, SLOT_CALL, ST_OK, ST_UNSUPPORTED};
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cint, FnLower};
+use super::FnLower;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
@@ -193,6 +193,7 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let (fd, fdesc) = self.any_parts(Operand::Copy(f.clone()), any);
+        self.proxy_this_fn_call((&f, &fd, &fdesc), (data, argv, argc, out), ty);
         self.proxy_array_call(&f, fdesc.clone(), (data, argv, argc, out), ty);
         let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
         let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
@@ -234,24 +235,8 @@ impl FnLower<'_, '_> {
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_m, yes, no);
         self.switch_to(yes);
-        // The arguments move into the array: `argc` values of `any`, one after the other.
-        let n = Operand::Copy(Place::local(argc));
-        let arr = Place::local(self.inline_array_with_len(n.clone(), any));
-        let (size, _) = self.stride(any);
-        let bytes = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, n, cint(size as i128, Ty::U64)),
-        );
-        let first = self.elem_place(&arr, cint(0, Ty::U64), any);
-        let dst = self.addr(first);
-        self.mem_copy_dyn(dst, Operand::Copy(Place::local(argv)), bytes, false);
-        let arr_ty = self.cx.intern(TyKind::Array(any));
-        let arr = if self.cx.boxed(arr_ty) {
-            let v = self.box_value(Operand::Copy(arr), arr_ty);
-            Place::local(self.copy_to_temp(v, Ty::Ptr))
-        } else {
-            arr
-        };
+        // The arguments move into the array.
+        let (arr, arr_ty) = self.argv_array(argv, argc);
         let r = self.proxy_receiver(data, ty);
         let outp = self.any_out(out);
         let args = vec![(f.clone(), any), (arr, arr_ty), (r, any)];
@@ -333,6 +318,8 @@ impl super::Cx<'_> {
                 .first()
                 .is_some_and(|f| f.name == "#call" || f.name == "#new")
         };
-        self.is_array_method(t) || matches!(self.hir.def(*d), hir::Def::Adt(a) if hidden(a))
+        self.is_array_method(t)
+            || self.is_this_fn(t)
+            || matches!(self.hir.def(*d), hir::Def::Adt(a) if hidden(a))
     }
 }

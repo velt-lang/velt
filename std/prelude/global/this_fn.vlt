@@ -1,0 +1,3 @@
+// Global (loaded when a module has a function expression with a `this` parameter that its body
+// uses, crates/veltc/src/loader/globals.rs): the value such an expression makes (velt:this_fn).
+export { __ThisFn } from "velt:this_fn";

@@ -1,0 +1,51 @@
+// std/this_fn: the value of a function expression with a `this: any` parameter
+// (docs/reference/functions.md "Function expressions"), whose `this` is the object it is called
+// on, as in JavaScript. Sema makes `function (this: any, a: A) { body }` a `__ThisFn` holding the
+// closure `(this, arguments) => { let a: A = arguments[0]; body }`, held as a `Function`. A call
+// passes the receiver: a method call through a proxy or an `any` (velt_vir's call slots), and
+// `call` (`__apply`), `apply` and `bind` (`__bind`) below; a plain call `f(x)` passes `undefined`. `typeof` is
+// `"function"`.
+
+/** A function value whose `this` is bound at the call (module docs). */
+export class __ThisFn {
+  #f: Function;
+
+  constructor(f: Function) {
+    this.#f = f;
+  }
+
+  /** The call with `self` as `this` and `args` as the arguments. */
+  __apply(self: any, args: any[]): any {
+    const f: any = this.#f;
+    return f(self, args);
+  }
+
+  /** `f.apply(thisArg, args)`. */
+  apply(self: any, args?: any[]): any {
+    if (args === undefined) {
+      return this.__apply(self, []);
+    }
+    return this.__apply(self, args);
+  }
+
+  /**
+   * `f.bind(thisArg, ...bound)`: a function whose `this` is `self`, whatever the call passes,
+   * and whose arguments start with `bound`. (`f.call(thisArg, ...args)` is `__apply`: velt_vir's
+   * `this_fn_call_keys` passes the arguments of both as one array.)
+   */
+  __bind(self: any, bound: any[]): Function {
+    const f: any = this.#f;
+    const g = (_ignored: any, args: any[]): any => {
+      const all: any[] = [];
+      for (const b of bound) {
+        all.push(b);
+      }
+      for (const a of args) {
+        all.push(a);
+      }
+      return f(self, all);
+    };
+    const out: any = new __ThisFn(g);
+    return out;
+  }
+}

@@ -168,6 +168,7 @@ mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
+mod this_fn_expr;
 mod this_param;
 mod this_type;
 mod three_state;

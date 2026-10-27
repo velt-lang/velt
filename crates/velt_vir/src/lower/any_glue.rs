@@ -675,6 +675,9 @@ impl FnLower<'_, '_> {
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
         }
+        if self.cx.is_this_fn(ty) {
+            self.this_fn_call_keys((data, key, argv, argc, out), ty);
+        }
         if self.prelude_record(ty).is_some() {
             // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
@@ -778,6 +781,10 @@ impl FnLower<'_, '_> {
             TyKind::Closure(_) => {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
+            }
+            // A function whose `this` is bound at the call (this_fn.rs).
+            TyKind::Adt(..) if self.cx.is_this_fn(ty) => {
+                self.this_fn_apply_body((data, argv, argc, out), ty);
             }
             // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
             TyKind::Adt(..) if self.cx.is_array_method(ty) => {

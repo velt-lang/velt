@@ -138,7 +138,28 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 /// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
 /// or for `RegExp` also by a regular expression literal.
 pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool {
-    mentions(src, name) || (name == "RegExp" && src.contains('/') && has_regex(module))
+    mentions(src, name)
+        || (name == "RegExp" && src.contains('/') && has_regex(module))
+        || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
+}
+
+/// The global a function expression with a `this` parameter loads (std/this_fn.vlt).
+const THIS_FN: &str = "__ThisFn";
+
+/// Whether `module` holds a function expression (not a generator) whose `this` parameter its
+/// body uses (sema's `this_fn_expr`, whose value is a `__ThisFn`).
+fn has_this_fn(module: &ast::Module) -> bool {
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Function(d) = &e.kind {
+                self.0 |= d.sig.this_param.is_some() && !d.sig.is_generator;
+            }
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
 }
 
 /// Whether `module` holds a `new RegExp(…)` (what the parser makes of a regex literal).
