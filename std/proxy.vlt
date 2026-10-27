@@ -334,6 +334,12 @@ export class Proxy {
   __get(key: any, receiver: any): any {
     const trap = this.#handler.get;
     if (trap == null) {
+      // A target that is no proxy reads as itself: Velt runs a class getter on the target, which
+      // without a `get` trap here reads the same fields Node's getter would through the
+      // receiver (a trap's own `Reflect.get(t, k, r)` of a getter stops instead, #1732).
+      if (!(this.#target instanceof Proxy)) {
+        return Reflect.get(this.#target, key);
+      }
       return Reflect.get(this.#target, key, receiver);
     }
     if (typeof key === "string") {

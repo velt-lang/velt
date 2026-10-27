@@ -35,7 +35,7 @@ function sig<T extends object>(t: T): S<T> {
           console.log("replaced", JSON.stringify(v));
         };
       }
-      return Reflect.get(target, key, recv);
+      return Reflect.get(target, key);
     },
   });
   return p as S<T>;
