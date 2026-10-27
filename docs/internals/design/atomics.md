@@ -251,9 +251,10 @@ atomics' words (vir.rs invariant 9's `frozen`, set where `readonly` would be, an
 value holding an `Atomic`, but never for a type whose values module state can reach: any callee
 could write the argument through a module variable or `static` field that holds it, which the
 call site cannot see; param_attrs.rs "Module state"). An atomic operation never reads or writes
-anything else, and no code reads an atomic's word as plain memory. So `velt_opt`'s `frozen` pass loads the scalar
-fields a function reads in a loop once, on entry: a node's array headers, its bounds, a pool's
-data pointer. The loop then keeps them in registers across acquires, fences and calls, and its
+anything else. An atomic's word itself changes, and is read as plain memory where a value is
+inspected (`console.log` of an `Atomic`), so no byte of an `Atomic` aggregate is promoted. So
+`velt_opt`'s `frozen` pass loads the other scalar fields a function reads in a loop once, on
+entry: a node's array headers, its bounds, a pool's data pointer. The loop then keeps them in registers across acquires, fences and calls, and its
 bounds checks become loop-invariant, which LLVM moves out.
 
 LLVM cannot find this itself: an acquire or a fence may let it see any memory another thread
@@ -380,6 +381,61 @@ measures the atomics alone. `bench/atomics/run.sh 7` the same day, with the barr
 ran about 10% slower than for the step 1 table): 354.6 / 352.0 (1.01), 90.1 / 90.1 (1.00),
 356.1 / 316.9 (1.12), 92.0 / 91.8 (1.00), 13.4 / 13.8 (0.97), 11.0 / 10.4 (1.06), 25.3 / 24.0
 (1.05). The contended rows move with where the OS puts the threads, as before.
+
+## Results of step 2
+
+The concurrent map is `velt:collections/concurrent_map` (`ConcurrentMap`, `u64` → `u64`), in
+pure Velt on public APIs. It differs from the plan above in two ways. Its nodes are 1 KB blocks
+of one `Atomic<u64>[]` arena taken whole by `create`, a fixed capacity instead of growing pools
+behind `Once<T>`: nodes never move or are freed, so the arena needs no reclamation. Its leaves
+are unsorted, unlike bbtree's sorted ones:
+- **Leaves:** 16-bit tags of the keys in the first line. A lookup compares them with velt:simd
+  `loadOptimistic` (step 2a) and reads one pair, or no pair for an absent key. A key sits in its
+  home slot when that was free, so `add` writes the home pair first and checks after.
+- **Inner nodes:** a 6-key index in the first line, then groups of 8 keys and 8 children, one
+  line each.
+- **Lookup:** the descent runs a fixed number of levels (the height is stored in the root).
+
+The `frozen` pass through field pointers and the `bounds` pass (step 2b) take a lookup from 432
+to 344 instructions, against bbtree's 349, with fewer cache misses (cachegrind, 1M keys, arm64
+Linux on the M4). On x86-64 the same counts, including each harness's key mixing, are 587
+against 568 for a lookup and 549 against 549 for an update (i9-12900HK).
+
+`bench/concurrent_map/run.sh`: 10M random keys inserted, then each thread looks up keys half of
+which are present; batched lookups (`getManyInto` against bbtree's `get_many`, 64 at a time); an
+update of present keys (`add` against bbtree's `update`); and a mix of 90% lookups and 10%
+updates. Apple M4, best of 7, Velt against bbtree:
+
+| workload | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|
+| insert | 19% faster | 20% faster | 23% faster | 19% faster |
+| lookup (half present) | 19% faster | 16% faster | 17% faster | 6% faster |
+| batched lookup | 40% faster | 37% faster | 40% faster | 30% faster |
+| update | 7% slower | 6% slower | 9% slower | 9% slower |
+| 90% lookup, 10% update | 12% faster | 11% faster | 10% faster | 3% faster |
+
+On an Intel i9-12900HK (7 interleaved runs, medians, the map's code at #1644's review):
+
+| workload | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|
+| insert | 6% faster | 6% faster | 22% faster | 30% faster |
+| lookup (half present) | 19% faster | 12% faster | 14% faster | 7% faster |
+| batched lookup | 56% faster | 56% faster | 49% faster | 27% faster |
+| update | 16% faster | 7% faster | 3% faster | 1% slower |
+| 90% lookup, 10% update | 14% faster | 6% faster | 4% faster | 9% faster |
+
+On the M4 updates still trail. A lookup of a present key costs our map more CPU than bbtree's: with the
+map in cache, 18% more (the tag compare chain feeds the pair's load). An update is such a lookup
+plus a latch. Two Apple-specific findings shaped `add`. First, a line read shared and then
+written by a read-modify-write is fetched twice. So `add` takes the leaf with one `or` and adds
+to the home pair before reading its key, and that took updates from 42% slower to the numbers
+above. Second, putting home-slot checks into lookups made them slower: an unpredictable branch,
+and an extra line read for an absent key.
+
+What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
+and unlinked), and giving room back (an emptied leaf is never reused, so keys moving to new
+ranges use up the capacity over the map's life). A leaf split sorts its 56 pairs with an
+insertion sort into two small arrays.
 
 ## Not in this design
 
