@@ -165,7 +165,10 @@ impl Printer<'_> {
             TypeExprKind::GenericFunction { type_params, ty } => {
                 format!("{}{}", self.generics(type_params), self.ty(ty))
             }
-            TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
+            TypeExprKind::Construct { ty, is_abstract } => {
+                let kw = if *is_abstract { "abstract new" } else { "new" };
+                format!("{kw} {}", self.ty(ty))
+            }
             TypeExprKind::TupleRest(ty) => format!("...{}", self.ty(ty)),
             TypeExprKind::TupleOptional(ty) => format!("{}?", self.ty(ty)),
             TypeExprKind::Union(members) => {

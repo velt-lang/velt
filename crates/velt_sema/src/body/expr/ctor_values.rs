@@ -31,7 +31,7 @@ use super::callback::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
-use crate::fn_types::{IS, NAME, NEW};
+use crate::fn_types::{ANEW, IS, NAME, NEW};
 use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
 
 /// Why class values of two signature types don't compare.
@@ -137,12 +137,29 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         };
         let f = self.cx.ctor_sig(target)?;
+        let is_abstract = self
+            .cx
+            .adt(d)
+            .and_then(|a| a.decl)
+            .is_some_and(|t| t.is_abstract);
+        if is_abstract && !self.cx.is_abstract_ctor(target) {
+            let tn = self.cx.display(target);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("abstract class `{class}` is not a `{tn}`: `new` through that type would create an instance of it (TypeScript's TS2345)"),
+                    span,
+                )
+                .with_note(format!("declare the type `abstract {tn}` to take abstract classes, or pass a subclass")),
+            );
+            return Some(self.error_expr(span));
+        }
         if let Some(g) = self.class_value_global(d, target, f, span) {
             let read = self.global_read(g, want, span);
             return Some(self.coerce(read, target));
         }
         let key = self.class_value_key(target);
-        let lit = |s: &mut Self| s.class_value_lit(&id.name, &class, f, span);
+        let abs = self.cx.is_abstract_ctor(target);
+        let lit = |s: &mut Self| s.class_value_lit(&id.name, &class, (f, abs), span);
         if let Some(h) = self.class_value_local(d, (target, key), lit, want, span) {
             return Some(h);
         }
@@ -150,7 +167,7 @@ impl FnCx<'_, '_> {
             self.local_class_out_of_reach(&id.name, span);
             return Some(self.error_expr(span));
         }
-        let lit = self.class_value_lit(&id.name, &class, f, span)?;
+        let lit = self.class_value_lit(&id.name, &class, (f, abs), span)?;
         Some(self.expr(&lit, Some(target), want))
     }
 
@@ -290,7 +307,8 @@ impl FnCx<'_, '_> {
         if let Some((_, g)) = values.iter().find(|(k, _)| *k == key) {
             return Some(*g);
         }
-        let lit = self.class_value_lit(&name, &name, f, span)?;
+        let abs = self.cx.is_abstract_ctor(target);
+        let lit = self.class_value_lit(&name, &name, (f, abs), span)?;
         let info = GlobalInfo {
             name: format!("{name}#value"),
             qual_name: format!("{qual}#value"),
@@ -326,12 +344,13 @@ impl FnCx<'_, '_> {
     }
 
     /// The object literal of the value of the class named `class` here, called `shown`, whose
-    /// `#new` has function type `f` (module docs).
+    /// `#new` has function type `f` (module docs). For an abstract construct signature
+    /// (`is_abstract`) it is `#anew`, a placeholder `panic` that never runs.
     fn class_value_lit(
         &mut self,
         class: &str,
         shown: &str,
-        f: TyId,
+        (f, is_abstract): (TyId, bool),
         span: Span,
     ) -> Option<ast::Expr> {
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(f).clone() else {
@@ -349,13 +368,27 @@ impl FnCx<'_, '_> {
                 }
             })
             .collect();
-        let new = synth(
-            ast::ExprKind::New {
-                class: class_type(class, span),
-                args,
-            },
-            span,
-        );
+        let new = match is_abstract {
+            false => synth(
+                ast::ExprKind::New {
+                    class: class_type(class, span),
+                    args,
+                },
+                span,
+            ),
+            true => {
+                let msg = format!("ICE: `new` through an abstract construct signature ({class})");
+                let msg = synth(ast::ExprKind::Lit(ast::Lit::Str(msg)), span);
+                let call = ast::ExprKind::Call {
+                    callee: Box::new(name_expr("panic", span)),
+                    type_args: vec![],
+                    args: vec![msg],
+                    optional: false,
+                };
+                synth(call, span)
+            }
+        };
+        let new_field = if is_abstract { ANEW } else { NEW };
         let test = synth(
             ast::ExprKind::InstanceOf {
                 expr: Box::new(name_expr("#v", span)),
@@ -366,7 +399,7 @@ impl FnCx<'_, '_> {
         let name = synth(ast::ExprKind::Lit(ast::Lit::Str(shown.into())), span);
         let lit = synth(
             ast::ExprKind::Object(vec![
-                ast::ObjectProp::KeyValue(hidden(NEW, span), arrow(ps, new, span)),
+                ast::ObjectProp::KeyValue(hidden(new_field, span), arrow(ps, new, span)),
                 ast::ObjectProp::KeyValue(
                     hidden(IS, span),
                     arrow(vec![param(ident("#v", span), false)], test, span),
@@ -506,6 +539,18 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let c = self.ctor_value_named(class)?;
         let v = self.expr(&c, None, Want::Borrow);
+        if self.cx.is_abstract_ctor(v.ty) {
+            let tn = self.cx.display(v.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("cannot create an instance through a value of type `{tn}`: it may hold an abstract class (TypeScript's TS2511)"),
+                    class.span,
+                )
+                .with_note("declare the value's type without `abstract` (`new (...) => T`) to create instances through it"),
+            );
+            self.check_args_loose(args);
+            return Some(self.error_expr(span));
+        }
         Some(self.ctor_field_call(v, NEW, args, span))
     }
 

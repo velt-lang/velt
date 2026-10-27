@@ -194,8 +194,9 @@ contents.
 
 ## Classes
 
-- Single inheritance; `override` is required on redefined methods; there are no abstract
-  classes and no `protected` members (`private` is private to the declaring class); a
+- Single inheritance; `override` is required on redefined methods (not on the implementation
+  of an abstract method); abstract classes, abstract properties and `abstract new () => T`
+  work as in TypeScript; there are no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules. ES private names
   (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
   `Object.keys`, never inherited.

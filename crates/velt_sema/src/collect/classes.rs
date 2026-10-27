@@ -1,7 +1,8 @@
 //! Phase 4: class hierarchy rules. `override` is required exactly when a method redefines a
 //! base-class method (same signature). Vtable slots exist only for methods that some subclass
 //! overrides (whole-program), laid out base slots first. Constructors are inherited when a class
-//! declares none; fields without a default need a constructor that initializes them.
+//! declares none; fields without a default need a constructor that initializes them. A method
+//! implementing an abstract one overrides it without `override` (`abstracts`).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
@@ -9,6 +10,7 @@ use std::collections::BTreeSet;
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use super::abstracts::{self, implements_abstract};
 use super::fill_defaults::{
     fill_key, fill_method, fill_positions, trailing_counts, Overrides, FILL,
 };
@@ -23,6 +25,7 @@ pub(super) fn check_classes(cx: &mut Ctx) {
         .map(DefId)
         .filter(|d| cx.adt(*d).is_some_and(|a| a.decl.is_some()))
         .collect();
+    abstracts::record(cx, &adts);
     let mut order = vec![];
     let mut seen = FxHashSet::default();
     for &d in &adts {
@@ -33,10 +36,11 @@ pub(super) fn check_classes(cx: &mut Ctx) {
         layout_vtable(cx, d, &overridden, &overrides);
         inherit_ctor(cx, d);
         check_field_inits(cx, d);
+        abstracts::check_implemented(cx, d);
     }
 }
 
-fn base_of_def(cx: &Ctx, d: DefId) -> Option<DefId> {
+pub(super) fn base_of_def(cx: &Ctx, d: DefId) -> Option<DefId> {
     let base = cx.adt(d)?.base?;
     cx.class_of(base).map(|(b, _)| b)
 }
@@ -57,6 +61,12 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
     let mut out = BTreeSet::new();
     let mut overrides = Overrides::default();
     for &d in adts {
+        // Fields implementing abstract members fill their slots (`abstract_fields`).
+        for (key, _) in super::abstract_fields::field_impls(cx, d) {
+            if let Some(origin) = introducer(cx, d, &key) {
+                out.insert((origin, key));
+            }
+        }
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
         // `override #m` is reported by `own_methods`: private names are never inherited.
         for m in decl
@@ -67,7 +77,8 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
             let name = &m.decl.sig.name;
             let module = cx.adt(d).expect("ICE: adt").module;
             let key = cx.method_key(module, name, m.is_setter);
-            if !m.is_override && (m.is_static || !std_override(cx, d, &key)) {
+            let implements = !m.is_static && implements_abstract(cx, d, &key);
+            if !m.is_override && !implements && (m.is_static || !std_override(cx, d, &key)) {
                 continue;
             }
             match introducer(cx, d, &key) {
@@ -133,7 +144,7 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
                 t.methods.iter().any(|x| {
                     x.is_override && cx.method_key(a.module, &x.decl.sig.name, x.is_setter) == name
                 })
-            });
+            }) || implements_abstract(cx, c, name);
             found = Some(c);
             if !is_override {
                 return found;
@@ -147,7 +158,7 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
 }
 
 /// Does class `c` get `name` as a default method of an interface it implements?
-fn has_default(cx: &Ctx, c: DefId, name: &str) -> bool {
+pub(super) fn has_default(cx: &Ctx, c: DefId, name: &str) -> bool {
     cx.adt(c).is_some_and(|a| {
         a.implements.iter().any(|b| {
             cx.iface(b.iface).is_some_and(|i| {
@@ -196,6 +207,11 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden, overrides: &Ov
         },
     };
     own_methods(cx, d, overridden, &mut vt);
+    for (key, def) in super::abstract_fields::field_methods(cx, d) {
+        if let Some(&slot) = vt.slots.get(&key) {
+            vt.entries[slot as usize] = def;
+        }
+    }
     getter_only_overrides(cx, d, &mut vt);
     // Interface default methods this class introduces and a subclass overrides.
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
@@ -297,7 +313,8 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
             .filter(|f| !f.is_static());
-        if m.is_override || (inherited.is_some() && std_override(cx, d, &key)) {
+        let implements = implements_abstract(cx, d, &key);
+        if m.is_override || implements || (inherited.is_some() && std_override(cx, d, &key)) {
             if let Some(f) = inherited {
                 check_override_sig(cx, mref, &f, name);
             }
@@ -337,12 +354,19 @@ fn shadowed_setter(cx: &Ctx, d: DefId, m: &ast::Method) -> Option<String> {
 fn getter_only_overrides(cx: &mut Ctx, d: DefId, vt: &mut Vtable) {
     let a = cx.adt(d).expect("ICE: adt");
     let (decl, base_ty, n) = (a.decl.expect("ICE: adt decl"), a.base, a.generics.len());
+    let module = a.module;
     let Some((b, bargs)) = base_ty.and_then(|b| cx.class_of(b)) else {
         return;
     };
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
     let self_ty = cx.ty.intern(crate::hir::TyKind::Adt(d, self_args));
-    for m in decl.methods.iter().filter(|m| m.is_override) {
+    let overriding: Vec<&ast::Method> = (decl.methods.iter())
+        .filter(|m| {
+            let key = cx.method_key(module, &m.decl.sig.name, m.is_setter);
+            m.is_override || (!m.is_static && implements_abstract(cx, d, &key))
+        })
+        .collect();
+    for m in overriding {
         hidden_getter(cx, d, (b, &bargs), m);
         let Some(key) = shadowed_setter(cx, d, m) else {
             continue;

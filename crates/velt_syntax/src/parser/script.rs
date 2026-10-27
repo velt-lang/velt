@@ -42,7 +42,12 @@ impl Parser<'_> {
             ) => true,
             Some(Kw::Async) => self.at_async_function(),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
-            None => self.at_extend() || self.at_namespace(0) || self.at_var_decl(),
+            None => {
+                self.at_extend()
+                    || self.at_namespace(0)
+                    || self.at_var_decl()
+                    || self.at_abstract_class()
+            }
             _ => false,
         }
     }

@@ -1,0 +1,10 @@
+abstract_class_syntax.vlt:4:22: error: property `x` cannot have an initializer because it is marked abstract (TypeScript's TS1267)
+abstract_class_syntax.vlt:5:16: error: abstract getter `h` must declare its type (`get h(): T`; TypeScript's TS7033)
+abstract_class_syntax.vlt:6:12: error: `abstract` modifier already seen (TypeScript's TS1030)
+abstract_class_syntax.vlt:7:19: error: `static` cannot be used with `abstract` (TypeScript's TS1243)
+abstract_class_syntax.vlt:8:20: error: `private` cannot be used with `abstract` (TypeScript's TS1243)
+abstract_class_syntax.vlt:9:24: error: abstract method `f` cannot have an implementation (TypeScript's TS1245): remove `abstract`, or the body
+abstract_class_syntax.vlt:12:12: error: abstract method `g` must declare its return type (`g(): void` if it returns nothing; TypeScript's TS7010)
+abstract_class_syntax.vlt:16:12: error: abstract methods can only appear in an abstract class (TypeScript's TS1244): declare `abstract class`
+abstract_class_syntax.vlt:20:12: error: only classes can have abstract methods
+abstract_class_syntax.vlt:24:12: error: `readonly`, `static`, `override`, `private` and `abstract` are not allowed on interface methods

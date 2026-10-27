@@ -78,7 +78,44 @@ hidden classes and no runtime shape checks.
   `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
   each class applies that class's own default, so a call passing every argument costs the same
   as before.
-  There are no abstract classes.
+- **Abstract classes** (TypeScript's rules): `abstract class C` cannot be created with `new`
+  (``cannot create an instance of abstract class `C` ``), only its subclasses can. It may declare
+  abstract methods and accessors, `abstract area(): number;` / `abstract get name(): string;`,
+  which have no body and must declare their return type, and abstract properties, `abstract
+  readonly name: string;` / `abstract count: number;` (an abstract getter, and a setter unless
+  `readonly`). A subclass implements an abstract property with a field (`readonly name = "q"`) or
+  accessors, and an abstract method with a method or a field of its function type (`run: () =>
+  number = () => 1`). Reading or writing an abstract property through `this` in its class's own
+  constructor is an error (TypeScript's TS2715): no subclass field is initialized yet. Every
+  concrete subclass implements each
+  abstract member it inherits, or it is an error naming the class and the missing members
+  (``class `Square` does not implement the abstract member `area` (from `Shape`)``); a subclass
+  that leaves some unimplemented must itself be `abstract`. An implementation overrides the
+  abstract method without `override` (writing it is allowed), and calls through the base class,
+  also from the base's own methods and constructor, dispatch to it. `abstract override m()`
+  makes an inherited method abstract again. An abstract method cannot be `static`, `private`,
+  `async`, a generator or generic, and cannot be called through `super`. Abstract classes are
+  passed as values through [abstract construct signatures](functions.md#arrow-functions-and-function-types),
+  `abstract new () => Shape`.
+
+  ```ts
+  abstract class Shape {
+    abstract area(): number;
+    describe(): string {
+      return `area ${this.area()}`;
+    }
+  }
+  class Square extends Shape {
+    constructor(public side: number) {
+      super();
+    }
+    area(): number {
+      return this.side * this.side;
+    }
+  }
+  const shapes: Shape[] = [new Square(2), new Square(3)];
+  for (const s of shapes) console.log(s.describe()); // area 4, area 9
+  ```
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
   don't use `this` or `super.x`
