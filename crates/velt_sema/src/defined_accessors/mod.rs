@@ -70,7 +70,7 @@ fn accessor_call(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr, &[ast::Object
 }
 
 /// Does `module` define an accessor with `Object.defineProperty`?
-fn defines_accessors(module: &ast::Module) -> bool {
+pub(crate) fn defines_accessors(module: &ast::Module) -> bool {
     struct Finds(bool);
     impl Visit<'_> for Finds {
         fn expr(&mut self, e: &ast::Expr) {

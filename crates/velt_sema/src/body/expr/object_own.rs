@@ -133,7 +133,8 @@ impl FnCx<'_, '_> {
                 let symbolic = self
                     .trial_type(k)
                     .is_some_and(|t| self.symbolic_key_type(t));
-                let method = if symbolic { "__hasKeyed" } else { "__has" };
+                let keyed = symbolic || self.cx.objects.record_accessors;
+                let method = if keyed { "__hasKeyed" } else { "__has" };
                 let obj = self.expr(o, None, Want::Borrow);
                 return self.record_call(obj, method, std::slice::from_ref(k), span);
             }

@@ -306,7 +306,12 @@ impl FnCx<'_, '_> {
                                 kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
                                 span: lhs.span,
                             };
-                            self.record_call(obj, "__has", &[lit], span)
+                            // A record's accessors too, in a program that defines them.
+                            let has = match self.cx.objects.record_accessors {
+                                true => "__hasKeyed",
+                                false => "__has",
+                            };
+                            self.record_call(obj, has, &[lit], span)
                         }
                         _ => self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
                     };

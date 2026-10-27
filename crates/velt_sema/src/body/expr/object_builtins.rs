@@ -84,6 +84,12 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(ns) = &object.kind else {
             return None;
         };
+        if ns.name == "Reflect" && prop.name == "ownKeys" && !self.is_local_name("Reflect") {
+            // `Reflect.ownKeys(r)` of a record: its string keys, then its symbol keys.
+            if let Some(h) = self.record_own_keys(args, "__ownKeys", span) {
+                return Some(h);
+            }
+        }
         if ns.name == "Array" && prop.name == "isArray" && self.builtin_array(ns) {
             // An `any` / `unknown` argument is `dynamic_narrow`'s, checked before.
             return Some(self.array_is_array(args, span));
@@ -124,6 +130,15 @@ impl FnCx<'_, '_> {
         }
         if let Some(h) = self.reject_dynamic_args(&format!("Object.{name}"), args, span) {
             return Some(h);
+        }
+        // A string-keyed record's symbol keys and accessors (`record_props.rs`).
+        let on_record = match name {
+            "defineProperty" => self.record_define_property(args, span),
+            "getOwnPropertySymbols" => self.record_own_keys(args, "__ownSymbols", span),
+            _ => None,
+        };
+        if on_record.is_some() {
+            return on_record;
         }
         Some(match name {
             "is" => self.object_is(args, span),

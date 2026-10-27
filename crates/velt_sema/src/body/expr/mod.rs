@@ -142,6 +142,7 @@ mod record_call;
 mod record_compound;
 mod record_literal;
 mod record_logical;
+mod record_props;
 mod record_view;
 mod regex_args;
 mod rest_shapes;

@@ -142,7 +142,25 @@ impl FnCx<'_, '_> {
         let mut c = self.fn_callable(def, format!("method `{method}`"), span);
         let mut kp = c.params.remove(0);
         let mut kty = self.cx.subst_known(kp.ty, &slots);
-        let key = match self.symbolic_key(kty, method, &key, want_of(kp.mode)) {
+        // In a program that defines accessors, which a record may hold, every key.
+        let keyed = keyed_method(method).filter(|_| {
+            self.cx.objects.record_accessors && kty == self.cx.ty.str_
+        });
+        let key = match keyed {
+            Some(keyed) => {
+                (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
+                c = self.fn_callable(def, format!("method `{keyed}`"), span);
+                kp = c.params.remove(0);
+                kty = self.cx.subst_known(kp.ty, &slots);
+                let str_ = self.cx.ty.str_;
+                let h = match self.symbolic_key(str_, method, &key, want_of(kp.mode)) {
+                    Ok((h, _)) => h,
+                    Err(Some(h)) => self.string_key_of(str_, h),
+                    Err(None) => self.record_key_arg(str_, &key, want_of(kp.mode)),
+                };
+                self.coerce(h, kty)
+            }
+            None => match self.symbolic_key(kty, method, &key, want_of(kp.mode)) {
             // A symbol or `string | symbol` key: the method that also reaches the symbol table.
             Ok((h, keyed)) => {
                 (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
@@ -153,6 +171,7 @@ impl FnCx<'_, '_> {
             }
             Err(Some(h)) => self.string_key_of(kty, h),
             Err(None) => self.record_key_arg(kty, &key, want_of(kp.mode)),
+            },
         };
         let vp = checked.as_ref().map(|_| c.params.remove(0));
         let ck = self.check_call(&c, slots, rest, None, span);
@@ -204,8 +223,17 @@ impl FnCx<'_, '_> {
         key: &RecordKey<'_>,
         want: Want,
     ) -> Result<(hir::Expr, &'static str), Option<hir::Expr>> {
-        let (RecordKey::Index(e) | RecordKey::Computed(e)) = key else {
-            return Err(None);
+        let well_known;
+        let e = match key {
+            RecordKey::Index(e) | RecordKey::Computed(e) => *e,
+            // `r[Symbol.iterator]`, which the parser names `[Symbol.iterator]`: the symbol.
+            RecordKey::Name(id) => match well_known_symbol(id) {
+                Some(w) if k == self.cx.ty.str_ => {
+                    well_known = w;
+                    &well_known
+                }
+                _ => return Err(None),
+            },
         };
         let plain = matches!(
             e.kind,
@@ -214,13 +242,7 @@ impl FnCx<'_, '_> {
         if k != self.cx.ty.str_ || plain {
             return Err(None);
         }
-        let keyed = match method {
-            "__get" => Some("__getKeyed"),
-            "__set" => Some("__setKeyed"),
-            "__delete" => Some("__deleteKeyed"),
-            "__has" => Some("__hasKeyed"),
-            _ => None,
-        };
+        let keyed = keyed_method(method);
         let h = self.expr(e, None, want);
         let symbolic = self.symbolic_key_type(h.ty);
         match keyed {
@@ -346,4 +368,31 @@ impl FnCx<'_, '_> {
         };
         Some(self.mk(kind, k, id.span))
     }
+}
+
+/// The `Record` method that takes a `string | symbol` key for `method`, if it has one.
+pub(super) fn keyed_method(method: &str) -> Option<&'static str> {
+    match method {
+        "__get" => Some("__getKeyed"),
+        "__set" => Some("__setKeyed"),
+        "__delete" => Some("__deleteKeyed"),
+        "__has" => Some("__hasKeyed"),
+        _ => None,
+    }
+}
+
+/// `Symbol.name` for the member name `[Symbol.name]` the parser gives `o[Symbol.name]`.
+fn well_known_symbol(id: &ast::Ident) -> Option<ast::Expr> {
+    let name = id.name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+    let ident = |n: &str| ast::Ident {
+        name: n.to_string(),
+        span: id.span,
+    };
+    let object = synth(ast::ExprKind::Ident(ident("Symbol")), id.span);
+    let kind = ast::ExprKind::Member {
+        object: Box::new(object),
+        prop: ident(name),
+        optional: false,
+    };
+    Some(synth(kind, id.span))
 }

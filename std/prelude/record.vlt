@@ -50,6 +50,46 @@ export class Record<K, V> {
   // Field 2: the symbol-keyed entries, a table of their own as in Node, made when the first
   // symbol key is written (`null` until then: the string-key methods never read it).
   private symbols: Map<symbol, V> | null = null;
+  // Field 3: the accessors `Object.defineProperty` defined (`__defineAccessor`), by key. They
+  // are not enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip
+  // them, as in Node. Only a program that defines accessors reads this field: sema calls the
+  // `Keyed` methods there for every key (`hir::Program::record_accessors`).
+  private accessors: Map<K | symbol, __RecordAccessor<V>> | null = null;
+
+  /** The accessor `key` names, if `Object.defineProperty` defined one. */
+  __accessor(key: K | symbol): __RecordAccessor<V> | undefined {
+    const t = this.accessors;
+    if (t == null) {
+      return undefined;
+    }
+    return t.get(key);
+  }
+
+  /**
+   * `Object.defineProperty(r, key, { get, set, configurable })`: the accessor replaces an entry
+   * with the key. Defining again a property that is not configurable is Node's `TypeError`.
+   */
+  __defineAccessor(
+    key: K | symbol,
+    get: (() => V) | null,
+    set: ((value: V) => void) | null,
+    configurable: bool,
+  ) {
+    const old = this.__accessor(key);
+    if (old != null && !old.configurable) {
+      panic(`TypeError: Cannot redefine property: ${__recordKeyText(key)}`);
+    }
+    this.__deleteKeyed(key);
+    const a = new __RecordAccessor<V>(get, set, configurable);
+    const t = this.accessors;
+    if (t == null) {
+      const made: Map<K | symbol, __RecordAccessor<V>> = new Map();
+      made.set(key, a);
+      this.accessors = made;
+    } else {
+      t.set(key, a);
+    }
+  }
 
   /** `r[s]` with a symbol `s`: its entry in the symbol table. */
   __getSym(key: symbol): V | undefined {
@@ -86,6 +126,12 @@ export class Record<K, V> {
 
   /** `r[k]` with a `string | symbol` key. */
   __getKeyed(key: K | symbol): V | undefined {
+    if (this.accessors != null) {
+      const a = this.__accessor(key);
+      if (a != null) {
+        return a.read();
+      }
+    }
     if (typeof key === "symbol") {
       return this.__getSym(key as symbol);
     }
@@ -94,6 +140,13 @@ export class Record<K, V> {
 
   /** `r[k] = v` with a `string | symbol` key. */
   __setKeyed(key: K | symbol, value: V) {
+    if (this.accessors != null) {
+      const a = this.__accessor(key);
+      if (a != null) {
+        a.write(key, value);
+        return;
+      }
+    }
     if (typeof key === "symbol") {
       this.__setSym(key as symbol, value);
     } else {
@@ -103,6 +156,18 @@ export class Record<K, V> {
 
   /** `delete r[k]` with a `string | symbol` key. */
   __deleteKeyed(key: K | symbol): bool {
+    const t = this.accessors;
+    if (t != null) {
+      const a = t.get(key);
+      if (a != null) {
+        // A property that is not configurable stays: `delete` is Node's `TypeError` (strict
+        // code).
+        if (!a.configurable) {
+          panic(`TypeError: Cannot delete property '${__recordKeyText(key)}' of #<Object>`);
+        }
+        return t.delete(key);
+      }
+    }
     if (typeof key === "symbol") {
       return this.__deleteSym(key as symbol);
     }
@@ -111,6 +176,9 @@ export class Record<K, V> {
 
   /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own entries only). */
   __hasKeyed(key: K | symbol): bool {
+    if (this.accessors != null && this.__accessor(key) != null) {
+      return true;
+    }
     if (typeof key === "symbol") {
       return this.__hasSym(key as symbol);
     }
@@ -126,6 +194,20 @@ export class Record<K, V> {
     return t.keys();
   }
 
+  /** `Object.getOwnPropertySymbols(r)`: the symbol keys, accessors' too. */
+  __ownSymbols(): symbol[] {
+    const out = this.__symbolKeys();
+    const t = this.accessors;
+    if (t != null) {
+      for (const k of t.keys()) {
+        if (typeof k === "symbol") {
+          out.push(k as symbol);
+        }
+      }
+    }
+    return out;
+  }
+
   /**
    * `Reflect.ownKeys(r)`: the string keys in `Object.keys` order (array indices first,
    * ascending, then insertion order), then the symbol keys in insertion order.
@@ -135,8 +217,23 @@ export class Record<K, V> {
     for (const k of this.__keyNames()) {
       out.push(k);
     }
+    const t = this.accessors;
+    if (t != null) {
+      for (const k of t.keys()) {
+        if (typeof k !== "symbol") {
+          out.push(`${k as K}`);
+        }
+      }
+    }
     for (const s of this.__symbolKeys()) {
       out.push(s);
+    }
+    if (t != null) {
+      for (const k of t.keys()) {
+        if (typeof k === "symbol") {
+          out.push(k as symbol);
+        }
+      }
     }
     return out;
   }
@@ -349,6 +446,44 @@ export class Record<K, V> {
     }
     return out;
   }
+}
+
+/** An accessor property of a record (`Object.defineProperty` with `get` / `set`). */
+export class __RecordAccessor<V> {
+  getter: (() => V) | null;
+  setter: ((value: V) => void) | null;
+  configurable: bool;
+
+  constructor(getter: (() => V) | null, setter: ((value: V) => void) | null, configurable: bool) {
+    this.getter = getter;
+    this.setter = setter;
+    this.configurable = configurable;
+  }
+
+  /** A read: the getter's value, `undefined` without one. */
+  read(): V | undefined {
+    const g = this.getter;
+    if (g == null) {
+      return undefined;
+    }
+    return g();
+  }
+
+  /** A write: the setter, or Node's `TypeError` (strict code) without one. */
+  write<K>(key: K, value: V) {
+    const s = this.setter;
+    if (s == null) {
+      panic(
+        `TypeError: Cannot set property ${__recordKeyText(key)} of #<Object> which has only a getter`,
+      );
+    }
+    s(value);
+  }
+}
+
+/** A record key as Node's messages show it: a string as it is, a symbol as `Symbol(d)`. */
+function __recordKeyText<K>(key: K): string {
+  return String(key);
 }
 
 /**

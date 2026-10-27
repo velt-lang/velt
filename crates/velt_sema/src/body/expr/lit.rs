@@ -484,6 +484,10 @@ impl FnCx<'_, '_> {
                 {
                     return self.printable_depth(ret, depth + 1);
                 }
+                // A record prints its entries (its accessors are not enumerable).
+                if Some(d) == self.cx.prelude_adt("Record") {
+                    return args.iter().all(|&a| self.printable_depth(a, depth + 1));
+                }
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
                     crate::defs::DefInfo::Enum(e) => {
