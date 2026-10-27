@@ -91,7 +91,14 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
                 changed = true;
                 // Its callees' reads of its `frozen` params are its own now, while it still
                 // has the params: read them once before it is inlined into its own callers.
-                crate::frozen::run(&program.aggs, &mut program.funcs[caller.0 as usize]);
+                let f = &mut program.funcs[caller.0 as usize];
+                crate::frozen::run(&program.aggs, f);
+                // Checks of inlined callees (a node read through helpers) and the caller's own
+                // range check are in one function now, while its frozen params still name the
+                // array lengths.
+                if f.param_attrs.iter().any(|a| a.frozen) {
+                    crate::bounds::run(&program.aggs, f);
+                }
             }
         }
     }

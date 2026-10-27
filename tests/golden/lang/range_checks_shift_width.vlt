@@ -1,0 +1,17 @@
+// A shift of a u32 by a count of 32 or more shifts by the count modulo 32, so its result is not
+// known to be small: the range check on the index it gives stays, and the release build panics
+// exactly as the debug build does.
+function f(xs: u64[], b: u64, s: u32): u64 {
+  if (xs.length < 8 || b > (xs.length as u64) - 8) {
+    return 999;
+  }
+  const x: u32 = 4294967295;
+  const t: u32 = (s & 1) + 33;
+  const y: u32 = x >> t;
+  return xs[y as u64];
+}
+
+function main() {
+  const xs: u64[] = [1, 2, 3, 4, 5, 6, 7, 8];
+  console.log(f(xs, 0, 0));
+}
