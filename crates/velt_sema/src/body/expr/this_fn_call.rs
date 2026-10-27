@@ -83,6 +83,11 @@ impl FnCx<'_, '_> {
             (ast::ExprKind::Member { prop, .. }, false) => match self.cx.record_type_args(ot) {
                 Some((_, v)) => v,
                 None => {
+                    // Only an object type or class has fields (a union, an enum: none).
+                    let crate::hir::TyKind::Adt(d, _) = *self.cx.ty.kind(ot) else {
+                        return None;
+                    };
+                    self.cx.adt(d)?;
                     let fields = self.cx.public_fields(ot);
                     fields.into_iter().find(|f| f.name == prop.name)?.ty
                 }
