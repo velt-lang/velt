@@ -347,7 +347,24 @@ verifier rejects a `velt_simd_*` extern that is not one, and both backends emit 
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
-too, below the lane count, and touch only those elements.
+too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`
+from an array of `Atomic` words other threads may be storing to (`T.loadOptimistic`): LLVM
+emits a plain vector load, without an alias tag, and `freeze`s it, so a lane read while a store
+raced it is some value rather than `undef` and nothing computed from it is undefined; Cranelift
+emits a plain load. Correctness does not depend on how the hardware splits the load: a lane no
+thread wrote during the load is the word, whatever the width of the accesses, and a lane a store
+raced is rejected by the latch check whatever its bytes are (arm64 happens to read a 128-bit load
+as two single-copy-atomic 64-bit reads; x86-64 documents no such guarantee for a 16-byte SSE
+load; Velt's wasm targets have no threads).
+
+What the latch check relies on: a racing plain load reads from no store, so in LLVM's model
+nothing makes the version re-read see the writer's lock. It works, as Linux's seqlock and
+crossbeam's `AtomicCell` do, because the load stays where the source puts it, between the
+latch's acquire load and its acquire fence, and the hardware keeps that order (x86-64 TSO; on
+arm64 the fence is `dmb ishld`, before the re-read). So no backend or VIR pass may hoist a
+`load_optimistic` out of a loop, merge two of them, or move one across an atomic operation or a
+fence. LLVM and Cranelift treat acquire loads and fences as clobbers of all memory, and velt_opt
+moves no call.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which

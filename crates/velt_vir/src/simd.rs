@@ -126,6 +126,11 @@ pub enum Op {
     /// `(array: ptr, at: u64) -> v`: the lanes at elements `at..` of an array's buffer,
     /// unchecked (the prelude checks the range).
     Load,
+    /// `(array: ptr, at: u64) -> v`: `Load` from `Atomic` words other threads may be storing
+    /// to (velt:simd `loadOptimistic`, under a latch): a plain vector load, then frozen, so a
+    /// lane a store raced is some value, never undefined behaviour; a latch's version check
+    /// tells the reader whether one did. Unchecked, like `Load`.
+    LoadOptimistic,
     /// `(v, array: ptr, at: u64)`: writes the lanes to elements `at..`, unchecked.
     Store,
     /// `(array: ptr, at: u64, count: u64) -> v`: elements `at..at + count` in the low lanes and
@@ -483,7 +488,7 @@ impl SimdCall {
                 Op::Splat => (vec![lanes.scalar()], V128),
                 Op::Index => (vec![], V128),
                 Op::Fits => (vec![Ptr, U64], Bool),
-                Op::Load => (vec![Ptr, U64], V128),
+                Op::Load | Op::LoadOptimistic => (vec![Ptr, U64], V128),
                 Op::Store => (vec![V128, Ptr, U64], Unit),
                 Op::LoadPartial => (vec![Ptr, U64, U64], V128),
                 Op::StorePartial => (vec![V128, Ptr, U64, U64], Unit),
@@ -582,6 +587,7 @@ fn vector_op(name: &str) -> Option<Op> {
         "index" => Op::Index,
         "fits" => Op::Fits,
         "load" => Op::Load,
+        "load_optimistic" => Op::LoadOptimistic,
         "store" => Op::Store,
         "load_partial" => Op::LoadPartial,
         "store_partial" => Op::StorePartial,
