@@ -87,12 +87,14 @@ system function the target lacks (planned: Windows over its kernel32 functions, 
   Node's strings (`"r"`, `"r+"`, `"rs"`, `"rs+"`, `"w"`, `"wx"`, `"w+"`, `"wx+"`, `"a"`, `"ax"`,
   `"as"`, `"a+"`, `"ax+"`, `"as+"`) or the system's `O_*` bits as a number; the descriptor is
   closed on `exec`, as in Node.
-- `readSync(fd, buffer: u8[], offset = 0, length?, position?): number`: reads up to `length`
-  bytes (default: the rest of the buffer) into `buffer` from `offset` on, at `position` in the
+- `readSync(fd, buffer: u8[] | ArrayBufferView, offset = 0, length?, position?): number`: reads
+  up to `length` bytes (default: the rest of the buffer) into `buffer` from `offset` on (a
+  `u8[]`, Node's `Buffer`, or a typed array or `DataView`, whose bytes `offset` and `length`
+  count, as in Node), at `position` in the
   file (`pread`), or at the file's own position, which advances, when `position` is `null` or
   -1. Returns the bytes read, 0 at the end of the file.
-- `writeSync(fd, buffer: u8[] | string, offset?, length?, position?): number`: writes the bytes
-  (a string as UTF-8; its third argument is then the position), at `position` or at the file's
+- `writeSync(fd, buffer: u8[] | ArrayBufferView | string, offset?, length?, position?): number`:
+  writes the bytes (of a `u8[]`, a typed array or a `DataView`; a string as UTF-8; its third argument is then the position), at `position` or at the file's
   own position (at the end for a file opened to append). Returns the bytes written.
 - Arguments are coerced as Node coerces them: a read's `length` is truncated to a 32-bit integer
   (`null` reads 0), a write's is used as given, a read's `position` must be an integer from -1

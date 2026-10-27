@@ -1,6 +1,6 @@
 //! Calls of system functions (`declare system function`, crate::system): the declaration's
 //! arguments become the C function's, as the table of the target states them. A buffer gives
-//! its data pointer and its length, a path is checked to end with 0, a struct goes through a
+//! its data pointer and its length (an array's, or a view's: system_views.rs), a path is checked to end with 0, a struct goes through a
 //! temporary of the C layout (copied back after the call), guarded integers are checked, and
 //! on Apple arm64 the variadic arguments go on the stack (see [`APPLE_VARIADIC_REGS`]).
 
@@ -26,6 +26,8 @@ enum Arg {
     Scalar(Operand),
     /// The place of the array's or struct's inline value, and its type.
     Value(Place, TyId),
+    /// A view's bytes: their address and length (`u64`).
+    Bytes(Operand, Operand),
 }
 
 impl FnLower<'_, '_> {
@@ -62,7 +64,13 @@ impl FnLower<'_, '_> {
             return self.rvalue_temp(ret, Rvalue::Cast(v, ret));
         }
         let mut vals = vec![];
-        for a in args {
+        let declared = func.params.iter().filter(|p| p.declared());
+        for (a, p) in args.iter().zip(declared) {
+            let name = system::param_name(p);
+            if let Some((ptr, n)) = self.system_view(func, name, a) {
+                vals.push(Arg::Bytes(ptr, n));
+                continue;
+            }
             let v = self.expr(a);
             let t = self.sub(a.ty);
             vals.push(match self.cx.kind(t) {
@@ -73,7 +81,6 @@ impl FnLower<'_, '_> {
                 }
             });
         }
-        let ranged = system::ranged(func, args.len());
         let mut cargs: Vec<Operand> = vec![];
         let mut ctys: Vec<Ty> = vec![];
         let mut structs: Vec<(Place, TyId, Place, &'static Struct)> = vec![];
@@ -96,16 +103,8 @@ impl FnLower<'_, '_> {
                     self.guard(func, name, &v, ty.vir(), guard);
                     push(&mut cargs, &mut ctys, v, ty.vir());
                 }
-                Param::Buf { len, name, .. } => {
-                    let (mut ptr, mut n) = self.buffer(vals.next());
-                    if ranged {
-                        let (Some(Arg::Scalar(start)), Some(Arg::Scalar(end))) =
-                            (vals.next(), vals.next())
-                        else {
-                            ice("system call: a buffer range")
-                        };
-                        (ptr, n) = self.buffer_range(func, name, ptr, n, start, end);
-                    }
+                Param::Buf { len, .. } => {
+                    let (ptr, n) = self.buffer(vals.next());
                     push(&mut cargs, &mut ctys, ptr, Ty::Ptr);
                     let n = match len {
                         Int::U32 => self.clamp_u32(n),
@@ -260,53 +259,13 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The data pointer and length (`u64`) of a buffer argument.
+    /// The data pointer and length (`u64`) of a buffer argument: an array's or a view's.
     fn buffer(&mut self, arg: Option<Arg>) -> (Operand, Operand) {
-        let Some(Arg::Value(place, t)) = arg else {
-            ice("system call: a buffer argument")
-        };
-        let hdr = self.content(&place, t);
-        let ptr = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(0)))),
-        );
-        let len = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(1)))),
-        );
-        (ptr, len)
-    }
-
-    /// The bytes `start..end` of a buffer at `ptr` of `n` bytes: stops the program unless
-    /// `start <= end <= n`.
-    fn buffer_range(
-        &mut self,
-        func: &Func,
-        name: &str,
-        ptr: Operand,
-        n: Operand,
-        start: Operand,
-        end: Operand,
-    ) -> (Operand, Operand) {
-        let ordered = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Le, start.clone(), end.clone()),
-        );
-        let (inside, ok, bad) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(ordered, inside, bad);
-        self.switch_to(inside);
-        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, end.clone(), n));
-        self.branch(fits, ok, bad);
-        self.switch_to(bad);
-        self.panic_msg(&format!(
-            "system function `{}`: the range of `{name}` is outside the array",
-            func.name
-        ));
-        self.terminate(Terminator::Unreachable);
-        self.switch_to(ok);
-        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, ptr, start.clone()));
-        let len = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, end, start));
-        (at, len)
+        match arg {
+            Some(Arg::Value(place, t)) => self.header_parts(&place, t),
+            Some(Arg::Bytes(ptr, n)) => (ptr, n),
+            _ => ice("system call: a buffer argument"),
+        }
     }
 
     /// `min(n, u32::MAX)` as a `u32` (a Windows length: a shorter read or write is allowed).

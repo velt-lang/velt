@@ -297,6 +297,7 @@ impl FnCx<'_, '_> {
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
         self.std_callback_arg(d, args);
+        self.system_args = self.cx.fn_info(d).system.is_some();
         let ck = self.check_call(&c, slots, args, exp, span);
         self.void_task = None;
         self.task_callback = None;

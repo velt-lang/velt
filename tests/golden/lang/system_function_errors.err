@@ -13,7 +13,7 @@ C: `ssize_t pread(int fd, void *buf, size_t len, off_t offset)`; Velt: `declare 
 `Bad.nope` is not a field of `struct flock`, which has
 `whence` is a C `int`: declare it `i32`, not a function
 `length` is a C `off_t`: declare it `i64`, not a floating-point number
-a range of the buffer `buf` is two `usize` parameters after it, `start` and `end`
+`pread` takes 3 parameters (fd, buf, offset), not 5; a part of a buffer is passed as a view: `buf.subarray(start, end)`
 `st` is a `struct stat *`: declare it as a `struct` whose fields are fields of `struct stat`, not `Handle`
 `declare function fdatasync` is not allowed
 `fdatasync` is a system function: `declare system function fdatasync(...)` binds the C library's

@@ -87,6 +87,10 @@ export class Int8Array extends TypedArray implements Iterable<number> {
     return 0;
   }
 
+  override __emptyText(): string {
+    return "Int8Array(0) []";
+  }
+
   override __size(): usize {
     return 1;
   }

@@ -87,6 +87,10 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     return 2;
   }
 
+  override __emptyText(): string {
+    return "Uint8ClampedArray(0) []";
+  }
+
   override __size(): usize {
     return 1;
   }

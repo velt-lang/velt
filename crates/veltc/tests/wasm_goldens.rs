@@ -55,7 +55,7 @@ const UNSUPPORTED: &[&str] = &[
     "system_function_errno_await",
     "system_function_guard",
     "system_function_interior_nul",
-    "system_function_range",
+    "system_function_views",
     "system_function_unterminated",
     "system_function_windows",
 ];

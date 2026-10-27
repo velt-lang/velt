@@ -95,6 +95,7 @@ impl FnCx<'_, '_> {
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
         let weak_key = std::mem::take(&mut self.weak_key_args);
+        let system = std::mem::take(&mut self.system_args);
         let explicit = std::mem::take(&mut self.explicit_type_spans)
             .filter(|(at, _)| *at == span)
             .map_or_else(Vec::new, |(_, s)| s);
@@ -156,7 +157,7 @@ impl FnCx<'_, '_> {
             }
         }
         let args_before = self.cx.diags.len();
-        let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
+        let checked = self.args_in_rounds(c, &mut slots, &context, args, (collect, system));
         let reported = self.cx.diags.len() > args_before;
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);
@@ -208,7 +209,10 @@ impl FnCx<'_, '_> {
             let site = self.arg_site(p, h.span);
             self.flow_into(&h, site);
             let outer_target = self.set_target(site);
-            let mut h = if weak_key && hargs.is_empty() {
+            // A view for a system function's byte buffer (`system_args.rs`), as it is.
+            let mut h = if system && self.is_byte_array(target) && self.is_byte_view(h.ty) {
+                h
+            } else if weak_key && hargs.is_empty() {
                 self.per_use_weak_key(&h);
                 self.weak_key_coerce(h, target)
             } else if self.cx.sigq.readonly_params.contains(&p.span)
@@ -429,7 +433,7 @@ impl FnCx<'_, '_> {
         slots: &mut [Option<TyId>],
         context: &[Option<TyId>],
         args: &[ast::Expr],
-        collect: bool,
+        (collect, system): (bool, bool),
     ) -> Vec<hir::Expr> {
         let order = self.arg_order(c, args);
         // Slots fixed before any argument (explicit type arguments, the receiver's).
@@ -438,7 +442,12 @@ impl FnCx<'_, '_> {
         for i in order {
             let p = &c.params[i];
             if untyped(&args[i]) {
-                self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
+                self.number_slot_from_callback(
+                    c,
+                    p.ty,
+                    slots,
+                    super::numbers::has_float_lit(&args[i]),
+                );
                 self.number_slot_from_context(p.ty, slots, context);
             }
             self.class_arg_slots((i, args), c, slots, &given);
@@ -493,10 +502,15 @@ impl FnCx<'_, '_> {
             let site = self.param_site(p);
             let outer_target = self.set_target(site);
             let want = want_of(p.mode);
-            let h = match (adapted, bound, arrow) {
-                (Some(h), _, _) => h,
-                (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
-                (None, None, Some(a))
+            let view = match system {
+                true => self.system_view_arg(&args[i], p.ty, want),
+                false => None,
+            };
+            let h = match (view, adapted, bound, arrow) {
+                (Some(h), ..) => h,
+                (None, Some(h), _, _) => h,
+                (None, None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, None, None, Some(a))
                     if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) =>
                 {
                     self.arrow_arg(a, expected, owned)
@@ -760,16 +774,6 @@ impl FnCx<'_, '_> {
             ),
             span,
         );
-    }
-}
-
-/// Does the untyped number expression `e` contain a float literal (`0.0`, `-(1 + 0.5)`)?
-fn has_float_lit(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Float { .. }) => true,
-        ast::ExprKind::Unary { expr, .. } | ast::ExprKind::Paren(expr) => has_float_lit(expr),
-        ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
-        _ => false,
     }
 }
 

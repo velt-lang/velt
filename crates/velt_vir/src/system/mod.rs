@@ -6,8 +6,9 @@
 //! - integers cross as themselves ([`Int`]: the declaration names the same type);
 //! - a byte buffer is one Velt parameter, `u8[]` (the C function writes it) or `readonly u8[]`
 //!   (it only reads it), and two C arguments, the pointer and the length, both taken from the
-//!   array ([`Param::Buf`]), so no call reaches past its end; a declaration may follow it with
-//!   `start: usize, end: usize` to pass the bytes `start..end` (checked: [`ranged`]);
+//!   array ([`Param::Buf`]), so no call reaches past its end; the argument may also be a view
+//!   of bytes (a typed array, a `DataView`, `xs.subarray(begin, end)` of a `u8[]`), whose
+//!   address and length lowering takes instead (`lower/system_views.rs`);
 //! - a path is a `readonly u8[]` (`u16[]` on Windows) with exactly one 0 element,
 //!   its last ([`Param::CStr`], [`Param::WStr`]), checked at the call;
 //! - a C struct is a Velt `struct` of integers whose fields name the C struct's fields
@@ -28,7 +29,7 @@ mod check;
 mod posix;
 mod windows;
 
-pub use check::{expected_decls, match_decl, ranged, Mismatch};
+pub use check::{expected_decls, match_decl, param_name, Mismatch};
 
 /// An integer type as a declaration names it (`i32`, `isize`, ...).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

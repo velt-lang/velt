@@ -111,6 +111,15 @@ export class BufferView {
     return 1;
   }
 
+  /**
+   * What Node's messages show for the view when it is empty (`util.inspect`: `Uint8Array(0) []`,
+   * or a `DataView` with its buffer), for the fd API's errors; each view overrides it, so a
+   * program has the code of the views it makes only.
+   */
+  __emptyText(): string {
+    return "";
+  }
+
   /** The buffer the view is of. */
   get buffer(): ArrayBuffer {
     return this.buf;
@@ -125,6 +134,14 @@ export class BufferView {
   get byteLength(): number {
     return (this.len * this.__size()) as number;
   }
+}
+
+/**
+ * The number of bytes `v` views (std only: a typed array's or a `DataView`'s bytes passed to a
+ * system function, crates/velt_vir/src/lower/system_views.rs).
+ */
+export function __viewBytes(v: BufferView): usize {
+  return v.len * v.__size();
 }
 
 /**

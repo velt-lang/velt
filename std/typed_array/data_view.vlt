@@ -172,6 +172,10 @@ export class DataView extends BufferView {
     store64(this.buf.bytes, this.at(byteOffset, 8), littleEndian ? x : swap64(x));
   }
 
+  override __emptyText(): string {
+    return this.__inspect().text;
+  }
+
   /** `"[object DataView]"`, as `String(view)` gives in JS. */
   toString(): string {
     return "[object DataView]";

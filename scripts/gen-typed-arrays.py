@@ -293,6 +293,10 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return @K@;
   }
 
+  override __emptyText(): string {
+    return "@C@(0) []";
+  }
+
   override __size(): usize {
     return @N@;
   }

@@ -109,8 +109,9 @@ it, starting with positioned I/O for the pager.
   its variadic arguments start, argument guards, and each C struct's layout by field name. A
   Velt struct names the fields it uses (any order, any subset); lowering copies through a
   temporary of the target's layout, so one Velt struct fits `struct flock` on macOS and Linux.
-- Until byte views (feature 3) exist, a range of a buffer is spelled `buf: u8[], start: usize,
-  end: usize` (checked at the call).
+- A buffer parameter takes an array or a view (#1718): a typed array, a `DataView`, a
+  `subarray` of one, or `xs.subarray(begin, end)` of a `u8[]`, borrowed for the call. The
+  interim `buf: u8[], start: usize, end: usize` form is gone.
 - `fcntl`'s forms are overloads in the table, chosen by the declaration's types; `fcntl$lock`
   names a second form in one module (the `$suffix` is ignored). Each form checks its commands.
 - Paths are `readonly u8[]` with exactly one 0, as the last byte (checked at the call), not `string`: no allocation or

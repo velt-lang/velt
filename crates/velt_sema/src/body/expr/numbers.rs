@@ -12,6 +12,7 @@
 //! a declared integer needs `as T`. Comparing an integer with a number is exact (`compare`).
 
 use velt_common::Span;
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, UseMode};
@@ -473,5 +474,15 @@ impl FnCx<'_, '_> {
             self.cx.ty.usize,
             span,
         )
+    }
+}
+
+/// Does the untyped number expression `e` contain a float literal (`0.0`, `-(1 + 0.5)`)?
+pub(super) fn has_float_lit(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary { expr, .. } | ast::ExprKind::Paren(expr) => has_float_lit(expr),
+        ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
+        _ => false,
     }
 }

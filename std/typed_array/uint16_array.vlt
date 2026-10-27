@@ -95,6 +95,10 @@ export class Uint16Array extends TypedArray implements Iterable<number> {
     return 4;
   }
 
+  override __emptyText(): string {
+    return "Uint16Array(0) []";
+  }
+
   override __size(): usize {
     return 2;
   }

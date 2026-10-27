@@ -11,19 +11,14 @@ import { IoError } from "velt:io";
 import { Stats } from "velt:fs";
 import { platform } from "velt:os";
 import { utf8Encode } from "velt:encoding";
+import { ArrayBufferView, BufferView } from "velt:typed_array/core";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function close(fd: i32): i32;
-declare system function read(fd: i32, buf: u8[], start: usize, end: usize): isize;
-declare system function write(fd: i32, buf: readonly u8[], start: usize, end: usize): isize;
-declare system function pread(fd: i32, buf: u8[], start: usize, end: usize, offset: i64): isize;
-declare system function pwrite(
-  fd: i32,
-  buf: readonly u8[],
-  start: usize,
-  end: usize,
-  offset: i64,
-): isize;
+declare system function read(fd: i32, buf: u8[]): isize;
+declare system function write(fd: i32, buf: readonly u8[]): isize;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
 declare system function fsync(fd: i32): i32;
 declare system function fdatasync(fd: i32): i32;
 declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
@@ -77,156 +72,59 @@ function linuxErrno(e: i32): i32 {
   return e < 35 ? e : -1;
 }
 
-// libuv's name and message of a Linux errno.
-function errnoName(e: i32): string {
-  switch (e) {
-    case 1:
-      return "EPERM";
-    case 2:
-      return "ENOENT";
-    case 4:
-      return "EINTR";
-    case 5:
-      return "EIO";
-    case 6:
-      return "ENXIO";
-    case 9:
-      return "EBADF";
-    case 11:
-      return "EAGAIN";
-    case 12:
-      return "ENOMEM";
-    case 13:
-      return "EACCES";
-    case 16:
-      return "EBUSY";
-    case 17:
-      return "EEXIST";
-    case 18:
-      return "EXDEV";
-    case 20:
-      return "ENOTDIR";
-    case 21:
-      return "EISDIR";
-    case 22:
-      return "EINVAL";
-    case 23:
-      return "ENFILE";
-    case 24:
-      return "EMFILE";
-    case 26:
-      return "ETXTBSY";
-    case 27:
-      return "EFBIG";
-    case 28:
-      return "ENOSPC";
-    case 29:
-      return "ESPIPE";
-    case 30:
-      return "EROFS";
-    case 32:
-      return "EPIPE";
-    case 35:
-      return "EDEADLK";
-    case 36:
-      return "ENAMETOOLONG";
-    case 37:
-      return "ENOLCK";
-    case 38:
-      return "ENOSYS";
-    case 39:
-      return "ENOTEMPTY";
-    case 40:
-      return "ELOOP";
-    case 75:
-      return "EOVERFLOW";
-    case 95:
-      return "ENOTSUP";
-    case 122:
-      return "EDQUOT";
-  }
-  return "UNKNOWN";
-}
-
-function errnoText(e: i32): string {
-  switch (e) {
-    case 1:
-      return "operation not permitted";
-    case 2:
-      return "no such file or directory";
-    case 4:
-      return "interrupted system call";
-    case 5:
-      return "i/o error";
-    case 6:
-      return "no such device or address";
-    case 9:
-      return "bad file descriptor";
-    case 11:
-      return "resource temporarily unavailable";
-    case 12:
-      return "not enough memory";
-    case 13:
-      return "permission denied";
-    case 16:
-      return "resource busy or locked";
-    case 17:
-      return "file already exists";
-    case 18:
-      return "cross-device link not permitted";
-    case 20:
-      return "not a directory";
-    case 21:
-      return "illegal operation on a directory";
-    case 22:
-      return "invalid argument";
-    case 23:
-      return "file table overflow";
-    case 24:
-      return "too many open files";
-    case 26:
-      return "text file is busy";
-    case 27:
-      return "file too large";
-    case 28:
-      return "no space left on device";
-    case 29:
-      return "invalid seek";
-    case 30:
-      return "read-only file system";
-    case 32:
-      return "broken pipe";
-    case 35:
-      return "resource deadlock avoided";
-    case 36:
-      return "name too long";
-    case 37:
-      return "no locks available";
-    case 38:
-      return "function not implemented";
-    case 39:
-      return "directory not empty";
-    case 40:
-      return "too many symbolic links encountered";
-    case 75:
-      return "value too large for defined data type";
-    case 95:
-      return "operation not supported on socket";
-    case 122:
-      return "disk quota exceeded";
-  }
-  return "unknown error";
-}
+// libuv's name and message of each Linux errno these calls report, one per line:
+// `<errno> <name>: <message>`. A table read on the error path, where a `switch` per errno would
+// put a branch and a string per case into every program that uses the fd API.
+const ERRNOS =
+  "\n" +
+  "1 EPERM: operation not permitted\n" +
+  "2 ENOENT: no such file or directory\n" +
+  "4 EINTR: interrupted system call\n" +
+  "5 EIO: i/o error\n" +
+  "6 ENXIO: no such device or address\n" +
+  "9 EBADF: bad file descriptor\n" +
+  "11 EAGAIN: resource temporarily unavailable\n" +
+  "12 ENOMEM: not enough memory\n" +
+  "13 EACCES: permission denied\n" +
+  "16 EBUSY: resource busy or locked\n" +
+  "17 EEXIST: file already exists\n" +
+  "18 EXDEV: cross-device link not permitted\n" +
+  "20 ENOTDIR: not a directory\n" +
+  "21 EISDIR: illegal operation on a directory\n" +
+  "22 EINVAL: invalid argument\n" +
+  "23 ENFILE: file table overflow\n" +
+  "24 EMFILE: too many open files\n" +
+  "26 ETXTBSY: text file is busy\n" +
+  "27 EFBIG: file too large\n" +
+  "28 ENOSPC: no space left on device\n" +
+  "29 ESPIPE: invalid seek\n" +
+  "30 EROFS: read-only file system\n" +
+  "32 EPIPE: broken pipe\n" +
+  "35 EDEADLK: resource deadlock avoided\n" +
+  "36 ENAMETOOLONG: name too long\n" +
+  "37 ENOLCK: no locks available\n" +
+  "38 ENOSYS: function not implemented\n" +
+  "39 ENOTEMPTY: directory not empty\n" +
+  "40 ELOOP: too many symbolic links encountered\n" +
+  "75 EOVERFLOW: value too large for defined data type\n" +
+  "95 ENOTSUP: operation not supported on socket\n" +
+  "122 EDQUOT: disk quota exceeded\n";
 
 /**
  * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any), as Node
  * writes it: `ENOENT: no such file or directory, open 'a.txt'`.
  */
 export function osError(e: i32, syscall: string, path: string | null = null): IoError {
-  const n = isMac() ? linuxErrno(e) : e;
-  const code = errnoName(n);
-  const at = path == null ? "" : ` '${path}'`;
-  return new IoError(code, `${code}: ${errnoText(n)}, ${syscall}${at}`);
+  const key = `\n${isMac() ? linuxErrno(e) : e} `;
+  const at = ERRNOS.indexOf(key);
+  let line = "UNKNOWN: unknown error";
+  if (at >= 0) {
+    const from = at + (key.length as i64);
+    line = ERRNOS.slice(from, ERRNOS.indexOf("\n", from));
+  }
+  const code = line.slice(0, line.indexOf(":"));
+  const on = path == null ? "" : ` '${path}'`;
+  return new IoError(code, `${line}, ${syscall}${on}`);
 }
 
 // The value of an integer argument as Node checks it (`validateInteger`).
@@ -425,32 +323,55 @@ function writePosition(p: number | null | undefined): i64 {
  * `position` in the file, or at the file's own position (which then advances) when `position`
  * is left out, `null` or -1. Returns the number of bytes read, 0 at the end of the file.
  * `offset` defaults to 0 and `length` to the rest of the buffer; a number is coerced as Node
- * does (`length` truncated to a 32-bit integer, `position` validated strictly). Velt's typed
- * API takes positional arguments, not Node's `(fd, buffer, options)` object.
+ * does (`length` truncated to a 32-bit integer, `position` validated strictly). `buffer` is a
+ * `u8[]` (Node's `Buffer`), a typed array or a `DataView`; `offset` and `length` count bytes of
+ * it. Velt's typed API takes positional arguments, not Node's `(fd, buffer, options)` object.
  */
 export function readSync(
   fd: number,
-  buffer: u8[],
+  buffer: u8[] | ArrayBufferView,
   offset: number | null = 0,
   length?: number | null,
   position?: number | null,
 ): number {
   const f = descriptor(fd);
-  const size = buffer.length as usize;
+  if (buffer instanceof BufferView) {
+    const size = buffer.len * buffer.__size();
+    return readInto(f, buffer.buf.bytes, buffer.off, size, buffer, offset, length, position);
+  }
+  return readInto(f, buffer, 0, buffer.length as usize, null, offset, length, position);
+}
+
+// `readSync` into the `size` bytes of `bytes` from `base` (all of them, or a view's), again when
+// a signal interrupted it. `view` is the view they are, for the message about an empty one.
+function readInto(
+  f: i32,
+  bytes: u8[],
+  base: usize,
+  size: usize,
+  view: BufferView | null,
+  offset: number | null,
+  length: number | null | undefined,
+  position: number | null | undefined,
+): number {
   const off = bufferOffset(size, offset, true);
   const len = readLength(size, off, length);
   if (len == 0) {
     return 0;
   }
   if (size == 0) {
-    throw new TypeError("The argument 'buffer' is empty and cannot be written. Received <Buffer >");
+    const shown = view == null ? "<Buffer >" : view.__emptyText();
+    throw new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
   }
   checkRead(size, off, len);
   const start = off as usize;
   const end = (off + len) as usize;
   const at = readPosition(position);
   while (true) {
-    const n = at < 0 ? read(f, buffer, start, end) : pread(f, buffer, start, end, at);
+    const n =
+      at < 0
+        ? read(f, bytes.subarray(base + start, base + end))
+        : pread(f, bytes.subarray(base + start, base + end), at);
     if (n >= 0) {
       return n as number;
     }
@@ -465,38 +386,49 @@ export function readSync(
  * Writes `length` bytes of `buffer` from byte `offset` on (Node's `fs.writeSync`): at
  * `position` in the file, or at the file's own position when `position` is left out, `null` or
  * not a valid byte offset (at its end for a file opened to append). Returns the number of bytes
- * written. `offset` defaults to 0 and `length` to the rest of the buffer. A string is written
- * as UTF-8, and its third argument is then the position.
+ * written. `offset` defaults to 0 and `length` to the rest of the buffer. `buffer` is a `u8[]`
+ * (Node's `Buffer`), a typed array or a `DataView`; a string is written as UTF-8, and its third
+ * argument is then the position.
  */
 export function writeSync(
   fd: number,
-  buffer: u8[] | string,
+  buffer: u8[] | ArrayBufferView | string,
   offset: number | null = null,
   length?: number | null,
   position?: number | null,
 ): number {
   const f = descriptor(fd);
   if (typeof buffer == "string") {
-    return writeBytes(f, utf8Encode(buffer), 0, null, offset);
+    const bytes = utf8Encode(buffer);
+    return writeFrom(f, bytes, 0, bytes.length as usize, 0, null, offset);
   }
-  return writeBytes(f, buffer, offset ?? 0, length, position);
+  if (buffer instanceof BufferView) {
+    const size = buffer.len * buffer.__size();
+    return writeFrom(f, buffer.buf.bytes, buffer.off, size, offset, length, position);
+  }
+  return writeFrom(f, buffer, 0, buffer.length as usize, offset, length, position);
 }
 
-function writeBytes(
+// `writeSync` of the `size` bytes of `bytes` from `base`, again when a signal interrupted it.
+function writeFrom(
   f: i32,
-  buffer: u8[],
+  bytes: u8[],
+  base: usize,
+  size: usize,
   offset: number | null,
   length: number | null | undefined,
   position: number | null | undefined,
 ): number {
-  const size = buffer.length as usize;
   const off = bufferOffset(size, offset, false);
   const len = writeLength(size, off, length);
   const start = off as usize;
   const end = (off + len) as usize;
   const at = writePosition(position);
   while (true) {
-    const n = at < 0 ? write(f, buffer, start, end) : pwrite(f, buffer, start, end, at);
+    const n =
+      at < 0
+        ? write(f, bytes.subarray(base + start, base + end))
+        : pwrite(f, bytes.subarray(base + start, base + end), at);
     if (n >= 0) {
       return n as number;
     }

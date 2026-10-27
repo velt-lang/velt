@@ -94,6 +94,10 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     return 7;
   }
 
+  override __emptyText(): string {
+    return "Float32Array(0) []";
+  }
+
   override __size(): usize {
     return 4;
   }
