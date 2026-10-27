@@ -33,7 +33,10 @@
 //!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or an
 //!    `Atomic` in its own memory, or the
 //!    param is written (`LocalDef::mutable`), and `frozen` under the same conditions except
-//!    that an `Atomic` is allowed (only its words change); aggregate-return out-pointer → `noalias`;
+//!    that an `Atomic` is allowed (only its words change); neither `noalias` nor `frozen` when
+//!    module state can reach values of the type (a module `const` / `let`, a `static` field:
+//!    a callee may write the argument through that variable); aggregate-return out-pointer →
+//!    `noalias`;
 //!    `nonnull` + `dereferenceable(size)` on all of them; the frame of a poll function
 //!    (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus `noalias` from
 //!    `velt_opt` when no pointer into the frame ever leaves the function). Every caller must

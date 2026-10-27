@@ -10,6 +10,7 @@
 
 mod kinds;
 mod locks;
+mod module_reach;
 mod transfers;
 mod weak;
 

@@ -104,8 +104,11 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   values holding a `Mutex` inline, nor params the body modifies — `LocalDef::mutable`, e.g.
   closure params); the same `Borrow` params → `frozen` also when the value holds an `Atomic`
   (nothing changes the pointee during the call but atomics' words, which only `velt_atomic_*`
-  calls access); aggregate / `Result` out-pointer → `noalias`; all of these `nonnull` +
-  `dereferenceable(size)`.
+  calls access); neither `noalias` nor `frozen` for a type whose values module state can reach
+  (a module-level `const` / `let`, a `static` field or an imported module's variable may hold
+  the argument, and a callee may write it through that variable; `readonly` still holds, as it
+  covers only writes through the param); aggregate / `Result` out-pointer → `noalias`; all of
+  these `nonnull` + `dereferenceable(size)`.
 - `velt_opt` keeps them on clones/specializations (inlined bodies simply lose them) and uses
   `noalias` and `frozen` for redundant-load elimination; LLVM emits them as parameter
   attributes (`frozen` has no LLVM counterpart); Cranelift ignores them.

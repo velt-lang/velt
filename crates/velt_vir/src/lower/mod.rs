@@ -200,6 +200,7 @@ pub(crate) fn lower_program(
             diags.extend(cx.fresh_fn_diagnostics());
             diags.extend(cx.counted_atomic_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
+            cx.unfreeze_module_reach();
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -412,6 +413,10 @@ struct Cx<'h> {
     /// The `AnyIface` glues, built last (any_iface.rs): each with the number of types `any`
     /// values held when it was built.
     iface_glues: Vec<(FuncId, TyId, Option<usize>)>,
+    /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
+    /// (boxing/module_reach.rs); those of the function being declared until it is built.
+    unique_params: Vec<(FuncId, u32, TyId)>,
+    declared_unique: Vec<(u32, TyId)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.
