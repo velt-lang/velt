@@ -11,7 +11,8 @@
 //!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
 //!   this rule gives every program's loops the same, its own modules' functions included.)
 //!
-//! Functions that never return (panic helpers) are never inlined: their calls are cold. A gated
+//! Functions that never return normally (panic helpers, and `never` functions that throw) are
+//! never inlined: their calls are cold. A gated
 //! function (`Function::target`) is never inlined into a function of another target, or into an
 //! ordinary one; an ordinary function may be inlined into a gated one.
 //! Recursive functions (members of a cycle) are never inlined, neither within their cycle
@@ -181,13 +182,18 @@ fn decide(
     (size <= limit && size <= budget.remaining).then_some(Decision::Charged(size))
 }
 
-/// Whether no path through `func` returns (a panic helper such as the out-of-bounds report):
-/// such calls are cold, and inlining them only bloats the hot code around them.
-fn never_returns(func: &Function) -> bool {
-    !func
-        .blocks
-        .iter()
-        .any(|b| matches!(b.term, Terminator::Return(_)))
+/// Whether no call of `func` returns normally: no path through it returns (a panic helper such
+/// as the out-of-bounds report), or it is declared `never` and returns only its error (a throw
+/// helper such as `corrupt(what): never`, `Function::cold`). Such calls are cold, and inlining
+/// them only bloats the hot code around them.
+pub(crate) fn never_returns(func: &Function) -> bool {
+    // A function imported from another unit has no body here: it may return.
+    func.cold
+        || (!func.blocks.is_empty()
+            && !func
+                .blocks
+                .iter()
+                .any(|b| matches!(b.term, Terminator::Return(_))))
 }
 
 /// Inline eligible calls in `caller`'s original blocks. Inlined bodies are not rescanned

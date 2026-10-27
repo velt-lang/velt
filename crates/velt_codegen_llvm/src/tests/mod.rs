@@ -84,6 +84,38 @@ fn module_structure() {
 }
 
 #[test]
+fn functions_that_never_return_are_cold() {
+    // `oob` has no `return` (a panic helper); `fail` returns only its error (`Function::cold`,
+    // a `never` function that throws); `helper` returns.
+    let mut p = sample();
+    let panic = ExternId(0);
+    let mut fb = FuncBuilder::internal("oob", &[Ptr], Unit);
+    let b = fb.block();
+    let n = fb.call(
+        b,
+        Callee::Extern(panic),
+        vec![copy_local(fb.param(0))],
+        None,
+    );
+    fb.term(n, Terminator::Unreachable);
+    p.funcs.push(fb.finish());
+    let mut fb = FuncBuilder::internal("fail", &[Ptr], Unit);
+    let b = fb.block();
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    let mut fail = fb.finish();
+    fail.cold = true;
+    p.funcs.push(fail);
+    let ir = emit_ir(&p, "x86_64-unknown-linux-gnu").expect("emit_ir");
+    for needle in [
+        "define internal void @\"oob\"(ptr %p0) #0 cold noinline {",
+        "define internal void @\"fail\"(ptr %p0) #0 cold noinline {",
+        "define internal zeroext i8 @\"helper\"(i8 signext %p0, i16 zeroext %p1) #0 {",
+    ] {
+        assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+    }
+}
+
+#[test]
 fn operations_follow_vir_semantics() {
     let ir = ir();
     for needle in [

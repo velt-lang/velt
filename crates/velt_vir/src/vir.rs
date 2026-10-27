@@ -233,6 +233,11 @@ pub struct Function {
     /// whole feature set and its SHA operations as the bare instructions. `None` for every
     /// other function. Inlining keeps a gated body out of callers with another target.
     pub target: Option<crate::simd::Ext>,
+    /// No call of it returns normally: its declared result is `never` (it panics, throws, exits
+    /// or loops forever), so every call is rare. Optimizers keep its body out of line (inlining
+    /// it only grows the hot code around the call) and backends may compile it as cold. Set by
+    /// lowering; `velt_opt` keeps it on clones. False promises nothing.
+    pub cold: bool,
 }
 
 /// What every caller guarantees about one `Ptr` param for the duration of the call
@@ -283,6 +288,7 @@ impl Function {
             param_attrs: Vec::new(),
             is_poll: false,
             target: None,
+            cold: false,
         }
     }
 
@@ -739,15 +745,8 @@ impl fmt::Display for Program {
         }
         for (i, e) in self.externs.iter().enumerate() {
             let nr = if e.noreturn { " noreturn" } else { "" };
-            writeln!(
-                f,
-                "extern#{} {}({}) -> {}{}",
-                i,
-                e.symbol,
-                fmt_tys(&e.params),
-                e.ret,
-                nr
-            )?;
+            let (sym, params) = (&e.symbol, fmt_tys(&e.params));
+            writeln!(f, "extern#{i} {sym}({params}) -> {}{nr}", e.ret)?;
         }
         for (i, func) in self.funcs.iter().enumerate() {
             let link = match func.linkage {
@@ -759,12 +758,13 @@ impl fmt::Display for Program {
             let open = if func.blocks.is_empty() { "" } else { " {" };
             writeln!(
                 f,
-                "fn#{} {} {}({}) -> {}{open}",
+                "fn#{} {} {}({}) -> {}{}{open}",
                 i,
                 link,
                 func.symbol,
                 fmt_tys(&func.params),
-                func.ret
+                func.ret,
+                if func.cold { " cold" } else { "" }
             )?;
             if open.is_empty() {
                 continue;
