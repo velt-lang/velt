@@ -288,14 +288,24 @@ pub(super) unsafe fn is_aliased(f: *mut VeltFut) -> bool {
 #[inline(always)]
 pub(super) unsafe fn forget_alias(f: *mut VeltFut, fl: u32) {
     if fl & ALIASED != 0 {
-        forget_alias_slow(f);
+        forget_alias_slow(f, fl);
     }
 }
 
 #[cold]
 #[inline(never)]
-unsafe fn forget_alias_slow(f: *mut VeltFut) {
+unsafe fn forget_alias_slow(f: *mut VeltFut, fl: u32) {
     crate::task::identity::forget(f);
+    // Finished, its result claimed or handled: no rejection of it is decided later, so its
+    // record goes now rather than when the node is freed.
+    let h = head(f);
+    let settled = h.owner.get() & OWNER_DELIVERED != 0
+        || h.flags.load(Ordering::Relaxed) & HANDLED != 0
+        || crate::task::identity::handled_elsewhere(f).is_some();
+    if fl & DONE != 0 && settled {
+        crate::task::identity::release(f);
+        h.flags.fetch_and(!ALIASED, Ordering::Relaxed);
+    }
 }
 
 /// The owner of aliased node `f` takes or hands on its result: a claim of the promise it stands
@@ -414,6 +424,16 @@ unsafe fn watch_rejection(f: *mut VeltFut, prev: u32) {
 
 /// Is `f`'s rejection (see [`watch_rejection`]) still unclaimed: its owner neither awaited it
 /// nor gave it up or handed it to a combinator or another task?
+/// Could the rejection of started node `f`, watched since it finished, still be unclaimed at the
+/// checkpoint ([`rejection_unclaimed`] without registering anything)?
+pub(super) unsafe fn rejection_open(f: *mut VeltFut) -> bool {
+    let h = head(f);
+    let fl = h.flags.load(Ordering::Acquire);
+    fl & (DETACHED | HANDLED | ADOPTED | HANDED_OVER) == 0
+        && h.owner.get() & OWNER_DELIVERED == 0
+        && h.transfer.load(Ordering::Acquire).is_null()
+}
+
 pub(super) unsafe fn rejection_unclaimed(f: *mut VeltFut) -> bool {
     let h = head(f);
     let fl = h.flags.load(Ordering::Acquire);

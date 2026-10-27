@@ -127,7 +127,6 @@ pub(super) unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     let h = head(f);
     // Finished: the set is done with the result, no need to tell it the owner is gone.
     let fl = h.flags.load(Ordering::Acquire);
-    super::forget_alias(f, fl);
     if fl & (ADOPTED | DONE) == ADOPTED {
         // Its leaves would wake this owner: let the set poll it (and re-register) instead.
         h.flags.fetch_and(!ADOPTED, Ordering::Relaxed);
@@ -137,5 +136,8 @@ pub(super) unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     if done && h.owner.get() & OWNER_DELIVERED == 0 {
         drop_result(f);
     }
+    // After the result's fate is settled: a finished node may wait in its set's queue until the
+    // task next yields, and its record goes now when nothing needs it any more.
+    super::forget_alias(f, fl | (done as u32 * DONE));
     release(f);
 }

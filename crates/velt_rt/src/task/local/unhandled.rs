@@ -41,6 +41,18 @@ pub extern "C" fn velt_rt_uncaught_now() {
 /// Drop the unclaimed result of started node `f` with `d` (its `result_drop`), letting an
 /// unhandled rejection wait for the queue when it runs inside a task.
 pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C" fn(*mut u8)) {
+    // A converted promise whose promise was handled elsewhere is dropped quietly now, not kept
+    // for the checkpoint (task/identity.rs).
+    if node::is_aliased(f) {
+        if let Some(quiet) = crate::task::identity::handled_elsewhere(f) {
+            if let Some(q) = quiet {
+                q(node::state(f));
+            }
+            // Handled: a checkpoint passes it over, and `watch` lets go of it.
+            node::mark_handled(f, None);
+            return;
+        }
+    }
     let inside = !super::current_set().is_null();
     if inside {
         DROPPING.with(|c| c.set(f));
@@ -68,7 +80,25 @@ pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
     // polled.
     unsafe {
         node::retain(f);
-        (*set).unhandled.push(f);
+        let list = &mut (*set).unhandled;
+        list.push(f);
+        if list.len() >= (*set).compact_unhandled_at {
+            // A converted promise dropped before its promise was handled waits here; once that
+            // is handled, it goes now (amortized constant cost per entry).
+            list.retain(|&g| {
+                if !node::is_aliased(g) {
+                    return true;
+                }
+                let Some(quiet) = crate::task::identity::handled_elsewhere(g) else {
+                    return true;
+                };
+                node::mark_handled(g, quiet);
+                node::drop_result_now(g);
+                node::release(g);
+                false
+            });
+            (*set).compact_unhandled_at = (list.len() * 2).max(COMPACT_MIN);
+        }
     }
     1
 }
@@ -81,8 +111,30 @@ pub(super) unsafe fn watch(f: *mut VeltFut) {
         return;
     }
     node::retain(f);
-    (*set).rejections.push(f);
+    let list = &mut (*set).rejections;
+    list.push(f);
+    if list.len() >= (*set).compact_at {
+        // Let go of the ones claimed meanwhile, which the checkpoint would pass over: the list
+        // keeps only the open ones, at amortized constant cost per entry.
+        list.retain(|&g| {
+            // A converted promise whose promise was handled is never reported (task/identity.rs).
+            if node::is_aliased(g) {
+                if let Some(quiet) = crate::task::identity::handled_elsewhere(g) {
+                    node::mark_handled(g, quiet);
+                }
+            }
+            let open = node::rejection_open(g);
+            if !open {
+                node::release(g);
+            }
+            open
+        });
+        (*set).compact_at = (list.len() * 2).max(COMPACT_MIN);
+    }
 }
+
+/// The smallest length of a set's `rejections` at which it is compacted (`watch`).
+pub(super) const COMPACT_MIN: usize = 256;
 
 /// Are rejections waiting for the microtask queue of the task owning `set`?
 ///
