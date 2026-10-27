@@ -385,6 +385,12 @@ impl FnCx<'_, '_> {
             return Some(self.immediate_wrapper(e, async_ty, (shape, &shape.same()), wrap, exp));
         }
         let f = self.closure(e, Some(async_ty), true);
+        // Its rejections go into the `Promise<T>` member written in the function type it is
+        // stored as (`throws::promise_sites`).
+        if let H::Closure(c) = &f.kind {
+            let at = self.cx.fn_info(*c).span;
+            self.cx.note_closure_promise_site(at, promise);
+        }
         if self.thread_adapter == Some(e.span) {
             self.thread_adapter = None;
             if let H::Closure(c) = &f.kind {

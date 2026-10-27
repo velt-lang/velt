@@ -153,6 +153,9 @@ impl Ctx<'_> {
             TyKind::Adt(d, args) if args.len() == 2 && Some(*d) == self.prelude_adt("Map") => {
                 args[1]
             }
+            TyKind::Adt(d, args) if args.len() == 1 && Some(*d) == self.prelude_adt("Set") => {
+                args[0]
+            }
             _ => return t,
         };
         let inner = self.ty.core(inner).unwrap_or(inner);
@@ -173,7 +176,8 @@ impl crate::body::FnCx<'_, '_> {
         args: &[ast::Expr],
     ) -> Option<(Span, Span)> {
         let arg = match (name, args) {
-            ("push" | "unshift", [v]) | ("set", [_, v]) => v,
+            ("push" | "unshift" | "add" | "has" | "delete" | "includes" | "indexOf", [v])
+            | ("set", [_, v]) => v,
             _ => return None,
         };
         let site = self.site_of_value(recv)?;
@@ -212,5 +216,40 @@ impl crate::body::FnCx<'_, '_> {
                 self.cx.fn_sites.anon_written.entry(at).or_insert(t.span);
             }
         }
+    }
+}
+
+impl Ctx<'_> {
+    /// An async closure created at `at` for a function type whose result is (or has a member)
+    /// `promise`, being stored into the current target site: what it rejects with goes into the
+    /// site of that `Promise<T>` written in the target's type.
+    pub(crate) fn note_closure_promise_site(&mut self, at: Span, promise: TyId) {
+        let Some(range) = self.fn_sites.target else {
+            return;
+        };
+        if let Some(s) = self.promise_site_in(range, promise) {
+            self.fn_sites.closure_sites.insert(at, s);
+        }
+    }
+
+    /// The site of a `Promise<T>` written within `range` that a value of `promise` may have:
+    /// matched by shape, since the site's type may be generic (`() => T | Promise<T>`) or have
+    /// another error type.
+    pub(crate) fn promise_site_in(&self, range: Span, promise: TyId) -> Option<Span> {
+        let ids = self.fn_sites.by_file.get(&range.file)?;
+        (ids.iter().map(|&i| self.fn_sites.sites[i]))
+            .find(|(s, g)| {
+                s.lo >= range.lo
+                    && s.hi <= range.hi
+                    && matches!(self.ty.kind(*g), TyKind::Promise(..))
+                    && self.site_matches(*g, promise, 0)
+            })
+            .map(|(s, _)| s)
+    }
+
+    /// The site of the `Promise<T>` written as the type of the declaration named at `name`.
+    pub(crate) fn written_promise_site(&self, name: Span, promise: TyId) -> Option<Span> {
+        let range = *self.fn_sites.written.get(&name)?;
+        self.promise_site_in(range, promise)
     }
 }

@@ -533,6 +533,14 @@ fn promise_results_unify(
     let (ret, ret_span) = (cx.fn_info(def).ret, cx.fn_info(def).ret_span);
     let have_site = ret_span.and_then(|s| cx.site_in(s, ret));
     let have = cx.subst(ret, owner_args);
-    let want_site = cx.decl_site(m.span, m.ret);
+    // The interface method's promise error is its `throws` (`collect::sigs::promise_throws`).
+    let want = match (cx.ty.promise_payload(want), m.throws.and_then(|t| t.ty)) {
+        (Some(v), Some(e)) => cx.ty.promise_rejecting(v, e),
+        _ => want,
+    };
+    if have_site.is_some() && have == want {
+        return true;
+    }
+    let want_site = cx.written_promise_site(m.span, want);
     cx.unify_promise_results((have, have_site), (want, want_site))
 }
