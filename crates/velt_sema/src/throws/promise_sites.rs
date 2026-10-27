@@ -220,14 +220,22 @@ impl crate::body::FnCx<'_, '_> {
 }
 
 impl Ctx<'_> {
-    /// An async closure created at `at` for a function type whose result is (or has a member)
-    /// `promise`, being stored into the current target site: what it rejects with goes into the
-    /// site of that `Promise<T>` written in the target's type.
-    pub(crate) fn note_closure_promise_site(&mut self, at: Span, promise: TyId) {
-        let Some(range) = self.fn_sites.target else {
+    /// The argument at `arg` is stored into site `site`: when it is an async closure checked for
+    /// a function type with a promise member in its result (`() => T | Promise<T>`), what it
+    /// rejects with goes into the site of that `Promise<T>` written in the site's type.
+    pub(crate) fn bind_async_arg(&mut self, arg: Span, site: Span) {
+        let Some(i) = self.fn_sites.async_args.iter().position(|(a, _)| *a == arg) else {
             return;
         };
-        if let Some(s) = self.promise_site_in(range, promise) {
+        let (_, at) = self.fn_sites.async_args.swap_remove(i);
+        let found = (self.fn_sites.by_file.get(&site.file).into_iter().flatten())
+            .map(|&i| self.fn_sites.sites[i])
+            .find(|(s, g)| {
+                s.lo >= site.lo
+                    && s.hi <= site.hi
+                    && matches!(self.ty.kind(*g), TyKind::Promise(..))
+            });
+        if let Some((s, _)) = found {
             self.fn_sites.closure_sites.insert(at, s);
         }
     }

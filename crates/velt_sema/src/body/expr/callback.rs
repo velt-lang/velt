@@ -389,7 +389,7 @@ impl FnCx<'_, '_> {
         // stored as (`throws::promise_sites`).
         if let H::Closure(c) = &f.kind {
             let at = self.cx.fn_info(*c).span;
-            self.cx.note_closure_promise_site(at, promise);
+            self.cx.fn_sites.async_args.push((span, at));
         }
         if self.thread_adapter == Some(e.span) {
             self.thread_adapter = None;

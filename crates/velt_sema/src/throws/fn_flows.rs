@@ -259,9 +259,13 @@ impl crate::body::FnCx<'_, '_> {
 
     /// The site the argument at `arg` for parameter `p` is stored into: the parameter's, or
     /// for the value of a `push`, the site of its array's element type.
-    pub(crate) fn arg_site(&self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
+    pub(crate) fn arg_site(&mut self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
         let pushed = (self.cx.fn_sites.push).filter(|(a, _)| *a == arg);
-        self.param_site(p).or(pushed.map(|(_, s)| s))
+        let site = self.param_site(p).or(pushed.map(|(_, s)| s));
+        if let Some(s) = site {
+            self.cx.bind_async_arg(arg, s);
+        }
+        site
     }
 
     /// The site of parameter `p` of a function being called.

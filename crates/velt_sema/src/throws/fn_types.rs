@@ -101,6 +101,9 @@ pub(crate) struct FnSites {
     /// Where the type of a field of an object literal's anonymous type is written in its value
     /// (`{ list: [] as Promise<T>[] }`), by def and field (the first literal of that shape).
     pub anon_written: FxHashMap<(DefId, u32), Span>,
+    /// Async closures checked for a function type with a promise member in its result: the
+    /// argument's span and the closure's (`promise_sites`).
+    pub async_args: Vec<(Span, Span)>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
