@@ -26,18 +26,37 @@ impl FnCx<'_, '_> {
         if prop.name != "fill" || args.len() != 1 {
             return None;
         }
-        // `new Array(...args)`: a one-element tuple's element is the argument (`args[0]`, the
-        // tuple evaluated once); any other spread stays the call's arguments.
+        // `new Array(...args)` with a tuple: one element is the argument (`args[0]`, the tuple
+        // evaluated once); any other count makes an array of those elements, as in JS, which
+        // `fill` replaces (`__arrayOne(args, __arrayFilled(count, v))`). Any other spread stays
+        // the call's arguments (an error unless it is a tuple).
         let elem;
         let n = match &n.kind {
             ast::ExprKind::Spread(inner) => {
-                let one = self.trial_type(inner).is_some_and(
-                    |t| matches!(self.cx.ty.kind(t), hir::TyKind::Tuple(elems) if elems.len() == 1),
-                );
-                if !one {
-                    let call_args = vec![n.clone(), args[0].clone()];
-                    let call = synthetic_call("__arrayFilled", type_args, call_args, span);
-                    return Some(self.expr(&call, exp, Want::Move));
+                let count = self
+                    .trial_type(inner)
+                    .and_then(|t| match self.cx.ty.kind(t) {
+                        hir::TyKind::Tuple(elems) => Some(elems.len()),
+                        _ => None,
+                    });
+                match count {
+                    Some(1) => {}
+                    Some(k) => {
+                        let filled = synthetic_call(
+                            "__arrayFilled",
+                            type_args,
+                            vec![int_lit(k as u128, span), args[0].clone()],
+                            span,
+                        );
+                        let call_args = vec![(**inner).clone(), filled];
+                        let call = synthetic_call("__arrayOne", vec![], call_args, span);
+                        return Some(self.expr(&call, exp, Want::Move));
+                    }
+                    None => {
+                        let call_args = vec![n.clone(), args[0].clone()];
+                        let call = synthetic_call("__arrayFilled", type_args, call_args, span);
+                        return Some(self.expr(&call, exp, Want::Move));
+                    }
                 }
                 elem = first_of(inner);
                 &elem
@@ -252,8 +271,10 @@ impl LengthKind {
         use LengthKind::*;
         match (self, other) {
             (a, b) if a == b => a,
-            (Unsupported | Enum(_), _) | (_, Unsupported | Enum(_)) => Unsupported,
-            _ => Mixed,
+            (Unsupported, _) | (_, Unsupported) => Unsupported,
+            (Other | Mixed, _) | (_, Other | Mixed) => Mixed,
+            // Numbers of different kinds (a number type and an enum, or two enums).
+            _ => Unsupported,
         }
     }
 }
@@ -268,11 +289,13 @@ impl FnCx<'_, '_> {
                 return LengthKind::Number
             }
             // A type parameter bounded by a number type would be a length, but its values do
-            // not convert to `number` yet; an unbounded one may be a number or not.
+            // not convert to `number` yet; one bounded by a type that is surely no number
+            // (`T extends string`) makes one element; an unbounded one may be either.
             hir::TyKind::Param(i) => {
                 let bound = self.cx.constraint_of(i);
                 return match bound.map(|c| self.length_kind(c)) {
                     Some(LengthKind::Number | LengthKind::Enum(_)) => LengthKind::Unsupported,
+                    Some(LengthKind::Other) => LengthKind::Other,
                     _ => LengthKind::Mixed,
                 };
             }
@@ -307,16 +330,21 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `e[0]`.
-fn first_of(e: &ast::Expr) -> ast::Expr {
-    let zero = ast::Expr {
+/// The integer literal `value`.
+fn int_lit(value: u128, span: Span) -> ast::Expr {
+    ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind: ast::ExprKind::Lit(ast::Lit::Int {
-            value: 0,
+            value,
             suffix: None,
         }),
-        span: e.span,
-    };
+        span,
+    }
+}
+
+/// `e[0]`.
+fn first_of(e: &ast::Expr) -> ast::Expr {
+    let zero = int_lit(0, e.span);
     ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind: ast::ExprKind::Index {

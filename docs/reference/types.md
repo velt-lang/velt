@@ -2108,7 +2108,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   that one element, as in JS (`new Array("3").fill("x")` is `["x"]`); one whose type may be
   either (`number | string`, an unbounded type parameter) is an error, since JS decides
   between the two at run time: test `typeof n === "number"` first. `new Array(...args)` with a
-  one-element tuple takes its element.
+  tuple follows JS: one element is the argument, any other count makes that many elements.
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **Length limit.** An array holds at most 2^52 - 1 elements, and its elements take at most

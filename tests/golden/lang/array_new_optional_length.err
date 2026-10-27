@@ -1,0 +1,2 @@
+`new Array(n)` with an `n` of type `E | undefined`, which may or may not be a number
+`new Array(n)` with an `n` of type `f64 | undefined`, which may or may not be a number

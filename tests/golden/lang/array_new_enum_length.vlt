@@ -20,7 +20,7 @@ function main() {
   const e: E = E.A;
   console.log(new Array<number>(e).fill(3));
   console.log(new Array(side()).fill("s"));
-  console.log(new Array<number>(S.Q).fill(5));
+  console.log(new Array<S | number>(S.Q).fill(5));
 }
 
 main();

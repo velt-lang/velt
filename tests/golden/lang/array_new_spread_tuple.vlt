@@ -1,10 +1,17 @@
-// `new Array(...args)` with a one-element tuple: its element is the argument, a length when it
-// is a number and the one element otherwise, as in JS.
+// `new Array(...args)` with a tuple, as in JS: one element is the argument (a length when it is
+// a number, the one element otherwise); any other count makes an array of those elements,
+// which `fill` replaces.
 function main() {
   const args: [number] = [3];
   console.log(new Array(...args).fill(0));
   const strs: [string] = ["z"];
   console.log(new Array(...strs).fill("w"));
+  const two: [number, number] = [5, 6];
+  console.log(new Array(...two).fill(1));
+  const none: [] = [];
+  console.log(new Array(...none).fill(2));
+  const mixed: [string, number, boolean] = ["a", 1, true];
+  console.log(new Array<string | number | boolean>(...mixed).fill("m"));
 }
 
 main();
