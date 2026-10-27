@@ -24,6 +24,8 @@ enum Variant {
     Overlap,
     /// `observe` gets a null pointer: no address of the frame leaves the function.
     Private,
+    /// `Private`, as a generator's resume function: its dispatch has a running case.
+    Generator,
 }
 
 /// State `{ tag: u32 @0, total: i64 @8, arr: { ptr, u64, u64 } @16, k: i64 @40, seen: i64 @48 }`
@@ -70,7 +72,10 @@ fn program(variant: Variant) -> Program {
         entry,
         Terminator::Switch {
             value: copy_local(tag),
-            cases: vec![(0, start), (1, start)],
+            cases: match variant {
+                Variant::Generator => vec![(0, start), (1, start), (GEN_RUNNING, other)],
+                _ => vec![(0, start), (1, start)],
+            },
             default: other,
         },
     );
@@ -121,7 +126,7 @@ fn program(variant: Variant) -> Program {
     fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, Ty::I64)));
     let args = match variant {
         Variant::PassFrame => vec![copy_local(p)],
-        Variant::Private => vec![int(0, Ty::Ptr)],
+        Variant::Private | Variant::Generator => vec![int(0, Ty::Ptr)],
         Variant::Plain | Variant::Overlap => vec![copy_local(q2)],
     };
     let next = fb.call(body, Callee::Extern(observe), args, None);
@@ -282,4 +287,6 @@ fn frame_is_noalias_only_when_no_address_leaves_the_function() {
     assert!(!noalias(Variant::Plain));
     assert!(!noalias(Variant::PassFrame));
     assert!(noalias(Variant::Private));
+    // A generator's body may resume itself through its `Generator` object (to panic): never.
+    assert!(!noalias(Variant::Generator));
 }

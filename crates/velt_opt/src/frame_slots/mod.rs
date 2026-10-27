@@ -43,13 +43,19 @@
 //! frame over exclusively. Poll functions that pass a part of the frame on (a child's
 //! `$poll`, `velt_rt_all`'s result buffer) do not get it: the callee may keep that pointer
 //! and use it during a later poll, through code that does not receive the frame (the same
-//! reason Rust emits no `noalias` for `Pin<&mut Self>` of a generator).
+//! reason Rust emits no `noalias` for `Pin<&mut Self>` of a generator). Nor does a generator's
+//! resume function: its frame lives in the `Generator` object, which the body can reach
+//! through a reference it holds to itself (`s.g.next()` inside `g`), and that nested resume
+//! must see the running tag the body stored before the call, to panic ("generator is already
+//! running"). Lowering gives every generator's dispatch a case for that tag
+//! ([`GEN_RUNNING`]); a function with one is left without `noalias`.
 
 mod rewrite;
 mod scan;
 
 use velt_vir::vir::{
-    AggId, AggLayout, Function, Local, Operand, ParamAttrs, Place, Proj, Rvalue, Stmt, Ty,
+    AggId, AggLayout, Function, Local, Operand, ParamAttrs, Place, Proj, Rvalue, Stmt, Terminator,
+    Ty,
 };
 
 use crate::locals::Usage;
@@ -79,13 +85,26 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
     let Some(facts) = scan::scan(&frame, func, &in_loop) else {
         return split;
     };
-    let marked = !facts.passed_on && mark_frame_noalias(func);
+    let marked = !facts.passed_on && !is_generator(func) && mark_frame_noalias(func);
     let slots = choose(facts);
     if slots.is_empty() {
         return split || marked;
     }
     rewrite::promote(&frame, func, slots);
     true
+}
+
+/// The tag of a running generator (velt_vir `async_fn/generator.rs`): the dispatch of every
+/// generator's resume function has a case for it (and for it with the drop bit), which panics.
+const GEN_RUNNING: i128 = 0x7FFF_FFFE;
+
+/// Whether `func` resumes a generator, whose frame its own body may reach (module docs): a
+/// switch with a case for [`GEN_RUNNING`].
+fn is_generator(func: &Function) -> bool {
+    func.blocks.iter().any(|b| match &b.term {
+        Terminator::Switch { cases, .. } => cases.iter().any(|&(v, _)| v == GEN_RUNNING),
+        _ => false,
+    })
 }
 
 /// Add `noalias` to the frame param (module docs); returns whether it was new.
