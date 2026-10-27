@@ -137,6 +137,9 @@ impl Builder<'_, '_, '_> {
             DefInfo::Fn(f) => Some(self.function(f)),
             DefInfo::Adt(a) => {
                 let (kind, kw) = match a.kind {
+                    AdtKind::Class if a.decl.is_some_and(|t| t.is_abstract) => {
+                        (DefKind::Class, "abstract class")
+                    }
                     AdtKind::Class => (DefKind::Class, "class"),
                     _ => (DefKind::Struct, "struct"),
                 };
