@@ -42,6 +42,11 @@ pub(crate) fn type_only_key(name: &str) -> String {
     key
 }
 
+/// A type key or a type-only key ([`TYPE_MARK`], [`TYPE_ONLY_MARK`]): not a name to list.
+pub(crate) fn is_marked_key(key: &str) -> bool {
+    key.ends_with([TYPE_MARK, TYPE_ONLY_MARK])
+}
+
 /// The name a type key is for (`None` for any other key).
 pub(crate) fn of_type_key(key: &str) -> Option<&str> {
     key.strip_suffix(TYPE_MARK)

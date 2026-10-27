@@ -80,3 +80,66 @@ fn type_and_value_of_one_name() {
     );
     client.shutdown();
 }
+
+const RE: &str =
+    "export type { guid } from \"./tvn_lib\";\nexport { makeId } from \"./tvn_lib\";\n";
+
+const USER: &str = r#"import * as r from "./tvn_re";
+import { guid } from "./tvn_re";
+import * as lib from "./tvn_lib";
+
+function main() {
+  const id: guid = r.makeId();
+  const other: lib.guid = lib.guid();
+  console.log(id, other);
+}
+"#;
+
+fn labels(result: &serde_json::Value) -> Vec<String> {
+    let items = result.as_array().unwrap();
+    items
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Names exported only as types, and names that are a type and a value, complete as their name
+/// alone: no internal key of either meaning is listed.
+#[test]
+fn completion_lists_each_name_once() {
+    let mut client = Client::start();
+    let doc = uri("tvn_user.vlt");
+    client.open(&uri("tvn_lib.vlt"), LIB);
+    client.open(&uri("tvn_re.vlt"), RE);
+    client.open(&doc, USER);
+    let diags = client.diagnostics(&doc);
+    assert_eq!(
+        diags["diagnostics"],
+        json!([]),
+        "the test program must check"
+    );
+    let clean = |items: &[String]| {
+        items
+            .iter()
+            .all(|i| !i.contains(['\u{1}', '\u{2}']) && !i.contains('.'))
+    };
+    for (needle, expected) in [
+        ("r.makeId", vec!["guid", "makeId"]),
+        ("lib.guid()", vec!["guid", "makeId"]),
+    ] {
+        let (line, col) = pos_of(USER, needle, needle.find('.').unwrap() + 1);
+        let mut items = labels(&client.request("textDocument/completion", at(&doc, line, col)));
+        items.sort();
+        assert_eq!(items, expected, "after `{needle}`");
+    }
+    let (line, col) = pos_of(USER, "console", 0);
+    let items = labels(&client.request("textDocument/completion", at(&doc, line, col)));
+    assert!(clean(&items), "{items:?}");
+    let count = |n: &str| items.iter().filter(|i| *i == n).count();
+    assert_eq!(
+        (count("guid"), count("r"), count("lib")),
+        (1, 1, 1),
+        "{items:?}"
+    );
+    client.shutdown();
+}
