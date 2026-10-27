@@ -286,6 +286,7 @@ impl FnCx<'_, '_> {
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
+        frame.asserted_ret = ret.is_none() && self.asserted_fn == Some(e.span);
         frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
         // A JS API callback returning a number (a comparator) may return any integer.

@@ -242,6 +242,9 @@ pub(crate) struct Frame {
     /// annotation: as in TypeScript, the value its body or a `return` gives is evaluated and
     /// dropped (`(s: string) => void` takes `(s) => out.push(s)` whatever `push` returns).
     pub discards_value: bool,
+    /// An arrow without a written result type asserted to a function type (`(() => …) as F`):
+    /// a returned `any` / `unknown` converts to the result, checked (`returns::returned`).
+    pub asserted_ret: bool,
     /// An arrow whose result type nothing expected fills (no function type is expected, or it
     /// is a promise callback): an end never reached and no `return` give `never`, as in
     /// TypeScript. Inferred for a type argument (`xs.map((x) => { throw e; })`) it stays `void`.
@@ -417,6 +420,7 @@ impl Frame {
             captures: vec![],
             escaping: false,
             discards_value: false,
+            asserted_ret: false,
             never_end: false,
             is_async: false,
             top_level: false,
@@ -602,6 +606,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub field_retag: bool,
     /// The expression being checked is the object of a member read (`body::expr::union_view`).
     pub view_receiver: bool,
+    /// The arrow being checked as the operand of a type assertion (`callables`).
+    pub asserted_fn: Option<Span>,
     /// The types of variables declared before their declaration, by name (`forward_consts`).
     pub forward_tys: rustc_hash::FxHashMap<Span, TyId>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
@@ -639,6 +645,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             static_this: None,
             enclosing_locals: vec![],
             generic_arrow: false,
+            asserted_fn: None,
             forward_tys: Default::default(),
             f: frame,
             outer: vec![],

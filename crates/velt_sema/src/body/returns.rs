@@ -158,6 +158,14 @@ impl FnCx<'_, '_> {
         if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
             return self.async_returned(e, ret);
         }
+        // In an arrow asserted to a function type, TypeScript compares the result it infers
+        // with the asserted one: an `any` / `unknown` returned converts, as `e as R` does.
+        if self.f.asserted_ret && self.cx.dynamic(ret).is_none() {
+            if let Some(t) = self.trial_type(e).filter(|t| self.cx.dynamic(*t).is_some()) {
+                let h = self.expr(e, Some(t), Want::Move);
+                return self.cast_dynamic(h, ret);
+            }
+        }
         // Stored into the site of the written result type (`throws::fn_flows`).
         let site = self.return_site(ret);
         self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move))

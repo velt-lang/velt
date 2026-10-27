@@ -3878,6 +3878,10 @@ with TypeScript's rules:
   TypeScript reads it as `unknown`: a getter `get value() { return read(); }` of an
   `Impl<unknown>` whose `value` is `T | null` returns what `read()` returns, `undefined`
   included.
+- An arrow without a written result type asserted to a function type (`(() => { … return
+  cache.get(key); }) as Use<T>`) may return an `any` or `unknown`: TypeScript compares the
+  result it infers with the asserted one, and Velt converts the value as `cache.get(key) as T`
+  does, checked at run time.
 - `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` give the
   name of the constructor of the value held, as in JavaScript: its class's (a subclass's when
   converted through its base), `"Object"` for an object literal or a record, `"Array"`,
