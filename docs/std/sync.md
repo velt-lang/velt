@@ -154,7 +154,9 @@ another: what a lock-free structure needs.
 An `Atomic<shared<T>>` (or `Atomic<shared<T> | null>`) holds one reference to an immutable
 value, which threads read and replace at once without a lock: a configuration every request
 reads while an admin task swaps in a new one, or the root of a structure that writers rebuild.
-- `load()` gives the current value (a reference of its own).
+- `load()` gives the current value. Reading it costs one load and no count, also through a
+  `const` (`const c = CONFIG.load()`) or a function it is passed to; what keeps it (a return, a
+  store, a closure, a task) takes a reference of its own, which keeps seeing that value.
 - `store(v)` makes `v` the value.
 - `exchange(v)` makes `v` the value and gives the one before.
 - `compareExchange(expected, v)` makes `v` the value only if the `Atomic` still holds

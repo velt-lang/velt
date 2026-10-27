@@ -489,7 +489,12 @@ and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two s
 reference that the `Atomic` owns. It is its field, so the struct's drop glue releases it, and
 null is none. Lowering (velt_vir `lower/atomic_ref.rs`) uses the 64-bit `velt_atomic_*` externs
 on the pointer's bits, so backends see nothing new.
-- **`load`:** a load, then one count increment of what it read (a counted copy).
+- **`load`:** a load, uncounted: the reference is *borrowed*. Read in place (`a.load().f`, a
+  borrowing argument) or bound by a `const` (sema `borrowed_load` binds it by reference, and
+  lowering's `let_pat` binds the loaded pointer without a drop), it costs the load alone. A
+  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). A borrow
+  stays valid as long as retired references are never released; once reclamation frees them,
+  a borrow lives in an epoch section, and one still live where a section closes is counted.
 - **`store(v)` and `exchange(v)`:** `v` moves in, by an atomic exchange. `exchange` gives the
   caller a counted copy of the old reference.
 - **`compareExchange(expected, v)`:** a compare-and-swap of the pointers, so it compares

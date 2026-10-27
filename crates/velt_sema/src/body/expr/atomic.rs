@@ -54,7 +54,7 @@ impl FnCx<'_, '_> {
     fn atomic_value_ty(&mut self, t: TyId, span: Span) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error => true,
-            _ if self.atomic_ref(t) => true,
+            _ if self.cx.atomic_ref(t) => true,
             _ => {
                 let shown = self.cx.display(t);
                 let d = Diagnostic::error(
@@ -110,7 +110,7 @@ impl FnCx<'_, '_> {
             let kind = self.cx.ty.kind(t);
             let int = matches!(kind, TyKind::Int(_));
             let float = matches!(kind, TyKind::Float(_));
-            let reference = self.atomic_ref(t);
+            let reference = self.cx.atomic_ref(t);
             let wrong = match op.map(|o| RMW[o as usize]) {
                 Some("add" | "sub" | "max" | "min") => (!int && !float).then_some("a number"),
                 Some("and" | "or" | "xor") => {
@@ -166,7 +166,7 @@ impl FnCx<'_, '_> {
                 if self
                     .cx
                     .atomic_value(a.ty)
-                    .is_some_and(|t| self.atomic_ref(t)) =>
+                    .is_some_and(|t| self.cx.atomic_ref(t)) =>
             {
                 self.cx.ty.bool_
             }
@@ -180,15 +180,6 @@ impl FnCx<'_, '_> {
             out.push(self.u8_lit(o, span));
         }
         Some(self.intrinsic(i, out, ret, span))
-    }
-
-    /// Is `t` a reference an `Atomic` word holds: `shared<U>` or `shared<U> | null`?
-    fn atomic_ref(&self, t: TyId) -> bool {
-        let inner = match self.cx.ty.kind(t) {
-            TyKind::Option(inner, _) => *inner,
-            _ => t,
-        };
-        matches!(self.cx.ty.kind(inner), TyKind::Shared(_))
     }
 
     /// The ordering an argument names (its index in `ORDERS`): a string literal, or a value

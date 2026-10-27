@@ -1,0 +1,46 @@
+// `load()` of an `Atomic` of a `shared` value is borrowed: read in place, bound by a `const`,
+// passed to a borrowing parameter, it counts nothing; what keeps it (a return, an array, a
+// closure, a spawned task) counts it, and keeps seeing the value after the `Atomic` changes.
+// Replaced values are kept until reclamation frees them, so this file has no leak check.
+interface Config {
+  name: string;
+  limit: u64;
+}
+const CFG = new Atomic<shared<Config> | null>(null);
+
+function config(limit: u64): shared<Config> {
+  return shared({ name: "c" + limit, limit });
+}
+
+function returned(): shared<Config> | null {
+  const c = CFG.load();
+  return c;
+}
+
+async function later(c: shared<Config>): Promise<u64> {
+  await sleep(1);
+  return c.limit;
+}
+
+async function main() {
+  CFG.store(config(1));
+  const r = returned();
+  const kept: shared<Config>[] = [];
+  const c = CFG.load();
+  if (c != null) {
+    kept.push(c);
+    const f = () => c.limit + 100;
+    const p = spawn(later(c));
+    CFG.store(config(2));
+    await sleep(1);
+    console.log(c.name, f(), await p, kept[0].name);
+  }
+  let total: u64 = 0;
+  for (let i: u64 = 0; i < 1000; i++) {
+    const x = CFG.load("acquire");
+    if (x != null) {
+      total += x.limit;
+    }
+  }
+  console.log(r != null ? r.name : "none", total);
+}
