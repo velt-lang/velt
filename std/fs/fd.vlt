@@ -49,107 +49,172 @@ function isMac(): bool {
 
 // ───────────────────────────── errors ─────────────────────────────
 
-// libuv's name and message of an errno, per system (macOS numbers differ from Linux's past 34).
-function errnoName(e: i32): [string, string] {
+// The Linux number of a macOS errno (they agree below 35).
+function linuxErrno(e: i32): i32 {
+  switch (e) {
+    case 11:
+      return 35; // EDEADLK
+    case 35:
+      return 11; // EAGAIN
+    case 45:
+      return 95; // ENOTSUP
+    case 62:
+      return 40; // ELOOP
+    case 63:
+      return 36; // ENAMETOOLONG
+    case 66:
+      return 39; // ENOTEMPTY
+    case 69:
+      return 122; // EDQUOT
+    case 77:
+      return 37; // ENOLCK
+    case 78:
+      return 38; // ENOSYS
+    case 84:
+      return 75; // EOVERFLOW
+  }
+  return e < 35 ? e : -1;
+}
+
+// libuv's name and message of a Linux errno.
+function errnoName(e: i32): string {
   switch (e) {
     case 1:
-      return ["EPERM", "operation not permitted"];
+      return "EPERM";
     case 2:
-      return ["ENOENT", "no such file or directory"];
+      return "ENOENT";
     case 4:
-      return ["EINTR", "interrupted system call"];
+      return "EINTR";
     case 5:
-      return ["EIO", "i/o error"];
+      return "EIO";
     case 6:
-      return ["ENXIO", "no such device or address"];
+      return "ENXIO";
     case 9:
-      return ["EBADF", "bad file descriptor"];
+      return "EBADF";
+    case 11:
+      return "EAGAIN";
     case 12:
-      return ["ENOMEM", "not enough memory"];
+      return "ENOMEM";
     case 13:
-      return ["EACCES", "permission denied"];
+      return "EACCES";
     case 16:
-      return ["EBUSY", "resource busy or locked"];
+      return "EBUSY";
     case 17:
-      return ["EEXIST", "file already exists"];
+      return "EEXIST";
     case 18:
-      return ["EXDEV", "cross-device link not permitted"];
+      return "EXDEV";
     case 20:
-      return ["ENOTDIR", "not a directory"];
+      return "ENOTDIR";
     case 21:
-      return ["EISDIR", "illegal operation on a directory"];
+      return "EISDIR";
     case 22:
-      return ["EINVAL", "invalid argument"];
+      return "EINVAL";
     case 23:
-      return ["ENFILE", "file table overflow"];
+      return "ENFILE";
     case 24:
-      return ["EMFILE", "too many open files"];
+      return "EMFILE";
     case 26:
-      return ["ETXTBSY", "text file is busy"];
+      return "ETXTBSY";
     case 27:
-      return ["EFBIG", "file too large"];
+      return "EFBIG";
     case 28:
-      return ["ENOSPC", "no space left on device"];
+      return "ENOSPC";
     case 29:
-      return ["ESPIPE", "invalid seek"];
+      return "ESPIPE";
     case 30:
-      return ["EROFS", "read-only file system"];
+      return "EROFS";
     case 32:
-      return ["EPIPE", "broken pipe"];
-  }
-  return isMac() ? macErrno(e) : linuxErrno(e);
-}
-
-function macErrno(e: i32): [string, string] {
-  switch (e) {
-    case 11:
-      return ["EDEADLK", "resource deadlock avoided"];
+      return "EPIPE";
     case 35:
-      return ["EAGAIN", "resource temporarily unavailable"];
-    case 45:
-      return ["ENOTSUP", "operation not supported on socket"];
-    case 62:
-      return ["ELOOP", "too many symbolic links encountered"];
-    case 63:
-      return ["ENAMETOOLONG", "name too long"];
-    case 66:
-      return ["ENOTEMPTY", "directory not empty"];
-    case 69:
-      return ["EDQUOT", "disk quota exceeded"];
-    case 77:
-      return ["ENOLCK", "no locks available"];
-    case 78:
-      return ["ENOSYS", "function not implemented"];
-    case 84:
-      return ["EOVERFLOW", "value too large for defined data type"];
-  }
-  return ["UNKNOWN", "unknown error"];
-}
-
-function linuxErrno(e: i32): [string, string] {
-  switch (e) {
-    case 11:
-      return ["EAGAIN", "resource temporarily unavailable"];
-    case 35:
-      return ["EDEADLK", "resource deadlock avoided"];
+      return "EDEADLK";
     case 36:
-      return ["ENAMETOOLONG", "name too long"];
+      return "ENAMETOOLONG";
     case 37:
-      return ["ENOLCK", "no locks available"];
+      return "ENOLCK";
     case 38:
-      return ["ENOSYS", "function not implemented"];
+      return "ENOSYS";
     case 39:
-      return ["ENOTEMPTY", "directory not empty"];
+      return "ENOTEMPTY";
     case 40:
-      return ["ELOOP", "too many symbolic links encountered"];
+      return "ELOOP";
     case 75:
-      return ["EOVERFLOW", "value too large for defined data type"];
+      return "EOVERFLOW";
     case 95:
-      return ["ENOTSUP", "operation not supported on socket"];
+      return "ENOTSUP";
     case 122:
-      return ["EDQUOT", "disk quota exceeded"];
+      return "EDQUOT";
   }
-  return ["UNKNOWN", "unknown error"];
+  return "UNKNOWN";
+}
+
+function errnoText(e: i32): string {
+  switch (e) {
+    case 1:
+      return "operation not permitted";
+    case 2:
+      return "no such file or directory";
+    case 4:
+      return "interrupted system call";
+    case 5:
+      return "i/o error";
+    case 6:
+      return "no such device or address";
+    case 9:
+      return "bad file descriptor";
+    case 11:
+      return "resource temporarily unavailable";
+    case 12:
+      return "not enough memory";
+    case 13:
+      return "permission denied";
+    case 16:
+      return "resource busy or locked";
+    case 17:
+      return "file already exists";
+    case 18:
+      return "cross-device link not permitted";
+    case 20:
+      return "not a directory";
+    case 21:
+      return "illegal operation on a directory";
+    case 22:
+      return "invalid argument";
+    case 23:
+      return "file table overflow";
+    case 24:
+      return "too many open files";
+    case 26:
+      return "text file is busy";
+    case 27:
+      return "file too large";
+    case 28:
+      return "no space left on device";
+    case 29:
+      return "invalid seek";
+    case 30:
+      return "read-only file system";
+    case 32:
+      return "broken pipe";
+    case 35:
+      return "resource deadlock avoided";
+    case 36:
+      return "name too long";
+    case 37:
+      return "no locks available";
+    case 38:
+      return "function not implemented";
+    case 39:
+      return "directory not empty";
+    case 40:
+      return "too many symbolic links encountered";
+    case 75:
+      return "value too large for defined data type";
+    case 95:
+      return "operation not supported on socket";
+    case 122:
+      return "disk quota exceeded";
+  }
+  return "unknown error";
 }
 
 /**
@@ -157,24 +222,25 @@ function linuxErrno(e: i32): [string, string] {
  * writes it: `ENOENT: no such file or directory, open 'a.txt'`.
  */
 export function osError(e: i32, syscall: string, path: string | null = null): IoError {
-  const [code, text] = errnoName(e);
+  const n = isMac() ? linuxErrno(e) : e;
+  const code = errnoName(n);
   const at = path == null ? "" : ` '${path}'`;
-  return new IoError(code, `${code}: ${text}, ${syscall}${at}`);
+  return new IoError(code, `${code}: ${errnoText(n)}, ${syscall}${at}`);
 }
 
 // The value of an integer argument as Node checks it (`validateInteger`).
 function integer(name: string, v: number, min: number, max: number): i64 {
-  if (Math.floor(v) != v) {
-    throw new RangeError(
-      `The value of "${name}" is out of range. It must be an integer. Received ${v}`,
-    );
+  if (v >= min && v <= max && Math.floor(v) == v) {
+    return v as i64;
   }
-  if (v < min || v > max) {
-    throw new RangeError(
-      `The value of "${name}" is out of range. It must be >= ${min} && <= ${max}. Received ${v}`,
-    );
-  }
-  return v as i64;
+  throw outOfRange(name, v, min, max);
+}
+
+function outOfRange(name: string, v: number, min: number, max: number): RangeError {
+  const must = Math.floor(v) != v ? "an integer" : `>= ${min} && <= ${max}`;
+  return new RangeError(
+    `The value of "${name}" is out of range. It must be ${must}. Received ${v}`,
+  );
 }
 
 function descriptor(fd: number): i32 {
@@ -183,74 +249,34 @@ function descriptor(fd: number): i32 {
 
 // ───────────────────────────── open and close ─────────────────────────────
 
-// The `open` flags of Node's flag strings (libuv adds `O_CLOEXEC`).
+// Node's flag strings, each between spaces.
+const FLAG_FORMS = " r rs sr r+ rs+ sr+ w wx xw w+ wx+ xw+ a ax xa as sa a+ ax+ xa+ as+ sa+ ";
+
+// The `open` flags of one of Node's flag strings (libuv adds `O_CLOEXEC`): `r` reads, `w`
+// truncates or creates, `a` appends or creates; `+` also the other direction, `x` fails if the
+// file exists, `s` writes through.
 function openFlags(flags: string): i32 {
-  const mac = isMac();
-  const creat: i32 = mac ? 0x200 : 0x40;
-  const trunc: i32 = mac ? 0x400 : 0x200;
-  const excl: i32 = mac ? 0x800 : 0x80;
-  const append: i32 = mac ? 0x8 : 0x400;
-  const sync: i32 = mac ? 0x80 : 0x101000;
-  const cloexec: i32 = mac ? 0x1000000 : 0x80000;
-  const rdwr: i32 = 2;
-  const wronly: i32 = 1;
-  let f: i32 = -1;
-  switch (flags) {
-    case "r":
-      f = 0;
-      break;
-    case "rs":
-    case "sr":
-      f = sync;
-      break;
-    case "r+":
-      f = rdwr;
-      break;
-    case "rs+":
-    case "sr+":
-      f = rdwr | sync;
-      break;
-    case "w":
-      f = trunc | creat | wronly;
-      break;
-    case "wx":
-    case "xw":
-      f = trunc | creat | wronly | excl;
-      break;
-    case "w+":
-      f = trunc | creat | rdwr;
-      break;
-    case "wx+":
-    case "xw+":
-      f = trunc | creat | rdwr | excl;
-      break;
-    case "a":
-      f = append | creat | wronly;
-      break;
-    case "ax":
-    case "xa":
-      f = append | creat | wronly | excl;
-      break;
-    case "as":
-    case "sa":
-      f = append | creat | wronly | sync;
-      break;
-    case "a+":
-      f = append | creat | rdwr;
-      break;
-    case "ax+":
-    case "xa+":
-      f = append | creat | rdwr | excl;
-      break;
-    case "as+":
-    case "sa+":
-      f = append | creat | rdwr | sync;
-      break;
-  }
-  if (f < 0) {
+  if (flags.length == 0 || flags.includes(" ") || !FLAG_FORMS.includes(` ${flags} `)) {
     throw new TypeError(`The argument 'flags' is invalid. Received '${flags}'`);
   }
-  return f | cloexec;
+  const mac = isMac();
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const plus = flags.includes("+");
+  let f: i32 = plus ? 2 : 1; // O_RDWR, O_WRONLY
+  if (flags.includes("r")) {
+    f = plus ? 2 : 0;
+  } else if (flags.includes("w")) {
+    f |= creat | (mac ? 0x400 : 0x200); // O_TRUNC
+  } else {
+    f |= creat | (mac ? 0x8 : 0x400); // O_APPEND
+  }
+  if (flags.includes("x")) {
+    f |= mac ? 0x800 : 0x80; // O_EXCL
+  }
+  if (flags.includes("s")) {
+    f |= mac ? 0x80 : 0x101000; // O_SYNC
+  }
+  return f | (mac ? 0x1000000 : 0x80000); // O_CLOEXEC
 }
 
 /**
@@ -311,18 +337,20 @@ function range(size: usize, offset: number, length: number | null, read: bool): 
   const off = integer("offset", offset, 0, MAX_SAFE);
   const total = size as i64;
   if (!read && off > total) {
-    throw new RangeError(
-      `The value of "offset" is out of range. It must be <= ${total}. Received ${off}`,
-    );
+    throw tooLarge("offset", total, off);
   }
   const len =
     length == null ? (total - off > 0 ? total - off : 0) : integer("length", length, 0, MAX_SAFE);
   if (off + len > total) {
-    throw new RangeError(
-      `The value of "length" is out of range. It must be <= ${total - off}. Received ${len}`,
-    );
+    throw tooLarge("length", total - off, len);
   }
   return [off as usize, (off + len) as usize];
+}
+
+function tooLarge(name: string, max: i64, v: i64): RangeError {
+  return new RangeError(
+    `The value of "${name}" is out of range. It must be <= ${max}. Received ${v}`,
+  );
 }
 
 // `null`, `undefined` or -1: the file's own position; otherwise the byte to start at.
