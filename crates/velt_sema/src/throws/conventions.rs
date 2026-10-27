@@ -23,9 +23,15 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
             continue;
         }
         let Some(e) = f.throws else { continue };
-        let generic_ret = cx.ty.promise_payload(f.ret).is_none();
+        let (is_getter, ret) = (f.is_getter, f.ret);
+        // A synchronous member whose body throws nothing returns its errors in the promise it
+        // returns (a `Promise<T>` written without an error type, `promise_sites`).
+        let generic_ret = cx.ty.promise_payload(ret).is_none();
+        if g.promise && !is_getter && !generic_ret && super::infer::own_final(cx, m).is_none() {
+            continue;
+        }
         let diag = match g.promise {
-            true if f.is_getter => getter_cannot_reject(cx, m, e, owner),
+            true if is_getter => getter_cannot_reject(cx, m, e, owner),
             true if generic_ret => generic_cannot_reject(cx, m, e, owner),
             true => must_be_async(cx, m, e, owner),
             false => cannot_be_async(cx, m, e, owner),

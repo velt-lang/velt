@@ -373,8 +373,16 @@ impl FnCx<'_, '_> {
         }
         let never = self.cx.ty.never;
         let observed = self.cx.ty.promise_error(ret).filter(|e| *e != never);
+        let mut srcs = vec![ThrowSrc::Call(d, targs.to_vec(), span)];
+        // A synchronous member of a promise group returns a `Promise<T>` written without an
+        // error type, which rejects with what is stored into it (`throws::promise_sites`).
+        let written = self.cx.ty.promise_error(self.cx.fn_info(d).ret);
+        if let Some(w) = written.filter(|w| *w != never && !self.cx.fn_info(d).is_async) {
+            let w = self.cx.subst(w, targs);
+            srcs.push(ThrowSrc::Direct(w, span));
+        }
         self.cx.throw_checks.push(ThrowCheck {
-            srcs: vec![ThrowSrc::Call(d, targs.to_vec(), span)],
+            srcs,
             observed,
             exact: true,
             span,

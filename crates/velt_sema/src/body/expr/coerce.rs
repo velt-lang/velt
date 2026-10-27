@@ -23,6 +23,9 @@ impl FnCx<'_, '_> {
         match self.try_coerce(h, exp) {
             Ok(h) => h,
             Err(h) => {
+                // `reject(v)` of a promise without a written error type: the program is checked
+                // again with `v`'s type in it, which drops this report (`throws::promise_sites`).
+                self.cx.seed_reject(h.ty, exp);
                 self.report_mismatch(exp, &h);
                 h
             }

@@ -81,6 +81,15 @@ pub(crate) struct FnSites {
     /// The argument (by its span) of the `push` being checked and the site of its array's
     /// element type (`promise_sites`).
     pub push: Option<(Span, Span)>,
+    /// The result type of an async function is being resolved: its `Promise<T>` rejects with
+    /// what the body throws, so it is no site (`promise_sites`).
+    pub async_ret: bool,
+    /// The open error types of `new Promise` executors being checked and of
+    /// `Promise.withResolvers` calls, with the site of each (`promise_sites`).
+    pub rejects: Vec<(TyId, Span)>,
+    /// Where the type of a field of an object literal's anonymous type is written in its value
+    /// (`{ list: [] as Promise<T>[] }`), by def and field (the first literal of that shape).
+    pub anon_written: FxHashMap<(DefId, u32), Span>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
@@ -365,15 +374,11 @@ impl Ctx<'_> {
 
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
-    /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
-    /// reach every function type of the same shape, and a value that is no `Error` (`null`)
-    /// would reach `catch` blocks and standard library callbacks that never see it.
+    /// `err` can't be kept (then the use is reported). Any thrown type another check can hold is
+    /// kept (`null`, a string, a class), as JavaScript may throw any value.
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
-            if !self.is_error_class(m) {
-                return false;
-            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -580,6 +585,7 @@ impl Ctx<'_> {
             | TyKind::Str
             | TyKind::Unit
             | TyKind::Symbol
+            | TyKind::Never
             | TyKind::Literal(_) => Portable::Leaf(k.clone()),
             TyKind::Adt(d, args) if (d.0 as usize) < self.collected_defs => {
                 let span = *self.def_spans.get(d.0 as usize)?;

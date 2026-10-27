@@ -526,8 +526,8 @@ impl Ctx<'_> {
                     }
                 }
                 None => {
-                    if !self.is_error_class_ty(m) {
-                        // Only `Error` classes are inferred (`fn_types::seed_fn_sites`).
+                    if self.port_type(m).is_none() {
+                        // Only types another check can hold (`fn_types::seed_fn_sites`).
                         return false;
                     }
                     if !self.fn_sites.var_sets.members[r as usize].contains(&m) {
@@ -762,24 +762,6 @@ impl Ctx<'_> {
             }
         }
         out
-    }
-
-    /// Is `t` the prelude's `Error` or a class extending it?
-    fn is_error_class_ty(&mut self, t: TyId) -> bool {
-        let Some(root) = self.prelude_adt("Error") else {
-            return false;
-        };
-        let mut cur = t;
-        for _ in 0..64 {
-            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
-                return true;
-            }
-            match self.base_of(cur) {
-                Some(b) => cur = b,
-                None => return false,
-            }
-        }
-        false
     }
 
     /// The solved sets as seeds for checking the program again (`FnSites::fallback`).

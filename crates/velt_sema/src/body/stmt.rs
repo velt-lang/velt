@@ -339,8 +339,12 @@ impl FnCx<'_, '_> {
         }
         let ann = v.ty.as_ref().map(|t| self.resolve(t));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
-            if let Some(t) = &v.ty {
-                self.cx.note_written_type(name.span, t.span);
+            match (
+                &v.ty,
+                v.init.as_ref().and_then(crate::throws::written_init_type),
+            ) {
+                (Some(t), _) | (None, Some(t)) => self.cx.note_written_type(name.span, t.span),
+                _ => {}
             }
             self.simple_decl(v, name, ann, span, out);
             return self.note_named_fn(v, name);

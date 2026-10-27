@@ -113,9 +113,6 @@ impl Ctx<'_> {
         }
         let mut members = vec![];
         for m in self.error_members(err) {
-            if !self.is_error_class(m) {
-                return false;
-            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -171,12 +168,17 @@ impl crate::body::FnCx<'_, '_> {
         use crate::hir::ExprKind as H;
         match &h.kind {
             H::Local(l, _) => self.local_site(*l),
+            H::Global(d) => match self.cx.info.get(d.0 as usize) {
+                Some(crate::defs::DefInfo::Global(g)) => self.cx.decl_site(g.span, g.ty),
+                _ => None,
+            },
             H::Field { base, index, .. } => {
                 let TyKind::Adt(d, _) = self.cx.ty.kind(base.ty) else {
                     return None;
                 };
                 let f = self.cx.adt(*d)?.fields.get(*index as usize)?;
-                self.cx.decl_site(f.span, f.declared)
+                let anon = self.cx.fn_sites.anon_written.get(&(*d, *index)).copied();
+                (self.cx.decl_site(f.span, f.declared)).or_else(|| self.cx.site_in(anon?, h.ty))
             }
             H::Call {
                 callee: crate::hir::Callee::Def(g, _),
