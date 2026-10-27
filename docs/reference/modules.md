@@ -324,6 +324,27 @@ library of its own package, and must match that export exactly
 program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics (`__intrinsic_*`) are reserved for
 the standard library too.
 
+### Host imports
+
+A `declare module "wasm:<name>"` block declares functions that the WebAssembly host provides:
+each becomes the wasm import `(import "<name>" "<function>")`, and the JS glue supplies it.
+They are written like `declare function`, without `declare`, and are declared in the module
+that has the block (export them with `export`). Any module may declare them, the standard
+library and packages alike; a program that calls one builds only for a host that provides it
+(`velt build --host workers`, [WebAssembly](../tooling/webassembly.md#on-cloudflare-workers)).
+
+```ts
+declare module "wasm:demo" {
+  function add(a: f64, b: f64): f64;
+  export function greeting(name: string): string;
+}
+```
+
+Arguments and results cross with the C ABI of `declare function`: numbers and `bool` by value;
+a `string` or `u8[]` as a pointer to the runtime's value, which the glue reads and writes with
+the module's `velt_host_*` exports. A name after `wasm:` is letters, digits and `_`. Only
+functions may be declared in the block, and none may be a generator.
+
 Whether a module belongs to the standard library depends on where it was loaded from (the std
 root), never on its name: a user module whose path would start with `std/` (a `./std/`
 directory) is an error, and no package may be named `std`.

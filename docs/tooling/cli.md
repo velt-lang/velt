@@ -43,9 +43,9 @@ Every build command works on a single file or on a package:
 ## `velt build` and `velt run`
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>]
-           [--backend cranelift|llvm] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v]
-           [--timings] [--report numbers]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--host <name>]
+           [--cpu <name>] [--backend cranelift|llvm] [--emit vir|llvm|obj|exe] [--locked] [--json]
+           [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
            [--backend cranelift|llvm] [--locked] [-v] [--timings] [--report numbers]
            [-- <program args>...]
@@ -67,6 +67,9 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
   silicon.
+- `--host workers` builds a [Cloudflare Worker](webassembly.md#on-cloudflare-workers): a
+  `wasm32-unknown-unknown` module whose `serve()` answers the Worker's requests, with its glue
+  and a `wrangler.toml` (`velt build` only: run a Worker with `npx wrangler dev`).
 - `--cpu <name>` chooses the CPU the program is built for: `baseline`, `x86-64-v2` (the default
   on x86_64: every x86_64 CPU since about 2009), `x86-64-v3`, `x86-64-v4`, `native` (this
   machine's CPU) or a CPU name clang knows for the target, such as `znver4` or `neoverse-n1`

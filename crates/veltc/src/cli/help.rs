@@ -156,7 +156,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[RELEASE, DEBUG_INFO, TARGET, HOST, CPU, BACKEND, LOCKED, VERBOSE],
+        options: &[RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),

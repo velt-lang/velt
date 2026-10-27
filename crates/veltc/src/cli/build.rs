@@ -51,8 +51,11 @@ pub(super) fn parse_build(
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
             // `velt dev --host` is the JIT host's own mode flag (cli/dev.rs takes it first).
-            "--host" if cmd != "dev" => {
+            "--host" if cmd == "build" => {
                 b.host = Some(take_value(inline.as_deref(), &mut it, flag)?)
+            }
+            "--host" if cmd == "run" => {
+                return Err("`velt run` can't run a Worker: build it with `velt build --host workers` and run it with `npx wrangler dev`".into());
             }
             "--cpu" => b.cpu = Some(take_cpu(inline.as_deref(), &mut it)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
@@ -129,7 +132,7 @@ pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--host" | "--cpu" | "--backend" | "--report") => i += 2,
+            Some("--target" | "--cpu" | "--backend" | "--report") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }
@@ -302,13 +305,8 @@ mod tests {
         assert!(err.contains("leave out `--target wasm32-wasip1`"), "{err}");
         let err = p(&["build", "--host", "deno", "a.vlt"]).unwrap_err();
         assert!(err.contains("unknown --host `deno`"), "{err}");
-        match p(&["run", "--host", "workers", "a.vlt", "x"]).unwrap() {
-            Command::Run { build, args } => {
-                assert_eq!(build.input, Some(PathBuf::from("a.vlt")));
-                assert_eq!(args, ["x"]);
-            }
-            other => panic!("{other:?}"),
-        }
+        let err = p(&["run", "--host", "workers", "a.vlt"]).unwrap_err();
+        assert!(err.contains("`velt run` can't run a Worker"), "{err}");
     }
 
     #[test]

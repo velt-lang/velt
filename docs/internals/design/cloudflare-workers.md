@@ -1,6 +1,9 @@
 # Design: Velt on Cloudflare Workers
 
-Status: proposed ([#1734](https://github.com/velt-lang/velt/issues/1734)). Sub-issues: host
+Status: first slice implemented ([#1734](https://github.com/velt-lang/velt/issues/1734)): host
+imports, `--host workers`, `serve()` as the Worker's handler. [As built](#as-built) records
+where it differs from the proposal below; async over host promises, `velt:cloudflare` and the
+registry are still to come. Sub-issues: host
 imports [#1735](https://github.com/velt-lang/velt/issues/1735), glue and target
 [#1736](https://github.com/velt-lang/velt/issues/1736), async over host promises
 [#1737](https://github.com/velt-lang/velt/issues/1737), `velt:cloudflare`
@@ -358,6 +361,41 @@ Each needs sign-off; the PR that implements a part changes its contract.
 - **A general JS FFI first** (call any JS method by name with dynamic values): bigger, slower
   (string dispatch per call) and untyped. Typed host imports cover std and `velt:cloudflare`;
   a dynamic layer can be built on them later if packages need it.
+
+## As built
+
+The first slice (host imports, the target and glue, `serve()`) differs from the proposal here:
+
+- **Host imports are visible where they are declared.** The functions of a `declare module
+  "wasm:<name>"` block are declared in the module that has the block, like `declare function`,
+  and are exported with `export`; there is no `import … from "wasm:<name>"`. The parser keeps
+  the block; sema hoists its functions (`interface_merge`) and gives each the symbol
+  `velt_host:<module>:<name>` (`velt_sema::host_import`), which the LLVM backend declares with
+  `wasm-import-module`/`wasm-import-name`. No AST, HIR or VIR type changed.
+- **The existing extern ABI, not pointer + length.** Strings and arrays cross as pointers to
+  the runtime's values (`const VeltStr*`, `VeltBytes*`, results through an out-pointer), and the
+  glue reads and writes them with the module's exports `velt_host_str_ptr`/`_len`,
+  `velt_host_bytes_ptr`/`_len`, `velt_host_alloc`/`_free`, `velt_host_str_new` and
+  `velt_host_bytes_new` (crates/velt_rt_wasm/src/workers.rs). `JsRef` is not built yet: the
+  glue keeps its own handles (a request is a `u32`).
+- **Per-host std modules are files, not a gate.** The loader tries `<module>.<host>.vlt` first
+  for a std module when the build has a host (`loader::locate::std_files`). The server side's
+  runtime calls are declared once in std/http/server_io.vlt; server_io.workers.vlt has the same
+  exports in Velt over the `velt_workers` host imports, and stream.workers.vlt replaces `pump`.
+  The frontend still doesn't know the target.
+- **Bodies are read before the handler runs** (`await request.arrayBuffer()` in the glue), so
+  every request read is a synchronous host call until section 5 lands. A streamed response body
+  answers 500 with a message.
+- **The Rust added**: the stored handler, `velt_fetch` (a task per request, as the native
+  server starts), `fetch_done`, `velt_turn`, the executor's `run_turn`, the string helpers
+  above, and `velt_rt_http_serve`/`_server_*` on wasm (workers.rs, about 200 lines).
+- **`--host` is a `velt build` option only**: `velt run --host workers` is an error that points
+  to `npx wrangler dev`, and `velt dev` keeps its own internal `--host`.
+- **Exports**: browser-flavor links pass `--export-if-defined` for the Worker entries, which
+  exist only when the program serves, so `velt_link::LinkRequest` didn't change.
+- **Tests**: crates/veltc/tests/workers.rs builds tests/workers/*.vlt with `--host workers`
+  (debug and release) and drives them under node through the glue; checked by hand under
+  `wrangler dev` (workerd). A release hello-world server is 635 KB, 197 KB gzipped.
 
 ## Open questions
 
