@@ -48,6 +48,8 @@ impl<'h> Cx<'h> {
             work_map: FxHashMap::default(),
             queue: VecDeque::new(),
             iface_glues: vec![],
+            unique_params: vec![],
+            declared_unique: vec![],
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
@@ -223,6 +225,7 @@ impl<'h> Cx<'h> {
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;
+        self.bind_unique_params(fid);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }

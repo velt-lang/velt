@@ -372,12 +372,14 @@ fn param_attributes_become_llvm_attributes() {
         ParamAttrs {
             noalias: true,
             readonly: false,
+            frozen: false,
             nonnull: true,
             dereferenceable: 24,
         },
         ParamAttrs {
             noalias: false,
             readonly: true,
+            frozen: false,
             nonnull: true,
             dereferenceable: 8,
         },

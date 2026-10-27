@@ -87,7 +87,12 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
     let mut changed = false;
     for scc in &sccs {
         for &caller in scc {
-            changed |= inline_into(program, caller, &mut state, budget);
+            if inline_into(program, caller, &mut state, budget) {
+                changed = true;
+                // Its callees' reads of its `frozen` params are its own now, while it still
+                // has the params: read them once before it is inlined into its own callers.
+                crate::frozen::run(&program.aggs, &mut program.funcs[caller.0 as usize]);
+            }
         }
     }
     changed

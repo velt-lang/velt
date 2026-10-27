@@ -1,0 +1,268 @@
+// A borrowed param that module state can reach is neither read once (`frozen`) nor `noalias`
+// (param_attrs.rs "Module state"): a function the call reaches may write the argument through
+// the module variable or static field holding it, and the caller sees that write, in debug and
+// release builds alike.
+import { Limits, poke, shared } from "./_frozen_module_state_lib";
+
+class Cfg {
+  limit: number = 3;
+}
+
+// A module `const`.
+const cfg = new Cfg();
+
+function bumpConst(): void {
+  cfg.limit = 10;
+}
+
+function countConst(c: Cfg): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpConst();
+    }
+  }
+  return n;
+}
+
+console.log("const", countConst(cfg));
+
+// A module `let`.
+let cfgLet = new Cfg();
+
+function bumpLet(): void {
+  cfgLet.limit = 10;
+}
+
+function countLet(c: Cfg): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpLet();
+    }
+  }
+  return n;
+}
+
+console.log("let", countLet(cfgLet));
+
+// A static field.
+class Registry {
+  static inst: Cfg = new Cfg();
+}
+
+function bumpStatic(): void {
+  Registry.inst.limit = 10;
+}
+
+function countStatic(c: Cfg): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpStatic();
+    }
+  }
+  return n;
+}
+
+console.log("static", countStatic(Registry.inst));
+
+// Another module's variable, written by that module's function.
+function countImported(c: Limits): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      poke();
+    }
+  }
+  return n;
+}
+
+console.log("imported", countImported(shared));
+
+// An object type.
+type Bound = { limit: number };
+
+const bound: Bound = { limit: 3 };
+
+function bumpBound(): void {
+  bound.limit = 10;
+}
+
+function countBound(b: Bound): number {
+  let n = 0;
+  while (n < b.limit) {
+    n++;
+    if (n == 2) {
+      bumpBound();
+    }
+  }
+  return n;
+}
+
+console.log("object type", countBound(bound));
+
+// `this` in a method.
+class Runner {
+  limit: number = 3;
+  run(): number {
+    let n = 0;
+    while (n < this.limit) {
+      n++;
+      if (n == 2) {
+        bumpRunner();
+      }
+    }
+    return n;
+  }
+}
+
+const runner = new Runner();
+
+function bumpRunner(): void {
+  runner.limit = 10;
+}
+
+console.log("this", runner.run());
+
+// A field written through the param, then through the module variable (#1631: the param is
+// not `noalias`).
+class Slot {
+  limit: number = 3;
+}
+
+const slot = new Slot();
+
+function bumpSlot(): void {
+  slot.limit = 10;
+}
+
+function reset(s: Slot): number {
+  s.limit = 1;
+  bumpSlot();
+  return s.limit;
+}
+
+console.log("noalias", reset(slot));
+
+// Objects inside module state: a field of a module object, an array element, a map value.
+class Inner {
+  limit: number = 3;
+}
+
+class Outer {
+  inner: Inner = new Inner();
+}
+
+const outer = new Outer();
+const inners: Inner[] = [new Inner()];
+const byName = new Map<string, Inner>([["a", new Inner()]]);
+
+function bumpInner(which: number): void {
+  if (which == 0) {
+    outer.inner.limit = 10;
+  } else if (which == 1) {
+    inners[0].limit = 10;
+  } else {
+    const i = byName.get("a");
+    if (i !== undefined) {
+      i.limit = 10;
+    }
+  }
+}
+
+function countInner(c: Inner, which: number): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpInner(which);
+    }
+  }
+  return n;
+}
+
+console.log("field", countInner(outer.inner, 0));
+console.log("element", countInner(inners[0], 1));
+const named = byName.get("a");
+if (named !== undefined) {
+  console.log("map value", countInner(named, 2));
+}
+
+// A subclass object held by a module variable, borrowed as its base class.
+class Base {
+  limit: number = 3;
+}
+
+class Derived extends Base {
+  extra: number = 1;
+}
+
+const held = new Derived();
+
+function bumpHeld(): void {
+  held.limit = 10;
+}
+
+function countBase(b: Base): number {
+  let n = 0;
+  while (n < b.limit) {
+    n++;
+    if (n == 2) {
+      bumpHeld();
+    }
+  }
+  return n;
+}
+
+console.log("subclass", countBase(held) + held.extra);
+
+// A class object held by a module variable of an interface type.
+interface Limited {
+  limit: number;
+  get(): number;
+}
+
+class Capped implements Limited {
+  limit: number = 3;
+  get(): number {
+    return this.limit;
+  }
+}
+
+const limited: Limited = new Capped();
+
+function bumpLimited(): void {
+  limited.limit = 10;
+}
+
+function countLimited(c: Limited): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpLimited();
+    }
+  }
+  return n + c.get();
+}
+
+console.log("interface", countLimited(limited));
+
+// A fresh local object: nothing else reaches it, and the loop ends at its own limit.
+function countLocal(c: Cfg): number {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bumpConst();
+    }
+  }
+  return n;
+}
+
+console.log("local", countLocal(new Cfg()));

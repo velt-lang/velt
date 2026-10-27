@@ -46,7 +46,7 @@ impl Cx<'_> {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => ShareKind::Object,
                 hir::Def::Adt(a) if a.is_copy => ShareKind::Plain,
                 hir::Def::Adt(a) if a.assigned || a.dispose.is_some() => ShareKind::Object,
-                hir::Def::Adt(_) if self.holds_mutex(t, 0) => ShareKind::Object,
+                hir::Def::Adt(_) if self.holds_mutex(t, 0, true) => ShareKind::Object,
                 _ => self.value_kind(t),
             },
             TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => self.value_kind(t),

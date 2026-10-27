@@ -32,7 +32,11 @@
 //!    and never borrowed inside a counted object, docs/design/semantics-stage2.md §3.4;
 //!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or an
 //!    `Atomic` in its own memory, or the
-//!    param is written (`LocalDef::mutable`); aggregate-return out-pointer → `noalias`;
+//!    param is written (`LocalDef::mutable`), and `frozen` under the same conditions except
+//!    that an `Atomic` is allowed (only its words change); neither `noalias` nor `frozen` when
+//!    module state can reach values of the type (a module `const` / `let`, a `static` field:
+//!    a callee may write the argument through that variable); aggregate-return out-pointer →
+//!    `noalias`;
 //!    `nonnull` + `dereferenceable(size)` on all of them; the frame of a poll function
 //!    (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus `noalias` from
 //!    `velt_opt` when no pointer into the frame ever leaves the function). Every caller must
@@ -236,6 +240,12 @@ pub struct ParamAttrs {
     pub noalias: bool,
     /// The callee never writes through this pointer (or pointers derived from it).
     pub readonly: bool,
+    /// Nothing changes the pointee's bytes during the call, through this pointer or any other,
+    /// except the words of `Atomic`s, which are only accessed through `velt_atomic_*` calls
+    /// (never read as plain memory): a plain read of the pointee gives the same value anywhere
+    /// in the call, so it may be done once on entry. Implied by nothing else: a `readonly`
+    /// pointee may still change through other pointers.
+    pub frozen: bool,
     /// The pointer is never null.
     pub nonnull: bool,
     /// At least this many bytes behind the pointer are valid to read (0 = unknown).
@@ -542,6 +552,9 @@ impl fmt::Display for ParamAttrs {
         }
         if self.readonly {
             parts.push("readonly".to_string());
+        }
+        if self.frozen {
+            parts.push("frozen".to_string());
         }
         if self.nonnull {
             parts.push("nonnull".to_string());
