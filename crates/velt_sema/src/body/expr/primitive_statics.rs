@@ -27,20 +27,24 @@ const NAMES: [&str; 13] = [
 /// name and the type, what `this` is there. The statics are found once per program.
 pub(crate) fn primitive_this(cx: &mut Ctx, def: DefId) -> Option<(&'static str, TyId)> {
     if cx.primitive_statics.is_none() {
+        let mut types = vec![];
+        for name in NAMES.into_iter().chain(["string"]) {
+            if let Some(ty) = cx.ty.primitive(name) {
+                types.push((name, ty));
+            }
+        }
         let mut map = FxHashMap::default();
         for x in &cx.extensions {
+            let Some(&prim) = types.iter().find(|(_, t)| *t == x.target) else {
+                continue;
+            };
             for m in x.methods.values().filter(|m| m.is_static) {
-                map.insert(m.def, x.target);
+                map.insert(m.def, prim);
             }
         }
         cx.primitive_statics = Some(map);
     }
-    let ty = *cx.primitive_statics.as_ref()?.get(&def)?;
-    let name = NAMES
-        .into_iter()
-        .chain(["string"])
-        .find(|n| cx.ty.primitive(n) == Some(ty))?;
-    Some((name, ty))
+    cx.primitive_statics.as_ref()?.get(&def).copied()
 }
 
 impl FnCx<'_, '_> {
@@ -66,9 +70,10 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let (name, ty) = match &object.kind {
             ast::ExprKind::This => self.this_primitive?,
-            ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => {
+            ast::ExprKind::Ident(id) => {
+                // The name test first: it is cheap, and most receivers aren't type names.
                 let ty = self.primitive_named(&id.name)?;
-                if self.lookup_item(&id.name, id.span).is_some() {
+                if self.is_local_name(&id.name) || self.lookup_item(&id.name, id.span).is_some() {
                     return None;
                 }
                 (id.name.as_str(), ty)
