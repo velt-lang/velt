@@ -1,3 +1,4 @@
+// check: no leaks
 // A local copy of a string field that is only read borrows the field (no reference count
 // change, #1670), and keeps its own reference whenever the field may change while the copy is
 // still read: then the copy must keep the old text, also after the old text's memory is
