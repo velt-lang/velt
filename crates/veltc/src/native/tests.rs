@@ -252,7 +252,11 @@ fn system_functions_are_bound_per_target() {
     let call = format!(
         "{PREAD}function main() {{\n  const b: u8[] = [0];\n  console.log(pread(0, b, 0));\n}}\n"
     );
-    for t in ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-musl"] {
+    for t in [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+    ] {
         assert_eq!(lower_for(&call, t), "", "{t}");
     }
     let d = lower_for(&call, "wasm32-wasip1");
@@ -280,7 +284,8 @@ fn system_functions_are_bound_per_target() {
 /// both, and Windows has its own functions (checked though untested there).
 #[test]
 fn struct_layouts_and_windows_declarations_check() {
-    let lock = "struct Lock {\n  l_type: i16;\n  l_whence: i16;\n  l_start: i64;\n  l_len: i64;\n  \
+    let lock =
+        "struct Lock {\n  l_type: i16;\n  l_whence: i16;\n  l_start: i64;\n  l_len: i64;\n  \
                 l_pid: i32;\n}\ndeclare system function fcntl(fd: i32, cmd: i32, lock: Lock): \
                 i32;\nfunction main() {\n  const l: Lock = { l_type: 1, l_whence: 0, l_start: \
                 0, l_len: 0, l_pid: 0 };\n  console.log(fcntl(0, 5, l));\n}\n";
@@ -297,7 +302,10 @@ fn struct_layouts_and_windows_declarations_check() {
     assert_eq!(lower_for(win, "x86_64-pc-windows-msvc"), "");
     let bad = "declare system function ReadFile(file: u64, buf: u8[], n: u32): i32;\nfunction main() {}\n";
     let d = lower_for(bad, "x86_64-pc-windows-msvc");
-    assert!(d.contains("`file` is a C `HANDLE`: declare it `usize`, not `u64`"), "{d}");
+    assert!(
+        d.contains("`file` is a C `HANDLE`: declare it `usize`, not `u64`"),
+        "{d}"
+    );
 }
 
 /// The system functions' struct layouts of the host are the C library's (`libc`'s
@@ -339,7 +347,10 @@ fn host_layouts_match_the_c_library() {
     assert_eq!(off(st, "st_blocks"), offset_of!(libc::stat, st_blocks));
     assert_eq!(off(st, "st_blksize"), offset_of!(libc::stat, st_blksize));
     assert_eq!(off(st, "st_mtime"), offset_of!(libc::stat, st_mtime));
-    assert_eq!(off(st, "st_mtime_nsec"), offset_of!(libc::stat, st_mtime_nsec));
+    assert_eq!(
+        off(st, "st_mtime_nsec"),
+        offset_of!(libc::stat, st_mtime_nsec)
+    );
     assert_eq!(off(st, "st_uid"), offset_of!(libc::stat, st_uid));
     assert_eq!(off(st, "st_rdev"), offset_of!(libc::stat, st_rdev));
 }

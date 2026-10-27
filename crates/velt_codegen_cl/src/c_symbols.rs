@@ -166,7 +166,11 @@ mod tests {
     fn covers_the_system_functions() {
         let host = velt_vir::system::host_triple();
         for f in velt_vir::system::table(&host) {
-            assert!(super::lookup(f.symbol).is_some(), "no address for `{}`", f.symbol);
+            assert!(
+                super::lookup(f.symbol).is_some(),
+                "no address for `{}`",
+                f.symbol
+            );
         }
     }
 }

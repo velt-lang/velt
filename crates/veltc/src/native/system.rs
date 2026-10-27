@@ -13,14 +13,11 @@ pub(super) fn check(p: &hir::Program, f: &hir::ExternFnDef, target: &str, diags:
     match system::match_decl(p, f, target) {
         Ok(_) => {}
         Err(Mismatch::Unknown { close }) => {
-            let mut d = Diagnostic::error(
-                format!("`{name}` is not a system function"),
-                f.span,
-            )
-            .with_note(
-                "`declare system function` binds a function of the platform's C library that \
+            let mut d = Diagnostic::error(format!("`{name}` is not a system function"), f.span)
+                .with_note(
+                    "`declare system function` binds a function of the platform's C library that \
                  the compiler knows how to call safely (system-functions.md lists them)",
-            );
+                );
             if let Some(c) = close {
                 d = d.with_note(format!("did you mean `{c}`?"));
             }

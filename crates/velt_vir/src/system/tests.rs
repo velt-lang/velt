@@ -65,7 +65,10 @@ fn every_table_reads_the_error() {
         assert!(available(t, "lastOsError"), "{t}");
     }
     let names = |t: &str| table(t).iter().map(|f| f.name).collect::<Vec<_>>();
-    assert_eq!(names("aarch64-apple-darwin"), names("x86_64-unknown-linux-gnu"));
+    assert_eq!(
+        names("aarch64-apple-darwin"),
+        names("x86_64-unknown-linux-gnu")
+    );
     assert!(table("wasm32-wasip1").is_empty());
     assert!(table("wasm32-unknown-unknown").is_empty());
     assert_eq!(base_name("fcntl$lock"), "fcntl");

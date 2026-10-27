@@ -165,19 +165,37 @@ macro_rules! posix_table {
             simple("close", &[FD], INT),
             simple(
                 "read",
-                &[FD, Param::Buf { name: "buf", written: true, len: Int::USize }],
+                &[
+                    FD,
+                    Param::Buf {
+                        name: "buf",
+                        written: true,
+                        len: Int::USize,
+                    },
+                ],
                 SSIZE,
             ),
             simple(
                 "write",
-                &[FD, Param::Buf { name: "buf", written: false, len: Int::USize }],
+                &[
+                    FD,
+                    Param::Buf {
+                        name: "buf",
+                        written: false,
+                        len: Int::USize,
+                    },
+                ],
                 SSIZE,
             ),
             simple(
                 "pread",
                 &[
                     FD,
-                    Param::Buf { name: "buf", written: true, len: Int::USize },
+                    Param::Buf {
+                        name: "buf",
+                        written: true,
+                        len: Int::USize,
+                    },
                     int("offset", "off_t", Int::I64),
                 ],
                 SSIZE,
@@ -186,7 +204,11 @@ macro_rules! posix_table {
                 "pwrite",
                 &[
                     FD,
-                    Param::Buf { name: "buf", written: false, len: Int::USize },
+                    Param::Buf {
+                        name: "buf",
+                        written: false,
+                        len: Int::USize,
+                    },
                     int("offset", "off_t", Int::I64),
                 ],
                 SSIZE,
@@ -196,8 +218,15 @@ macro_rules! posix_table {
             simple("ftruncate", &[FD, int("length", "off_t", Int::I64)], INT),
             simple(
                 "lseek",
-                &[FD, int("offset", "off_t", Int::I64), int("whence", "int", Int::I32)],
-                Ret::Int { c: "off_t", ty: Int::I64 },
+                &[
+                    FD,
+                    int("offset", "off_t", Int::I64),
+                    int("whence", "int", Int::I32),
+                ],
+                Ret::Int {
+                    c: "off_t",
+                    ty: Int::I64,
+                },
             ),
             simple("unlink", &[Param::CStr { name: "path" }], INT),
             Func {
@@ -205,7 +234,12 @@ macro_rules! posix_table {
                 symbol: "fcntl",
                 params: &[
                     FD,
-                    Param::Int { name: "cmd", c: "int", ty: Int::I32, guard: Guard::OneOf($fint) },
+                    Param::Int {
+                        name: "cmd",
+                        c: "int",
+                        ty: Int::I32,
+                        guard: Guard::OneOf($fint),
+                    },
                     int("arg", "int", Int::I32),
                 ],
                 variadic: 2,
@@ -217,8 +251,16 @@ macro_rules! posix_table {
                 symbol: "fcntl",
                 params: &[
                     FD,
-                    Param::Int { name: "cmd", c: "int", ty: Int::I32, guard: Guard::OneOf($flk) },
-                    Param::Struct { name: "lock", layout: $flock },
+                    Param::Int {
+                        name: "cmd",
+                        c: "int",
+                        ty: Int::I32,
+                        guard: Guard::OneOf($flk),
+                    },
+                    Param::Struct {
+                        name: "lock",
+                        layout: $flock,
+                    },
                 ],
                 variadic: 2,
                 ret: INT,
@@ -227,7 +269,13 @@ macro_rules! posix_table {
             Func {
                 name: "fstat",
                 symbol: $fstat,
-                params: &[FD, Param::Struct { name: "st", layout: $stat }],
+                params: &[
+                    FD,
+                    Param::Struct {
+                        name: "st",
+                        layout: $stat,
+                    },
+                ],
                 variadic: 2,
                 ret: INT,
                 after: After::None,
@@ -255,7 +303,15 @@ const fn simple(name: &'static str, params: &'static [Param], ret: Ret) -> Func 
     }
 }
 
-posix_table!(MACOS_ARM, &FLOCK_MACOS, &STAT_MACOS, "fstat", "__error", FCNTL_INT_MACOS, FCNTL_LOCK_MACOS);
+posix_table!(
+    MACOS_ARM,
+    &FLOCK_MACOS,
+    &STAT_MACOS,
+    "fstat",
+    "__error",
+    FCNTL_INT_MACOS,
+    FCNTL_LOCK_MACOS
+);
 posix_table!(
     MACOS_X86,
     &FLOCK_MACOS,

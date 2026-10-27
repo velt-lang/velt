@@ -72,7 +72,9 @@ impl FnLower<'_, '_> {
             let first = cargs.len();
             match *p {
                 Param::Null { .. } => push(&mut cargs, &mut ctys, cint(0, Ty::Ptr), Ty::Ptr),
-                Param::Int { ty, guard, name, .. } => {
+                Param::Int {
+                    ty, guard, name, ..
+                } => {
                     let Some(Arg::Scalar(v)) = vals.next() else {
                         ice("system call: an integer argument")
                     };
@@ -132,10 +134,19 @@ impl FnLower<'_, '_> {
         };
         let id = self.cx.extern_sym(func.symbol, ctys, cret, false);
         let dest = self.temp(cret);
-        self.call(vir::Callee::Extern(id), cargs, Some(Place::local(dest)), false);
+        self.call(
+            vir::Callee::Extern(id),
+            cargs,
+            Some(Place::local(dest)),
+            false,
+        );
         if let After::WaitOverlapped { handle, overlapped } = func.after {
-            let h = by_param[handle].clone().unwrap_or_else(|| ice("handle argument"));
-            let ov = by_param[overlapped].clone().unwrap_or_else(|| ice("overlapped argument"));
+            let h = by_param[handle]
+                .clone()
+                .unwrap_or_else(|| ice("handle argument"));
+            let ov = by_param[overlapped]
+                .clone()
+                .unwrap_or_else(|| ice("overlapped argument"));
             self.wait_overlapped(dest, h, ov);
         }
         for (place, t, tmp, layout) in structs {
@@ -232,7 +243,10 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(out), Rvalue::Use(n));
         self.goto(join);
         self.switch_to(join);
-        self.rvalue_temp(Ty::U32, Rvalue::Cast(Operand::Copy(Place::local(out)), Ty::U32))
+        self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Cast(Operand::Copy(Place::local(out)), Ty::U32),
+        )
     }
 
     /// Stop the program unless the string at `ptr` (`n` elements) ends with a 0 element, so the
@@ -382,14 +396,23 @@ impl FnLower<'_, '_> {
         let (check, wait, done) = (self.new_block(), self.new_block(), self.new_block());
         let failed = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(dest)), cint(0, Ty::I32)),
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(dest)),
+                cint(0, Ty::I32),
+            ),
         );
         self.branch(failed, check, done);
         self.switch_to(check);
         // As the table's `lastOsError` declares it: one signature per symbol.
         let gle = self.cx.extern_sym("GetLastError", vec![], Ty::I32, false);
         let code = self.temp(Ty::I32);
-        self.call(vir::Callee::Extern(gle), vec![], Some(Place::local(code)), false);
+        self.call(
+            vir::Callee::Extern(gle),
+            vec![],
+            Some(Place::local(code)),
+            false,
+        );
         let pending = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(
@@ -409,7 +432,12 @@ impl FnLower<'_, '_> {
             false,
         );
         let args = vec![h, ov, np, cint(1, Ty::I32)];
-        self.call(vir::Callee::Extern(gor), args, Some(Place::local(dest)), false);
+        self.call(
+            vir::Callee::Extern(gor),
+            args,
+            Some(Place::local(dest)),
+            false,
+        );
         self.goto(done);
         self.switch_to(done);
     }

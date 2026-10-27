@@ -100,9 +100,7 @@ static TABLE: &[Func] = &[
     func(
         "CreateFileW",
         &[
-            Param::WStr {
-                name: "lpFileName",
-            },
+            Param::WStr { name: "lpFileName" },
             int("dwDesiredAccess", "DWORD", Int::U32),
             int("dwShareMode", "DWORD", Int::U32),
             Param::Null {
@@ -216,7 +214,12 @@ static TABLE: &[Func] = &[
         BOOL,
         wait(4),
     ),
-    func("CloseHandle", &[int("hObject", "HANDLE", Int::USize)], BOOL, After::None),
+    func(
+        "CloseHandle",
+        &[int("hObject", "HANDLE", Int::USize)],
+        BOOL,
+        After::None,
+    ),
     Func {
         name: "lastOsError",
         symbol: "GetLastError",

@@ -74,7 +74,11 @@ pub fn match_decl(
 /// buffer.
 pub fn ranged(c: &Func, declared: usize) -> bool {
     let params = c.params.iter().filter(|p| p.declared()).count();
-    let bufs = c.params.iter().filter(|p| matches!(p, Param::Buf { .. })).count();
+    let bufs = c
+        .params
+        .iter()
+        .filter(|p| matches!(p, Param::Buf { .. }))
+        .count();
     bufs == 1 && declared == params + 2
 }
 

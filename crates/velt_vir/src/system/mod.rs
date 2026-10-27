@@ -144,7 +144,10 @@ pub struct Field {
 /// A result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ret {
-    Int { c: &'static str, ty: Int },
+    Int {
+        c: &'static str,
+        ty: Int,
+    },
     /// `lastOsError()`: the symbol returns `int *` (`__error`, `__errno_location`), and the
     /// result is the `int` there.
     Errno,
@@ -157,7 +160,10 @@ pub enum After {
     /// Windows: a result of 0 with `ERROR_IO_PENDING` waits for the operation
     /// (`GetOverlappedResult(handle, overlapped, &n, TRUE)`), so the kernel is done with the
     /// buffer and the `OVERLAPPED` before the call returns. The indices are of `params`.
-    WaitOverlapped { handle: usize, overlapped: usize },
+    WaitOverlapped {
+        handle: usize,
+        overlapped: usize,
+    },
 }
 
 /// A function of the table.
