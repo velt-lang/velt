@@ -247,7 +247,7 @@ fn not_declared_before<'a>(
             .chain(throws.as_deref())
             .find_map(|a| not_declared_before(a, rest)),
         K::GenericFunction { ty, .. }
-        | K::Construct(ty)
+        | K::Construct { ty, .. }
         | K::TupleRest(ty)
         | K::TupleOptional(ty) => not_declared_before(ty, rest),
         K::Object(fields) => fields.iter().find_map(|f| not_declared_before(&f.ty, rest)),

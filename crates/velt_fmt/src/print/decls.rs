@@ -49,7 +49,20 @@ impl<'a> Printer<'a> {
                 .iter()
                 .map(|c| Member::Constructor(c, visibility)),
         );
-        members.extend(decl.methods.iter().map(Member::Method));
+        // An abstract property's setter is printed with its getter, as the property.
+        let property_setter = |m: &&Method| m.is_setter && self.abstract_property(m);
+        let methods = decl.methods.iter().filter(|m| !property_setter(m));
+        members.extend(methods.map(Member::Method));
+        self.readonly_properties = (decl.methods.iter())
+            .filter(|m| m.is_getter && self.abstract_property(m))
+            .filter(|g| {
+                !decl
+                    .methods
+                    .iter()
+                    .any(|s| s.is_setter && s.decl.sig.span == g.decl.sig.span)
+            })
+            .map(|g| g.decl.sig.name.span.lo)
+            .collect();
         let mut head = cat![
             keyword,
             decl.name.name.clone(),
@@ -184,14 +197,26 @@ impl<'a> Printer<'a> {
                 if m.is_static {
                     mods.push_str("static ");
                 }
+                // TypeScript's order: `abstract override` (TS1029).
+                if m.is_abstract {
+                    mods.push_str("abstract ");
+                }
                 if m.is_override {
                     mods.push_str("override ");
+                }
+                if m.is_getter && self.abstract_property(m) {
+                    return self.abstract_property_decl(m, mods);
                 }
                 if m.is_getter {
                     mods.push_str("get ");
                 }
                 if m.is_setter {
                     mods.push_str("set ");
+                }
+                if m.is_abstract {
+                    // The body is the parser's placeholder: print the signature alone.
+                    let sig = self.fn_sig(&m.decl.sig, "", m.decl.sig.span.hi);
+                    return cat![mods, sig, ";"];
                 }
                 self.fn_decl_with(&m.decl, "", &mods)
             }
@@ -312,5 +337,56 @@ fn static_block(f: &Field) -> Option<&velt_syntax::ast::Block> {
             ..
         } => Some(b),
         _ => None,
+    }
+}
+
+impl Printer<'_> {
+    /// Was abstract accessor `m` written as an abstract property (`abstract count: number;`),
+    /// which the parser reads as an abstract getter and setter? A `:` or `?` follows its name.
+    fn abstract_property(&self, m: &Method) -> bool {
+        let after = self
+            .src
+            .get(m.decl.sig.name.span.hi as usize..)
+            .unwrap_or("");
+        m.is_abstract && (m.is_getter || m.is_setter) && after.trim_start().starts_with([':', '?'])
+    }
+
+    /// `abstract [override] [readonly] name[?]: T;` from the getter `m` of an abstract property.
+    fn abstract_property_decl(&mut self, m: &Method, mut mods: String) -> Doc {
+        if self.readonly_properties.contains(&m.decl.sig.name.span.lo) {
+            mods.push_str("readonly ");
+        }
+        let name = &m.decl.sig.name;
+        let after = self.src.get(name.span.hi as usize..).unwrap_or("");
+        let optional = after.trim_start().starts_with('?');
+        let Some(ty) = &m.decl.sig.ret else {
+            return cat![mods, name.name.clone(), ";"];
+        };
+        let ty = match optional {
+            true => written_optional(ty),
+            false => ty.clone(),
+        };
+        let mark = if optional { "?" } else { "" };
+        cat![mods, name.name.clone(), mark, ": ", self.ty(&ty), ";"]
+    }
+}
+
+/// The type written in `name?: T`, without the `undefined` the parser adds (an empty span).
+fn written_optional(ty: &TypeExpr) -> TypeExpr {
+    let velt_syntax::ast::TypeExprKind::Union(ms) = &ty.kind else {
+        return ty.clone();
+    };
+    let written: Vec<TypeExpr> = (ms.iter())
+        .filter(|m| {
+            !(matches!(m.kind, velt_syntax::ast::TypeExprKind::Undefined) && m.span.lo == m.span.hi)
+        })
+        .cloned()
+        .collect();
+    match written.len() {
+        1 => written.into_iter().next().expect("ICE: one member"),
+        _ => TypeExpr {
+            kind: velt_syntax::ast::TypeExprKind::Union(written),
+            span: ty.span,
+        },
     }
 }

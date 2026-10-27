@@ -235,6 +235,8 @@ pub(crate) struct Frame {
     /// Declared/expected return type; `None` while it is inferred from the body's `return`s
     /// (recorded in `returns`).
     pub ret: Option<TyId>,
+    /// Where a closure's result goes (`returns::ReturnSite`).
+    pub return_site: returns::ReturnSite,
     pub returns: returns::Returns,
     pub captures: Vec<CaptureCx>,
     pub escaping: bool,
@@ -416,6 +418,7 @@ impl Frame {
             loops: vec![],
             loop_count: 0,
             ret,
+            return_site: Default::default(),
             returns: Default::default(),
             captures: vec![],
             escaping: false,
@@ -508,6 +511,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// In a static method using `this` or `super` (`collect::static_this`): the class `this`
     /// is, and the class declaring the method (whose base `super` is).
     pub static_this: Option<(DefId, DefId)>,
+    /// In a static method of an `extend` block of a primitive type: the type's name and the
+    /// type, what `this` is (`expr::primitive_statics`).
+    pub this_primitive: Option<(&'static str, TyId)>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
@@ -649,6 +655,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             owner: None,
             body_def: None,
             static_this: None,
+            this_primitive: None,
             enclosing_locals: vec![],
             generic_arrow: false,
             asserted_fn: None,

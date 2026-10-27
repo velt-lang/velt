@@ -130,6 +130,7 @@ fn is_declaration(first_line: &str) -> bool {
         "async function ",
         "async function*",
         "class ",
+        "abstract class ",
         "struct ",
         "interface ",
         "type ",

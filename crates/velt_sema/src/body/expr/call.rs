@@ -536,6 +536,9 @@ impl FnCx<'_, '_> {
             // `this.f()` in a static method: the class it was called on.
             return Some(self.this_static_call(this, declaring, prop, type_args, args, exp, span));
         }
+        if let Some(h) = self.primitive_namespace_call(object, prop, type_args, args, exp, span) {
+            return Some(h);
+        }
         let ast::ExprKind::Ident(id) = &object.kind else {
             return None;
         };

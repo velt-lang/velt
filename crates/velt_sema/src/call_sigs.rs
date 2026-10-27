@@ -47,7 +47,10 @@ fn sig_type(s: &ast::CallSig) -> ast::TypeExpr {
     let ty = fn_type(&s.sig, s.span);
     match s.construct {
         true => ast::TypeExpr {
-            kind: ast::TypeExprKind::Construct(Box::new(ty)),
+            kind: ast::TypeExprKind::Construct {
+                ty: Box::new(ty),
+                is_abstract: false,
+            },
             span: s.span,
         },
         false => ty,

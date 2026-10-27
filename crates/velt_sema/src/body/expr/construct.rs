@@ -52,6 +52,21 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if let Some(a) = self
+            .cx
+            .adt(d)
+            .filter(|a| a.decl.is_some_and(|t| t.is_abstract))
+        {
+            let msg = format!(
+                "cannot create an instance of abstract class `{}` (TypeScript's TS2511)",
+                a.name
+            );
+            self.cx.error(Diagnostic::error(msg, class.span).with_note(
+                "create an instance of a subclass that implements its abstract members",
+            ));
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         let n = slots.len();
         let self_ty = crate::collect::self_type(self.cx, d, n);
         let ctor = self.cx.adt(d).and_then(|a| a.ctor);

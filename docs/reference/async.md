@@ -736,7 +736,9 @@ shared between threads …`` where the `shared` or the server is made. Capture a
 ## Errors
 
 Errors are typed like everywhere else ([Errors](errors.md)). A promise's type carries what it
-can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
+can reject with: `Promise<T, E>`. A `Promise<T>` written without an error type rejects with
+what the promises stored into it reject with (see below), and never rejects when none of them
+can.
 
 - An async function's `throws` clause (`async function f(): Promise<T> throws E`, or the
   inferred one) is its promise's `E`. In a function type, `throws` after a `Promise` result is
@@ -744,9 +746,11 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   promise (`load(id: string): Promise<User> throws NotFound`, or `Promise<User, NotFound>`):
   calling it through the interface returns a `Promise<User, NotFound>`, and its
   implementations are `async` methods (a synchronous one may return a promise only when the
-  method's promise cannot reject). The same holds for a class method returning a promise that
-  a subclass overrides: the base method and every override are `async` when any of them can
-  fail. A getter cannot be `async`, so a getter returning a promise from an interface cannot
+  method's promise cannot reject). The same holds for a class method returning a promise that a subclass overrides: the base method
+  and every override are `async` when any of them can fail, unless the failing one only
+  returns a rejecting promise: a synchronous override whose body throws nothing may return a
+  promise that rejects, when both results are `Promise<T>` written without an error type, and
+  the base method's promise then rejects with that too. A getter cannot be `async`, so a getter returning a promise from an interface cannot
   fail, and overridden getters throw at the read. A method declared as returning a type
   parameter (`get(): T`) throws its errors for every type argument: an `async` implementation
   for `T = Promise<…>` must not fail. A default body of such an interface method can be `async` too:
@@ -792,6 +796,45 @@ async function main() {
   argument, a return value). An array literal without an expected type still takes its element
   type from its first element, so mixed arrays need a type:
   `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
+- As in TypeScript, a promise that rejects can be stored where a `Promise<T>` written without
+  an error type is expected: returned from a function declared `: Promise<T>` that is not
+  `async`, assigned to a variable or field of that type (also `Promise<T> | null`), passed for
+  such a parameter, pushed to a `Promise<T>[]` or set as a value of a `Map<K, Promise<T>>`. Each such written type (each place it is
+  written) then rejects with what is stored into it, inferred over the whole program as for
+  [function types written without `throws`](errors.md#dynamic-calls), so awaiting a value read
+  from it throws those errors and a `try` around the `await` catches them, as in Node. A value
+  of that type stored into another such type takes its errors along. The result type of an `async`
+  function is not such a type: it rejects with what the function throws. Where the compiler
+  can't tell which written type the promise is stored into (a promise stored through `any`, an
+  element of an untyped array), the error type must be written (`Promise<T, E>`).
+
+  ```ts
+  class Timeout extends Error {}
+
+  async function fetchName(fail: boolean): Promise<string> {
+    if (fail) {
+      throw new Timeout("too slow");
+    }
+    return "ada";
+  }
+
+  function loadName(fail: boolean): Promise<string> {
+    return fetchName(fail);
+  }
+
+  async function main() {
+    const pending: Promise<string>[] = [];
+    pending.push(loadName(false));
+    pending.push(loadName(true));
+    for (const p of pending) {
+      try {
+        console.log(await p);
+      } catch (e) {
+        console.log("failed:", (e as Error).message);
+      }
+    }
+  }
+  ```
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
@@ -813,8 +856,9 @@ async function main() {
 ## `new Promise`
 
 `new Promise<T, E>((resolve, reject) => …)` runs the executor at once and wraps callback APIs.
-`T` and `E` come from the type arguments or from the expected type (`Promise<T>` cannot reject;
-`new Promise((resolve) => …)` takes no `reject`).
+`T` and `E` come from the type arguments or from the expected type. Without a written `E`
+(`new Promise((resolve, reject) => …)`, `new Promise<T>(…)`), the promise rejects with what
+`reject` is called with, as in TypeScript; `new Promise((resolve) => …)` takes no `reject`.
 
 - `resolve` and `reject` are owned handles to the promise's settle-once slot on the heap, not
   closures from a caller: the executor may store them, capture them in callbacks, pass them to
@@ -865,8 +909,8 @@ async function main() {
 `Promise.withResolvers<T, E>()` (ES2024) returns a `PromiseWithResolvers<T, E>`:
 `{ promise: Promise<T, E>; resolve: (value: T) => void; reject: (reason: E) => void }`, a
 pending promise and the functions that settle it, without an executor. `T` and `E` come from
-the type arguments (`E` defaults to `never`: the promise cannot reject) or from the expected
-type.
+the type arguments or from the expected type; without a written `E`
+(`Promise.withResolvers<T>()`), the promise rejects with what `reject` is called with.
 
 - `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
   spawned task, or send them over a [channel](../std/channel.md) and call them there; the

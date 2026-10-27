@@ -1,4 +1,5 @@
-//! Members of declaration bodies: modifiers (`private public readonly static async override`,
+//! Members of declaration bodies: modifiers (`private public readonly static async override
+//! abstract`,
 //! accessors `get` / `set`, `protected` on a constructor only), fields
 //! (including optional `name?: T`), methods and constructors of `struct`/`class`/`extend`, and the
 //! fields and (optionally defaulted) methods of `interface`.
@@ -6,6 +7,8 @@
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
+
+mod abstracts;
 
 /// Modifiers seen before a member name.
 #[derive(Default)]
@@ -23,6 +26,8 @@ pub(super) struct Modifiers {
     is_setter: bool,
     /// `declare name: T;` (a class field TypeScript emits no initializer for).
     is_declare: bool,
+    /// `abstract name(): T;`: a method without a body (in an `abstract class`).
+    is_abstract: bool,
 }
 
 impl Modifiers {
@@ -35,6 +40,7 @@ impl Modifiers {
             || self.is_getter
             || self.is_setter
             || self.is_declare
+            || self.is_abstract
     }
 
     fn ctor_visibility(&self) -> CtorVisibility {
@@ -92,6 +98,7 @@ impl<'a> Parser<'a> {
                 }
                 // `override` is contextual (not in the keyword list), so it arrives as an identifier.
                 None if self.at_word("override") => &mut m.is_override,
+                None if self.at_word("abstract") => &mut m.is_abstract,
                 None if self.at_word("private") && !m.is_public && !m.is_protected => {
                     &mut m.is_private
                 }
@@ -108,7 +115,16 @@ impl<'a> Parser<'a> {
                 _ => break,
             };
             if *flag {
-                break;
+                // `abstract abstract m()`: a name follows (the loop's condition), so this is
+                // the modifier again, not the member's name (TypeScript's TS1030).
+                let span = self.cur_span();
+                let word = self.text(span.lo, span.hi).to_string();
+                self.error(
+                    format!("`{word}` modifier already seen (TypeScript's TS1030)"),
+                    span,
+                );
+                self.bump();
+                continue;
             }
             *flag = true;
             self.bump();
@@ -156,6 +172,9 @@ impl<'a> Parser<'a> {
             if let Some(s) = star {
                 self.error("`*` marks a generator method: expected `(`", s);
             }
+            if mods.is_abstract {
+                return self.abstract_property(lo, name, &mods);
+            }
             return Ok(Member::Field(self.parse_field_rest(lo, name, &mods)?));
         }
         if mods.readonly {
@@ -169,6 +188,9 @@ impl<'a> Parser<'a> {
         }
         let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         self.check_accessor(&sig, &mods);
+        if mods.is_abstract {
+            return self.abstract_method(sig, &mods);
+        }
         if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
         }
@@ -184,6 +206,7 @@ impl<'a> Parser<'a> {
             is_getter: mods.is_getter,
             is_setter: mods.is_setter,
             is_override: mods.is_override,
+            is_abstract: false,
         }))
     }
 
@@ -468,9 +491,14 @@ impl<'a> Parser<'a> {
             decl.fields.push(field);
             return Ok(());
         }
-        if mods.readonly || mods.is_static || mods.is_override || mods.is_private {
+        if mods.readonly
+            || mods.is_static
+            || mods.is_override
+            || mods.is_private
+            || mods.is_abstract
+        {
             self.error(
-                "`readonly`, `static`, `override` and `private` are not allowed on interface methods",
+                "`readonly`, `static`, `override`, `private` and `abstract` are not allowed on interface methods",
                 name.span,
             );
         }

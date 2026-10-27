@@ -14,6 +14,12 @@
 //!   params (borrowed values, also ones holding atomics) that the function reads in a loop are
 //!   loaded once on entry: nothing changes them during the call, not even atomic operations,
 //!   fences or calls.
+//! - `bounds`: in functions with `frozen` params, before the rounds (after a cleanup that gives
+//!   `a || b` its two branches) and from `inline` once their callees are inlined, range checks
+//!   that an earlier check proves (a node's whole range checked once, then words read at
+//!   constant offsets in it) are decided, with no-wrap reasoning LLVM cannot do on Velt's
+//!   wrapping integers; a frozen param's field (an array's length) is one value however often
+//!   it is read, and the decided checks then go wherever the function is inlined.
 //! - `inline`: bottom-up inlining of small / called-once direct callees.
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive
@@ -63,6 +69,7 @@
 use velt_vir::vir;
 
 mod addr_forward;
+mod bounds;
 mod callgraph;
 mod const_fields;
 mod constfold;
@@ -171,11 +178,20 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.aggs,
                 &program.statics,
             );
+            let signatures = t.time("signatures", || callgraph::signatures(program));
             for func in &mut program.funcs {
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(&program.aggs, func, t);
                 }
                 t.time("frozen", || frozen::run(&program.aggs, func));
+                if func.param_attrs.iter().any(|a| a.frozen) {
+                    // `a || b` as two branches (threaded), the shape `bounds` reads facts from.
+                    t.time("constfold", || constfold::run(&signatures, func));
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                    t.time("bounds", || bounds::run(&program.aggs, func));
+                }
             }
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();

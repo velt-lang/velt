@@ -118,6 +118,9 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok(StmtKind::Empty)
                 }
+                _ if self.at_abstract_class() => {
+                    Ok(StmtKind::Item(Box::new(self.parse_item(false)?)))
+                }
                 _ => self.parse_labeled_or_expr_stmt(),
             };
         };
@@ -176,6 +179,7 @@ impl<'a> Parser<'a> {
             Some(Kw::Async) => self.at_async_function(),
             Some(Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
+            None => self.at_abstract_class(),
             _ => false,
         }
     }

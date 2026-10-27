@@ -427,6 +427,8 @@ pub(super) fn check_method_sig(
             let r = cx.subst(ret, owner_args);
             cx.same_ty(r, want_ret)
         }
+    } else if promise_results_unify(cx, def, owner_args, m, want_ret) {
+        true
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
@@ -517,4 +519,28 @@ fn own_generics_match(
         return None;
     }
     Some(args)
+}
+
+/// A method returning a `Promise<T>` written without an error type implements an interface
+/// method returning one: the two reject with what either is given (`throws::promise_sites`).
+fn promise_results_unify(
+    cx: &mut Ctx,
+    def: DefId,
+    owner_args: &[TyId],
+    m: &IfaceMethod,
+    want: TyId,
+) -> bool {
+    let (ret, ret_span) = (cx.fn_info(def).ret, cx.fn_info(def).ret_span);
+    let have_site = ret_span.and_then(|s| cx.site_in(s, ret));
+    let have = cx.subst(ret, owner_args);
+    // The interface method's promise error is its `throws` (`collect::sigs::promise_throws`).
+    let want = match (cx.ty.promise_payload(want), m.throws.and_then(|t| t.ty)) {
+        (Some(v), Some(e)) => cx.ty.promise_rejecting(v, e),
+        _ => want,
+    };
+    if have_site.is_some() && have == want {
+        return true;
+    }
+    let want_site = cx.written_promise_site(m.span, want);
+    cx.unify_promise_results((have, have_site), (want, want_site))
 }

@@ -205,7 +205,7 @@ impl FnCx<'_, '_> {
                 h
             };
             let arg_ty = h.ty;
-            let site = self.param_site(p);
+            let site = self.arg_site(p, h.span);
             self.flow_into(&h, site);
             let outer_target = self.set_target(site);
             let mut h = if weak_key && hargs.is_empty() {

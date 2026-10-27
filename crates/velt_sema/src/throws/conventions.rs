@@ -23,9 +23,15 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
             continue;
         }
         let Some(e) = f.throws else { continue };
-        let generic_ret = cx.ty.promise_payload(f.ret).is_none();
+        let (is_getter, ret) = (f.is_getter, f.ret);
+        // A synchronous member whose body throws nothing returns its errors in the promise it
+        // returns (a `Promise<T>` written without an error type, `promise_sites`).
+        let generic_ret = cx.ty.promise_payload(ret).is_none();
+        if g.promise && !is_getter && !generic_ret && returns_errors(cx, m, ret, e) {
+            continue;
+        }
         let diag = match g.promise {
-            true if f.is_getter => getter_cannot_reject(cx, m, e, owner),
+            true if is_getter => getter_cannot_reject(cx, m, e, owner),
             true if generic_ret => generic_cannot_reject(cx, m, e, owner),
             true => must_be_async(cx, m, e, owner),
             false => cannot_be_async(cx, m, e, owner),
@@ -155,4 +161,14 @@ fn failing_member(cx: &mut Ctx, g: &Group, d: DefId) -> Option<(Span, String)> {
         return Some((at, format!("`{name}` fails with `{en}` here")));
     }
     None
+}
+
+/// Does synchronous member `d`, whose result is `ret`, report the group's errors `e` through
+/// the promise it returns: its body throws nothing, and its result (a `Promise<T>` written
+/// without an error type, `promise_sites`) rejects with all of them.
+fn returns_errors(cx: &mut Ctx, d: DefId, ret: crate::hir::TyId, e: crate::hir::TyId) -> bool {
+    let Some(rejects) = cx.ty.promise_error(ret) else {
+        return false;
+    };
+    super::infer::own_final(cx, d).is_none() && cx.error_outside(Some(rejects), Some(e)).is_none()
 }

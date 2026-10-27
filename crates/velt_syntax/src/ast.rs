@@ -8,11 +8,13 @@
 use velt_common::Span;
 
 mod blocks;
+mod decls;
 mod jsx;
 mod type_level;
 mod type_parts;
 
 pub use blocks::*;
+pub use decls::*;
 pub use jsx::*;
 pub use type_level::*;
 pub use type_parts::*;
@@ -175,119 +177,6 @@ pub struct FnDecl {
     pub overloads: Vec<FnSig>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Field {
-    pub name: Ident,
-    pub ty: TypeExpr,
-    pub default: Option<Expr>,
-    pub readonly: bool,
-    /// `name?: T` — the field has type `T | null` and defaults to `null`.
-    pub optional: bool,
-    /// `private name: T` — only accessible inside the declaring type's body.
-    pub is_private: bool,
-    /// `static readonly name: T = e;` — a per-type constant, not an instance field.
-    pub is_static: bool,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct Method {
-    pub decl: FnDecl,
-    pub is_static: bool,
-    /// `private` keyword: only callable inside the declaring type's body.
-    pub is_private: bool,
-    /// `get name(): T { ... }` — read as a property (`x.name`), no parameters.
-    pub is_getter: bool,
-    /// `set name(v: T) { ... }` — runs on assignment `x.name = v`; one parameter, no return
-    /// type; it always mutates `this`. May share its name with a getter.
-    pub is_setter: bool,
-    /// `override` keyword: redefines a base-class method.
-    pub is_override: bool,
-}
-
-/// Shared by `struct` and `class`.
-#[derive(Clone, Debug)]
-pub struct TypeDecl {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    /// `extends Base<T>` — classes only, at most one.
-    pub extends: Option<TypeExpr>,
-    /// `implements A, B`
-    pub implements: Vec<TypeExpr>,
-    pub fields: Vec<Field>,
-    pub constructor: Option<FnDecl>,
-    /// `private constructor` / `protected constructor` (`Public` without a constructor).
-    pub ctor_visibility: CtorVisibility,
-    pub methods: Vec<Method>,
-}
-
-/// Who may call a class's constructor (TypeScript's rules, docs/reference/classes.md): anyone;
-/// the class body and its subclasses (`protected`); only the class body, and the class cannot
-/// be extended (`private`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CtorVisibility {
-    #[default]
-    Public,
-    Protected,
-    Private,
-}
-
-#[derive(Clone, Debug)]
-pub struct InterfaceDecl {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    pub extends: Vec<TypeExpr>,
-    /// Fields every implementor must have (same name and type).
-    pub fields: Vec<Field>,
-    pub methods: Vec<InterfaceMethod>,
-    /// Call and construct signatures, as for [`TypeExprKind::Callable`].
-    pub call_sigs: Vec<CallSig>,
-}
-
-/// Interface method: required (`body: None`) or with a default implementation.
-#[derive(Clone, Debug)]
-pub struct InterfaceMethod {
-    pub sig: FnSig,
-    pub body: Option<Block>,
-    /// `get name(): T` — read as a property, no parameters.
-    pub is_getter: bool,
-    /// `set name(v: T)` — called by `x.name = v`; one parameter; it always mutates `this`.
-    pub is_setter: bool,
-}
-
-/// `extend<T> Target<T> [implements A, B] { methods }`
-#[derive(Clone, Debug)]
-pub struct ExtendDecl {
-    pub generics: Vec<GenericParam>,
-    pub target: TypeExpr,
-    /// `implements A, B`: the interfaces the block's methods implement for the target.
-    pub implements: Vec<TypeExpr>,
-    pub methods: Vec<Method>,
-}
-
-/// `enum Color { Red, Green = 5 }` (numeric, TS-style) or `enum Dir { Up = "UP" }` (string enum).
-/// Tagged unions are written as discriminated unions of object types instead.
-#[derive(Clone, Debug)]
-pub struct EnumDecl {
-    pub name: Ident,
-    pub variants: Vec<Variant>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Variant {
-    pub name: Ident,
-    /// `= 5` / `= -1` / `= "UP"`.
-    pub discriminant: Option<Expr>,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeAlias {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    pub ty: TypeExpr,
-}
-
 // ───────────────────────────── Types ─────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -326,9 +215,13 @@ pub enum TypeExprKind {
         type_params: Vec<GenericParam>,
         ty: Box<TypeExpr>,
     },
-    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
-    /// function type, generic or not, after `new`).
-    Construct(Box<TypeExpr>),
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (`ty`: the
+    /// function type, generic or not, after `new`). `abstract new (a: A) => R` (`is_abstract`)
+    /// also takes abstract classes, and cannot be called with `new`.
+    Construct {
+        ty: Box<TypeExpr>,
+        is_abstract: bool,
+    },
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
     /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)

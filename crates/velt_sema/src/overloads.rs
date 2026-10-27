@@ -222,6 +222,7 @@ fn methods(
                 is_getter: false,
                 is_setter: false,
                 is_override,
+                is_abstract: false,
             });
         }
     }

@@ -37,6 +37,7 @@ velt:bigint = ../std/bigint.md
 velt:child_process = ../std/child_process.md
 velt:cli = ../std/cli.md
 velt:collections/btree_map = ../std/collections/btree_map.md
+velt:collections/concurrent_map = ../std/collections/concurrent_map.md
 velt:collections/deque = ../std/collections/deque.md
 velt:collections/priority_queue = ../std/collections/priority_queue.md
 velt:collections/set = ../std/collections/set.md

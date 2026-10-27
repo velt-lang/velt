@@ -303,6 +303,7 @@ impl FnCx<'_, '_> {
             // A field read through an interface's getter slot (`iface_write`).
             return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
+        self.abstract_in_ctor(&obj, &prop.name, false, prop.span);
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
     }
 

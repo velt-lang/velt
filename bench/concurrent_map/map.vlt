@@ -1,0 +1,200 @@
+// velt:collections/concurrent_map against bbtree's concurrent `BBTreeMap` (rust/), the same
+// workloads on both: `insert` puts N keys `mix(2i)` into an empty map, split across T threads;
+// `get_half` then does OPS lookups per thread, half of them hits (`mix(2i)`) and half misses
+// (`mix(2i + 1)`), i uniform; `get_half_batch` the same 64 keys a call (`getManyInto`, bbtree's
+// `get_many_copied`); `update` OPS adds of 1 to present keys per thread (`add`, bbtree's
+// `update`); `mixed` 90% `get_half` lookups and 10% updates. Each line: `name threads Mops/s
+// checksum`. Times run from a start barrier to the last thread's end.
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const N: u64 = 10000000;
+const OPS: u64 = 5000000;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+class Run {
+  map: ConcurrentMap;
+  ready: Atomic<u32>[] = [];
+  go: Atomic<bool>[] = [];
+  constructor(map: ConcurrentMap) {
+    this.map = map;
+    for (let i = 0; i < 5; i++) {
+      this.ready.push(new Atomic<u32>(0));
+      this.go.push(new Atomic<bool>(false));
+    }
+  }
+}
+
+function arrive(r: Run, phase: i64) {
+  r.ready[phase].add(1);
+  while (!r.go[phase].load("acquire")) {
+    Atomic.spinHint();
+  }
+}
+
+async function release(r: shared<Run>, phase: i64, n: u32): Promise<f64> {
+  while (r.ready[phase].load("acquire") < n) {
+    await yieldNow();
+  }
+  const start = performance.now();
+  r.go[phase].store(true, "release");
+  return start;
+}
+
+function fill(r: Run, t: u64, threads: u64): f64 {
+  arrive(r, 0);
+  for (let i = t; i < N; i += threads) {
+    r.map.set(mix(2 * i), i);
+  }
+  return performance.now();
+}
+
+async function filler(r: shared<Run>, t: u64, threads: u64): Promise<f64, Error> {
+  return fill(r, t, threads);
+}
+
+function lookups(r: Run, t: u64): [f64, u64] {
+  arrive(r, 1);
+  let s = mix(t + 12345);
+  let check: u64 = 0;
+  for (let i: u64 = 0; i < OPS; i++) {
+    s ^= s << 13;
+    s ^= s >> 7;
+    s ^= s << 17;
+    const k = mix(2 * (s % N) + (s >> 63));
+    check += r.map.get(k) ?? 1;
+  }
+  return [performance.now(), check];
+}
+
+async function getter(r: shared<Run>, t: u64): Promise<[f64, u64]> {
+  return lookups(r, t);
+}
+
+/** `lookups` in batches of 64 keys (`getManyInto`). */
+function batches(r: Run, t: u64): [f64, u64] {
+  arrive(r, 2);
+  let s = mix(t + 12345);
+  let check: u64 = 0;
+  const keys: u64[] = [];
+  const values: u64[] = [];
+  for (let i: u64 = 0; i < OPS; i += 64) {
+    keys.length = 0;
+    for (let j = 0; j < 64; j++) {
+      s ^= s << 13;
+      s ^= s >> 7;
+      s ^= s << 17;
+      keys.push(mix(2 * (s % N) + (s >> 63)));
+    }
+    const found = r.map.getManyInto(keys, values);
+    for (let j: u64 = 0; j < 64; j++) {
+      check += ((found >> j) & 1) != 0 ? values[j] : 1;
+    }
+  }
+  return [performance.now(), check];
+}
+
+async function batcher(r: shared<Run>, t: u64): Promise<[f64, u64]> {
+  return batches(r, t);
+}
+
+/** OPS adds of 1 to present keys (`mixed`: 9 in 10 of them lookups of half-present keys). */
+function updates(r: Run, t: u64, mixed: bool): [f64, u64] {
+  arrive(r, mixed ? 4 : 3);
+  let s = mix(t + 54321);
+  let check: u64 = 0;
+  for (let i: u64 = 0; i < OPS; i++) {
+    s ^= s << 13;
+    s ^= s >> 7;
+    s ^= s << 17;
+    if (mixed && s % 10 != 0) {
+      check += r.map.get(mix(2 * (s % N) + (s >> 63))) != undefined ? 1 : 0;
+    } else {
+      check += r.map.add(mix(2 * (s % N)), 1) != undefined ? 1 : 0;
+    }
+  }
+  return [performance.now(), check];
+}
+
+async function updater(r: shared<Run>, t: u64, mixed: bool): Promise<[f64, u64]> {
+  return updates(r, t, mixed);
+}
+
+async function phase(r: shared<Run>, threads: u64, mixed: bool, name: string) {
+  const ps: Promise<[f64, u64]>[] = [];
+  for (let t: u64 = 0; t < threads; t++) {
+    ps.push(spawn(updater(r, t, mixed)));
+  }
+  const start = await release(r, mixed ? 4 : 3, threads as u32);
+  const res = await Promise.all(ps);
+  let check: u64 = 0;
+  const ends: f64[] = [];
+  for (const [e, c] of res) {
+    ends.push(e);
+    check += c;
+  }
+  const ms = last(start, ends);
+  console.log(`${name} ${threads} ${(((OPS * threads) as f64) / ms / 1000).toFixed(2)} ${check}`);
+}
+
+function last(start: f64, ends: f64[]): f64 {
+  let e = start;
+  for (const x of ends) {
+    e = Math.max(e, x);
+  }
+  return e - start;
+}
+
+async function main() {
+  for (const threads of [1, 2, 4, 8] as u64[]) {
+    const r = shared(new Run(ConcurrentMap.create(N as usize)));
+    const fs: Promise<f64, Error>[] = [];
+    for (let t: u64 = 0; t < threads; t++) {
+      fs.push(spawn(filler(r, t, threads)));
+    }
+    let start = await release(r, 0, threads as u32);
+    const ms = last(start, await Promise.all(fs));
+    console.log(`insert ${threads} ${((N as f64) / ms / 1000).toFixed(2)} 1`);
+
+    const gs: Promise<[f64, u64]>[] = [];
+    for (let t: u64 = 0; t < threads; t++) {
+      gs.push(spawn(getter(r, t)));
+    }
+    start = await release(r, 1, threads as u32);
+    const res = await Promise.all(gs);
+    let check: u64 = 0;
+    const ends: f64[] = [];
+    for (const [e, c] of res) {
+      ends.push(e);
+      check += c;
+    }
+    const gms = last(start, ends);
+    console.log(
+      `get_half ${threads} ${(((OPS * threads) as f64) / gms / 1000).toFixed(2)} ${check}`,
+    );
+
+    const bs: Promise<[f64, u64]>[] = [];
+    for (let t: u64 = 0; t < threads; t++) {
+      bs.push(spawn(batcher(r, t)));
+    }
+    start = await release(r, 2, threads as u32);
+    const bres = await Promise.all(bs);
+    let bcheck: u64 = 0;
+    const bends: f64[] = [];
+    for (const [e, c] of bres) {
+      bends.push(e);
+      bcheck += c;
+    }
+    const bms = last(start, bends);
+    console.log(
+      `get_half_batch ${threads} ${(((OPS * threads) as f64) / bms / 1000).toFixed(2)} ${bcheck}`,
+    );
+    await phase(r, threads, false, "update");
+    await phase(r, threads, true, "mixed");
+  }
+}

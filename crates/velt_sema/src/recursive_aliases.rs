@@ -476,7 +476,7 @@ fn any_name(t: &ast::TypeExpr, f: &mut dyn FnMut(&str) -> bool) -> bool {
                 || throws.as_deref().is_some_and(|x| any_name(x, f))
         }
         K::GenericFunction { ty, .. }
-        | K::Construct(ty)
+        | K::Construct { ty, .. }
         | K::TupleRest(ty)
         | K::TupleOptional(ty) => any_name(ty, f),
         K::Indexed { object, key } => any_name(object, f) || any_name(key, f),

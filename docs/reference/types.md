@@ -3784,13 +3784,12 @@ around `p.k`, `p[i]`, `p.k = v`, `k in p`, `delete p.k`, `Object.keys(p)` (and `
 called on an `any` proxy `p` catches the trap's own error object; a function that doesn't catch
 it throws it on (an `async` one rejects with it), and `finally` blocks run on the way out. Velt's
 [typed errors](errors.md) see it too: a trap's errors are inferred from the closures stored into
-the handler (`Error` classes, as for other function types written without `throws`), and in a
+the handler (any thrown value, as for other function types written without `throws`), and in a
 program whose traps throw, an operation on `any` throws what the trap it runs throws (a read
 what `get` throws, a write what `set` throws), so a `throws` clause around one must allow it and a
 `catch` variable's type includes it. A program whose traps throw nothing compiles as before.
-Where Node lets a trap throw any value, Velt rejects a trap that throws something other than an
-`Error` (`throw "a string"`) at compile time, with a note saying to throw an `Error` instead
-(`throw new Error(String(value))`).
+As in Node, a trap may throw any value (`throw "a string"`): a `catch` around the operation gets
+it.
 
 ```ts
 class ReadOnly extends Error {}

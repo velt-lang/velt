@@ -22,10 +22,11 @@ impl Ctx<'_> {
         }
     }
 
-    /// The site written within `range` (the outermost one) whose type is `t`'s function type.
+    /// The site written within `range` (the outermost one) whose type is `t`'s function type,
+    /// or its promise type (`promise_sites`).
     pub(crate) fn site_in(&self, range: Span, t: TyId) -> Option<Span> {
-        let t = self.ty.core(t).unwrap_or(t);
-        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. }) {
+        let t = self.site_core(t);
+        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Promise(..)) {
             return None;
         }
         let ids = self.fn_sites.by_file.get(&range.file)?;
@@ -58,10 +59,18 @@ impl Ctx<'_> {
     /// The site a value of type `to` being stored is stored into, if it is known.
     pub(crate) fn target_site(&self, to: TyId) -> Option<Span> {
         let s = self.fn_sites.target?;
-        let to = self.ty.core(to).unwrap_or(to);
+        let to = self.site_core(to);
         let typed = (self.fn_sites.by_file.get(&s.file).into_iter().flatten())
             .any(|&i| self.fn_sites.sites[i] == (s, to));
-        typed.then_some(s)
+        if typed {
+            return Some(s);
+        }
+        // A `Promise<T>` written within the target's type: a generic parameter's, a tuple
+        // element's, a union member (`promise_sites`).
+        match self.ty.kind(to) {
+            TyKind::Promise(..) => self.promise_site_in(s, to),
+            _ => None,
+        }
     }
 
     /// A closure created at `span` where a value of type `exp` is stored into the current
@@ -112,10 +121,7 @@ impl Ctx<'_> {
         }
         let mut members = vec![];
         for m in self.error_members(err) {
-            if !self.is_error_class(m) {
-                return false;
-            }
-            match self.port(m, 0) {
+            match self.port_thrown(m) {
                 Some(p) => members.push(p),
                 None => return false,
             }
@@ -170,13 +176,22 @@ impl crate::body::FnCx<'_, '_> {
         use crate::hir::ExprKind as H;
         match &h.kind {
             H::Local(l, _) => self.local_site(*l),
+            H::Global(d) => match self.cx.info.get(d.0 as usize) {
+                Some(crate::defs::DefInfo::Global(g)) => self.cx.decl_site(g.span, g.ty),
+                _ => None,
+            },
             H::Field { base, index, .. } => {
                 let TyKind::Adt(d, _) = self.cx.ty.kind(base.ty) else {
                     return None;
                 };
                 let f = self.cx.adt(*d)?.fields.get(*index as usize)?;
-                self.cx.decl_site(f.span, f.declared)
+                let anon = self.cx.fn_sites.anon_written.get(&(*d, *index)).copied();
+                (self.cx.decl_site(f.span, f.declared))
+                    .or_else(|| self.cx.decl_site(f.span, h.ty))
+                    .or_else(|| self.cx.site_in(anon?, h.ty))
             }
+            // An element of an array, `Map` or `Record` of promises: the container's site.
+            H::Index { base, .. } => self.site_of_value(base),
             H::Call {
                 callee: crate::hir::Callee::Def(g, _),
                 ..
@@ -190,11 +205,15 @@ impl crate::body::FnCx<'_, '_> {
 
     /// The site of the result type of the declared function whose body is being checked.
     pub(crate) fn return_site(&self, ret: TyId) -> Option<Span> {
-        if !self.outer.is_empty() || self.cx.fn_sites.by_file.is_empty() {
+        if self.cx.fn_sites.by_file.is_empty() {
             return None;
         }
-        let rs = self.cx.fn_info(self.body_def?).ret_span?;
-        self.cx.site_in(rs, ret)
+        // A closure's or nested function's own written result.
+        let rs = match self.outer.is_empty() {
+            true => self.cx.fn_info(self.body_def?).ret_span?,
+            false => self.f.return_site.ret_span?,
+        };
+        self.cx.site_in(rs, ret).or(Some(rs))
     }
 
     /// The site of local `l` (through the captures of the enclosing closures).
@@ -216,8 +235,21 @@ impl crate::body::FnCx<'_, '_> {
 
     /// Store `h` (already checked) into site `to`: values read from its own site flow there.
     pub(crate) fn flow_into(&mut self, h: &crate::hir::Expr, to: Option<Span>) {
+        if let Some(to) = to {
+            let at = match &h.kind {
+                crate::hir::ExprKind::Closure(c) => Some(self.cx.fn_info(*c).span),
+                _ => None,
+            };
+            self.cx.bind_stored_fn(at, h.ty, to);
+        }
         if let (Some(to), Some(from)) = (to, self.site_of_value(h)) {
             self.cx.site_flow(from, to);
+            // An array, `Set` or `Map` of promises is shared: what is stored through either name
+            // is in both (`promise_sites`).
+            let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+            if self.cx.site_core(t) != t {
+                self.cx.site_flow(to, from);
+            }
         }
     }
 
@@ -240,11 +272,27 @@ impl crate::body::FnCx<'_, '_> {
         std::mem::replace(&mut self.cx.fn_sites.target, site)
     }
 
+    /// The site the argument at `arg` for parameter `p` is stored into: the parameter's, or
+    /// for the value of a `push`, the site of its array's element type.
+    pub(crate) fn arg_site(&mut self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
+        let pushed = (self.cx.fn_sites.push).filter(|(a, _)| *a == arg);
+        // The parameter's own site, else the receiver's (a parameter typed by its class's type
+        // argument), else where the parameter's type is written.
+        let exact = (self.cx.fn_sites.by_file.contains_key(&p.span.file))
+            .then(|| self.cx.decl_site(p.span, p.ty))
+            .flatten();
+        let site = (exact.or(pushed.map(|(_, s)| s))).or_else(|| self.param_site(p));
+        if let Some(s) = site {
+            self.cx.bind_async_arg(arg, s);
+        }
+        site
+    }
+
     /// The site of parameter `p` of a function being called.
     pub(crate) fn param_site(&self, p: &crate::defs::ParamSig) -> Option<Span> {
         if !self.cx.fn_sites.by_file.contains_key(&p.span.file) {
             return None;
         }
-        self.cx.decl_site(p.span, p.ty)
+        (self.cx.decl_site(p.span, p.ty)).or_else(|| self.cx.written_range(p.span))
     }
 }

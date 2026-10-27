@@ -55,3 +55,32 @@ follow it. The essentials for agents:
 5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates
    the docs; `ts` code blocks in the docs must compile.
 6. Never commit secrets, tokens or personal data.
+
+## Pitfalls (each cost a session real time)
+- **Measuring on a busy machine.** With other builds running, wall-clock times are off by 2-4x.
+  Compare base and head by instructions retired (`/usr/bin/time -l` on macOS, cachegrind on
+  Linux), and run wall-clock A/Bs interleaved, best of N. For a std-only change, build both
+  programs with the same compiler (std is read at compile time) and swap only the std files.
+- **A new test must fail on a broken version.** Break the code on purpose (a sign, a constant,
+  a check left out) and see the test fail before trusting it; a test that passes either way
+  tests nothing.
+- **Recursion stops inlining.** A hot helper that can call itself, directly or through its slow
+  path, is not inlined by LLVM (a whitespace skip that called back after a comment cost 4-9%).
+  Make the slow path return to the caller instead.
+- **The string builder passed as a `string`** (std code calling `velt_rt_strbuf_*` externs): an
+  argument after it that is a call makes the compiler copy the builder first, and the append
+  goes to the copy. Compute such arguments into locals first, or use `StringBuilder`.
+- **Module constants** initialized by a call are evaluated at every use; an array literal of
+  numbers is static data.
+- **`git stash` is shared by all worktrees.** Use a named stash and pop it by name, or copy the
+  files aside, so you never pop another session's stash.
+- **A shared `CARGO_TARGET_DIR` across worktrees** saves disk, but the `velt` binary finds
+  `std/` next to the target directory, so it compiles against the other worktree's std (set
+  `VELT_STD=$PWD/std`), and the tests that link a prebuilt runtime or std (playground, example
+  apps, templates) fail with undefined symbols from the other branch. Use a build directory of
+  your own (rule 0) when you need them to pass locally.
+- **Pull request text:** the hygiene check rejects review and stacking notes ("stacked on #N")
+  in the description, which becomes the commit message; put them in a comment.
+- **Shell:** pass commit messages and PR bodies as files (`git commit -F`, `--body-file`):
+  backticks inside `-m "…"` run as commands. In zsh, `for f in $list` does not split a string
+  on spaces: use an array, or run the script with bash.

@@ -1,0 +1,15 @@
+// A ConcurrentMap's room is fixed: a `set` past it is a RangeError.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function main() {
+  const m = ConcurrentMap.create(0);
+  let i: u64 = 0;
+  while (true) {
+    m.set(i, i);
+    i++;
+    if (i % 1000 == 0) {
+      console.log(i);
+    }
+  }
+}

@@ -63,7 +63,14 @@ impl<'a> Printer<'a> {
             TypeExprKind::GenericFunction { type_params, ty } => {
                 cat![self.generic_params(type_params), self.ty(ty)]
             }
-            TypeExprKind::Construct(ty) => cat!["new ", self.ty(ty)],
+            TypeExprKind::Construct { ty, is_abstract } => {
+                let kw = if *is_abstract {
+                    "abstract new "
+                } else {
+                    "new "
+                };
+                cat![kw, self.ty(ty)]
+            }
             TypeExprKind::TupleRest(ty) => match fn_type_param_name(self.src, ty.span.lo) {
                 Some(label) => cat!["...", label.to_string(), ": ", self.ty(ty)],
                 None => cat!["...", self.ty_operand(ty)],
@@ -299,7 +306,7 @@ impl<'a> Printer<'a> {
             TypeExprKind::Conditional(_)
             | TypeExprKind::Function { .. }
             | TypeExprKind::GenericFunction { .. }
-            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
+            | TypeExprKind::Construct { .. } => cat!["(", self.ty(t), ")"],
             _ => self.ty(t),
         }
     }
@@ -339,7 +346,7 @@ impl<'a> Printer<'a> {
             | TypeExprKind::Infer(_)
             | TypeExprKind::Function { .. }
             | TypeExprKind::GenericFunction { .. }
-            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
+            | TypeExprKind::Construct { .. } => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)
                 if is_readonly_op(slice(self.src, t.span)) =>

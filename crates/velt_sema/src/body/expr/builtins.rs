@@ -362,7 +362,12 @@ impl FnCx<'_, '_> {
         let recv_param = c.params.remove(0);
         let mut slots = vec![None; c.slot_names.len()];
         self.cx.match_ty(recv_param.ty, recv.ty, &mut slots);
+        // A promise pushed to an array of a `Promise<T>` written without an error type is
+        // stored into that site (`throws::promise_sites`).
+        let pushed = self.stored_arg_site(&recv, name, args);
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, pushed);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.cx.fn_sites.push = outer;
         match recv_param.mode {
             PassMode::BorrowMut => self.use_mutably(&mut recv, "call a mutating method on"),
             _ => {
