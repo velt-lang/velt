@@ -285,13 +285,13 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, "{ ");
                 let types = (map_ty, kt, vt);
                 if own.is_empty() {
-                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child, None);
+                    lw.format_map_entries(buf, &map, types, (entries, None, None), size, &child);
                 } else {
                     // The entries, if any, then each field after a comma.
                     let (some, none) = (lw.new_block(), lw.new_block());
                     lw.branch(empty, none, some);
                     lw.switch_to(some);
-                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child, None);
+                    lw.format_map_entries(buf, &map, types, (entries, None, None), size, &child);
                     lw.push_text(buf, ", ");
                     lw.goto(none);
                     lw.switch_to(none);
@@ -387,7 +387,7 @@ impl FnLower<'_, '_> {
                 let order = (entries == Entries::Record).then(|| lw.record_order(obj, ty));
                 let ord = order.as_ref();
                 let shown =
-                    lw.format_map_entries(buf, &map, types, (entries, ord), size, &child, None);
+                    lw.format_map_entries(buf, &map, types, (entries, ord, None), size, &child);
                 if let Some(o) = order {
                     lw.drop_record_order(o);
                 }
@@ -402,15 +402,8 @@ impl FnLower<'_, '_> {
                     let symbol = lw.cx.intern(TyKind::Symbol);
                     let types = (sym_ty, symbol, vt);
                     let start = Some(Operand::Copy(Place::local(shown)));
-                    lw.format_map_entries(
-                        buf,
-                        &sym_map,
-                        types,
-                        (Entries::Symbols, None),
-                        n,
-                        &child,
-                        start,
-                    );
+                    let how = (Entries::Symbols, None, start);
+                    lw.format_map_entries(buf, &sym_map, types, how, n, &child);
                     lw.goto(after);
                     lw.switch_to(after);
                 }
@@ -474,10 +467,9 @@ impl FnLower<'_, '_> {
         buf: &Operand,
         obj: &Place,
         (ty, kt, vt): (TyId, TyId, TyId),
-        (entries, order): (Entries, Option<&RecordOrder>),
+        (entries, order, start): (Entries, Option<&RecordOrder>, Option<Operand>),
         size: Operand,
         child: &Operand,
-        start: Option<Operand>,
     ) -> vir::Local {
         let tys = self.cx.adt_field_tys(ty);
         let keys = self.field_place(obj, ty, KEYS);

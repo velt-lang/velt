@@ -356,7 +356,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_numeric(kt) {
             return Some(WriteKey::Num(self.coerce_number(k, f64_)));
         }
-        if self.symbolic_key_type(k.ty) {
+        if self.string_or_symbol(k.ty) || (self.uses_proxy() && self.symbolic_key_type(k.ty)) {
             let any = self.any_ty()?;
             let k = self.coerce(k, any);
             if self.uses_proxy() {

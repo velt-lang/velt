@@ -500,7 +500,8 @@ impl FnCx<'_, '_> {
             self.coerce(k, str_)
         } else if self.cx.dynamic(k.ty).is_some()
             || self.cx.ty.is_numeric(kt)
-            || self.symbolic_key_type(k.ty)
+            || self.string_or_symbol(k.ty)
+            || (self.uses_proxy() && self.symbolic_key_type(k.ty))
         {
             self.coerce(k, obj.ty)
         } else {
