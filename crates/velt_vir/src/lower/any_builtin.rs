@@ -218,22 +218,38 @@ impl FnLower<'_, '_> {
         (ty, d): (TyId, DefId),
         outp: &Place,
     ) {
-        let keys = &self.cx.boxing.any_call_keys;
-        if keys.is_empty() {
+        if self.cx.boxing.any_call_keys.is_empty() {
             return;
         }
-        let hir::Def::Adt(a) = &self.cx.hir.defs[d.0 as usize] else {
-            return;
-        };
-        let (true, Some((_, class))) = (a.name.starts_with("std/"), a.name.rsplit_once("::"))
-        else {
-            return;
+        // A user class extending `Map` or `Set` (`class MyMap extends Map<string, number>`):
+        // the standard class it extends, at the type arguments it gives it.
+        let (mut base, mut bd) = (ty, d);
+        let class = loop {
+            let (name, b) = match &self.cx.hir.defs[bd.0 as usize] {
+                hir::Def::Adt(a) => (a.name.clone(), a.base),
+                _ => return,
+            };
+            if name.starts_with("std/") {
+                match name.rsplit_once("::") {
+                    Some((_, class)) => break class.to_string(),
+                    None => return,
+                }
+            }
+            let (Some(b), Some((_, args))) = (b, self.plain_adt(base)) else {
+                return;
+            };
+            base = self.cx.subst(b, &args);
+            let Some((next, _)) = self.plain_adt(base) else {
+                return;
+            };
+            bd = next;
         };
         let prefix = format!("__any{class}_");
+        let keys = &self.cx.boxing.any_call_keys;
         let methods: Vec<(String, DefId)> = (self.builtin_methods(&prefix).into_iter())
             .filter(|(name, _)| keys.contains("") || keys.contains(name))
             .collect();
-        let Some((_, targs)) = self.plain_adt(ty) else {
+        let Some((_, targs)) = self.plain_adt(base) else {
             return;
         };
         for (name, def) in methods {

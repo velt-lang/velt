@@ -368,15 +368,30 @@ impl FnCx<'_, '_> {
     /// `any` it needs them written.
     fn narrowed_dynamic_instance(&self, recv: &hir::Expr) -> bool {
         // The read of a narrowed `object` / `unknown` is the value it holds, checked (`AnyTo`)
-        // of a share of the variable (`downcast_narrowed`).
+        // of a share of the variable (`downcast_narrowed`). The result of an array method that
+        // returns an array (`u.filter(…)` in `u.filter(…).map(…)`) is TypeScript's `any[]`
+        // again when its receiver is one.
         let mut inner = recv;
-        for _ in 0..3 {
+        for _ in 0..16 {
             inner = match &inner.kind {
                 H::Downcast(x) => x.as_ref(),
                 H::Call {
                     callee: hir::Callee::Intrinsic(Intrinsic::AnyTo | Intrinsic::Share),
                     args,
                 } if args.len() == 1 => &args[0],
+                H::Block(b) => match &b.value {
+                    Some(v) => v.as_ref(),
+                    None => return false,
+                },
+                H::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::AnyCall),
+                    args,
+                } => match args.get(1).map(|k| &k.kind) {
+                    Some(H::Lit(Lit::Str(name))) if ARRAY_RESULTS.contains(&name.as_str()) => {
+                        &args[0]
+                    }
+                    _ => return false,
+                },
                 _ => break,
             };
         }
@@ -599,3 +614,22 @@ impl FnCx<'_, '_> {
         self.mk(hir::ExprKind::Cast(Box::new(h)), f64_, span)
     }
 }
+
+/// The array methods whose result is an array of the same kind (`any[]` on an `any[]`).
+const ARRAY_RESULTS: &[&str] = &[
+    "concat",
+    "copyWithin",
+    "fill",
+    "filter",
+    "flat",
+    "flatMap",
+    "map",
+    "reverse",
+    "slice",
+    "sort",
+    "splice",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "with",
+];

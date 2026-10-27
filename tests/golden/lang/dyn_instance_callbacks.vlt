@@ -93,3 +93,43 @@ function sets(o: object): void {
 }
 
 sets(new Set([1, 2]));
+
+// A class extending `Map` or `Set`, held in an `any` or narrowed: `forEach` of the class it
+// extends.
+class MyMap extends Map<string, number> {}
+
+class MySet extends Set<string> {}
+
+const mm = new MyMap([
+  ["a", 1],
+  ["b", 2],
+]);
+const mmAny: any = mm;
+mmAny.forEach((v: any, k: any) => console.log("sub", k, v));
+
+function sub(o: object): void {
+  if (o instanceof Map) {
+    o.forEach((v, k) => console.log("narrowed sub", k, v));
+  } else if (o instanceof Set) {
+    o.forEach((v) => console.log("narrowed set sub", v));
+  }
+}
+
+sub(mm);
+sub(new MySet(["z"]));
+
+// Callbacks of methods chained on a narrowed array (TypeScript's `any[]` again).
+function chain(u: unknown): void {
+  if (Array.isArray(u)) {
+    console.log(u.filter((x) => x > 1).map((x) => x * 10));
+    console.log(u.slice().sort((a, b) => b - a));
+    console.log(
+      u
+        .concat([4])
+        .reverse()
+        .map((x, i) => x + i),
+    );
+  }
+}
+
+chain([1, 2, 3]);
