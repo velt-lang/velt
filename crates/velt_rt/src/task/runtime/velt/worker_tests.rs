@@ -427,3 +427,25 @@ fn velt_rescue_0_turns_the_stall_rescue_off() {
     assert_eq!(spares, 1);
     assert_eq!(ws[1].inbox_len.load(Ordering::SeqCst), 510);
 }
+
+#[test]
+fn workers_stalling_in_the_same_tick_share_one_spare() {
+    // Two workers computing, none other started: the spare started for the first serves the
+    // second too, as a worker not stalled (not a spare each).
+    let ws = stalled_workers(3);
+    fill(&ws[0], 1000, 10);
+    fill(&ws[1], 1000, 10);
+    let mut spares = 0;
+    stall_duties(ws, 2, LATE, true, || {
+        spares += 1;
+        // As `start_spare` does: awake, with progress at this tick.
+        ws[2].progress.store(LATE, Ordering::Relaxed);
+        Some(2)
+    });
+    assert_eq!(spares, 1, "a spare per stalled worker");
+    assert_eq!(ws[2].inbox_len.load(Ordering::SeqCst), 1020);
+    for w in &ws[..2] {
+        assert_eq!(w.inbox_len.load(Ordering::SeqCst), 0);
+        assert_eq!(lock(&w.queue).len(), 500);
+    }
+}

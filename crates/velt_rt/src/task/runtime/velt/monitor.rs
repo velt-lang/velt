@@ -183,9 +183,12 @@ impl MonitorSleep {
 pub(super) const RESCUE_ENV: &str = "VELT_RESCUE";
 
 /// Whether the monitor rescues stalled workers, from the value of [`RESCUE_ENV`]: unless it is
-/// `0`. Off, no spare starts and no task moves away from a long poll, so the instructions a
-/// program executes no longer depend on how the OS (or valgrind, which runs one thread at a
-/// time) schedules the workers: for counting them (bench/nightly.sh), not for running programs.
+/// `0`. Off, the monitor does nothing for a stalled worker (no reactor turn or timers for it,
+/// no task moved from it, no spare started). With one worker (`VELT_THREADS=1`) nothing else
+/// moves tasks either, so the instructions a program executes no longer depend on how the OS
+/// (or valgrind, which runs one thread at a time) schedules its threads: for counting them
+/// (bench/nightly.sh), not for running programs. With more workers, sleeping ones still take
+/// tasks ([`start_fresh`], a worker's offer).
 pub(super) fn rescues(value: Option<&str>) -> bool {
     value.map(str::trim) != Some("0")
 }
@@ -243,7 +246,9 @@ pub(super) fn run() {
 }
 
 /// The monitor's tick `now` over the workers `ws`, of which the first `up` have started: the
-/// rescue of each stalled one ([`rescue_of`]), unless rescues are off ([`rescues`]).
+/// rescue of each stalled one ([`rescue_of`]), unless rescues are off ([`rescues`]). A spare
+/// started for one counts as started for the next in the same tick, which it serves as a worker
+/// not stalled: one spare, not one each, for workers stalling together.
 pub(super) fn stall_duties(
     ws: &[Shared],
     up: usize,
@@ -254,9 +259,17 @@ pub(super) fn stall_duties(
     if !rescue_on {
         return;
     }
+    let mut started = up;
     for i in 0..up {
         if stalled(&ws[i], now) {
-            rescue_of(ws, up, i, now, &mut spare);
+            let mut new = None;
+            rescue_of(ws, started, i, now, || {
+                new = spare();
+                new
+            });
+            if let Some(index) = new {
+                started = started.max(index + 1);
+            }
         }
     }
 }

@@ -137,22 +137,24 @@ never wakes another thread.
   The options must be an object literal (a variable holding them is an error); `worker` may
   be given once. An index out of range is a panic:
   `spawn: worker 7 is out of range (the runtime has 4 workers)`.
-- Tasks run on the runtime's own scheduler: every worker runs its own event loop, a task stays
-  on the worker it started on (an unpinned one starts on the spawning worker), and another
-  worker takes on part of a worker's tasks only while that one stays busy and the help raises
-  how much gets done. A pinned task never moves. A task that computes without pausing for more
-  than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
-  tasks go to another worker meanwhile, except tasks pinned to that worker. When no other worker
-  can take them (one worker, or every other one computing too), a spare worker starts and does,
-  up to four in all; `workerCount()` counts each from then on. Past those, they wait for a worker
-  to finish its computation. `VELT_RESCUE=0` turns this off (no spare starts, nothing moves away
-  from a long computation), for deterministic measurement only: with it, a program's instruction
-  count no longer depends on how its threads are scheduled (`bench/nightly.sh` sets it for the
-  `async/` benchmarks), but one task that computes holds up everything on its worker. Tasks spawned together that compute (`spawn` in a loop, then `await Promise.all(...)`) start on idle workers well under a
-  millisecond apart: once the first has computed for 50 µs, the others, not started yet, go to
-  sleeping workers, one each (on Windows, whose timers are coarser, within about a millisecond).
-  After many spawned tasks that each finished at once, the first such group may take up to a
-  millisecond. `VELT_SCHEDULER=stealing` or
+- Tasks run on the runtime's own scheduler: every worker runs its own event loop, a task stays on
+  the worker it started on (an unpinned one starts on the spawning worker), and another worker takes
+  on part of a worker's tasks only while that one stays busy and the help raises how much gets done.
+  A pinned task never moves. A task that computes without pausing for more than a few milliseconds
+  doesn't hold up the rest of its worker: its timers, sockets and woken tasks go to another worker
+  meanwhile, except tasks pinned to that worker. When no other worker can take them (one worker, or
+  every other one computing too), a spare worker starts and does, up to four in all; `workerCount()`
+  counts each from then on. Past those, they wait for a worker to finish its computation.
+  `VELT_RESCUE=0` turns this rescue off (for a worker that computes, nothing serves its timers and
+  sockets, no task moves away from it and no spare starts), for deterministic measurement only:
+  together with `VELT_THREADS=1` a program's instruction count no longer depends on how its threads
+  are scheduled (`bench/nightly.sh` runs the `async/` benchmarks so), but one task that computes
+  holds up everything on its worker. With more workers, tasks still move to sleeping ones (below,
+  and when a worker stays busy). Tasks spawned together that compute (`spawn` in a loop, then
+  `await Promise.all(...)`) start on idle workers well under a millisecond apart: once the first has
+  computed for 50 µs, the others, not started yet, go to sleeping workers, one each (on Windows,
+  whose timers are coarser, within about a millisecond). After many spawned tasks that each finished
+  at once, the first such group may take up to a millisecond. `VELT_SCHEDULER=stealing` or
   `per-core` selects one of tokio's schedulers instead (for comparison;
   [`VELT_SCHEDULER`](../tooling/cli.md)); with `stealing`, `{ worker }` is checked but the task
   may run on any worker, and `currentWorker()` can change at any `await`.
