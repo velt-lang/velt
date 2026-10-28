@@ -181,8 +181,7 @@ pub(crate) struct Ctx<'m> {
     /// The receivers of `ThreadLocal` `get`/`set` calls, checked once every module constant is
     /// (`crate::thread_locals`): the constant's `DefId` when the receiver is one, and the span.
     pub thread_local_uses: Vec<(Option<DefId>, velt_common::Span)>,
-    /// The type parameters `frozen_readable` takes as readable in place: those bounded by the
-    /// prelude's `Frozen` in the body being checked (`FnCx::frozen_readable_here`).
+    /// The type parameters bounded by `Frozen` in the body being checked, read in place.
     pub frozen_params: Vec<u32>,
     /// Module constants whose initializer is being checked on trial for its type, while it
     /// reads the constant inside a function value (`body::driver::ensure_global`).
