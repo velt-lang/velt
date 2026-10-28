@@ -57,14 +57,13 @@ impl FnCx<'_, '_> {
         // The written parameters (a `this` parameter aside), matched to the function's last ones
         // (its receiver comes first when it uses `this`). A function given by reference has no
         // written parameters: one whose type doesn't hold `undefined` is required.
-        let written = v.map(written_params).unwrap_or_default();
-        let skip = params.len().saturating_sub(written.len());
+        let written = v.and_then(written_params);
+        let skip = written
+            .as_ref()
+            .map_or(0, |w| params.len().saturating_sub(w.len()));
         let own: Vec<(TyId, Option<&Written>)> = (params.iter().enumerate())
-            .skip(match written.is_empty() {
-                true => 0,
-                false => skip,
-            })
-            .map(|(i, t)| (*t, written.get(i.wrapping_sub(skip))))
+            .skip(skip)
+            .map(|(i, t)| (*t, written.as_ref().and_then(|w| w.get(i - skip))))
             .collect();
         for sig in sigs {
             if let Some(why) = self.misfit(sig, &own, ret) {
@@ -128,25 +127,30 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The parameters of a method written as an arrow or function expression.
-fn written_params(v: &ast::Expr) -> Vec<Written> {
+/// The parameters of a method written as an arrow or function expression (`None` for another
+/// expression, a function given by reference).
+fn written_params(v: &ast::Expr) -> Option<Vec<Written>> {
     match &v.kind {
         ast::ExprKind::Paren(x) => written_params(x),
-        ast::ExprKind::Arrow { params, .. } => (params.iter())
-            .filter(|p| p.name.name != ast::METHOD_THIS)
-            .map(|p| Written {
-                name: p.name.name.clone(),
-                required: !p.optional && p.default.is_none() && !p.rest,
-            })
-            .collect(),
-        ast::ExprKind::Function(d) => (d.sig.params.iter())
-            .filter(|p| p.name.name != ast::METHOD_THIS)
-            .map(|p| Written {
-                name: p.name.name.clone(),
-                required: !p.optional && p.default.is_none() && !p.rest,
-            })
-            .collect(),
-        _ => vec![],
+        ast::ExprKind::Arrow { params, .. } => Some(
+            (params.iter())
+                .filter(|p| p.name.name != ast::METHOD_THIS)
+                .map(|p| Written {
+                    name: p.name.name.clone(),
+                    required: !p.optional && p.default.is_none() && !p.rest,
+                })
+                .collect(),
+        ),
+        ast::ExprKind::Function(d) => Some(
+            (d.sig.params.iter())
+                .filter(|p| p.name.name != ast::METHOD_THIS)
+                .map(|p| Written {
+                    name: p.name.name.clone(),
+                    required: !p.optional && p.default.is_none() && !p.rest,
+                })
+                .collect(),
+        ),
+        _ => None,
     }
 }
 

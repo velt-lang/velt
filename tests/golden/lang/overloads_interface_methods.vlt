@@ -85,3 +85,14 @@ function lookupDirective(name: string, definition?: Def): any {
 }
 const byRef: App = { directive: lookupDirective, label: () => "by-ref" };
 console.log(byRef.directive("r")?.name, byRef.directive("r", { name: "s" }) === app);
+
+// A method written with no parameters that uses `this`.
+const noParams: App = {
+  directive(): any {
+    return this;
+  },
+  label() {
+    return "L";
+  },
+};
+console.log(noParams.directive("a", { name: "x" }).label());
