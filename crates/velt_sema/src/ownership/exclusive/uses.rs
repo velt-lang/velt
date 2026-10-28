@@ -202,6 +202,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::expr(e, &mut v);
     }
@@ -212,6 +213,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::block(b, &mut v);
     }
@@ -222,6 +224,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         for s in stmts {
             visit::stmt(s, &mut v);
@@ -274,6 +277,9 @@ struct Nested<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     out: &'c mut Vec<Use>,
     skip: FxHashSet<*const Expr>,
+    /// Temporaries holding another reference to a place (`let t = share(h.b)`, how a write
+    /// through a counted field is lowered: `h.b.length = 0`): a use of one is a use of the place.
+    shares: FxHashMap<LocalId, (Place, String)>,
 }
 
 impl Nested<'_, '_, '_> {
@@ -288,8 +294,16 @@ impl Nested<'_, '_, '_> {
         }
     }
 
-    fn record(&mut self, e: &Expr, place: Place, access: Access) {
-        let text = self.col.text(e);
+    fn record(&mut self, e: &Expr, mut place: Place, access: Access) {
+        let mut text = self.col.text(e);
+        if let Some((p, shown)) = self.shares.get(&place.root) {
+            if place.proj.is_empty() {
+                text = shown.clone();
+            }
+            let mut full = p.clone();
+            full.proj.extend(place.proj);
+            place = full;
+        }
         self.out.push(Use {
             place,
             access,
@@ -302,6 +316,26 @@ impl Nested<'_, '_, '_> {
 }
 
 impl VisitMut for Nested<'_, '_, '_> {
+    fn stmt(&mut self, s: &mut Stmt) {
+        if let crate::hir::StmtKind::Let {
+            local,
+            init: Some(init),
+        } = &s.kind
+        {
+            if let E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } = &init.kind
+            {
+                if let Some(a) = args.first() {
+                    if let Some((p, _)) = self.col.place_of(a) {
+                        self.shares.insert(*local, (p, self.col.text(a)));
+                    }
+                }
+            }
+        }
+    }
+
     fn expr(&mut self, e: &mut Expr) {
         if self.skip.remove(&(e as *const Expr)) {
             return self.skip_bases(e);
