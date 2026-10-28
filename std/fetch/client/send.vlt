@@ -165,7 +165,7 @@ async function exchange(
   t: Target,
   req: Encoded,
 ): Promise<[Conn, Head], IoError | AbortError> {
-  const conn = await open(t, o.ca, o.signal);
+  const conn = await open(t, o.ca, o.signal, !idempotent(o.method));
   try {
     return await sendOn(conn, o, req);
   } catch (e) {
@@ -173,7 +173,7 @@ async function exchange(
       throw e;
     }
   }
-  const fresh = await open(t, o.ca, o.signal);
+  const fresh = await open(t, o.ca, o.signal, true);
   fresh.reused = false;
   return await sendOn(fresh, o, req);
 }

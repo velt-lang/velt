@@ -203,14 +203,19 @@ export function keyOf(t: Target, ca: string): string {
   return t.https && ca.length > 0 ? `${origin} ${ca}` : origin;
 }
 
-/** A connection for a request to `t`: an idle pooled one, else a new one. */
+/**
+ * A connection for a request to `t`: an idle pooled one, else a new one. A request that may not
+ * be sent twice (`once`) takes only a pooled connection whose server has had time to close it
+ * (`TcpStream.unpark`), since it cannot be sent again on another one.
+ */
 export async function open(
   t: Target,
   ca: string,
   signal: AbortSignal | null,
+  once: bool,
 ): Promise<Conn, IoError | AbortError> {
   const key = keyOf(t, ca);
-  const idle = TcpStream.unpark(key);
+  const idle = TcpStream.unpark(key, once);
   if (idle != null) {
     return new Conn(idle, key, true, signal);
   }

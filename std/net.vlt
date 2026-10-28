@@ -62,7 +62,7 @@ declare async function velt_rt_tcp_listen_tls(
   alpn: string,
 ): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_park(s: u64, key: string);
-declare function velt_rt_tcp_unpark(key: string): u64;
+declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
 declare async function velt_rt_tcp_connect_tls(
   addr: string,
   serverName: string,
@@ -311,11 +311,12 @@ export struct TcpStream {
   }
 
   /**
-   * The stream most recently parked under `key` that is still open, or null (std only). One
-   * idle for a while is checked first; one idle too long is closed.
+   * The stream most recently parked under `key` that is still open, or null (std only); with
+   * `settled`, only one idle long enough that a close sent right after its last response has
+   * arrived (for a request that may not be sent twice). One idle too long is closed.
    */
-  private static unpark(key: string): TcpStream | null {
-    const h = velt_rt_tcp_unpark(key);
+  private static unpark(key: string, settled: bool = false): TcpStream | null {
+    const h = velt_rt_tcp_unpark(key, settled ? 1 : 0);
     return h == 0 ? null : TcpStream { handle: h };
   }
 

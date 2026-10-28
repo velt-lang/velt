@@ -74,7 +74,9 @@ the one sent. Responses are read as strictly as Node reads them: a status below 
 name that is not a token, a control character in a header value or the reason phrase, both
 `transfer-encoding` and `content-length`, or a chunked trailer larger than a head may be (400
 KiB) fail with `IoError` "EPROTO". A connection taken from the pool is checked first, so a
-request never goes out on one the server has closed meanwhile.
+request never goes out on one the server has closed meanwhile; a request that may not be sent
+twice (a POST) takes only one idle for at least a millisecond, by when a close the server sent
+right after its last response has arrived (a new connection otherwise), as Node in effect does.
 
 HTTPS trusts Mozilla's root certificates (compiled in, so the result does not depend on the
 machine) plus `ca`. An untrusted certificate fails with `IoError`.

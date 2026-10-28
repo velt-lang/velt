@@ -88,6 +88,6 @@ pub extern "C" fn velt_rt_tcp_close(_s: u64) {}
 pub unsafe extern "C" fn velt_rt_tcp_park(_s: u64, _key: *const VeltStr) {}
 
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_unpark(_key: *const VeltStr) -> u64 {
+pub unsafe extern "C" fn velt_rt_tcp_unpark(_key: *const VeltStr, _settled: u32) -> u64 {
     0
 }

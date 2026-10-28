@@ -9,11 +9,15 @@
 //! the leak counters of the debug runtime see. Its entries are stream handles, so it owns no
 //! Velt memory.
 //!
-//! Every stream is checked before it is handed out: a read that finds the end of the stream (the
-//! server closed it, however shortly before), unexpected bytes or an error closes it instead, so
-//! a request that may not be sent twice (a POST) never goes out on a connection already closed.
-//! Streams idle longer than [`MAX_IDLE`] are closed when their key is next asked for, and a key
-//! keeps at most [`MAX_PER_KEY`] streams.
+//! Every stream is checked before it is handed out: a look at the socket that finds the end of
+//! the stream (the server closed it), unexpected bytes or an error closes it instead. A server
+//! that closes a connection right after its response sends the end a moment after the response,
+//! which a check right away cannot see yet: a request that may not be sent twice (a POST) is
+//! handed only a stream idle for at least [`SETTLED`], by when that end has arrived; the newer
+//! streams stay parked (it gets a new connection if there is none). Against a server farther away
+//! than that, every parked stream is older, so this costs nothing; against a fast local one, a
+//! loop of POSTs keeps a few more connections. Streams idle longer than [`MAX_IDLE`] are closed
+//! when their key is next asked for, and a key keeps at most [`MAX_PER_KEY`] streams.
 
 use super::tcp::{velt_rt_tcp_close, StreamHandle, STREAMS};
 use crate::str::VeltStr;
@@ -26,6 +30,8 @@ use std::time::{Duration, Instant};
 const MAX_PER_KEY: usize = 512;
 /// A stream idle this long is closed rather than reused.
 const MAX_IDLE: Duration = Duration::from_secs(60);
+/// A stream idle this long has received a close its server sent right after the response.
+const SETTLED: Duration = Duration::from_millis(1);
 
 /// FNV-1a over the key's bytes: keys are a handful of origins the program chose, so a seeded
 /// hash's cost (SipHash, several hundred instructions per request) buys nothing.
@@ -85,14 +91,16 @@ pub unsafe extern "C" fn velt_rt_tcp_park(s: StreamHandle, key: *const VeltStr) 
     }
 }
 
-/// `TcpStream.unpark(key)`: the most recently parked stream under `key` that is still usable,
-/// or 0 when there is none. Streams found closed or idle too long are closed on the way.
+/// `TcpStream.unpark(key, settled)`: the most recently parked stream under `key` that is still
+/// usable (with `settled` (not 0), the most recent one idle for at least [`SETTLED`]), or 0 when there is
+/// none. Streams found closed or idle too long are closed on the way.
 ///
 /// # Safety
 /// `key` is a valid string.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr) -> StreamHandle {
+pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr, settled: u32) -> StreamHandle {
     let key = (*key).as_bytes();
+    let settled = settled != 0;
     loop {
         let mut stale = vec![];
         let found = {
@@ -106,7 +114,7 @@ pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr) -> StreamHandle
                         .take_while(|(_, since)| since.elapsed() > MAX_IDLE)
                         .count();
                     stale.extend(list.drain(..expired).map(|(s, _)| s));
-                    list.pop()
+                    pick(list, settled, Instant::now()).map(|i| list.remove(i))
                 }
             }
         };
@@ -121,6 +129,17 @@ pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr) -> StreamHandle
             return s;
         }
         velt_rt_tcp_close(s);
+    }
+}
+
+/// The stream of `list` (newest last) to hand out at `now`: the newest, or with `settled` the
+/// newest parked at least [`SETTLED`] before `now`.
+fn pick(list: &[(StreamHandle, Instant)], settled: bool, now: Instant) -> Option<usize> {
+    if settled {
+        list.iter()
+            .rposition(|(_, since)| now.saturating_duration_since(*since) >= SETTLED)
+    } else {
+        list.len().checked_sub(1)
     }
 }
 
@@ -146,12 +165,25 @@ mod tests {
         let (a, b) = (StreamHandle::from_bits(11), StreamHandle::from_bits(12));
         // SAFETY: valid strings.
         unsafe {
-            assert_eq!(velt_rt_tcp_unpark(&k).bits(), 0);
+            assert_eq!(velt_rt_tcp_unpark(&k, 0).bits(), 0);
             velt_rt_tcp_park(a, &k);
             velt_rt_tcp_park(b, &k);
-            assert_eq!(velt_rt_tcp_unpark(&key("http://other:1")).bits(), 0);
-            assert_eq!(velt_rt_tcp_unpark(&k).bits(), 0);
+            assert_eq!(velt_rt_tcp_unpark(&key("http://other:1"), 0).bits(), 0);
+            assert_eq!(velt_rt_tcp_unpark(&k, 0).bits(), 0);
         }
+    }
+
+    #[test]
+    fn a_settled_request_skips_streams_parked_just_now() {
+        let t0 = Instant::now();
+        let h = StreamHandle::from_bits;
+        let list = [(h(1), t0), (h(2), t0 + SETTLED), (h(3), t0 + SETTLED * 3)];
+        let now = t0 + SETTLED * 3;
+        assert_eq!(pick(&list, false, now), Some(2));
+        // 3 was parked just now, 2 one interval ago: the newest settled one.
+        assert_eq!(pick(&list, true, now), Some(1));
+        assert_eq!(pick(&list[2..], true, now), None);
+        assert_eq!(pick(&[], false, now), None);
     }
 
     #[test]
