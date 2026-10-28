@@ -243,7 +243,9 @@ function main() {
     const t = schema.table(name)!;
     const want: Text[] = c
       .prepare(
-        `SELECT ${t.columns.map((col) => `CAST(${col.name} AS TEXT)`).join(" || '|' || ")} AS v FROM ${name}`,
+        "SELECT " +
+          t.columns.map((col) => "CAST(" + col.name + " AS TEXT)").join(" || '|' || ") +
+          ` AS v FROM ${name}`,
       )
       .all();
     const rows: string[] = [];
