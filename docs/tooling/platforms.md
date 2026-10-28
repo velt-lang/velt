@@ -15,6 +15,11 @@
 x86_64 programs are built for x86-64-v2 CPUs (about 2009 and later) unless `--cpu` says
 otherwise; `--cpu baseline` builds for older ones ([CPU](#cpu)).
 
+A program's main thread has an 8 MiB stack on every platform, so a program recurses as deep
+everywhere: Windows executables reserve it at link time (the MSVC default is 1 MiB), Linux and
+macOS give it by default (on Linux, `ulimit -s` sets it), and WebAssembly modules are linked
+with it.
+
 Windows on arm64 has not been run yet. Its executables carry unwind information (`.pdata` and
 `.xdata`, as on x64), so debuggers and backtraces walk through Velt frames; `velt dev`'s JIT
 code does not register unwind information there yet.
