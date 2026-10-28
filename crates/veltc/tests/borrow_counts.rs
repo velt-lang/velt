@@ -3,7 +3,8 @@
 //! passed to a quiet callee (no stabilizing share, velt_vir `lower/quiet.rs`) or to one quiet for
 //! borrows (it pushes onto an array and throws through a `never` helper), while a callee that may
 //! replace what the borrow goes through still gets one. A call of a `never` function that throws
-//! has no Ok path after it (`Function::cold`).
+//! has no Ok path after it (`Function::cold`). In a release build, a local that only reads a
+//! field's array keeps no count (velt_opt `borrowed_copies/counted`).
 
 use std::path::Path;
 
@@ -18,6 +19,24 @@ fn vir(name: &str) -> String {
     let opts = BuildOptions {
         input,
         release: false,
+        emit: Emit::Vir,
+        ..Default::default()
+    };
+    let mut sess = Session::new();
+    match driver::compile(&mut sess, &opts) {
+        Ok(program) => program.to_string(),
+        Err(e) => panic!("{e:?}\n{}", sess.render_diagnostics()),
+    }
+}
+
+/// The release VIR of `tests/borrow_counts/<name>.vlt`.
+fn release_vir(name: &str) -> String {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/borrow_counts")
+        .join(format!("{name}.vlt"));
+    let opts = BuildOptions {
+        input,
+        release: true,
         emit: Emit::Vir,
         ..Default::default()
     };
@@ -78,6 +97,17 @@ fn a_throwing_never_call_has_no_ok_path() {
     let check = function(&vir, "_V5check(");
     // The branch on the result's tag: the error goes on, the Ok side is unreachable.
     assert!(check.contains("unreachable"), "{check}");
+}
+
+#[test]
+fn a_local_reading_a_field_array_keeps_no_count() {
+    let vir = release_vir("field_copy");
+    let sum = function(&vir, "ReaderM3sum(");
+    // No count word (8 bytes before the array) is touched, and nothing is freed.
+    assert!(
+        !sum.contains("-8_i64") && !sum.contains("velt_rt_free"),
+        "{sum}"
+    );
 }
 
 #[test]

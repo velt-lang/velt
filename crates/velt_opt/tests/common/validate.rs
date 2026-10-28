@@ -50,7 +50,11 @@ impl Ctx<'_> {
     fn function(&mut self) {
         let f = self.f;
         if f.blocks.is_empty() {
-            return self.err("no blocks".into());
+            // A declaration of a function imported from another unit (vir.rs invariant 11).
+            if f.linkage != velt_vir::vir::Linkage::Import {
+                self.err("no blocks".into());
+            }
+            return;
         }
         for (i, &param) in f.params.iter().enumerate() {
             if !param.is_scalar() || f.locals.get(i).map(|l| l.ty) != Some(param) {

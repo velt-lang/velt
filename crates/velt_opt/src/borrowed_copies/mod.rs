@@ -33,6 +33,7 @@
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod counted;
 mod live;
 
 use rustc_hash::{FxHashMap, FxHashSet};

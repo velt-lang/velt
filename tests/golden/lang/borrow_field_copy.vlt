@@ -1,0 +1,68 @@
+// A local that only reads a field's array (`const data = this.db.data`) needs no count of its
+// own in a release build, unless something it calls while using it may free it (velt_opt
+// `borrowed_copies/counted`): the old array stays readable after the field is replaced.
+
+class Db {
+  data: u8[];
+  constructor(data: u8[]) {
+    this.data = data;
+  }
+}
+
+class Reader {
+  db: Db;
+  pos: usize = 0;
+  constructor(db: Db) {
+    this.db = db;
+  }
+
+  /** Reads only: borrows `data`. */
+  sum(n: usize): u64 {
+    const data = this.db.data;
+    let s: u64 = 0;
+    for (let i: usize = 0; i < n; i++) {
+      s += data[this.pos + i] as u64;
+    }
+    return s;
+  }
+
+  /** Runs a callback that may replace the field while reading: keeps its count. */
+  each(f: (i: usize) => void): u64 {
+    const data = this.db.data;
+    let s: u64 = 0;
+    for (let i: usize = 0; i < data.length; i++) {
+      f(i);
+      s += data[i] as u64;
+    }
+    return s;
+  }
+
+  /** Replaces the field while reading the old array: keeps its count. */
+  swap(n: usize): u64 {
+    const data = this.db.data;
+    this.db.data = [];
+    let s: u64 = 0;
+    for (let i: usize = 0; i < n; i++) {
+      s += data[i] as u64;
+    }
+    return s;
+  }
+}
+
+function main() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 100; i++) {
+    bytes.push(i as u8);
+  }
+  const db = new Db(bytes);
+  const r = new Reader(db);
+  const other = new Reader(db);
+  console.log(r.sum(10), other.sum(5));
+  console.log(r.swap(4), db.data.length, bytes.length);
+  db.data = [1, 2, 3];
+  console.log(r.each((i: usize) => {
+    if (i == 1) {
+      db.data = [9];
+    }
+  }), db.data.length);
+}
