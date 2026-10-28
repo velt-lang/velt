@@ -147,7 +147,15 @@ impl FnLower<'_, '_> {
         let kept = std::mem::replace(&mut self.kept_args, kept);
         let handed = std::mem::take(&mut self.kept_handed);
         let drops = std::mem::take(&mut self.kept_drops);
+        // A modified param of a function also used as a value is `Borrow` (sema demotes it, as
+        // calls through a value may alias it): the argument must still be the caller's object.
+        let changed = (f.params[f.params.len() - modes.len()..].iter().enumerate())
+            .filter(|(i, p)| *i < 64 && p.mode == PassMode::Borrow)
+            .filter(|(_, p)| f.body.locals[p.local.0 as usize].mutable)
+            .fold(0u64, |m, (i, _)| m | 1 << i);
+        let changed = std::mem::replace(&mut self.changed_args, changed);
         argv.extend(self.lower_args(args, &modes, how));
+        self.changed_args = changed;
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
         let drops = std::mem::replace(&mut self.kept_drops, drops);
@@ -322,6 +330,7 @@ impl FnLower<'_, '_> {
         let outer = self.start_borrows();
         let mut recv = self.proxy_recv.take();
         let kept = std::mem::take(&mut self.kept_args);
+        let changed = std::mem::take(&mut self.changed_args);
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             self.owner_write = false;
             if *mode == PassMode::BorrowMut {
@@ -357,8 +366,11 @@ impl FnLower<'_, '_> {
                     };
                     // A value the callee modifies stays where it is (it may only be shared). A
                     // frozen one changes for nobody, and is not counted (frozen.rs).
+                    let changes = i < 64 && changed >> i & 1 == 1 && self.inline_object(a.ty);
                     let v = match mode {
-                        PassMode::Borrow if !self.frozen_root(a) => self.hold(v, a.ty, later),
+                        PassMode::Borrow if !self.frozen_root(a) && !changes => {
+                            self.hold(v, a.ty, later)
+                        }
                         _ => v,
                     };
                     argv.push(self.operand_addr(v, t));
@@ -449,6 +461,10 @@ impl FnLower<'_, '_> {
                     // A value the callee modifies stays where it is; a frozen one changes for
                     // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
+                    // Through a function value, a `Borrow` param may be one the callee changes
+                    // (a closure's, or a named function's demoted by sema): an object stored
+                    // inline stays where it is, so the change reaches the caller's object.
+                    None | Some(PassMode::Borrow) if self.inline_object(a.ty) => v,
                     _ if self.frozen_root(a) && !super::place::number(t) => v,
                     _ => self.hold(v, a.ty, later),
                 }
