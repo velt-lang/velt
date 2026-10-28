@@ -156,11 +156,8 @@ impl FnLower<'_, '_> {
         (seen, head): (Local, BlockId),
         fail: BlockId,
     ) {
-        let lit = self.str_lit(name);
-        let la = self.operand_addr(lit, STR);
-        let eq = self.reader_call("keyIs", vec![Operand::Copy(Place::local(r)), la]);
         let (hit, miss) = (self.new_block(), self.new_block());
-        self.branch(eq, hit, miss);
+        self.key_is_branch(r, name, hit, miss);
         self.switch_to(hit);
         let fp = self.field_place(place, ty, i);
         // A repeated key: the later value wins.

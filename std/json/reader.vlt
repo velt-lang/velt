@@ -125,8 +125,6 @@ export class Reader extends Scanner {
   int: i64 = 0;
   /** The last value `readValue` built (a runtime `JsonValue` handle). */
   handle: u64 = 0;
-  /** The row reader's last key or string. */
-  rowKey: string = "";
   /**
    * The last key of `nextKey`: its raw bytes, or its text when it had escapes. Kept apart from
    * the last token, so that a decoder can still name the key after reading or skipping its value.
@@ -135,6 +133,8 @@ export class Reader extends Scanner {
   keyEnd: usize = 0;
   keyEscaped: bool = false;
   keyDecoded: string = "";
+  /** The last key's length in bytes (of `keyDecoded` if escaped, else of the raw bytes). */
+  keyLen: usize = 0;
 
   /** A reader over JSON text, with `FLAG_*` options and a nesting limit (0: none). */
   constructor(src: string, flags: u32, maxDepth: u32) {
@@ -247,7 +247,7 @@ export class Reader extends Scanner {
   /**
    * The next key of an object and its `:`: `STEP_MORE` (the key is the string token, `text()`
    * or `keyIs`; its value follows), `STEP_END` after the closing `}`, or `STEP_ERROR`. A row
-   * reader's key is `rowKey`.
+   * reader's key counts as escaped (`keyDecoded`).
    */
   nextKey(): u8 {
     if (this.failed != NONE) {
@@ -269,8 +269,10 @@ export class Reader extends Scanner {
     this.keyStart = this.start;
     this.keyEnd = this.end;
     this.keyEscaped = this.escaped;
+    this.keyLen = this.end - this.start;
     if (this.escaped) {
       this.keyDecoded = this.decoded;
+      this.keyLen = __intrinsic_str_byte_len(this.decoded);
     }
     if (this.peekNonWs() != 58) {
       this.fail("expected ':'");
@@ -283,22 +285,21 @@ export class Reader extends Scanner {
 
   /** The last key, as a string. */
   key(): string {
-    if (this.rows != 0) {
-      return this.rowKey;
-    }
     return this.keyEscaped ? this.keyDecoded : utf8Substring(this.src, this.keyStart, this.keyEnd);
   }
 
   /** The last string value (`readString`), as a string. */
   value(): string {
-    return this.rows != 0 ? this.rowKey : this.text();
+    return this.text();
+  }
+
+  /** The last key's length in bytes (decoders compare it with each field name's first). */
+  keyLength(): u64 {
+    return this.keyLen as u64;
   }
 
   /** Whether the last key is `name` (compared in place, without making a string). */
   keyIs(name: string): bool {
-    if (this.rows != 0) {
-      return this.rowKey == name;
-    }
     if (this.keyEscaped) {
       return this.keyDecoded == name;
     }
@@ -307,9 +308,6 @@ export class Reader extends Scanner {
 
   /** Whether the last string value (`readString`) is `text`, compared in place. */
   textIs(text: string): bool {
-    if (this.rows != 0) {
-      return this.rowKey == text;
-    }
     if (this.escaped) {
       return this.decoded == text;
     }
@@ -343,13 +341,14 @@ export class Reader extends Scanner {
     return this.step(93, "expected ',' or ']'");
   }
 
-  /** A string value (decoded): `text()` after true. A row reader's is `rowKey`. */
+  /** A string value (decoded): `text()` after true. A row reader's counts as escaped. */
   readString(): bool {
     if (!this.valueStart(34, 34)) {
       if (this.rows != 0 && this.failed == ROWS) {
         let s = "";
         const ok = velt_rt_json_reader_read_string(this.rows, s) == 1;
-        this.rowKey = s;
+        this.escaped = true;
+        this.decoded = s;
         return ok;
       }
       return false;
@@ -801,7 +800,9 @@ export class Reader extends Scanner {
     }
     let key = "";
     const step = velt_rt_json_reader_next_key(this.rows, key);
-    this.rowKey = key;
+    this.keyLen = __intrinsic_str_byte_len(key);
+    this.keyEscaped = true;
+    this.keyDecoded = key;
     return step;
   }
 

@@ -11,7 +11,7 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 use super::STR;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, Cx, FnLower, ScopeKind};
-use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Ty};
 
 /// Qualified name of the reader class.
 const READER: &str = "std/json/reader::Reader";
@@ -60,6 +60,24 @@ impl FnLower<'_, '_> {
     pub(super) fn reader_call(&mut self, name: &str, pre: Vec<Operand>) -> Operand {
         let def = self.cx.json_reader_fn(name);
         self.json_std_call(def, pre)
+    }
+
+    /// To `hit` if the reader's last key is `name`, else to `miss`. The key's length is compared
+    /// here, with the name's as a constant: most of an object's fields have a name of another
+    /// length, and that answer needs no call of `keyIs`.
+    pub(super) fn key_is_branch(&mut self, r: Local, name: &str, hit: BlockId, miss: BlockId) {
+        let len = self.reader_call("keyLength", vec![Operand::Copy(Place::local(r))]);
+        let same = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, len, cint(name.len() as i128, Ty::U64)),
+        );
+        let compare = self.new_block();
+        self.branch(same, compare, miss);
+        self.switch_to(compare);
+        let lit = self.str_lit(name);
+        let la = self.operand_addr(lit, STR);
+        let eq = self.reader_call("keyIs", vec![Operand::Copy(Place::local(r)), la]);
+        self.branch(eq, hit, miss);
     }
 
     /// A direct call of the std function `def` with lowered arguments.
