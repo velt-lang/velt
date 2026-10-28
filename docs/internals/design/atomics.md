@@ -492,9 +492,10 @@ on the pointer's bits, so backends see nothing new.
 - **`load`:** a load, uncounted: the reference is *borrowed*. Read in place (`a.load().f`, a
   borrowing argument) or bound by a `const` (sema `borrowed_load` binds it by reference, and
   lowering's `let_pat` binds the loaded pointer without a drop), it costs the load alone. A
-  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). A borrow
-  stays valid as long as retired references are never released; once reclamation frees them,
-  a borrow lives in an epoch section, and one still live where a section closes is counted.
+  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). The
+  function runs in an epoch section ("Sections"), so a borrow stays valid until it returns. In
+  an async function or a generator, `load` counts at once instead, inside a section of its
+  own, and sema binds such a `const` as a value.
 - **`store(v)` and `exchange(v)`:** `v` moves in, by an atomic exchange. `exchange` gives the
   caller a counted copy of the old reference.
 - **`compareExchange(expected, v)`:** a compare-and-swap of the pointers, so it compares
@@ -504,9 +505,9 @@ on the pointer's bits, so backends see nothing new.
   meanwhile (no ABA).
 - **Retiring:** the reference a store, an exchange or a successful compare-and-swap takes out of
   the word is *retired*, not released. Another thread may have loaded the pointer and not
-  counted it yet; releasing it could free the box under that increment. Until reclamation
-  (`velt:sync/epoch`, step 2c/2d) retires into per-thread lists freed after a grace period, a
-  retired reference is kept forever: memory-safe, but it stays allocated.
+  counted it yet; releasing it could free the box under that increment. Lowering calls
+  `velt:sync/epoch`'s `retire<U>` with it (none for null), which drops it once no thread in a
+  section can still read it.
 
 ## Reclamation (#1696 step 2d)
 
@@ -543,6 +544,31 @@ on the pointer's bits, so backends see nothing new.
   either mutant in 25 runs on an M4. So veltc `epoch_fences` checks the optimized LLVM IR: one
   `seqcst` fence in a program that only pins, two in one that only retires. Each mutant fails
   it.
+
+## Sections (#1696 step 2e)
+
+velt_vir `lower/epoch_sections.rs` places the sections. A function with a borrowed reference
+load (`FnLower::ref_loads`) calls `velt:sync/epoch`'s `pin` at its entry and `unpin` before each
+`Return`: the entry's code moves to a block of its own behind the `pin` call, and jumps to the
+entry are redirected there.
+- **Suspensions:** poll functions and generator resumes keep their dispatch in the entry block,
+  and a borrow must not outlive a suspension. So there each `load` is a section of its own:
+  `pin`, the load, the count, `unpin`. Sema binds `const c = a.load()` there by value.
+- **Nesting:** `pin` counts depth in a `ThreadLocal`, so a callee with loads of its own costs a
+  depth count, not a fence.
+- **Exempt:** `velt:sync/epoch`'s own functions (`FnLower::epoch_exempt`, by qualified name).
+  Its registry words are only ever set once, so its borrows need no section.
+- **Not done:** sections stay open across a loop's back edges, so a long synchronous loop
+  delays drops (memory only).
+- **Measured** (M4, release, load ~140): a `pin`/`unpin` pair costs 2–3 ns on one thread and
+  24–42 ns with 8 threads at once. A loop of 10M loads inside one call costs the same as with
+  no sections.
+- **Hold rule:** `shared_value` used to keep a counted hold on every narrowed handle
+  (`x` after `x == null` returned). That was one contended increment and decrement per `pin`
+  on the registry's box; a narrowed handle is now held only if what it narrows is replaceable.
+- **Tests:** `std/atomic_ref_sections`. A task on another thread is inside a function holding a
+  loaded value while main replaces it 10 times and collects 100 times: nothing is dropped
+  until it returns. Without sections, all 10 are dropped and the holder reads a freed string.
 
 ## Not in this design
 

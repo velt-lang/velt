@@ -1,7 +1,8 @@
 // `load()` of an `Atomic` of a `shared` value is borrowed: read in place, bound by a `const`,
 // passed to a borrowing parameter, it counts nothing; what keeps it (a return, an array, a
 // closure, a spawned task) counts it, and keeps seeing the value after the `Atomic` changes.
-// Replaced values are kept until reclamation frees them, so this file has no leak check.
+// Replaced values are dropped by `velt:sync/epoch` at its own pace, so this file has no leak
+// check.
 interface Config {
   name: string;
   limit: u64;

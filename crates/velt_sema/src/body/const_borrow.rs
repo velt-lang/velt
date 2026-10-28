@@ -27,7 +27,14 @@ impl FnCx<'_, '_> {
         if let Some(e) = v
             .init
             .as_ref()
-            .filter(|e| v.kind == ast::VarKind::Const && is_load(e))
+            // In an async function or generator the load is counted (its section closes at each
+            // suspension, velt_vir `epoch_sections.rs`): bound as a value.
+            .filter(|e| {
+                v.kind == ast::VarKind::Const
+                    && is_load(e)
+                    && !self.f.is_async
+                    && self.f.yield_ty.is_none()
+            })
         {
             return self.borrowed_load(v, e, name, ann, span, out);
         }

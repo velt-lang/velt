@@ -1,7 +1,7 @@
 // Tasks on worker threads replace and read one `Atomic<shared<Snapshot>>` at once: a reader
 // always sees a whole snapshot (its two fields agree), every swap takes exactly the snapshot
 // before it, and the snapshot the `Atomic` holds is one some writer stored. Values that writers
-// replace are kept until reclamation frees them, so this file has no leak check.
+// replace are dropped by `velt:sync/epoch` at its own pace, so this file has no leak check.
 
 interface Snapshot {
   version: u64;
