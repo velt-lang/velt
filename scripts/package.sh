@@ -7,7 +7,7 @@
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
-#   std/**  share/velt/lldb/velt_lldb.py  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
+#   std/**  share/velt/lldb/velt_lldb.py  share/velt/warm/*.vlt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: scripts/package.sh [--std-dir <dir>] [--skip-build] [--no-archive] [--lld <path>]
 #                           [--no-bundled-linker] [--no-musl]
@@ -79,12 +79,17 @@ name="velt-$version-$host"
 dist="$repo/dist"
 out="$dist/$name"
 rm -rf "$out"
-mkdir -p "$out/bin" "$out/lib" "$out/std" "$out/share/velt/lldb"
+mkdir -p "$out/bin" "$out/lib" "$out/std" "$out/share/velt/lldb" "$out/share/velt/warm"
 
 cp "$release/velt" "$release/velt-launcher" "$out/bin/"
 cp "$release/libvelt_rt.a" "$release/$shared_rt" "$out/lib/"
 cp "$repo/crates/velt_rt/NATIVE_LIBS.md" "$out/lib/"
 cp "$repo/editors/lldb/velt_lldb.py" "$out/share/velt/lldb/"
+# The programs `velt cache warm` compiles std into the build cache with.
+# (A loop over the list, not a pipe, so a missing program fails the script under `set -e`.)
+for p in $(grep -v '^#' "$repo/share/velt/warm/programs.txt"); do
+    cp "$repo/share/velt/warm/$p" "$out/share/velt/warm/"
+done
 if [ -d "$std_dir" ]; then
     cp -R "$std_dir/." "$out/std/"
 else

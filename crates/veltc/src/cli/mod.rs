@@ -179,6 +179,8 @@ pub enum Command {
     },
     /// `velt clean`: remove the package's `target/`; `--cache`: the machine's build cache instead.
     Clean { cache: bool },
+    /// `velt cache warm [--background]`: compile std into the build cache.
+    CacheWarm { background: bool },
     /// `velt completions <shell>`.
     Completions(Shell),
     /// `velt add <name>[@<req>] [--path <dir>]`.
@@ -291,6 +293,7 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "registry" => tools::parse_registry(rest),
         "doctor" => no_arguments(sub, rest),
         "clean" => parse_clean(rest),
+        "cache" => parse_cache(rest),
         "completions" => parse_completions(rest),
         "help" => parse_help(rest),
         "--version" | "-V" | "version" => Ok(Command::Version),
@@ -347,6 +350,34 @@ fn no_arguments(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         return Err(format!("unexpected argument `{other}` for `velt {sub}`"));
     }
     Ok(Command::Doctor)
+}
+
+/// `velt cache warm [--background]`.
+fn parse_cache(rest: Vec<OsString>) -> Result<Command, String> {
+    let args = strings(rest)?;
+    match args.split_first() {
+        Some((action, rest)) if action == "warm" => {
+            let mut background = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "--background" => background = true,
+                    flag if flag.starts_with('-') => {
+                        return Err(unknown_option("cache warm", flag))
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected argument `{other}` for `velt cache warm`"
+                        ))
+                    }
+                }
+            }
+            Ok(Command::CacheWarm { background })
+        }
+        Some((other, _)) => Err(format!(
+            "unknown action `{other}`: `velt cache warm` (`velt clean --cache` removes the cache)"
+        )),
+        None => Err("missing action: `velt cache warm`".into()),
+    }
 }
 
 /// `velt clean [--cache]`.
@@ -455,6 +486,19 @@ mod tests {
             Command::Clean { cache: true }
         );
         assert!(p(&["clean", "--cash"]).unwrap_err().contains("--cache"));
+        assert_eq!(
+            p(&["cache", "warm"]).unwrap(),
+            Command::CacheWarm { background: false }
+        );
+        assert_eq!(
+            p(&["cache", "warm", "--background"]).unwrap(),
+            Command::CacheWarm { background: true }
+        );
+        assert!(p(&["cache"]).unwrap_err().contains("missing action"));
+        assert!(p(&["cache", "cool"])
+            .unwrap_err()
+            .contains("unknown action"));
+        assert!(p(&["cache", "warm", "x"]).is_err());
         assert!(p(&["doctor", "-x"])
             .unwrap_err()
             .contains("unexpected argument"));

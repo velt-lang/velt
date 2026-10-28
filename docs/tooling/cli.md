@@ -15,6 +15,7 @@ prints every command's options and examples.
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
 | `velt clean [--cache]` | remove the package's `target/` directory; `--cache`: the machine's [build cache](#build-cache) |
+| `velt cache warm` | compile the standard library into the [build cache](#build-cache) ahead of a first build |
 | `velt add`, `install`, `update`, `publish`, `native build` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
@@ -146,6 +147,13 @@ A build never compiles the same thing twice:
   `VELT_BUILD_CACHE=off` builds without it.
 - Entries are used as they are, so a `VELT_BUILD_CACHE` directory must be writable only by users
   you trust: whoever can write to it can put code into your builds.
+- **Warm from the start.** Installing a Velt version (the install scripts, `velt toolchain
+  install`, or the launcher installing the version a package pins) starts `velt cache warm` in
+  the background at low priority: it compiles a set of programs shipped with the toolchain
+  (`share/velt/warm/`) that reach most of std, for this machine's CPU (what `velt run` and
+  `velt test` build for) and the default one (`velt build`). A project's first build then
+  compiles little more than its own code. It runs once per Velt version; `velt cache warm` runs
+  it in the foreground, `--background` detached.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
   the build cache)`) and when a build was up to date.
 

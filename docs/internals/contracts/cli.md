@@ -12,6 +12,7 @@ velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
 velt clean [--cache]
+velt cache warm [--background]
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
@@ -454,6 +455,19 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   prints `Removed <dir> (<n> files, <size>)`; no `target/` → `Clean nothing to remove`.
   `clean --cache` removes the build cache's directory instead (same output; the cache turned off
   → `Clean nothing to remove (the build cache is off: $VELT_BUILD_CACHE)`).
+- `cache warm [--background]` (additive, #1612): with the build cache on, builds each
+  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `<prefix>/share/velt/warm`, else
+  `share/velt/warm` of the checkout above the executable) with a child `velt build <file> --emit
+  obj` (`VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  writes the marker `<cache>/warm/<hex>` (SHA-256 of the version line and the executable's size
+  and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
+  present it prints that the cache is warm and does nothing; one run per marker at a time
+  (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
+  others ran. `--background` starts `velt cache warm` detached (own process group, lowest
+  priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns. The cache off →
+  a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
+  after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
+  failures).
 - `completions <shell>` (additive): prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--backend`/`--emit` values and files.
 - Help (additive): `velt --help` lists commands, templates and environment variables;

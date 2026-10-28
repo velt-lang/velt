@@ -355,6 +355,61 @@ fn outputs_written_without_a_stamp_are_a_change() {
     assert_eq!(text(&run_copy(&exe, "obj").stdout), "BBBB\n");
 }
 
+#[test]
+fn cache_warm_compiles_the_warm_up_programs_once() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let warm = dir.join("share/warm");
+    std::fs::create_dir_all(&warm).unwrap();
+    let program = "function main() {\n  const m = new Map<string, number>();\n  m.set(\"a\", 1);\n  console.log(m.get(\"a\"));\n}\n";
+    std::fs::write(warm.join("map.vlt"), program).unwrap();
+    let cache = dir.join("cache");
+    let env = [
+        (
+            "VELT_SHARE",
+            dir.join("share").to_str().unwrap().to_string(),
+        ),
+        ("VELT_BUILD_CACHE", cache.to_str().unwrap().to_string()),
+    ];
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let o = velt(dir, &["cache", "warm"], &env);
+    let err = text(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        err.contains("warmed the build cache with 1 programs"),
+        "{err}"
+    );
+    let again = velt(dir, &["cache", "warm"], &env);
+    assert!(text(&again.stderr).contains("warm for this velt already"));
+
+    // A build of the same code then takes every function from the cache.
+    std::fs::write(dir.join("app.vlt"), program).unwrap();
+    let mut build_env = env.clone();
+    build_env.push(("VELT_BUILD_STAMP", "off"));
+    let o = velt(
+        dir,
+        &["build", "app.vlt", "-v", "--cpu", "native"],
+        &build_env,
+    );
+    let err = text(&o.stderr);
+    let line = err.lines().find(|l| l.contains("from the build cache"));
+    let counts: Vec<u32> = line
+        .unwrap_or_else(|| panic!("{err}"))
+        .split(['(', ' '])
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    assert!(counts.len() == 2 && counts[0] == counts[1], "{err}");
+
+    // A program that does not compile is reported, and leaves the cache unmarked.
+    std::fs::remove_dir_all(&cache).unwrap();
+    std::fs::write(warm.join("broken.vlt"), "function main() {\n  nope();\n}\n").unwrap();
+    let o = velt(dir, &["cache", "warm"], &env);
+    let err = text(&o.stderr);
+    assert!(!o.status.success() && err.contains("broken.vlt"), "{err}");
+    let o = velt(dir, &["cache", "warm"], &env);
+    assert!(text(&o.stderr).contains("warmed the build cache with 2 programs"));
+}
+
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
 /// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
 /// locked for a moment (an antivirus scan), so the relink must never target a file that ran.
