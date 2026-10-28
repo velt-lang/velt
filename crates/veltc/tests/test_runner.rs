@@ -26,7 +26,6 @@ fn write(dir: &Path, rel: &str, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-/// The lines of `stdout` from `running <file>` up to the next `running` line.
 /// The test programs built in `dir`, without their extension, sorted.
 fn built(dir: &Path) -> Vec<String> {
     let mut stems: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
@@ -39,6 +38,7 @@ fn built(dir: &Path) -> Vec<String> {
     stems
 }
 
+/// The lines of `stdout` from `running <file>` up to the next `running` line.
 fn block<'s>(stdout: &'s str, file: &str) -> Vec<&'s str> {
     let mut lines = stdout.lines().skip_while(|l| !l.ends_with(file));
     let head = lines
