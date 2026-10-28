@@ -1,0 +1,6 @@
+2 true object 1 2
+1 out:n:true,in:n
+2 out:twice:true,in:twice
+caught boom
+2 102 1
+1

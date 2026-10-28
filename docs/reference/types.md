@@ -3762,7 +3762,8 @@ target whose `get` trap answers every key). A method called through a typed prox
 trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
 the target's method, which then runs with `this` the proxy. A class getter read through a typed
 proxy that is a class instance brand (`s.twice` of sigx's `signal(new C())`) is the `get` trap's
-answer, checked as the getter's type, as for a field: a trap that forwards it with
+answer (its receiver is the proxy itself), checked as the getter's type, as for a field; a
+handler without a `get` trap runs the getter on the target. A trap that forwards it with
 `Reflect.get(target, key)` runs the getter on the target, as Node does, and one that forwards with
 `Reflect.get(target, key, receiver)` stops with a `TypeError` naming #823, since Node would run
 the getter with `this` the proxy (its reads through the traps). Without a brand, a class getter

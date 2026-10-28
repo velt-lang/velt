@@ -126,19 +126,6 @@ function classGetterValue(target: any, key: any, value: any): bool {
   }
 }
 
-/**
- * The receiver a `get` trap sees for a class getter read on a class instance brand
- * (`Proxy.__getGetter`): the proxy, marked so that `Reflect.get(target, key, receiver)` of a
- * class getter can stop (#1732).
- */
-export class __GetterReceiver {
-  proxy: any;
-
-  constructor(proxy: any) {
-    this.proxy = proxy;
-  }
-}
-
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
 function proxyKey(key: any): string | symbol {
   if (typeof key === "string") {
@@ -288,24 +275,43 @@ export class Proxy {
   #target: any;
   #handler: ProxyHandler<any>;
   #view: boolean;
+  // The key of the class getter read on a class instance brand that this proxy's `get` trap is
+  // answering (`__getGetter`), or `undefined`.
+  #getterKey: any;
 
   /** A proxy of `target` whose operations run the traps of `handler`. */
   constructor(target: any, handler: ProxyHandler<any>) {
     this.#target = target;
     this.#handler = handler;
     this.#view = false;
+    this.#getterKey = undefined;
   }
 
   /**
    * `p.twice` of a class getter on a class instance brand that is this proxy (velt_sema
-   * `proxy_getters.rs`): the `get` trap's answer. The trap's receiver is a `__GetterReceiver`,
-   * so a trap that forwards with `Reflect.get(target, key, receiver)` stops with a `TypeError`
-   * there (#1732): Node would run the getter with `this` the proxy, Velt runs it on the target.
+   * `proxy_getters.rs`): the `get` trap's answer, with the proxy as its receiver. While the trap
+   * runs, the read is marked on the proxy, so a trap that forwards it with
+   * `Reflect.get(target, key, receiver)` stops with a `TypeError` there (#1732): Node would run
+   * the getter with `this` the proxy, Velt runs it on the target. Without a `get` trap nothing
+   * forwards a receiver, and the read is the target's, as in Node.
    */
   __getGetter(key: any): any {
     const me: any = this;
-    const recv: any = new __GetterReceiver(me);
-    return this.__get(key, recv);
+    if (this.#handler.get == null) {
+      return Reflect.get(this.#target, key, me);
+    }
+    const outer: any = this.#getterKey;
+    this.#getterKey = key;
+    try {
+      return this.__get(key, me);
+    } finally {
+      this.#getterKey = outer;
+    }
+  }
+
+  /** Whether this proxy's `get` trap is answering a brand's class getter read of `key`. */
+  __readsGetter(key: any): boolean {
+    return this.#getterKey !== undefined && this.#getterKey === key;
   }
 
   /**
@@ -663,24 +669,21 @@ export class Proxy {
 export class Reflect {
   /** `target[key]`, with `receiver` (default: `target`) as the receiver a proxy target sees. */
   static get(target: any, key: any, receiver?: any): any {
-    if (receiver instanceof __GetterReceiver) {
-      // A brand's getter read (`Proxy.__getGetter`) forwarded with its receiver.
-      const proxy: any = (receiver as __GetterReceiver).proxy;
-      if (target instanceof Proxy) {
-        return target.__get(key, proxy);
-      }
-      const value = Reflect.get(target, key);
-      if (classGetterValue(target, key, value)) {
-        // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
-        proxyGetterReceiverUnsupported(key);
-      }
-      return value;
-    }
     if (receiver != null) {
       if (target instanceof Proxy) {
         return target.__get(key, receiver);
       }
-      if (!(receiver instanceof Proxy) && receiver !== target) {
+      if (receiver instanceof Proxy) {
+        if ((receiver as Proxy).__readsGetter(key)) {
+          // A brand's getter read (`Proxy.__getGetter`) forwarded with its receiver.
+          const value = Reflect.get(target, key);
+          if (classGetterValue(target, key, value)) {
+            // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
+            proxyGetterReceiverUnsupported(key);
+          }
+          return value;
+        }
+      } else if (receiver !== target) {
         proxyReceiverUnsupported("get");
       }
     }
