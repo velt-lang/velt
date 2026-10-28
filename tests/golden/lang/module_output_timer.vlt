@@ -1,0 +1,6 @@
+// An imported module's top-level output comes before the root's in a script that starts a timer
+// (#1399).
+import { f } from "./_module_output_async_main_lib";
+
+console.log("root", f());
+setTimeout(() => console.log("timer"), 0);
