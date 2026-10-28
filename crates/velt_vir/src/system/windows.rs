@@ -21,8 +21,16 @@ const BOOL: Ret = Ret::Int {
 };
 
 /// `OVERLAPPED`: `ULONG_PTR Internal, InternalHigh; DWORD Offset, OffsetHigh; HANDLE hEvent`.
-/// `hEvent` is not a field Velt can set: it stays 0, so no event and no completion port is
-/// told about the operation.
+/// `hEvent` is not a field Velt can set: it stays 0.
+///
+/// SAFETY, before this is enabled on Windows: a handle associated with an I/O completion port
+/// queues a completion packet for every overlapped operation unless `hEvent`'s low bit is set
+/// (`GetQueuedCompletionStatus` remarks). The synchronous fd API waits inline
+/// (`After::WaitOverlapped`) and never drains a port, so a handle on one would leak packets.
+/// When the Windows fd API is turned on, lowering must
+/// set `hEvent = 1` on the `OVERLAPPED` it builds, or the API must reject handles bound to a
+/// port. Until then the Windows table only type-checks declarations; calling its functions
+/// needs a Windows target, which the fd API does not yet support.
 static OVERLAPPED: Struct = Struct {
     c: "OVERLAPPED",
     size: 32,

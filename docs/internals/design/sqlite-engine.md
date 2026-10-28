@@ -123,6 +123,10 @@ it, starting with positioned I/O for the pager.
   preceded it (`crates/velt_vir/src/lower/system.rs`). So a freed temporary or a `console.log`
   between the failing call and the read cannot clobber the value. It costs one `__error` load per
   call. Windows reads `GetLastError()` at the `lastOsError()` call as before.
+- **Deferred** (#1773): listing a package's system functions in `velt check` and
+  `velt.lock.json`. It spans the package manifest, the lock file and the registry metadata, none
+  of it memory safety; the compile-time table (`velt_vir`'s per-target list) already bounds what
+  a declaration can bind. To be built with the registry work.
 
 ## Steps
 
