@@ -2,7 +2,8 @@
 # Nightly benchmark guard (Linux): counts the instructions each benchmark executes and compares
 # them with a baseline from an earlier run. Instructions, not time: a CI runner shares its
 # machine, so wall time varies by tens of percent from run to run, while the instruction count of
-# one program is the same every time (VELT_THREADS=1 keeps the async benchmarks on one worker).
+# one program is the same every time (VELT_THREADS=1 and VELT_RESCUE=0 keep the async benchmarks
+# on one worker).
 #
 #   bench/nightly.sh [--baseline FILE] [--out FILE] [--threshold PERCENT] [--velt PATH]
 #
@@ -70,6 +71,11 @@ count() {
 import os, re, subprocess, sys, time
 name, cmd = sys.argv[1], sys.argv[2:]
 env = dict(os.environ, VELT_THREADS="1")
+# The async benchmarks spawn in long polls: without this, the runtime's rescue of a stalled
+# worker starts spares and moves tasks whenever a thread waits for its turn, which under valgrind
+# (one thread at a time) depends on timing (#1673).
+if name.startswith("async/"):
+    env["VELT_RESCUE"] = "0"
 t = time.perf_counter()
 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, env=env)
 ms = (time.perf_counter() - t) * 1000
