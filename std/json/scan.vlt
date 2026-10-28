@@ -20,12 +20,66 @@ declare function velt_simd_mask8x16_any(m: mask8x16): bool;
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
 declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
 
-/** Detail for a byte that cannot start or continue the construct. */
-export const UNEXPECTED_CHAR = "unexpected character";
+// Why a scan failed (`Scanner.code`; `detailText` gives the text, `Scanner.what`). A code, not
+// the text: recording one is a store, where a string field is a release and a retain.
+/** No failure. */
+export const OK: u8 = 0;
+/** Input that ends inside a value. */
+export const UNEXPECTED_EOF: u8 = 1;
+/** A byte that cannot start or continue the construct. */
+export const UNEXPECTED_CHAR: u8 = 2;
+export const INVALID_NUMBER: u8 = 3;
+export const CONTROL_CHAR: u8 = 4;
+export const INVALID_ESCAPE: u8 = 5;
+export const INVALID_U_ESCAPE: u8 = 6;
 /** More nested arrays and objects than a decoder's `maxDepth` allows. */
-export const TOO_DEEP = "nested too deeply";
-/** Detail for input that ends inside a value. */
-export const UNEXPECTED_EOF = "unexpected end of input";
+export const TOO_DEEP: u8 = 7;
+export const EXPECTED_KEY: u8 = 8;
+export const EXPECTED_COLON: u8 = 9;
+export const EXPECTED_COMMA_BRACE: u8 = 10;
+export const EXPECTED_COMMA_BRACKET: u8 = 11;
+export const TRAILING: u8 = 12;
+
+/** The text of a failure `code`. */
+export function detailText(code: u8): string {
+  if (code == UNEXPECTED_EOF) {
+    return "unexpected end of input";
+  }
+  if (code == UNEXPECTED_CHAR) {
+    return "unexpected character";
+  }
+  if (code == INVALID_NUMBER) {
+    return "invalid number";
+  }
+  if (code == CONTROL_CHAR) {
+    return "control character in string";
+  }
+  if (code == INVALID_ESCAPE) {
+    return "invalid escape";
+  }
+  if (code == INVALID_U_ESCAPE) {
+    return "invalid \\u escape";
+  }
+  if (code == TOO_DEEP) {
+    return "nested too deeply";
+  }
+  if (code == EXPECTED_KEY) {
+    return "expected string key";
+  }
+  if (code == EXPECTED_COLON) {
+    return "expected ':'";
+  }
+  if (code == EXPECTED_COMMA_BRACE) {
+    return "expected ',' or '}'";
+  }
+  if (code == EXPECTED_COMMA_BRACKET) {
+    return "expected ',' or ']'";
+  }
+  if (code == TRAILING) {
+    return "unexpected trailing characters";
+  }
+  return "";
+}
 
 // Bytes the scanner compares with.
 const QUOTE: u8 = 34;
@@ -35,7 +89,7 @@ const PLUS: u8 = 43;
 const DOT: u8 = 46;
 const ZERO: u8 = 48;
 
-/** A cursor over a JSON document. Failing methods return false and set `what` and `at`. */
+/** A cursor over a JSON document. Failing methods return false and set `code` and `at`. */
 export class Scanner {
   src: string;
   /** The source's length in bytes. */
@@ -54,7 +108,7 @@ export class Scanner {
   /** The last number token had no fraction and no exponent. */
   integer: bool = false;
   /** The last error: its detail and byte offset. */
-  what: string = "";
+  code: u8 = OK;
   at: usize = 0;
 
   constructor(src: string) {
@@ -81,9 +135,14 @@ export class Scanner {
     return -1;
   }
 
-  /** Fails with `what` at the current position, or `UNEXPECTED_EOF` past the end. */
-  fail(what: string): bool {
-    this.what = this.pos >= this.len ? UNEXPECTED_EOF : what;
+  /** The last error's text. */
+  get what(): string {
+    return detailText(this.code);
+  }
+
+  /** Fails with `code` at the current position, or `UNEXPECTED_EOF` past the end. */
+  fail(code: u8): bool {
+    this.code = this.pos >= this.len ? UNEXPECTED_EOF : code;
     this.at = this.pos;
     return false;
   }
@@ -116,7 +175,7 @@ export class Scanner {
     } else if (this.pos < this.len && this.digitAt(this.pos)) {
       this.digits();
     } else {
-      return this.fail("invalid number");
+      return this.fail(INVALID_NUMBER);
     }
     let integer = true;
     if (this.byteIs(DOT)) {
@@ -234,7 +293,7 @@ export class Scanner {
         return true;
       }
       if (b != BACKSLASH) {
-        return this.fail("control character in string");
+        return this.fail(CONTROL_CHAR);
       }
       if (decode) {
         out += utf8Substring(this.src, run, this.pos);
@@ -300,7 +359,7 @@ export class Scanner {
       }
       return cp >= 0x10000 ? 2 : 1;
     } else {
-      this.fail("invalid escape");
+      this.fail(INVALID_ESCAPE);
       return -1;
     }
     this.pos++;
@@ -343,7 +402,7 @@ export class Scanner {
       const d =
         this.pos < this.len ? hexValue(__intrinsic_str_byte_at(this.src, this.pos as u64)) : -1;
       if (d < 0) {
-        this.fail("invalid \\u escape");
+        this.fail(INVALID_U_ESCAPE);
         return -1;
       }
       v = v * 16 + d;
@@ -358,7 +417,7 @@ export class Scanner {
       this.pos++;
     }
     if (this.pos == start) {
-      return this.fail("invalid number");
+      return this.fail(INVALID_NUMBER);
     }
     return true;
   }

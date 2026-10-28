@@ -13,8 +13,13 @@
 // messages.
 
 import {
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  EXPECTED_KEY,
   Scanner,
   TOO_DEEP,
+  TRAILING,
   UNEXPECTED_CHAR,
   numberF64,
   numberI64,
@@ -253,12 +258,12 @@ export class Reader extends Scanner {
     if (this.failed != NONE) {
       return this.rowsNextKey();
     }
-    const step = this.step(125, "expected ',' or '}'");
+    const step = this.step(125, EXPECTED_COMMA_BRACE);
     if (step != STEP_MORE) {
       return step;
     }
     if (this.peekNonWs() != 34) {
-      this.fail("expected string key");
+      this.fail(EXPECTED_KEY);
       this.syntaxFailed();
       return STEP_ERROR;
     }
@@ -275,7 +280,7 @@ export class Reader extends Scanner {
       this.keyLen = __intrinsic_str_byte_len(this.decoded);
     }
     if (this.peekNonWs() != 58) {
-      this.fail("expected ':'");
+      this.fail(EXPECTED_COLON);
       this.syntaxFailed();
       return STEP_ERROR;
     }
@@ -338,7 +343,7 @@ export class Reader extends Scanner {
         ? velt_rt_json_reader_array_next(this.rows)
         : STEP_ERROR;
     }
-    return this.step(93, "expected ',' or ']'");
+    return this.step(93, EXPECTED_COMMA_BRACKET);
   }
 
   /** A string value (decoded): `text()` after true. A row reader's counts as escaped. */
@@ -554,7 +559,7 @@ export class Reader extends Scanner {
       return this.rows != 0 && this.failed == ROWS && velt_rt_json_reader_end(this.rows) == 1;
     }
     if (this.peekNonWs() >= 0) {
-      this.fail("unexpected trailing characters");
+      this.fail(TRAILING);
       return this.syntaxFailed();
     }
     return true;
@@ -572,7 +577,7 @@ export class Reader extends Scanner {
     }
     const where = shortPath(path);
     if (this.failed == SYNTAX) {
-      if (this.what == TOO_DEEP) {
+      if (this.code == TOO_DEEP) {
         return `JSON nested deeper than ${this.maxDepth} levels at ${where} (byte ${this.at})`;
       }
       return `invalid JSON at ${where}: ${this.detail()} (byte ${this.at})`;
@@ -642,7 +647,7 @@ export class Reader extends Scanner {
   }
 
   // Before the next member or element: consumes the comma or the closing bracket `close`.
-  private step(close: i32, expected: string): u8 {
+  private step(close: i32, expected: u8): u8 {
     const first = this.afterOpen;
     this.afterOpen = false;
     const b = this.peekNonWs();
@@ -753,7 +758,7 @@ export class Reader extends Scanner {
           }
           continue;
         }
-        return this.fail(object ? "expected ',' or '}'" : "expected ',' or ']'");
+        return this.fail(object ? EXPECTED_COMMA_BRACE : EXPECTED_COMMA_BRACKET);
       }
     }
     return false;
@@ -762,13 +767,13 @@ export class Reader extends Scanner {
   // `"key" :` inside an object being walked.
   private keyColon(): bool {
     if (this.peekNonWs() != 34) {
-      return this.fail("expected string key");
+      return this.fail(EXPECTED_KEY);
     }
     if (!this.string(false)) {
       return false;
     }
     if (this.peekNonWs() != 58) {
-      return this.fail("expected ':'");
+      return this.fail(EXPECTED_COLON);
     }
     this.pos++;
     return true;
@@ -809,7 +814,7 @@ export class Reader extends Scanner {
   // The detail of a syntax error: the offending character for `UNEXPECTED_CHAR` (`U+XXXX` if
   // it is a control character).
   private detail(): string {
-    if (this.what != UNEXPECTED_CHAR || this.at >= this.len) {
+    if (this.code != UNEXPECTED_CHAR || this.at >= this.len) {
       return this.what;
     }
     const lead = __intrinsic_str_byte_at(this.src, this.at as u64);
@@ -835,9 +840,9 @@ export class Reader extends Scanner {
       }
     }
     if (code < 0x20 || (code >= 0x7f && code < 0xa0)) {
-      return `${UNEXPECTED_CHAR} U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+      return `${this.what} U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
     }
-    return `${UNEXPECTED_CHAR} '${ch}'`;
+    return `${this.what} '${ch}'`;
   }
 }
 
