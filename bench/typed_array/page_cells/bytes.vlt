@@ -1,5 +1,5 @@
 // Velt's `u8[]` with integer types: the baseline the views should match (not TypeScript).
-import { build, cellCount, PAGE, PAGES } from "./pages";
+import { build, cellCount, PAGE, PAGES } from "./_pages";
 
 function viaBytes(all: u8[]): number {
   let sum: u64 = 0;

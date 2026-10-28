@@ -1,5 +1,5 @@
 // A `subarray` per page, read with shifts.
-import { PAGE, PAGES, run } from "./pages";
+import { PAGE, PAGES, run } from "./_pages";
 
 function viaSubarray(all: Uint8Array): number {
   let sum = 0;

@@ -1,5 +1,5 @@
 // The whole `Uint8Array` with shifts and a base offset per page.
-import { PAGE, PAGES, run } from "./pages";
+import { PAGE, PAGES, run } from "./_pages";
 
 function viaFlat(all: Uint8Array): number {
   let sum = 0;

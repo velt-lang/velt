@@ -1,5 +1,5 @@
 // A `DataView` per page: `getUint16` and `getUint32` (big-endian), `getUint8` for the varint.
-import { PAGE, PAGES, run } from "./pages";
+import { PAGE, PAGES, run } from "./_pages";
 
 function viaDataView(all: Uint8Array): number {
   let sum = 0;

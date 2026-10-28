@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instructions per b-tree cell decoded from SQLite-like pages in a `Uint8Array` (pages.vlt):
+# Instructions per b-tree cell decoded from SQLite-like pages in a `Uint8Array` (_pages.vlt):
 # through a `DataView` (dataview.vlt), a `subarray` per page with shifts (subarray.vlt), the whole
 # `Uint8Array` with shifts (flat.vlt), and Velt's `u8[]` with integer types (bytes.vlt, the
 # baseline), against Rust's `&[u8]` with `u16::from_be_bytes`/`u32::from_be_bytes` (rust/).
