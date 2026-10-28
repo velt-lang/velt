@@ -1,0 +1,138 @@
+// The statement parser of the Velt SQLite engine (velt:sqlite/sql/statement, #1720): CREATE TABLE
+// with every column and table constraint, CREATE INDEX/VIEW, INSERT with UPSERT and RETURNING,
+// UPDATE … FROM, DELETE, transactions, PRAGMA, DROP, ALTER TABLE, EXPLAIN.
+import { parseAll } from "velt:sqlite/sql/statement";
+import { SqlError } from "velt:sqlite/sql/lexer";
+
+const CASES: string[] = [
+  "CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, score REAL DEFAULT -1.5, data BLOB, n INT CHECK (n > 0) DEFAULT (abs(-3)), g AS (n * 2) STORED, FOREIGN KEY (n) REFERENCES u(id) ON DELETE CASCADE, UNIQUE (name, n) ON CONFLICT REPLACE) WITHOUT ROWID, STRICT",
+  "CREATE TABLE IF NOT EXISTS main.\"my table\" ([a b] VARCHAR(10), `c` DOUBLE PRECISION, d, PRIMARY KEY (a DESC, c))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ix ON t (lower(name) COLLATE NOCASE DESC, n) WHERE n > 0",
+  "CREATE TEMP VIEW v (a, b) AS SELECT 1, 2",
+  "CREATE TABLE copy AS SELECT * FROM t",
+  "INSERT INTO t (a, b) VALUES (1, 'x'), (?, :y) ON CONFLICT (a) DO UPDATE SET b = excluded.b, (c, d) = (1, 2) WHERE a > 0 ON CONFLICT DO NOTHING RETURNING *, a AS z",
+  "INSERT OR IGNORE INTO t SELECT * FROM u",
+  "REPLACE INTO t DEFAULT VALUES",
+  "INSERT INTO t VALUES (1) UNION SELECT 2",
+  "UPDATE OR REPLACE t AS x SET a = a + 1 FROM u WHERE x.id = u.id RETURNING a",
+  "DELETE FROM t WHERE id IN (SELECT id FROM u) RETURNING id",
+  "BEGIN IMMEDIATE TRANSACTION; SAVEPOINT s1; RELEASE SAVEPOINT s1; ROLLBACK TO s1; COMMIT; END",
+  "PRAGMA journal_mode = WAL; PRAGMA main.page_size(4096); PRAGMA table_info('t'); PRAGMA cache_size = -2000",
+  "DROP TABLE IF EXISTS t; DROP INDEX ix; ALTER TABLE t RENAME TO u; ALTER TABLE u ADD COLUMN z INTEGER DEFAULT 0 NOT NULL; ALTER TABLE u RENAME COLUMN z TO w; ALTER TABLE u DROP COLUMN w",
+  "EXPLAIN QUERY PLAN SELECT 1",
+  "WITH x AS (SELECT 1) SELECT * FROM x",
+  ";;  SELECT 1;;",
+  "CREATE TABLE t (a",
+  "DROP SCHEMA x",
+  "SELECT 1 SELECT 2",
+  "PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL; PRAGMA x = DEFAULT; PRAGMA x = TRUE; PRAGMA x = -5",
+  "PRAGMA x = NULL",
+  "PRAGMA x = SELECT",
+  "INSERT OR BOGUS INTO t VALUES (1)",
+  "UPDATE t AS SET a = 1",
+  "UPDATE t AS x SET a = 1",
+  "DROP",
+  "DROP TABLE",
+  "WITH x AS (SELECT ')') SELECT * FROM x",
+  "INSERT INTO t VALUES ('(') UNION SELECT 2",
+  "CREATE TABLE t (a UNIQUE ON CONFLICT BOGUS)",
+];
+
+function main() {
+  for (const sql of CASES) {
+    try {
+      const all = parseAll(sql);
+      const parts: string[] = [];
+      for (const s of all) {
+        let d = `k${s.kind} ${s.schema != "" ? s.schema + "." : ""}${s.name}`;
+        if (s.columnDefs.length > 0) {
+          d +=
+            " cols[" +
+            s.columnDefs
+              .map(
+                (
+                  c,
+                ) => `${c.name}:${c.type}${c.primaryKey ? " pk" : ""}${c.desc ? " desc" : ""}${c.autoincrement ? " auto" : ""}${c.notNull ? " nn" : ""}${c.unique ? " uq" : ""}${c.collate != "" ? " " + c.collate : ""}${c.dflt != null ? " dflt" : ""}${c.check.length > 0 ? " check" : ""}${c.generated != null ? (c.stored ? " stored" : " virtual") : ""}`,
+              )
+              .join(", ") +
+            "]";
+        }
+        if (s.primaryKey.length > 0) {
+          d += ` pk(${s.primaryKey.map((c) => c.expr.name + (c.desc ? " desc" : "")).join(",")})`;
+        }
+        if (s.uniques.length > 0) {
+          d += ` uniques ${s.uniques.length}`;
+        }
+        if (s.withoutRowid) {
+          d += " without-rowid";
+        }
+        if (s.strict) {
+          d += " strict";
+        }
+        if (s.indexed.length > 0) {
+          d += ` on ${s.table} (${s.indexed.map((c) => String(c.expr.kind) + (c.collate != "" ? " " + c.collate : "") + (c.desc ? " desc" : "")).join(",")})${s.unique ? " unique" : ""}${s.where != null ? " partial" : ""}`;
+        }
+        if (s.columns.length > 0) {
+          d += ` columns(${s.columns.join(",")})`;
+        }
+        if (s.rows.length > 0) {
+          d += ` rows ${s.rows.length}`;
+        }
+        if (s.select != null) {
+          d += " select";
+        }
+        if (s.defaultValues) {
+          d += " default-values";
+        }
+        if (s.orConflict != "") {
+          d += ` or ${s.orConflict}`;
+        }
+        if (s.upserts.length > 0) {
+          d += ` upserts ${s.upserts.map((u) => u.doNothing ? "nothing" : "set " + u.setColumns.map((c) => c.join("+")).join(",")).join("; ")}`;
+        }
+        if (s.setColumns.length > 0) {
+          d += ` set ${s.setColumns.map((c) => c.join("+")).join(",")}`;
+        }
+        if (s.from.length > 0) {
+          d += ` from ${s.from.length}`;
+        }
+        if (s.where != null && s.indexed.length == 0) {
+          d += " where";
+        }
+        if (s.returning.length > 0) {
+          d += ` returning ${s.returning.length}`;
+        }
+        if (s.mode != "") {
+          d += ` ${s.mode}`;
+        }
+        if (s.what != "") {
+          d += ` ${s.what}${s.ifExists ? " if-exists" : ""}`;
+        }
+        if (s.ifNotExists) {
+          d += " if-not-exists";
+        }
+        if (s.temp) {
+          d += " temp";
+        }
+        if (s.value != null) {
+          d += ` = ${s.value!.kind}:${s.value!.name}${s.value!.ival}${s.value!.text}`;
+        }
+        if (s.action != "") {
+          d += ` ${s.action} ${s.newName}`;
+        }
+        if (s.inner != null) {
+          d += ` explain${s.queryPlan ? " plan" : ""} k${s.inner!.kind}`;
+        }
+        d += ` | ${s.sql}`;
+        parts.push(d);
+      }
+      console.log(parts.join("\n  "));
+    } catch (e) {
+      if (e instanceof SqlError) {
+        console.log(`error at ${e.at}: ${e.message}`);
+      } else {
+        throw e;
+      }
+    }
+  }
+}

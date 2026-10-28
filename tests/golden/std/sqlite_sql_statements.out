@@ -1,0 +1,49 @@
+k4 t cols[id:INTEGER pk auto, name:TEXT nn uq NOCASE, score:REAL dflt, data:BLOB, n:INT dflt check, g: stored] uniques 1 without-rowid strict | CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, score REAL DEFAULT -1.5, data BLOB, n INT CHECK (n > 0) DEFAULT (abs(-3)), g AS (n * 2) STORED, FOREIGN KEY (n) REFERENCES u(id) ON DELETE CASCADE, UNIQUE (name, n) ON CONFLICT REPLACE) WITHOUT ROWID, STRICT
+k4 main.my table cols[a b:VARCHAR(10), c:DOUBLE PRECISION, d:] pk(a desc,c) if-not-exists | CREATE TABLE IF NOT EXISTS main."my table" ([a b] VARCHAR(10), `c` DOUBLE PRECISION, d, PRIMARY KEY (a DESC, c))
+k5 ix on t (9 NOCASE desc,6) unique partial if-not-exists | CREATE UNIQUE INDEX IF NOT EXISTS ix ON t (lower(name) COLLATE NOCASE DESC, n) WHERE n > 0
+k14 v columns(a,b) select temp | CREATE TEMP VIEW v (a, b) AS SELECT 1, 2
+k4 copy select | CREATE TABLE copy AS SELECT * FROM t
+k1 t columns(a,b) rows 2 upserts set b,c+d; nothing returning 2 | INSERT INTO t (a, b) VALUES (1, 'x'), (?, :y) ON CONFLICT (a) DO UPDATE SET b = excluded.b, (c, d) = (1, 2) WHERE a > 0 ON CONFLICT DO NOTHING RETURNING *, a AS z
+k1 t select or IGNORE | INSERT OR IGNORE INTO t SELECT * FROM u
+k1 t default-values or REPLACE | REPLACE INTO t DEFAULT VALUES
+k1 t select | INSERT INTO t VALUES (1) UNION SELECT 2
+k2 t or REPLACE set a from 1 where returning 1 | UPDATE OR REPLACE t AS x SET a = a + 1 FROM u WHERE x.id = u.id RETURNING a
+k3 t where returning 1 | DELETE FROM t WHERE id IN (SELECT id FROM u) RETURNING id
+k7  IMMEDIATE | BEGIN IMMEDIATE TRANSACTION
+  k11 s1 | SAVEPOINT s1
+  k12 s1 | RELEASE SAVEPOINT s1
+  k9 s1 | ROLLBACK TO s1
+  k8  | COMMIT
+  k8  | END
+k10 journal_mode = 6:WAL0 | PRAGMA journal_mode = WAL
+  k10 main.page_size = 1:4096 | PRAGMA main.page_size(4096)
+  k10 table_info = 3:0t | PRAGMA table_info('t')
+  k10 cache_size = 1:-2000 | PRAGMA cache_size = -2000
+k6 t TABLE if-exists | DROP TABLE IF EXISTS t
+  k6 ix INDEX | DROP INDEX ix
+  k13 t RENAME u | ALTER TABLE t RENAME TO u
+  k13 u ADD COLUMN  | ALTER TABLE u ADD COLUMN z INTEGER DEFAULT 0 NOT NULL
+  k13 u columns(z) RENAME COLUMN w | ALTER TABLE u RENAME COLUMN z TO w
+  k13 u columns(w) DROP COLUMN  | ALTER TABLE u DROP COLUMN w
+k15  explain plan k0 | EXPLAIN QUERY PLAN SELECT 1
+k0  select | WITH x AS (SELECT 1) SELECT * FROM x
+k0  select | SELECT 1
+error at 17: incomplete input
+error at 5: near "SCHEMA": syntax error
+error at 9: near "SELECT": syntax error
+k10 foreign_keys = 6:ON0 | PRAGMA foreign_keys = ON
+  k10 journal_mode = 6:DELETE0 | PRAGMA journal_mode = DELETE
+  k10 synchronous = 6:FULL0 | PRAGMA synchronous = FULL
+  k10 x = 6:DEFAULT0 | PRAGMA x = DEFAULT
+  k10 x = 6:TRUE0 | PRAGMA x = TRUE
+  k10 x = 1:-5 | PRAGMA x = -5
+error at 11: near "NULL": syntax error
+error at 11: near "SELECT": syntax error
+error at 10: near "BOGUS": syntax error
+error at 12: near "SET": syntax error
+k2 t set a | UPDATE t AS x SET a = 1
+error at 4: incomplete input
+error at 10: incomplete input
+k0  select | WITH x AS (SELECT ')') SELECT * FROM x
+k1 t select | INSERT INTO t VALUES ('(') UNION SELECT 2
+error at 37: near "BOGUS": syntax error
