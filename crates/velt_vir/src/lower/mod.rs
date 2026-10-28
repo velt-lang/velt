@@ -128,6 +128,7 @@ mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_tests;
 mod types;
 mod upcast;
 mod view_unswitch;

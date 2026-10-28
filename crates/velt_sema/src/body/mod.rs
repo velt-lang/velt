@@ -62,6 +62,7 @@ mod key_narrow;
 mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
+mod type_guards;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
 mod chain_facts;
 mod literal_patterns;

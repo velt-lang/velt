@@ -497,6 +497,36 @@ function main() {
 }
 ```
 
+### Type tests
+
+`typeIs<A, B>()` tells whether two types are the same, decided where the generic is used: a
+constant for each instantiation, and an `if` on it runs only the branch it takes, so generic
+code can choose a representation per type at no cost (the other branch is not compiled for that
+instantiation). Inside `if (typeIs<A, B>())`, `asType<B>(x)` converts a value `x: A` to `B`, the
+same type there; anywhere else it is an error, and neither function can be used as a value.
+Both are Velt's (TypeScript has no counterpart).
+
+```ts
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v); // numbers inline: one store for `Slot<u64>`
+    } else {
+      this.boxed = [v];
+    }
+  }
+}
+
+function main() {
+  const s = new Slot<u64>();
+  s.put(7);
+  console.log(s.word, s.boxed.length); // 7 0
+}
+```
+
 ## Generators
 
 ```ts

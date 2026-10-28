@@ -213,6 +213,14 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep tasks and threads out of code shared with TypeScript",
     ),
     (
+        "typeIs",
+        "keep compile-time type tests out of code shared with TypeScript",
+    ),
+    (
+        "asType",
+        "keep compile-time type tests out of code shared with TypeScript",
+    ),
+    (
         "shared",
         "keep thread-shared values out of code shared with TypeScript",
     ),

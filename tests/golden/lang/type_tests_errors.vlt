@@ -1,0 +1,18 @@
+// `asType` needs an enclosing `typeIs` test of the same two types, and neither function can be
+// used as a value.
+
+function unguarded<V>(v: V): u64 {
+  return asType<u64>(v);
+}
+
+function otherTest<V>(v: V): u64 {
+  if (typeIs<V, string>()) {
+    return asType<u64>(v);
+  }
+  return 0;
+}
+
+function main() {
+  const t = typeIs;
+  const a = asType;
+}

@@ -540,7 +540,7 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        if self.gated_value(d, &id.name, span) {
+        if self.gated_value(d, &id.name, span) || self.type_test_value(d, &id.name, span) {
             return self.error_expr(span);
         }
         let f = self.cx.fn_info(d);

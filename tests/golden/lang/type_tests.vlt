@@ -1,0 +1,41 @@
+// `typeIs<A, B>()` is decided where a generic is used, and an `if` on it runs only the branch
+// it takes; inside, `asType<B>(x)` converts the value to the type the test named. One generic
+// class keeps numbers inline and anything else boxed, with no test left at run time.
+
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v);
+    } else {
+      this.boxed = [v];
+    }
+  }
+
+  get(fallback: V): V {
+    if (typeIs<V, u64>()) {
+      return asType<V>(this.word);
+    }
+    return this.boxed.length > 0 ? this.boxed[0] : fallback;
+  }
+}
+
+function describe<T>(): string {
+  if (typeIs<T, string>()) {
+    return "string";
+  } else if (typeIs<T, u64>()) {
+    return "u64";
+  }
+  return "other";
+}
+
+function main() {
+  const n = new Slot<u64>();
+  n.put(42);
+  const s = new Slot<string>();
+  s.put("hello");
+  console.log(n.get(0), n.boxed.length, s.get(""), s.word);
+  console.log(describe<string>(), describe<u64>(), describe<bool>());
+}
