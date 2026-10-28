@@ -200,7 +200,7 @@ export class Conn {
 
 /** The pool key of `t`'s connections: its origin, and the extra CA a TLS connection trusts. */
 export function keyOf(t: Target, ca: string): string {
-  const origin = t.origin();
+  const origin = t.origin;
   return t.https && ca.length > 0 ? `${origin} ${ca}` : origin;
 }
 

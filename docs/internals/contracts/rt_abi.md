@@ -395,21 +395,28 @@ integer lanes) reverses the bytes within each lane.
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
-`sha1msg2` on x86-64; `velt_vir::simd::ShaOp`) are the instructions themselves: a caller runs one
-only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` (`-> bool`) is true. On the
+`sha1msg2` on x86-64), and `velt_simd_u64x2_<op>` for the carry-less multiplications
+(`pclmulqdq_<imm>` on x86-64, `pmull_<imm>` on aarch64, `imm` 0, 1, 16 or 17 choosing the 64-bit
+lanes as PCLMULQDQ's immediate does; additive), `velt_vir::simd::ExtOp`, are the instructions
+themselves: a caller runs one only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` /
+`velt_simd_has_clmul_x86()` / `velt_simd_has_clmul_arm()` (`-> bool`) is true. On the
 architecture with the extension that check reads the runtime's flag byte, otherwise (another
 architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
 The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
-changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` leaves them 0:
+changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
+leaves the SHA (carry-less) ones 0:
 
 ```c
-uint8_t velt_cpu_sha_arm;  /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
-uint8_t velt_cpu_sha_x86;  /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
+uint8_t velt_cpu_sha_x86;    /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
 ```
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
-`+sha`), which it uses for nothing else; a *gated* function (VIR `Function::target`, HIR
-`Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" | "sha-x86")`, every call of
+`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
+`Function::target`, HIR `Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension

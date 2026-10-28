@@ -39,7 +39,7 @@ Instructions each client executed (cachegrind's `I refs`, millions), Linux x86-6
 | `conc` | 3,640 | 1,474 | 5,957 | 0.25 |
 | `big` | 108.7 | 1.8 | 107.6 | 0.02 |
 | `json` | 681.9 | 659.5 | 783.3 | 0.84 |
-| `gzip` | 930.1 | 922.0 | 977.1 | 0.94 |
+| `gzip` | 930.1 | 832.2 | 977.1 | 0.85 |
 
 Wall clock under cachegrind followed the same order (`seq`: 1,315 → 4,041 req/s against
 reqwest's 919; `big`: 128 → 365 MB/s). Where it comes from:
@@ -52,9 +52,9 @@ reqwest's 919; `big`: 128 → 365 MB/s). Where it comes from:
   copies nothing (hyper's client copied the 100 MB once).
 - `text()` validates UTF-8 before decoding (`Buffer.utf8Slice`, which now does so for every
   caller), as #653 did for the old client.
-- gzip: `velt:compress/inflate` decodes the 1 MB in about 0.91 of `flate2`'s instructions
-  (bench/stdport `gunzip`), most of the rest being its CRC-32 (slicing-by-8 tables, where
-  `flate2` uses carry-less multiplication).
+- gzip: `velt:compress/inflate` decodes the 1 MB in 0.65 of `flate2`'s instructions
+  (bench/stdport `gunzip`), its CRC-32 folded with carry-less multiplication (PCLMULQDQ /
+  PMULL through `velt:simd`'s `u64x2.clmulLow` & co.), as `flate2` does.
 - HTTP/1.1 only, as Node's `fetch`: HTTP/2 is not offered over TLS any more.
 
 ### Before

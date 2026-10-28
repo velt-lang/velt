@@ -4,7 +4,7 @@
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_module::Module;
-use velt_vir::simd::{reversed_bytes, Lanes, MaskOp, Op, ShaOp, SimdCall};
+use velt_vir::simd::{reversed_bytes, ExtOp, Lanes, MaskOp, Op, SimdCall};
 use velt_vir::vir::{Callee, Const, Operand, Ty};
 
 use super::place::mem_flags;
@@ -88,8 +88,10 @@ impl<M: Module> Translator<'_, '_, M> {
             // check is false and the operations sit behind it as dead code (std/simd/sha.vlt
             // runs the emulation). They give a zero value, never computed at run time.
             SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
-            SimdCall::Sha(ShaOp::Sha1H) => Inlined::Value(self.builder.ins().iconst(types::I32, 0)),
-            SimdCall::Sha(_) => Inlined::Value(self.zero_vector()),
+            SimdCall::Inst(ExtOp::Sha1H) => {
+                Inlined::Value(self.builder.ins().iconst(types::I32, 0))
+            }
+            SimdCall::Inst(_) => Inlined::Value(self.zero_vector()),
             // Cranelift has no prefetch: the hint is dropped.
             SimdCall::Prefetch => Inlined::Unit,
         })

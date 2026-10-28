@@ -66,7 +66,7 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
-        SimdCall::Sha(op) => Some(sha::op(&mut body, arch, op)),
+        SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
         SimdCall::Prefetch => {
             // A read, kept in every cache level (`locality` 3), of data (cache type 1).
             body.declarations.push(
@@ -89,7 +89,7 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
     let ext_features;
     let features = match call {
         _ if arch == Arch::Wasm => WASM_SIMD,
-        SimdCall::Sha(op) if has_ext(arch, op.ext()) => {
+        SimdCall::Inst(op) if has_ext(arch, op.ext()) => {
             ext_features = format!(" \"target-features\"=\"{}\"", op.ext().op_features());
             ext_features.as_str()
         }

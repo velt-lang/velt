@@ -1,7 +1,7 @@
 // check: no leaks
 // The client's URL check (std/fetch/client/target.vlt) takes a URL as it is only when WHATWG
-// parsing would serialize it unchanged: for each URL, the target's `href`, host, port and
-// request-target agree with velt:url's, whichever way it was taken.
+// parsing would serialize it unchanged: for each URL, the target's `href`, host, request-target
+// and origin (its connection pool's key) agree with velt:url's, whichever way it was taken.
 import { target } from "velt:fetch/client/target";
 import { URL } from "velt:url";
 
@@ -36,7 +36,11 @@ function main() {
     const t = target(u);
     const w = new URL(u);
     w.hash = "";
-    const agrees = t.href == w.href && t.host == w.host && t.path == `${w.pathname}${w.search}`;
+    const agrees =
+      t.href == w.href &&
+      t.host == w.host &&
+      t.path == `${w.pathname}${w.search}` &&
+      t.origin == w.origin;
     if (agrees) {
       same += 1;
     } else {

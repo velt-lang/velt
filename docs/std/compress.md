@@ -57,6 +57,6 @@ function main() {
 ## Speed
 
 Against the Rust crates the runtime used before ([bench/stdport](../../bench/stdport/README.md),
-instructions on x86-64): Brotli decodes in 0.73 of `brotli-decompressor`'s instructions, gzip in
-0.91 of `flate2`'s, most of the rest being the CRC-32 check (`flate2` computes it with
-carry-less multiplication, which `velt:simd` does not have yet).
+instructions on x86-64): gzip decodes in 0.65 of `flate2`'s instructions, Brotli in 0.73 of
+`brotli-decompressor`'s. The gzip CRC-32 is folded with the CPU's carry-less multiplication
+([velt:simd](simd.md#carry-less-multiplication)) where it has it, tables elsewhere.

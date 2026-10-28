@@ -369,4 +369,6 @@ open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt:simd
 {reexports}export {{ {", ".join(MASKS)} }} from "velt:simd/masks";
 // The CPU's SHA instructions on `u32x4` (hand-written, not generated).
 import "velt:simd/sha";
+// Carry-less multiplication on `u64x2` (hand-written, not generated).
+import "velt:simd/clmul";
 """)

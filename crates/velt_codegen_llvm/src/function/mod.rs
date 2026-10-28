@@ -197,7 +197,7 @@ fn extension_features(
         .externs
         .iter()
         .find_map(|e| match SimdCall::of_symbol(&e.symbol)? {
-            SimdCall::Sha(op) if crate::simd::has_ext(arch, op.ext()) => {
+            SimdCall::Inst(op) if crate::simd::has_ext(arch, op.ext()) => {
                 Some(op.ext().op_features())
             }
             _ => None,

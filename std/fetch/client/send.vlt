@@ -132,7 +132,7 @@ function follow(o: ClientRequest, from: Target, to: Target, status: i64) {
       "content-location",
     ];
   }
-  if (from.origin() != to.origin()) {
+  if (from.origin != to.origin) {
     drop = drop.concat(["authorization", "cookie", "proxy-authorization", "host"]);
   }
   if (drop.length == 0 || o.headers.length == 0) {

@@ -5,6 +5,10 @@
 //! `velt_simd_<type>_<op>`, and backends emit each call inline from the [`SimdCall`] its symbol
 //! parses to. No runtime function exists behind these symbols.
 
+mod ext;
+
+pub use ext::{Ext, ExtOp};
+
 use crate::vir::Ty;
 
 /// The lanes of a vector type: `u8x16` is sixteen `U8` lanes.
@@ -244,181 +248,6 @@ pub enum MaskOp {
     Not,
 }
 
-/// A CPU extension beyond the 128-bit baseline that some operations use (#1330).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Ext {
-    /// The ARMv8 SHA-1 and SHA-256 instructions (aarch64 `sha2`).
-    ShaArm,
-    /// The x86 SHA extensions (SHA-NI), with the SSSE3 and SSE4.1 every such CPU has.
-    ShaX86,
-}
-
-impl Ext {
-    /// Every extension.
-    pub const ALL: [Ext; 2] = [Ext::ShaArm, Ext::ShaX86];
-
-    /// The name `__intrinsic_target` takes: `sha-arm`, `sha-x86`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "sha-arm",
-            Ext::ShaX86 => "sha-x86",
-        }
-    }
-
-    /// The extension `__intrinsic_target(name)` names.
-    pub fn named(name: &str) -> Option<Ext> {
-        Ext::ALL.into_iter().find(|e| e.name() == name)
-    }
-
-    /// The runtime's byte that says whether the CPU has it (1) or not (0): set before any Velt
-    /// code runs, and 0 with `VELT_SIMD_DISABLE=sha` (rt_abi.md "SIMD").
-    pub fn flag_symbol(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "velt_cpu_sha_arm",
-            Ext::ShaX86 => "velt_cpu_sha_x86",
-        }
-    }
-
-    /// Whether its instructions exist on an architecture (`aarch64`, `x86_64`, …).
-    pub fn on_arch(self, arch: &str) -> bool {
-        match self {
-            Ext::ShaArm => arch == "aarch64",
-            Ext::ShaX86 => arch == "x86_64",
-        }
-    }
-
-    /// The LLVM features a function that contains one of its operations gets: only the
-    /// extension itself, which LLVM uses for nothing but those operations, so such a function
-    /// is safe on a CPU without it (each operation is behind the runtime check).
-    pub fn op_features(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "+sha2",
-            Ext::ShaX86 => "+sha",
-        }
-    }
-
-    /// The LLVM features of a gated function: everything a CPU with the extension has, which
-    /// LLVM may use anywhere in the function.
-    pub fn gated_features(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "+sha2",
-            Ext::ShaX86 => "+sha,+ssse3,+sse4.1",
-        }
-    }
-}
-
-/// An instruction of a CPU extension, on `u32x4` values (lane 0 the low 32 bits), with the
-/// operands in the instruction's own order. Every one is also emulated in Velt
-/// (std/simd/sha.vlt), which runs where the CPU lacks it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ShaOp {
-    /// ARM `SHA1C (abcd, e: u32, wk) -> abcd`: four rounds with the choose function.
-    Sha1C,
-    /// ARM `SHA1P`: four rounds with parity.
-    Sha1P,
-    /// ARM `SHA1M`: four rounds with majority.
-    Sha1M,
-    /// ARM `SHA1H (e: u32) -> u32`: `e` rotated left by 30.
-    Sha1H,
-    /// ARM `SHA1SU0 (w0, w1, w2)`: message schedule, part 1.
-    Sha1Su0,
-    /// ARM `SHA1SU1 (t, w3)`: message schedule, part 2.
-    Sha1Su1,
-    /// ARM `SHA256H (abcd, efgh, wk) -> abcd`: four rounds.
-    Sha256H,
-    /// ARM `SHA256H2 (efgh, abcd, wk) -> efgh`: four rounds, the other half of the state.
-    Sha256H2,
-    /// ARM `SHA256SU0 (w0, w1)`: message schedule, part 1.
-    Sha256Su0,
-    /// ARM `SHA256SU1 (t, w2, w3)`: message schedule, part 2.
-    Sha256Su1,
-    /// x86 `SHA256RNDS2 (cdgh, abef, wk) -> abef`: two rounds; `wk`'s two low lanes (the
-    /// instruction's implicit `xmm0`).
-    Sha256Rnds2,
-    /// x86 `SHA256MSG1 (a, b)`.
-    Sha256Msg1,
-    /// x86 `SHA256MSG2 (a, b)`.
-    Sha256Msg2,
-    /// x86 `SHA1RNDS4 (abcd, ewk, func)`: four rounds; the immediate `func` (0–3) is part of the
-    /// operation.
-    Sha1Rnds4(u8),
-    /// x86 `SHA1NEXTE (a, b)`.
-    Sha1Nexte,
-    /// x86 `SHA1MSG1 (a, b)`.
-    Sha1Msg1,
-    /// x86 `SHA1MSG2 (a, b)`.
-    Sha1Msg2,
-}
-
-impl ShaOp {
-    /// Every operation (with each immediate of `Sha1Rnds4`).
-    pub const ALL: [ShaOp; 20] = [
-        ShaOp::Sha1C,
-        ShaOp::Sha1P,
-        ShaOp::Sha1M,
-        ShaOp::Sha1H,
-        ShaOp::Sha1Su0,
-        ShaOp::Sha1Su1,
-        ShaOp::Sha256H,
-        ShaOp::Sha256H2,
-        ShaOp::Sha256Su0,
-        ShaOp::Sha256Su1,
-        ShaOp::Sha256Rnds2,
-        ShaOp::Sha256Msg1,
-        ShaOp::Sha256Msg2,
-        ShaOp::Sha1Rnds4(0),
-        ShaOp::Sha1Rnds4(1),
-        ShaOp::Sha1Rnds4(2),
-        ShaOp::Sha1Rnds4(3),
-        ShaOp::Sha1Nexte,
-        ShaOp::Sha1Msg1,
-        ShaOp::Sha1Msg2,
-    ];
-
-    /// The extension it belongs to.
-    pub fn ext(self) -> Ext {
-        match self {
-            ShaOp::Sha1C
-            | ShaOp::Sha1P
-            | ShaOp::Sha1M
-            | ShaOp::Sha1H
-            | ShaOp::Sha1Su0
-            | ShaOp::Sha1Su1
-            | ShaOp::Sha256H
-            | ShaOp::Sha256H2
-            | ShaOp::Sha256Su0
-            | ShaOp::Sha256Su1 => Ext::ShaArm,
-            _ => Ext::ShaX86,
-        }
-    }
-
-    /// The operation's part of its symbol (`velt_simd_u32x4_<name>`): `sha256h`, `sha1rnds4_2`.
-    pub fn name(self) -> String {
-        match self {
-            ShaOp::Sha1Rnds4(f) => format!("sha1rnds4_{f}"),
-            other => format!("{other:?}").to_lowercase(),
-        }
-    }
-
-    /// Number of `V128` operands (`sha1c` & co. also take a `u32` second, `sha1h` only one).
-    pub fn vector_operands(self) -> usize {
-        match self {
-            ShaOp::Sha1H => 0,
-            ShaOp::Sha1Su0
-            | ShaOp::Sha256H
-            | ShaOp::Sha256H2
-            | ShaOp::Sha256Su1
-            | ShaOp::Sha256Rnds2 => 3,
-            _ => 2,
-        }
-    }
-
-    /// Whether a `u32` operand (ARM's `e`) comes second.
-    fn takes_e(self) -> bool {
-        matches!(self, ShaOp::Sha1C | ShaOp::Sha1P | ShaOp::Sha1M)
-    }
-}
-
 /// What a `velt_simd_*` symbol computes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SimdCall {
@@ -426,9 +255,10 @@ pub enum SimdCall {
     Vector(Lanes, Op),
     /// An operation on the mask type with lanes of the given width in bits.
     Mask(u32, MaskOp),
-    /// An instruction of a CPU extension (`velt_simd_u32x4_<op>`), which the caller runs only
-    /// where the CPU has the extension (std/simd/sha.vlt checks `Has` first).
-    Sha(ShaOp),
+    /// An instruction of a CPU extension (`velt_simd_u32x4_<op>`, `velt_simd_u64x2_<op>`), which
+    /// the caller runs only where the CPU has the extension (std/simd/sha.vlt and clmul.vlt check
+    /// `Has` first).
+    Inst(ExtOp),
     /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;
     /// `false` on another architecture, on wasm and under Cranelift).
     Has(Ext),
@@ -447,10 +277,11 @@ impl SimdCall {
         if let Some(ext) = rest.strip_prefix("has_") {
             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
         }
-        if let Some(op) = rest.strip_prefix("u32x4_") {
-            if let Some(op) = ShaOp::ALL.into_iter().find(|o| o.name() == op) {
-                return Some(SimdCall::Sha(op));
-            }
+        if let Some(op) = ExtOp::ALL
+            .into_iter()
+            .find(|o| rest == format!("{}_{}", o.type_name(), o.name()))
+        {
+            return Some(SimdCall::Inst(op));
         }
         let (ty, op) = rest.split_once('_')?;
         if let Some(bits) = mask_bits(ty) {
@@ -470,8 +301,8 @@ impl SimdCall {
         match self {
             SimdCall::Has(_) => (vec![], Bool),
             SimdCall::Prefetch => (vec![Ptr], Unit),
-            SimdCall::Sha(ShaOp::Sha1H) => (vec![U32], U32),
-            SimdCall::Sha(op) => {
+            SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
+            SimdCall::Inst(op) => {
                 let mut params = vec![V128; op.vector_operands()];
                 if op.takes_e() {
                     params.insert(1, U32);
@@ -659,11 +490,11 @@ mod tests {
     #[test]
     fn sha_symbols_and_signatures() {
         use Ty::{Bool, U32, V128};
-        for op in ShaOp::ALL {
-            let symbol = format!("velt_simd_u32x4_{}", op.name());
+        for op in ExtOp::ALL {
+            let symbol = format!("velt_simd_{}_{}", op.type_name(), op.name());
             assert_eq!(
                 SimdCall::of_symbol(&symbol),
-                Some(SimdCall::Sha(op)),
+                Some(SimdCall::Inst(op)),
                 "{symbol}"
             );
         }
@@ -678,8 +509,16 @@ mod tests {
         assert_eq!(sig("velt_simd_has_sha_x86"), (vec![], Bool));
         assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_sha1rnds4_4"), None);
         assert_eq!(SimdCall::of_symbol("velt_simd_has_sha_mips"), None);
-        assert_eq!(ShaOp::Sha256Msg2.ext(), Ext::ShaX86);
-        assert_eq!(ShaOp::Sha1H.ext(), Ext::ShaArm);
+        assert_eq!(ExtOp::Sha256Msg2.ext(), Ext::ShaX86);
+        assert_eq!(ExtOp::Sha1H.ext(), Ext::ShaArm);
+        assert_eq!(
+            sig("velt_simd_u64x2_pclmulqdq_16"),
+            (vec![V128, V128], V128)
+        );
+        assert_eq!(SimdCall::of_symbol("velt_simd_u64x2_pclmulqdq_2"), None);
+        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_pmull_0"), None);
+        assert_eq!(ExtOp::Pmull(17).ext(), Ext::ClmulArm);
+        assert_eq!(ExtOp::Pclmulqdq(1).ext(), Ext::ClmulX86);
     }
 
     #[test]

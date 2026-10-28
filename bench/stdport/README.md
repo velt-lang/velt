@@ -132,18 +132,19 @@ their runtime helpers.
 `gunzip` is `velt:compress/inflate`'s `gunzip` against `flate2` (its default `miniz_oxide`
 backend, the crate the runtime's `fetch` decoded gzip and deflate bodies with): the 1 MB JSON of
 `gen_inputs.rs`, gzip-compressed at the default level, decoded 50 times. Instructions executed
-(cachegrind, x86-64 Linux, 4 cores):
+(cachegrind, x86-64 Linux, 4 cores), and best wall-clock of 5 interleaved runs:
 
-| benchmark | Velt | Rust | Velt / Rust |
-|---|---:|---:|---:|
-| gunzip | 571 M | 628 M | 0.91 |
+| benchmark | Velt | Rust | Velt / Rust | Velt ms | Rust ms |
+|---|---:|---:|---:|---:|---:|
+| gunzip | 408 M | 628 M | 0.65 | 49 | 63 |
 
-About 180 M of Velt's are the CRC-32 the trailer is checked against (slicing-by-8 tables, 3.4
-instructions per byte), where `crc32fast` uses carry-less multiplication (PCLMULQDQ), which
-`velt:simd` does not have yet: with it the row would be near 0.65. The decoder refills its
-64-bit bit buffer with one 8-byte load per symbol, decodes a second literal without a refill,
-and copies matches 16 bytes at a time; its output is allocated without zeroing
-(`Buffer.allocUnsafe`), which was 21 % of the instructions before.
+The CRC-32 the trailer is checked against folds 64 bytes per step with carry-less
+multiplication (`u64x2.clmulLow` & co., PCLMULQDQ on x86-64, PMULL on arm64), as `crc32fast`
+does: 24 M of the 408 M, where the slicing-by-8 tables it falls back to without the instruction
+took 180 M (3.4 instructions per byte). The decoder refills its 64-bit bit buffer with one 8-byte
+load per symbol, decodes a second literal without a refill, and copies matches 16 bytes at a
+time; its output is allocated without zeroing (`Buffer.allocUnsafe`), which was 21 % of the
+instructions before.
 
 ## Brotli
 

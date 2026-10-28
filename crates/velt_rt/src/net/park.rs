@@ -17,6 +17,7 @@
 use super::tcp::{velt_rt_tcp_close, StreamHandle, STREAMS};
 use crate::str::VeltStr;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -27,7 +28,30 @@ const MAX_IDLE: Duration = Duration::from_secs(60);
 /// A stream idle this long is checked before it is reused.
 const CHECK_IDLE: Duration = Duration::from_secs(1);
 
-type Parked = HashMap<Vec<u8>, Vec<(StreamHandle, Instant)>>;
+/// FNV-1a over the key's bytes: keys are a handful of origins the program chose, so a seeded
+/// hash's cost (SipHash, several hundred instructions per request) buys nothing.
+#[derive(Default)]
+struct Fnv(u64);
+
+impl Hasher for Fnv {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
+        for &b in bytes {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type Parked = HashMap<Vec<u8>, Vec<(StreamHandle, Instant)>, BuildHasherDefault<Fnv>>;
 
 static PARKED: Mutex<Option<Parked>> = Mutex::new(None);
 
@@ -46,7 +70,7 @@ pub unsafe extern "C" fn velt_rt_tcp_park(s: StreamHandle, key: *const VeltStr) 
     let key = (*key).as_bytes();
     let full = {
         let mut guard = parked();
-        let map = guard.get_or_insert_with(HashMap::new);
+        let map = guard.get_or_insert_with(Parked::default);
         let list = match map.get_mut(key) {
             Some(list) => list,
             None => map.entry(key.to_vec()).or_default(),

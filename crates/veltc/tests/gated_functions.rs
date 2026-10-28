@@ -213,7 +213,7 @@ export function probe(): i64 {
         MAIN_PROBE,
         &[
             "`__intrinsic_target` must be the first statement of a function (not a method or closure)",
-            "`__intrinsic_target` takes the target as a string literal: one of sha-arm, sha-x86",
+            "`__intrinsic_target` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
         ],
     );
 }
@@ -425,6 +425,76 @@ fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
                 .lines()
                 .any(|l| callees_in(l).contains(&gated) && l.ends_with(" noinline")),
             "{triple}: {caller}"
+        );
+    }
+}
+
+/// Each carry-less multiplication in a function gated on its extension, per architecture.
+const CLMUL_PROBE: &str = r#"
+import { u64x2 } from "velt:simd";
+
+export function foldX86(a: u64x2, n: i64): u64x2 {
+  __intrinsic_target("clmul-x86");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
+  }
+  return x;
+}
+
+export function foldArm(a: u64x2, n: i64): u64x2 {
+  __intrinsic_target("clmul-arm");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
+  }
+  return x;
+}
+"#;
+
+const CLMUL_MAIN: &str = "import { foldArm, foldX86 } from \"velt:zz_gated\";\nimport { u64x2 } from \"velt:simd\";\n\nfunction main() {\n  const a = u64x2.splat(3);\n  if (u64x2.hasClmulX86()) {\n    console.log(foldX86(a, 3).lane(0));\n  }\n  if (u64x2.hasClmulArm()) {\n    console.log(foldArm(a, 3).lane(0));\n  }\n}\n";
+
+#[test]
+fn clmul_gated_functions_are_the_bare_instruction() {
+    // In a function gated on `clmul-x86` (`clmul-arm`), the methods are PCLMULQDQ (PMULL) with
+    // no test of the CPU flag and no emulation left.
+    let dir = test_dir::TestDir::new();
+    for (triple, gated, ext, instruction) in [
+        (
+            "x86_64-unknown-linux-gnu",
+            "N7foldX86",
+            "x86",
+            "@llvm.x86.pclmulqdq",
+        ),
+        (
+            "aarch64-unknown-linux-gnu",
+            "N7foldArm",
+            "arm",
+            "@llvm.aarch64.neon.pmull64",
+        ),
+    ] {
+        let args = ["build", "--release", "--emit", "llvm", "--target", triple];
+        let out = velt(&dir, CLMUL_PROBE, CLMUL_MAIN, &args);
+        let ir = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{triple}: {stderr}");
+        let functions = llvm_functions(&ir);
+        let gated = functions
+            .iter()
+            .find(|(f, _)| f.contains("zz__gated") && f.contains(gated))
+            .map(|(f, _)| f.clone())
+            .unwrap_or_else(|| panic!("{triple}: no {gated}"));
+        let reached = reachable(&functions, &gated);
+        let check = format!("@velt.simd.has_clmul_{ext}()");
+        for (f, body) in &reached {
+            assert!(
+                !body.contains(&check) && !body.contains("velt_cpu_clmul"),
+                "{triple}: {f}, reached from {gated}, tests the CPU flag:\n{body}"
+            );
+        }
+        assert!(
+            reached.iter().any(|(_, body)| body.contains(instruction)),
+            "{triple}: {gated} uses {instruction}"
         );
     }
 }
