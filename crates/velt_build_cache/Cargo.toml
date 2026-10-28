@@ -1,0 +1,11 @@
+[package]
+name = "velt_build_cache"
+version.workspace = true
+edition.workspace = true
+description = "Velt's build cache: compiled code shared by every build on a machine, keyed by content, bounded in size"
+
+[dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
