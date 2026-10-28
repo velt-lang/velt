@@ -10,12 +10,15 @@
 //   file's tests one after another and reports each in marker lines for the runner. A failed
 //   test is an error it throws (a failed `assert` throws an `AssertionError`): it is caught and
 //   reported, and the next test runs. When a test ends the process (a panic, `process.exit`),
-//   the runner starts the file again from the test after it.
+//   the runner starts the file again from the test after it. After its last test the process
+//   exits, whatever timers or servers a failed test left behind.
 // - Started without either (a test program run by hand or under a debugger), it runs every file's
 //   tests in this process and prints the report itself.
 
 import { exec, ExecResult } from "velt:child_process";
 import { readFileSync } from "velt:fs";
+
+declare function velt_rt_clear_throw_loc(): void;
 
 /** One registered test. */
 class Test {
@@ -50,9 +53,13 @@ export function __test(name: string, run: () => void throws unknown) {
   );
 }
 
-/** Registers an `async` test of the current file. */
-export function __testAsync(name: string, run: () => Promise<void, unknown>) {
-  current().tests.push(new Test(name, run));
+/** Registers an `async` test of the current file; what its promise holds is not looked at. */
+export function __testAsync<T>(name: string, run: () => Promise<T, unknown>) {
+  current().tests.push(
+    new Test(name, async (): Promise<void, unknown> => {
+      await run();
+    }),
+  );
 }
 
 function current(): TestFile {
@@ -94,8 +101,11 @@ struct Skipped {
   reason: string;
 }
 
-/** Prefix of the lines a test process writes for the runner. */
-const MARK = "::velt-test:: ";
+/**
+ * Prefix of the lines a test process writes for the runner: this, then the run's token
+ * (`$VELT_TEST_MARK`), so a test printing something that looks like one isn't taken for it.
+ */
+const MARK = "::velt-test:";
 
 /** What a test file printed, read back, and how its tests went. */
 class Report {
@@ -110,30 +120,33 @@ export async function __run() {
   const file = process.env.VELT_TEST_FILE;
   if (file != null) {
     const from = Number(process.env.VELT_TEST_FROM ?? "0");
-    await runTests(files[Number(file) as usize], from as usize, true);
+    const mark = `${MARK}${process.env.VELT_TEST_MARK ?? ""}:: `;
+    console.log(`${mark}start`);
+    await runTests(files[Number(file) as usize], from as usize, mark);
+    process.exit(0);
   } else if (plan != null) {
     const ok = await runPlan(JSON.parse<Plan>(readFileSync(plan)));
     process.exit(ok ? 0 : 1);
   } else {
     let failed: usize = 0;
     for (const f of files) {
-      failed += await runTests(f, 0, false);
+      failed += await runTests(f, 0, null);
     }
-    if (failed > 0) {
-      process.exit(1);
-    }
+    process.exit(failed > 0 ? 1 : 0);
   }
 }
 
 /**
- * Run the tests of `file` from `from` on, reporting each: in marker lines for the runner
- * (`marked`), else as the runner shows them. Returns how many failed.
+ * Run the tests of `file` from `from` on, reporting each: in lines starting with `mark` for the
+ * runner, else (`null`) as the runner shows them. Returns how many failed.
  */
-async function runTests(file: TestFile, from: usize, marked: bool): Promise<usize> {
+async function runTests(file: TestFile, from: usize, mark: string | null): Promise<usize> {
   let failed: usize = 0;
   for (let i = from; i < file.tests.length; i++) {
     const t = file.tests[i];
     let error: string | null = null;
+    // An error that is never thrown here (a rejection) has no location of its own.
+    velt_rt_clear_throw_loc();
     try {
       await t.run();
     } catch (e) {
@@ -142,14 +155,14 @@ async function runTests(file: TestFile, from: usize, marked: bool): Promise<usiz
       error = located(__intrinsic_error_text(e), at);
     }
     if (error == null) {
-      console.log(marked ? `${MARK}ok ${t.name}` : `ok ${t.name}`);
+      console.log(mark != null ? `${mark}ok ${t.name}` : `ok ${t.name}`);
       continue;
     }
     failed++;
-    if (marked) {
-      console.log(`${MARK}fail ${t.name}`);
+    if (mark != null) {
+      console.log(`${mark}fail ${t.name}`);
       for (const line of error.split("\n")) {
-        console.log(`${MARK}| ${line}`);
+        console.log(`${mark}| ${line}`);
       }
     } else {
       console.log(`FAILED ${t.name}`);
@@ -220,11 +233,17 @@ async function runFile(f: PlanFile, paint: Paint): Promise<Report> {
     report.failed = f.tests.length;
     return report;
   }
+  const mark = `${MARK}${token()}:: `;
   let from: usize = 0;
   while (from < f.tests.length) {
-    from = await runFrom(f, exe, from, report, paint);
+    from = await runFrom(f, exe, from, mark, report, paint);
   }
   return report;
+}
+
+/** A token no test is likely to print, different in each run. */
+function token(): string {
+  return Math.floor(Math.random() * 1e15).toString(36);
 }
 
 /** One process running the tests of `f` from `from` on; returns where the next one starts. */
@@ -232,6 +251,7 @@ async function runFrom(
   f: PlanFile,
   exe: string,
   from: usize,
+  mark: string,
   report: Report,
   paint: Paint,
 ): Promise<usize> {
@@ -239,6 +259,7 @@ async function runFrom(
     ["VELT_SCRIPT", f.script],
     ["VELT_TEST_FILE", String(f.index)],
     ["VELT_TEST_FROM", String(from)],
+    ["VELT_TEST_MARK", mark.slice(MARK.length as i64, (mark.length as i64) - 3)],
   ]);
   let r: ExecResult;
   try {
@@ -250,27 +271,45 @@ async function runFrom(
     return f.tests.length;
   }
   let next = from;
+  let started = false;
   const lines = r.stdout.split("\n");
   if (lines.length > 0 && lines[lines.length - 1] == "") {
     lines.pop();
   }
   for (const line of lines) {
-    if (!line.startsWith(MARK)) {
+    // A test's output without a final newline runs into the marker after it.
+    const at = line.indexOf(mark);
+    if (at < 0) {
       report.lines.push(line);
       continue;
     }
-    const rest = line.slice(MARK.length as i64);
-    if (rest.startsWith("ok ")) {
-      report.lines.push(`${paint.good("ok")} ${rest.slice(3)}`);
+    if (at > 0) {
+      report.lines.push(line.slice(0, at));
+    }
+    const rest = line.slice(at + (mark.length as i64));
+    const name = next < f.tests.length ? f.tests[next] : null;
+    if (rest == "start") {
+      started = true;
+    } else if (rest == `ok ${name}`) {
+      report.lines.push(`${paint.good("ok")} ${name}`);
       report.passed++;
       next++;
-    } else if (rest.startsWith("fail ")) {
-      report.lines.push(`${paint.failed()} ${rest.slice(5)}`);
+    } else if (rest == `fail ${name}`) {
+      report.lines.push(`${paint.failed()} ${name}`);
       report.failed++;
       next++;
     } else if (rest.startsWith("| ")) {
       report.lines.push(`    ${rest.slice(2)}`);
     }
+  }
+  if (!started) {
+    // It ended before running a test: in a module's top-level code.
+    report.lines.push(
+      `${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`,
+    );
+    pushStderr(report, r.stderr);
+    report.failed += f.tests.length - from;
+    return f.tests.length;
   }
   if (next >= f.tests.length) {
     if (r.code != 0) {
@@ -283,13 +322,17 @@ async function runFrom(
   }
   // The process ended inside test `next`.
   report.lines.push(`${paint.failed()} ${f.tests[next]} (exit code ${r.code})`);
-  for (const line of r.stderr.split("\n")) {
+  pushStderr(report, r.stderr);
+  report.failed++;
+  return next + 1;
+}
+
+function pushStderr(report: Report, stderr: string) {
+  for (const line of stderr.split("\n")) {
     if (line != "") {
       report.lines.push(`    ${line}`);
     }
   }
-  report.failed++;
-  return next + 1;
 }
 
 /** `velt`'s ANSI colors (`veltc` `style`), when `velt test` found the stream takes them. */

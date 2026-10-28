@@ -112,6 +112,77 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
     found
 }
 
+/// Does a module that `module` (the file `file`) imports by a relative path, directly or through
+/// others, run code when it is evaluated? Its code would run in the process of every test file
+/// sharing a harness, and a failure there would end them all. Package and `velt:` imports are
+/// not followed; a module that cannot be read or parsed counts as running code (its file then
+/// gets a harness of its own, which reports the error).
+pub fn imports_run_code(file: &Path, module: &ast::Module) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![(file.to_path_buf(), relative_imports(module))];
+    while let Some((from, specs)) = stack.pop() {
+        let dir = from.parent().unwrap_or(Path::new(""));
+        for spec in specs {
+            let Some(path) = resolve(&dir.join(&spec)) else {
+                // Not a source file (JSON, an asset) or missing: the build says which.
+                continue;
+            };
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                return true;
+            };
+            let (m, diags) = velt_syntax::parse_file(velt_common::FileId(0), &src);
+            if diags.iter().any(|d| d.is_error()) || runs_code(&m) {
+                return true;
+            }
+            stack.push((path, relative_imports(&m)));
+        }
+    }
+    false
+}
+
+fn relative_imports(module: &ast::Module) -> Vec<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Import(i) if i.from.starts_with("./") || i.from.starts_with("../") => {
+                Some(i.from.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The source file a relative import `base` names: itself, with an extension, its `index`, or
+/// for `./m.js` the `./m.ts` beside it.
+fn resolve(base: &Path) -> Option<PathBuf> {
+    let source = |p: &Path| {
+        matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("vlt" | "ts" | "tsx")
+        ) && p.is_file()
+    };
+    if source(base) {
+        return Some(base.to_path_buf());
+    }
+    // `./m.js` names `./m.ts`, as in TypeScript.
+    if base.extension().is_some_and(|e| e == "js") {
+        return ["ts", "tsx", "vlt"]
+            .iter()
+            .map(|ext| base.with_extension(ext))
+            .find(|p| p.is_file());
+    }
+    let name = base.file_name()?.to_string_lossy().into_owned();
+    ["vlt", "ts", "tsx"]
+        .iter()
+        .map(|ext| base.with_file_name(format!("{name}.{ext}")))
+        .chain(["vlt", "ts", "tsx"].iter().map(|ext| base.join(format!("index.{ext}"))))
+        .find(|p| p.is_file())
+}
+
 /// Does evaluating `module` do anything but declare? Every module a program imports is evaluated
 /// when it starts (docs/reference/modules.md), so a test file in a shared harness is evaluated in
 /// every test file's process: only one that just declares can share one. Top-level statements,
@@ -292,5 +363,37 @@ mod tests {
         assert!(runs(
             "class C { static n: i64 = make(); }\nfunction make(): i64 { return 1; }\n"
         ));
+    }
+
+    #[test]
+    fn code_run_by_what_a_test_file_imports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let write = |rel: &str, src: &str| {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, src).unwrap();
+        };
+        write("lib/pure.vlt", "export function f(): i64 { return 1; }\n");
+        write("lib/index.ts", "export * from \"./pure.vlt\";\n");
+        write("lib/init.ts", "export const DATA = load();\nfunction load(): i64 { return 1; }\n");
+        write("lib/via.vlt", "import { DATA } from \"./init.js\";\nexport const D2 = 2;\n");
+        let imports = |src: &str| {
+            let file = d.join("t/a.test.vlt");
+            write("t/a.test.vlt", src);
+            let (module, diags) = velt_syntax::parse_file(FileId(0), src);
+            assert!(diags.is_empty(), "{diags:?}");
+            imports_run_code(&file, &module)
+        };
+        // Through `index`, a re-export and a package that is not followed: only declarations.
+        assert!(!imports(
+            "import { f } from \"../lib\";\nimport { x } from \"pkg\";\nimport \"./missing.json\";\n"
+        ));
+        // Code two imports away, behind a `.js` name for a `.ts` file.
+        assert!(imports("import { D2 } from \"../lib/via\";\n"));
+        // An import cycle ends.
+        write("lib/c1.vlt", "import { b } from \"./c2\";\nexport const a = 1;\n");
+        write("lib/c2.vlt", "import { a } from \"./c1\";\nexport const b = 2;\n");
+        assert!(!imports("import { a } from \"../lib/c1\";\n"));
     }
 }

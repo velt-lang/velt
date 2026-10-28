@@ -105,8 +105,10 @@ file's process also evaluates the other test files and the modules they import. 
 for a file that only declares (imports, functions, classes, types, and constants made of
 literals), and most test files do. A test file whose evaluation runs code (statements at the top
 level, or a constant or static field initialized with a call, `const Page = component(...)`)
-gets a program of its own, so other files never see what it does. The modules under `src/` that
-test files import are evaluated in every file's process: keep their top level free of side
+gets a program of its own, so other files never see what it does. So does a test file that
+imports such a module by a relative path (`import { DATA } from "./fixtures"`), directly or
+through other modules: if that code fails, only that file's tests fail ("exit code 1 before its
+tests ran"). Imports of packages are not followed; keep a package's top level free of side
 effects, as for any module.
 
 ## Testing servers

@@ -255,22 +255,19 @@ impl Run<'_> {
         }))
     }
 
-    /// Build the harnesses for `planned` and run them: `velt:test` in the first one that built
-    /// (or in one without test files) runs every file, as the plan it is handed says, prints
-    /// the report and exits with the run's verdict. Returns whether every test passed.
+    /// Build the harnesses for `planned` and run them: `velt:test` in a harness without test
+    /// files runs every file, as the plan it is handed says, prints the report and exits with
+    /// the run's verdict. Returns whether every test passed.
     fn run(&mut self, planned: &[Planned]) -> Result<bool, String> {
+        // Without test files, so no test file's module code (or what it imports) runs in it.
+        let Some(runner) = self.build_harness(&[]) else {
+            return Ok(false);
+        };
         // For each file: the harness it is in, and its index there.
         let mut built: Vec<Option<(PathBuf, usize)>> = vec![None; planned.len()];
         for group in groups(planned) {
             self.build_group(planned, &group, &mut built);
         }
-        let runner = match built.iter().flatten().next() {
-            Some((exe, _)) => exe.clone(),
-            None => match self.build_harness(&[]) {
-                Some(exe) => exe,
-                None => return Ok(false),
-            },
-        };
         let files: Vec<Value> = planned
             .iter()
             .zip(&built)
@@ -301,7 +298,10 @@ impl Run<'_> {
             "failed": self.failed,
             "files": files,
         });
-        let plan_file = self.out_dir.join("plan.json");
+        // One per run: two runs in a package at once must not read each other's.
+        let plan_file = self
+            .out_dir
+            .join(format!("plan-{}.json", std::process::id()));
         std::fs::create_dir_all(&self.out_dir)
             .and_then(|()| std::fs::write(&plan_file, plan.to_string()))
             .map_err(|e| format!("cannot write `{}`: {e}", plan_file.display()))?;
@@ -310,9 +310,9 @@ impl Run<'_> {
         for var in harness::CHILD_VARS {
             command.env_remove(var);
         }
-        let status = command
-            .status()
-            .map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
+        let status = command.status();
+        let _ = std::fs::remove_file(&plan_file);
+        let status = status.map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
         Ok(status.success())
     }
 
@@ -341,7 +341,7 @@ impl Run<'_> {
         }
     }
 
-    /// A harness without test files, to run the plan when no other one built.
+    /// The harness of `files` alone; without files, the runner.
     fn build_harness(&mut self, files: &[&Planned]) -> Option<PathBuf> {
         self.build_files(files, false)
     }
@@ -407,7 +407,9 @@ impl Run<'_> {
             }
             return Ok(None);
         }
-        Ok(Some(discover::test_functions(&module)))
+        let mut found = discover::test_functions(&module);
+        found.runs_code = found.runs_code || discover::imports_run_code(file, &module);
+        Ok(Some(found))
     }
 
     /// `--no-run`: build the harness for `p` alone and record it.
@@ -452,6 +454,7 @@ impl Run<'_> {
     fn harness_options(&mut self, files: &[&Planned]) -> BuildOptions {
         let dir = common_dir(files.iter().map(|p| p.file.as_path()));
         let name = match files {
+            [] => "runner".to_string(),
             [one] => one.module_name.clone(),
             _ => "harness".to_string(),
         };

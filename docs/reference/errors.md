@@ -193,7 +193,10 @@ nothing; `null` means success).
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`. They print `panic: … at file:line:col` and exit with code 101. They cannot be
   caught. A failed `assert`, `assertEq` or `assertThrows` throws an `AssertionError` (an
-  `Error`, as Node's `assert` throws), which can.
+  `Error`, as Node's `assert` throws), which can. Like any error, it is part of the inferred
+  error type of the function that calls them: a function with `throws ParseError` that calls
+  `assert` must allow `AssertionError` too (`throws ParseError | AssertionError`), and a `catch`
+  that handles only `ParseError` no longer covers everything the block throws.
 - There is no `Result` type, no `Ok`/`Err` and no postfix `?`: errors propagate by themselves,
   and values use unions.
 

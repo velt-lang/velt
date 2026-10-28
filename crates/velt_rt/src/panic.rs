@@ -96,6 +96,13 @@ pub extern "C" fn velt_rt_set_throw_loc(loc: *const VeltStr) {
     THROW_LOC.with(|c| c.set(loc));
 }
 
+/// Forget this thread's throw location (`velt:test`, before each test, so an error that is
+/// never thrown here, such as a rejection, isn't reported where an earlier test threw).
+#[no_mangle]
+pub extern "C" fn velt_rt_clear_throw_loc() {
+    velt_rt_set_throw_loc(std::ptr::null());
+}
+
 /// The location recorded by the last [`velt_rt_set_throw_loc`] on this thread (null if none).
 #[no_mangle]
 pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
@@ -211,7 +218,7 @@ mod tests {
         std::thread::spawn(|| assert!(super::velt_rt_throw_loc().is_null()))
             .join()
             .unwrap();
-        super::velt_rt_set_throw_loc(std::ptr::null());
+        super::velt_rt_clear_throw_loc();
         assert!(super::velt_rt_throw_loc().is_null());
     }
 

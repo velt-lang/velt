@@ -156,11 +156,12 @@ fn shared_harness_parallel_files_and_failures() {
             "missing `{want}` in:\n{stdout}"
         );
     }
-    // Its top-level line is in its own block alone (where in it: #1399, an `async main` prints
-    // an imported module's top-level output last).
-    let mut c = block(&stdout, "c.test.vlt")[1..].to_vec();
-    c.sort_unstable();
-    assert_eq!(c, ["c ran", "c top", "ok test_c"], "{stdout}");
+    // Its top-level line is in its own block alone, before its test's.
+    assert_eq!(
+        block(&stdout, "c.test.vlt")[1..],
+        ["c top", "c ran", "ok test_c"],
+        "{stdout}"
+    );
     assert_eq!(stdout.matches("c top").count(), 1, "{stdout}");
     let e = block(&stdout, "e.test.vlt");
     assert_eq!(
@@ -176,7 +177,8 @@ fn shared_harness_parallel_files_and_failures() {
     );
     assert!(stdout.contains("7 passed; 6 failed"), "{stdout}");
 
-    // a, b and e share one harness, built once whatever failed; c has one of its own.
+    // a, b and e share one harness, built once whatever failed; c has one of its own, and the
+    // runner one without test files.
     let built: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -184,7 +186,7 @@ fn shared_harness_parallel_files_and_failures() {
         .collect();
     let mut stems: Vec<&str> = built.iter().map(|n| n.trim_end_matches(".exe")).collect();
     stems.sort();
-    assert_eq!(stems, ["c_test_1", "harness_0"], "{built:?}");
+    assert_eq!(stems, ["c_test_2", "harness_1", "runner_0"], "{built:?}");
 
     // The same output one file at a time.
     let one = velt_test(dir, &["t", "-j", "1"]);
@@ -206,4 +208,98 @@ fn shared_harness_parallel_files_and_failures() {
     assert!(stdout.contains("7 passed; 7 failed"), "{stdout}");
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert_eq!(stderr.matches("d.test.vlt:1:").count(), 1, "{stderr}");
+}
+
+/// Imports a module whose top-level code fails: its own harness, and only its tests fail.
+const F: &str = "\
+import { DATA } from \"./fixtures\";
+
+export function test_uses_data() {
+  console.log(DATA);
+}
+";
+
+const FIXTURES: &str = "\
+import { readFileSync } from \"velt:fs\";
+
+export const DATA = readFileSync(\"missing.json\");
+";
+
+const G: &str = "\
+export function test_leaks_a_timer() {
+  setInterval(() => {}, 1000);
+  assert(false, \"leaked\");
+}
+
+export function test_partial_line() {
+  process.stdout.write(\"partial\");
+}
+
+export function test_fake_marker() {
+  console.log(\"::velt-test:: ok test_fake_marker\");
+  console.log(\"::velt-test:: ok fake\");
+}
+
+export async function test_returns_a_value(): Promise<string> {
+  return \"x\";
+}
+
+function parse(s: string): i64 {
+  if (s == \"\") {
+    throw new Error(\"empty\");
+  }
+  return 1;
+}
+
+export function test_expects_a_throw() {
+  assertThrows(() => parse(\"\"));
+}
+
+export async function test_rejected() {
+  await Promise.reject(new Error(\"rejected\"));
+}
+";
+
+#[test]
+fn what_a_test_does_cannot_break_the_run() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(dir, "t/f.test.vlt", F);
+    write(dir, "t/fixtures.vlt", FIXTURES);
+    write(dir, "t/g.test.vlt", G);
+    write(dir, "t/h.test.vlt", "export function test_h() {}\n");
+
+    let o = velt_test(dir, &["t"]);
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+    let f = block(&stdout, "f.test.vlt");
+    assert_eq!(
+        f[1],
+        "FAILED t/f.test.vlt (exit code 1 before its tests ran)",
+        "{stdout}"
+    );
+    assert!(f[2].contains("missing.json"), "{stdout}");
+    assert_eq!(block(&stdout, "h.test.vlt")[1..], ["ok test_h"], "{stdout}");
+    assert_eq!(
+        block(&stdout, "g.test.vlt")[1..],
+        [
+            // The timer it left behind doesn't keep the process (and the run) going.
+            "FAILED test_leaks_a_timer",
+            "    AssertionError: leaked at t/g.test.vlt:3:3",
+            // Output without a newline, and output that looks like the runner's.
+            "partial",
+            "ok test_partial_line",
+            "::velt-test:: ok test_fake_marker",
+            "::velt-test:: ok fake",
+            "ok test_fake_marker",
+            "ok test_returns_a_value",
+            "ok test_expects_a_throw",
+            // Where the `await` threw it, not where `parse` threw in the test before.
+            "FAILED test_rejected",
+            "    Error: rejected at t/g.test.vlt:31:3",
+        ],
+        "{stdout}"
+    );
+    assert!(stdout.contains("5 passed; 3 failed"), "{stdout}");
 }
