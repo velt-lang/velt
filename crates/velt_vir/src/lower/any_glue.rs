@@ -469,6 +469,9 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_get_record(data, key, &outp, ty);
         }
+        if self.fn_props(ty) {
+            return self.fn_prop_get(data, key, &outp, ty);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
@@ -676,6 +679,9 @@ impl FnLower<'_, '_> {
     ) {
         if self.is_proxy(ty) {
             return self.proxy_call_body((data, key, argv, argc, out), ty);
+        }
+        if self.fn_props(ty) {
+            self.fn_prop_call((data, key, argv, argc, out), ty);
         }
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);

@@ -1,0 +1,51 @@
+// Properties on functions held as `any` (#924): JavaScript functions are objects.
+function component(setup: (n: number) => number, name?: string): any {
+  const factory: any =
+    function (props: any) {
+      return { type: factory, props: props || {} };
+    } as any;
+  (factory as any).__setup = setup as any;
+  (factory as any).__name = name;
+  (factory as any).__props = null as any;
+  return factory;
+}
+
+const C = component((n) => n * 2, "C");
+console.log(C.__name, C.__setup(21), typeof C, C.__props, C.__events);
+const vnode = C({ a: 1 });
+console.log(vnode.type.__name, vnode.props.a, vnode.type === C);
+
+// An arrow without captures, and copies of it.
+const f: any = () => 1;
+f.tag = "x";
+const g = f;
+g.n = 5;
+console.log(f.tag, f.n, g.tag, f());
+f.tag = "y";
+f.p = null;
+f.u = undefined;
+console.log(g.tag, g.p, g.u, g.missing);
+console.log("tag" in f, "nope" in f, Object.keys(f));
+
+// A declared function converted to `any`.
+function plus(a: number): number {
+  return a + 1;
+}
+
+const h: any = plus;
+h.label = "plus";
+h.meta = { calls: 0 };
+h.meta.calls = 2;
+const h2: any = h;
+console.log(h2.label, h2(1), h2.meta.calls);
+
+// Functions made in a loop each have their own properties.
+const made: any[] = [];
+for (let i = 0; i < 3; i++) {
+  const k: any = () => i;
+  k.v = [i, i * 10];
+  made.push(k);
+}
+for (const k of made) {
+  console.log(k(), k.v[1]);
+}

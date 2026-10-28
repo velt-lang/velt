@@ -607,6 +607,33 @@ need not assume that a call may change a box of a view type.
 original, and the LLVM backend declares it `cold` (and touching only memory compiled code
 never reads), so that it treats the loop's copy for a plain array as the one that runs.
 
+## Function properties [additive, #924]
+
+```c
+const uint8_t *velt_rt_fnprop_get(const uint8_t *env, const VeltStr *key);
+void velt_rt_fnprop_set(uint8_t *env, const VeltStr *key, const uint8_t *value);
+uint8_t velt_rt_fnprop_delete(const uint8_t *env, const VeltStr *key);
+uint64_t velt_rt_fnprop_len(const uint8_t *env);
+void velt_rt_fnprop_key(const uint8_t *env, uint64_t i, VeltStr *out);
+```
+
+Properties a program adds to a function value through `any` (velt_vir `lower/any_fn_props.rs`):
+JavaScript functions are objects. The function's identity is its closure environment (a
+program with writes through `any` gives every closure a counted one), so the table maps the
+environment's address to its properties in insertion order, each value an `any` (`{ data,
+table }`, 16 bytes). `get` answers the address of the value held (borrowed: the caller shares
+it at once) or null; `set` takes the `any` at `value` and drops the one it replaces after the
+store; `delete` answers 1 when there was one; `len` and `key` list the names (`key` writes an
+owned string).
+
+The first `set` on an environment replaces its drop entry (its first word) with the runtime's,
+which calls the original and, with the last reference (a count of 1 in front of the
+environment), first removes the entry, puts the original drop entry back and drops the names
+and values. The values are dropped through their table's drop slot, and never under the
+table's lock. One table for the process, behind a lock. Both runtimes provide them
+(`velt_rt/src/fn_props.rs`, compiled into velt_rt_wasm too). Programs without a write through
+`any` never call them.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

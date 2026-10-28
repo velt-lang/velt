@@ -459,7 +459,12 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         self.share_from.clear();
-        next.fn_identity |= self.facts.fn_compared;
+        // A function that may get properties through `any` needs an identity to carry them
+        // (any_fn_props.rs): in a program that writes through `any` and holds functions there.
+        let fn_props = self.facts.any_set
+            && (self.facts.dyn_types.iter())
+                .any(|t| matches!(self.kind(*t), TyKind::FnPtr { .. } | TyKind::Closure(_)));
+        next.fn_identity |= self.facts.fn_compared || fn_props;
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;

@@ -48,7 +48,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the `any` at `*v` and return `status`.
-    fn any_set_refuse(&mut self, v: vir::Local, status: i128) {
+    pub(super) fn any_set_refuse(&mut self, v: vir::Local, status: i128) {
         let any = self.cx.any_ty();
         let vp = self.any_out(v);
         self.drop_glue(vp, any);
@@ -76,6 +76,9 @@ impl FnLower<'_, '_> {
     fn any_set_body(&mut self, data: vir::Local, key: vir::Local, v: vir::Local, ty: TyId) {
         if self.is_proxy(ty) {
             return self.proxy_set_body(data, ProxyKey::Str(key), v, ty);
+        }
+        if self.fn_props(ty) {
+            return self.fn_prop_set(data, key, v, ty);
         }
         if let Some((k, val)) = self.prelude_record(ty) {
             return self.any_set_record(data, key, v, ty, (k, val));

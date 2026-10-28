@@ -28,6 +28,7 @@ mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_fn_props;
 mod any_generic_fn;
 mod any_glue;
 mod any_has;

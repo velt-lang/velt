@@ -3218,9 +3218,12 @@ no new properties through `any` (#924)` (Node adds it), writing a getter that ha
 Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
 gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
 `TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
+A function is an object, as in JavaScript: it takes any property (`factory.__setup = setup`),
+which every reference to the function sees, and reads, calls, `in`, `Object.keys` and `delete`
+through `any` find it (see [Functions with properties](functions.md#functions-with-properties)).
 Writing a `readonly` field, a method, an element further past the end of an array or a longer
-`length` (Node leaves holes, which Velt's arrays don't have), or a member of a
-string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
+`length` (Node leaves holes, which Velt's arrays don't have), a function's `name` or `length`,
+or a member of a string or number stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
 `x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
 as in JavaScript; the expression is the member read or the value written. A `new C()` without
 type arguments there takes them from what the expression is assigned to, as nothing else gives

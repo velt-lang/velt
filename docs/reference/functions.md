@@ -1309,7 +1309,29 @@ an error; use the call's result.
 
 The value is an object with a fixed set of fields, the function among them: properties the type
 does not declare can't be added, and a function whose type has no members has no properties of
-its own (`const f = () => 1; f.label = "one"` is an error). Several call signatures next to
+its own (`const f = () => 1; f.label = "one"` is an error).
+
+Held as `any`, any function takes new properties, as in JavaScript: every reference to the
+function (copies of the `any`, a closure that captured it) sees them, and reads, method calls,
+`in`, `Object.keys` and `delete` find them. A property never written reads as `undefined`.
+
+```ts
+function component(setup: (n: number) => number, name?: string): any {
+  const factory: any = function (props: any) {
+    return { type: factory, props: props || {} };
+  };
+  factory.__setup = setup;
+  factory.__name = name;
+  return factory;
+}
+
+const C = component((n) => n * 2, "C");
+console.log(C.__name, C.__setup(21), typeof C); // C 42 function
+console.log(C({}).type === C, Object.keys(C)); // true [ '__setup', '__name' ]
+```
+
+Through `any`, a function's own `name` and `length`, and `call`, `apply` and `bind`, are not
+supported yet (a `TypeError` naming #924). Several call signatures next to
 members (overloads) and `Object.defineProperty` onto a function are not supported yet.
 
 ### `call` and `apply`
