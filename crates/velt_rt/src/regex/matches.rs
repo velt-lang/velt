@@ -27,14 +27,68 @@ fn next_pos(s: &[u8], start: usize, end: usize) -> Option<usize> {
     Some(end + step)
 }
 
+/// Is byte `i` of `s` where a code unit (or code point) starts, or the end?
+fn at_boundary(s: &[u8], i: usize) -> bool {
+    i >= s.len() || !crate::str::wtf8::is_continuation(s[i])
+}
+
+/// Is `start..end` a match the program can see: both ends on code unit boundaries? The engine
+/// takes a lone surrogate's 3 bytes (and in the units form every surrogate's) as invalid UTF-8,
+/// so an empty match (`\B`, `(?:)`) can fall between them.
+fn whole(s: &[u8], start: usize, end: usize) -> bool {
+    at_boundary(s, start) && at_boundary(s, end)
+}
+
+/// The boundary after the one at or before `i` (`i` inside a sequence: past it).
+fn boundary_after(s: &[u8], i: usize) -> usize {
+    let mut p = i + 1;
+    while p < s.len() && crate::str::wtf8::is_continuation(s[p]) {
+        p += 1;
+    }
+    p
+}
+
+/// The first match at or after byte `pos` whose ends are code unit boundaries.
+pub fn find_at(re: &Regex, s: &[u8], mut pos: usize) -> Option<(usize, usize)> {
+    loop {
+        let m = re.find_at(s, pos)?;
+        if whole(s, m.start(), m.end()) {
+            return Some((m.start(), m.end()));
+        }
+        pos = boundary_after(s, m.start());
+        if pos > s.len() {
+            return None;
+        }
+    }
+}
+
+/// [`find_at`] with the group locations in `locs`.
+pub fn captures_at(
+    re: &Regex,
+    locs: &mut CaptureLocations,
+    s: &[u8],
+    mut pos: usize,
+) -> Option<(usize, usize)> {
+    loop {
+        let m = re.captures_read_at(locs, s, pos)?;
+        if whole(s, m.start(), m.end()) {
+            return Some((m.start(), m.end()));
+        }
+        pos = boundary_after(s, m.start());
+        if pos > s.len() {
+            return None;
+        }
+    }
+}
+
 /// Calls `f(start, end)` for every match in JS order; `f` returns `false` to stop.
 pub fn each_find(re: &Regex, s: &[u8], mut f: impl FnMut(usize, usize) -> bool) {
     let mut pos = 0;
-    while let Some(m) = re.find_at(s, pos) {
-        if !f(m.start(), m.end()) {
+    while let Some((start, end)) = find_at(re, s, pos) {
+        if !f(start, end) {
             return;
         }
-        match next_pos(s, m.start(), m.end()) {
+        match next_pos(s, start, end) {
             Some(p) => pos = p,
             None => return,
         }
@@ -46,11 +100,11 @@ pub fn each_find(re: &Regex, s: &[u8], mut f: impl FnMut(usize, usize) -> bool) 
 pub fn each_captures(re: &Regex, s: &[u8], mut f: impl FnMut(&CaptureLocations) -> bool) {
     let mut locs = re.capture_locations();
     let mut pos = 0;
-    while let Some(m) = re.captures_read_at(&mut locs, s, pos) {
+    while let Some((start, end)) = captures_at(re, &mut locs, s, pos) {
         if !f(&locs) {
             return;
         }
-        match next_pos(s, m.start(), m.end()) {
+        match next_pos(s, start, end) {
             Some(p) => pos = p,
             None => return,
         }
