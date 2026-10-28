@@ -497,6 +497,43 @@ function main() {
 }
 ```
 
+### Type tests
+
+`typeIs<A, B>()` tells whether two types are the same, decided where the generic is used: a
+constant for each instantiation, and an `if` on it runs only the branch it takes, so generic
+code can choose a representation per type at no cost (the other branch is not compiled for that
+instantiation). Inside `if (typeIs<A, B>())`, `asType<B>(x)` converts a value `x: A` to `B`, the
+same type there; anywhere else it is an error, and neither function can be used as a value.
+Both are Velt's (TypeScript has no counterpart).
+
+- **What counts as the guard:** only the `then` branch of an `if` whose condition is the call
+  itself, and closures written inside it. Not `!typeIs…` with its `else`, `typeIs… && c`, a
+  ternary, code after an early `if (!typeIs…) return;`, a test saved in a `const`, or a chain
+  (`typeIs<A, B>` with `asType<C>`).
+- **The call:** `asType<B>(x)`, with `B` written and nothing else: the type of `x` is the type
+  converted from.
+
+```ts
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v); // numbers inline: one store for `Slot<u64>`
+    } else {
+      this.boxed = [v];
+    }
+  }
+}
+
+function main() {
+  const s = new Slot<u64>();
+  s.put(7);
+  console.log(s.word, s.boxed.length); // 7 0
+}
+```
+
 ## Generators
 
 ```ts

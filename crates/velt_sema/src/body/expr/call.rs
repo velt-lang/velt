@@ -289,6 +289,9 @@ impl FnCx<'_, '_> {
             return self.this_fn_call(d, name, None, type_args, args, exp, span);
         }
         self.check_gated_call(d, name, span);
+        if let Some(h) = self.as_type_call(d, type_args, args, span) {
+            return h;
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];

@@ -23,6 +23,9 @@ impl FnLower<'_, '_> {
             hir::Callee::Def(def, targs) => match self.cx.hir.def(*def) {
                 hir::Def::Fn(_) => {
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
+                    if let Some(v) = self.type_test_call(*def, &targs, args) {
+                        return v;
+                    }
                     let v = self.call_def(*def, targs, vec![], args);
                     self.after_super_inits(*def);
                     v

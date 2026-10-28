@@ -1529,3 +1529,12 @@ at the start of the class's block or of the function's body (`body/expr/ctor_loc
 captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).
+
+## Type tests (std/prelude/type_tests.vlt; additive)
+
+`typeIs<A, B>()` and `asType<B>(x)` are ordinary `Call { Def(prelude fn, [A, B]) }` /
+`Call { Def(prelude fn, [B, A]), [x] }` nodes (sema `body/type_guards.rs` checks `asType`'s
+guard and refuses both as values). Lowering replaces them per instance (velt_vir
+`lower/type_tests.rs`): `typeIs` by the constant `A == B` (the `if` it guards then lowers one
+branch), `asType` by `x` itself when `A == B` and by a trap otherwise (only reachable in a
+branch the constant made dead).

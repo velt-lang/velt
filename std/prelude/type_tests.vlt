@@ -1,0 +1,20 @@
+// Prelude: compile-time type tests for generic code (docs/reference/functions.md "Type tests").
+// The compiler decides `typeIs<A, B>()` per instantiation, and lowers an `if` on it so that only
+// the branch it takes runs; `asType<B>(x)` is allowed only inside such a branch. The bodies
+// here run only through a function value, which the compiler refuses.
+
+/**
+ * Whether `A` and `B` are the same type, decided where the generic is used: a constant per
+ * instantiation, so `if (typeIs<V, u64>()) { … } else { … }` costs nothing at run time.
+ */
+export function typeIs<A, B>(): bool {
+  return false;
+}
+
+/**
+ * `x` as the type `B`, which is its own type `A`: allowed only inside
+ * `if (typeIs<A, B>()) { … }`, where the compiler knows the two are the same.
+ */
+export function asType<B, A>(x: A): B {
+  panic("asType: outside its typeIs guard");
+}
