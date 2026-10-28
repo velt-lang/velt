@@ -279,7 +279,10 @@ fn system_functions_are_bound_per_target() {
     );
     for t in ["wasm32-wasip1", "x86_64-pc-windows-msvc"] {
         let d = lower_for(&view, t);
-        assert!(d.contains("system function `pread` is not available on"), "{t}: {d}");
+        assert!(
+            d.contains("system function `pread` is not available on"),
+            "{t}: {d}"
+        );
         assert!(!d.contains("ICE"), "{t}: {d}");
     }
     // Declared but never called: nothing to report anywhere.
