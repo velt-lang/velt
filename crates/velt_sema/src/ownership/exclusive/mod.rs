@@ -51,8 +51,14 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
-    let closures = Closures::of(cx);
+    // Which closure a local names, for the closures and functions used as values of the
+    // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
+    // every body is in place.
+    let mut closures: Option<Closures> = None;
     for d in fns {
+        if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
+            closures = Some(Closures::of(cx));
+        }
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
@@ -82,9 +88,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
-        let params: FxHashMap<String, LocalId> = (aliases.iter())
-            .map(|(l, p)| (f.body.locals[l.0 as usize].name.clone(), p.root))
-            .collect();
+        let params: Vec<(LocalId, LocalId)> = aliases.iter().map(|(l, p)| (*l, p.root)).collect();
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
@@ -92,7 +96,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             aliases,
             params,
             at: (d, &f.captures),
-            closures: &closures,
+            closures: closures.as_ref(),
             held: &held,
             soft: &soft,
             errors: vec![],
@@ -328,15 +332,18 @@ fn share_capture(cx: &mut Ctx, c: DefId, outer: LocalId) {
 /// so they all stand for the first one.
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     let mut out = Aliases::default();
-    let info = cx.fn_info(d);
-    let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
-    if !as_value {
+    if !as_value(cx, d) {
         return out;
     }
     for (l, root) in alias_groups(cx, f) {
         out.insert(l, Place { root, proj: vec![] });
     }
     out
+}
+
+/// Is `d` a closure or a function used as a value?
+fn as_value(cx: &Ctx, d: DefId) -> bool {
+    cx.fn_info(d).kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d)
 }
 
 /// The non-Copy declared params of `f`, each with the first param it may be the same value as
@@ -395,11 +402,12 @@ struct Checker<'a, 'm> {
     cx: &'a Ctx<'m>,
     locals: &'a [LocalDef],
     aliases: Aliases,
-    /// The params `aliases` makes one place ([`aliasing_params`]), by name, with that place.
-    params: FxHashMap<String, LocalId>,
+    /// The params `aliases` makes one place ([`aliasing_params`]), each with that place.
+    params: Vec<(LocalId, LocalId)>,
     /// The function checked, and its captures.
     at: (DefId, &'a [Capture]),
-    closures: &'a Closures,
+    /// Which closure a local names; `None` before a program's closure is checked.
+    closures: Option<&'a Closures>,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
     held: &'a FxHashMap<LocalId, DefId>,
     /// The function's soft moves (`FnInfo::soft_moves`).
@@ -488,7 +496,9 @@ impl Checker<'_, '_> {
         let whole = |u: &Use| {
             u.place.proj.is_empty()
                 && !u.captured
-                && self.params.get(&u.text) == Some(&u.place.root)
+                && (self.params.iter()).any(|(l, root)| {
+                    *root == u.place.root && self.locals[l.0 as usize].name == u.text
+                })
         };
         let relaxed = std::cell::OnceCell::new();
         let skip = |u: &Use, w: &Use| {
@@ -538,7 +548,10 @@ impl Checker<'_, '_> {
                             _ => &[],
                         }
                     };
-                    match self.closures.resolve(self.at.0, self.at.1, l, caps_of) {
+                    let Some(closures) = self.closures else {
+                        return false;
+                    };
+                    match closures.resolve(self.at.0, self.at.1, l, caps_of) {
                         Some(h) => h,
                         None => return false,
                     }
