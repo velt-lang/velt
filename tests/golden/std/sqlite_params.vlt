@@ -56,10 +56,18 @@ function main() {
 
   // What is missing or extra fails as with JSON text.
   const failures: (() => void)[] = [
-    () => { put.runWith([1, 2]); },
-    () => { put.runWith([] as i64[]); },
-    () => { named.runWith({ a: 1 }); },
-    () => { put.runWith({ a: 1 }); },
+    () => {
+      put.runWith([1, 2]);
+    },
+    () => {
+      put.runWith([] as i64[]);
+    },
+    () => {
+      named.runWith({ a: 1 });
+    },
+    () => {
+      put.runWith({ a: 1 });
+    },
   ];
   for (const f of failures) {
     try {

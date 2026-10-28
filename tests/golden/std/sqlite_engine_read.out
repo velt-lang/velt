@@ -1,0 +1,8 @@
+collations: 400 entries (same), seek true
+reserved 32 bytes a page: integrity ok
+reserved 32 pages 3160 of 1024: 1523 rows (same), index 1523 (same), seeks 1523 (same), keys 1523 (same)
+page size 512 pages 7065 of 512: 3023 rows (same), index 3023 (same), seeks 3023 (same), keys 3023 (same)
+page size 1024 pages 3084 of 1024: 1523 rows (same), index 1523 (same), seeks 1523 (same), keys 1523 (same)
+page size 4096 pages 2390 of 4096: 1523 rows (same), index 1523 (same), seeks 1523 (same), keys 1523 (same)
+page size 65536 pages 331 of 65536: 1523 rows (same), index 1523 (same), seeks 1523 (same), keys 1523 (same)
+empty pages 3 of 4096: 0 rows (same), index 0 (same), seeks 0 (same), keys 0 (same)
