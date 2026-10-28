@@ -10,20 +10,24 @@ struct User {
   tags: string[];
   email?: string;
 }
+
 struct P {
   x: i64;
   y: f64;
 }
+
 class Item {
   id: u8 = 0;
   ok: bool = false;
   w?: f64;
   at: P = { x: 0, y: 0 };
 }
+
 class Box {
   items: Item[] = [];
   label: string = "";
 }
+
 function users() {
   const docs = [
     `{"tags":["a","b"],"name":"x"}`,
@@ -44,6 +48,7 @@ function users() {
     }
   }
 }
+
 function boxes() {
   const ok = `{"label":"L","items":[{"id":1,"ok":true,"at":{"x":-2,"y":0.5}},{"at":{"y":1e3,"x":7},"w":2.25,"ok":false,"id":255}]}`;
   console.log(JSON.stringify(JSON.parse<Box>(ok)));
@@ -60,7 +65,39 @@ function boxes() {
     }
   }
 }
+
+struct V {
+  v: JsonValue;
+}
+
+// A JsonValue read that fails after an earlier one succeeded: the failed read owns nothing (it
+// used to leave the earlier value's handle behind, released twice).
+function values() {
+  const report = (e: JsonError) => console.log("json error:", e.message);
+  try {
+    JSON.parse<V>(`{"v":1,"v":x}`);
+  } catch (e) {
+    report(e);
+  }
+  try {
+    JSON.parse<JsonValue[]>(`[[1],[2],x]`);
+  } catch (e) {
+    report(e);
+  }
+  try {
+    JSON.parse<V[]>(`[{"v":[1]},{"v":}]`);
+  } catch (e) {
+    report(e);
+  }
+  try {
+    JSON.parse<Map<string, JsonValue>>(`{"a":{"x":1},"b":]`);
+  } catch (e) {
+    report(e);
+  }
+}
+
 function main() {
   users();
   boxes();
+  values();
 }
