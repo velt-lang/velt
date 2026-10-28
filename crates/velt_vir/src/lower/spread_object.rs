@@ -10,7 +10,7 @@
 use velt_sema::hir::{self, LitValue, Nothing, TyId, TyKind};
 
 use super::operand::proj;
-use super::{ice, unit, FnLower};
+use super::{ice, unit, FnLower, ScopeKind};
 use crate::vir::{BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -285,6 +285,9 @@ impl FnLower<'_, '_> {
         for ((_, k), b) in fields.iter().zip(blocks) {
             self.switch_to(b);
             let fi = ftys[*k as usize];
+            // The slot a proxy's answer lands in is dropped at the end of this key's arm: a
+            // statement's temporaries drop after the join, where the other arms never set it.
+            self.push_scope(ScopeKind::Temps);
             // A proxiable object may be a proxy: its `get` trap answers.
             let fp = match self.cx.proxiable(oty) {
                 true => {
@@ -298,6 +301,7 @@ impl FnLower<'_, '_> {
             // Keys whose fields have different types: the field as the union `T[K]`.
             let v = self.key_value_into(v, fi, fty);
             self.assign(Place::local(out), Rvalue::Use(v));
+            self.pop_scope();
             self.goto(join);
         }
         self.switch_to(join);
