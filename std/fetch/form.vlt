@@ -131,7 +131,8 @@ export class FormData extends ByteSource {
   private boundary(): string {
     if (this.#boundary.length == 0) {
       const n = Math.floor(Math.random() * 1e11) as i64;
-      this.#boundary = `----formdata-undici-0${`${n}`.padStart(11, "0")}`;
+      const digits = n.toString().padStart(11, "0");
+      this.#boundary = `----formdata-undici-0${digits}`;
     }
     return this.#boundary;
   }
