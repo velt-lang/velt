@@ -380,10 +380,13 @@ impl FnLower<'_, '_> {
                     };
                     // A value the callee modifies stays where it is (it may only be shared). A
                     // frozen one changes for nobody, and is not counted (frozen.rs).
-                    let changes = i < 64 && changed >> i & 1 == 1 && self.inline_object(a.ty);
-                    let v = match mode {
-                        PassMode::Borrow if !self.frozen_root(a) && !changes => {
-                            self.hold(v, a.ty, later)
+                    let held = match i < 64 && changed >> i & 1 == 1 {
+                        true => self.changed_hold(args, i, later),
+                        false => Some(later),
+                    };
+                    let v = match (mode, held) {
+                        (PassMode::Borrow, Some(l)) if !self.frozen_root(a) => {
+                            self.hold(v, a.ty, l)
                         }
                         _ => v,
                     };
@@ -476,9 +479,13 @@ impl FnLower<'_, '_> {
                     // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
                     // Through a function value, a `Borrow` param may be one the callee changes
-                    // (a closure's, or a named function's demoted by sema): an object stored
-                    // inline stays where it is, so the change reaches the caller's object.
-                    None | Some(PassMode::Borrow) if self.inline_object(a.ty) => v,
+                    // (a closure's, or a named function's demoted by sema): the change must
+                    // reach the caller's object.
+                    None | Some(PassMode::Borrow) => match self.changed_hold(args, i, later) {
+                        None => v,
+                        Some(_) if self.frozen_root(a) && !super::place::number(t) => v,
+                        Some(l) => self.hold(v, a.ty, l),
+                    },
                     _ if self.frozen_root(a) && !super::place::number(t) => v,
                     _ => self.hold(v, a.ty, later),
                 }
