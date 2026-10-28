@@ -246,6 +246,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// uncaught.
     pub(super) fn push_error_text(&mut self, buf: &Operand, ep: &Place, err: TyId) {
         if self.cx.is_union(err) {
+            if let Some(root) = self.common_error_root(err) {
+                return self.push_union_error_header(buf, ep, err, root);
+            }
             let done = self.new_block();
             self.for_each_member(ep, err, |lw, payload, m| {
                 let vt = lw.cx.ty(m);
@@ -266,6 +269,43 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             self.push_thrown_value(buf, ep, err);
         }
+    }
+
+    /// The `Error` class every member of the union `err` extends, when they all do (the errors
+    /// `velt:fs` throws: `IoError | RangeError | TypeError`).
+    fn common_error_root(&mut self, err: TyId) -> Option<DefId> {
+        let mut root = None;
+        for k in 0..self.union_len(err) {
+            let m = self.cx.variant_tys(err, k)[0];
+            if self.cx.is_never(m) {
+                continue;
+            }
+            let r = self.error_root(m)?;
+            if root.is_some_and(|x| x != r) {
+                return None;
+            }
+            root = Some(r);
+        }
+        root
+    }
+
+    /// [`push_error_text`](Self::push_error_text) for a union of `Error` classes extending
+    /// `root`: each member only names its class, and one call writes the header, so a `main`
+    /// calling functions that throw three kinds of error has one header, not three.
+    fn push_union_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+        const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
+        let obj = Place::local(self.temp(Ty::Ptr));
+        let name = Place::local(self.temp(STR));
+        let tail = self.new_block();
+        self.for_each_member(ep, err, |lw, payload, m| {
+            lw.assign(obj.clone(), Rvalue::Use(payload));
+            let cls = lw.error_class_name(&obj, m);
+            lw.assign(name.clone(), Rvalue::Use(Operand::Copy(cls)));
+            lw.goto(tail);
+        });
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(tail);
+        self.push_class_error_header(buf, &obj, root, &name);
     }
 
     /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
@@ -310,6 +350,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+        let cls = self.error_class_name(ep, err);
+        self.push_class_error_header(buf, ep, root, &cls);
+    }
+
+    /// The name of the class of the error of class type `err` at `ep` that the header shows (a
+    /// string the place holds, not owned).
+    fn error_class_name(&mut self, ep: &Place, err: TyId) -> Place {
         // A standard library class stands for the error Node throws (`UrlError` for a
         // `TypeError`): named as that class, so the header is its `name` alone, as for
         // `JsonError`.
@@ -321,7 +368,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             TyKind::Adt(d, _) => std_class.is_none() && self.cx.has_header(d),
             _ => false,
         };
-        let cls = if self.is_json_error(err) {
+        if self.is_json_error(err) {
             // `JSON.parse`'s error stands for the `SyntaxError` Node throws: `SyntaxError: <m>`.
             let s = self.str_lit("SyntaxError");
             Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
@@ -337,10 +384,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let name = std_class.unwrap_or_else(|| self.cx.type_name(err));
             let s = self.str_lit(&name);
             Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
-        };
+        }
+    }
+
+    /// `Error.__uncaughtHeader(cls)` of the error at `ep` (a class extending `root`), appended
+    /// to the builder at `buf`.
+    fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, root: DefId, cls: &Place) {
         let m = self.class_method(root, "__uncaughtHeader");
         let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
-        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(&cls));
+        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(cls));
         let a = self.addr(text.clone());
         self.push_str(buf, a);
         self.drop_glue(text, ty);

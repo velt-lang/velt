@@ -91,7 +91,7 @@ impl FnLower<'_, '_> {
         })
     }
 
-    fn union_len(&mut self, u: TyId) -> u32 {
+    pub(super) fn union_len(&mut self, u: TyId) -> u32 {
         match self.cx.kind(u) {
             TyKind::Adt(d, _) => self.cx.enum_def(d).variants.len() as u32,
             _ => ice("union length of a non-union"),
