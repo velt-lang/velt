@@ -3870,8 +3870,7 @@ a set or a function, but not a `number`, `string`, `boolean`, `symbol`, `null` o
 with TypeScript's rules:
 
 - Only objects convert to `object`, and only functions to `Function` (a `Point | null` does not
-  convert to `object`: test it for `null` first). `object | undefined` is `object`, which holds
-  `undefined` itself, so an optional object (`opts?: Options`) passes there as it is. Both convert to `any` and `unknown`, a
+  convert to `object`: test it for `null` first). Both convert to `any` and `unknown`, a
   `Function` to `object`, and an `any` to either.
 - `T extends object` takes only types whose values are objects, so overloads can tell objects
   from primitives; inside, a `T` converts to `object`.

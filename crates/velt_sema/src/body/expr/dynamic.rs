@@ -103,22 +103,6 @@ impl FnCx<'_, '_> {
             let bounds = self.bounds.clone();
             return self.cx.satisfies(t, &b, &bounds);
         }
-        // `object | undefined` is `object`, which holds `undefined` itself
-        // (`Ctx::narrow_dynamic_union`): an optional `Opts | undefined` passed there is boxed as
-        // it is. A `T | null` is still tested for `null` first.
-        let undefined = matches!(self.cx.ty.kind(t), TyKind::Option(_, Nothing::Undefined));
-        if let Some(p) = self
-            .cx
-            .ty
-            .opt_payload(t)
-            .filter(|_| d == Dynamic::Object && undefined)
-        {
-            if !matches!(self.cx.ty.kind(p), TyKind::Param(_) | TyKind::Op(..))
-                && self.cx.dynamic_takes(iface, p) == Some(true)
-            {
-                return true;
-            }
-        }
         // `T & object` (or `T & …` at a `T extends object`) holds objects at every instance.
         if d == Dynamic::Object {
             if let TyKind::Op(crate::hir::TyOp::Intersect, _) = self.cx.ty.kind(t) {
