@@ -51,6 +51,7 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_rejection",
     // System functions: WebAssembly has none (calling one is a compile error there).
     "system_functions",
+    "system_function_buffer_owner",
     "system_function_errno_adjacency",
     "system_function_errno_await",
     "system_function_forged_view",

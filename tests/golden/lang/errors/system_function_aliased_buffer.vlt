@@ -1,0 +1,9 @@
+// A system function writes its buffer while the call runs, so a later argument may not change
+// the buffer's owner: here it would shrink `xs` under the view, and the call would write freed
+// memory. Through a `subarray`, the place used is the receiver `xs`.
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+
+function main() {
+  const xs: u8[] = Buffer.alloc(16);
+  console.log(pread(0, xs.subarray(0, 8), (xs.length = 0) as i64));
+}
