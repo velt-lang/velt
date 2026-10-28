@@ -278,7 +278,8 @@ struct Nested<'c, 'a, 'm> {
     out: &'c mut Vec<Use>,
     skip: FxHashSet<*const Expr>,
     /// Temporaries holding another reference to a place (`let t = share(h.b)`, how a write
-    /// through a counted field is lowered: `h.b.length = 0`): a use of one is a use of the place.
+    /// through a counted field is lowered: `h.b.length = 0`): a write through one is a write of
+    /// the place.
     shares: FxHashMap<LocalId, (Place, String)>,
 }
 
@@ -296,7 +297,12 @@ impl Nested<'_, '_, '_> {
 
     fn record(&mut self, e: &Expr, mut place: Place, access: Access) {
         let mut text = self.col.text(e);
-        if let Some((p, shown)) = self.shares.get(&place.root) {
+        // A write through the other reference writes the place; moving the reference out
+        // takes only that reference.
+        let through = (access == Access::Unique)
+            .then(|| self.shares.get(&place.root))
+            .flatten();
+        if let Some((p, shown)) = through {
             if place.proj.is_empty() {
                 text = shown.clone();
             }
