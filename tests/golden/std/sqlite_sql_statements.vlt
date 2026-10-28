@@ -1,6 +1,7 @@
-// The statement parser of the Velt SQLite engine (velt:sqlite/sql/statement, #1720): CREATE TABLE
-// with every column and table constraint, CREATE INDEX/VIEW, INSERT with UPSERT and RETURNING,
-// UPDATE … FROM, DELETE, transactions, PRAGMA, DROP, ALTER TABLE, EXPLAIN.
+// The statement parser of the Velt SQLite engine (velt:sqlite/sql/statement and /table, #1720):
+// CREATE TABLE with every column and table constraint, CREATE INDEX/VIEW, INSERT with UPSERT and
+// RETURNING, UPDATE … FROM, DELETE, transactions, PRAGMA, DROP, ALTER TABLE, EXPLAIN. Accepted
+// and rejected as /usr/bin/sqlite3 3.54 does, with its error messages.
 import { parseAll, parseOne } from "velt:sqlite/sql/statement";
 import { SqlError } from "velt:sqlite/sql/lexer";
 
@@ -40,9 +41,135 @@ const CASES: string[] = [
   "EXPLAIN EXPLAIN SELECT 1",
   "EXPLAIN QUERY PLAN EXPLAIN SELECT 1",
   "EXPLAIN " + "EXPLAIN ".repeat(10000) + "SELECT 1",
+  // CREATE TABLE forms of real schemas: MATCH with a join word, a table CHECK with ON CONFLICT,
+  // table constraints without commas, CONSTRAINT name alone, string type names, types kept as
+  // written, GENERATED ALWAYS out of the type, keywords as names, DEFERRABLE on a column.
+  "CREATE TABLE r(start, end, offset INT, left 'text', \"right\" 'big' int, b REFERENCES p(a) MATCH FULL ON INSERT CASCADE NOT DEFERRABLE INITIALLY DEFERRED, CHECK (a > 0) ON CONFLICT ABORT PRIMARY KEY (start) UNIQUE (end) CONSTRAINT x FOREIGN KEY (b) REFERENCES p CONSTRAINT y)",
+  "CREATE TABLE g(a  big   int ( 1 , -2 ), b INT GENERATED ALWAYS AS (a + 1) STORED, c GENERATED ALWAYS AS (1), d INT NOT NULL GENERATED ALWAYS AS (2) VIRTUAL, e DEFERRABLE, f CONSTRAINT z)",
+  "CREATE TABLE d(a DEFAULT -1, b DEFAULT +1.5, c DEFAULT 'x', d DEFAULT x'00', e DEFAULT NULL, f DEFAULT CURRENT_TIME, g DEFAULT (1 + 1), h DEFAULT -'x', i DEFAULT end, j DEFAULT true, k DEFAULT indexed, l DEFAULT \"q\")",
+  "CREATE TABLE p(a, PRIMARY KEY(a AUTOINCREMENT)) STRICT, WITHOUT ROWID",
+  // Types are dequoted as SQLite does it (the PRAGMA table_info types of sqlite3).
+  "CREATE TABLE q(a 'big' int, b 'x''y', c \"q\" z, d [x] y, e 'text', f [int], g \"a\"\"b\", h 'ab' 'cd')",
+  // What SQLite rejects: a column after a table constraint, foreign key actions, DEFAULT and
+  // table options outside the grammar, TEMP INDEX, column lists with COLLATE or ASC.
+  "CREATE TABLE p(a, PRIMARY KEY(a), b)",
+  "CREATE TABLE p(PRIMARY KEY(a))",
+  "CREATE TABLE p(a REFERENCES q ON BOGUS CASCADE)",
+  "CREATE TABLE p(a REFERENCES q ON DELETE BOGUS)",
+  "CREATE TABLE p(a REFERENCES q ON DELETE SET BOGUS)",
+  "CREATE TABLE p(a DEFERRABLE INITIALLY bogus)",
+  "CREATE TABLE p(a DEFAULT ~1)",
+  "CREATE TABLE p(a DEFAULT f(1))",
+  "CREATE TABLE p(a DEFAULT x.y)",
+  "CREATE TABLE p(a DEFAULT - - 1)",
+  "CREATE TABLE p(a DEFAULT -x)",
+  "CREATE TABLE p(a DEFAULT ?)",
+  "CREATE TABLE p(a DEFAULT left)",
+  "CREATE TABLE p(a DEFAULT 1 + 1)",
+  "CREATE TABLE p(a COLLATE left)",
+  "CREATE TABLE p(a) STRICT WITHOUT ROWID",
+  "CREATE TABLE p(a) STRICT,",
+  "CREATE TABLE p(a) WITHOUT ROWID WITHOUT ROWID",
+  "CREATE TABLE p(a) BOGUS",
+  "CREATE TABLE p(a) WITHOUT left",
+  "CREATE TABLE p(a) \"strict\"",
+  "CREATE TABLE p(a AS (1) bogus)",
+  "CREATE TABLE p(a, CHECK(a),)",
+  "CREATE TABLE p(a, FOREIGN KEY (a COLLATE x) REFERENCES q)",
+  "CREATE VIEW v(a DESC) AS SELECT 1",
+  "CREATE INDEX i ON t(a NULLS FIRST)",
+  "CREATE TEMP INDEX i ON t(a)",
+  "CREATE TEMP UNIQUE INDEX i ON t(a)",
+  // INSERT as SQLite: VALUES rows of one length, no ORDER BY or LIMIT after VALUES, no upsert
+  // after DEFAULT VALUES, only the last ON CONFLICT without a target, and ON after a FROM item
+  // is a join constraint (SQLite's documented ambiguity; `WHERE true` resolves it).
+  "INSERT INTO t VALUES (1, 2), (3)",
+  "INSERT INTO t VALUES (1) ORDER BY 1",
+  "INSERT INTO t VALUES (1) LIMIT 1",
+  "INSERT INTO t DEFAULT VALUES ON CONFLICT DO NOTHING",
+  "INSERT INTO t DEFAULT VALUES RETURNING *",
+  "INSERT INTO t VALUES (1) ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING",
+  "INSERT INTO t VALUES (1) ON CONFLICT DO UPDATE SET a = 1 ON CONFLICT (a) DO NOTHING",
+  "INSERT INTO t VALUES (1) ON CONFLICT (a) DO NOTHING ON CONFLICT DO NOTHING",
+  "INSERT INTO t SELECT * FROM u ON CONFLICT DO NOTHING",
+  "INSERT INTO t SELECT * FROM u WHERE true ON CONFLICT DO NOTHING",
+  "INSERT INTO t SELECT 1 ON CONFLICT DO NOTHING",
+  // UPDATE and DELETE: an alias needs AS; INDEXED BY and NOT INDEXED; RETURNING takes no t.*.
+  "UPDATE t x SET a = 1",
+  "UPDATE t AS x INDEXED BY i SET a = 1; UPDATE t NOT INDEXED SET a = 1; DELETE FROM t INDEXED BY i; DELETE FROM t AS x NOT INDEXED WHERE 1",
+  "DELETE FROM t x",
+  "UPDATE t SET (a, b) = (1, 2), c = 3 FROM u WHERE 1 RETURNING a 'x', *",
+  "DELETE FROM t RETURNING t.*",
+  // Transactions take a name after TRANSACTION.
+  "BEGIN TRANSACTION a; COMMIT TRANSACTION b; BEGIN DEFERRED TRANSACTION c; END TRANSACTION d; ROLLBACK TRANSACTION e TO SAVEPOINT s",
+  // PRAGMA values: a signed number, a name or string, ON, DELETE or DEFAULT; nothing else.
+  "PRAGMA a = -2000; PRAGMA b = +2000; PRAGMA c = -2.5; PRAGMA d = 'x'; PRAGMA e = left; PRAGMA f(\"g\")",
+  "PRAGMA cache_size = ~2000",
+  "PRAGMA cache_size = (2000)",
+  "PRAGMA cache_size = x'00'",
+  "PRAGMA cache_size = ?",
+  "PRAGMA x = - 'a'",
+  "PRAGMA x = 1_0",
 ];
 
+/** Every SQLite keyword (and some words that are not keywords), lower case. */
+const KEYWORDS: string[] = (
+  "abort action add after all alter always analyze and as asc attach autoincrement before " +
+  "begin between by cascade case cast check collate column commit conflict constraint create " +
+  "cross current current_date current_time current_timestamp database default deferrable " +
+  "deferred delete desc detach distinct do drop each else end escape except exclude exclusive " +
+  "exists explain fail filter first following for foreign from full generated glob group " +
+  "groups having if ignore immediate in index indexed initially inner insert instead " +
+  "intersect into is isnull join key last left like limit match materialized natural no not " +
+  "nothing notnull null nulls of offset on or order others outer over partition plan pragma " +
+  "preceding primary query raise range recursive references regexp reindex release rename " +
+  "replace restrict returning right rollback row rows savepoint select set table temp " +
+  "temporary then ties to transaction trigger unbounded union unique update using vacuum " +
+  "values view virtual when where window with without rowid strict true false"
+).split(" ");
+
+/**
+ * Where each keyword is tried: a column, a table, a type and a type's second word, a DEFAULT,
+ * a collation, a MATCH name, an INSERT column, an UPDATE column, a DELETE alias, an index, a
+ * pragma and its value, a savepoint, a dropped table.
+ */
+const FORMS: string[] = [
+  "CREATE TABLE n(%)",
+  "CREATE TABLE %(a)",
+  "CREATE TABLE n(a %)",
+  "CREATE TABLE n(a int %)",
+  "CREATE TABLE n(a DEFAULT %)",
+  "CREATE TABLE n(a COLLATE %)",
+  "CREATE TABLE n(a REFERENCES p MATCH %)",
+  "INSERT INTO t(%) VALUES (1)",
+  "UPDATE t SET % = 1",
+  "DELETE FROM t AS %",
+  "CREATE INDEX % ON t(a)",
+  "PRAGMA %",
+  "PRAGMA x = %",
+  "SAVEPOINT %",
+  "DROP TABLE %",
+];
+
+/** Whether `sql` parses. */
+function accepts(sql: string): bool {
+  try {
+    parseAll(sql);
+    return true;
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return false;
+    }
+    throw e;
+  }
+}
+
 function main() {
+  // The keyword sweep: + where the keyword is accepted, - where it is an error, in the order of
+  // FORMS; the expected marks are /usr/bin/sqlite3 3.54's.
+  for (const kw of KEYWORDS) {
+    console.log(`${kw} ${FORMS.map((f) => (accepts(f.replaceAll("%", kw)) ? "+" : "-")).join("")}`);
+  }
   // parseOne takes exactly one statement.
   for (const sql of ["", " ; ;", "SELECT 1; SELECT 2", "SELECT 1;"]) {
     try {
@@ -68,7 +195,7 @@ function main() {
               .map(
                 (
                   c,
-                ) => `${c.name}:${c.type}${c.primaryKey ? " pk" : ""}${c.desc ? " desc" : ""}${c.autoincrement ? " auto" : ""}${c.notNull ? " nn" : ""}${c.unique ? " uq" : ""}${c.collate != "" ? " " + c.collate : ""}${c.dflt != null ? " dflt" : ""}${c.check.length > 0 ? " check" : ""}${c.generated != null ? (c.stored ? " stored" : " virtual") : ""}`,
+                ) => `${c.name}:${c.type}${c.primaryKey ? " pk" : ""}${c.desc ? " desc" : ""}${c.autoincrement ? " auto" : ""}${c.notNull ? " nn" : ""}${c.unique ? " uq" : ""}${c.collate != "" ? " " + c.collate : ""}${c.dflt != null ? " dflt" + String(c.dflt!.kind) + (c.dflt!.text != "" ? "'" + c.dflt!.text : "") : ""}${c.check.length > 0 ? " check" : ""}${c.generated != null ? (c.stored ? " stored" : " virtual") : ""}`,
               )
               .join(", ") +
             "]";
@@ -120,6 +247,21 @@ function main() {
         }
         if (s.mode != "") {
           d += ` ${s.mode}`;
+        }
+        if (s.transaction != "") {
+          d += ` transaction ${s.transaction}`;
+        }
+        if (s.indexedBy != "") {
+          d += ` indexed-by ${s.indexedBy}`;
+        }
+        if (s.notIndexed) {
+          d += " not-indexed";
+        }
+        if (s.alias != "") {
+          d += ` alias ${s.alias}`;
+        }
+        if (s.checks.length > 0) {
+          d += ` checks ${s.checks.length}`;
         }
         if (s.what != "") {
           d += ` ${s.what}${s.ifExists ? " if-exists" : ""}`;

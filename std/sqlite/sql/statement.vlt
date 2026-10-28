@@ -1,23 +1,27 @@
 // velt:sqlite/sql/statement — the statements of SQLite's grammar besides SELECT: INSERT (with
 // UPSERT and RETURNING), UPDATE, DELETE, CREATE TABLE / INDEX / VIEW, DROP, ALTER TABLE,
-// BEGIN / COMMIT / ROLLBACK / SAVEPOINT / RELEASE, PRAGMA and EXPLAIN.
+// BEGIN / COMMIT / ROLLBACK / SAVEPOINT / RELEASE, PRAGMA and EXPLAIN. CREATE TABLE's
+// definitions are in velt:sqlite/sql/table.
 
 import { Parser } from "velt:sqlite/sql/parser";
-import { SqlError, T_EOF, T_IDENT, T_OP, T_QUOTED, T_SEMI } from "velt:sqlite/sql/lexer";
 import {
-  ColumnDef,
-  E_COLLATE,
+  SqlError,
+  T_EOF,
+  T_IDENT,
+  T_INTEGER,
+  T_OP,
+  T_REAL,
+  T_SEMI,
+  T_STRING,
+} from "velt:sqlite/sql/lexer";
+import {
   E_COLUMN,
   E_STAR,
   Expr,
-  IndexedColumn,
-  KeyConstraint,
-  ResultColumn,
   S_ALTER,
   S_BEGIN,
   S_COMMIT,
   S_CREATE_INDEX,
-  S_CREATE_TABLE,
   S_CREATE_VIEW,
   S_DELETE,
   S_DROP,
@@ -32,6 +36,17 @@ import {
   Statement,
   Upsert,
 } from "velt:sqlite/sql/ast";
+import {
+  columnDef,
+  columnNames,
+  conflictResolution,
+  createTable,
+  ifNotExists,
+  indexedColumns,
+  literal,
+  negated,
+  qualified,
+} from "velt:sqlite/sql/table";
 
 /** Parses the statements of `sql` (separated by `;`; empty ones are skipped). */
 export function parseAll(sql: string): Statement[] {
@@ -113,16 +128,17 @@ function command(p: Parser): Statement {
     if (p.isKw("DEFERRED") || p.isKw("IMMEDIATE") || p.isKw("EXCLUSIVE")) {
       s.mode = p.advance().upper;
     }
-    p.eatKw("TRANSACTION");
+    transaction(p, s);
     return s;
   }
   if (p.eatKw("COMMIT") || p.eatKw("END")) {
-    p.eatKw("TRANSACTION");
-    return new Statement(S_COMMIT);
+    const s = new Statement(S_COMMIT);
+    transaction(p, s);
+    return s;
   }
   if (p.eatKw("ROLLBACK")) {
     const s = new Statement(S_ROLLBACK);
-    p.eatKw("TRANSACTION");
+    transaction(p, s);
     if (p.eatKw("TO")) {
       p.eatKw("SAVEPOINT");
       s.name = p.name();
@@ -144,6 +160,13 @@ function command(p: Parser): Statement {
     return pragma(p);
   }
   p.fail();
+}
+
+/** `[TRANSACTION [name]]` after BEGIN, COMMIT, END or ROLLBACK (the name means nothing). */
+function transaction(p: Parser, s: Statement) {
+  if (p.eatKw("TRANSACTION") && p.isName()) {
+    s.transaction = p.name();
+  }
 }
 
 /** Whether WITH at the parser's position starts a SELECT (looks past the CTEs' parentheses). */
@@ -172,15 +195,6 @@ function withSelect(p: Parser): bool {
   }
 }
 
-/** schema.name or name. */
-function qualified(p: Parser, s: Statement) {
-  s.name = p.name();
-  if (p.eatOp(".")) {
-    s.schema = s.name;
-    s.name = p.name();
-  }
-}
-
 function names(p: Parser): string[] {
   p.expectOp("(");
   const out: string[] = [p.name()];
@@ -195,21 +209,31 @@ function returning(p: Parser, s: Statement) {
   if (!p.eatKw("RETURNING")) {
     return;
   }
-  while (true) {
-    if (p.isOp("*")) {
-      const star = new Expr(E_STAR, p.advance().start);
-      s.returning.push(ResultColumn { expr: star, alias: "" });
-    } else {
-      const e = p.expr();
-      let alias = "";
-      if (p.eatKw("AS") || p.isName()) {
-        alias = p.name();
-      }
-      s.returning.push(ResultColumn { expr: e, alias: alias });
+  const at = p.peek().start;
+  s.returning = p.resultColumns();
+  for (const r of s.returning) {
+    if (r.expr.kind == E_STAR && r.expr.table != "") {
+      throw new SqlError(`RETURNING may not use "TABLE.*" wildcards`, at);
     }
-    if (!p.eatOp(",")) {
-      return;
-    }
+  }
+}
+
+/** `[schema.]name [AS alias]` of INSERT, UPDATE and DELETE (an alias needs AS). */
+function target(p: Parser, s: Statement) {
+  qualified(p, s);
+  if (p.eatKw("AS")) {
+    s.alias = p.name();
+  }
+}
+
+/** INDEXED BY name or NOT INDEXED, after UPDATE's or DELETE's table. */
+function indexHint(p: Parser, s: Statement) {
+  if (p.eatKw("INDEXED")) {
+    p.expectKw("BY");
+    s.indexedBy = p.name();
+  } else if (p.eatKw("NOT")) {
+    p.expectKw("INDEXED");
+    s.notIndexed = true;
   }
 }
 
@@ -224,25 +248,30 @@ function insert(p: Parser): Statement {
     }
   }
   p.expectKw("INTO");
-  qualified(p, s);
-  if (p.eatKw("AS")) {
-    s.alias = p.name();
-  }
+  target(p, s);
   if (p.isOp("(")) {
     s.columns = names(p);
   }
   if (p.eatKw("DEFAULT")) {
+    // DEFAULT VALUES takes RETURNING, but no upsert.
     p.expectKw("VALUES");
     s.defaultValues = true;
-  } else if (p.isKw("VALUES") && !compoundValues(p)) {
+    returning(p, s);
+    return s;
+  }
+  if (p.isKw("VALUES") && !compoundValues(p)) {
     p.advance();
     while (true) {
+      const at = p.peek().start;
       p.expectOp("(");
       const row: Expr[] = [p.expr()];
       while (p.eatOp(",")) {
         row.push(p.expr());
       }
       p.expectOp(")");
+      if (s.rows.length > 0 && row.length != s.rows[0].length) {
+        throw new SqlError("all VALUES must have the same number of terms", at);
+      }
       s.rows.push(row);
       if (!p.eatOp(",")) {
         break;
@@ -254,13 +283,18 @@ function insert(p: Parser): Statement {
   while (p.isKw("ON") && p.isKwAt(1, "CONFLICT")) {
     p.advance();
     p.advance();
-    s.upserts.push(upsert(p));
+    const u = upsert(p);
+    s.upserts.push(u);
+    if (u.target.length == 0) {
+      // Only the last ON CONFLICT may omit its target.
+      break;
+    }
   }
   returning(p, s);
   return s;
 }
 
-/** VALUES followed by UNION, ORDER BY or LIMIT is a select, not plain rows. */
+/** VALUES followed by UNION, INTERSECT or EXCEPT is a compound select, not plain rows. */
 function compoundValues(p: Parser): bool {
   let depth = 0;
   let k: usize = 0;
@@ -276,13 +310,7 @@ function compoundValues(p: Parser): bool {
     } else if (
       depth == 0 &&
       t.kind == T_IDENT &&
-      (
-        t.upper == "UNION" ||
-        t.upper == "EXCEPT" ||
-        t.upper == "INTERSECT" ||
-        t.upper == "ORDER" ||
-        t.upper == "LIMIT"
-      )
+      (t.upper == "UNION" || t.upper == "EXCEPT" || t.upper == "INTERSECT")
     ) {
       return true;
     } else if (depth == 0 && t.kind == T_IDENT && (t.upper == "ON" || t.upper == "RETURNING")) {
@@ -329,30 +357,13 @@ function assignments(p: Parser, columns: string[][], values: Expr[]) {
   }
 }
 
-/** ROLLBACK, ABORT, REPLACE, FAIL or IGNORE (after OR, or ON CONFLICT). */
-function conflictResolution(p: Parser): string {
-  const w = p.peek().upper;
-  if (
-    p.peek().kind != T_IDENT ||
-    (w != "ROLLBACK" && w != "ABORT" && w != "REPLACE" && w != "FAIL" && w != "IGNORE")
-  ) {
-    p.fail();
-  }
-  p.advance();
-  return w;
-}
-
 function update(p: Parser): Statement {
   const s = new Statement(S_UPDATE);
   if (p.eatKw("OR")) {
     s.orConflict = conflictResolution(p);
   }
-  qualified(p, s);
-  if (p.eatKw("AS")) {
-    s.alias = p.name();
-  } else if (p.isName() && !p.isKw("SET")) {
-    s.alias = p.name();
-  }
+  target(p, s);
+  indexHint(p, s);
   p.expectKw("SET");
   assignments(p, s.setColumns, s.setValues);
   if (p.eatKw("FROM")) {
@@ -368,10 +379,8 @@ function update(p: Parser): Statement {
 function remove(p: Parser): Statement {
   const s = new Statement(S_DELETE);
   p.expectKw("FROM");
-  qualified(p, s);
-  if (p.eatKw("AS")) {
-    s.alias = p.name();
-  }
+  target(p, s);
+  indexHint(p, s);
   if (p.eatKw("WHERE")) {
     s.where = p.expr();
   }
@@ -386,265 +395,37 @@ function create(p: Parser): Statement {
     s.temp = temp;
     return s;
   }
-  const unique = p.eatKw("UNIQUE");
-  if (p.eatKw("INDEX")) {
-    const s = new Statement(S_CREATE_INDEX);
-    s.unique = unique;
-    s.ifNotExists = ifNotExists(p);
-    qualified(p, s);
-    p.expectKw("ON");
-    s.table = p.name();
-    s.indexed = indexedColumns(p);
-    if (p.eatKw("WHERE")) {
-      s.where = p.expr();
-    }
-    return s;
-  }
-  if (!unique && p.eatKw("VIEW")) {
+  if (p.eatKw("VIEW")) {
     const s = new Statement(S_CREATE_VIEW);
     s.temp = temp;
     s.ifNotExists = ifNotExists(p);
     qualified(p, s);
     if (p.isOp("(")) {
-      s.columns = names(p);
+      s.columns = columnNames(p);
     }
     p.expectKw("AS");
     s.select = p.select();
     return s;
   }
-  if (p.isKw("TRIGGER") || p.isKw("VIRTUAL")) {
+  if (p.isKw("TRIGGER") || (!temp && p.isKw("VIRTUAL"))) {
     throw new SqlError(`CREATE ${p.peek().upper} is not supported yet`, p.peek().start);
   }
-  p.fail();
-}
-
-function ifNotExists(p: Parser): bool {
-  if (p.isKw("IF")) {
-    p.advance();
-    p.expectKw("NOT");
-    p.expectKw("EXISTS");
-    return true;
-  }
-  return false;
-}
-
-/** `(col [COLLATE c] [ASC|DESC], …)` of an index, a key or an upsert target. */
-export function indexedColumns(p: Parser): IndexedColumn[] {
-  p.expectOp("(");
-  const out: IndexedColumn[] = [];
-  while (true) {
-    let e = p.expr();
-    let collate = "";
-    // `x COLLATE c` parses as an expression; keep the column and the collation apart.
-    if (e.kind == E_COLLATE && e.a != null) {
-      collate = e.name;
-      e = e.a!;
-    }
-    let desc = false;
-    if (p.eatKw("DESC")) {
-      desc = true;
-    } else {
-      p.eatKw("ASC");
-    }
-    out.push(IndexedColumn { expr: e, collate: collate, desc: desc });
-    if (!p.eatOp(",")) {
-      break;
-    }
-  }
-  p.expectOp(")");
-  return out;
-}
-
-function createTable(p: Parser): Statement {
-  const s = new Statement(S_CREATE_TABLE);
-  s.ifNotExists = ifNotExists(p);
-  qualified(p, s);
-  if (p.eatKw("AS")) {
-    s.select = p.select();
-    return s;
-  }
-  p.expectOp("(");
-  while (true) {
-    if (
-      p.isKw("CONSTRAINT") ||
-      p.isKw("PRIMARY") ||
-      p.isKw("UNIQUE") ||
-      p.isKw("CHECK") ||
-      p.isKw("FOREIGN")
-    ) {
-      tableConstraint(p, s);
-    } else {
-      const c = columnDef(p);
-      s.columnDefs.push(c);
-      columnKeys(s, c);
-    }
-    if (!p.eatOp(",")) {
-      break;
-    }
-  }
-  p.expectOp(")");
-  /** Table options: WITHOUT ROWID, STRICT. */
-  while (p.isKw("WITHOUT") || p.isKw("STRICT")) {
-    if (p.eatKw("STRICT")) {
-      s.strict = true;
-    } else {
-      p.advance();
-      if (p.peek().upper != "ROWID") {
-        p.fail();
-      }
-      p.advance();
-      s.withoutRowid = true;
-    }
-    p.eatOp(",");
-  }
-  return s;
-}
-
-/** A column's PRIMARY KEY and UNIQUE constraints, as single-column keys. */
-function columnKeys(s: Statement, c: ColumnDef) {
-  const e = new Expr(E_COLUMN, 0);
-  e.name = c.name;
-  if (c.primaryKey) {
-    const k = IndexedColumn { expr: e, collate: "", desc: c.desc };
-    s.keys.push(KeyConstraint { primary: true, columns: [k] });
-  }
-  if (c.unique) {
-    const k = IndexedColumn { expr: e, collate: "", desc: false };
-    s.keys.push(KeyConstraint { primary: false, columns: [k] });
-  }
-}
-
-function tableConstraint(p: Parser, s: Statement) {
-  if (p.eatKw("CONSTRAINT")) {
-    p.name();
-  }
-  if (p.eatKw("PRIMARY")) {
-    p.expectKw("KEY");
-    s.primaryKey = indexedColumns(p);
-    s.keys.push(KeyConstraint { primary: true, columns: s.primaryKey });
-    conflictClause(p);
-  } else if (p.eatKw("UNIQUE")) {
-    const u = indexedColumns(p);
-    s.uniques.push(u);
-    s.keys.push(KeyConstraint { primary: false, columns: u });
-    conflictClause(p);
-  } else if (p.eatKw("CHECK")) {
-    p.expectOp("(");
-    s.checks.push(p.expr());
-    p.expectOp(")");
-  } else if (p.eatKw("FOREIGN")) {
-    p.expectKw("KEY");
-    names(p);
-    foreignKey(p);
-  } else {
+  if (temp) {
+    // An index is never TEMP (its table decides).
     p.fail();
   }
-}
-
-/** ON CONFLICT <resolution> of a constraint (kept by SQLite in the schema; enforced later). */
-function conflictClause(p: Parser) {
-  if (p.isKw("ON") && p.isKwAt(1, "CONFLICT")) {
-    p.advance();
-    p.advance();
-    conflictResolution(p);
+  const s = new Statement(S_CREATE_INDEX);
+  s.unique = p.eatKw("UNIQUE");
+  p.expectKw("INDEX");
+  s.ifNotExists = ifNotExists(p);
+  qualified(p, s);
+  p.expectKw("ON");
+  s.table = p.name();
+  s.indexed = indexedColumns(p);
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
   }
-}
-
-function foreignKey(p: Parser) {
-  p.expectKw("REFERENCES");
-  p.name();
-  if (p.isOp("(")) {
-    names(p);
-  }
-  /** ON DELETE/UPDATE actions, MATCH, DEFERRABLE: read and kept in the schema text only. */
-  while (
-    p.isKw("ON") ||
-    p.isKw("MATCH") ||
-    p.isKw("DEFERRABLE") ||
-    (p.isKw("NOT") && p.isKwAt(1, "DEFERRABLE"))
-  ) {
-    if (p.eatKw("ON")) {
-      p.advance();
-      if (p.eatKw("SET")) {
-        p.advance();
-      } else if (p.eatKw("NO")) {
-        p.expectKw("ACTION");
-      } else {
-        p.advance();
-      }
-    } else if (p.eatKw("MATCH")) {
-      p.name();
-    } else {
-      p.eatKw("NOT");
-      p.expectKw("DEFERRABLE");
-      if (p.eatKw("INITIALLY")) {
-        p.advance();
-      }
-    }
-  }
-}
-
-function columnDef(p: Parser): ColumnDef {
-  const c = new ColumnDef(p.name());
-  c.type = p.typeName();
-  while (true) {
-    if (p.eatKw("CONSTRAINT")) {
-      p.name();
-    }
-    if (p.eatKw("PRIMARY")) {
-      p.expectKw("KEY");
-      c.primaryKey = true;
-      if (p.eatKw("DESC")) {
-        c.desc = true;
-      } else {
-        p.eatKw("ASC");
-      }
-      conflictClause(p);
-      c.autoincrement = p.eatKw("AUTOINCREMENT");
-    } else if (p.isKw("NOT") && p.isKwAt(1, "NULL")) {
-      p.advance();
-      p.advance();
-      c.notNull = true;
-      conflictClause(p);
-    } else if (p.eatKw("NULL")) {
-      conflictClause(p);
-    } else if (p.eatKw("UNIQUE")) {
-      c.unique = true;
-      conflictClause(p);
-    } else if (p.eatKw("CHECK")) {
-      p.expectOp("(");
-      c.check.push(p.expr());
-      p.expectOp(")");
-    } else if (p.eatKw("DEFAULT")) {
-      if (p.eatOp("(")) {
-        c.dflt = p.expr();
-        p.expectOp(")");
-      } else {
-        // A literal, a signed number, or a bare word (taken as a string).
-        c.dflt = p.unary();
-      }
-    } else if (p.eatKw("COLLATE")) {
-      c.collate = p.name().toUpperCase();
-    } else if (p.eatKw("REFERENCES")) {
-      p.pos--;
-      foreignKey(p);
-    } else if (p.eatKw("GENERATED") || p.isKw("AS")) {
-      if (!p.eatKw("AS")) {
-        p.expectKw("ALWAYS");
-        p.expectKw("AS");
-      }
-      p.expectOp("(");
-      c.generated = p.expr();
-      p.expectOp(")");
-      if (p.eatKw("STORED")) {
-        c.stored = true;
-      } else {
-        p.eatKw("VIRTUAL");
-      }
-    } else {
-      return c;
-    }
-  }
+  return s;
 }
 
 function drop(p: Parser): Statement {
@@ -709,31 +490,36 @@ function pragma(p: Parser): Statement {
 }
 
 /**
- * A pragma's value: a signed number, a string, or a word as a column name, upper case (ON,
- * FULL, WAL, TRUE): any name, and the keywords ON, DELETE and DEFAULT, as SQLite's grammar.
+ * A pragma's value, as SQLite's grammar allows: a signed number (no digit separators), a
+ * string, or a name, upper case (ON, FULL, WAL, TRUE; the keywords ON, DELETE and DEFAULT too).
  */
 function pragmaValue(p: Parser): Expr {
   const t = p.peek();
-  if (t.kind == T_IDENT || t.kind == T_QUOTED) {
-    const w = t.upper;
-    if (!p.isName() && w != "ON" && w != "DELETE" && w != "DEFAULT" && !isJoinWord(w)) {
-      p.fail();
-    }
+  if (p.isOp("+") || p.isOp("-")) {
+    const sign = p.advance();
+    const e = pragmaNumber(p);
+    return sign.text == "-" ? negated(e, sign.start) : e;
+  }
+  if (t.kind == T_INTEGER || t.kind == T_REAL) {
+    return pragmaNumber(p);
+  }
+  if (t.kind == T_STRING) {
+    return literal(p);
+  }
+  if (p.isName() || p.isKw("ON") || p.isKw("DELETE") || p.isKw("DEFAULT")) {
     p.advance();
     const e = new Expr(E_COLUMN, t.start);
-    e.name = w;
+    e.name = t.upper;
     return e;
   }
-  return p.unary();
+  p.fail();
 }
 
-/** Join keywords, which SQLite also takes as names. */
-function isJoinWord(w: string): bool {
-  return w == "LEFT" ||
-    w == "RIGHT" ||
-    w == "FULL" ||
-    w == "INNER" ||
-    w == "OUTER" ||
-    w == "CROSS" ||
-    w == "NATURAL";
+/** An integer or a real, written without separators (`plus_num`). */
+function pragmaNumber(p: Parser): Expr {
+  const t = p.peek();
+  if ((t.kind != T_INTEGER && t.kind != T_REAL) || p.raw(t).includes("_")) {
+    p.fail();
+  }
+  return p.primary();
 }

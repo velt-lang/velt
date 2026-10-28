@@ -226,6 +226,9 @@ export class Statement {
   setColumns: string[][] = [];
   setValues: Expr[] = [];
   from: FromItem[] = [];
+  /** UPDATE, DELETE: INDEXED BY name, or NOT INDEXED (`notIndexed`). */
+  indexedBy: string = "";
+  notIndexed: bool = false;
   where: Expr | null = null;
   returning: ResultColumn[] = [];
   orderBy: OrderTerm[] = [];
@@ -250,6 +253,8 @@ export class Statement {
   ifExists: bool = false;
   /** BEGIN DEFERRED/IMMEDIATE/EXCLUSIVE, PRAGMA value, SAVEPOINT name. */
   mode: string = "";
+  /** BEGIN, COMMIT, ROLLBACK: the name after TRANSACTION, which SQLite ignores. */
+  transaction: string = "";
   value: Expr | null = null;
   /** ALTER TABLE: RENAME TO / RENAME COLUMN / ADD COLUMN / DROP COLUMN. */
   action: string = "";
