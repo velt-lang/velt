@@ -82,7 +82,9 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
-        let params: FxHashSet<LocalId> = aliases.keys().copied().collect();
+        let params: FxHashSet<String> = (aliases.keys())
+            .map(|l| f.body.locals[l.0 as usize].name.clone())
+            .collect();
         let caps: Vec<(LocalId, LocalId)> = f.captures.iter().map(|c| (c.inner, c.outer)).collect();
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
@@ -394,8 +396,8 @@ struct Checker<'a, 'm> {
     cx: &'a Ctx<'m>,
     locals: &'a [LocalDef],
     aliases: Aliases,
-    /// The params `aliases` makes one place ([`aliasing_params`]).
-    params: FxHashSet<LocalId>,
+    /// The names of the params `aliases` makes one place ([`aliasing_params`]).
+    params: FxHashSet<String>,
     /// The function checked, and its captures (inner, outer).
     at: (DefId, Vec<(LocalId, LocalId)>),
     closures: &'a Closures,
@@ -481,17 +483,19 @@ impl Checker<'_, '_> {
             drop_key_through_receiver(&mut uses);
         }
         let shared = share_borrowed_captures(&mut uses);
-        if let Some(d) = first_conflict(&uses) {
-            if relaxed && !self.conflicts_as_written(args, held) {
-                return;
-            }
+        // Two whole params passed on to a callee checked with its params as one place
+        // (`relaxed_callee`) are what it was checked for.
+        let params = &self.params;
+        let whole = |u: &Use| u.place.proj.is_empty() && !u.captured && params.contains(&u.text);
+        let skip = |u: &Use, w: &Use| relaxed && whole(u) && whole(w) && u.text != w.text;
+        if let Some(d) = first_conflict(&uses, &skip) {
             self.errors.push(d);
         } else if !shared.is_empty() {
             // The conflict the shares resolve, for a closure that turns out to modify.
             for &(i, k, ..) in &shared {
                 uses[i].0[k].access = Access::Move;
             }
-            if let Some(err) = first_conflict(&uses) {
+            if let Some(err) = first_conflict(&uses, &skip) {
                 for (_, _, c, outer) in shared {
                     self.shares.push((c, outer, err.clone()));
                 }
@@ -501,41 +505,15 @@ impl Checker<'_, '_> {
 }
 
 impl Checker<'_, '_> {
-    /// Does the call conflict with this function's params taken as distinct values? (Its
-    /// conflict otherwise comes from two params that may be one value, [`aliasing_params`].)
-    fn conflicts_as_written(&self, args: &mut [Expr], held: Option<(DefId, Span)>) -> bool {
-        let aliases: Aliases = (self.aliases.iter())
-            .filter(|(l, _)| !self.params.contains(*l))
-            .map(|(l, p)| (*l, p.clone()))
-            .collect();
-        let col = Collector {
-            cx: self.cx,
-            locals: self.locals,
-            aliases: &aliases,
-            held: self.held,
-        };
-        let mut uses: ArgUses = vec![];
-        if let Some((c, span)) = held {
-            let mut caps = vec![];
-            col.captures(c, span, false, &mut caps);
-            uses.push((caps, vec![]));
-        }
-        for a in args.iter_mut() {
-            let (mut direct, mut nested) = (vec![], vec![]);
-            col.direct(a, &mut direct, &mut nested);
-            uses.push((direct, nested));
-        }
-        share_borrowed_captures(&mut uses);
-        first_conflict(&uses).is_some()
-    }
-
     /// Is `callee` a function checked as if its params may be one value, which assumes no
     /// exclusive access for any of them (a closure, or a function used as a value, whose
-    /// modified params are `Borrow`, `finish::demote_fn_values`)? Two arguments that are one
-    /// value only because this function's own params may be (`mount(vnode, container)` passing
-    /// both on, in a renderer whose nested functions are closures) are then what that callee
-    /// was checked for (#1383), as in JavaScript, where they are one object. A named function
-    /// that takes one of them `BorrowMut` keeps the error: its body assumes they are not.
+    /// modified params are `Borrow`, `finish::demote_fn_values`)? Two whole params of this
+    /// function that may be one value (`mount(vnode, container)` passing both on, in a renderer
+    /// whose nested functions are closures) are then what that callee was checked for (#1383),
+    /// as in JavaScript, where they are one object. Not a part of one with the other (`(a.log,
+    /// b)`: the callee was checked with an array and an object it can't contain), nor a param
+    /// changed while another argument is evaluated, nor a named function that takes one of them
+    /// `BorrowMut`: its body assumes they are not one value.
     fn relaxed_callee(&self, callee: &Callee) -> bool {
         if self.params.is_empty() {
             return false;
@@ -643,7 +621,8 @@ fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, Loca
     out
 }
 
-fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
+/// `skip`: a pair of direct uses that is no conflict.
+fn first_conflict(uses: &ArgUses, skip: &dyn Fn(&Use, &Use) -> bool) -> Option<Diagnostic> {
     for (i, (direct_i, _)) in uses.iter().enumerate() {
         for (j, (direct_j, nested_j)) in uses.iter().enumerate() {
             if i == j {
@@ -651,7 +630,7 @@ fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
             }
             for u in direct_i {
                 if i < j {
-                    let hit = direct_j.iter().find(|w| clash(u, w));
+                    let hit = direct_j.iter().find(|w| clash(u, w) && !skip(u, w));
                     if let Some(w) = hit {
                         return Some(report_direct(u, w));
                     }

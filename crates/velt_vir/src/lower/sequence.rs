@@ -280,24 +280,42 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Is a value of type `ty` an object a callee can change in place where it is stored inline
-    /// (an uncounted object type, array or tuple, or one of them or `null`)? Holding it against
-    /// later operands copies it, and a change would then go to the copy. The exclusivity rule
-    /// (velt_sema `ownership/exclusive`) keeps later operands from changing what such a
-    /// borrowed argument holds, so it is passed where it is.
-    pub(super) fn inline_object(&mut self, ty: TyId) -> bool {
+    /// Is a borrowed argument of type `ty`, which the callee may change (a modified param of a
+    /// function used as a value, or any param through a function value), an object stored
+    /// inline (an uncounted object type, array or tuple, or one of them or `null`) that must
+    /// be passed where it is? Holding it against the later operands would copy it, and the
+    /// change would go to the copy. When a later operand may change memory (a call through a
+    /// function value can change the caller's object behind the exclusivity check, as such a
+    /// callee's modified params are `Borrow`: `pushes[0](p.log, swaps[0](p))`), the object's
+    /// type is counted instead, so the hold is a share of the one object, as in JavaScript;
+    /// otherwise the exclusivity rule (velt_sema `ownership/exclusive`) keeps the later operands
+    /// from changing what it holds.
+    pub(super) fn changed_in_place(&mut self, ty: TyId, later: Later) -> bool {
+        let Some(obj) = self.inline_object(ty) else {
+            return false;
+        };
+        if later.memory {
+            self.cx.note_identity_borrow(obj);
+            return false;
+        }
+        true
+    }
+
+    /// The object type a value of type `ty` stores inline (`changed_in_place`).
+    fn inline_object(&mut self, ty: TyId) -> Option<TyId> {
         let t = self.sub(ty);
         if self.cx.counted(t) || self.vty(t).is_scalar() {
-            return false;
+            return None;
         }
         match self.cx.kind(t) {
             hir::TyKind::Option(x, _) => self.inline_object(x),
-            hir::TyKind::Tuple(_) | hir::TyKind::Array(_) => true,
+            hir::TyKind::Tuple(_) | hir::TyKind::Array(_) => Some(t),
             hir::TyKind::Adt(d, _) => matches!(
                 self.cx.hir.def(d),
                 hir::Def::Adt(a) if a.kind != hir::AdtKind::Class && !a.is_copy
-            ),
-            _ => false,
+            )
+            .then_some(t),
+            _ => None,
         }
     }
 

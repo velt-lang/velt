@@ -5,9 +5,9 @@
 
 use rustc_hash::FxHashMap;
 
+use super::local_closures::walk;
 use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S};
-use crate::visit::{self, VisitMut};
 
 /// Which closure a local is bound to (`const f = () => …`, a nested `function`), and which
 /// function creates each closure.
@@ -23,12 +23,15 @@ impl Closures {
             parent: FxHashMap::default(),
         };
         for &d in &cx.fn_defs {
+            // Std's closures are left out: there a call keeps every conflict
+            // (`exclusive::Checker::relaxed_callee`).
+            if cx.modules[cx.fn_info(d).module].is_std {
+                continue;
+            }
             let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
                 continue;
             };
-            let mut block = f.body.block.clone();
-            let mut v = Bound { d, out: &mut out };
-            visit::block(&mut block, &mut v);
+            walk::block(&f.body.block, &mut Bound { d, out: &mut out });
         }
         out
     }
@@ -67,8 +70,8 @@ struct Bound<'a> {
     out: &'a mut Closures,
 }
 
-impl VisitMut for Bound<'_> {
-    fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+impl walk::Visit for Bound<'_> {
+    fn stmt(&mut self, s: &crate::hir::Stmt) {
         if let S::Let {
             local,
             init: Some(init),
@@ -89,7 +92,7 @@ impl VisitMut for Bound<'_> {
         }
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Closure(c) => {
                 self.out.parent.insert(*c, self.d);
