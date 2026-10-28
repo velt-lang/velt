@@ -1466,6 +1466,18 @@ Build cost of a program using the fd API (`openSync` + `readSync` + `closeSync`)
 using `readFileBytesSync` (Rust runtime): 8,215 against 2,427 lines of `--emit llvm`, and a
 `velt build --release` of 0.54–0.63 s against 0.19–0.39 s (same loaded machine).
 
+With byte views (#1718: `readSync` / `writeSync` take typed arrays and `DataView`s, system
+function buffers take views, the errno table one string, one uncaught-error report for a union
+of `Error` classes), the same program is 9,082 lines (from 8,291 on the branch before; the
+`readFileBytesSync` program 2,463) and its `velt build --release` takes 640–657 M instructions
+against 623–691 M before (`/usr/bin/time -l`, the compiler process; the `readFileBytesSync`
+program 509–512 M). What the lines are: `main` with `openSync`, `readSync` and `closeSync`
+inlined and the uncaught-error report (5,106), `readInto` (1,141: the range checks, the two
+system calls each with its `subarray` clamped, the errors), `osError` (1,094: the errno table
+lookup and the message), `integer` (458), and the error classes' drop, format and clone glue.
+Most of it is string and error code: a template, a string drop or a `length` is written out
+inline at each use, which is where a smaller IR would come from next.
+
 ## Byte views: decoding b-tree page cells (`bench/typed_array/page_cells`, #1718, 2026-10-28)
 
 SQLite-like b-tree pages (64 pages of 4 KiB, 26,181 cells) in a `Uint8Array`, decoded in plain
