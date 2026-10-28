@@ -341,8 +341,11 @@ export function readSync(
   const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
   const size =
     buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
-  const off = bufferOffset(size, offset, true);
-  const len = readLength(size, off, length);
+  // A `null` offset is Node's options argument (`typeof null` is "object") with no options:
+  // the whole buffer, at the file's own position, whatever `length` and `position` say.
+  const options = offset === null;
+  const off = options ? 0 : bufferOffset(size, offset, true);
+  const len = readLength(size, off, options ? undefined : length);
   if (len == 0) {
     return 0;
   }
@@ -356,7 +359,7 @@ export function readSync(
     bytes,
     base + (off as usize),
     base + ((off + len) as usize),
-    readPosition(position),
+    options ? -1 : readPosition(position),
   );
 }
 

@@ -2,6 +2,7 @@
 3 0,0,0,119,111,114,0,0,0,0
 16 104,101,108,108,111,32,119,111,114,108,100,44,32,98,121,116
 5 104,101,108,108,111
+4 32,119,111,114
 TypeError The argument 'buffer' is empty and cannot be written. Received Uint8Array(0) []
 TypeError The argument 'buffer' is empty and cannot be written. Received Float32Array(0) []
 TypeError The argument 'buffer' is empty and cannot be written. Received DataView {

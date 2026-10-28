@@ -92,7 +92,9 @@ system function the target lacks (planned: Windows over its kernel32 functions, 
   `u8[]`, Node's `Buffer`, or a typed array or `DataView`, whose bytes `offset` and `length`
   count, as in Node), at `position` in the
   file (`pread`), or at the file's own position, which advances, when `position` is `null` or
-  -1. Returns the bytes read, 0 at the end of the file.
+  -1. Returns the bytes read, 0 at the end of the file. A `null` `offset` is Node's options
+  argument with no options: the whole buffer is read at the file's own position, and `length`
+  and `position` are ignored.
 - `writeSync(fd, buffer: u8[] | ArrayBufferView | string, offset?, length?, position?): number`:
   writes the bytes (of a `u8[]`, a typed array or a `DataView`; a string as UTF-8; its third argument is then the position), at `position` or at the file's
   own position (at the end for a file opened to append). Returns the bytes written.

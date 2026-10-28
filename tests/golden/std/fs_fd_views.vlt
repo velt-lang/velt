@@ -25,6 +25,10 @@ function main() {
   console.log(fs.readSync(fd, f64, 0, 16, 0), new Uint8Array(f64.buffer).join(","));
   const sub = new Uint8Array(12).subarray(4, 9);
   console.log(fs.readSync(fd, sub), sub.join(","));
+  // A `null` offset is Node's options argument: the whole view at the file's own position,
+  // whatever the length and position after it say.
+  const opts = new Uint8Array(4);
+  console.log(fs.readSync(fd, opts, null, 2, 0), opts.join(","));
   attempt(() => `${fs.readSync(fd, new Uint8Array(0), 0, 1, 0)}`);
   attempt(() => `${fs.readSync(fd, new Float32Array(0), 0, 1, 0)}`);
   attempt(() => `${fs.readSync(fd, new DataView(new ArrayBuffer(0)), 0, 1, 0)}`);
