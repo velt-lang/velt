@@ -589,6 +589,25 @@ holding one: the box a `shared<string>` has. velt_vir `Cx::adt_field_tys` lays t
   module state. `Atomic<string | null>` is not supported yet (`Atomic<shared<string> | null>`
   is).
 
+## `Atom<T>` (#1696 step 3)
+
+`velt:sync`'s `Atom<T>` is plain Velt on the pieces above: a struct of an `Atomic<shared<T>>`
+and a `VersionLatch` for writers.
+- **Reads:** `read(f)` loads the value borrowed and hands it to the callback, with no count, in
+  the method's own epoch section. `load()` returns it counted.
+- **Writes:** `store` and `swap` are the `Atomic`'s.
+- **`update(f)`:** takes the latch, so updates take turns. It loads, calls `f`, and publishes
+  with a compare-and-swap. A `store` or `swap` that came in between makes it run `f` again on
+  the newer value. A throw leaves the value as it was, and `finally` lets the latch go.
+- **Measured** against Rust's `arc-swap` (M4, release, load ~70; 8 threads each reading 10M
+  times, then 4 writers and 4 readers):
+  - one `read` per call: 65–91 ms against 63–81 ms, about the same;
+  - reads in a loop: 42–51 ms against 63–81 ms;
+  - mixed: 166–187 ms against 546–626 ms, about 70% less time.
+
+  Each `read` opens a section; a raw `Atomic<shared<T>>` read in a loop inside one function
+  pays it once (6–13 ms).
+
 ## Not in this design
 
 - `Atomics.wait` / `notify` (futex): blocking a worker thread stalls its tasks; an async-aware

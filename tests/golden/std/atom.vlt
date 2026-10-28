@@ -1,0 +1,64 @@
+// `Atom<T>` (velt:sync): a `shared` value threads read without a lock and replace whole. Tasks on
+// 4 threads update it 10,000 times each while 4 others read it: updates take turns, so none is
+// lost; a throwing update changes nothing and lets the next one run.
+import { Atom } from "velt:sync";
+
+interface Config {
+  name: string;
+  hits: u64;
+}
+
+class Server {
+  config: Atom<Config> = Atom.create(shared({ name: "a", hits: 0 }));
+}
+
+class Refused extends Error {}
+
+async function bump(s: shared<Server>, n: u64): Promise<void> {
+  for (let i: u64 = 0; i < n; i++) {
+    s.config.update((c) => shared({ name: c.name, hits: c.hits + 1 }));
+  }
+}
+
+async function reader(s: shared<Server>, n: u64): Promise<u64> {
+  let backwards: u64 = 0;
+  let last: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const hits = s.config.read((c) => c.hits);
+    if (hits < last) {
+      backwards++;
+    }
+    last = hits;
+  }
+  return backwards;
+}
+
+async function main() {
+  const s = shared(new Server());
+  console.log(s.config.read((c) => c.name), s.config.load().hits);
+  const before = s.config.swap(shared({ name: "b", hits: 0 }));
+  console.log(before.name, s.config.load().name);
+  try {
+    s.config.update((c) => {
+      if (c.hits == 0) {
+        throw new Refused("not yet");
+      }
+      return c;
+    });
+  } catch (e) {
+    console.log("refused", e instanceof Refused, s.config.load().name);
+  }
+  const ps: Promise<void>[] = [];
+  const rs: Promise<u64>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(bump(s, 10000)));
+    rs.push(spawn(reader(s, 100000)));
+  }
+  await Promise.all(ps);
+  let backwards: u64 = 0;
+  for (const b of await Promise.all(rs)) {
+    backwards += b;
+  }
+  s.config.store(shared({ name: "c", hits: s.config.load().hits }));
+  console.log("hits", s.config.load().hits, "seen backwards", backwards, s.config.load().name);
+}
