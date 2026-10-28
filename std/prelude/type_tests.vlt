@@ -1,4 +1,4 @@
-// Prelude: compile-time type tests for generic code (docs/reference/generics.md "Type tests").
+// Prelude: compile-time type tests for generic code (docs/reference/functions.md "Type tests").
 // The compiler decides `typeIs<A, B>()` per instantiation, and lowers an `if` on it so that only
 // the branch it takes runs; `asType<B>(x)` is allowed only inside such a branch. The bodies
 // here run only through a function value, which the compiler refuses.

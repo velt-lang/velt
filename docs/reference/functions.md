@@ -506,6 +506,13 @@ instantiation). Inside `if (typeIs<A, B>())`, `asType<B>(x)` converts a value `x
 same type there; anywhere else it is an error, and neither function can be used as a value.
 Both are Velt's (TypeScript has no counterpart).
 
+- **What counts as the guard:** only the `then` branch of an `if` whose condition is the call
+  itself, and closures written inside it. Not `!typeIs…` with its `else`, `typeIs… && c`, a
+  ternary, code after an early `if (!typeIs…) return;`, a test saved in a `const`, or a chain
+  (`typeIs<A, B>` with `asType<C>`).
+- **The call:** `asType<B>(x)`, with `B` written and nothing else: the type of `x` is the type
+  converted from.
+
 ```ts
 class Slot<V> {
   word: u64 = 0;

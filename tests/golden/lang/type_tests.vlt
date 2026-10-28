@@ -31,6 +31,15 @@ function describe<T>(): string {
   return "other";
 }
 
+// A closure inside the test's branch is compiled in the same instantiation, so it converts too.
+function adder<T>(t: T, xs: u64[]): u64 {
+  if (typeIs<T, u64>()) {
+    const plus = () => asType<u64>(t) + 1;
+    return xs.map((e) => e + asType<u64>(t)).reduce((a, b) => a + b, 0) + plus();
+  }
+  return 0;
+}
+
 function main() {
   const n = new Slot<u64>();
   n.put(42);
@@ -38,4 +47,5 @@ function main() {
   s.put("hello");
   console.log(n.get(0), n.boxed.length, s.get(""), s.word);
   console.log(describe<string>(), describe<u64>(), describe<bool>());
+  console.log(adder<u64>(10, [1, 2]), adder<string>("x", [1, 2]));
 }

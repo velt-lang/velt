@@ -1,9 +1,11 @@
-//! Compile-time type tests (std/prelude/type_tests.vlt, docs/reference/generics.md "Type
+//! Compile-time type tests (std/prelude/type_tests.vlt, docs/reference/functions.md "Type
 //! tests"): `typeIs<A, B>()` is a call of the prelude function, which lowering replaces by a
 //! constant per instantiation (velt_vir `lower/type_tests.rs`). Inside the `then` branch of
 //! `if (typeIs<A, B>())` (`Frame::type_guards`), `asType<B>(x)` with `x: A` converts between the
-//! two, which that instantiation makes the same type; anywhere else it is an error. Neither
-//! function can be used as a value: its body is not what a call means.
+//! two, which that instantiation makes the same type; anywhere else it is an error, as is any
+//! other form of the call (`B` not written, or `A` written: `x` is what says it). A closure in the
+//! branch is lowered in the same instantiation and has its guards. Neither function can be used
+//! as a value: its body is not what a call means.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -59,8 +61,9 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `asType<B>(x)`: the prelude's `asType<B, A>` with `A` the type of `x` (written or not),
-    /// inside `if (typeIs<A, B>())` (either order); `None` for any other call.
+    /// `asType<B>(x)`: the prelude's `asType<B, A>` with `A` the type of `x`, inside
+    /// `if (typeIs<A, B>())` (either order); `None` for a call of another function. Every call of
+    /// it comes here: one of another form is an error.
     pub(crate) fn as_type_call(
         &mut self,
         d: DefId,
@@ -68,16 +71,23 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if Some(d) != self.cx.prelude_fn("asType") || args.len() != 1 || type_args.is_empty() {
+        if Some(d) != self.cx.prelude_fn("asType") {
             return None;
         }
-        let b = self.resolve(&type_args[0]);
-        // Borrowed: the converted value is the same one (a consumer that keeps it counts it).
-        let x = self.expr(&args[0], None, Want::Borrow);
-        let a = match type_args.get(1) {
-            Some(t) => self.resolve(t),
-            None => x.ty,
+        let ([target], [arg]) = (type_args, args) else {
+            self.cx.error(
+                Diagnostic::error("`asType` takes one type argument and one argument", span)
+                    .with_note("write the type to convert to, `asType<B>(x)`: the type of `x` is the other"),
+            );
+            for a in args {
+                self.expr(a, None, Want::Borrow);
+            }
+            return Some(self.error_expr(span));
         };
+        let b = self.resolve(target);
+        // Borrowed: the converted value is the same one (a consumer that keeps it counts it).
+        let x = self.expr(arg, None, Want::Borrow);
+        let a = x.ty;
         self.check_as_type(a, b, span);
         let kind = H::Call {
             callee: hir::Callee::Def(d, vec![b, a]),
