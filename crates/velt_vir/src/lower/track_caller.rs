@@ -1,7 +1,8 @@
 //! Caller-tracking standard-library functions (Rust's `#[track_caller]`, implicitly): a
 //! synchronous, capture-free function defined in a standard-library file whose body calls
 //! `panic` directly (or calls another such function) reports the location of its call site
-//! when it panics. A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
+//! when it panics. An internal error (`panic("ICE: …")`, std's own bug) does not count: it
+//! reports where it is. A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
 //! call site (`Work::Tracked`), whose location is a compile-time constant; copies that small
 //! cost little and are inlined anyway. A larger one has one instance that takes the location
 //! as a hidden last parameter, as Rust passes it (`srcloc::ARG_LOC`), so a program does not
@@ -159,7 +160,9 @@ fn expr_panics(e: &hir::Expr, callees: &mut Scan) -> bool {
     match &e.kind {
         K::Call { callee, args } => {
             let own = match callee {
-                hir::Callee::Intrinsic(Intrinsic::Panic) => true,
+                // An internal error (`panic("ICE: …")`) is the standard library's own bug, not
+                // its caller's: it reports where it is, and needs no caller's location.
+                hir::Callee::Intrinsic(Intrinsic::Panic) => !args.first().is_some_and(is_ice),
                 hir::Callee::Indirect(x) => expr_panics(x, callees),
                 hir::Callee::Def(d, _) => {
                     callees.callees.push(*d);
@@ -214,5 +217,20 @@ fn expr_panics(e: &hir::Expr, callees: &mut Scan) -> bool {
             f
         }
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) | K::Closure(_) => false,
+    }
+}
+
+/// A message that starts with `ICE:`: a literal, or a template or concatenation whose first part
+/// is one.
+fn is_ice(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(hir::Lit::Str(s)) => s.starts_with("ICE:"),
+        K::Binary { lhs, .. } => is_ice(lhs),
+        K::Call {
+            callee: hir::Callee::Intrinsic(Intrinsic::StrConcat | Intrinsic::TemplateToString),
+            args,
+        } => args.first().is_some_and(is_ice),
+        _ => false,
     }
 }
