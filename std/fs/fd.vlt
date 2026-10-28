@@ -1,5 +1,5 @@
-// velt:fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), which
-// `velt:fs` exports. It is Velt code over system functions (docs/reference/system-functions.md):
+// velt:fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a module of
+// its own so that a program importing `velt:fs` does not compile it. It is Velt code over system functions (docs/reference/system-functions.md):
 // each call is one call of the C library, with nothing in between. On macOS and Linux; calling
 // it for another target is a compile error that names the system function it lacks.
 //
@@ -8,6 +8,7 @@
 // Node's messages for arguments it rejects.
 
 import { IoError } from "velt:io";
+import { Stats } from "velt:fs";
 import { platform } from "velt:os";
 import { utf8Encode } from "velt:encoding";
 
@@ -541,12 +542,23 @@ export function ftruncateSync(fd: number, len: number = 0) {
   }
 }
 
-/** The `struct stat` of `fd` (`fstatSync` in velt:fs makes the `Stats`). */
-export function fstatOf(fd: number): Stat {
+/**
+ * The metadata of the open file `fd` (Node's `fs.fstatSync`): its size, modification time and
+ * type, from the system's `fstat`.
+ */
+export function fstatSync(fd: number): Stats {
   const f = descriptor(fd);
   const st: Stat = { st_mode: 0, st_size: 0, st_mtime: 0, st_mtime_nsec: 0 };
   if (fstat(f, st) != 0) {
     throw osError(lastOsError(), "fstat");
   }
-  return st;
+  const kind = st.st_mode & 0o170000;
+  return {
+    size: st.st_size as u64,
+    mtimeMs:
+      (st.st_mtime as number) * 1000 + Math.floor((st.st_mtime_nsec as number) / 1000) / 1000,
+    file: kind == 0o100000,
+    dir: kind == 0o040000,
+    symlink: kind == 0o120000,
+  };
 }

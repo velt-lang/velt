@@ -14,7 +14,7 @@ declare system function fsync(fd: i32): i32;
 declare system function lastOsError(): i32;
 ```
 
-[`velt:fs`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
+[`velt:fs/fd`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
 and `fstatSync` are Velt code over these declarations.
 
 ## What crosses
