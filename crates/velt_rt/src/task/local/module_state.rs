@@ -302,6 +302,14 @@ pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64
     block(desc, slot)
 }
 
+/// Take the module lock as an access of module state does: for what the runtime keeps per
+/// process for compiled code, whose counts are not atomic (a declared function's identity and
+/// its properties, fn_props.rs).
+pub(crate) fn touch() {
+    // SAFETY: as for an access of module state.
+    unsafe { lock_for_access() }
+}
+
 /// Take the module lock for an access unless this thread holds it ([`velt_rt_module_state`]).
 #[inline]
 unsafe fn lock_for_access() {

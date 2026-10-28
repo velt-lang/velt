@@ -634,8 +634,12 @@ keeps for the function with that code address (an environment holding nothing, m
 use, one more reference for the caller, which stores it into the value as its environment), and
 `identity_of(code)` the same without making one or counting it (null when there is none). A
 value converted to `any` gets it there, so `===`, `Map` keys and properties see one function.
-The table holds its reference to the end; with the leak counters on (`VELT_RC_STATS=1`), it is
-released at exit, as module state is.
+These identities are module state (above): their counts and properties are not atomic, so both
+functions take the module lock as an access of a module-level `let` does, and the task keeps
+it in its polls from then on. A value holding one that goes to another task leaves it behind
+(its transfer entry releases the reference and answers null), and finds it there again through
+`identity_of`. The table holds its reference to the end; with the leak counters on
+(`VELT_RC_STATS=1`), it is released at exit, as module state is.
 
 The first `set` on an environment replaces its drop entry (its first word) and its transfer
 entry (its third) with the runtime's. The drop calls the original and, with the last reference

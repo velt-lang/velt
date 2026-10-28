@@ -534,6 +534,9 @@ unsafe fn not_ready(desc: *const ModuleDesc, slot: u64) -> ! {
     crate::platform::exit(1)
 }
 
+/// The module lock of a runtime with threads (velt_rt `module_state::touch`): one thread here.
+pub(crate) fn module_touch() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

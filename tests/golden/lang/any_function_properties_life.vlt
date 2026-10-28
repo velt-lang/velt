@@ -19,12 +19,15 @@ console.log(seen.join(" "));
 function decl(): number {
   return 1;
 }
+
 (decl as any).y = 2;
 console.log((decl as any).y);
+
 function tag(f: any, v: number): any {
   f.v = v;
   return f;
 }
+
 const keep: any = decl;
 tag(keep, 10);
 console.log(keep.v, keep(), (decl as any) === keep);
@@ -44,10 +47,13 @@ async function reader(f: any, n: number): Promise<number> {
   for (let i = 0; i < n; i++) {
     const o = f.obj;
     s += o.k;
-    if (i % 64 == 0) await Promise.resolve();
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
   }
   return s;
 }
+
 async function main(): Promise<void> {
   const f: any = () => 1;
   f.obj = { k: 1 };
@@ -58,10 +64,45 @@ async function main(): Promise<void> {
   }
   for (let i = 0; i < 5000; i++) {
     f.obj = { k: 1 };
-    if (i % 64 == 0) await Promise.resolve();
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
   }
   let s = 0;
-  for (const p of ps) s += await p;
+  for (const p of ps) {
+    s += await p;
+  }
   console.log(s);
 }
+
 await main();
+
+// Tasks that each convert a declared function again and rewrite its property: one function,
+// whose properties are module state (each task takes the module lock).
+async function worker(n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const d: any = decl;
+    d.obj = { k: 1 };
+    const o = d.obj;
+    s += o.k;
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function workers(): Promise<void> {
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(worker(2000)));
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(s);
+}
+
+await workers();

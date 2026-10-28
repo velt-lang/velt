@@ -218,9 +218,14 @@ pub unsafe extern "C" fn velt_rt_fnprop_key(env: *const u8, i: u64, out: *mut Ve
 const IDENTITY_BLOCK: u64 = 32;
 
 /// The identity environment of each function value that has none of its own, by its code
-/// address: a declared function is one object in JavaScript, whichever reference reaches it.
-/// The table holds one reference to each, for the life of the process, as the function lives.
-static IDENTITIES: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+/// address: a declared function is one object in JavaScript, whichever reference reaches it,
+/// in every task. Its count and its properties are not atomic, so they are module state (rt_abi
+/// "Module state"): a task that reaches one takes the module lock, as an access of a
+/// module-level `let` does, and keeps it in its polls from then on. The table holds one
+/// reference to each, as long as the process runs.
+type Identities = HashMap<usize, usize>;
+
+static IDENTITIES: Mutex<Option<Identities>> = Mutex::new(None);
 
 /// The identity environment of the function value with code `code` and no environment, made
 /// on first use (an environment holding nothing), with one more reference for the caller: the
@@ -231,11 +236,18 @@ pub extern "C" fn velt_rt_fnprop_identity(code: *const u8) -> *mut u8 {
     if code.is_null() {
         return std::ptr::null_mut();
     }
+    crate::task::local::module_touch();
+    let key = code as usize;
     let mut t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
     let env = *t
         .get_or_insert_with(HashMap::new)
-        .entry(code as usize)
-        .or_insert_with(|| empty_env() as usize) as *mut u8;
+        .entry(key)
+        .or_insert_with(|| {
+            let env = empty_env();
+            // SAFETY: a fresh environment; sent to another task, it is found there again.
+            unsafe { *header(env, 2) = word_of(identity_transfer as *const ()) };
+            env as usize
+        }) as *mut u8;
     // SAFETY: the table's reference keeps the environment alive.
     unsafe { *(env.sub(8) as *mut u64) += 1 };
     env
@@ -259,8 +271,10 @@ fn empty_env() -> *mut u8 {
 /// property was ever written to it (not counted: the table's reference keeps it), or null.
 #[no_mangle]
 pub extern "C" fn velt_rt_fnprop_identity_of(code: *const u8) -> *mut u8 {
+    crate::task::local::module_touch();
+    let key = code as usize;
     let t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-    let env = t.as_ref().and_then(|t| t.get(&(code as usize)).copied());
+    let env = t.as_ref().and_then(|t| t.get(&key).copied());
     env.unwrap_or(0) as *mut u8
 }
 
@@ -272,6 +286,19 @@ unsafe extern "C" fn identity_drop(env: *mut u8) {
     } else {
         *count -= 1;
     }
+}
+
+/// The transfer entry of a declared function's identity: the function goes to the other task
+/// without one (its own reference released here, under the module lock this task holds), and
+/// finds it there again through the table, taking the module lock first. A tagged pointer (the
+/// many-threads check) has nothing to check.
+unsafe extern "C" fn identity_transfer(env: *mut u8) -> *mut u8 {
+    if env as usize & 1 != 0 {
+        return (env as usize & !1) as *mut u8;
+    }
+    // The table holds a reference too, so this is never the last.
+    *(env.sub(8) as *mut u64) -= 1;
+    std::ptr::null_mut()
 }
 
 /// The clone entry of an identity environment: it holds nothing to copy, so a copy of the
@@ -325,6 +352,7 @@ pub unsafe extern "C" fn velt_rt_fnprop_env_drop(env: *mut u8) {
 pub unsafe extern "C" fn velt_rt_fnprop_env_transfer(env: *mut u8) -> *mut u8 {
     let plain = (env as usize & !1) as *mut u8;
     let orig = with(|t| t.get(&(plain as usize)).map_or(0, |p| p.transfer));
+    let declared = orig == word_of(identity_transfer as *const ());
     let orig = fn_word::<TransferFn>(orig);
     if env as usize & 1 != 0 {
         return match orig {
@@ -367,6 +395,13 @@ pub unsafe extern "C" fn velt_rt_fnprop_env_transfer(env: *mut u8) -> *mut u8 {
         })
     });
     let new = match orig {
+        // A declared function's identity: the other task finds it, with its properties.
+        Some(f) if declared => {
+            for (mut n, _) in copies {
+                n.release();
+            }
+            return f(plain);
+        }
         Some(f) => f(plain),
         None => {
             *(plain.sub(8) as *mut u64) -= 1;
