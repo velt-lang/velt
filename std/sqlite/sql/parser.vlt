@@ -2,8 +2,7 @@
 // SQLite's grammar (parse.y), on the expression grammar of velt:sqlite/sql/expr.
 
 import { ExprParser } from "velt:sqlite/sql/expr";
-import { K_JOIN } from "velt:sqlite/sql/cursor";
-import { SqlError, T_EOF, T_IDENT, T_OP, T_SEMI, Token } from "velt:sqlite/sql/lexer";
+import { K_JOIN, SqlError, T_EOF, T_IDENT, T_OP, T_SEMI, Token } from "velt:sqlite/sql/lexer";
 import {
   C_EXCEPT,
   C_INTERSECT,
@@ -176,7 +175,10 @@ export class Parser extends ExprParser {
         materialized = 2;
       }
       this.expectOp("(");
+      // A CTE's frames are a subquery's and more: it counts two levels.
+      this.enter();
       const c = new Cte(name, this.select());
+      this.leave();
       this.expectOp(")");
       c.columns = columns;
       c.materialized = materialized;
@@ -397,7 +399,10 @@ export class Parser extends ExprParser {
     let plain = false;
     if (this.eatOp("(")) {
       if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+        // A FROM subquery nests through the SELECT core and FROM items: two levels.
+        this.enter();
         item.subquery = this.select();
+        this.leave();
         this.expectOp(")");
       } else {
         throw new SqlError("parenthesized joins are not supported yet", this.peek().start);

@@ -16,6 +16,191 @@ export const T_PARAM: u8 = 7;
 export const T_OP: u8 = 8;
 export const T_SEMI: u8 = 9;
 
+// Keyword classes: how SQLite's grammar (parse.y, its `%fallback ID` list and the `nm`, `ids`
+// and `idj` token classes) and tokenizer (tokenize.c) treat its 147 keywords where a name
+// could stand. Each bare word's class is in its token (`kw`). The keyword sweep of the sqlite_sql_parse golden checks them against sqlite3.
+
+/** Not a keyword: a name anywhere. */
+export const K_ID: u8 = 0;
+/**
+ * A keyword with `%fallback ID`: a name wherever the keyword itself has no meaning (`end`,
+ * `offset`, `like`, `with` name columns and tables; CAST, RAISE and CURRENT_TIME do not start
+ * an operand that is a name, as they start their own expressions there).
+ */
+export const K_FALLBACK: u8 = 1;
+/** A join word (JOIN_KW: LEFT RIGHT FULL INNER OUTER CROSS NATURAL): a name (`nm`) and an
+ *  operand, but not a bare alias or a type name. */
+export const K_JOIN: u8 = 2;
+/** INDEXED: like a join word. */
+export const K_INDEXED: u8 = 3;
+/** A reserved word: never a bare name. */
+export const K_RESERVED: u8 = 4;
+/**
+ * FILTER, OVER and WINDOW: keywords only where tokenize.c's look-around makes them so
+ * (velt:sqlite/sql/cursor's `classAt` decides).
+ */
+export const K_CONTEXT: u8 = 5;
+
+/** The class of upper-case word `w`, before FILTER, OVER and WINDOW are decided by context. */
+export function keywordClass(w: string): u8 {
+  switch (w) {
+    case "ABORT":
+    case "ACTION":
+    case "AFTER":
+    case "ALWAYS":
+    case "ANALYZE":
+    case "ASC":
+    case "ATTACH":
+    case "BEFORE":
+    case "BEGIN":
+    case "BY":
+    case "CASCADE":
+    case "CAST":
+    case "COLUMN":
+    case "CONFLICT":
+    case "CURRENT":
+    case "CURRENT_DATE":
+    case "CURRENT_TIME":
+    case "CURRENT_TIMESTAMP":
+    case "DATABASE":
+    case "DEFERRED":
+    case "DESC":
+    case "DETACH":
+    case "DO":
+    case "EACH":
+    case "END":
+    case "EXCLUDE":
+    case "EXCLUSIVE":
+    case "EXPLAIN":
+    case "FAIL":
+    case "FIRST":
+    case "FOLLOWING":
+    case "FOR":
+    case "GENERATED":
+    case "GLOB":
+    case "GROUPS":
+    case "IF":
+    case "IGNORE":
+    case "IMMEDIATE":
+    case "INITIALLY":
+    case "INSTEAD":
+    case "KEY":
+    case "LAST":
+    case "LIKE":
+    case "MATCH":
+    case "MATERIALIZED":
+    case "NO":
+    case "NULLS":
+    case "OF":
+    case "OFFSET":
+    case "OTHERS":
+    case "PARTITION":
+    case "PLAN":
+    case "PRAGMA":
+    case "PRECEDING":
+    case "QUERY":
+    case "RAISE":
+    case "RANGE":
+    case "RECURSIVE":
+    case "REGEXP":
+    case "REINDEX":
+    case "RELEASE":
+    case "RENAME":
+    case "REPLACE":
+    case "RESTRICT":
+    case "ROLLBACK":
+    case "ROW":
+    case "ROWS":
+    case "SAVEPOINT":
+    case "TEMP":
+    case "TEMPORARY":
+    case "TIES":
+    case "TRIGGER":
+    case "UNBOUNDED":
+    case "VACUUM":
+    case "VIEW":
+    case "VIRTUAL":
+    case "WITH":
+    case "WITHOUT":
+      return K_FALLBACK;
+    case "ADD":
+    case "ALL":
+    case "ALTER":
+    case "AND":
+    case "AS":
+    case "AUTOINCREMENT":
+    case "BETWEEN":
+    case "CASE":
+    case "CHECK":
+    case "COLLATE":
+    case "COMMIT":
+    case "CONSTRAINT":
+    case "CREATE":
+    case "DEFAULT":
+    case "DEFERRABLE":
+    case "DELETE":
+    case "DISTINCT":
+    case "DROP":
+    case "ELSE":
+    case "ESCAPE":
+    case "EXCEPT":
+    case "EXISTS":
+    case "FOREIGN":
+    case "FROM":
+    case "GROUP":
+    case "HAVING":
+    case "IN":
+    case "INDEX":
+    case "INSERT":
+    case "INTERSECT":
+    case "INTO":
+    case "IS":
+    case "ISNULL":
+    case "JOIN":
+    case "LIMIT":
+    case "NOT":
+    case "NOTHING":
+    case "NOTNULL":
+    case "NULL":
+    case "ON":
+    case "OR":
+    case "ORDER":
+    case "PRIMARY":
+    case "REFERENCES":
+    case "RETURNING":
+    case "SELECT":
+    case "SET":
+    case "TABLE":
+    case "THEN":
+    case "TO":
+    case "TRANSACTION":
+    case "UNION":
+    case "UNIQUE":
+    case "UPDATE":
+    case "USING":
+    case "VALUES":
+    case "WHEN":
+    case "WHERE":
+      return K_RESERVED;
+    case "CROSS":
+    case "FULL":
+    case "INNER":
+    case "LEFT":
+    case "NATURAL":
+    case "OUTER":
+    case "RIGHT":
+      return K_JOIN;
+    case "INDEXED":
+      return K_INDEXED;
+    case "FILTER":
+    case "OVER":
+    case "WINDOW":
+      return K_CONTEXT;
+    default:
+      return K_ID;
+  }
+}
+
 /** A SQL syntax error, with the byte offset it was found at. */
 export class SqlError extends Error {
   at: usize;
@@ -35,6 +220,8 @@ export struct Token {
    *  the number's digits, the parameter's name with its sigil, or the operator. */
   text: string;
   upper: string;
+  /** A bare word's keyword class (K_ID … K_CONTEXT); K_ID for every other token. */
+  kw: u8;
 }
 
 function isIdentStart(b: u8): bool {
@@ -196,7 +383,7 @@ export function tokenize(sql: string): Token[] {
       }
       const hex = u.slice(from, i);
       i++;
-      out.push(Token { kind: T_BLOB, start: start, end: i, text: hex, upper: "" });
+      out.push(Token { kind: T_BLOB, start: start, end: i, text: hex, upper: "", kw: K_ID });
       continue;
     }
     if (isIdentStart(b)) {
@@ -204,7 +391,15 @@ export function tokenize(sql: string): Token[] {
         i++;
       }
       const word = u.slice(start, i);
-      out.push(Token { kind: T_IDENT, start: start, end: i, text: word, upper: asciiUpper(word) });
+      const upper = asciiUpper(word);
+      out.push(Token {
+        kind: T_IDENT,
+        start: start,
+        end: i,
+        text: word,
+        upper: upper,
+        kw: keywordClass(upper),
+      });
       continue;
     }
     if (
@@ -235,7 +430,14 @@ export function tokenize(sql: string): Token[] {
       }
       const name = u.slice(start + 1, i);
       i++;
-      out.push(Token { kind: T_QUOTED, start: start, end: i, text: name, upper: asciiUpper(name) });
+      out.push(Token {
+        kind: T_QUOTED,
+        start: start,
+        end: i,
+        text: name,
+        upper: asciiUpper(name),
+        kw: K_ID,
+      });
       continue;
     }
     if (b == 63) {
@@ -243,7 +445,14 @@ export function tokenize(sql: string): Token[] {
       while (i < n && isDigit(__intrinsic_str_byte_at(sql, i as u64))) {
         i++;
       }
-      out.push(Token { kind: T_PARAM, start: start, end: i, text: u.slice(start, i), upper: "" });
+      out.push(Token {
+        kind: T_PARAM,
+        start: start,
+        end: i,
+        text: u.slice(start, i),
+        upper: "",
+        kw: K_ID,
+      });
       continue;
     }
     if (b == 58 || b == 64 || b == 36) {
@@ -254,12 +463,19 @@ export function tokenize(sql: string): Token[] {
       if (i == start + 1) {
         throw new SqlError(`unrecognized token: "${byteSlice(sql, start, i)}"`, start);
       }
-      out.push(Token { kind: T_PARAM, start: start, end: i, text: u.slice(start, i), upper: "" });
+      out.push(Token {
+        kind: T_PARAM,
+        start: start,
+        end: i,
+        text: u.slice(start, i),
+        upper: "",
+        kw: K_ID,
+      });
       continue;
     }
     if (b == 59) {
       i++;
-      out.push(Token { kind: T_SEMI, start: start, end: i, text: ";", upper: ";" });
+      out.push(Token { kind: T_SEMI, start: start, end: i, text: ";", upper: ";", kw: K_ID });
       continue;
     }
     // Operators: the two-byte ones first.
@@ -279,10 +495,10 @@ export function tokenize(sql: string): Token[] {
         i += 2;
         if (two == "->" && i < n && __intrinsic_str_byte_at(sql, i as u64) == 62) {
           i++;
-          out.push(Token { kind: T_OP, start: start, end: i, text: "->>", upper: "->>" });
+          out.push(Token { kind: T_OP, start: start, end: i, text: "->>", upper: "->>", kw: K_ID });
           continue;
         }
-        out.push(Token { kind: T_OP, start: start, end: i, text: two, upper: two });
+        out.push(Token { kind: T_OP, start: start, end: i, text: two, upper: two, kw: K_ID });
         continue;
       }
     }
@@ -305,12 +521,12 @@ export function tokenize(sql: string): Token[] {
     ) {
       i++;
       const op = u.slice(start, i);
-      out.push(Token { kind: T_OP, start: start, end: i, text: op, upper: op });
+      out.push(Token { kind: T_OP, start: start, end: i, text: op, upper: op, kw: K_ID });
       continue;
     }
     throw new SqlError(`unrecognized token: "${byteSlice(sql, start, start + 1)}"`, start);
   }
-  out.push(Token { kind: T_EOF, start: n, end: n, text: "", upper: "" });
+  out.push(Token { kind: T_EOF, start: n, end: n, text: "", upper: "", kw: K_ID });
   return out;
 }
 
@@ -385,6 +601,7 @@ function quoted(u: Utf16Index, n: usize, start: usize, q: u8, kind: u8): Token {
     end: i,
     text: text,
     upper: kind == T_QUOTED ? asciiUpper(text) : "",
+    kw: K_ID,
   };
 }
 
@@ -472,5 +689,5 @@ function finishNumber(
     }
     text = text.replaceAll("_", "");
   }
-  return Token { kind: kind, start: start, end: end, text: text, upper: text };
+  return Token { kind: kind, start: start, end: end, text: text, upper: text, kw: K_ID };
 }

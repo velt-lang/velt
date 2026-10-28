@@ -9,6 +9,7 @@
 // (velt:sqlite/sql/cursor's `enter`), so deeply nested input fails with SQLite's error.
 
 import {
+  K_RESERVED,
   T_BLOB,
   T_IDENT,
   T_INTEGER,
@@ -53,7 +54,7 @@ import {
   Select,
   SelectCore,
 } from "velt:sqlite/sql/ast";
-import { K_RESERVED, TokenCursor } from "velt:sqlite/sql/cursor";
+import { TokenCursor } from "velt:sqlite/sql/cursor";
 
 /** The expression grammar, on a token cursor. */
 export abstract class ExprParser extends TokenCursor {
@@ -325,7 +326,84 @@ export abstract class ExprParser extends TokenCursor {
     return e;
   }
 
+  /**
+   * An operand. The productions that nest (parentheses, CAST, EXISTS, CASE, NOT, calls) are
+   * methods of their own, so the stack a level of nesting costs is theirs, not every branch's.
+   */
   primary(): Expr {
+    const i = this.pos;
+    if (this.toks[i].kind == T_OP && this.toks[i].text == "(") {
+      return this.parenthesized();
+    }
+    if (this.toks[i].kind == T_IDENT) {
+      const w = this.toks[i].upper;
+      if (w == "NOT") {
+        // NOT in an operand's place (`1 = NOT 0`); NOT EXISTS is NOT of EXISTS, as in SQLite.
+        return this.notOperand();
+      }
+      if (w == "CASE") {
+        return this.caseExpr();
+      }
+      if (w == "CAST") {
+        return this.castExpr();
+      }
+      if (w == "EXISTS") {
+        return this.existsExpr();
+      }
+      if (w == "RAISE") {
+        return this.raise();
+      }
+    }
+    return this.operand();
+  }
+
+  /** `(expr)`, a row value `(a, b, …)`, or a subquery. */
+  parenthesized(): Expr {
+    const at = this.advance().start;
+    if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+      const e = new Expr(E_SUBQUERY, at);
+      e.select = this.select();
+      this.expectOp(")");
+      return sized(e);
+    }
+    // Parentheses add no level: SQLite makes no node for them.
+    const first = this.expr();
+    if (this.isOp(",")) {
+      const row = new Expr(E_ROW, at);
+      row.args.push(first);
+      while (this.eatOp(",")) {
+        row.args.push(this.expr());
+      }
+      this.expectOp(")");
+      return sized(row);
+    }
+    this.expectOp(")");
+    return first;
+  }
+
+  castExpr(): Expr {
+    const e = new Expr(E_CAST, this.advance().start);
+    this.expectOp("(");
+    // Its frame is a call's (the type name's parsing): a level more than a parenthesis.
+    this.enter();
+    e.a = this.expr();
+    this.leave();
+    this.expectKw("AS");
+    e.name = dequote(this.typeName());
+    this.expectOp(")");
+    return sized(e);
+  }
+
+  existsExpr(): Expr {
+    const e = new Expr(E_EXISTS, this.advance().start);
+    this.expectOp("(");
+    e.select = this.select();
+    this.expectOp(")");
+    return sized(e);
+  }
+
+  /** A literal, a parameter, or a name: a column, `t.c`, `s.t.c`, or a call. */
+  operand(): Expr {
     const t = this.peek();
     const at = t.start;
     if (t.kind == T_INTEGER) {
@@ -354,34 +432,8 @@ export abstract class ExprParser extends TokenCursor {
       this.pos++;
       return this.param(t);
     }
-    if (t.kind == T_OP && t.text == "(") {
-      this.pos++;
-      if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
-        const e = new Expr(E_SUBQUERY, at);
-        e.select = this.select();
-        this.expectOp(")");
-        return sized(e);
-      }
-      // Parentheses add no level: SQLite makes no node for them.
-      const first = this.expr();
-      if (this.isOp(",")) {
-        const row = new Expr(E_ROW, at);
-        row.args.push(first);
-        while (this.eatOp(",")) {
-          row.args.push(this.expr());
-        }
-        this.expectOp(")");
-        return sized(row);
-      }
-      this.expectOp(")");
-      return first;
-    }
     if (t.kind == T_IDENT) {
       const w = t.upper;
-      if (w == "NOT") {
-        // NOT in an operand's place (`1 = NOT 0`); NOT EXISTS is NOT of EXISTS, as in SQLite.
-        return this.notOperand();
-      }
       if (w == "NULL") {
         this.pos++;
         return new Expr(E_NULL, at);
@@ -399,30 +451,6 @@ export abstract class ExprParser extends TokenCursor {
         const e = new Expr(E_CALL, at);
         e.name = w;
         return e;
-      }
-      if (w == "CASE") {
-        return this.caseExpr();
-      }
-      if (w == "CAST") {
-        this.pos++;
-        this.expectOp("(");
-        const e = new Expr(E_CAST, at);
-        e.a = this.expr();
-        this.expectKw("AS");
-        e.name = dequote(this.typeName());
-        this.expectOp(")");
-        return sized(e);
-      }
-      if (w == "EXISTS") {
-        this.pos++;
-        this.expectOp("(");
-        const e = new Expr(E_EXISTS, at);
-        e.select = this.select();
-        this.expectOp(")");
-        return sized(e);
-      }
-      if (w == "RAISE") {
-        return this.raise();
       }
     }
     // A name: ID, INDEXED or a join word, a call of one (quoted names included, as SQLite's

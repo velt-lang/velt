@@ -2,6 +2,11 @@
 // keyword and operator matching, names, and SQLite's syntax error messages.
 
 import {
+  K_CONTEXT,
+  K_FALLBACK,
+  K_ID,
+  K_JOIN,
+  K_RESERVED,
   T_EOF,
   T_IDENT,
   T_OP,
@@ -15,195 +20,15 @@ import {
 } from "velt:sqlite/sql/lexer";
 
 /**
- * How deep the parser may recurse: each parenthesis, right operand, NOT or unary operand counts
- * one, a call or subquery two. A level costs up to about five stack frames, so 600 levels stay
- * well inside an 8 MiB main-thread stack, release builds included. Expression trees are bounded
- * separately at SQLite's 1000 (velt:sqlite/sql/expr); past this bound the error is SQLite's
- * for its parser stack.
+ * How deep the parser may recurse: each parenthesis, right operand, NOT, CASE or unary operand
+ * counts one level; a call, CAST, subquery or CTE two. A level costs up to about 5.6 KB of stack
+ * in a release build (measured: Cranelift, arm64), so 200 levels stay within half of the
+ * smallest stack the parser runs on: a worker thread's 2 MiB (the main thread has 8 MiB).
+ * Expression trees are bounded separately at SQLite's 1000 (velt:sqlite/sql/expr); past this
+ * bound the error is SQLite's for its parser stack. SQLite itself takes deeper nesting (its
+ * parser keeps its stack on the heap).
  */
-const MAX_DEPTH: usize = 600;
-
-// Keyword classes: how SQLite's grammar (parse.y, its `%fallback ID` list and the `nm`, `ids`
-// and `idj` token classes) and tokenizer (tokenize.c) treat its 147 keywords where a name
-// could stand. The keyword sweep of the sqlite_sql_parse golden checks them against sqlite3.
-
-/** Not a keyword: a name anywhere. */
-export const K_ID: u8 = 0;
-/**
- * A keyword with `%fallback ID`: a name wherever the keyword itself has no meaning (`end`,
- * `offset`, `like`, `with` name columns and tables; CAST, RAISE and CURRENT_TIME do not start
- * an operand that is a name, as they start their own expressions there).
- */
-export const K_FALLBACK: u8 = 1;
-/** A join word (JOIN_KW: LEFT RIGHT FULL INNER OUTER CROSS NATURAL): a name (`nm`) and an
- *  operand, but not a bare alias or a type name. */
-export const K_JOIN: u8 = 2;
-/** INDEXED: like a join word. */
-export const K_INDEXED: u8 = 3;
-/** A reserved word: never a bare name. */
-export const K_RESERVED: u8 = 4;
-/** FILTER, OVER and WINDOW: keywords only where tokenize.c's look-around makes them so. */
-const K_CONTEXT: u8 = 5;
-
-/** The class of upper-case word `w`, before FILTER, OVER and WINDOW are decided by context. */
-function keywordClass(w: string): u8 {
-  switch (w) {
-    case "ABORT":
-    case "ACTION":
-    case "AFTER":
-    case "ALWAYS":
-    case "ANALYZE":
-    case "ASC":
-    case "ATTACH":
-    case "BEFORE":
-    case "BEGIN":
-    case "BY":
-    case "CASCADE":
-    case "CAST":
-    case "COLUMN":
-    case "CONFLICT":
-    case "CURRENT":
-    case "CURRENT_DATE":
-    case "CURRENT_TIME":
-    case "CURRENT_TIMESTAMP":
-    case "DATABASE":
-    case "DEFERRED":
-    case "DESC":
-    case "DETACH":
-    case "DO":
-    case "EACH":
-    case "END":
-    case "EXCLUDE":
-    case "EXCLUSIVE":
-    case "EXPLAIN":
-    case "FAIL":
-    case "FIRST":
-    case "FOLLOWING":
-    case "FOR":
-    case "GENERATED":
-    case "GLOB":
-    case "GROUPS":
-    case "IF":
-    case "IGNORE":
-    case "IMMEDIATE":
-    case "INITIALLY":
-    case "INSTEAD":
-    case "KEY":
-    case "LAST":
-    case "LIKE":
-    case "MATCH":
-    case "MATERIALIZED":
-    case "NO":
-    case "NULLS":
-    case "OF":
-    case "OFFSET":
-    case "OTHERS":
-    case "PARTITION":
-    case "PLAN":
-    case "PRAGMA":
-    case "PRECEDING":
-    case "QUERY":
-    case "RAISE":
-    case "RANGE":
-    case "RECURSIVE":
-    case "REGEXP":
-    case "REINDEX":
-    case "RELEASE":
-    case "RENAME":
-    case "REPLACE":
-    case "RESTRICT":
-    case "ROLLBACK":
-    case "ROW":
-    case "ROWS":
-    case "SAVEPOINT":
-    case "TEMP":
-    case "TEMPORARY":
-    case "TIES":
-    case "TRIGGER":
-    case "UNBOUNDED":
-    case "VACUUM":
-    case "VIEW":
-    case "VIRTUAL":
-    case "WITH":
-    case "WITHOUT":
-      return K_FALLBACK;
-    case "ADD":
-    case "ALL":
-    case "ALTER":
-    case "AND":
-    case "AS":
-    case "AUTOINCREMENT":
-    case "BETWEEN":
-    case "CASE":
-    case "CHECK":
-    case "COLLATE":
-    case "COMMIT":
-    case "CONSTRAINT":
-    case "CREATE":
-    case "DEFAULT":
-    case "DEFERRABLE":
-    case "DELETE":
-    case "DISTINCT":
-    case "DROP":
-    case "ELSE":
-    case "ESCAPE":
-    case "EXCEPT":
-    case "EXISTS":
-    case "FOREIGN":
-    case "FROM":
-    case "GROUP":
-    case "HAVING":
-    case "IN":
-    case "INDEX":
-    case "INSERT":
-    case "INTERSECT":
-    case "INTO":
-    case "IS":
-    case "ISNULL":
-    case "JOIN":
-    case "LIMIT":
-    case "NOT":
-    case "NOTHING":
-    case "NOTNULL":
-    case "NULL":
-    case "ON":
-    case "OR":
-    case "ORDER":
-    case "PRIMARY":
-    case "REFERENCES":
-    case "RETURNING":
-    case "SELECT":
-    case "SET":
-    case "TABLE":
-    case "THEN":
-    case "TO":
-    case "TRANSACTION":
-    case "UNION":
-    case "UNIQUE":
-    case "UPDATE":
-    case "USING":
-    case "VALUES":
-    case "WHEN":
-    case "WHERE":
-      return K_RESERVED;
-    case "CROSS":
-    case "FULL":
-    case "INNER":
-    case "LEFT":
-    case "NATURAL":
-    case "OUTER":
-    case "RIGHT":
-      return K_JOIN;
-    case "INDEXED":
-      return K_INDEXED;
-    case "FILTER":
-    case "OVER":
-    case "WINDOW":
-      return K_CONTEXT;
-    default:
-      return K_ID;
-  }
-}
+const MAX_DEPTH: usize = 200;
 
 /** A cursor over the tokens of one SQL text. */
 export abstract class TokenCursor {
@@ -258,13 +83,20 @@ export abstract class TokenCursor {
 
   /** Whether the next token is the keyword `kw` (upper case). */
   isKw(kw: string): bool {
-    const t = this.peek();
-    return t.kind == T_IDENT && t.upper == kw;
+    // Fields read in place: a Token copied to a local costs every caller a stack slot.
+    const i = this.pos;
+    return this.toks[i].kind == T_IDENT && this.toks[i].upper == kw;
   }
 
   isKwAt(k: usize, kw: string): bool {
-    const t = this.peekAt(k);
-    return t.kind == T_IDENT && t.upper == kw;
+    const i = this.at(k);
+    return this.toks[i].kind == T_IDENT && this.toks[i].upper == kw;
+  }
+
+  /** The index of the token `k` ahead (the final T_EOF past the end). */
+  at(k: usize): usize {
+    const i = this.pos + k;
+    return i < this.toks.length ? i : this.toks.length - 1;
   }
 
   eatKw(kw: string): bool {
@@ -282,8 +114,8 @@ export abstract class TokenCursor {
   }
 
   isOp(op: string): bool {
-    const t = this.peek();
-    return t.kind == T_OP && t.text == op;
+    const i = this.pos;
+    return this.toks[i].kind == T_OP && this.toks[i].text == op;
   }
 
   eatOp(op: string): bool {
@@ -328,14 +160,13 @@ export abstract class TokenCursor {
    * AS, OVER after `)` and before `(` or a name, FILTER after `)` and before `(`.
    */
   classAt(i: usize): u8 {
-    const t = this.tokenAt(i);
-    if (t.kind != T_IDENT) {
-      return K_ID;
-    }
-    const c = keywordClass(t.upper);
-    if (c != K_CONTEXT) {
-      return c;
-    }
+    const kw = this.toks[i].kw;
+    return kw == K_CONTEXT ? this.contextClass(i) : kw;
+  }
+
+  /** `classAt` of FILTER, OVER or WINDOW at token `i`. */
+  contextClass(i: usize): u8 {
+    const t = this.toks[i];
     const next = this.tokenAt(i + 1);
     if (t.upper == "WINDOW") {
       const after = this.tokenAt(i + 2);
@@ -363,8 +194,11 @@ export abstract class TokenCursor {
     if (t.kind != T_IDENT) {
       return false;
     }
-    const c = keywordClass(t.upper);
-    return c == K_ID || c == K_FALLBACK || c == K_JOIN || t.upper == "WINDOW" || t.upper == "OVER";
+    const c = t.kw;
+    return c == K_ID ||
+      c == K_FALLBACK ||
+      c == K_JOIN ||
+      (c == K_CONTEXT && (t.upper == "WINDOW" || t.upper == "OVER"));
   }
 
   /** Whether the next token is the keyword `kw` as a keyword, not a name (FILTER, OVER, WINDOW). */
@@ -377,16 +211,15 @@ export abstract class TokenCursor {
    * string, or a bare word that is not reserved (join words and INDEXED included).
    */
   isName(): bool {
-    const t = this.peek();
-    return t.kind == T_QUOTED ||
-      t.kind == T_STRING ||
-      (t.kind == T_IDENT && this.classAt(this.pos) != K_RESERVED);
+    const k = this.toks[this.pos].kind;
+    return k == T_QUOTED || k == T_STRING || (k == T_IDENT && this.classAt(this.pos) != K_RESERVED);
   }
 
   /** The name at the cursor (`nm`), consumed. */
   name(): string {
     if (this.isName()) {
-      return this.advance().text;
+      this.pos++;
+      return this.toks[this.pos - 1].text;
     }
     this.fail();
   }
@@ -394,17 +227,17 @@ export abstract class TokenCursor {
   /** Whether the next token is `ID`: a quoted name, or a bare word that is not a keyword or
    *  falls back to a name. */
   isId(): bool {
-    const t = this.peek();
-    return t.kind == T_QUOTED || (t.kind == T_IDENT && this.classAt(this.pos) <= K_FALLBACK);
+    const k = this.toks[this.pos].kind;
+    return k == T_QUOTED || (k == T_IDENT && this.classAt(this.pos) <= K_FALLBACK);
   }
 
   /** Whether the next token can be a bare alias or a type name's word (`ids`: ID or a string). */
   isAlias(): bool {
-    return this.isId() || this.peek().kind == T_STRING;
+    return this.isId() || this.toks[this.pos].kind == T_STRING;
   }
 
   isOpAt(k: usize, op: string): bool {
-    const t = this.peekAt(k);
-    return t.kind == T_OP && t.text == op;
+    const i = this.at(k);
+    return this.toks[i].kind == T_OP && this.toks[i].text == op;
   }
 }
