@@ -236,7 +236,7 @@ function main() {
   returns `any` where the signatures' results differ, since a class method implements an
   interface method with exactly its types. A call takes the first signature that accepts it, and
   its result is tested as above. Generic signatures, rest parameters and `void` results there
-  are not supported yet.
+  are not supported yet, nor is an implementation with a rest parameter (`(...args: any[])`).
 - `velt doc` shows the signatures, not the implementation.
 - Not supported yet: overloaded constructors, overloads of a function declared inside a
   function, and several declarations of one name that each have a body (overloads in Velt's own form, chosen by the most specific parameter types).

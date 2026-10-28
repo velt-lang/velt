@@ -3,3 +3,5 @@ tip undefined
 registry a
 3 2
 undefined fb
+t! with-this
+ref:r true
