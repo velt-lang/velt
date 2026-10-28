@@ -173,7 +173,13 @@ call: directly, as an overlapping place (`a` / `a.f`, `xs` / `xs[i]`), through a
 binding, or as a closure capture. `append(xs, xs)`, `append(g.rows[0], g.rows[1])` and
 `xs.forEach((x) => { xs.push(x); })` are errors
 (``cannot use `xs` here: this call may modify it through another argument``). Reading a number
-is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). This rule
+is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). An
+argument may change the inside of a class instance or an array another argument passes while it
+is evaluated, before the call starts (`this.set(this.src.get(1))` with `get` changing
+`this.src`): JavaScript's callee sees that change too. Replacing what is passed is still an error
+(`xs.push(popIt(xs))`), and so is changing an object of an object type or a `struct` another
+argument passes (`f(o.pt, (o.pt.x = 5))` with `pt: { x: number; y: number }`): Velt holds those
+inline and passes a copy, which would miss the change. This rule
 is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
 variables that refer to the same object (`const ys = xs; append(xs, ys)`) are allowed and work
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.

@@ -235,6 +235,38 @@ fn function_values_may_write_what_they_receive() {
     );
 }
 
+#[test]
+fn an_argument_may_change_the_inside_of_an_object_another_one_passes() {
+    // `get` modifies `this.src` while the argument is evaluated, before `set` runs: JavaScript's
+    // `set` sees the changed object too.
+    ok_src(
+        "class Src { n: i64 = 0; get(i: i64): i64 { this.n++; return i + this.n; } }
+         class User {
+           src: Src = new Src(); v: i64 = 0;
+           set(x: i64) { this.v = x; }
+           step() { this.set(this.src.get(1)); }
+         }
+         function main() { const u = new User(); u.step(); console.log(u.v); }",
+    );
+    // Replacing what is passed is still a conflict: the callee would see the new array.
+    let r =
+        err_main("const b = new Box(); fill(b.items, [popIt(b.items), b.items.length as i64]);");
+    assert!(r.contains("b.items"), "{r}");
+}
+
+#[test]
+fn an_argument_may_not_change_an_inline_object_another_one_passes() {
+    // `o.pt` is held inline and passed as a copy made before `o.pt.x = 5` runs: Node's `f`
+    // would see the change, Velt's would not, so it is still a conflict.
+    let r = err_src(
+        "type Pt = { x: number; y: number };
+         class O { pt: Pt = { x: 1, y: 2 }; }
+         function f(p: Pt, n: number): number { return p.x * 10 + n; }
+         function main() { const o = new O(); console.log(f(o.pt, (o.pt.x = 5))); }",
+    );
+    assert!(r.contains("o.pt"), "{r}");
+}
+
 /// A renderer whose nested functions are closures that call each other: `mount` passes its
 /// params on to `mountComponent` (`call`), which modifies the vnode.
 fn renderer(call: &str) -> String {

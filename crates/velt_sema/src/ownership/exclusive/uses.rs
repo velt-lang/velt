@@ -73,6 +73,10 @@ pub(super) struct Use {
     pub text: String,
     pub captured: bool,
     pub capture: Option<(DefId, LocalId)>,
+    /// A value JavaScript holds by reference (a class instance, an object, an array) handed to
+    /// the callee: what another argument changes inside it while being evaluated is what
+    /// JavaScript's callee sees too.
+    pub identity: bool,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
@@ -149,6 +153,7 @@ impl Collector<'_, '_> {
                     text,
                     captured: false,
                     capture: None,
+                    identity: super::by_reference(self.cx, e.ty),
                 });
             }
             return self.index_operands(e, nested);
@@ -266,6 +271,7 @@ impl Collector<'_, '_> {
                 text: self.locals[cap.outer.0 as usize].name.clone(),
                 captured: true,
                 capture: Some((def, cap.outer)),
+                identity: false,
             });
         }
     }
@@ -317,6 +323,7 @@ impl Nested<'_, '_, '_> {
             text,
             captured: false,
             capture: None,
+            identity: false,
         });
     }
 }

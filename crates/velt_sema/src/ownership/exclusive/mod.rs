@@ -9,7 +9,8 @@
 //!   moves or captures;
 //! - a place passed `Borrow` must not overlap a place another argument moves;
 //! - no argument may mutate or move (while being evaluated) a place another argument passes by
-//!   reference.
+//!   reference, except change the inside of a class instance, object or array passed so (the
+//!   callee sees the change as JavaScript's would: `this.set(this.src.get(1))`).
 //!
 //! Places overlap when one is a prefix of the other (`a` / `a.f`, `xs` / `xs[i]`; `xs[i]` and
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
@@ -669,7 +670,7 @@ fn first_conflict(uses: &ArgUses, skip: &dyn Fn(&Use, &Use) -> bool) -> Option<D
                 let by_ref = matches!(u.access, Access::Shared | Access::Unique);
                 let hit = nested_j
                     .iter()
-                    .find(|w| by_ref && u.place.overlaps(&w.place));
+                    .find(|w| by_ref && u.place.overlaps(&w.place) && !changes_inside(u, w));
                 if let Some(w) = hit {
                     return Some(report(u, w));
                 }
@@ -677,6 +678,28 @@ fn first_conflict(uses: &ArgUses, skip: &dyn Fn(&Use, &Use) -> bool) -> Option<D
         }
     }
     None
+}
+
+/// Does `w`, a change made while another argument is evaluated, only change the inside of
+/// the value `u` hands to the callee by reference (`this.set(this.src.get(1))`, `get`
+/// modifying `this.src`)? JavaScript's callee then sees the change too: no conflict. Replacing
+/// the value or a place on its way (`f(x.arr, reset(x))`) still is one.
+fn changes_inside(u: &Use, w: &Use) -> bool {
+    u.identity && w.access == Access::Unique && w.place.proj.len() > u.place.proj.len()
+}
+
+/// Whether Velt, as JavaScript, passes values of type `t` by reference: class instances and
+/// arrays. An object type (`{ x: number }`) or a `struct` is inline: the call gets a copy made
+/// when its argument is evaluated, so a later argument's change to it would not reach the
+/// callee, as it does in JavaScript.
+pub(super) fn by_reference(cx: &Ctx, t: crate::hir::TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Adt(d, _) => cx
+            .adt(*d)
+            .is_some_and(|a| a.kind == crate::hir::AdtKind::Class),
+        TyKind::Array(_) => true,
+        _ => false,
+    }
 }
 
 /// Do two argument uses (`u` evaluated before `w`) conflict? Two moves, or a move followed
