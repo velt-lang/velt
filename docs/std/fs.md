@@ -79,8 +79,8 @@ Node's file-descriptor API, written in Velt over [system functions](../reference
 each call is one call of the C library, with no runtime in between. It is the module
 `velt:fs/fd` (`import { openSync, readSync } from "velt:fs/fd"`), not `velt:fs` itself, so a
 program that only reads and writes whole files does not compile it. On macOS and Linux; for
-Windows and WebAssembly, a call of one of them is a compile error that names the system
-function the target lacks (planned: Windows over its kernel32 functions, and `fs.promises`'
+Windows and WebAssembly, a call of one of them is a compile error at that call, which names the
+system function the target lacks (planned: Windows over its kernel32 functions, and `fs.promises`'
 `FileHandle`).
 
 - `openSync(path, flags = "r", mode = 0o666): number`: a file descriptor. `flags` is one of

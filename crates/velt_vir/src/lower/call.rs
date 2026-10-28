@@ -21,7 +21,8 @@ impl FnLower<'_, '_> {
         match callee {
             hir::Callee::Intrinsic(i) => self.intrinsic(*i, args, ty),
             hir::Callee::Def(def, targs) => match self.cx.hir.def(*def) {
-                hir::Def::Fn(_) => {
+                hir::Def::Fn(f) => {
+                    self.note_std_call(*def, f.span);
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                     let v = self.call_def(*def, targs, vec![], args);
                     self.after_super_inits(*def);

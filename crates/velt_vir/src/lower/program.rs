@@ -29,6 +29,7 @@ impl<'h> Cx<'h> {
             cell_checks: false,
             target: String::new(),
             unavailable: vec![],
+            std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
             types,

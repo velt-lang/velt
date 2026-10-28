@@ -95,6 +95,13 @@ error: system function `pread` is not available on wasm32-wasip1
   = note: this target has no system functions
 ```
 
+A standard-library function that calls one is reported at the program's call of it:
+
+```text
+app.vlt:4:14: error: `openSync` (velt:fs/fd) is not available on x86_64-pc-windows-msvc
+  = note: it calls the system function `open`, which x86_64-pc-windows-msvc lacks
+```
+
 ## Checked at the call
 
 Some arguments change how the C function uses memory, so the call checks them and stops the

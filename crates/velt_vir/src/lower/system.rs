@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
             // The target lacks it (or cannot call it yet, `system::callable`) (veltc reported every other mismatch): an error, reported
             // once lowering is done (`unavailable_diagnostics`).
             _ => {
-                self.cx.unavailable.push((def, self.cx.cur_def));
+                self.cx.unavailable.push((def, self.cx.cur_def, self.cx.user_site));
                 for a in args {
                     self.expr(a);
                 }
@@ -542,28 +542,65 @@ fn push(cargs: &mut Vec<Operand>, ctys: &mut Vec<Ty>, v: Operand, t: Ty) {
     ctys.push(t);
 }
 
+impl FnLower<'_, '_> {
+    /// A user call (the current `user_site`) of the standard-library function `def`, defined at
+    /// `at`: remembered, so a system function the target lacks that it reaches is reported at
+    /// this call (`unavailable_diagnostics`).
+    pub(super) fn note_std_call(&mut self, def: DefId, at: velt_common::Span) {
+        let site = self.cx.user_site;
+        let Some(m) = self.cx.locs.as_ref() else {
+            return;
+        };
+        if site != velt_common::Span::DUMMY && m.is_std(at) && !m.is_std(site) {
+            self.cx.std_calls.entry(site).or_insert(def);
+        }
+    }
+}
+
 impl super::Cx<'_> {
-    /// The errors for calls of system functions the target lacks.
+    /// The errors for calls of system functions the target lacks. One the standard library
+    /// calls is reported at the user's call that reached it, as that call of std's function.
     pub(super) fn unavailable_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen_decls = rustc_hash::FxHashSet::default();
+        let mut seen_sites = rustc_hash::FxHashSet::default();
         let mut out = vec![];
-        for &(d, caller) in &self.unavailable {
-            if !seen.insert(d) {
-                continue;
-            }
+        for &(d, caller, site) in &self.unavailable {
             let hir::Def::ExternFn(x) = self.hir.def(d) else {
                 continue;
             };
-            let mut diag = velt_common::Diagnostic::error(
-                format!(
-                    "system function `{}` is not available on {}",
-                    x.symbol, self.target
-                ),
-                x.span,
-            );
-            if let Some(hir::Def::Fn(f)) = caller.map(|c| self.hir.def(c)) {
-                diag = diag.with_note(format!("`{}` calls it", f.name));
-            }
+            let in_std = self.locs.as_ref().is_some_and(|m| m.is_std(x.span));
+            let entry = self.std_calls.get(&site).map(|&e| self.hir.def(e));
+            let mut diag = match entry {
+                Some(hir::Def::Fn(f)) if in_std => {
+                    if !seen_sites.insert(site) {
+                        continue;
+                    }
+                    velt_common::Diagnostic::error(
+                        format!("{} is not available on {}", std_name(&f.name), self.target),
+                        site,
+                    )
+                    .with_note(format!(
+                        "it calls the system function `{}`, which {} lacks",
+                        x.symbol, self.target
+                    ))
+                }
+                _ => {
+                    if !seen_decls.insert(d) {
+                        continue;
+                    }
+                    let diag = velt_common::Diagnostic::error(
+                        format!(
+                            "system function `{}` is not available on {}",
+                            x.symbol, self.target
+                        ),
+                        x.span,
+                    );
+                    match caller.map(|c| self.hir.def(c)) {
+                        Some(hir::Def::Fn(f)) => diag.with_note(format!("`{}` calls it", f.name)),
+                        _ => diag,
+                    }
+                }
+            };
             let note = match system::target_os(&self.target) {
                 None => "this target has no system functions".to_string(),
                 Some(_) => {
@@ -582,8 +619,21 @@ impl super::Cx<'_> {
                     }
                 }
             };
-            out.push(diag.with_note(note));
+            diag = diag.with_note(note);
+            out.push(diag);
         }
         out
+    }
+}
+
+/// A standard-library function as a program imports it: `std/fs/fd::openSync` is
+/// "`openSync` (velt:fs/fd)".
+fn std_name(qualified: &str) -> String {
+    match qualified.rsplit_once("::") {
+        Some((module, name)) => {
+            let module = module.strip_prefix("std/").unwrap_or(module);
+            format!("`{name}` (velt:{module})")
+        }
+        None => format!("`{qualified}`"),
     }
 }

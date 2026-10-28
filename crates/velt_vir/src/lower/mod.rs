@@ -396,8 +396,12 @@ struct Cx<'h> {
     cell_checks: bool,
     /// The target triple, for system functions (`LowerOptions::target`).
     target: String,
-    /// Calls of system functions the target lacks: (the declaration, the calling function).
-    unavailable: Vec<(DefId, Option<DefId>)>,
+    /// Calls of system functions the target lacks: (the declaration, the calling function, the
+    /// user code being lowered then, `user_site`).
+    unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
+    /// Per user call site of a standard-library function, that function (call.rs): what an
+    /// unavailable system function deep in std is reported as, at the user's call.
+    std_calls: FxHashMap<velt_common::Span, DefId>,
     /// The aggregates of C structs (system.rs), by the table's struct.
     system_aggs: FxHashMap<usize, vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
