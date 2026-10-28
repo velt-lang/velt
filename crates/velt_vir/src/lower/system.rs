@@ -37,10 +37,13 @@ impl FnLower<'_, '_> {
         let ret = self.cx.ty(x.ret);
         let func = match system::match_decl(self.cx.hir, x, &self.cx.target) {
             Ok(Some(f)) if system::callable(f) => f,
-            // The target lacks it (or cannot call it yet, `system::callable`) (veltc reported every other mismatch): an error, reported
-            // once lowering is done (`unavailable_diagnostics`).
+            // The target lacks it, or cannot call it yet (`system::callable`); veltc reported
+            // every other mismatch. An error, reported once lowering is done
+            // (`unavailable_diagnostics`).
             _ => {
-                self.cx.unavailable.push((def, self.cx.cur_def, self.cx.user_site));
+                self.cx
+                    .unavailable
+                    .push((def, self.cx.cur_def, self.cx.user_site));
                 for a in args {
                     self.expr(a);
                 }
@@ -234,7 +237,12 @@ impl FnLower<'_, '_> {
             return super::unit();
         }
         let out = self.temp(ret);
-        self.call(vir::Callee::Extern(id), args, Some(Place::local(out)), false);
+        self.call(
+            vir::Callee::Extern(id),
+            args,
+            Some(Place::local(out)),
+            false,
+        );
         Operand::Copy(Place::local(out))
     }
 

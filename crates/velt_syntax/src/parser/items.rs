@@ -172,8 +172,8 @@ impl<'a> Parser<'a> {
     /// (`declare async system function` too, which the system function check rejects)
     /// (`system` is a word only there: a function of the platform's C library).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
-        self.bump(); // declare
         // `declare async system function` parses, so the check can say why it is not one.
+        self.bump(); // declare
         let async_system = self.at_kw(Kw::Async)
             && self.nth_word(1, "system")
             && self.nth(2) == Tok::Kw(Kw::Function);
