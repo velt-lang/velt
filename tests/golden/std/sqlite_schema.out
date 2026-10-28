@@ -29,6 +29,10 @@ t9 without rowid: a TEXT not null, b INTEGER not null, c ; affinities 130; rowid
 t10: a INT, b TEXT; affinities 31; rowid none
   sqlite_autoindex_t10_1 unique: a BINARY
   sqlite_autoindex_t10_2 unique: b RTRIM
+kw: end INTEGER, offset TEXT not null default, left , right big, by  default, with , match x] ; affinities 3102002; rowid end
+  kw_left: left desc BINARY, offset BINARY
+  sqlite_autoindex_kw_1 unique: left BINARY
+  sqlite_autoindex_kw_2 unique: by BINARY, with BINARY
 odd: a TEXT, b ; affinities 10; rowid none
   odd_a: a BINARY (not seekable)
 0 differ from C SQLite

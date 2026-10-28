@@ -1,8 +1,8 @@
 // The schema the Velt SQLite engine reads (velt:sqlite/schema, #1720) against C SQLite's own
 // account of the same file (pragma table_info, index_list, index_xinfo): columns, the rowid
 // alias, automatic indexes numbered as SQLite numbers them (constraints in source order, a
-// repeated key making no second index), collations, directions, WITHOUT ROWID tables, and an
-// index over a collation the engine does not know.
+// repeated key making no second index), collations, directions, WITHOUT ROWID tables, keywords
+// as names, and an index over a collation the engine does not know.
 import { open, Database } from "velt:sqlite";
 import { DbFile } from "velt:sqlite/format";
 import { Index, Table, loadSchema } from "velt:sqlite/schema";
@@ -25,6 +25,10 @@ const TABLES: string[] = [
   "CREATE TABLE t9 (a TEXT, b INTEGER, c, PRIMARY KEY (b, a), UNIQUE (c)) WITHOUT ROWID",
   "CREATE INDEX t9_a ON t9 (a DESC)",
   "CREATE TABLE t10 (a INT PRIMARY KEY, b TEXT UNIQUE COLLATE RTRIM)",
+  // Keywords SQLite takes as names (`end`, `offset`, join words), MATCH FULL, a table CHECK
+  // with ON CONFLICT, constraints without commas and quoted types: the table loads, as in C SQLite.
+  "CREATE TABLE kw (end INTEGER PRIMARY KEY, offset TEXT NOT NULL DEFAULT 'o', left UNIQUE, right 'big' int, by DEFAULT end, with REFERENCES t4 (a) MATCH FULL ON DELETE CASCADE, match [x] y, CHECK (offset <> '') ON CONFLICT ABORT UNIQUE (by, with))",
+  "CREATE INDEX kw_left ON kw (left DESC, offset)",
   "CREATE TABLE odd (a TEXT COLLATE NOCASE, b)",
   "CREATE INDEX odd_a ON odd (a)",
 ];
