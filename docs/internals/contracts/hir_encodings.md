@@ -865,6 +865,30 @@ has a callback that does. In a program whose functions may have properties, lowe
 `velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
 program without `any`.
 
+## Unchecked definitions (#1658; additive)
+
+Sema checks standard-library definitions that only std code refers to when checked code
+reaches them (docs/internals/design/lazy-std.md). `Program::unchecked` lists the ones nothing
+reached. Each still has a definition, so every `DefId` has one:
+
+- a function or method: a `Def::Fn` with its signature (`name`, `generics`, `params` as the
+  first locals, `this` first for a method, `self_ty`, `ret`, `is_async`, `is_generator`) and an
+  empty body (no statements, no value);
+- a module constant: a `Def::Global` of type `void` whose `init` is `Lit(Unit)`.
+
+Checked code never refers to one: no `Callee::Def`, `FnRef` or `Global` names it, no checked
+expression has a type whose methods it is, and no value of such a type exists, so no
+`vtable`, `impls` entry or `dyn_members` table of a type the program uses holds one. Lowering
+never builds or reads one: building a function in `unchecked` (any `Work` of its `DefId`) or
+reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
+look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
+`HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
+methods of the prelude's types, the modules in `EAGER`, and, in the glue built for a JSON
+intrinsic, the definitions of the module in `JSON_GLUE` it calls, which sema checks once
+checked code instantiates such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
+`JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for `JsonStringify` and
+`DbBind`.
+
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is

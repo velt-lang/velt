@@ -170,6 +170,7 @@ pub(crate) struct Ctx<'m> {
     pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
     /// The properties of `globalThis` the program uses (`crate::global_this`).
     pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
@@ -499,6 +500,7 @@ impl<'m> Ctx<'m> {
             lock_free_callbacks: FxHashSet::default(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            lazy: crate::body::lazy_std::Lazy::new(),
             global_props: Default::default(),
             global_cycles: 0,
             fn_value_depth: 0,

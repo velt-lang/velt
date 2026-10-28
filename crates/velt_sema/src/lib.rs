@@ -413,7 +413,7 @@ fn check_timed(
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
-    finalize::build_defs(&mut cx);
+    let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx);
     let module_state = module_state::build(&mut cx, entry);
@@ -473,6 +473,7 @@ fn check_timed(
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
+        unchecked: unchecked.into_iter().collect(),
     };
     (Some(program), diags)
 }

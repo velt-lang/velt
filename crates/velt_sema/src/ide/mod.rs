@@ -101,6 +101,7 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         cx.fn_sites = crate::throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
+        cx.lazy.on = false;
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();

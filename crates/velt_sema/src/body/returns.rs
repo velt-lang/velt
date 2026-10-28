@@ -64,6 +64,14 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
             return t;
         }
     }
+    // A deferred std function is checked before its first call is (`lazy_std`): what a caller's
+    // check learns from the callee's body is there, as when every body was checked first.
+    if cx.fn_info(d).state == BodyState::Unchecked
+        && super::lazy_std::deferred(cx, d)
+        && !stack_exhausted(cx)
+    {
+        ensure_body(cx, d);
+    }
     let f = cx.fn_info(d);
     match f.ret_source.clone() {
         RetSource::Known => f.ret,

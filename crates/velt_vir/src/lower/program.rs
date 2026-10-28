@@ -205,6 +205,12 @@ impl<'h> Cx<'h> {
             return;
         }
         let outer = self.cur_def;
+        if let Some(d) = work_def(work).filter(|d| self.hir.unchecked.contains(d)) {
+            let name = &self.fn_def(d).name;
+            ice(format_args!(
+                "`{name}` was left unchecked: no checked code reaches it"
+            ));
+        }
         self.cur_def = work_def(work).or(outer);
         let site = self.fn_sites.get(&fid).copied();
         let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
