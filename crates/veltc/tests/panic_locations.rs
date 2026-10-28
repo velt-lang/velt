@@ -151,3 +151,25 @@ fn panics_report_their_source_location() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// Panic texts compiled into a program name a standard-library file relative to the std root
+/// (`std/math.vlt:17:15`), never by the absolute path of this checkout or install: std code
+/// compiles to the same bytes on every machine, so it can be compiled once and shared (#1728).
+#[test]
+fn std_locations_are_relative_to_the_std_root() {
+    let root = root();
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "bench/compile/all_std.vlt", "--emit", "vir"])
+        .current_dir(&root)
+        .output()
+        .expect("run velt build");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let vir = String::from_utf8_lossy(&o.stdout);
+    let std_root = root.join("std").display().to_string().replace('\\', "/");
+    let absolute = vir
+        .lines()
+        .find(|l| l.replace('\\', "/").contains(&std_root));
+    assert_eq!(absolute, None, "an absolute std path in the program");
+    // gcd's `x % y` (its division-by-zero check).
+    assert!(vir.contains(" at std/math.vlt:"), "no std location at all");
+}

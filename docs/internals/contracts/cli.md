@@ -330,7 +330,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
   Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
   build that `link.exe` links emits none, leaving function symbols).
-- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
+- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler; a
+  standard-library file as `std/<path below the std root>`) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit
   code**. Compiler errors → exit code 1, nothing executed. Internal compiler errors → 101.
