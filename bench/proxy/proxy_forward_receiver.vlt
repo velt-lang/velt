@@ -1,0 +1,18 @@
+// A forwarding get trap (Reflect.get with the receiver) over a class instance, read in a loop.
+class Box {
+  n = 1;
+  m = 2;
+  get twice(): number {
+    return this.n * 2;
+  }
+}
+const p: any = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    return Reflect.get(t, k, r);
+  },
+});
+let s = 0;
+for (let i = 0; i < 300000; i++) {
+  s += p.n + p.m;
+}
+console.log(s);

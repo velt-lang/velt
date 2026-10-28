@@ -71,3 +71,20 @@ const fw = new Proxy(new Box(), {
   },
 }) as S<Box>;
 console.log(fw.n);
+
+// An untyped read of the same key inside the trap of a brand's getter read is another read: its
+// trap forwards with the receiver and runs the getter on the target, as without the brand.
+let depth = 0;
+const re: S<Box> = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "twice" && depth === 0) {
+      depth++;
+      const inner = (r as any).twice;
+      depth--;
+      return inner + 1000;
+    }
+    return Reflect.get(t, k, r);
+  },
+}) as S<Box>;
+console.log(re.n);
+console.log(re.twice);
