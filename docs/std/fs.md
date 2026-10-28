@@ -92,6 +92,11 @@ function the target lacks (planned: Windows over its kernel32 functions, and `fs
 - `writeSync(fd, buffer: u8[] | string, offset?, length?, position?): number`: writes the bytes
   (a string as UTF-8; its third argument is then the position), at `position` or at the file's
   own position (at the end for a file opened to append). Returns the bytes written.
+- Arguments are coerced as Node coerces them: a read's `length` is truncated to a 32-bit integer
+  (`null` reads 0), a write's is used as given, a read's `position` must be an integer from -1
+  (a `RangeError` otherwise) while a write's invalid `position` means the file's own. The
+  arguments are positional: Node's `(fd, buffer, options)` form is not supported, so
+  `readSync(fd, buf, 4)` reads from offset 4 to the end where Node throws a `TypeError`.
 - `fsyncSync(fd)`, `fdatasyncSync(fd)`: flush the file to the disk (on macOS with
   `F_FULLFSYNC`, falling back as Node does). `ftruncateSync(fd, len = 0)`. `closeSync(fd)`.
 - `fstatSync(fd): Stats`: the `Stats` of `stat`, from `fstat`. `unlinkSync(path)` removes a file.
