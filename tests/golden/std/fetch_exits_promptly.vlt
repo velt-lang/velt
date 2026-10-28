@@ -1,8 +1,8 @@
-// check: no leaks
 // A `fetch` that connected leaves nothing running: the program ends as soon as its work is done.
 // The client's 10-second connect timeout was a timer that kept running after the connection was
 // made, so the process stayed alive for the rest of it; the unref'd timer below would then run.
-// Valid TypeScript; prints what Node 22 prints.
+// Valid TypeScript; prints what Node 22 prints. No leak check: the unref'd timer is never run, so
+// its callback is never freed (as in the other unref goldens).
 import { serve } from "velt:http";
 
 async function main() {
