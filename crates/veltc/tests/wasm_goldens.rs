@@ -53,6 +53,7 @@ const UNSUPPORTED: &[&str] = &[
     "system_functions",
     "system_function_errno_adjacency",
     "system_function_errno_await",
+    "system_function_forged_view",
     "system_function_guard",
     "system_function_interior_nul",
     "system_function_views",

@@ -162,6 +162,19 @@ impl Collector<'_, '_> {
                 self.direct(then, direct, nested);
                 self.direct(els, direct, nested);
             }
+            // `xs.subarray(begin, end)` passed to a system function's buffer: the place is the
+            // receiver `xs`, used with the receiver's own mode (`BorrowMut` for a written
+            // buffer), and `begin` / `end` are evaluated while the argument is.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Subarray),
+                args,
+            } => {
+                if let Some((rest, [recv, begin])) = args.split_last_mut() {
+                    self.direct(recv, direct, nested);
+                    self.nested(begin, nested);
+                    self.nested(rest, nested);
+                }
+            }
             E::Closure(def) => self.captures(*def, e.span, false, direct),
             _ => self.nested(e, nested),
         }

@@ -335,43 +335,36 @@ export function readSync(
   position?: number | null,
 ): number {
   const f = descriptor(fd);
-  if (buffer instanceof BufferView) {
-    const size = buffer.len * buffer.__size();
-    return readInto(f, buffer.buf.bytes, buffer.off, size, buffer, offset, length, position);
-  }
-  return readInto(f, buffer, 0, buffer.length as usize, null, offset, length, position);
-}
-
-// `readSync` into the `size` bytes of `bytes` from `base` (all of them, or a view's), again when
-// a signal interrupted it. `view` is the view they are, for the message about an empty one.
-function readInto(
-  f: i32,
-  bytes: u8[],
-  base: usize,
-  size: usize,
-  view: BufferView | null,
-  offset: number | null,
-  length: number | null | undefined,
-  position: number | null | undefined,
-): number {
+  // The bytes a view holds are `buffer.buf.bytes`; the write loop takes those alone, so the
+  // view is never passed beside its own bytes (which the exclusive-access check would reject).
+  const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
+  const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
+  const size =
+    buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
   const off = bufferOffset(size, offset, true);
   const len = readLength(size, off, length);
   if (len == 0) {
     return 0;
   }
   if (size == 0) {
-    const shown = view == null ? "<Buffer >" : view.__emptyText();
+    const shown = buffer instanceof BufferView ? buffer.__emptyText() : "<Buffer >";
     throw new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
   }
   checkRead(size, off, len);
-  const start = off as usize;
-  const end = (off + len) as usize;
-  const at = readPosition(position);
+  return readLoop(
+    f,
+    bytes,
+    base + (off as usize),
+    base + ((off + len) as usize),
+    readPosition(position),
+  );
+}
+
+// `read` / `pread` into the bytes `start..end` of `bytes`, retried after a signal.
+function readLoop(f: i32, bytes: u8[], start: usize, end: usize, at: i64): number {
   while (true) {
     const n =
-      at < 0
-        ? read(f, bytes.subarray(base + start, base + end))
-        : pread(f, bytes.subarray(base + start, base + end), at);
+      at < 0 ? read(f, bytes.subarray(start, end)) : pread(f, bytes.subarray(start, end), at);
     if (n >= 0) {
       return n as number;
     }
@@ -399,14 +392,14 @@ export function writeSync(
 ): number {
   const f = descriptor(fd);
   if (typeof buffer == "string") {
-    const bytes = utf8Encode(buffer);
-    return writeFrom(f, bytes, 0, bytes.length as usize, 0, null, offset);
+    const b = utf8Encode(buffer);
+    return writeFrom(f, b, 0, b.length as usize, 0, null, offset);
   }
-  if (buffer instanceof BufferView) {
-    const size = buffer.len * buffer.__size();
-    return writeFrom(f, buffer.buf.bytes, buffer.off, size, offset, length, position);
-  }
-  return writeFrom(f, buffer, 0, buffer.length as usize, offset, length, position);
+  const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
+  const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
+  const size =
+    buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
+  return writeFrom(f, bytes, base, size, offset, length, position);
 }
 
 // `writeSync` of the `size` bytes of `bytes` from `base`, again when a signal interrupted it.
@@ -421,14 +414,12 @@ function writeFrom(
 ): number {
   const off = bufferOffset(size, offset, false);
   const len = writeLength(size, off, length);
-  const start = off as usize;
-  const end = (off + len) as usize;
+  const start = base + (off as usize);
+  const end = base + ((off + len) as usize);
   const at = writePosition(position);
   while (true) {
     const n =
-      at < 0
-        ? write(f, bytes.subarray(base + start, base + end))
-        : pwrite(f, bytes.subarray(base + start, base + end), at);
+      at < 0 ? write(f, bytes.subarray(start, end)) : pwrite(f, bytes.subarray(start, end), at);
     if (n >= 0) {
       return n as number;
     }

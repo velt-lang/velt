@@ -26,6 +26,7 @@ impl FnLower<'_, '_> {
         func: &Func,
         name: &str,
         a: &hir::Expr,
+        later: super::sequence::Later,
     ) -> Option<(Operand, Operand)> {
         if let hir::ExprKind::Call {
             callee: HCallee::Intrinsic(Intrinsic::Subarray),
@@ -35,7 +36,10 @@ impl FnLower<'_, '_> {
             let [xs, begin, end] = args.as_slice() else {
                 ice("`Subarray` takes three arguments")
             };
+            // Retain the array before the later arguments: one that reassigns a module `let`
+            // (or otherwise drops the owner) must not free the bytes the pointer points at.
             let v = self.expr(xs);
+            let v = self.hold_buffer(v, xs.ty, later);
             let t = self.sub(xs.ty);
             let vt = self.cx.ty(t);
             let place = self.operand_place(v, vt);
@@ -64,15 +68,21 @@ impl FnLower<'_, '_> {
         if !self.cx.is_class(t) {
             return None;
         }
+        // Retain the view (which holds its `ArrayBuffer`, and so the `u8[]`) across later
+        // arguments that may free it.
         let v = self.expr(a);
+        let v = self.hold_buffer(v, a.ty, later);
         let place = self.operand_place(v.clone(), Ty::Ptr);
         let buf = self.class_field(&place, t, "buf");
         let off = self.class_field(&place, t, "off");
         let off = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(off.0)));
         let (buf, bt) = buf;
         let (bytes, at) = self.class_field(&buf, bt, "bytes");
-        let (data, len) = self.header_parts(&bytes, at);
-        // `len * __size()`, through std (a typed array's element size is a method).
+        let (data, blen) = self.header_parts(&bytes, at);
+        // `len * __size()`, through std (a typed array's element size is a method). A view the
+        // program forged by overriding `__size()` or with a constructor of its own can make
+        // this huge or `off` wrap; the two checks below are non-wrapping, so the range stays
+        // inside the buffer's own bytes whatever the view claims.
         let d = self
             .cx
             .prelude_def(VIEW_BYTES)
@@ -81,10 +91,17 @@ impl FnLower<'_, '_> {
         let n = Place::local(self.temp(Ty::U64));
         self.call(Callee::Func(f), vec![v], Some(n.clone()), false);
         let n = Operand::Copy(n);
-        // Inside the owner's current length: `off + n <= len`.
-        let end = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, off.clone(), n.clone()));
-        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, end, len));
-        let (ok, bad) = (self.new_block(), self.new_block());
+        // `off <= blen && n <= blen - off`, checked without the addition that could wrap: the
+        // start is inside the buffer, and the length fits what is left after it.
+        let (ok, bad, span) = (self.new_block(), self.new_block(), self.new_block());
+        let start_ok = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Le, off.clone(), blen.clone()),
+        );
+        self.branch(start_ok, span, bad);
+        self.switch_to(span);
+        let avail = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, blen, off.clone()));
+        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, n.clone(), avail));
         self.branch(fits, ok, bad);
         self.switch_to(bad);
         self.panic_msg(&format!(

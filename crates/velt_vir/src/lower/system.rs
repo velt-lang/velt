@@ -7,6 +7,7 @@
 use velt_sema::hir::{self, DefId, TyId};
 
 use super::operand::proj;
+use super::sequence::Later;
 use super::{cint, ice, FnLower};
 use crate::system::{self, After, Func, Guard, Int, Param, Ret, Struct};
 use crate::tls::TlsCall;
@@ -47,7 +48,7 @@ impl FnLower<'_, '_> {
                     .unavailable
                     .push((def, self.cx.cur_def, self.cx.user_site));
                 for a in args {
-                    self.expr(a);
+                    self.system_arg_effects(a);
                 }
                 return cint(0, ret);
             }
@@ -64,10 +65,14 @@ impl FnLower<'_, '_> {
             return self.rvalue_temp(ret, Rvalue::Cast(v, ret));
         }
         let mut vals = vec![];
-        let declared = func.params.iter().filter(|p| p.declared());
-        for (a, p) in args.iter().zip(declared) {
+        let declared: Vec<&Param> = func.params.iter().filter(|p| p.declared()).collect();
+        // What each argument's siblings after it do: a later one may free the buffer an earlier
+        // one names (through a module `let` it reassigns, or another reference), so a captured
+        // buffer or view is retained across them (`hold_buffer`, `system_view`).
+        let laters = self.later_each(args);
+        for ((a, p), later) in args.iter().zip(declared).zip(laters) {
             let name = system::param_name(p);
-            if let Some((ptr, n)) = self.system_view(func, name, a) {
+            if let Some((ptr, n)) = self.system_view(func, name, a, later) {
                 vals.push(Arg::Bytes(ptr, n));
                 continue;
             }
@@ -76,6 +81,7 @@ impl FnLower<'_, '_> {
             vals.push(match self.cx.kind(t) {
                 hir::TyKind::Int(_) => Arg::Scalar(self.freeze(v, a.ty)),
                 _ => {
+                    let v = self.hold_buffer(v, a.ty, later);
                     let vt = self.cx.ty(t);
                     Arg::Value(self.operand_place(v, vt), t)
                 }
@@ -198,6 +204,42 @@ impl FnLower<'_, '_> {
         ))
     }
 
+    /// Keep the buffer value `v` (of type `ty`) alive across the arguments after it: when one of
+    /// them may change memory (`later.memory`) it can free what `v` points to through another
+    /// reference (a module `let` it reassigns), so `v` is retained for the statement and released
+    /// after the call. A value nothing else reaches, or no later argument can free, is untouched.
+    pub(super) fn hold_buffer(
+        &mut self,
+        v: Operand,
+        ty: velt_sema::hir::TyId,
+        later: Later,
+    ) -> Operand {
+        let cty = self.sub(ty);
+        if !later.memory || !self.cx.counted(cty) {
+            return v;
+        }
+        let shared = self.share_value(v, cty);
+        self.own_value(shared, cty)
+    }
+
+    /// Evaluate a system-function argument for its side effects only, on a target that lacks the
+    /// function (the call is a compile error, reported once lowering is done). A view argument is
+    /// `Intrinsic::Subarray`, which only [`Self::system_view`] knows how to lower; here its
+    /// sub-expressions are evaluated (JS order) and the view itself is dropped.
+    fn system_arg_effects(&mut self, a: &hir::Expr) {
+        if let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Subarray),
+            args,
+        } = &a.kind
+        {
+            for sub in args {
+                self.expr(sub);
+            }
+        } else {
+            self.expr(a);
+        }
+    }
+
     /// Read `errno` of the calling thread now (`*__error()` / `*__errno_location()`) into the
     /// thread's errno slot, for a later `lastOsError()`, in this function or a caller. Does
     /// nothing on a target whose `lastOsError` is not an `errno` pointer.
@@ -245,7 +287,9 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
-    /// Zeros before the variadic arguments on Apple arm64 (`APPLE_VARIADIC_REGS`).
+    /// Evaluate a system function's argument for its effects only (the call is not made: the
+    /// target lacks the function). `xs.subarray(b, e)` (`Intrinsic::Subarray`) is no value of
+    /// its own out
     fn variadic_padding(&mut self, cargs: &mut Vec<Operand>, ctys: &mut Vec<Ty>) {
         let apple_arm = matches!(
             system::target_os(&self.cx.target),
