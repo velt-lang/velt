@@ -8,7 +8,7 @@
 
 use velt_sema::hir::{self, TyId};
 
-use super::any::TAG_OBJECT;
+use super::any::{TAG_FUNCTION, TAG_OBJECT};
 use super::operand::proj;
 use super::{cint, FnLower};
 use crate::vir::{BinOp, BlockId, Const, Operand, Place, Proj, Rvalue, Ty};
@@ -36,7 +36,8 @@ impl FnLower<'_, '_> {
             || self.record_fill
             || a.kind != hir::AdtKind::Anon
             || a.fields.is_empty()
-            || a.fields.iter().any(|f| f.name.starts_with('#'))
+            || (a.fields.iter().enumerate())
+                .any(|(i, f)| f.name.starts_with('#') && (i, f.name.as_str()) != (0, "#call"))
             || self.prelude_record(ty).is_some()
         {
             return;
@@ -49,7 +50,10 @@ impl FnLower<'_, '_> {
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
         let tag = self.any_tag_of(desc.clone());
-        let obj = cint(TAG_OBJECT as i128, Ty::U64);
+        // A function with properties (`#call` first, hir_encodings.md) comes from a function.
+        let callable = fields[0].0 == "#call";
+        let want = if callable { TAG_FUNCTION } else { TAG_OBJECT };
+        let obj = cint(want as i128, Ty::U64);
         let is_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, obj));
         let (fill, no) = (self.new_block(), self.new_block());
         self.branch(is_obj, fill, no);
@@ -65,6 +69,13 @@ impl FnLower<'_, '_> {
         let mut flags = vec![];
         for (i, ((name, optional), fty)) in fields.iter().zip(tys).enumerate() {
             let tmp = Place::local(self.temp(avt));
+            if i == 0 && callable {
+                // The function itself, checked as the call signature's type.
+                let f = self.share_value(Operand::Copy(p.clone()), any);
+                self.assign(tmp.clone(), Rvalue::Use(f));
+                ops.push(self.any_unbox(&tmp, any, fty));
+                continue;
+            }
             let ta = self.addr(tmp.clone());
             let key = self.str_lit(name);
             let ka = self.operand_addr(key, Ty::Agg(crate::vir::STR_AGG));
