@@ -187,11 +187,8 @@ impl FnLower<'_, '_> {
         which: Local,
         found: BlockId,
     ) {
-        let l = self.str_lit(name);
-        let la = self.operand_addr(l, STR);
-        let eq = self.reader_call("keyIs", vec![Operand::Copy(Place::local(cx.r)), la]);
         let (hit, other) = (self.new_block(), self.new_block());
-        self.branch(eq, hit, other);
+        self.key_is_branch(cx.r, name, hit, other);
         self.switch_to(hit);
         let alts: Vec<LitValue> = tys
             .iter()
@@ -217,11 +214,8 @@ impl FnLower<'_, '_> {
     /// falls through.
     fn object_match_keys(&mut self, r: Local, keys: &[String], which: Local, found: BlockId) {
         for (i, k) in keys.iter().enumerate() {
-            let l = self.str_lit(k);
-            let la = self.operand_addr(l, STR);
-            let eq = self.reader_call("keyIs", vec![Operand::Copy(Place::local(r)), la]);
             let (hit, miss) = (self.new_block(), self.new_block());
-            self.branch(eq, hit, miss);
+            self.key_is_branch(r, k, hit, miss);
             self.switch_to(hit);
             self.assign(Place::local(which), Rvalue::Use(cint(i as i128, Ty::U32)));
             self.goto(found);
