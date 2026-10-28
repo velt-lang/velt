@@ -1,0 +1,29 @@
+// Converting an `any` holding an object to an interface with optional fields it lacks (#1675).
+interface H {
+  name: string;
+}
+
+const d: H = { name: "d" } as any;
+console.log(d.name);
+
+interface G {
+  name: string;
+  tag?: string;
+  count?: number;
+}
+
+const e: G = { name: "e" } as any;
+console.log(e.name, e.tag, e.count);
+const f: G = { name: "f", count: 3 } as any;
+console.log(f.name, f.tag, f.count);
+
+interface Handler {
+  name: string;
+  test?: (v: unknown) => boolean;
+  priority?: number;
+}
+
+const handlers: Handler[] = [{ name: "a", priority: 2 } as any, { name: "b" } as any];
+for (const h of handlers) {
+  console.log(h.name, h.priority ?? 0, h.test === undefined);
+}

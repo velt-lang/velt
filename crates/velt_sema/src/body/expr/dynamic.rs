@@ -448,6 +448,13 @@ impl FnCx<'_, '_> {
             }
         }
         self.note_dynamic_iface(exp, span);
+        // An object type with optional fields may be built from the members of an object of
+        // another type (velt_vir `any_object_fill.rs`), which lowering reads through `any`.
+        if let TyKind::Adt(d, _) = self.cx.ty.kind(exp).clone() {
+            if (self.cx.adt(d)).is_some_and(|a| a.fields.iter().any(|f| f.optional)) {
+                self.cx.note_dyn_members();
+            }
+        }
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
     }

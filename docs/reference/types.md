@@ -3072,8 +3072,12 @@ a copy of the object, and a view sent to another thread (`spawn`, a channel, `sh
 there ([Async](async.md)), so a write there does not reach the object here, and converting the
 object here again gives a view of its own. A union with
 one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
-way. In a program without proxies, and into a class or an interface with methods, an object of
-another type stays a `TypeError`.
+way. In a program without proxies, an object of another type converted to an object type is a
+copy of the object's members, each read and checked as the field's type when the conversion
+runs: an optional field the object lacks is absent (`const e: G = { name: "e" } as any` with
+`interface G { name: string; tag?: string }` reads `e.tag` as `undefined`, as in Node) and a
+required one stops with a `TypeError`; a later write to the copy does not reach the object. Into
+a class or an interface with methods, an object of another type stays a `TypeError`.
 
 An object literal with a getter (`{ get value() { … } }`, the value of its own interface)
 asserted to an object type that declares only fields (`obj as Computed<T>` with
