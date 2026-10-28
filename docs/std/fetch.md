@@ -60,7 +60,8 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
 
 Requests send `accept: */*`, `user-agent: velt` and, like Node, `accept-encoding: gzip,
-deflate` (`br, gzip, deflate` over HTTPS) unless you set them. Following a redirect
+deflate` (`br, gzip, deflate` over HTTPS, chosen again for each redirect hop) unless you set
+them. Following a redirect
 works as in browsers and Node: a 303 (and a 301 or 302 after a POST) becomes a GET without a
 body, and `authorization`, `cookie` and a `host` you set are not sent to another origin.
 

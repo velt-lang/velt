@@ -82,10 +82,10 @@ function unknown(message: string): IoError {
 /** Sends `o`, following redirects as `o.redirect` says, and resolves with the response. */
 export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortError> {
   let t = target(o.url);
-  const codings = acceptEncoding(t.https);
   let redirected = false;
   for (let hop: i64 = 0; hop <= MAX_REDIRECTS; hop++) {
-    const req = encode(o.method, t, o.headers, codings, o.kind, o.text, o.bytes);
+    // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
+    const req = encode(o.method, t, o.headers, acceptEncoding(t.https), o.kind, o.text, o.bytes);
     const [conn, head] = await exchange(o, t, req);
     const s = head.status;
     const location = s >= 300 && s < 400 && o.redirect != MANUAL ? head.location() : null;
