@@ -429,8 +429,16 @@ impl FnCx<'_, '_> {
             self.throw_src(crate::defs::ThrowSrc::Direct(throws, span));
         }
         // Through a function type written without `throws` in a user module, it may throw what
-        // is stored into the type (`throws::fn_types`).
-        if !self.cx.scopes[self.module].is_std {
+        // is stored into the type (`throws::fn_types`); a `const` holding a closure throws what
+        // that closure throws (a wrapper's hidden local too, `callback::wrap`).
+        // (An async one's errors are its promise's: the call itself throws nothing more.)
+        let sync = closure.filter(|c| {
+            let f = self.cx.fn_info(*c);
+            !f.is_async && !f.is_generator
+        });
+        if let Some(c) = sync {
+            self.throw_src(crate::defs::ThrowSrc::Call(c, vec![], span));
+        } else if !self.cx.scopes[self.module].is_std {
             let site = self.site_of_value(&f);
             self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
         }

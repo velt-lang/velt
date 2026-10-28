@@ -251,6 +251,11 @@ impl FnCx<'_, '_> {
         let (value, closure, call) = match callee {
             Callee::Named(e) => (None, None, e),
             Callee::Value(v, closure) => {
+                // A closure literal wrapped: calls through the hidden local are calls of it.
+                let closure = closure.or(match &v.kind {
+                    H::Closure(c) => Some(*c),
+                    _ => None,
+                });
                 let name = ast::Ident {
                     name: format!("#callback{}", self.f.locals.len()),
                     span: v.span,

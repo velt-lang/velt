@@ -738,6 +738,10 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(&name, h.ty, LocalKind::Const);
+        // A closure literal adapted: calls through the hidden local are calls of it.
+        if let H::Closure(c) = &h.kind {
+            self.f.closure_consts.insert(local, *c);
+        }
         let arrow = wrapper(
             synth(ast::ExprKind::Ident(name), span),
             shape,

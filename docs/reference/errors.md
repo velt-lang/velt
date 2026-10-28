@@ -144,7 +144,9 @@ what a function stored there may throw.
   ```
 - A closure gets the error type of the function type expected where it is written (and must
   not throw more than a written `throws` allows); otherwise, what its body throws. A named
-  function used as a value may throw less than its function type allows.
+  function used as a value may throw less than its function type allows. A closure used as a
+  value of another function type (one taking more parameters, the other arm of a `? :`) still
+  throws only what it throws, and so does a call through a `const` holding a closure.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
