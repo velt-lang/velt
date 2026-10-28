@@ -304,9 +304,7 @@ async function runFrom(
   }
   if (!started) {
     // It ended before running a test: in a module's top-level code.
-    report.lines.push(
-      `${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`,
-    );
+    report.lines.push(`${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`);
     pushStderr(report, r.stderr);
     report.failed += f.tests.length - from;
     return f.tests.length;

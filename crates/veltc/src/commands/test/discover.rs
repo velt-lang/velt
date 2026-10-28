@@ -179,7 +179,11 @@ fn resolve(base: &Path) -> Option<PathBuf> {
     ["vlt", "ts", "tsx"]
         .iter()
         .map(|ext| base.with_file_name(format!("{name}.{ext}")))
-        .chain(["vlt", "ts", "tsx"].iter().map(|ext| base.join(format!("index.{ext}"))))
+        .chain(
+            ["vlt", "ts", "tsx"]
+                .iter()
+                .map(|ext| base.join(format!("index.{ext}"))),
+        )
         .find(|p| p.is_file())
 }
 
@@ -376,8 +380,14 @@ mod tests {
         };
         write("lib/pure.vlt", "export function f(): i64 { return 1; }\n");
         write("lib/index.ts", "export * from \"./pure.vlt\";\n");
-        write("lib/init.ts", "export const DATA = load();\nfunction load(): i64 { return 1; }\n");
-        write("lib/via.vlt", "import { DATA } from \"./init.js\";\nexport const D2 = 2;\n");
+        write(
+            "lib/init.ts",
+            "export const DATA = load();\nfunction load(): i64 { return 1; }\n",
+        );
+        write(
+            "lib/via.vlt",
+            "import { DATA } from \"./init.js\";\nexport const D2 = 2;\n",
+        );
         let imports = |src: &str| {
             let file = d.join("t/a.test.vlt");
             write("t/a.test.vlt", src);
@@ -392,8 +402,14 @@ mod tests {
         // Code two imports away, behind a `.js` name for a `.ts` file.
         assert!(imports("import { D2 } from \"../lib/via\";\n"));
         // An import cycle ends.
-        write("lib/c1.vlt", "import { b } from \"./c2\";\nexport const a = 1;\n");
-        write("lib/c2.vlt", "import { a } from \"./c1\";\nexport const b = 2;\n");
+        write(
+            "lib/c1.vlt",
+            "import { b } from \"./c2\";\nexport const a = 1;\n",
+        );
+        write(
+            "lib/c2.vlt",
+            "import { a } from \"./c1\";\nexport const b = 2;\n",
+        );
         assert!(!imports("import { a } from \"../lib/c1\";\n"));
     }
 }

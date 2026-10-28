@@ -275,8 +275,7 @@ fn what_a_test_does_cannot_break_the_run() {
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     let f = block(&stdout, "f.test.vlt");
     assert_eq!(
-        f[1],
-        "FAILED t/f.test.vlt (exit code 1 before its tests ran)",
+        f[1], "FAILED t/f.test.vlt (exit code 1 before its tests ran)",
         "{stdout}"
     );
     assert!(f[2].contains("missing.json"), "{stdout}");
