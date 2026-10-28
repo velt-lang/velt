@@ -260,7 +260,7 @@ impl Ctx<'_> {
 }
 
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).
-pub(crate) fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
     let mut add = |x: &'t ast::TypeExpr| names_in(x, out);
     use ast::TypeExprKind as K;
     match &t.kind {
@@ -322,12 +322,7 @@ pub(crate) fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
 
 /// `t` as written, without its positions: forms written alike have one key.
 fn shape_key(t: &ast::TypeExpr) -> String {
-    debug_key(&t.kind)
-}
-
-/// `x`'s debug form without its positions.
-pub(crate) fn debug_key(x: &impl std::fmt::Debug) -> String {
-    let full = format!("{x:?}");
+    let full = format!("{:?}", t.kind);
     let mut out = String::with_capacity(full.len());
     let mut rest = full.as_str();
     while let Some(i) = rest.find("Span {") {

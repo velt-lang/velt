@@ -122,52 +122,6 @@ impl Ctx<'_> {
     }
 }
 
-impl Ctx<'_> {
-    /// The first alias declared exactly like alias `a` (same name, parameters and body, the
-    /// names in them bound to the same items), else `a`: a module's own copy of another's
-    /// alias (`type Strip<T> = …` written in both) is one type when deferred, as TypeScript
-    /// compares the two structurally.
-    pub(crate) fn alias_twin(&mut self, a: u32) -> u32 {
-        if let Some(&t) = self.type_level.twins.get(&a) {
-            return t;
-        }
-        let twin = (0..a).find(|&b| self.alias_twins(a, b)).unwrap_or(a);
-        self.type_level.twins.insert(a, twin);
-        twin
-    }
-
-    fn alias_twins(&self, a: u32, b: u32) -> bool {
-        let (x, y) = (&self.aliases[a as usize], &self.aliases[b as usize]);
-        if x.decl.name.name != y.decl.name.name || !x.outer.is_empty() || !y.outer.is_empty() {
-            return false;
-        }
-        if x.module == y.module {
-            return false;
-        }
-        let gx = crate::type_level::inline::debug_key(&x.decl.generics);
-        let gy = crate::type_level::inline::debug_key(&y.decl.generics);
-        if gx != gy
-            || crate::type_level::inline::debug_key(&x.decl.ty.kind)
-                != crate::type_level::inline::debug_key(&y.decl.ty.kind)
-        {
-            return false;
-        }
-        let mut names = vec![];
-        crate::type_level::inline::names_in(&x.decl.ty, &mut names);
-        for g in &x.decl.generics {
-            for t in g.bounds.iter().chain(g.default.iter()) {
-                crate::type_level::inline::names_in(t, &mut names);
-            }
-        }
-        let (sx, sy) = (&self.scopes[x.module], &self.scopes[y.module]);
-        names.iter().all(|n| {
-            *n != "*"
-                && (sx.items.get(*n) == sy.items.get(*n)
-                    || x.decl.generics.iter().any(|g| g.name.name == *n))
-        })
-    }
-}
-
 /// The spans of the function types among the parts of `t` when it is an intersection of them
 /// with other parts (a callable object type: `((p: P) => R) & { x: X }`); empty otherwise.
 fn call_parts(t: &ast::TypeExpr) -> Vec<Span> {

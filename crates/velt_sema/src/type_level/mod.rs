@@ -65,8 +65,8 @@ pub(crate) struct State {
     pub(crate) stuck: bool,
     /// While a callable alias is expanded again (`Ctx::alias_body`): a parameter type of a
     /// function type in it that needs a type parameter is deferred on its own, as a form over
-    /// the alias's parameters (`TyOp::Inline`), instead of the whole alias.
-    /// The function types' spans.
+    /// the alias's parameters (`TyOp::Inline`), instead of the whole alias: the spans of those
+    /// function types.
     pub(crate) callable_params: Vec<Span>,
     /// Where each deferred type was first written (reductions report there).
     pub(crate) op_sites: rustc_hash::FxHashMap<TyId, Span>,
@@ -88,8 +88,6 @@ pub(crate) struct State {
     pub(crate) reduced: rustc_hash::FxHashMap<TyId, TyId>,
     /// The deferred forms written outside aliases (`TyOp::Inline`).
     pub(crate) inline: inline::Forms,
-    /// Each deferred alias's twin (`Ctx::alias_twin`).
-    pub(crate) twins: rustc_hash::FxHashMap<u32, u32>,
 }
 
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
@@ -153,7 +151,6 @@ impl Ctx<'_> {
     /// The deferred application of alias `a` to `args` (which mention type parameters), as
     /// written at `span`.
     pub(crate) fn deferred_alias(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
-        let a = self.alias_twin(a);
         let op = self.ty.intern(TyKind::Op(TyOp::Alias(a), args));
         self.type_level.op_sites.entry(op).or_insert(span);
         op
