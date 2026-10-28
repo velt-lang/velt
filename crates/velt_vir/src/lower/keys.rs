@@ -13,7 +13,7 @@ use velt_sema::hir::{DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
 use super::Cx;
 use crate::mangle::{mangle, segment};
-use crate::vir::Function;
+use crate::vir::{Function, Linkage};
 
 impl Cx<'_> {
     /// The stable spelling of type `t`, e.g. `i64`, `Map<string, Point[]>`, `Box<i64>`.
@@ -223,9 +223,15 @@ impl Cx<'_> {
 /// otherwise). Two functions only share a symbol if two definitions share a qualified name; this
 /// keeps symbols unique (as backends need) regardless, and `velt dev` treats such keys as
 /// ambiguous.
+///
+/// An imported function (vir.rs invariant 11) keeps its symbol, which the object defining it
+/// uses: on a clash, the program's own function is renamed.
 pub(super) fn disambiguate(funcs: &mut [Function]) {
     let mut seen: FxHashMap<String, u32> = FxHashMap::default();
-    for f in funcs {
+    for f in funcs.iter().filter(|f| f.linkage == Linkage::Import) {
+        seen.insert(f.symbol.clone(), 1);
+    }
+    for f in funcs.iter_mut().filter(|f| f.linkage != Linkage::Import) {
         let n = seen.entry(f.symbol.clone()).or_insert(0);
         *n += 1;
         if *n > 1 {
@@ -264,5 +270,25 @@ fn lit_key(v: &LitValue) -> String {
         LitValue::Float(FloatTy::F32, bits) => format!("{bits:#x}f32"),
         LitValue::Float(FloatTy::F64, bits) => format!("{bits:#x}f64"),
         LitValue::Bool(b) => b.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vir::Ty;
+
+    #[test]
+    fn imported_symbols_are_never_renamed() {
+        let f = |sym: &str, linkage| Function::new(sym.into(), vec![], Ty::Unit, linkage);
+        let mut funcs = vec![
+            f("a", Linkage::Internal),
+            f("a", Linkage::Import),
+            f("b", Linkage::Internal),
+            f("b", Linkage::Internal),
+        ];
+        disambiguate(&mut funcs);
+        let symbols: Vec<&str> = funcs.iter().map(|f| f.symbol.as_str()).collect();
+        assert_eq!(symbols, ["a$dup2", "a", "b", "b$dup2"]);
     }
 }

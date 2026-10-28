@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use super::programs;
+use super::{copy_local, finish_main, float, int, main_fb, FuncBuilder, Out, ProgramBuilder};
 use crate::{emit_object, host_triple, CodegenOptions};
 
 const HARNESS: &str = r#"
@@ -45,6 +46,9 @@ fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_str_cmp(a: *const VeltStr, b: *const VeltStr) -> i32 {
     unsafe { bytes(a).cmp(bytes(b)) as i32 }
 }
+// Defined here for programs that import them (`imported_functions_are_called_in_another_object`).
+#[no_mangle] pub extern "C" fn velt_test_imported(a: i64, b: u8, c: f64) -> i64 { a * 100 + b as i64 * 10 + c as i64 }
+#[no_mangle] pub extern "C" fn velt_test_kept(x: i64) -> i64 { x + 1 }
 #[no_mangle] pub extern "C" fn velt_rt_pow_i64(a: i64, b: i64) -> i64 { a.wrapping_pow(b as u32) }
 // The backend emits these as instructions; a call reaching them would print NaN.
 #[no_mangle] pub extern "C" fn velt_rt_math_sqrt(_x: f64) -> f64 { f64::NAN }
@@ -69,8 +73,9 @@ fn rustc() -> Option<String> {
         .map(|_| rustc)
 }
 
-fn tmp_dir() -> PathBuf {
-    let d = std::env::temp_dir().join(format!("velt_codegen_link_{}", std::process::id()));
+/// A directory of this test process for test `name` (tests run in parallel).
+fn tmp_dir(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("velt_codegen_link_{}_{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -133,13 +138,68 @@ fn link_and_run_host_objects() {
         eprintln!("note: rustc not available; skipping native link test");
         return;
     };
-    let dir = tmp_dir();
+    let dir = tmp_dir("programs");
     for tp in programs::all() {
         for optimize in [false, true] {
             let (rc, stdout) = build_and_run(&rustc, &dir, &tp, optimize);
             assert_eq!(stdout, tp.stdout, "{} optimize={optimize}", tp.name);
             assert_eq!(rc, tp.exit, "{} optimize={optimize}", tp.name);
         }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `Linkage::Import` function (vir.rs invariant 11) is declared, never defined: calls reach
+/// the definition in another object of the link (here the harness), with or without a body kept
+/// for inlining (emitting it would define the symbol twice, or return 0).
+#[test]
+fn imported_functions_are_called_in_another_object() {
+    let Some(rustc) = rustc() else {
+        eprintln!("note: rustc not available; skipping native link test");
+        return;
+    };
+    use velt_vir::vir::Ty::*;
+    use velt_vir::vir::*;
+    let (mut pb, rt) = ProgramBuilder::new();
+    let imported = pb.add(Function::new(
+        "velt_test_imported".into(),
+        vec![I64, U8, F64],
+        I64,
+        Linkage::Import,
+    ));
+    let mut kept = FuncBuilder::new("velt_test_kept", &[I64], I64, Linkage::Import);
+    let b = kept.block();
+    kept.term(b, Terminator::Return(int(0, I64)));
+    let kept = pb.add(kept.finish());
+    let (mut fb, b0) = main_fb();
+    let r = fb.local(I64);
+    let mut o = Out {
+        fb: &mut fb,
+        rt: &rt,
+        cur: b0,
+    };
+    let args = vec![int(4, I64), int(2, U8), float(7.5, F64)];
+    o.cur = (o.fb).call(o.cur, Callee::Func(imported), args, Some(Place::local(r)));
+    o.line(copy_local(r), I64);
+    let args = vec![int(41, I64)];
+    o.cur = (o.fb).call(o.cur, Callee::Func(kept), args, Some(Place::local(r)));
+    o.line(copy_local(r), I64);
+    let cur = o.cur;
+    pb.add(finish_main(fb, cur, 0));
+    let tp = programs::TestProgram {
+        name: "imported",
+        program: pb.p,
+        stdout: "427\n42\n".into(),
+        exit: 0,
+    };
+    let dir = tmp_dir("imported");
+    for optimize in [false, true] {
+        let (rc, stdout) = build_and_run(&rustc, &dir, &tp, optimize);
+        assert_eq!(
+            (rc, stdout.as_str()),
+            (0, "427\n42\n"),
+            "optimize={optimize}"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

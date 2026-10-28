@@ -124,7 +124,10 @@ fn declare_all<M: Module>(
     let (funcs, defs) = match naming {
         Naming::Program => {
             let funcs = declare_program_functions(module, program, call_conv)?;
-            let defs = funcs.iter().copied().map(Some).collect();
+            // An imported function's code is in another object (vir.rs invariant 11).
+            let defs = (funcs.iter().zip(&program.funcs))
+                .map(|(&id, f)| (f.linkage != vir::Linkage::Import).then_some(id))
+                .collect();
             (funcs, defs)
         }
         Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
@@ -210,7 +213,7 @@ fn declare_all<M: Module>(
     Ok((decls, defs))
 }
 
-/// Every function under its symbol, with its VIR linkage.
+/// Every function under its symbol, with its VIR linkage (an imported one as an import).
 fn declare_program_functions<M: Module>(
     module: &mut M,
     program: &vir::Program,
@@ -222,6 +225,7 @@ fn declare_program_functions<M: Module>(
         let linkage = match f.linkage {
             vir::Linkage::Export => Linkage::Export,
             vir::Linkage::Internal => internal,
+            vir::Linkage::Import => Linkage::Import,
         };
         funcs.push(declare_function(
             module, call_conv, &f.symbol, &f.params, f.ret, linkage,
