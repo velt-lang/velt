@@ -10,7 +10,7 @@
 //!   Pinned functions (`roles`: async `$poll`/`$drop`, handler `$init`, …) are referenced
 //!   directly, by the code of their own version.
 //! - [`DevSession::reload`] compares the new version with the running one per function key
-//!   (`facts`, `fingerprint`, `classify`): either it compiles the changed functions into a new
+//!   (`facts`, `velt_vir::fingerprint`, `classify`): either it compiles the changed functions into a new
 //!   module and swaps them in, or it reports why the program must restart.
 //! - Each version's unwind info is registered with the system (`unwind::jit_windows` on
 //!   Windows x64, `unwind::jit_systemv` on macOS and Linux), so stack walks get through JIT
@@ -23,7 +23,6 @@
 
 mod classify;
 mod facts;
-mod fingerprint;
 mod handlers;
 mod roles;
 mod trampoline;
