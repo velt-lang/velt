@@ -1,0 +1,100 @@
+// check: unfreed blocks at most 140
+// (Kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4 blocks, and a
+// list of retired values per thread that retired one, 4 blocks each: 140 covers 34 threads. A
+// value a `set` or `delete` failed to retire, or a split dropped, is thousands more.)
+// A `ConcurrentMap` with object values on worker threads: two writers each set and delete their
+// own keys over and over (leaves split, empty and are reused), while four readers `get` and
+// `read` the same keys. Every value a reader finds is its key's; at the end every key is deleted
+// and the epoch drained.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { collect, outstanding } from "velt:sync/epoch";
+
+interface Entry {
+  key: u64;
+  name: string;
+  tags: u64[];
+}
+
+const KEYS: u64 = 3000;
+const ROUNDS: u64 = 40;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+async function writer(m: shared<ConcurrentMap<u64, Entry>>, t: u64) {
+  for (let r: u64 = 0; r < ROUNDS; r++) {
+    for (let i = t; i < KEYS; i += 2) {
+      m.set(mix(i), { key: i, name: `${i}:${r}`, tags: [i, r] });
+    }
+    for (let i = t; i < KEYS; i += 2) {
+      if ((i + r) % 3 == 0) {
+        m.delete(mix(i));
+      }
+    }
+  }
+}
+
+async function reader(m: shared<ConcurrentMap<u64, Entry>>): Promise<u64> {
+  let wrong: u64 = 0;
+  for (let r: u64 = 0; r < ROUNDS / 4; r++) {
+    for (let i: u64 = 0; i < KEYS; i++) {
+      const e = m.get(mix(i));
+      if (e != undefined && (e.key != i || e.tags[0] != i)) {
+        wrong++;
+      }
+      const ok = m.read(mix(i), (v) => v.key == i && v.tags.length == 2);
+      if (ok == false) {
+        wrong++;
+      }
+    }
+  }
+  return wrong;
+}
+
+function drain(): u64 {
+  let rounds: u64 = 0;
+  while (outstanding() > 0 && rounds < 10) {
+    collect();
+    rounds++;
+  }
+  return outstanding();
+}
+
+async function churn(): Promise<string> {
+  const m: ConcurrentMap<u64, Entry> = ConcurrentMap.create((2 * KEYS) as usize);
+  const s = shared(m);
+  const ws: Promise<void>[] = [spawn(writer(s, 0)), spawn(writer(s, 1))];
+  const rs: Promise<u64>[] = [];
+  for (let t = 0; t < 4; t++) {
+    rs.push(spawn(reader(s)));
+  }
+  await Promise.all(ws);
+  let wrong: u64 = 0;
+  for (const w of await Promise.all(rs)) {
+    wrong += w;
+  }
+  let present: u64 = 0;
+  for (let i: u64 = 0; i < KEYS; i++) {
+    const e = s.get(mix(i));
+    if (e != undefined) {
+      present++;
+      if (e.name != `${i}:${ROUNDS - 1}`) {
+        wrong++;
+      }
+    }
+  }
+  for (let i: u64 = 0; i < KEYS; i++) {
+    s.delete(mix(i));
+  }
+  return `wrong ${wrong} present ${present}`;
+}
+
+async function main() {
+  console.log(await churn());
+  console.log("outstanding", drain());
+}

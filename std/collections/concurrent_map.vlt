@@ -94,6 +94,11 @@ function rangeError(what: string): never {
   panic(`RangeError: ConcurrentMap.${what}`);
 }
 
+/** Whether a `shared<V>` is an atomic integer, which `add` and `set` change in place. */
+function atomicShared<V>(): bool {
+  return typeIs<V, i64>() || typeIs<V, u64>() || typeIs<V, isize>() || typeIs<V, usize>();
+}
+
 /** The tree word of `key` (`create` takes only `u64` keys for now). */
 function keyWord<K>(key: K): u64 {
   if (typeIs<K, u64>()) {
@@ -174,7 +179,8 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
   }
 
   /**
-   * Runs `f` on the value of `key` (the map's own, not a copy) and returns what it returns, or
+   * Runs `f` on the value of `key` (the map's own, not a copy; for a 64-bit integer `V`, whose
+   * `shared` is an atomic integer, a box of its own) and returns what it returns, or
    * `undefined` if the map has no `key`.
    */
   read<R, E>(key: K, f: (value: shared<V>) => R throws E): R | undefined throws E {
@@ -184,7 +190,16 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
       return w == undefined ? undefined : f(shared(asType<V>(w)));
     }
     const s = this.findBoxed(k);
-    return s == null ? undefined : f(s);
+    if (s == null) {
+      return undefined;
+    }
+    // A `shared` 64-bit integer is an atomic one (`add`, `set`): the callback gets a box of its
+    // own, so it cannot change the map's value outside the leaf's latch.
+    if (atomicShared<V>()) {
+      const v: V = s;
+      return f(shared(v));
+    }
+    return f(s);
   }
 
   /** Whether the map has `key`. */

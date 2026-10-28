@@ -38,9 +38,10 @@ was measured on a slightly earlier version of the map, before its leaf splits go
   entries.
 - `get(key): V | undefined`, `has(key)`.
 - `read(key, (v) => …)`: runs the callback on the value of `key`, the map's own (borrowed, not
-  copied), and returns what it returns, or `undefined` if the map has no `key`. For `u64` values
-  the callback gets a `shared<u64>`, an atomic integer read with `v.get()`, boxed for the call:
-  `get` is the cheaper read there.
+  copied), and returns what it returns, or `undefined` if the map has no `key`. For 64-bit
+  integer values (`u64`, `i64`, `usize`, `isize`) the callback gets a `shared` integer, an atomic
+  one read with `v.get()`, in a box of its own for the call: changing it does not change the map,
+  and `get` is the cheaper read there.
 - `set(key, value)`: adds `key` or replaces its value. The key `2^64 - 1` cannot be held (a
   RangeError); every lookup of it answers absent.
 - `add(key, delta): u64 | undefined`: for `u64` values, adds `delta` to the value of `key`
