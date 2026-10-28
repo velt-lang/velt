@@ -46,6 +46,18 @@ impl FnLower<'_, '_> {
                 return cint(0, ret);
             }
         };
+        // `lastOsError()` reads the errno captured right after the last system call (set below),
+        // when there was one: no `errno` read here, so a temporary freed between the failing
+        // call and this one cannot change the value (docs/reference/system-functions.md). With
+        // no earlier call in this function, it falls through to reading `errno` itself.
+        if matches!(func.ret, Ret::Errno) {
+            if let Some(slot) = self.errno_slot {
+                for a in args {
+                    self.expr(a);
+                }
+                return Operand::Copy(Place::local(slot));
+            }
+        }
         let mut vals = vec![];
         for a in args {
             let v = self.expr(a);
@@ -140,6 +152,12 @@ impl FnLower<'_, '_> {
             Some(Place::local(dest)),
             false,
         );
+        // Capture `errno` into a hidden local straight away, before any drop or other call of
+        // the statement runs: a following `lastOsError()` reads this local. `lastOsError`
+        // itself (`Ret::Errno`) is read from the C library, so it never overwrites the slot.
+        if !matches!(func.ret, Ret::Errno) {
+            self.capture_errno();
+        }
         if let After::WaitOverlapped { handle, overlapped } = func.after {
             let h = by_param[handle]
                 .clone()
@@ -164,6 +182,43 @@ impl FnLower<'_, '_> {
             Ret::Int { .. } if cret == ret => result,
             Ret::Int { .. } => self.rvalue_temp(ret, Rvalue::Cast(result, ret)),
         }
+    }
+
+    /// Read `errno` of the calling thread now (`*__error()` / `*__errno_location()`) into the
+    /// function's hidden errno slot, for a following `lastOsError()`. Does nothing on a target
+    /// whose `lastOsError` is not an `errno` pointer (Windows reads `GetLastError()` at the
+    /// call). The slot is one local per function, zero-initialized in the entry block, so every
+    /// `lastOsError()` read is dominated by a definite assignment even across branches.
+    fn capture_errno(&mut self) {
+        let Some(errno) =
+            system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))
+        else {
+            return;
+        };
+        let slot = match self.errno_slot {
+            Some(s) => s,
+            None => {
+                let s = self.temp(Ty::I32);
+                let zero = Stmt::Assign(Place::local(s), Rvalue::Use(cint(0, Ty::I32)));
+                self.blocks[0].0.insert(0, zero);
+                self.block_locs[0].0.insert(0, self.loc);
+                self.errno_slot = Some(s);
+                s
+            }
+        };
+        let id = self.cx.extern_sym(errno.symbol, vec![], Ty::Ptr, false);
+        let ptr = self.temp(Ty::Ptr);
+        self.call(
+            vir::Callee::Extern(id),
+            vec![],
+            Some(Place::local(ptr)),
+            false,
+        );
+        let at = Place {
+            local: ptr,
+            proj: vec![Proj::Deref(Ty::I32)],
+        };
+        self.assign(Place::local(slot), Rvalue::Use(Operand::Copy(at)));
     }
 
     /// Zeros before the variadic arguments on Apple arm64 (`APPLE_VARIADIC_REGS`).

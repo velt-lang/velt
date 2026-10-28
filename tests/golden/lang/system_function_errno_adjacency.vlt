@@ -1,0 +1,25 @@
+// requires: unix
+// `lastOsError()` reads the errno of the call right before it, even when freeing a temporary
+// (or any other work that calls the C library) sits between the failing call and the read: the
+// compiler captures errno into a hidden slot right after each system call. `open` of a missing
+// file sets ENOENT (2 everywhere); building and dropping arrays in between must not change it.
+import { lastOsError } from "velt:os";
+
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function close(fd: i32): i32;
+
+function cString(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s) + 1);
+  b.write(s);
+  return b;
+}
+
+function main() {
+  // A temporary path (freed at the end of this statement, before `lastOsError`).
+  console.log(open(cString("velt_errno_missing_dir/nope"), 0, 0));
+  const junk: u8[] = Buffer.alloc(4096);
+  junk.fill(7);
+  console.log(lastOsError());
+  // A second failing call overwrites the slot; `lastOsError` then reads the newer errno.
+  console.log(close(-1), lastOsError() == 9);
+}

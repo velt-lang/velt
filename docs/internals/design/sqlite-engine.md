@@ -117,6 +117,12 @@ it, starting with positioned I/O for the pager.
   conversion is hidden in a call.
 - A target without a function accepts its declaration; calling it there is a compile error
   (`velt:fs`'s fd API on Windows and WebAssembly for now).
+- `lastOsError()` adjacency is a compiler guarantee, not a convention: lowering captures `errno`
+  (`*__error()` / `*__errno_location()`) into one hidden `i32` local per function, zero-filled in
+  the entry block, right after every system call; `lastOsError()` reads that local when a call
+  preceded it (`crates/velt_vir/src/lower/system.rs`). So a freed temporary or a `console.log`
+  between the failing call and the read cannot clobber the value. It costs one `__error` load per
+  call. Windows reads `GetLastError()` at the `lastOsError()` call as before.
 
 ## Steps
 

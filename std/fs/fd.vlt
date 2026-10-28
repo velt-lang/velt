@@ -318,7 +318,10 @@ function cPath(path: string): u8[] {
 
 /** Removes the file `path` (Node's `fs.unlinkSync`; not a directory: `EPERM` or `EISDIR`). */
 export function unlinkSync(path: string) {
-  if (unlink(cPath(path)) != 0) {
+  // `c` is a variable, not a temporary, so its free runs at the end of the function, after
+  // `lastOsError` has read errno (the compiler also captures errno right after the call).
+  const c = cPath(path);
+  if (unlink(c) != 0) {
     throw osError(lastOsError(), "unlink", path);
   }
 }

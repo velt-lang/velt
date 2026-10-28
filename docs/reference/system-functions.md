@@ -53,11 +53,12 @@ A name may end in `$` and any suffix, which the table ignores: `fcntl$lock` bind
 module that needs two forms of a variadic function (`fcntl` with an `int` and with a
 `struct flock *`) declares them under two names; the parameter types choose the form.
 
-`lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. Read it right
-after the call that failed, before anything that may call the C library: another system
-function, a function such as `console.log`, or freeing memory (a temporary argument of the
-failed call is freed at the end of its statement, so pass variables, as below). `velt:os`
-exports it (`import { lastOsError } from "velt:os"`).
+`lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. The compiler
+captures `errno` into a hidden slot right after every system call, and `lastOsError()` reads
+that slot, so a system call followed by `lastOsError()` reports that call's error even when
+anything the statement does after the call (freeing a temporary argument, `console.log`) runs in
+between; call `lastOsError()` after the failing call and before the next system call, which
+overwrites the slot. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
 
 ```ts
 import { lastOsError } from "velt:os";

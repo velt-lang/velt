@@ -701,6 +701,11 @@ struct FnLower<'c, 'h> {
     /// While lowering a stabilized borrow (stabilize.rs): every counted object a place
     /// projection goes through is retained until the end of the statement.
     retain_hops: bool,
+    /// One hidden `i32` local per function (zero-initialized in the entry block) that holds
+    /// `errno`, captured right after every system call lowered (system.rs). `lastOsError()`
+    /// reads it instead of `errno` itself, so nothing emitted between the call and the read (a
+    /// temporary's free) can clobber it. `None` until the first system call allocates it.
+    errno_slot: Option<vir::Local>,
     /// Elements of arrays borrowed in place by the arguments being lowered when the array has
     /// no other reference: checked again just before the call (stabilize.rs).
     pending_borrows: Vec<stabilize::PendingBorrow>,
