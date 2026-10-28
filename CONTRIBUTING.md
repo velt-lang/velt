@@ -226,7 +226,8 @@ and the `pre-push` hook from `cargo xtask install-hooks` covers all of them: eac
 `cargo xtask precheck` in the worktree it comes from.
 Never edit `main/` itself; it only ever fast-forwards. Give each worktree its own build
 directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLDEN_WORK` on a
-bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
+bigger disk), so parallel builds never wait on each other's locks. The `velt` cargo builds keeps its
+build cache in that build directory (`velt-build-cache`, at most 500 MB), not in `~/.velt`. Agents follow the same layout:
 one worktree per agent, created from `origin/main`.
 
 A new worktree starts with an empty build directory, and building the dependencies takes minutes.

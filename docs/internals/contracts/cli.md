@@ -243,19 +243,31 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
   (`<exe>.link-stamp` beside it).
 - Build cache (additive, #1612). Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
-  `off|0|false|no|none`), default `$VELT_HOME/build-cache` (builds run through cargo in this
-  repository: `target/velt-build-cache`, limit 500M, from `.cargo/config.toml`); layout `v2/<kind>/`
-  with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key) and `llvm`
+  `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
+  profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from
+  `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
+  holds only what the cache makes (a directory with other files is used, never adopted), and
+  `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
+  `warm/` and the marker (the root too when it is then empty); layout `v3/<kind>/`
+  with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
+  Cranelift version) and `llvm`
   (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an
-  exclusive lock of `<nn>.lock`; a value whose checksum does not match is a miss. Larger ones are
-  files, `<kind>/large/<2 hex>/<62 hex>`, used at their modification time. Limit
+  exclusive lock of `<nn>.lock`; a value whose checksum does not match is a miss, and the next
+  store appends it again. Larger ones are files, `<kind>/large/<2 hex>/<62 hex>`: the value's
+  length (8 bytes) and checksum (8), then the value, synced and renamed into place, used at their
+  modification time; one that fails its check is removed (a miss) and stored again. File entries
+  (`Cache::put_file`/`path_of`/`touch`, for files a linker reads) are plain files in
+  `<kind>/files/<2 hex>/<62 hex>` with the length and checksum in a `.check` sidecar, checked
+  before the path is handed out; stored, and removed when damaged, under `<kind>/files.lock`.
+  Their time of use is the sidecar's: the file keeps its size and time while it is cached. Limit
   `$VELT_BUILD_CACHE_SIZE` (`parse_size`: `500M`, `2G`, bytes; default 2 GiB) on the disk space
   the files take (allocated blocks), enforced after a build that stored entries, at most hourly
   (`gc-stamp`): entries used least recently go until 3/4 of it, packs with a quarter unreferenced
-  are rewritten, and other layout directories (`v1`) are removed. A hit refreshes its time of use
+  are rewritten, and other layout directories (`v1`) are removed. The directory must be writable only by trusted
+  users: entries are used as they are. A hit refreshes its time of use
   when that is over an hour old. `-v` appends
   `(<n> of <m> functions|codegen units from the build cache)` to the codegen line.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as

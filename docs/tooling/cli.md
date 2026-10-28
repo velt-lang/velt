@@ -129,7 +129,11 @@ A build never compiles the same code twice:
 - The cache stays under `VELT_BUILD_CACHE_SIZE` (default `2G`) of disk space: about once an
   hour, a build that added code removes the code used least recently until the cache is under
   three quarters of that. Small entries (most compiled functions) are packed into a few files
-  instead of a file each, so they take the space of their contents. `velt clean --cache` removes it all; `VELT_BUILD_CACHE=off` builds without it.
+  instead of a file each, so they take the space of their contents. `velt clean --cache` removes it all
+  (only what the cache made: a `VELT_BUILD_CACHE` directory that holds other files keeps them);
+  `VELT_BUILD_CACHE=off` builds without it.
+- Entries are used as they are, so a `VELT_BUILD_CACHE` directory must be writable only by users
+  you trust: whoever can write to it can put code into your builds.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
   the build cache)`).
 

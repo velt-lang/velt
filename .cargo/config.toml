@@ -10,8 +10,7 @@ xtask = "run --quiet --package xtask --"
 CFLAGS_x86_64_unknown_linux_gnu = "-std=gnu17"
 CFLAGS_aarch64_unknown_linux_gnu = "-std=gnu17"
 
-# Builds run through cargo (tests, goldens, `cargo run -p veltc`) keep their build cache in this
-# checkout's target directory, not in the user's `~/.velt/build-cache`, and smaller: every worktree
-# has one. A variable already set in the environment wins.
-VELT_BUILD_CACHE = { value = "target/velt-build-cache", relative = true }
+# Builds run through cargo (tests, goldens, `cargo run -p veltc`) keep a smaller build cache: every
+# target directory has one (`velt-build-cache` in it, crates/veltc/src/build_cache.rs). A variable
+# already set in the environment wins.
 VELT_BUILD_CACHE_SIZE = "500M"

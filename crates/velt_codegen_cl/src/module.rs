@@ -83,6 +83,10 @@ pub(crate) fn build_module<M: Module>(
 }
 
 /// [`build_module`], compiling the functions on every core and through `cache` (see `cache`).
+/// Functions translated and compiled together: enough to keep every core busy, few enough that
+/// their contexts take little memory (all of a 30 000-function program's took a gigabyte).
+const BATCH: usize = 1024;
+
 pub(crate) fn build_module_cached<M: Module>(
     module: &mut M,
     program: &vir::Program,
@@ -92,42 +96,47 @@ pub(crate) fn build_module_cached<M: Module>(
     validate_aggregates(program)?;
     let (decls, defs) = declare_all(module, program, naming)?;
 
-    // Translate every function (sequential: it declares into the module)...
+    // In batches, so that only one batch's contexts (IR and code) are alive at a time: translate
+    // its functions (sequential: it declares into the module), compile them (in parallel,
+    // through the cache), and define their code in order.
     let mut libs = LibFunctions::default();
     let mut builder_ctx = FunctionBuilderContext::new();
-    let mut translated = Vec::new();
-    for (i, func) in program.funcs.iter().enumerate() {
-        let Some(id) = defs[i] else { continue };
-        let mut ctx = module.make_context();
-        ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
-        ctx.func.name = UserFuncName::user(0, id.as_u32());
-        let srclocs = translate_function(
-            module,
-            program,
-            &decls,
-            &mut libs,
-            func,
-            &mut ctx.func,
-            &mut builder_ctx,
-        )
-        .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
-        translated.push((id, func, ctx, srclocs));
-    }
-    // ...compile them all (in parallel, through the cache)...
-    let symbols: Vec<&str> = translated.iter().map(|t| t.1.symbol.as_str()).collect();
-    let mut ctxs: Vec<Context> = translated
-        .iter_mut()
-        .map(|t| take_context(&mut t.2))
-        .collect();
-    let stats = compile_all(module.isa(), &mut ctxs, &symbols, cache)?;
-    // ...and define their code in order.
+    let mut stats = CacheStats::default();
     let mut unwind = Vec::new();
     let mut lines = Vec::new();
-    for ((id, func, _, srclocs), ctx) in translated.iter().zip(&ctxs) {
-        define_compiled(module, *id, ctx, &func.symbol)?;
-        unwind.extend(unwind_info(module, *id, ctx, &func.symbol)?);
-        if !program.files.is_empty() {
-            lines.extend(FunctionLines::new(*id, func, ctx, srclocs));
+    let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
+        .filter_map(|(i, func)| Some((defs[i]?, func)))
+        .collect();
+    for batch in defined.chunks(BATCH) {
+        let mut translated = Vec::with_capacity(batch.len());
+        for &(id, func) in batch {
+            let mut ctx = module.make_context();
+            ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
+            ctx.func.name = UserFuncName::user(0, id.as_u32());
+            let srclocs = translate_function(
+                module,
+                program,
+                &decls,
+                &mut libs,
+                func,
+                &mut ctx.func,
+                &mut builder_ctx,
+            )
+            .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
+            translated.push((ctx, srclocs));
+        }
+        let symbols: Vec<&str> = batch.iter().map(|(_, f)| f.symbol.as_str()).collect();
+        let mut ctxs: Vec<Context> = translated
+            .iter_mut()
+            .map(|t| take_context(&mut t.0))
+            .collect();
+        stats.add(compile_all(module.isa(), &mut ctxs, &symbols, cache)?);
+        for ((&(id, func), (_, srclocs)), ctx) in batch.iter().zip(&translated).zip(&ctxs) {
+            define_compiled(module, id, ctx, &func.symbol)?;
+            unwind.extend(unwind_info(module, id, ctx, &func.symbol)?);
+            if !program.files.is_empty() {
+                lines.extend(FunctionLines::new(id, func, ctx, srclocs));
+            }
         }
     }
     Ok(Built {

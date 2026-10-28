@@ -37,6 +37,12 @@ pub struct CacheStats {
 }
 
 impl CacheStats {
+    /// Add `other`'s counts.
+    pub fn add(&mut self, other: CacheStats) {
+        self.hits += other.hits;
+        self.misses += other.misses;
+    }
+
     /// The stats of items that were (`true`) or were not taken from the cache.
     pub fn of(hits: &[bool]) -> CacheStats {
         let found = hits.iter().filter(|&&h| h).count();
@@ -121,7 +127,7 @@ fn compile_one(
     let mut plane = ControlPlane::default();
     let result = match cache {
         Some(cache) => ctx
-            .compile_with_cache(isa, &mut Store(cache), &mut plane)
+            .compile_with_cache(isa, &mut Store(cache, CRANELIFT), &mut plane)
             .map(|(_, hit)| hit),
         None => ctx.compile(isa, &mut plane).map(|_| false),
     };
@@ -134,15 +140,71 @@ fn compile_one(
     })
 }
 
-/// A [`CodeCache`] as Cranelift's store.
-struct Store<'a>(&'a dyn CodeCache);
+/// The Cranelift that compiled the cached code. Its own key leaves the version out (its
+/// `VersionMarker` hashes nothing), and an entry of another version is rejected and then never
+/// replaced (the store keeps the first value of a key), so the version is in our key.
+pub(crate) const CRANELIFT: &str = "cranelift-codegen 0.132.3";
+
+/// A [`CodeCache`] as Cranelift's store, for one version of Cranelift.
+struct Store<'a>(&'a dyn CodeCache, &'a str);
 
 impl CacheKvStore for Store<'_> {
     fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
-        self.0.get(key).map(Cow::Owned)
+        self.0.get(&self.key(key)).map(Cow::Owned)
     }
 
     fn insert(&mut self, key: &[u8], val: Vec<u8>) {
-        self.0.put(key, &val);
+        self.0.put(&self.key(key), &val);
+    }
+}
+
+impl Store<'_> {
+    /// Cranelift's `key` for this version of Cranelift.
+    fn key(&self, key: &[u8]) -> Vec<u8> {
+        [self.1.as_bytes(), b"\0", key].concat()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Map(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
+
+    impl CodeCache for Map {
+        fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+            self.0.lock().unwrap().get(key).cloned()
+        }
+
+        fn put(&self, key: &[u8], value: &[u8]) {
+            self.0
+                .lock()
+                .unwrap()
+                .entry(key.to_vec())
+                .or_insert(value.to_vec());
+        }
+    }
+
+    /// After a Cranelift upgrade, code the old one compiled is a miss, and the new code is
+    /// stored and then found.
+    #[test]
+    fn another_cranelift_misses_then_stores_its_own() {
+        let map = Map::default();
+        Store(&map, "cranelift-codegen 1.0.0").insert(b"f", b"old code".to_vec());
+        let mut new = Store(&map, "cranelift-codegen 1.0.1");
+        assert_eq!(new.get(b"f"), None);
+        new.insert(b"f", b"new code".to_vec());
+        assert_eq!(new.get(b"f").as_deref(), Some(&b"new code"[..]));
+    }
+
+    /// `CRANELIFT` names the Cranelift the workspace builds with.
+    #[test]
+    fn the_version_is_the_locked_one() {
+        let lock = include_str!("../../../Cargo.lock");
+        let at = lock.find("name = \"cranelift-codegen\"\n").unwrap();
+        let version = lock[at..].lines().nth(1).unwrap();
+        let version = version.trim_start_matches("version = ").trim_matches('"');
+        assert_eq!(CRANELIFT, format!("cranelift-codegen {version}"));
     }
 }

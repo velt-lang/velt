@@ -54,8 +54,16 @@ pub fn clean_cache_command() -> Result<(), String> {
         return Ok(());
     }
     let (files, bytes) = measure(&root);
-    std::fs::remove_dir_all(&root)
+    velt_build_cache::Cache::new(&root, crate::build_cache::limit())
+        .clear()
         .map_err(|e| format!("cannot remove `{}`: {e}", root.display()))?;
+    // Only the cache's own files went: count what is gone.
+    let (files_left, bytes_left) = measure(&root);
+    // A build running meanwhile may have added files.
+    let (files, bytes) = (
+        files.saturating_sub(files_left),
+        bytes.saturating_sub(bytes_left),
+    );
     style::status(
         "Removed",
         &format!(
