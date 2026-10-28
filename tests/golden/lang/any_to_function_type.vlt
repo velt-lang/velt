@@ -27,5 +27,43 @@ const u: unknown = (name: string) => "hi " + name;
 const greet = u as (name: string) => string;
 console.log(greet("velt"));
 const maybe: any = undefined;
-const cb = maybe as (((n: number) => void) | undefined);
+const cb = maybe as ((n: number) => void) | undefined;
 console.log(cb === undefined);
+
+// A result of a function type or a promise of one (sigx's `ViewFn | Promise<ViewFn>`): the
+// function member is told by `typeof`, and is itself called through `any`.
+type View = () => string;
+type Setup = (c: Ctx<any>) => View | Promise<View>;
+function component(setup: (c: Ctx<string>) => View | Promise<View>): any {
+  const f: any = function (props: any) {
+    return props;
+  } as any;
+  f.__setup = setup as any;
+  return f;
+}
+const Page = component((c) => () => "<p>" + c.v + "</p>");
+const setup = Page.__setup as Setup;
+const view = setup({ v: "page" });
+if (typeof view === "function") {
+  console.log(view());
+}
+
+// The same conversion as a field of an object literal.
+const entry: { name?: string; setup: Setup } = { name: "Page", setup: Page.__setup as any };
+const v2 = entry.setup({ v: "entry" });
+if (typeof v2 === "function") {
+  console.log(entry.name, v2());
+}
+
+
+// A promise member is never held as `any`: the function member is the one converted, and a
+// function returning such a union is called through `any` as well.
+function make(): View | Promise<View> {
+  return () => "made";
+}
+const held: any = make;
+const again = held as () => View | Promise<View>;
+const made = again();
+if (typeof made === "function") {
+  console.log(made());
+}

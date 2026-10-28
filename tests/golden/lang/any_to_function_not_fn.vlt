@@ -1,0 +1,6 @@
+// An `any` that holds no function converted to a function type converts (Node checks nothing
+// there), and calling it stops with a `TypeError`, as Node's `f is not a function`.
+const notFn: any = 42;
+const bad = notFn as (n: number) => number;
+console.log("converted");
+console.log(bad(1));

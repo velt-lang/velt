@@ -449,13 +449,17 @@ impl FnCx<'_, '_> {
             }
         }
         // A function: called through `any`, whatever types it was made with (dynamic_as_fn).
+        let mut h = h;
         if let TyKind::FnPtr {
             params,
             rest: false,
             ..
         } = self.cx.ty.kind(exp).clone()
         {
-            return self.dynamic_as_fn(h, exp, params.len());
+            match self.dynamic_as_fn(h, exp, params.len()) {
+                Ok(g) => return g,
+                Err(back) => h = back,
+            }
         }
         self.note_dynamic_iface(exp, span);
         self.note_object_fill(exp);
@@ -513,6 +517,9 @@ impl FnCx<'_, '_> {
             // `Array.isArray` tells one array member from the others, not two arrays apart.
             let tested = match self.cx.ty.kind(m) {
                 TyKind::Array(_) if arrays > 1 => None,
+                TyKind::FnPtr { .. } if self.fn_members(&members) > 1 => None,
+                // A promise is never held as `any` (it has one owner): no value is one.
+                TyKind::Promise(..) => continue,
                 _ => self.member_test(tmp, dty, m, span),
             };
             let Some((test, value)) = tested else {
@@ -550,34 +557,6 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), exp, span)
-    }
-
-    /// The one member of `members` that [`Self::member_test`] has no test for, when every other
-    /// member has one and it is an interface or object type (which `AnyTo` checks).
-    fn untested_member(&self, members: &[TyId]) -> Option<TyId> {
-        let arrays = self.array_members(members);
-        let mut untested = members.iter().copied().filter(|&m| {
-            let tested = match self.cx.ty.kind(m) {
-                TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Bool | TyKind::Symbol => {
-                    true
-                }
-                TyKind::Array(_) => arrays == 1,
-                _ => self.cx.lit_value(m).is_some() || self.cx.class_of(m).is_some(),
-            };
-            !tested
-        });
-        let m = untested.next()?;
-        if untested.next().is_some() {
-            return None;
-        }
-        let checked = matches!(self.cx.ty.kind(m), TyKind::Dyn(..)) || self.cx.is_object_type(m);
-        (checked && self.cx.dynamic(m).is_none()).then_some(m)
-    }
-
-    /// How many of `members` are arrays.
-    fn array_members(&self, members: &[TyId]) -> usize {
-        let is_array = |m: &&TyId| matches!(self.cx.ty.kind(**m), TyKind::Array(_));
-        members.iter().filter(is_array).count()
     }
 
     /// The test that the dynamic value in `tmp` (type `dty`) holds a `m`, and the value as `m`.
@@ -637,6 +616,7 @@ impl FnCx<'_, '_> {
                     self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span)
                 }
             }
+            TyKind::FnPtr { rest: false, .. } => return self.fn_member_test(x, owned, m, span),
             _ => {
                 let (class, _) = self.cx.class_of(m)?;
                 let arms = vec![

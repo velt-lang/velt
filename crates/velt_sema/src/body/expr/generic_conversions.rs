@@ -48,19 +48,37 @@ impl FnCx<'_, '_> {
     /// held function's parameter types, a `TypeError` for one that doesn't convert, or for a
     /// value that is no function) and whose result converts to `exp`'s, as JavaScript calls the
     /// function whatever its declared types. Node checks nothing at the conversion either.
-    pub(super) fn dynamic_as_fn(&mut self, h: hir::Expr, exp: TyId, n: usize) -> hir::Expr {
-        let h = self.share_if_place(h);
+    /// Checked as a trial: `Err` (`h` as it was) when an argument or the result has no
+    /// conversion through `any` (a result of `Promise<T>`), for the caller's checked
+    /// conversion to the exact type.
+    pub(super) fn dynamic_as_fn(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        n: usize,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let held = self.share_if_place(h.clone());
         // Called as an `any` (an `unknown` would have to be narrowed first).
-        let h = match self.any_ty() {
-            Some(any) if h.ty != any => {
-                let span = h.span;
-                self.intrinsic(hir::Intrinsic::AnyTo, vec![h], any, span)
+        let held = match self.any_ty() {
+            Some(any) if held.ty != any => {
+                let span = held.span;
+                self.intrinsic(hir::Intrinsic::AnyTo, vec![held], any, span)
             }
-            _ => h,
+            _ => held,
         };
-        self.forwarding(h, exp, (n, false), |s, arrow, exp| {
+        let g = self.forwarding(held, exp, (n, false), |s, arrow, exp| {
             s.closure(arrow, Some(exp), true)
-        })
+        });
+        if self.cx.diags.len() == diags {
+            return Ok(g);
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        Err(h)
     }
 
     /// `const g = <name>` of a named generic function (`const g: G = id`), or of a constant
