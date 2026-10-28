@@ -185,7 +185,12 @@ impl FnCx<'_, '_> {
         if sig.required > n && !want.rest {
             return None;
         }
-        if sig.shape() == want && !drops_result && !widens_result && !becomes_task {
+        if sig.shape() == want
+            && !drops_result
+            && !widens_result
+            && !becomes_task
+            && !self.defaults_take_undefined(&sig, &want_tys)
+        {
             return None;
         }
         let Some(args) = self.adapter_args(want, elem, &sig, arg) else {

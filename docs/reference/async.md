@@ -813,7 +813,9 @@ async function main() {
   `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - As in TypeScript, a promise that rejects can be stored where a `Promise<T>` written without
   an error type is expected: returned from a function declared `: Promise<T>` that is not
-  `async`, assigned to a variable or field of that type (also `Promise<T> | null`), passed for
+  `async`, assigned to a variable or field of that type (also `Promise<T> | null`, a field's value in an
+  object literal: `pending.push({ id, promise: render() })`, and a `Record` literal's value or
+  one set by index, also through a type alias), passed for
   such a parameter, pushed to a `Promise<T>[]` or set as a value of a `Map<K, Promise<T>>`. Each such written type (each place it is
   written) then rejects with what is stored into it, inferred over the whole program as for
   [function types written without `throws`](errors.md#dynamic-calls), so awaiting a value read

@@ -1,0 +1,17 @@
+patch 1 2 ok undefined
+mount 3 first null false
+mount 4 second 7 false
+mount 5 third null false
+mount 6 fourth null false
+caught patch bad
+calls 6
+0:1
+0:null
+0:null
+#5
+#6 #6
+same a null L
+same b host null
+same c null L
+same d null L
+same e null L

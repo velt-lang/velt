@@ -447,7 +447,11 @@ impl Ctx<'_> {
     ) -> TyId {
         match item {
             Item::Def(d) => self.def_type(d, name, args, t),
-            Item::Alias(a) => self.expand_alias(a, args, t),
+            Item::Alias(a) => {
+                let body = self.aliases[a as usize].decl.ty.span;
+                self.fn_sites.alias_written.insert(t.span, body);
+                self.expand_alias(a, args, t)
+            }
         }
     }
 
