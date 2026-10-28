@@ -196,7 +196,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Hold the borrowed operand `op` (of type `ty`) against the operands after it (`later`):
-    /// a value that owns nothing is copied; anything else gets a reference of its own in an
+    /// a value that owns nothing is copied, except one holding an `Atomic`, which is used
+    /// where it is; anything else gets a reference of its own in an
     /// owned temporary (a share), so the parts it points at outlive what the later operands
     /// free. A share that would count a type not counted yet is replaced by a bitwise copy:
     /// holding never changes the program's counted types.
@@ -254,6 +255,12 @@ impl FnLower<'_, '_> {
             };
         }
         let cty = self.sub(ty);
+        // A value holding an `Atomic` stays where it is: a copy's atomics would take the
+        // changes (a method on a copy of the receiver), and no other code sees them.
+        let mut seen = rustc_hash::FxHashSet::default();
+        if !owned && self.cx.holds_atomic(cty, &mut seen) {
+            return op;
+        }
         if owned || !self.cx.needs_drop(cty) || !self.cx.shares_as_counted(cty) {
             // Owned already, owning nothing, or holding an uncounted object: a later operand
             // reaches such an object only through a counted container or a shared cell, and

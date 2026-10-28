@@ -159,6 +159,7 @@ impl FnLower<'_, '_> {
     pub(super) fn finish(mut self, symbol: String, params: Vec<Ty>, ret: Ty) -> Function {
         self.build_div_zero_blocks();
         self.version_view_loops(params.len());
+        self.place_sections();
         let mut remap = vec![None; self.blocks.len()];
         for (n, (i, _)) in self
             .live

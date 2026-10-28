@@ -51,7 +51,10 @@ exiting. Press Ctrl-C twice to exit at once.
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
 connection is refused during a reload and a server on port 0 keeps its port. State in values
 that `main` creates carries over a hot swap. [Module state](../reference/variables.md#module-state)
-(module-level `let`s) does not: the swapped-in code starts it over from its initializers.
+(module-level `let`s) does not: the swapped-in code starts it over from its initializers. A
+`const X = new Atomic<T>(literal)` is not module state ([sync](../std/sync.md)): it keeps its
+value across swaps, also when the edit changes its starting literal (the first version's value
+stays). An edit that changes its type gives it a new word, which starts at the new literal.
 
 ## Modes
 

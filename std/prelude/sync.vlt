@@ -11,6 +11,11 @@
 // rt_abi_async.md §9.2). Neither is ever Copy
 // (copying one would duplicate the lock). Their methods are the only way to reach the value.
 
+// Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
+// and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
+// `atomic_ref.rs`).
+import { pin, unpin, retire } from "velt:sync/epoch";
+
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:
  * `shared(new Mutex<T>(x))`. `m.with((v) => …)` locks, runs the callback on the value, then
@@ -71,12 +76,15 @@ export struct RwLock<T> {
 }
 
 /**
- * A number or `bool` that threads read and change at once, without a lock: `new Atomic<u64>(0)`
+ * A number, `bool` or `shared` value that threads read and change at once, without a lock:
+ * `new Atomic<u64>(0)`
  * (docs/std/sync.md). It is stored in place, as a plain `T`, in the object or array that holds
  * it, and it is the one part of a `shared<T>` that changes: `s.hits.add(1)` changes the word in
  * the `shared` value every thread reads. Each method is one instruction (or a short loop where
  * the CPU has none). `T` is an integer type, `f64`, `f32` or `bool`; a float's `add`, `sub`,
- * `max` and `min` are compare-and-swap loops.
+ * `max` and `min` are compare-and-swap loops. `T` may also be `shared<U>` or `shared<U> | null`:
+ * `load`, `store` and `exchange` then move references, and `compareExchange` compares identity
+ * and returns whether it swapped (docs/std/sync.md).
  *
  * Every method takes a memory ordering, `"seqcst"` when left out, as JavaScript's `Atomics`:
  * `"relaxed"` (only this word is atomic), `"acquire"` (later reads see what the thread that
@@ -105,7 +113,8 @@ export struct Atomic<T> {
   /**
    * Makes `v` the value if it is `expected`; returns the previous value, which is `expected`
    * when it did. `failure` is the ordering of the read when it did not (by default `order`
-   * without its release part).
+   * without its release part). On an `Atomic` of a `shared` value it compares identity (the same
+   * reference) and returns whether it made `v` the value; when it did not, `v` is dropped.
    */
   compareExchange(
     expected: T,

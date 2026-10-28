@@ -295,10 +295,13 @@ queue to a sleeping worker, which becomes the tasks' home (`velt/spread.rs`). A 
 out of work, before it sleeps, runs half of the input waiting on another awake worker without
 taking it over (the tasks keep their home). The monitor does the duties of a worker that has
 started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
-of its queue to another worker, each 1 ms tick while the stall lasts. It also starts spawned
-tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
-first poll of a spawned task with tasks never polled behind it, while another started worker
-sleeps, publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)
+of its queue to another worker that can take them (one asleep, one not stalled itself, or a
+spare that starts, up to four), each 1 ms tick while the stall lasts; with none, they stay.
+`VELT_RESCUE=0` turns the rescue off (spares included), for counting instructions with
+`VELT_THREADS=1` (`bench/nightly.sh`); other moves to sleeping workers remain. It also starts
+spawned tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
+first poll of a spawned task with tasks never polled behind it, while another started worker sleeps,
+publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)
 that were queued behind it go to sleeping workers, one each, which become their home. Shorter
 polls move nothing. A connection's socket
 moves its registration to its task's home worker when the task reads there (Unix). A Postgres

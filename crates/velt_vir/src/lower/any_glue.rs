@@ -315,7 +315,9 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (k, &p) in params.iter().enumerate() {
             let vt = self.cx.ty(p);
-            let slot = Place::local(self.temp(vt));
+            // A `void` parameter (no argument passed): a stand-in place; a missing one is fine.
+            let unit = vt == Ty::Unit;
+            let slot = Place::local(self.temp(if unit { Ty::U8 } else { vt }));
             let has = self.rvalue_temp(
                 Ty::Bool,
                 Rvalue::Binary(
@@ -331,10 +333,13 @@ impl FnLower<'_, '_> {
             let avt = self.cx.ty(any);
             let ap = Place::local(self.copy_to_temp(Operand::Copy(ap), avt));
             let v = self.any_unbox(&ap, any, p);
-            self.store(slot.clone(), v);
+            if !unit {
+                self.store(slot.clone(), v);
+            }
             self.goto(done);
             self.switch_to(no);
-            if self.cx.is_dynamic(p) {
+            if unit {
+            } else if self.cx.is_dynamic(p) {
                 self.any_nothing_into(Nothing::Undefined, &slot);
             } else if matches!(self.cx.kind(p), TyKind::Option(..)) {
                 let none = self.none_value(p);

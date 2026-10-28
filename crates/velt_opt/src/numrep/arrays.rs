@@ -474,11 +474,11 @@ fn widened(old: Fact, new: Fact) -> Fact {
 /// Per group: the join of the values its stores write, under `flow`.
 fn stored(func: &Function, flow: &Flow, groups: &Groups) -> Vec<Fact> {
     let mut out = vec![Fact::empty(); groups.ty.len()];
+    let mut st: State = flow.scratch();
     for (bi, b) in func.blocks.iter().enumerate() {
-        let Some(entry) = flow.entry(bi) else {
+        if !flow.load(bi, &mut st) {
             continue;
-        };
-        let mut st: State = entry.clone();
+        }
         for s in &b.stmts {
             if let Stmt::Assign(d, rv) = s {
                 if let Some(g) = groups.of_element(d) {

@@ -366,6 +366,7 @@ fn errors_are_reported_not_panics() {
         bytes: vec![0; 8],
         align: 8,
         relocs: vec![(0, Const::Func(FuncId(9)))],
+        mutable: None,
     });
     let err = emit_object(&p, &opts).unwrap_err();
     assert!(err.contains("relocation at 0: unknown function"), "{err}");

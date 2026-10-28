@@ -116,6 +116,7 @@ impl Cx<'_> {
             bytes,
             align: 8,
             relocs,
+            mutable: None,
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.gen_tables.insert((def, targs.to_vec()), id);

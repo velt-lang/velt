@@ -334,7 +334,7 @@ pub struct ExternFn {
     pub noreturn: bool,
 }
 
-/// Read-only data (string literal bytes, vtables, …).
+/// Read-only data (string literal bytes, vtables, …), or a word the program writes.
 #[derive(Clone, Debug)]
 pub struct StaticData {
     pub bytes: Vec<u8>,
@@ -343,6 +343,14 @@ pub struct StaticData {
     /// offset is 8-aligned and the 8 bytes there are zero in `bytes`. `target` is a
     /// `Const::Func`, `Const::Extern` or `Const::Static`.
     pub relocs: Vec<(u32, Const)>,
+    /// `Some(id)`: writable data, the word of a static atomic (a module `const` made by
+    /// `new Atomic<T>(literal)`), with no relocations, which code reads and writes only
+    /// through `velt_atomic_*` externs. `bytes` is its starting value, and no pass may assume
+    /// it still holds it. `id` names it across the versions of a `velt dev` session, which
+    /// all use the session's one copy: the 64-bit FNV-1a hash of the constant's qualified
+    /// name and value type (`tls::stable_id`), so an edit changing the type gets a new word.
+    /// It is one aligned word (1, 2, 4 or 8 bytes). Every other static is read-only (`None`).
+    pub mutable: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -715,12 +723,14 @@ impl fmt::Display for Program {
             )?;
         }
         for (i, s) in self.statics.iter().enumerate() {
+            let mutable = s.mutable.map(|id| format!(" mutable={id:x}"));
             writeln!(
                 f,
-                "static#{} align={} {:?}",
+                "static#{} align={} {:?}{}",
                 i,
                 s.align,
-                String::from_utf8_lossy(&s.bytes)
+                String::from_utf8_lossy(&s.bytes),
+                mutable.unwrap_or_default()
             )?;
         }
         for (i, e) in self.externs.iter().enumerate() {

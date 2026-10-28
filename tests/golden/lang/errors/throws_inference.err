@@ -1,2 +1,1 @@
-throws_inference.vlt:7:22: error: the error type of this function is not known yet: it can throw `TooDeep` through a recursive call
-throws_inference.vlt:19:3: error: `Rejecting.read` throws an error whose type depends on a type parameter
+throws_inference.vlt:20:3: error: `Rejecting.read` throws an error whose type depends on a type parameter

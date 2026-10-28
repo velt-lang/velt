@@ -1,0 +1,2 @@
+overloads_interface_params_ref.vlt:17:22: error: method `directive` does not fit every signature of the interface's `directive`: its parameter 2 is required, and a signature leaves it out
+overloads_interface_params_ref.vlt:20:3: error: an implementation of the overloaded method `directive` with a rest parameter is not supported yet (#964)

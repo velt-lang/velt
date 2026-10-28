@@ -1,0 +1,235 @@
+// velt:sqlite/format — the SQLite database file format (https://sqlite.org/fileformat2.html),
+// read in Velt: the header, b-tree pages, cells, overflow chains and records.
+//
+// Step 1 of the pure-Velt engine (docs/internals/design/sqlite-engine.md): the whole file is
+// one `u8[]` and pages are offsets into it. The pager (step 2) replaces `data` with a page
+// cache over positioned reads; every reader here goes through `page(n)`, which gives the
+// offset of page `n`'s first byte.
+
+/** A database file that does not follow the format. */
+export class CorruptError extends Error {
+  constructor(message: string) {
+    super(`database disk image is malformed: ${message}`);
+  }
+}
+
+/** Throws a `CorruptError`: out of line, so the readers that check stay small. */
+export function corrupt(what: string): never {
+  throw new CorruptError(what);
+}
+
+function corruptPage(n: u32): never {
+  throw new CorruptError(`page ${n} out of range`);
+}
+
+/** Page types (the first byte of a b-tree page header). */
+export const INTERIOR_INDEX: u8 = 2;
+export const INTERIOR_TABLE: u8 = 5;
+export const LEAF_INDEX: u8 = 10;
+export const LEAF_TABLE: u8 = 13;
+
+/** Text encodings of the header's offset 56. */
+export const UTF8: u32 = 1;
+
+/** The big-endian unsigned integer of `n` (1 to 8) bytes at `at`. */
+export function readBe(data: u8[], at: usize, n: usize): u64 {
+  let v: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    v = (v << 8) | (data[at + i] as u64);
+  }
+  return v;
+}
+
+/** The big-endian 16-bit unsigned integer at `at`. */
+export function readU16(data: u8[], at: usize): usize {
+  return ((data[at] as usize) << 8) | (data[at + 1] as usize);
+}
+
+/** The big-endian 32-bit unsigned integer at `at` (page numbers, overflow pointers). */
+export function readU32(data: u8[], at: usize): u32 {
+  return ((data[at] as u32) << 24) |
+    ((data[at + 1] as u32) << 16) |
+    ((data[at + 2] as u32) << 8) |
+    (data[at + 3] as u32);
+}
+
+/**
+ * A database file held in memory. `pageSize` and `usable` (the page size less the reserved
+ * bytes at the end of each page) come from the header. A file in WAL mode reads correctly only
+ * as checkpointed: this reader does not read the `-wal` file beside it.
+ */
+export class DbFile {
+  data: u8[];
+  pageSize: usize;
+  usable: usize;
+  pageCount: u32;
+  encoding: u32;
+  schemaCookie: u32;
+
+  constructor(data: u8[]) {
+    if (data.length < 100) {
+      throw new CorruptError("file is shorter than its header");
+    }
+    // "SQLite format 3\0"
+    const magic: u8[] = [83, 81, 76, 105, 116, 101, 32, 102, 111, 114, 109, 97, 116, 32, 51, 0];
+    for (let i: usize = 0; i < 16; i++) {
+      if (data[i] != magic[i]) {
+        throw new CorruptError("not a database file");
+      }
+    }
+    let pageSize = readU16(data, 16);
+    if (pageSize == 1) {
+      pageSize = 65536;
+    }
+    if (pageSize < 512 || (pageSize & (pageSize - 1)) != 0) {
+      throw new CorruptError(`page size ${pageSize}`);
+    }
+    // The read version (offset 19): 1 is a rollback journal, 2 is WAL; anything newer is a
+    // format this reader does not know (C SQLite refuses it too). A file in WAL mode reads as
+    // its last checkpoint: pages still in its `-wal` file are not read.
+    if (data[19] > 2) {
+      throw new CorruptError(`file format read version ${data[19]} is not supported`);
+    }
+    // The payload fractions (offsets 21 to 23) must be 64, 32 and 32: the local payload sizes
+    // assume them.
+    if (data[21] != 64 || data[22] != 32 || data[23] != 32) {
+      throw new CorruptError(`payload fractions ${data[21]}, ${data[22]}, ${data[23]}`);
+    }
+    this.data = data;
+    this.pageSize = pageSize;
+    this.usable = pageSize - (data[20] as usize);
+    // SQLite's own floor: below 480 usable bytes the cell size limits stop making sense.
+    if (this.usable < 480) {
+      throw new CorruptError(`usable page size ${this.usable}`);
+    }
+    // The in-header page count is valid when the change counter matches its version
+    // (offsets 24 and 92); otherwise the file size says.
+    const counted = readU32(data, 28);
+    const fromSize = (data.length / pageSize) as u32;
+    this.pageCount = counted != 0 && readU32(data, 24) == readU32(data, 92) ? counted : fromSize;
+    if ((this.pageCount as usize) * pageSize > data.length) {
+      throw new CorruptError("file is shorter than its page count");
+    }
+    this.schemaCookie = readU32(data, 40);
+    const enc = readU32(data, 56);
+    this.encoding = enc == 0 ? UTF8 : enc;
+    if (this.encoding != UTF8) {
+      throw new CorruptError("UTF-16 databases are not supported yet");
+    }
+  }
+
+  /** The offset of page `n`'s first byte (pages count from 1). */
+  page(n: u32): usize {
+    if (n == 0 || n > this.pageCount) {
+      corruptPage(n);
+    }
+    return ((n - 1) as usize) * this.pageSize;
+  }
+
+  /** The offset of page `n`'s b-tree header: past the file header on page 1. */
+  header(n: u32): usize {
+    return n == 1 ? 100 : this.page(n);
+  }
+}
+
+/** A varint's value and its length in bytes. */
+export struct Varint {
+  value: i64;
+  len: usize;
+}
+
+/**
+ * The varint at `at` (1 to 9 bytes, big-endian, 7 bits a byte, all 8 in the ninth). One that
+ * would run past the end of `data` is corrupt.
+ */
+export function readVarint(data: u8[], at: usize): Varint {
+  return at + 9 <= data.length ? readVarintUnchecked(data, at) : readVarintNearEnd(data, at);
+}
+
+/**
+ * The varint at `at`, for a caller that has checked that 9 bytes follow `at` in `data` (a cell
+ * on a page that is not the file's last): no bounds check of its own.
+ */
+export function readVarintUnchecked(data: u8[], at: usize): Varint {
+  const b0 = data[at];
+  if (b0 < 0x80) {
+    return Varint { value: b0 as i64, len: 1 };
+  }
+  let v: u64 = (b0 & 0x7f) as u64;
+  for (let i: usize = 1; i < 8; i++) {
+    const b = data[at + i];
+    v = (v << 7) | ((b & 0x7f) as u64);
+    if (b < 0x80) {
+      return Varint { value: v as i64, len: i + 1 };
+    }
+  }
+  v = (v << 8) | (data[at + 8] as u64);
+  return Varint { value: v as i64, len: 9 };
+}
+
+/** A varint that may run into the end of `data`: one that does is corrupt, not a panic. */
+function readVarintNearEnd(data: u8[], at: usize): Varint {
+  let v: u64 = 0;
+  for (let i: usize = 0; i < 9; i++) {
+    if (at + i >= data.length) {
+      corrupt("varint past the end of the file");
+    }
+    const b = data[at + i];
+    if (i == 8) {
+      return Varint { value: ((v << 8) | (b as u64)) as i64, len: 9 };
+    }
+    v = (v << 7) | ((b & 0x7f) as u64);
+    if (b < 0x80) {
+      return Varint { value: v as i64, len: i + 1 };
+    }
+  }
+  corrupt("varint");
+}
+
+/**
+ * The body bytes of serial type `t`, which must fit in the `room` bytes left of its record:
+ * types 10 and 11 (reserved), negative ones and ones past the payload make the file corrupt.
+ */
+export function fieldSize(t: i64, room: usize): usize {
+  if (t < 0 || t == 10 || t == 11) {
+    corrupt(`serial type ${t}`);
+  }
+  const n = serialSize(t);
+  if (n > room) {
+    corrupt("record body larger than its payload");
+  }
+  return n;
+}
+
+/** The bytes a value of serial type `t` takes in a record body. */
+export function serialSize(t: i64): usize {
+  if (t >= 12) {
+    return ((t - 12) >> 1) as usize;
+  }
+  if (t < 5) {
+    return t as usize;
+  }
+  if (t == 5) {
+    return 6;
+  }
+  if (t == 6 || t == 7) {
+    return 8;
+  }
+  return 0;
+}
+
+/** The most payload a cell keeps on its page: table leaves and index cells differ. */
+export function maxLocal(usable: usize, table: bool): usize {
+  return table ? usable - 35 : ((usable - 12) * 64 / 255) - 23;
+}
+
+/** Of a payload of `size` bytes that does not fit, the bytes the cell keeps on its page. */
+export function localSize(usable: usize, table: bool, size: usize): usize {
+  const x = maxLocal(usable, table);
+  if (size <= x) {
+    return size;
+  }
+  const m = ((usable - 12) * 32 / 255) - 23;
+  const k = m + ((size - m) % (usable - 4));
+  return k <= x ? k : m;
+}

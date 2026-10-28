@@ -95,11 +95,11 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         cand: &cand,
         list: vec![],
     };
+    let mut st: State = flow.scratch();
     for (bi, block) in func.blocks.iter().enumerate() {
-        let Some(entry) = flow.entry(bi) else {
+        if !flow.load(bi, &mut st) {
             continue;
-        };
-        let mut st: State = entry.clone();
+        }
         for (si, s) in block.stmts.iter().enumerate() {
             if let Stmt::Assign(d, rv) = s {
                 reads.assignment(flow, func, &st, rv, d, (bi, si));

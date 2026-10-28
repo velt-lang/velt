@@ -33,6 +33,7 @@ mod counter;
 mod fact;
 mod flow;
 mod int32;
+mod liveness;
 mod narrow;
 mod params;
 mod print;
@@ -303,6 +304,7 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
     let mut in_slice = vec![false; n];
     let mut work: Vec<Local> = seeds.into_iter().filter(|&l| reg(l)).collect();
     let mut counters_seen = false;
+    let counter_cx = counter::Cx::new(func);
     loop {
         while let Some(l) = work.pop() {
             if std::mem::replace(&mut in_slice[l.0 as usize], true) {
@@ -327,7 +329,7 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
         let double_counter = |i: usize| {
             in_slice[i]
                 && ty(Local(i as u32)) == Ty::F64
-                && counter::maybe(func, Local(i as u32), true)
+                && counter::maybe(&counter_cx, Local(i as u32), true)
         };
         if counters_seen || !(0..n).any(double_counter) {
             break;

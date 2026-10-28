@@ -639,7 +639,9 @@ expected and the reverse.
 
 A parameter's default applies where the argument is `undefined`, as in JavaScript:
 `f(undefined)` and `f(v)` with a `v: number | undefined` that holds `undefined` give
-`function f(x = 5)` its `5`. A parameter whose type allows `undefined` may have a default
+`function f(x = 5)` its `5`. So does a `T | null | undefined` value for a `T | null` parameter
+with a default (`before: Node | null = null` given a `before?: Node | null`): `undefined` takes
+the default, a `null` stays `null`. A parameter whose type allows `undefined` may have a default
 too (`function f(x: number | undefined = 5)`, or `status = 302` in a method whose interface
 declares `status?: number`); it is a `number` in the body.
 

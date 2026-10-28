@@ -161,6 +161,16 @@ impl FnLower<'_, '_> {
             return;
         }
         let ty = self.sub(init.ty);
+        // `const c = a.load()` of a reference `Atomic`, bound by reference (sema
+        // `borrowed_load`): the loaded reference, uncounted and never released (atomic_ref.rs).
+        if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && self.is_ref_load(init) {
+            let v = self.expr(init);
+            if !self.dead() {
+                let p = self.place_of(v, ty);
+                self.bind_frozen(false, pat, &p, ty);
+            }
+            return;
+        }
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
             // place keeps ownership.

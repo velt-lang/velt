@@ -1,0 +1,44 @@
+// `Atomic<shared<T>>` and `Atomic<shared<T> | null>`: the word owns one counted reference.
+// `load` gives a counted copy, `store` and `exchange` move a reference in (`exchange` gives the
+// old one back), `compareExchange` compares identity and gives whether it swapped. Values a
+// store replaces are dropped by `velt:sync/epoch` at its own pace, so this file has no leak
+// check.
+
+interface Config {
+  name: string;
+  limit: u64;
+}
+
+function config(name: string, limit: u64): shared<Config> {
+  return shared({ name, limit });
+}
+
+const CURRENT = new Atomic<shared<Config> | null>(null);
+
+async function main() {
+  const cell = new Atomic<shared<Config>>(config("a", 1));
+  const first = cell.load();
+  console.log(first.name, first.limit);
+
+  cell.store(config("b", 2));
+  console.log(cell.load().name, first.name);
+
+  const old = cell.exchange(config("c", 3), "acqrel");
+  console.log(old.name, cell.load().name);
+
+  const seen = cell.load();
+  console.log(cell.compareExchange(old, config("x", 0)), cell.load().name);
+  console.log(cell.compareExchange(seen, config("d", 4)), cell.load().name);
+  console.log(cell.compareExchangeWeak(seen, config("y", 0)), cell.load().limit);
+
+  console.log(CURRENT.load() == null);
+  // `shared({ … })` takes its type from the `shared<Config> | null` parameter.
+  CURRENT.store(shared({ name: "global", limit: 9 }), "release");
+  const g = CURRENT.load("acquire");
+  console.log(g == null ? "none" : g.name);
+  console.log(CURRENT.compareExchange(null, config("z", 0)));
+  CURRENT.store(null);
+  console.log(CURRENT.load() == null);
+  const maybe: shared<Config> | null = shared({ name: "m", limit: 5 });
+  console.log(maybe != null ? maybe.limit : 0);
+}

@@ -20,6 +20,8 @@
 //!   get one: the flow analysis then meets the counter's facts with it, so it never widens
 //!   past it. A counter that may pass 2^53 stays a double.
 
+use std::collections::BTreeMap;
+
 use velt_vir::vir::{BinOp, Const, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty};
 
 use super::fact::{Fact, TWO_53};
@@ -34,7 +36,8 @@ const MAX_RUNS: u128 = 1 << 100;
 /// Per tracked slot of `flow`: the cap of the counters among them (`None` for the others).
 pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
     let mut out = vec![None; flow.slots()];
-    let counters = counters(func, flow);
+    let cx = Cx::new(func);
+    let counters = counters(&cx, flow);
     if counters.is_empty() {
         return out;
     }
@@ -44,7 +47,7 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
     let trips: Vec<Option<u128>> = nest
         .loops
         .iter()
-        .map(|lp| nest.trips(func, flow, lp))
+        .map(|lp| nest.trips(&cx, flow, lp))
         .collect();
     for (l, defs) in counters {
         let ty = func.locals[l.0 as usize].ty;
@@ -59,17 +62,19 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
 
 /// The tracked numeric locals (not parameters) set only to whole constants and to steps of
 /// themselves, with at least one step; with their definitions.
-fn counters(func: &Function, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
+fn counters(cx: &Cx, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
+    let func = cx.func;
     (func.params.len()..func.locals.len())
         .map(|i| Local(i as u32))
-        .filter(|&l| flow.slot(l).is_some() && maybe(func, l, false))
-        .filter_map(|l| Some((l, counter_defs(&Cx::new(func), l)?)))
+        .filter(|&l| flow.slot(l).is_some() && maybe(cx, l, false))
+        .filter_map(|l| Some((l, counter_defs(cx, l)?)))
         .collect()
 }
 
 /// Is `l` an `f64` or integer local (not a parameter) that may be a counter: set only to whole
 /// constants and to steps of itself, at least once to a step (a constant one, with `constant`)?
-pub(super) fn maybe(func: &Function, l: Local, constant: bool) -> bool {
+pub(super) fn maybe(cx: &Cx, l: Local, constant: bool) -> bool {
+    let func = cx.func;
     let ty = func.locals[l.0 as usize].ty;
     let step = |d: &Def| match d {
         Def::Step(_, _, by) => !constant || matches!(by, By::Const(_)),
@@ -77,7 +82,7 @@ pub(super) fn maybe(func: &Function, l: Local, constant: bool) -> bool {
     };
     l.0 as usize >= func.params.len()
         && (ty == Ty::F64 || ty.is_int())
-        && counter_defs(&Cx::new(func), l).is_some_and(|d| d.iter().any(step))
+        && counter_defs(cx, l).is_some_and(|d| d.iter().any(step))
 }
 
 /// A definition of a counter.
@@ -103,18 +108,16 @@ enum By {
 /// The definitions of `l` if each is a whole constant or a step of `l` (`None` otherwise).
 fn counter_defs(cx: &Cx, l: Local) -> Option<Vec<Def>> {
     let func = cx.func;
+    let index = cx.defs();
+    if index.call_dest[l.0 as usize] {
+        return None;
+    }
     let mut defs = vec![];
-    for (bi, b) in func.blocks.iter().enumerate() {
-        if let Terminator::Call { dest: Some(d), .. } = &b.term {
-            if d.local == l {
-                return None;
-            }
-        }
-        for (si, s) in b.stmts.iter().enumerate() {
-            let Stmt::Assign(d, rv) = s else { continue };
-            if d.local != l {
+    {
+        for &(bi, si) in &index.assigns[l.0 as usize] {
+            let Stmt::Assign(d, rv) = &func.blocks[bi].stmts[si] else {
                 continue;
-            }
+            };
             if !d.proj.is_empty() {
                 return None;
             }
@@ -175,17 +178,48 @@ fn step(cx: &Cx, bi: usize, si: usize, l: Local) -> Option<(usize, By)> {
 }
 
 /// A function and, computed when first needed, its predecessors and dominators.
-struct Cx<'f> {
+/// A function with what the counter checks look up in it, computed once (#1658: once per
+/// local made them quadratic in a function's size).
+pub(super) struct Cx<'f> {
     func: &'f Function,
     cfg: std::cell::OnceCell<(Vec<Vec<usize>>, Dominators)>,
+    defs: std::cell::OnceCell<DefIndex>,
+}
+
+/// Where each local is set.
+struct DefIndex {
+    /// Per local: the statements assigning it or a place in it, as (block, statement), in order.
+    assigns: Vec<Vec<(usize, usize)>>,
+    /// Per local: whether a call's result goes to it or a place in it.
+    call_dest: Vec<bool>,
 }
 
 impl<'f> Cx<'f> {
-    fn new(func: &'f Function) -> Cx<'f> {
+    pub(super) fn new(func: &'f Function) -> Cx<'f> {
         Cx {
             func,
             cfg: std::cell::OnceCell::new(),
+            defs: std::cell::OnceCell::new(),
         }
+    }
+
+    fn defs(&self) -> &DefIndex {
+        self.defs.get_or_init(|| {
+            let n = self.func.locals.len();
+            let mut assigns = vec![vec![]; n];
+            let mut call_dest = vec![false; n];
+            for (bi, b) in self.func.blocks.iter().enumerate() {
+                for (si, s) in b.stmts.iter().enumerate() {
+                    if let Stmt::Assign(d, _) = s {
+                        assigns[d.local.0 as usize].push((bi, si));
+                    }
+                }
+                if let Terminator::Call { dest: Some(d), .. } = &b.term {
+                    call_dest[d.local.0 as usize] = true;
+                }
+            }
+            DefIndex { assigns, call_dest }
+        })
     }
 
     fn cfg(&self) -> &(Vec<Vec<usize>>, Dominators) {
@@ -225,24 +259,14 @@ fn reads(cx: &Cx, bi: usize, at: usize, op: &Operand, l: Local) -> bool {
         return copy;
     }
     // The only definition of `p`, a copy of `l`.
-    let mut defs = func.blocks.iter().enumerate().flat_map(|(b, block)| {
-        block
-            .stmts
-            .iter()
-            .enumerate()
-            .filter_map(move |(i, s)| match s {
-                Stmt::Assign(d, rv) if d.local == p.local => Some((b, i, d, rv)),
-                _ => None,
-            })
-    });
-    let (Some((qb, qi, d, rv)), None) = (defs.next(), defs.next()) else {
+    let index = cx.defs();
+    let &[(qb, qi)] = index.assigns[p.local.0 as usize].as_slice() else {
         return false;
     };
-    let p_call = func
-        .blocks
-        .iter()
-        .any(|b| matches!(&b.term, Terminator::Call { dest: Some(d), .. } if d.local == p.local));
-    if !copies(d, rv) || p_call {
+    let Stmt::Assign(d, rv) = &func.blocks[qb].stmts[qi] else {
+        return false;
+    };
+    if !copies(d, rv) || index.call_dest[p.local.0 as usize] {
         return false;
     }
     let (preds, doms) = cx.cfg();
@@ -421,10 +445,11 @@ impl Nest {
     }
 
     /// A bound on how often the head of `lp` runs per entry, from an induction variable.
-    fn trips(&self, func: &Function, flow: &Flow, lp: &Loop) -> Option<u128> {
-        let n = func.locals.len();
-        // Per local: its whole definitions in the loop (`None` once one is something else).
-        let mut defs: Vec<Option<Vec<(usize, usize)>>> = vec![Some(vec![]); n];
+    fn trips(&self, cx: &Cx, flow: &Flow, lp: &Loop) -> Option<u128> {
+        let func = cx.func;
+        // Per local the loop sets: its whole definitions in the loop (`None` once one is
+        // something else). Only those locals, in order: a loop costs its own size (#1658).
+        let mut defs: BTreeMap<u32, Option<Vec<(usize, usize)>>> = BTreeMap::new();
         for (bi, b) in func
             .blocks
             .iter()
@@ -433,27 +458,29 @@ impl Nest {
         {
             for (si, s) in b.stmts.iter().enumerate() {
                 if let Stmt::Assign(d, _) = s {
-                    let i = d.local.0 as usize;
-                    match (&mut defs[i], d.proj.is_empty()) {
+                    match (
+                        defs.entry(d.local.0).or_insert(Some(vec![])),
+                        d.proj.is_empty(),
+                    ) {
                         (Some(v), true) => v.push((bi, si)),
                         (slot, _) => *slot = None,
                     }
                 }
             }
             if let Terminator::Call { dest: Some(d), .. } = &b.term {
-                defs[d.local.0 as usize] = None;
+                defs.insert(d.local.0, None);
             }
         }
         let mut best: Option<u128> = None;
-        for (i, ds) in defs.iter().enumerate() {
-            let l = Local(i as u32);
+        for (&i, ds) in &defs {
+            let l = Local(i);
             let Some(ds) = ds.as_ref().filter(|ds| !ds.is_empty()) else {
                 continue;
             };
             if flow.slot(l).is_none() {
                 continue;
             }
-            if let Some(t) = self.iv_trips(func, flow, lp, l, ds) {
+            if let Some(t) = self.iv_trips(cx, flow, lp, l, ds) {
                 best = Some(best.map_or(t, |b| b.min(t)));
             }
         }
@@ -464,19 +491,20 @@ impl Nest {
     /// the loop are `ds`).
     fn iv_trips(
         &self,
-        func: &Function,
+        cx: &Cx,
         flow: &Flow,
         lp: &Loop,
         l: Local,
         ds: &[(usize, usize)],
     ) -> Option<u128> {
+        let func = cx.func;
         let ty = func.locals[l.0 as usize].ty;
         if !(ty == Ty::F64 || ty.is_int()) {
             return None;
         }
         let steps: Vec<(usize, usize, f64)> = ds
             .iter()
-            .map(|&(b, s)| match step(&Cx::new(func), b, s, l) {
+            .map(|&(b, s)| match step(cx, b, s, l) {
                 Some((at, By::Const(c))) => Some((b, at, c)),
                 _ => None,
             })

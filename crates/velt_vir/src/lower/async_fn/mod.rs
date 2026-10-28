@@ -209,6 +209,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut pick = |c: &hir::Expr| self.const_cond(c) == Some(true);
         let scan = FlagScan::run_picking(hir, &f.body, Some(&mut pick));
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
+        self.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
         let inputs = self.declare_async_locals(f, shared);
         self.declare_drop_flags(f, &scan);
         self.lower_body(f);

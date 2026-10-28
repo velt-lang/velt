@@ -1,0 +1,19 @@
+race pending 2
+race settled 1
+race settled, other order 2
+any settled 1
+race async settled 3
+any async settled 3
+race settled vs ticks 5
+race settled vs timer 5
+race unshared settled 8
+any after rejection 11
+race rejected first failed 10
+race fulfilled first 11
+any resolve after rejection 30
+any returned after rejection 31
+race rejected before resolve failed 13
+race resolve before settled 33
+race settled before resolve 11
+race then vs settled 11
+race ticks vs resolve 36

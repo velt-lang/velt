@@ -1,0 +1,243 @@
+// velt:sqlite/sql/cursor — the parser's position in the tokens of one SQL text: lookahead,
+// keyword and operator matching, names, and SQLite's syntax error messages.
+
+import {
+  K_CONTEXT,
+  K_FALLBACK,
+  K_ID,
+  K_JOIN,
+  K_RESERVED,
+  T_EOF,
+  T_IDENT,
+  T_OP,
+  T_PARAM,
+  T_QUOTED,
+  T_STRING,
+  SqlError,
+  Token,
+  Utf16Index,
+  tokenize,
+} from "velt:sqlite/sql/lexer";
+
+/**
+ * How deep the parser may recurse: each parenthesis, right operand, NOT, CASE or unary operand
+ * counts one level; a call, CAST, subquery or CTE two. A level costs up to about 5.6 KB of stack
+ * in a release build (measured: Cranelift, arm64), so 200 levels stay within half of the
+ * smallest stack the parser runs on: a worker thread's 2 MiB (the main thread has 8 MiB).
+ * Expression trees are bounded separately at SQLite's 1000 (velt:sqlite/sql/expr); past this
+ * bound the error is SQLite's for its parser stack. SQLite itself takes deeper nesting (its
+ * parser keeps its stack on the heap).
+ */
+const MAX_DEPTH: usize = 200;
+
+/** A cursor over the tokens of one SQL text. */
+export abstract class TokenCursor {
+  sql: string;
+  toks: Token[];
+  pos: usize = 0;
+  /** Byte offsets to string indexes, for cutting source text out (statements, type names). */
+  index: Utf16Index;
+  /** The nesting of expressions being parsed, bounded so deep input cannot exhaust the stack. */
+  depth: usize = 0;
+
+  constructor(sql: string) {
+    this.sql = sql;
+    this.toks = tokenize(sql);
+    this.index = new Utf16Index(sql);
+  }
+
+  /** The source text of bytes [from, to). */
+  text(from: usize, to: usize): string {
+    return this.index.slice(from, to);
+  }
+
+  /** Enters one more level of recursion; too many is SQLite's parser stack error. */
+  enter() {
+    this.depth++;
+    if (this.depth > MAX_DEPTH) {
+      throw new SqlError("Recursion limit", this.peek().start);
+    }
+  }
+
+  /** Leaves a level entered with `enter`. */
+  leave() {
+    this.depth--;
+  }
+
+  peek(): Token {
+    return this.toks[this.pos];
+  }
+
+  peekAt(k: usize): Token {
+    const i = this.pos + k;
+    return i < this.toks.length ? this.toks[i] : this.toks[this.toks.length - 1];
+  }
+
+  advance(): Token {
+    const t = this.toks[this.pos];
+    if (t.kind != T_EOF) {
+      this.pos++;
+    }
+    return t;
+  }
+
+  /** Whether the next token is the keyword `kw` (upper case). */
+  isKw(kw: string): bool {
+    // Fields read in place: a Token copied to a local costs every caller a stack slot.
+    const i = this.pos;
+    return this.toks[i].kind == T_IDENT && this.toks[i].upper == kw;
+  }
+
+  isKwAt(k: usize, kw: string): bool {
+    const i = this.at(k);
+    return this.toks[i].kind == T_IDENT && this.toks[i].upper == kw;
+  }
+
+  /** The index of the token `k` ahead (the final T_EOF past the end). */
+  at(k: usize): usize {
+    const i = this.pos + k;
+    return i < this.toks.length ? i : this.toks.length - 1;
+  }
+
+  eatKw(kw: string): bool {
+    if (this.isKw(kw)) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+
+  expectKw(kw: string) {
+    if (!this.eatKw(kw)) {
+      this.fail();
+    }
+  }
+
+  isOp(op: string): bool {
+    const i = this.pos;
+    return this.toks[i].kind == T_OP && this.toks[i].text == op;
+  }
+
+  eatOp(op: string): bool {
+    if (this.isOp(op)) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+
+  expectOp(op: string) {
+    if (!this.eatOp(op)) {
+      this.fail();
+    }
+  }
+
+  /** Throws SQLite's error for the next token: `near "x": syntax error`. */
+  fail(): never {
+    const t = this.peek();
+    if (t.kind == T_EOF) {
+      throw new SqlError("incomplete input", t.start);
+    }
+    throw new SqlError(`near "${this.source(t)}": syntax error`, t.start);
+  }
+
+  source(t: Token): string {
+    return t.kind == T_IDENT || t.kind == T_OP || t.kind == T_PARAM ? t.text : this.raw(t);
+  }
+
+  raw(t: Token): string {
+    return this.text(t.start, t.end);
+  }
+
+  /** Token `i`, or the final T_EOF past the end. */
+  tokenAt(i: usize): Token {
+    return i < this.toks.length ? this.toks[i] : this.toks[this.toks.length - 1];
+  }
+
+  /**
+   * The keyword class of token `i` (K_ID for anything but a bare word). FILTER, OVER and WINDOW
+   * are decided by their neighbours, as tokenize.c does: WINDOW is a keyword before a name and
+   * AS, OVER after `)` and before `(` or a name, FILTER after `)` and before `(`.
+   */
+  classAt(i: usize): u8 {
+    const kw = this.toks[i].kw;
+    return kw == K_CONTEXT ? this.contextClass(i) : kw;
+  }
+
+  /** `classAt` of FILTER, OVER or WINDOW at token `i`. */
+  contextClass(i: usize): u8 {
+    const t = this.toks[i];
+    const next = this.tokenAt(i + 1);
+    if (t.upper == "WINDOW") {
+      const after = this.tokenAt(i + 2);
+      return this.idLike(i + 1) && after.kind == T_IDENT && after.upper == "AS" ? K_RESERVED : K_ID;
+    }
+    if (i == 0 || !(this.toks[i - 1].kind == T_OP && this.toks[i - 1].text == ")")) {
+      return K_ID;
+    }
+    const paren = next.kind == T_OP && next.text == "(";
+    if (t.upper == "OVER") {
+      return paren || this.idLike(i + 1) ? K_RESERVED : K_ID;
+    }
+    return paren ? K_RESERVED : K_ID;
+  }
+
+  /**
+   * Whether token `i` is an identifier to tokenize.c's look-ahead (`getToken`): a name, a
+   * string, a join word, a fallback keyword, WINDOW or OVER.
+   */
+  idLike(i: usize): bool {
+    const t = this.tokenAt(i);
+    if (t.kind == T_QUOTED || t.kind == T_STRING) {
+      return true;
+    }
+    if (t.kind != T_IDENT) {
+      return false;
+    }
+    const c = t.kw;
+    return c == K_ID ||
+      c == K_FALLBACK ||
+      c == K_JOIN ||
+      (c == K_CONTEXT && (t.upper == "WINDOW" || t.upper == "OVER"));
+  }
+
+  /** Whether the next token is the keyword `kw` as a keyword, not a name (FILTER, OVER, WINDOW). */
+  isKeyword(kw: string): bool {
+    return this.isKw(kw) && this.classAt(this.pos) == K_RESERVED;
+  }
+
+  /**
+   * Whether the next token is a name where the grammar takes any (`nm`): a quoted name, a
+   * string, or a bare word that is not reserved (join words and INDEXED included).
+   */
+  isName(): bool {
+    const k = this.toks[this.pos].kind;
+    return k == T_QUOTED || k == T_STRING || (k == T_IDENT && this.classAt(this.pos) != K_RESERVED);
+  }
+
+  /** The name at the cursor (`nm`), consumed. */
+  name(): string {
+    if (this.isName()) {
+      this.pos++;
+      return this.toks[this.pos - 1].text;
+    }
+    this.fail();
+  }
+
+  /** Whether the next token is `ID`: a quoted name, or a bare word that is not a keyword or
+   *  falls back to a name. */
+  isId(): bool {
+    const k = this.toks[this.pos].kind;
+    return k == T_QUOTED || (k == T_IDENT && this.classAt(this.pos) <= K_FALLBACK);
+  }
+
+  /** Whether the next token can be a bare alias or a type name's word (`ids`: ID or a string). */
+  isAlias(): bool {
+    return this.isId() || this.toks[this.pos].kind == T_STRING;
+  }
+
+  isOpAt(k: usize, op: string): bool {
+    const i = this.at(k);
+    return this.toks[i].kind == T_OP && this.toks[i].text == op;
+  }
+}

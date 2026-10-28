@@ -43,7 +43,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             match cx.error_outside(decl.ty, own) {
                 Some(m) if decl.from_body => {
                     let srcs = cx.fn_info(d).throw_srcs.clone();
-                    if !slots_found_late(cx, &srcs) {
+                    if !slots_found_late(cx, &srcs) && !cx.recursion_found_late(&srcs) {
                         closure_too_early(cx, d, m);
                     }
                 }
@@ -315,7 +315,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     } else {
         cx.error_outside(obs, fin).is_none()
     };
-    if ok || slots_found_late(cx, &c.srcs) {
+    if ok || slots_found_late(cx, &c.srcs) || cx.recursion_found_late(&c.srcs) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {

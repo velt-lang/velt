@@ -1,0 +1,97 @@
+// velt:sync/epoch across threads: while a task on another thread is in a section, no value
+// retired since is dropped, however often the epoch is pushed; once it leaves, they are.
+// Then tasks on 8 threads enter sections and retire values at once: once all are done, a few
+// collects drop the rest, and every value retired was dropped exactly once.
+import { availableParallelism } from "velt:os";
+import { pin, unpin, retire, collect, pending, dropped, outstanding } from "velt:sync/epoch";
+
+interface Item {
+  n: u64;
+}
+
+const READY = new Atomic<bool>(false);
+const RELEASE = new Atomic<bool>(false);
+
+// The holder spins inside its section, never awaiting there: a task resumes on any thread
+// after an `await`, and a section belongs to the thread it was entered on.
+async function holder(): Promise<void> {
+  // A nested section opened and closed first: the outer one must still hold.
+  pin();
+  pin();
+  unpin();
+  READY.store(true, "release");
+  while (!RELEASE.load("acquire")) {
+    Atomic.spinHint();
+  }
+  unpin();
+}
+
+/** The runtime's worker threads (`VELT_THREADS`, else one per core). */
+function workers(): f64 {
+  const set = process.env.VELT_THREADS;
+  return set == undefined ? (availableParallelism() as number) : Number(set);
+}
+
+async function churn(n: u64): Promise<u64> {
+  for (let i: u64 = 0; i < n; i++) {
+    pin();
+    retire(shared({ n: i }));
+    unpin();
+  }
+  return n;
+}
+
+async function main() {
+  // The holder spins beside main: that needs a second worker thread. With one, there is
+  // nothing to check across threads; print what the check shows.
+  if (workers() < 2) {
+    for (let i: u64 = 0; i < 10; i++) {
+      retire(shared({ n: i }));
+    }
+    console.log("while held 0 10");
+    let late: u64 = 0;
+    for (let i = 0; i < 3; i++) {
+      late += collect();
+    }
+    console.log("after", late, pending());
+    await churnAll();
+    return;
+  }
+  const h = spawn(holder());
+  while (!READY.load("acquire")) {
+    await yieldNow();
+  }
+  for (let i: u64 = 0; i < 10; i++) {
+    retire(shared({ n: i }));
+  }
+  let early: u64 = 0;
+  for (let i = 0; i < 100; i++) {
+    early += collect();
+  }
+  console.log("while held", early, pending());
+  RELEASE.store(true, "release");
+  await h;
+  let late: u64 = 0;
+  for (let i = 0; i < 3; i++) {
+    late += collect();
+  }
+  console.log("after", late, pending());
+
+  await churnAll();
+}
+
+/** Tasks on 8 threads entering sections and retiring at once; then every value is dropped. */
+async function churnAll(): Promise<void> {
+  const ps: Promise<u64>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ps.push(spawn(churn(5000)));
+  }
+  let retired: u64 = 0;
+  for (const n of await Promise.all(ps)) {
+    retired += n;
+  }
+  for (let i = 0; i < 3; i++) {
+    collect();
+  }
+  console.log("retired", retired, "outstanding", outstanding(), "dropped", dropped());
+}

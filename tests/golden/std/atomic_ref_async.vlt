@@ -1,0 +1,53 @@
+// An async function's `load()` is counted at once, inside an epoch section of its own: writers
+// that replace the value and collect at every step can never drop it between the load and the
+// count. Async tasks on 4 threads read while 4 others replace and collect; every value read is
+// whole (its check field agrees), and no count lands on a freed box.
+import { collect } from "velt:sync/epoch";
+
+interface Snapshot {
+  version: u64;
+  check: u64;
+}
+
+class Registry {
+  current: Atomic<shared<Snapshot>> = new Atomic<shared<Snapshot>>(
+    shared({ version: 1, check: 8 }),
+  );
+}
+
+function snapshot(version: u64): shared<Snapshot> {
+  return shared({ version, check: version * 7 + 1 });
+}
+
+async function writer(reg: shared<Registry>, id: u64, n: u64): Promise<u64> {
+  for (let i: u64 = 1; i <= n; i++) {
+    reg.current.store(snapshot(id * 1000000 + i));
+    collect();
+  }
+  return 0;
+}
+
+async function reader(reg: shared<Registry>, n: u64): Promise<u64> {
+  let torn: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const s = reg.current.load("acquire");
+    if (s.check != s.version * 7 + 1) {
+      torn++;
+    }
+  }
+  return torn;
+}
+
+async function main() {
+  const reg = shared(new Registry());
+  const ps: Promise<u64>[] = [];
+  for (let t: u64 = 1; t <= 4; t++) {
+    ps.push(spawn(writer(reg, t, 400000)));
+    ps.push(spawn(reader(reg, 1200000)));
+  }
+  let torn: u64 = 0;
+  for (const n of await Promise.all(ps)) {
+    torn += n;
+  }
+  console.log("torn", torn);
+}

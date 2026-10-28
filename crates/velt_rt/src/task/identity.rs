@@ -66,6 +66,11 @@ fn alias_of(f: *mut VeltFut) -> Option<*mut VeltFut> {
         .filter(|h| !h.is_null())
 }
 
+/// The holder a converted promise `f` keeps of the promise it stands for, if it keeps one.
+pub(crate) fn converted_from(f: *mut VeltFut) -> Option<*mut VeltFut> {
+    alias_of(f)
+}
+
 /// The identity of promise `f` (null: 0): two holders of one promise, and a converted promise
 /// and the promise it converts, have the same (module docs).
 ///

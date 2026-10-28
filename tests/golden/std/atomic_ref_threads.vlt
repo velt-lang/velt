@@ -1,0 +1,58 @@
+// Tasks on worker threads replace and read one `Atomic<shared<Snapshot>>` at once: a reader
+// always sees a whole snapshot (its two fields agree), every swap takes exactly the snapshot
+// before it, and the snapshot the `Atomic` holds is one some writer stored. Values that writers
+// replace are dropped by `velt:sync/epoch` at its own pace, so this file has no leak check.
+
+interface Snapshot {
+  version: u64;
+  check: u64;
+}
+
+class Registry {
+  current: Atomic<shared<Snapshot>> = new Atomic<shared<Snapshot>>(shared({ version: 0, check: 0 }));
+}
+
+function snapshot(version: u64): shared<Snapshot> {
+  return shared({ version, check: version * 7 + 1 });
+}
+
+const TORN = new Atomic<u64>(0);
+
+async function writer(reg: shared<Registry>, id: u64, n: u64): Promise<u64> {
+  let swaps: u64 = 0;
+  for (let i: u64 = 1; i <= n; i++) {
+    const old = reg.current.exchange(snapshot(id * 1000000 + i));
+    if (old.version != 0 && old.check != old.version * 7 + 1) {
+      TORN.add(1);
+    }
+    swaps++;
+  }
+  return swaps;
+}
+
+async function reader(reg: shared<Registry>, n: u64): Promise<u64> {
+  let seen: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const s = reg.current.load("acquire");
+    if (s.version != 0 && s.check != s.version * 7 + 1) {
+      TORN.add(1);
+    }
+    seen++;
+  }
+  return seen;
+}
+
+async function main() {
+  const reg = shared(new Registry());
+  const ps: Promise<u64>[] = [];
+  for (let t: u64 = 1; t <= 4; t++) {
+    ps.push(spawn(writer(reg, t, 5000)));
+    ps.push(spawn(reader(reg, 20000)));
+  }
+  let total: u64 = 0;
+  for (const n of await Promise.all(ps)) {
+    total += n;
+  }
+  const last = reg.current.load();
+  console.log("ops", total, "torn", TORN.load(), "last from a writer", last.version > 1000000);
+}

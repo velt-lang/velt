@@ -107,6 +107,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
+            ref_loads: false,
+            epoch_exempt: false,
             proxy_routes: false,
             record_fill: false,
         };
@@ -223,6 +225,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
+        lw.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
         lw.in_reflect = f
             .name
             .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);

@@ -9,6 +9,10 @@
 //!   still moves jumps to the next of `THRESHOLDS`, so each bound moves a handful of times.
 //!   Induction variables need nothing more: only the moving bound widens, and the exit test
 //!   bounds it on the loop's edges.
+//! - **Sparse states**: a block's entry state holds the tracked locals live into it only, so a
+//!   visit costs the block's statements and the locals live across its edges, not every tracked
+//!   local: a function made big by inlining stays linear (#1658). Code reading the states
+//!   (`load`) reads the locals its block uses, which are live there or set before.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -50,7 +54,8 @@ const CHAR_CODE_AT: &str = "velt_rt_str_char_code_at";
 const ARRAY_LEN_MAX: i128 = (1 << 53) - 3;
 const _: () = assert!(velt_vir::MAX_ARRAY_LEN as i128 <= ARRAY_LEN_MAX);
 
-/// A fact per tracked local.
+/// A fact per tracked local. One loaded for a block (`Flow::load`) holds the facts of the locals
+/// live into the block; the others are stale, and nothing reads them before setting them.
 pub(super) type State = Vec<Fact>;
 
 /// Block entry facts of one function.
@@ -59,7 +64,14 @@ pub(super) struct Flow {
     slot: Vec<Option<usize>>,
     /// Type per tracked local.
     tys: Vec<Ty>,
-    entry: Vec<Option<State>>,
+    /// Per block: the tracked locals live into it (state indexes, ascending).
+    live_in: Vec<Vec<u32>>,
+    /// Per block: the facts of `live_in` at its entry (`None` if unreachable).
+    entry: Vec<Option<Vec<Fact>>>,
+    /// A state of `Fact::top` per tracked local.
+    tops: State,
+    /// Facts joined, loaded, refined and transferred while solving (a cost measure, #1658).
+    work: u64,
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
     /// Per aggregate, its field types (`Env::field_tys`).
@@ -89,14 +101,19 @@ impl Flow {
         for (i, l) in tracked.iter().enumerate() {
             slot[l.0 as usize] = Some(i);
         }
-        let tys = tracked
+        let tys: Vec<Ty> = tracked
             .iter()
             .map(|l| func.locals[l.0 as usize].ty)
             .collect();
+        let live_in = super::liveness::live_in(func, &slot, tracked.len());
+        let tops = tys.iter().map(|t| Fact::top(*t)).collect();
         let mut flow = Flow {
             slot,
             tys,
+            live_in,
             entry: vec![None; func.blocks.len()],
+            tops,
+            work: 0,
             array: env.array,
             field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
@@ -124,13 +141,42 @@ impl Flow {
         self.slot.get(l.0 as usize).copied().flatten()
     }
 
-    /// Facts about `l` before statement `si` of block `b` (`None` if unreachable or untracked).
+    /// Facts about `l`, read by statement `si` of block `b`, before it (`None` if unreachable
+    /// or untracked).
     pub fn fact_before(&self, func: &Function, b: usize, si: usize, l: Local) -> Option<Fact> {
-        let mut st = self.entry(b)?.clone();
+        let i = self.slot(l)?;
+        let mut st = self.tops.clone();
+        if !self.load(b, &mut st) {
+            return None;
+        }
         for s in &func.blocks[b].stmts[..si] {
             self.transfer(&mut st, func, s);
         }
-        Some(st[self.slot(l)?])
+        Some(st[i])
+    }
+
+    /// A state for [`Flow::load`] to fill.
+    pub fn scratch(&self) -> State {
+        self.tops.clone()
+    }
+
+    /// Set the locals live into block `b` in `st` to their facts at its entry; false (and `st`
+    /// unchanged) if `b` is unreachable. The other locals keep what `st` held: a statement
+    /// reads only locals live before it, which are live into the block or set in it.
+    pub fn load(&self, b: usize, st: &mut State) -> bool {
+        let Some(e) = &self.entry[b] else {
+            return false;
+        };
+        for (&i, f) in self.live_in[b].iter().zip(e) {
+            st[i as usize] = *f;
+        }
+        true
+    }
+
+    /// The facts joined, loaded, refined and transferred while solving.
+    #[cfg(test)]
+    pub fn work(&self) -> u64 {
+        self.work
     }
 
     /// `f` met with the cap of tracked local `i`.
@@ -139,11 +185,6 @@ impl Flow {
             Some(c) if !f.is_empty() => meet(f, c),
             _ => f,
         }
-    }
-
-    /// Entry state of block `b` (`None` if unreachable).
-    pub fn entry(&self, b: usize) -> Option<&State> {
-        self.entry[b].as_ref()
     }
 
     /// Facts about the numeric operand `op` in `st` (`None` for other types).
@@ -279,7 +320,8 @@ impl Flow {
 
     fn solve(&mut self, func: &Function, env: &Env) {
         let n = func.blocks.len();
-        self.entry[0] = Some(self.start(func, env));
+        let start = self.start(func, env);
+        self.entry[0] = Some(self.live_in[0].iter().map(|&i| start[i as usize]).collect());
         let cfg = Cfg::of(func);
         let assigned = cfg.assigned(func, &self.slot, self.tys.len());
         let mut visits = vec![0u32; n];
@@ -287,23 +329,71 @@ impl Flow {
         let mut queued = vec![false; n];
         let mut work = BinaryHeap::from([Reverse(cfg.rank[0])]);
         queued[0] = true;
+        // The state of the block being visited: the locals live into it loaded, the others
+        // stale (`load`).
+        let mut st = self.tops.clone();
+        // The facts a branch refined, to restore before the other edge.
+        let mut undo: Vec<(usize, Fact)> = vec![];
         while let Some(Reverse(r)) = work.pop() {
             let b = cfg.rpo[r as usize];
             queued[b] = false;
-            let Some(mut st) = self.entry[b].clone() else {
+            if !self.load(b, &mut st) {
                 continue;
-            };
+            }
+            self.work += (self.live_in[b].len() + func.blocks[b].stmts.len()) as u64;
             for s in &func.blocks[b].stmts {
                 self.transfer(&mut st, func, s);
             }
-            for (succ, out) in self.edges(func, env, b, st) {
+            let mut arrive = |flow: &mut Flow, succ: usize, st: &State| {
                 visits[succ] += 1;
                 let widen = cfg.head[succ] && visits[succ] > WIDEN_AFTER;
                 let widen = widen.then_some(assigned[succ].as_slice());
-                if self.merge(succ, out, widen) && !queued[succ] {
+                if flow.merge(succ, st, widen) && !queued[succ] {
                     queued[succ] = true;
                     work.push(Reverse(cfg.rank[succ]));
                 }
+            };
+            match &func.blocks[b].term {
+                Terminator::Goto(t) => arrive(self, t.0 as usize, &st),
+                Terminator::Branch { then, els, .. } => {
+                    let cond = super::refine::condition(func, b);
+                    for (target, taken) in [(then, true), (els, false)] {
+                        let feasible = match &cond {
+                            Some(c) => self.refine(&mut st, func, b, c, taken, &mut undo),
+                            None => true,
+                        };
+                        if feasible {
+                            arrive(self, target.0 as usize, &st);
+                        }
+                        self.work += undo.len() as u64;
+                        for (i, f) in undo.drain(..).rev() {
+                            st[i] = f;
+                        }
+                    }
+                }
+                Terminator::Switch {
+                    value,
+                    cases,
+                    default,
+                } => {
+                    for (v, t) in cases {
+                        self.set(&mut st, value, Fact::int(*v, *v), &mut undo);
+                        arrive(self, t.0 as usize, &st);
+                        for (i, f) in undo.drain(..).rev() {
+                            st[i] = f;
+                        }
+                    }
+                    arrive(self, default.0 as usize, &st);
+                }
+                t @ Terminator::Call { dest, next, .. } => {
+                    if let Some(d) = dest.as_ref().filter(|d| d.proj.is_empty()) {
+                        if let Some(i) = self.slot[d.local.0 as usize] {
+                            st[i] = self.call_result(&st, func, env, t);
+                        }
+                    }
+                    arrive(self, next.0 as usize, &st);
+                }
+                Terminator::Return(_) | Terminator::Unreachable => {}
             }
         }
     }
@@ -325,22 +415,25 @@ impl Flow {
         start
     }
 
-    /// Join `out` into the entry state of `b`, widening the locals `widen` says the loop at `b`
-    /// assigns; returns whether it changed. A local the loop does not assign keeps the value it
-    /// enters with, so it needs no widening there: an outer loop's `k < 30` stays `[0, 29]` at
-    /// an inner loop's head.
-    fn merge(&mut self, b: usize, out: State, widen: Option<&[bool]>) -> bool {
+    /// Join `out` (its locals live into `b`) into the entry state of `b`, widening the locals
+    /// `widen` says the loop at `b` assigns; returns whether it changed. A local the loop does
+    /// not assign keeps the value it enters with, so it needs no widening there: an outer loop's
+    /// `k < 30` stays `[0, 29]` at an inner loop's head.
+    fn merge(&mut self, b: usize, out: &State, widen: Option<&[bool]>) -> bool {
+        let live = &self.live_in[b];
+        self.work += live.len() as u64;
         let Some(old) = &mut self.entry[b] else {
-            self.entry[b] = Some(out);
+            self.entry[b] = Some(live.iter().map(|&i| out[i as usize]).collect());
             return true;
         };
         let mut changed = false;
-        for (i, (o, n)) in old.iter_mut().zip(out).enumerate() {
-            let mut j = o.join(n);
+        for (o, &i) in old.iter_mut().zip(live) {
+            let i = i as usize;
+            let mut j = o.join(out[i]);
             if widen.is_some_and(|w| w[i]) && j != *o {
                 j = widened(*o, j);
                 if self.tys[i].is_int() {
-                    let top = Fact::top(self.tys[i]);
+                    let top = self.tops[i];
                     j.lo = j.lo.max(top.lo);
                     j.hi = j.hi.min(top.hi);
                 }
@@ -354,58 +447,12 @@ impl Flow {
         changed
     }
 
-    /// Successor states of block `b` whose statements left `st`, refined by the branch.
-    fn edges(&self, func: &Function, env: &Env, b: usize, st: State) -> Vec<(usize, State)> {
-        match &func.blocks[b].term {
-            Terminator::Goto(t) => vec![(t.0 as usize, st)],
-            Terminator::Branch { then, els, .. } => {
-                let cond = super::refine::condition(func, b);
-                let mut out = vec![];
-                for (target, taken) in [(then, true), (els, false)] {
-                    let mut s = st.clone();
-                    let feasible = match &cond {
-                        Some(c) => self.refine(&mut s, func, b, c, taken),
-                        None => true,
-                    };
-                    if feasible {
-                        out.push((target.0 as usize, s));
-                    }
-                }
-                out
-            }
-            Terminator::Switch {
-                value,
-                cases,
-                default,
-            } => {
-                let mut out: Vec<(usize, State)> = cases
-                    .iter()
-                    .map(|(v, t)| {
-                        let mut s = st.clone();
-                        self.set(&mut s, value, Fact::int(*v, *v));
-                        (t.0 as usize, s)
-                    })
-                    .collect();
-                out.push((default.0 as usize, st));
-                out
-            }
-            t @ Terminator::Call { dest, next, .. } => {
-                let mut s = st;
-                if let Some(d) = dest.as_ref().filter(|d| d.proj.is_empty()) {
-                    if let Some(i) = self.slot[d.local.0 as usize] {
-                        s[i] = self.call_result(&s, func, env, t);
-                    }
-                }
-                vec![(next.0 as usize, s)]
-            }
-            Terminator::Return(_) | Terminator::Unreachable => vec![],
-        }
-    }
-
-    /// Meet the fact of a tracked local operand with `v` (no-op for others).
-    pub(super) fn set(&self, st: &mut State, op: &Operand, v: Fact) {
+    /// Meet the fact of a tracked local operand with `v` (no-op for others), logging the fact
+    /// it had in `undo`.
+    fn set(&self, st: &mut State, op: &Operand, v: Fact, undo: &mut Vec<(usize, Fact)>) {
         if let Operand::Copy(p) = op {
             if let (true, Some(i)) = (p.proj.is_empty(), self.slot[p.local.0 as usize]) {
+                undo.push((i, st[i]));
                 st[i] = meet(st[i], v);
             }
         }
@@ -419,6 +466,7 @@ impl Flow {
         b: usize,
         c: &super::refine::Condition,
         taken: bool,
+        undo: &mut Vec<(usize, Fact)>,
     ) -> bool {
         let (Some(x), Some(y)) = (
             self.operand(st, func, &c.lhs),
@@ -430,26 +478,28 @@ impl Flow {
             return false;
         };
         for (op, f) in [(&c.lhs, nx), (&c.rhs, ny)] {
-            self.set(st, op, f);
+            self.set(st, op, f, undo);
             for copy in super::refine::copies_of(func, b, op) {
-                self.set(st, &Operand::Copy(Place::local(copy)), f);
+                self.set(st, &Operand::Copy(Place::local(copy)), f, undo);
             }
             use super::refine::Conversion;
             match super::refine::converted_from(func, b, op, &self.preds) {
                 Some((src, Conversion::Copy)) => {
-                    self.set(st, &src, f);
+                    self.set(st, &src, f, undo);
                     // `i = k as u64; t = i; t < xs.length`.
                     if let Some((k, Conversion::FromF64(ty))) =
                         super::refine::converted_from(func, b, &src, &self.preds)
                     {
-                        self.set(st, &k, super::refine::unconverted(f, ty));
+                        self.set(st, &k, super::refine::unconverted(f, ty), undo);
                     }
                 }
                 // Strictly within ±2^53 the conversion was exact: `2^53 + 1` converts to 2^53.
-                Some((src, Conversion::ToF64)) if f.magnitude() < TWO_53 => self.set(st, &src, f),
+                Some((src, Conversion::ToF64)) if f.magnitude() < TWO_53 => {
+                    self.set(st, &src, f, undo)
+                }
                 // `k as u64 < xs.length`: `k` is below the length too.
                 Some((src, Conversion::FromF64(ty))) => {
-                    self.set(st, &src, super::refine::unconverted(f, ty))
+                    self.set(st, &src, super::refine::unconverted(f, ty), undo)
                 }
                 _ => {}
             }
@@ -635,3 +685,7 @@ pub(super) fn is_comparison(op: BinOp) -> bool {
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
     )
 }
+
+#[cfg(test)]
+#[path = "flow_tests.rs"]
+mod tests;

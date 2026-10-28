@@ -22,6 +22,11 @@ work in this order, finishing each step before the next:
    next ones (grouped by area, not overlapping a large in-flight change).
 5. **Housekeeping.** Merged branches, stale worktrees, disk space for build directories.
 
+Between steps, keep `.claude/scripts/pr-watch.sh` running as a Monitor (re-arm it when it ends)
+and react to its events as maintaining.md "Watching for events" says; triage a `QUEUE FAIL` first.
+Resume the agent that reviewed or wrote a pull request for its next round instead of starting a
+new one.
+
 Report a short status table (pull request, size, verdict, CI, queue) and your recommended next
 actions. When this runs on a schedule (`/loop 30m /maintain`), report only what changed since the
 previous run. $ARGUMENTS

@@ -63,6 +63,7 @@ impl Cx<'_> {
             bytes,
             align: 8,
             relocs,
+            mutable: None,
         });
         self.module_desc = Some(id);
         id

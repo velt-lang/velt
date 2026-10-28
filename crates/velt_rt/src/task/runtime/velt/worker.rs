@@ -15,12 +15,13 @@
 //! due timers), then its inbox and half of its queue to another worker, a sleeping one if
 //! there is one, which becomes their home; each tick again while the stall lasts. When every
 //! other worker is stalled too (or there is no other: one core), a spare worker starts and
-//! takes them ([`SPARES`]). So a timer of `main` still fires while a spawned task computes,
-//! whatever the number of cores, and requests do not wait out a
-//! preempted worker (JSON on 512 connections, server and load generator sharing 9 cores: p99
-//! 4.4 ms before, against 3.4 ms with tokio's work stealing). The fast path pays two atomic
-//! stores per poll and a lock of its own queue; while every worker sleeps, so does the
-//! monitor.
+//! takes them ([`SPARES`]). Once every spare has started, the tasks stay where they are until a
+//! worker can take them: moved to another stalled worker, they would only move again. So a
+//! timer of `main` still fires while a spawned task computes, whatever the number of cores, and
+//! requests do not wait out a preempted worker (JSON on 512 connections, server and load
+//! generator sharing 9 cores: p99 4.4 ms before, against 3.4 ms with tokio's work stealing). The
+//! fast path pays two atomic stores per poll and a lock of its own queue; while every worker
+//! sleeps, so does the monitor.
 
 //!
 //! The monitor also starts spawned tasks that wait behind a sibling that computes: see
@@ -319,12 +320,17 @@ pub(super) fn start(n: usize) {
 }
 
 fn start_thread(index: usize) {
-    let started = std::thread::Builder::new()
-        .name("velt-worker".into())
-        .spawn(move || run(index));
+    let started = worker_thread().spawn(move || run(index));
     if let Err(e) = started {
         fatal(e);
     }
+}
+
+/// A worker thread, with the stack every thread that runs tasks has.
+fn worker_thread() -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name("velt-worker".into())
+        .stack_size(super::super::TASK_THREAD_STACK)
 }
 
 /// Starts the next spare worker (the monitor's thread only); its index, or `None` once all

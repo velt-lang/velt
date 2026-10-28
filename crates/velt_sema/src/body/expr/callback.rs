@@ -185,7 +185,12 @@ impl FnCx<'_, '_> {
         if sig.required > n && !want.rest {
             return None;
         }
-        if sig.shape() == want && !drops_result && !widens_result && !becomes_task {
+        if sig.shape() == want
+            && !drops_result
+            && !widens_result
+            && !becomes_task
+            && !self.defaults_take_undefined(&sig, &want_tys)
+        {
             return None;
         }
         let Some(args) = self.adapter_args(want, elem, &sig, arg) else {
@@ -251,6 +256,11 @@ impl FnCx<'_, '_> {
         let (value, closure, call) = match callee {
             Callee::Named(e) => (None, None, e),
             Callee::Value(v, closure) => {
+                // A closure literal wrapped: calls through the hidden local are calls of it.
+                let closure = closure.or(match &v.kind {
+                    H::Closure(c) => Some(*c),
+                    _ => None,
+                });
                 let name = ast::Ident {
                     name: format!("#callback{}", self.f.locals.len()),
                     span: v.span,

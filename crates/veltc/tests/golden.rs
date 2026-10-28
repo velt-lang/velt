@@ -24,6 +24,9 @@
 //!   the count is taken at a moment when every block was freed, or once no task can run any
 //!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
 //!   unfreed).
+//! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
+//!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
+//!   they exit (`velt:sync/epoch`'s registry of thread slots, made once and never freed).
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).
@@ -284,16 +287,16 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
                 cmd.env("VELT_RT_DEBUG_ALLOC", "1");
             }
-            let leak_check = mode.is_none() && checks_leaks(f);
+            let leak_check = mode.is_none().then(|| leak_allowance(f)).flatten();
             let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
             let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
-            if leak_check || str_limit.is_some() || block_limit.is_some() {
+            if leak_check.is_some() || str_limit.is_some() || block_limit.is_some() {
                 cmd.env("VELT_RC_STATS", "1");
             }
             let o = run_with_timeout(cmd);
             let stdout = norm(&String::from_utf8_lossy(&o.stdout));
-            if leak_check {
-                if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr)) {
+            if let Some(allowed) = leak_check {
+                if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr), allowed) {
                     failures.push(format!("{rel} [debug]: {leak}"));
                 }
             }
@@ -352,12 +355,19 @@ fn also_with_env(file: &Path) -> Option<EnvVar> {
     Some((name.to_string(), value.to_string()))
 }
 
-/// Does the golden ask for a leak check (`// check: no leaks` on one of its first lines)?
-fn checks_leaks(file: &Path) -> bool {
-    std::fs::read_to_string(file).is_ok_and(|src| {
-        src.lines()
-            .take(10)
-            .any(|l| l.trim() == "// check: no leaks")
+/// The blocks a golden may leave unfreed when it asks for a leak check: 0 for `// check: no
+/// leaks`, N for `// check: unfreed blocks at most N` (on one of its first lines).
+fn leak_allowance(file: &Path) -> Option<u64> {
+    let src = std::fs::read_to_string(file).ok()?;
+    src.lines().take(10).find_map(|l| match l.trim() {
+        "// check: no leaks" => Some(0),
+        l => l
+            .strip_prefix("// check: unfreed blocks at most ")
+            .map(|n| {
+                n.trim()
+                    .parse()
+                    .expect("a number after `unfreed blocks at most`")
+            }),
     })
 }
 
@@ -428,16 +438,18 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
-/// The leak in a `rc stats: ... blocks=A/F` report: blocks allocated but not freed, or no report.
-fn leaked_blocks(stderr: &str) -> Option<String> {
+/// The leak in a `rc stats: ... blocks=A/F` report: more than `allowed` blocks allocated but
+/// not freed, or no report.
+fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
     let counts = stderr
         .lines()
         .rev()
         .find(|l| l.starts_with("rc stats:"))
         .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
         .and_then(|b| b.split_once('/'));
+    let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
     match counts {
-        Some((a, f)) if a == f => None,
+        Some((a, f)) if unfreed(a, f).is_some_and(|n| n <= allowed) => None,
         Some((a, f)) => Some(format!("leak: {a} blocks allocated, {f} freed")),
         None => Some("leak check: no `rc stats` report on stderr".into()),
     }

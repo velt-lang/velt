@@ -1,0 +1,43 @@
+// check: unfreed blocks at most 4
+// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, made at the first load's section
+// and kept until the program exits.)
+// What an `Atomic` of a `shared` value owns is freed when nothing replaces it: loads, failed
+// compare-and-swaps (with `expected` a variable, a temporary and `null`), an exchange of null
+// for null, and the `Atomic` dropped as a local, as a class field and in an array.
+
+interface Item {
+  n: u64;
+}
+
+class Holder {
+  cell: Atomic<shared<Item>> = new Atomic<shared<Item>>(shared({ n: 10 }));
+}
+
+function item(n: u64): shared<Item> {
+  return shared({ n });
+}
+
+function main() {
+  const a = new Atomic<shared<Item>>(item(1));
+  const b = new Atomic<shared<Item>>(item(2));
+  const kept = a.load();
+  console.log(kept.n, a.load().n);
+
+  const other = item(3);
+  console.log(a.compareExchange(other, item(4)), a.compareExchangeWeak(other, item(5)));
+  console.log(b.compareExchange(a.load(), item(6)), b.compareExchangeWeak(a.load(), item(7)));
+
+  const empty = new Atomic<shared<Item> | null>(null);
+  const none = empty.exchange(null);
+  console.log(none == null, empty.compareExchange(item(8), item(9)), empty.load() == null);
+  const full = new Atomic<shared<Item> | null>(item(11));
+  console.log(full.compareExchange(null, item(12)), full.load() != null);
+
+  const h = new Holder();
+  console.log(h.cell.load().n);
+  const cells: Atomic<shared<Item>>[] = [];
+  for (let i: u64 = 0; i < 3; i++) {
+    cells.push(new Atomic<shared<Item>>(item(i)));
+  }
+  console.log(cells[2].load().n, a.load().n, b.load().n);
+}

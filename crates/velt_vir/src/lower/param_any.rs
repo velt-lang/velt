@@ -147,7 +147,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of literal type `l` boxed into `out`.
-    fn any_literal_into(&mut self, l: &LitValue, out: &Place) {
+    pub(super) fn any_literal_into(&mut self, l: &LitValue, out: &Place) {
         let (v, k) = match l {
             LitValue::Str(s) => (self.str_lit(s), TyKind::Str),
             LitValue::Bool(b) => (Operand::Const(Const::Bool(*b), Ty::Bool), TyKind::Bool),

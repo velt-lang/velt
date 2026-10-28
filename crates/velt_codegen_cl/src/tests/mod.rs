@@ -11,6 +11,7 @@ mod jit_relocs;
 mod link;
 mod objects;
 mod rounding;
+mod static_atomic;
 mod tls;
 
 use velt_vir::vir::*;
@@ -201,6 +202,7 @@ impl ProgramBuilder {
             bytes: bytes.to_vec(),
             align,
             relocs,
+            mutable: None,
         });
         StaticId(self.p.statics.len() as u32 - 1)
     }

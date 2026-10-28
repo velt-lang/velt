@@ -50,6 +50,7 @@ mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod atomic;
+mod atomic_ref;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -66,6 +67,7 @@ mod debug_vars;
 mod dispatch;
 mod drops;
 mod entry;
+mod epoch_sections;
 mod errors;
 mod expr;
 mod ext_exists;
@@ -113,6 +115,7 @@ mod simd;
 mod spread_object;
 mod srcloc;
 mod stabilize;
+mod static_atomic;
 mod stmt;
 mod strbuf;
 mod strings;
@@ -409,6 +412,9 @@ struct Cx<'h> {
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
     tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
+    /// The data of each static atomic used so far, `None` for a global that is not one
+    /// (static_atomic.rs).
+    static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,
@@ -739,6 +745,10 @@ struct FnLower<'c, 'h> {
     direct_siblings: FxHashMap<LocalId, DefId>,
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
+    /// This function loads an `Atomic` of a `shared` value, so it runs in an epoch section
+    /// (epoch_sections.rs), unless it is one of `velt:sync/epoch`'s own (`epoch_exempt`).
+    ref_loads: bool,
+    epoch_exempt: bool,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,

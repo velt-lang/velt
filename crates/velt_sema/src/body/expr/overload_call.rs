@@ -313,12 +313,26 @@ impl FnCx<'_, '_> {
         };
         if nullable {
             let null = self.mk(H::Lit(hir::Lit::Null), sty, span);
-            let body = match self.try_coerce(null, target) {
-                Ok(b) => {
+            // The result's `null` or `undefined` where the signature's type holds it (`Def |
+            // undefined` out of `App | Def | undefined`) is that type's.
+            let nothings = (self.cx.ty.nothing_of(sty), self.cx.ty.nothing_of(target));
+            let kept = matches!(nothings, (Some(from), Some(to)) if from.within(to))
+                && self.cx.ty.opt_payload(target).is_some();
+            let body = match kept {
+                true => {
                     fits = true;
-                    b
+                    self.mk(H::Lit(hir::Lit::Null), target, span)
                 }
-                Err(_) => panic_arm(self, "null".to_string()),
+                false => match self.try_coerce(null, target) {
+                    Ok(b) => {
+                        fits = true;
+                        b
+                    }
+                    Err(_) => {
+                        let word = nothings.0.map_or("null", |n| n.word());
+                        panic_arm(self, word.to_string())
+                    }
+                },
             };
             arms.push(hir::Arm {
                 pat: self.pat(P::None, sty, span),

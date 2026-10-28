@@ -258,41 +258,6 @@ impl FnCx<'_, '_> {
         out
     }
 
-    pub(super) fn prop_value(
-        &mut self,
-        name: &ast::Ident,
-        value: Option<&ast::Expr>,
-        exp: Option<TyId>,
-    ) -> hir::Expr {
-        match value {
-            Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
-            None => self.ident_expr(name, exp, Want::Move),
-        }
-    }
-
-    /// [`Self::prop_value`] for a field of an object type. A value that may be null written
-    /// for an optional field without a presence flag (`watched`, `anon::absent_is_null`) is
-    /// remembered: Node finds the key of `{ b: undefined }`, which such a field cannot hold
-    /// (`crate::absent_fields`).
-    pub(super) fn field_value(
-        &mut self,
-        name: &ast::Ident,
-        value: Option<&ast::Expr>,
-        exp: Option<TyId>,
-        watched: bool,
-    ) -> hir::Expr {
-        let h = self.prop_value(name, value, exp);
-        if !watched {
-            return h;
-        }
-        let nullable = crate::absent_fields::literal_may_be_null(self.cx, &h);
-        if nullable {
-            let store = (name.name.clone(), h.span);
-            self.cx.object_copies.null_literals.push(store);
-        }
-        h
-    }
-
     pub(crate) fn object_lit(
         &mut self,
         props: &[ast::ObjectProp],
