@@ -40,7 +40,11 @@ impl Ctx<'_> {
                 best = Some(s);
             }
         }
-        best
+        // A type alias written there: the sites are in its body.
+        match (best, self.fn_sites.alias_written.get(&range)) {
+            (None, Some(&body)) if body != range => self.site_in(body, t),
+            _ => best,
+        }
     }
 
     /// The site of the parameter, field or variable declared at `name` with type `t`.

@@ -4,3 +4,6 @@
 4 failed: LoadError cannot load bad-aside
 a done
 bad-b failed: cannot load bad-b
+home <home>
+broken failed: true cannot load bad-page
+late failed: true cannot load bad-late

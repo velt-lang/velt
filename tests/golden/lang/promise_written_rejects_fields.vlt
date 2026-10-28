@@ -1,8 +1,8 @@
 // A rejecting promise written into a field of an object literal whose type is `Promise<T>`
 // written without an error type takes its rejections there, as TypeScript lets it (sigx:
 // server-renderer render-core.ts `ctx._pendingAsync.push({ id, promise })`): an interface's
-// field, an object type's, a literal pushed to an array of them, and a field given through
-// `return`.
+// field, an object type's, a literal pushed to an array of them, a field given through
+// `return`, and a value of a `Record` literal or one set by index.
 
 class LoadError extends Error {
   constructor(message: string) {
@@ -51,6 +51,14 @@ function job(name: string): Job {
   return j;
 }
 
+type Pages = Record<string, Promise<string>>;
+
+function pages(): Pages {
+  const r: Pages = { home: load("home"), broken: load("bad-page") };
+  r["late"] = load("bad-late");
+  return r;
+}
+
 async function main() {
   const ctx: RenderCtx = { pending: [] };
   queue(ctx, 1, "header");
@@ -70,6 +78,14 @@ async function main() {
       console.log(j.name, "done");
     } catch (e) {
       console.log(j.name, "failed:", (e as Error).message);
+    }
+  }
+  const r = pages();
+  for (const k of ["home", "broken", "late"]) {
+    try {
+      console.log(k, await r[k]);
+    } catch (e) {
+      console.log(k, "failed:", e instanceof LoadError, (e as Error).message);
     }
   }
 }

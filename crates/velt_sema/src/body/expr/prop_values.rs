@@ -19,10 +19,18 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.adapted_prop_fn(name, value, exp) {
             return h;
         }
-        match value {
+        let h = match value {
             Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
             None => self.ident_expr(name, exp, Want::Move),
+        };
+        // A promise that rejects, stored into a field or record value whose `Promise<T>` is
+        // written without an error type: that site takes its errors (`throws::promise_sites`).
+        // The literal converts its values to the expected types after the site is no longer
+        // the target, so the value seeds it here.
+        if let Some(exp) = exp {
+            self.cx.seed_promise_site(h.ty, exp);
         }
+        h
     }
 
     /// [`Self::prop_value`] for a field of an object type. A value that may be null written
@@ -37,13 +45,6 @@ impl FnCx<'_, '_> {
         watched: bool,
     ) -> hir::Expr {
         let h = self.prop_value(name, value, exp);
-        // A promise that rejects, stored into a field whose `Promise<T>` is written without an
-        // error type: the field's site takes its errors (`throws::promise_sites`). The literal
-        // converts its values to the field types after the field's site is no longer the
-        // target, so it is seeded here.
-        if let Some(exp) = exp {
-            self.cx.seed_promise_site(h.ty, exp);
-        }
         if !watched {
             return h;
         }
