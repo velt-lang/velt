@@ -44,6 +44,7 @@ fn coff_args(req: &LinkRequest, kit: &Kit) -> Result<Vec<OsString>, String> {
         "/NODEFAULTLIB",
         "/SUBSYSTEM:CONSOLE",
         "/INCREMENTAL:NO",
+        crate::WINDOWS_STACK,
     ]
     .map(OsString::from)
     .into();
@@ -236,6 +237,7 @@ mod tests {
         );
         for item in [
             "/NODEFAULTLIB",
+            crate::WINDOWS_STACK,
             "/DEBUG",
             // Cranelift's DWARF stays in the executable, beside the PDB.
             "/IGNORE:longsections",
