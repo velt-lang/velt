@@ -31,7 +31,13 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
 /// `unpin` and `retire`) and calls them.
-const EAGER: &[&str] = &["std/sort", "std/proxy", "std/typed_array", "std/sync/epoch"];
+const EAGER: &[&str] = &[
+    "std/sort",
+    "std/proxy",
+    "std/typed_array",
+    "std/sync/epoch",
+    "std/this_fn",
+];
 
 /// Std modules whose definitions lowering's JSON glue calls by name (`velt_vir` `json_std_fn`:
 /// `std/json/reader::Reader.<method>`, `std/json/writer::<fn>`): all of a module's deferred
@@ -53,6 +59,7 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__ClassMarker",
     "__HasOwnProperty",
     "__HasOwnPropertyProxy",
+    "__ThisFn",
     "__any",
     "__anyConcatPlain",
     "__anyConcatText",
@@ -67,6 +74,7 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__anyTextUnsupported",
     "__anyToPrimitive",
     "__anyToPrimitivePlain",
+    "__apply",
     "__arrayCall",
     "__arrayViewFlush",
     "__arrayViewFlushAt",
@@ -77,6 +85,7 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__arrayViewSync",
     "__arrayViewSyncAt",
     "__arrayViewSyncLen",
+    "__bind",
     "__classObject",
     "__debug_line",
     "__decoded",
