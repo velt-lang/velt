@@ -196,11 +196,14 @@ nothing; `null` means success).
 
 ## Inference limits
 
-A closure created inside a recursive function that it calls throws what the function's body
-throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
-`xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
-error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```). A call through an interface
+A closure created inside a recursive function that it calls throws what the function throws,
+also what it throws after the closure (`xs.map((x) => walk(x, d + 1))`, then `throw new
+TypeError(…)`), and so does the generator a recursive generator function returns
+(`yield* walk(child)` before a `throw`), and a `catch` or promise whose error type depends on a
+function still being checked through recursion: the program is checked again with the error
+types the recursion found, as in Node, and needs no `throws` clause. Only an error type the
+next check cannot carry over (an object type, `throw { code: 1 }`) still needs one (``` the
+error type of this function is not known yet ```). A call through an interface
 value whose method's error type is found only after the call is checked (the recursion goes
 through the interface, or an object literal is converted to the interface by code checked
 later) needs none, also when the `catch` or promise sees it through other functions (an

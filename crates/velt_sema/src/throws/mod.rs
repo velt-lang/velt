@@ -163,9 +163,18 @@ fn own_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     if let Some(decl) = cx.try_fn(d).and_then(|f| f.declared_throws) {
         return decl.ty;
     }
+    // A call back into a function whose body is being checked (recursion): its sources are not
+    // known yet; count what it threw in the previous check, when the program is checked again
+    // for it (`Ctx::recursion_found_late`).
+    let in_progress = cx.try_fn(d)?.state == crate::defs::BodyState::InProgress;
     crate::body::ensure_body(cx, d);
     let srcs = cx.try_fn(d)?.throw_srcs.clone();
-    srcs_now_in(cx, &srcs, visited)
+    let t = srcs_now_in(cx, &srcs, visited);
+    if !in_progress {
+        return t;
+    }
+    let hint = cx.recursion_hint(d);
+    cx.join_errors(t, hint)
 }
 
 fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
