@@ -10,3 +10,8 @@ calls 6
 0:null
 #5
 #6 #6
+same a null L
+same b host null
+same c null L
+same d null L
+same e null L

@@ -3,7 +3,10 @@
 // field (`{ patch }`, `{ mount: mountAt }`), also a nested function that throws and a field of a
 // generic interface. The parameters it is not given take their defaults. A `T | null`
 // parameter with a default, given a `T | null | undefined` (an optional parameter of the
-// field's type), takes its default where the value is `undefined` and keeps a `null` (#930).
+// field's type), takes its default where the value is `undefined` and keeps a `null` (#930),
+// also when the function type has as many parameters as the function (sigx's `mount(…, before:
+// HostNode | null = null, parentNS = false)` for a type ending `before?: HostNode | null,
+// parentNS?: boolean`), in a field or a variable, at module level or in a function.
 
 class PatchError extends Error {}
 
@@ -47,6 +50,29 @@ interface Formatter {
   format: (n: number) => string;
 }
 
+class HostNode {
+  name = "host";
+}
+
+type SameMountFn = (tag: string, before?: HostNode | null, label?: string | null) => void;
+
+function mountSame(tag: string, before: HostNode | null = null, label: string | null = "L"): void {
+  console.log("same", tag, before === null ? "null" : before.name, label);
+}
+
+const sameField: { m: SameMountFn } = { m: mountSame };
+const sameVar: SameMountFn = mountSame;
+
+function sameArity(): void {
+  sameField.m("a");
+  sameField.m("b", new HostNode(), null);
+  sameVar("c", undefined, undefined);
+  const local: { m: SameMountFn } = { m: mountSame };
+  local.m("d", null);
+  const v: SameMountFn = mountSame;
+  v("e");
+}
+
 function main(): void {
   const r = createRenderer<number>("bad");
   r.patch(1, 2, "ok");
@@ -70,6 +96,7 @@ function main(): void {
   console.log(f.format(5));
   const fs: Formatter[] = [{ format: label }, f];
   console.log(fs.map((x) => x.format(6)).join(" "));
+  sameArity();
 }
 
 main();

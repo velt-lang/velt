@@ -835,7 +835,9 @@ async function main() {
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
   (`setTimeout(tick, 10)` with `function tick(n?: number)`, or `{ patch }` for a field
   `patch: (a: VNode, b: VNode) => void` with `function patch(a: VNode, b: VNode, ns = false)`):
-  they are left out and take their defaults. A function with
+  they are left out and take their defaults. A parameter with a default also takes the
+  `undefined` an optional parameter of the type may pass (`before: Node | null = null` for
+  `before?: Node | null`, at the same number of parameters too): the default applies there. A function with
   a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
   returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
