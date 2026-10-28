@@ -86,7 +86,8 @@ velt test --no-run              # build the test programs without running them
 ```
 
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
-test failed, so it works in CI as is. Each test file runs in a process of its own, several at
+test failed, so it works in CI as is. A `--filter` that matches no test says so and builds
+nothing. Each test file runs in a process of its own, several at
 once (`--jobs`), and its output is printed in file order, whatever finishes first. The tests of
 a file run one after another, in source order, in that process; one that ends it (a panic, a
 crash, `process.exit`) is reported, and a new process runs the tests after it. The runner itself
@@ -110,7 +111,8 @@ gets a program of its own, so other files never see what it does. So does a test
 imports such a module by a relative path (`import { DATA } from "./fixtures"`), directly or
 through other modules: if that code fails, only that file's tests fail ("exit code 1 before its
 tests ran"). Imports of packages are not followed; keep a package's top level free of side
-effects, as for any module.
+effects, as for any module. When a test file doesn't compile, its tests fail ("build failed")
+and the other files are built together again without it.
 
 ## Testing servers
 
