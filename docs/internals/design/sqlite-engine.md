@@ -124,6 +124,11 @@ it, starting with positioned I/O for the pager.
   preceded it (`crates/velt_vir/src/lower/system.rs`). So a freed temporary or a `console.log`
   between the failing call and the read cannot clobber the value. It costs one `__error` load per
   call. Windows reads `GetLastError()` at the `lastOsError()` call as before.
+- **Deferred**: rejecting a `readonly u8[]` passed to a written buffer parameter at compile time
+  (TypeScript's TS2345). Velt models `readonly T[]` as `T[]` and checks writes through the
+  variable, not assignability, so this is a general limitation of the read-only model, not
+  specific to system functions, and it is not memory-unsafe (the array is valid memory). To be
+  done with read-only assignability across the language.
 - **Deferred** (#1773): listing a package's system functions in `velt check` and
   `velt.lock.json`. It spans the package manifest, the lock file and the registry metadata, none
   of it memory safety; the compile-time table (`velt_vir`'s per-target list) already bounds what

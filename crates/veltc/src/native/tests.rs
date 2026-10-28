@@ -271,6 +271,17 @@ fn system_functions_are_bound_per_target() {
         d.contains("is available on aarch64-apple-darwin, x86_64-apple-darwin"),
         "{d}"
     );
+    // A view argument (`b.subarray(..)`, `Intrinsic::Subarray`) on a target without the
+    // function gives the same error, not an ICE from lowering a view that never ships (#1718).
+    let view = format!(
+        "{PREAD}function main() {{\n  const b: u8[] = [0, 0];\n  \
+         console.log(pread(0, b.subarray(0, 1), 0));\n}}\n"
+    );
+    for t in ["wasm32-wasip1", "x86_64-pc-windows-msvc"] {
+        let d = lower_for(&view, t);
+        assert!(d.contains("system function `pread` is not available on"), "{t}: {d}");
+        assert!(!d.contains("ICE"), "{t}: {d}");
+    }
     // Declared but never called: nothing to report anywhere.
     let unused = format!("{PREAD}function main() {{}}\n");
     assert_eq!(lower_for(&unused, "wasm32-wasip1"), "");
