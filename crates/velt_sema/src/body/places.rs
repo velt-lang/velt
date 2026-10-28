@@ -299,6 +299,12 @@ pub(crate) fn frozen_root(e: &hir::Expr) -> bool {
             callee: Callee::Intrinsic(Intrinsic::SharedRead),
             ..
         } => true,
+        // A field read through an interface's or bound's getter slot (`iface_field`), as a
+        // field of a written type is.
+        H::Call {
+            callee: Callee::ParamMethod { .. } | Callee::Dyn { .. },
+            args,
+        } if args.len() == 1 => frozen_root(&args[0]),
         H::Field { base, .. }
         | H::Index { base, .. }
         | H::UnwrapSome(base, _)
@@ -317,7 +323,7 @@ pub(crate) fn frozen_source(cx: &crate::ctx::Ctx, e: &hir::Expr) -> bool {
             args,
         } if cx.fn_info(*d).this.is_some() => args.first().is_some_and(|a| frozen_source(cx, a)),
         H::Call {
-            callee: Callee::Virtual { .. },
+            callee: Callee::Virtual { .. } | Callee::ParamMethod { .. } | Callee::Dyn { .. },
             args,
         } => args.first().is_some_and(|a| frozen_source(cx, a)),
         H::Upcast(x) | H::Downcast(x) => frozen_source(cx, x),

@@ -1,0 +1,56 @@
+// A function value given a value read out of a `shared` (here `this` in a getter or method of a
+// shared object, reached directly, through a bound's field, and from four threads at once) gets
+// a copy of its own: it may change what it is given, and the shared value is read-only. The same
+// code on an object of this thread's changes the object, as in JavaScript.
+
+const poke = (o: B) => {
+  o.k++;
+};
+
+interface HasK {
+  readonly kk: u64;
+}
+
+class B implements HasK {
+  k: u64 = 0;
+  get kk(): u64 {
+    poke(this);
+    return this.k;
+  }
+  viaClosure(): u64 {
+    poke(this);
+    return this.k;
+  }
+}
+
+function viaK<V extends Frozen & HasK>(s: shared<V>): u64 {
+  return s.kk;
+}
+
+async function hammer(b: shared<B>): Promise<u64> {
+  let last: u64 = 0;
+  for (let i = 0; i < 100000; i++) {
+    last = viaK<B>(b);
+  }
+  return last;
+}
+
+function own() {
+  const o = new B();
+  console.log(o.kk, o.k, o.viaClosure(), o.k);
+}
+
+async function main() {
+  own();
+  const b = shared(new B());
+  console.log(viaK<B>(b), b.k, b.kk, b.k, b.viaClosure(), b.k);
+  const ts: Promise<u64>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ts.push(spawn(hammer(b)));
+  }
+  let sum: u64 = 0;
+  for (const v of await Promise.all(ts)) {
+    sum += v;
+  }
+  console.log(sum, b.k);
+}

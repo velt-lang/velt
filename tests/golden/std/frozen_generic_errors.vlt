@@ -58,6 +58,45 @@ function bumpShared<V extends Frozen & Bump>(s: shared<V>) {
   s.bump();
 }
 
+// A field read through the bound's getter is a part of the value inside: changing it, or a local
+// holding it, is refused as it is for a written type.
+interface HasArr {
+  readonly arr: u64[];
+}
+
+interface HasSelf {
+  readonly me: Holder;
+}
+
+class Holder implements HasArr, HasSelf {
+  k: u64 = 0;
+  a: u64[] = [0];
+  get arr(): u64[] {
+    return this.a;
+  }
+  get me(): Holder {
+    return this;
+  }
+}
+
+function writeElem<V extends Frozen & HasArr>(s: shared<V>) {
+  s.arr[0] = 7;
+}
+
+function writeLocal<V extends Frozen & HasArr>(s: shared<V>) {
+  const x = s.arr;
+  x[0] = 8;
+}
+
+function writeField<V extends Frozen & HasSelf>(s: shared<V>) {
+  s.me.k = 6;
+}
+
+function writeHeld<V extends Frozen & HasSelf>(s: shared<V>) {
+  const m = s.me;
+  m.k = 5;
+}
+
 // Both are only bounds: no value has them as its type.
 function boundsOnly() {
   const fv: Frozen = 1;

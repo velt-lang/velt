@@ -10,9 +10,10 @@
 //!   retains the box (async_fn/sync.rs `shared_value`), so it stays where it is;
 //! - one consumed (moved into a variable, an owned param, a field, returned) is a deep copy
 //!   (`FnLower::consume`);
-//! - a counted one passed to a borrowed param of a direct call goes to the callee's
-//!   `Work::Frozen` instance with that param in its mask; through a function value, a vtable or
-//!   an interface (whose code cannot be specialized) it is a copy;
+//! - one passed to a borrowed param of a direct call goes to the callee's `Work::Frozen`
+//!   instance with that param in its mask, if it holds counted parts or is an object or array
+//!   code could change (`frozen_counted`); through a function value, whose code cannot be
+//!   specialized, it is a copy (`borrow_args`), since the function may change what it is given;
 //! - a binding by reference into one, a `for…of` element of one and a borrowed capture of one
 //!   are frozen too (the capture through a `Work::Frozen` instance of the closure), and so are
 //!   a map loop's hidden map and its entries when the body changes neither
@@ -20,13 +21,13 @@
 //! - a closure literal passed to a frozen instance is called there directly, through its own
 //!   frozen instance ([`KnownFn`]), so a callback reads what it is given in place.
 //!
-//! What holds no counted part (`Cx::holds_counted`) has no count to change: it is borrowed as
-//! usual and goes to ordinary instances.
+//! A number or string holds nothing a callee could count or change: it is borrowed as usual and
+//! goes to ordinary instances.
 
 use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{
-    self, Callee, ExprKind as K, Intrinsic, LocalId, PassMode, Pat, PatKind, UseMode,
+    self, Callee, ExprKind as K, Intrinsic, LocalId, PassMode, Pat, PatKind, TyKind, UseMode,
 };
 
 use super::operand::proj;
@@ -69,16 +70,21 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Is `e` frozen and does it hold counted parts, which no code here may count?
+    /// Is `e` frozen, and is it a value code could count (counted parts) or change (an object
+    /// or array, through a function value it reaches: `borrow_args` gives those a copy) rather
+    /// than a number or string, which a callee only reads?
     pub(super) fn frozen_counted(&mut self, e: &hir::Expr) -> bool {
         if !self.frozen_root(e) {
             return false;
         }
         let ty = self.sub(e.ty);
+        let vt = self.vty(e.ty);
         self.cx.holds_counted(ty)
+            || !(super::place::number(vt) || matches!(self.cx.kind(ty), TyKind::Str))
     }
 
-    /// The mask of a direct call's params that get a frozen counted argument (`args` follow
+    /// The mask of a direct call's params that get a frozen argument it could count or change
+    /// (`frozen_counted`; `args` follow
     /// `skip` already lowered leading params): such a call goes to a `Work::Frozen` instance.
     pub(super) fn frozen_mask(
         &mut self,
