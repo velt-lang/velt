@@ -491,12 +491,9 @@ function significand(src: string, start: usize, end: usize): Significand {
 /** The number token as an exact `u64`, or null if it is not an integer in `[0, 2^64)`. */
 export function numberU64(src: string, start: usize, end: usize, integer: bool): u64 | null {
   if (!integer) {
-    const v = numberF64(src, start, end, false);
-    // [0, 2^64): both bounds are exact in f64.
-    if (Math.trunc(v) == v && v >= 0 && v < 18446744073709551616.0) {
-      return v as u64;
-    }
-    return null;
+    const x = exactInteger(src, start, end);
+    // `-0.0` and `-0e5` are 0; any other negative is out of range.
+    return x.ok && (!x.neg || x.mag == 0) ? x.mag : null;
   }
   let i = start;
   const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
@@ -517,15 +514,107 @@ export function numberU64(src: string, start: usize, end: usize, integer: bool):
   return neg && acc != 0 ? null : acc;
 }
 
+/** A number token's exact integer value: its sign and magnitude, or `ok` false. */
+struct ExactInteger {
+  ok: bool;
+  neg: bool;
+  mag: u64;
+}
+
+// The exact value of a number token with a fraction or an exponent, if it is an integer below
+// 2^64 (`1.0`, `9007199254740993e0`, `18446744073709551615.000`, `25e-1` is not one): its
+// digits read into a `u64` (a zero that no longer fits only scales it; any other digit that
+// doesn't fit means more significant digits than 2^64 holds), the exponent applied, trailing
+// zeros dropped, then an overflow-checked scale by the power of ten left.
+function exactInteger(src: string, start: usize, end: usize): ExactInteger {
+  const none = ExactInteger { ok: false, neg: false, mag: 0 };
+  const max: u64 = 18446744073709551615;
+  let i = start;
+  const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
+  if (neg) {
+    i++;
+  }
+  let w: u64 = 0;
+  let q: i64 = 0;
+  let fraction = false;
+  while (i < end) {
+    const b = __intrinsic_str_byte_at(src, i as u64);
+    if (b == DOT) {
+      fraction = true;
+      i++;
+      continue;
+    }
+    if (b - ZERO > 9) {
+      break;
+    }
+    const d = (b - ZERO) as u64;
+    if (w > (max - d) / 10) {
+      if (d != 0) {
+        return none;
+      }
+      // A zero that doesn't fit: the value is w * 10 at this place.
+      if (!fraction) {
+        q++;
+      }
+    } else {
+      w = w * 10 + d;
+      if (fraction) {
+        q--;
+      }
+    }
+    i++;
+  }
+  if (i < end) {
+    // The exponent: `e` or `E`, an optional sign, digits (the scanner checked the token).
+    i++;
+    let eneg = false;
+    const sign = __intrinsic_str_byte_at(src, i as u64);
+    if (sign == MINUS || sign == PLUS) {
+      eneg = sign == MINUS;
+      i++;
+    }
+    let e: i64 = 0;
+    while (i < end) {
+      // Past 10^6 the result is 0, too large, or not an integer whatever the digits.
+      if (e < 1000000) {
+        e = e * 10 + ((__intrinsic_str_byte_at(src, i as u64) - ZERO) as i64);
+      }
+      i++;
+    }
+    q += eneg ? -e : e;
+  }
+  if (w == 0) {
+    return ExactInteger { ok: true, neg: neg, mag: 0 };
+  }
+  while (q < 0 && w % 10 == 0) {
+    w = w / 10;
+    q++;
+  }
+  if (q < 0) {
+    return none;
+  }
+  while (q > 0) {
+    if (w > max / 10) {
+      return none;
+    }
+    w = w * 10;
+    q--;
+  }
+  return ExactInteger { ok: true, neg: neg, mag: w };
+}
+
 /** The number token as an exact `i64`, or null if it is not an integer in range. */
 export function numberI64(src: string, start: usize, end: usize, integer: bool): i64 | null {
   if (!integer) {
-    const v = numberF64(src, start, end, false);
-    // [-2^63, 2^63): both bounds are exact in f64.
-    if (Math.trunc(v) == v && v >= -9223372036854775808.0 && v < 9223372036854775808.0) {
-      return v as i64;
+    const x = exactInteger(src, start, end);
+    const limit: u64 = 9223372036854775808;
+    if (!x.ok || x.mag > limit || (x.mag == limit && !x.neg)) {
+      return null;
     }
-    return null;
+    if (x.mag == limit) {
+      return -9223372036854775807 - 1;
+    }
+    return x.neg ? -(x.mag as i64) : x.mag as i64;
   }
   let i = start;
   const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;

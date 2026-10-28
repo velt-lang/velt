@@ -10,3 +10,7 @@ json error: expected i64 at $.age
 json error: expected u8 at $.items[0].id
 json error: expected boolean at $.items[0].ok
 json error: expected field "y" at $.items[0].at
+json error: Unexpected token 'x', "{"v":1,"v":x}" is not valid JSON
+json error: Unexpected token 'x', "[[1],[2],x]" is not valid JSON
+json error: Unexpected token '}', "[{"v":[1]},{"v":}]" is not valid JSON
+json error: Unexpected token ']', "{"a":{"x":1},"b":]" is not valid JSON

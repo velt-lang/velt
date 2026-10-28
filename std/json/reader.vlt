@@ -521,11 +521,16 @@ export class Reader extends Scanner {
 
   /** One complete value of any kind, built as a runtime `JsonValue` tree: `handle` after true. */
   readValue(): bool {
+    // The glue takes `handle` as the value even when this fails (the decoder's out-parameter
+    // must then own nothing): a failed read leaves 0, not the handle of the value before.
+    this.handle = 0;
     if (!this.valueStart(0, 0)) {
       if (this.rows != 0 && this.failed == ROWS) {
         let out = ReaderHandle { v: 0 };
         const ok = velt_rt_json_reader_read_value(this.rows, out) == 1;
-        this.handle = out.v;
+        if (ok) {
+          this.handle = out.v;
+        }
         return ok;
       }
       return false;
