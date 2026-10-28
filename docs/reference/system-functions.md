@@ -58,7 +58,7 @@ captures `errno` into a slot of the thread right after every system call, and `l
 reads that slot, so a system call followed by `lastOsError()` reports that call's error even when
 anything the statement does after the call (freeing a temporary argument, `console.log`) runs in
 between, and even when the call was made in a function this one called; call `lastOsError()`
-after the failing call and before the next system call, which overwrites the slot. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
+after the failing call and before the next system call, which overwrites the slot. Read it before any `await` too: the slot belongs to the thread, as C's `errno` does, so across an `await` other tasks' system calls (on this thread or, once resumed, another one) may have replaced it. Keep the value in a local if it is needed after the `await`. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
 
 ```ts
 import { lastOsError } from "velt:os";
