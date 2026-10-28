@@ -92,6 +92,40 @@ function proxyReceiverUnsupported(op: string): never {
   );
 }
 
+/**
+ * `Reflect.get(target, key, receiver)` of a class getter with a proxy receiver: Node runs the
+ * getter with `this` = the receiver, so the getter's own reads go through the proxy's traps.
+ * Velt runs it on the target, which could give another value, so it stops instead (#823).
+ */
+function proxyGetterReceiverUnsupported(key: any): never {
+  panic(
+    `TypeError: Reflect.get of the getter '${String(key)}' with a proxy as the receiver is not supported yet (#823): forward with Reflect.get(target, key)`,
+  );
+}
+
+// Is `value`, read as `target[key]`, what a class getter gave: a string key that is not an own
+// property of a class instance (a method's value is a function, which a call runs with `this`
+// the proxy already).
+function classGetterValue(target: any, key: any, value: any): bool {
+  if (
+    typeof key !== "string" ||
+    value === undefined ||
+    typeof value === "function" ||
+    Array.isArray(target) ||
+    target instanceof Record ||
+    target instanceof Proxy
+  ) {
+    return false;
+  }
+  // `target` is no proxy, so no trap runs here: the `catch` only keeps the traps' errors out of
+  // what `Reflect.get` throws.
+  try {
+    return !Object.hasOwn(target, key);
+  } catch (e) {
+    return false;
+  }
+}
+
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
 function proxyKey(key: any): string | symbol {
   if (typeof key === "string") {
@@ -241,12 +275,49 @@ export class Proxy {
   #target: any;
   #handler: ProxyHandler<any>;
   #view: boolean;
+  // Whether this proxy's `get` trap is answering a class getter read on a class instance brand
+  // (`__getGetter`), and the getter's key then.
+  #getterMarked: boolean;
+  #getterKey: string;
 
   /** A proxy of `target` whose operations run the traps of `handler`. */
   constructor(target: any, handler: ProxyHandler<any>) {
     this.#target = target;
     this.#handler = handler;
     this.#view = false;
+    this.#getterMarked = false;
+    this.#getterKey = "";
+  }
+
+  /**
+   * `p.twice` of a class getter on a class instance brand that is this proxy (velt_sema
+   * `proxy_getters.rs`): the `get` trap's answer, with the proxy as its receiver. While the trap
+   * runs, the read is marked on the proxy, so a trap that forwards it with
+   * `Reflect.get(target, key, receiver)` stops with a `TypeError` there (#1732): Node would run
+   * the getter with `this` the proxy, Velt runs it on the target. Without a `get` trap nothing
+   * forwards a receiver, and the read is the target's, as in Node.
+   */
+  __getGetter(key: string): any {
+    const me: any = this;
+    const trap = this.#handler.get;
+    if (trap == null) {
+      return Reflect.get(this.#target, key, me);
+    }
+    const outerMarked = this.#getterMarked;
+    const outerKey = this.#getterKey;
+    this.#getterMarked = true;
+    this.#getterKey = key;
+    try {
+      return trap(this.#target, key, me);
+    } finally {
+      this.#getterMarked = outerMarked;
+      this.#getterKey = outerKey;
+    }
+  }
+
+  /** Whether this proxy's `get` trap is answering a brand's class getter read of `key`. */
+  __readsGetter(key: any): boolean {
+    return this.#getterMarked && this.#getterKey === key;
   }
 
   /**
@@ -311,10 +382,27 @@ export class Proxy {
     if (trap == null) {
       return Reflect.get(this.#target, key, receiver);
     }
+    if (this.#getterMarked) {
+      return this.#getWhileMarked(key, receiver);
+    }
     if (typeof key === "string") {
       return trap(this.#target, key, receiver);
     }
     return trap(this.#target, proxyKey(key), receiver);
+  }
+
+  // `__get` while a brand's getter read is marked (`__getGetter`): this read is another one, so
+  // the mark is off while its trap runs.
+  #getWhileMarked(key: any, receiver: any): any {
+    const trap = this.#handler.get!;
+    const outerKey = this.#getterKey;
+    this.#getterMarked = false;
+    try {
+      return trap(this.#target, proxyKey(key), receiver);
+    } finally {
+      this.#getterMarked = true;
+      this.#getterKey = outerKey;
+    }
   }
 
   /** `receiver[key] = value` where the write reached this proxy: the `set` trap. */
@@ -608,7 +696,17 @@ export class Reflect {
       if (target instanceof Proxy) {
         return target.__get(key, receiver);
       }
-      if (!(receiver instanceof Proxy) && receiver !== target) {
+      if (receiver instanceof Proxy) {
+        if (receiver.__readsGetter(key)) {
+          // A brand's getter read (`Proxy.__getGetter`) forwarded with its receiver.
+          const value = Reflect.get(target, key);
+          if (classGetterValue(target, key, value)) {
+            // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
+            proxyGetterReceiverUnsupported(key);
+          }
+          return value;
+        }
+      } else if (receiver !== target) {
         proxyReceiverUnsupported("get");
       }
     }

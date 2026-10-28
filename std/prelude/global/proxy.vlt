@@ -22,6 +22,7 @@ export {
   __anyValuesProxy,
   __HasOwnPropertyProxy,
   __proxyKeysOf,
+  __brandGetterRead,
   __proxyAny,
   __proxyHas,
   __proxyHasOwnOf,

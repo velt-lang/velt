@@ -97,6 +97,18 @@ export function __anyDeleteProxy(o: any, k: any): boolean {
   return __anyDelete(o, k);
 }
 
+/**
+ * `o.key` of a class getter `key` on a class instance brand that holds a typed proxy (velt_sema
+ * `proxy_getters.rs`): the `get` trap's answer, where a trap that forwards the getter with
+ * `Reflect.get(target, key, receiver)` stops (#1732).
+ */
+export function __brandGetterRead(o: any, key: string): any {
+  if (o instanceof Proxy) {
+    return o.__getGetter(key);
+  }
+  return o[key];
+}
+
 /** `o[KEY]` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
 export function __anyGetSym(o: any, name: string, key: symbol): any {
   const recv: any = o;

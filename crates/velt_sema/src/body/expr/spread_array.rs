@@ -277,6 +277,7 @@ impl FnCx<'_, '_> {
 
     /// A spread source that is not an array: an iterable (`[...gen()]`), else an error.
     fn spread_iterable(&mut self, h: hir::Expr, inner: &ast::Expr) -> Option<Consumable> {
+        let h = self.unbrand(h);
         let ty = h.ty;
         if self.is_consumable(ty) {
             return self.consumable(h);

@@ -1,0 +1,34 @@
+// An accessor `Object.defineProperty` defines on a record may throw, as in JavaScript (sigx's
+// collection `size` getter calls `track`, which may). The error leaves at the read that ran
+// the getter; no `try` catches it there yet (#1637), so the process ends with Node's
+// `Uncaught` report and exit code 1, after the output before it.
+function check(n: number): number {
+  if (n < 0) {
+    throw new Error("neg " + n);
+  }
+  return n;
+}
+
+const target = new Map<string, number>([["a", 1]]);
+const inst: Record<string, any> = {};
+let n = 1;
+Object.defineProperty(inst, "size", {
+  get() {
+    check(n);
+    return target.size;
+  },
+  configurable: true,
+});
+let stored = 0;
+Object.defineProperty(inst, "w", {
+  set(v: number) {
+    stored = check(v);
+  },
+  configurable: true,
+});
+inst.w = 5;
+console.log(inst.size, stored, JSON.stringify(inst));
+n = -1;
+console.log("before");
+console.log(inst.size);
+console.log("not reached");

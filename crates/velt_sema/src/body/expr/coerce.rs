@@ -40,6 +40,17 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // An instance of a class to a brand of it whose object part every instance has.
+        let h = match self.instance_brand_target(exp) {
+            Some(base) => match self.try_coerce(h, base) {
+                Ok(mut c) => {
+                    c.ty = exp;
+                    return Ok(c);
+                }
+                Err(h) => h,
+            },
+            None => h,
+        };
         if self.cx.brand_base(h.ty).is_none() {
             return self.try_coerce_value(h, exp);
         }

@@ -119,6 +119,9 @@ impl FnLower<'_, '_> {
     /// In `lower_args`, once the receiver `recv` of a direct call of the method `def<targs>`
     /// on a proxiable class is lowered (`proxy_recv`): the `get` trap's read of the method.
     pub(super) fn proxy_recv_lowered(&mut self, (def, targs): (DefId, Vec<TyId>), recv: &Operand) {
+        if self.member_getter(def) {
+            return;
+        }
         if !self.method_readable(def, &targs) {
             return self.proxy_method_check(recv);
         }
@@ -140,6 +143,9 @@ impl FnLower<'_, '_> {
         };
         let m = self.cx.adt_def(d).vtable[slot as usize];
         let targs = self.cx.method_targs(m, cls);
+        if self.member_getter(m) {
+            return;
+        }
         if !self.method_readable(m, &targs) {
             return self.proxy_method_check(recv);
         }
@@ -167,6 +173,13 @@ impl FnLower<'_, '_> {
         }
         let rty = self.sub(args[0].ty);
         self.cx.is_class(rty) && self.cx.proxiable(rty)
+    }
+
+    /// Is `def` a getter sema made that reads a member through `any` (`C.<any name>`: a part
+    /// interface's slot on a class instance brand, velt_sema intersection_class_parts.rs)? No
+    /// `get` trap answers it as a method: its read runs the trap for the member's own name.
+    fn member_getter(&self, def: DefId) -> bool {
+        self.cx.fn_def(def).name.contains(".<any ")
     }
 
     /// The property name of the method `def` (its name after the class's).

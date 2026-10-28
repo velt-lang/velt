@@ -144,6 +144,7 @@ impl FnCx<'_, '_> {
             return None;
         };
         let keys = prop.name == "keys";
+        self.instance_arg(arg);
         // `for (const k in o)` is a loop over the built-in `Object.keys(o)`, whose callee the
         // parser writes with an empty span, whatever `Object` names here.
         let for_in = keys && callee.span.lo == callee.span.hi;

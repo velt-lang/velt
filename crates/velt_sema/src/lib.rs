@@ -73,6 +73,7 @@ mod infer;
 mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
+mod intersection_class_parts;
 mod intersection_members;
 mod intersection_records;
 mod intersections;

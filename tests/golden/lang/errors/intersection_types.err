@@ -3,14 +3,12 @@ intersection_types.vlt:18:12: error: no field `name` on type `T & { tag: string 
 intersection_types.vlt:25:23: error: missing field `b` in `AB` literal
 intersection_types.vlt:26:35: error: no field `c` on type `AB`
   = note: objects have a fixed shape; use a `Map<string, V>` for dynamic keys
-intersection_types.vlt:27:16: error: `&` combines object types; `Point` is a class
-  = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
+intersection_types.vlt:27:32: error: mismatched types
+  = note: `Point & { tag: string }` is a branded `Point`: a plain `Point` does not convert to it; brand a value with `x as Point & { tag: string }`
 intersection_types.vlt:5:17: error: no value has type `{ k: string } & { k: f64 }`: field `k` is `string` in one part and `f64` in another
   = note: a value of an intersection has every part's fields at once
 intersection_types.vlt:6:14: error: no value has type `{ kind: "a"; x: f64 } & { kind: "b" }`: field `kind` is `"a"` in one part and `"b"` in another
   = note: a value of an intersection has every part's fields at once
-intersection_types.vlt:11:16: error: `&` combines object types; `Point` is a class
-  = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
 intersection_types.vlt:12:15: error: `&` combines object types; `string[]` is an array
   = note: an array with extra members is not supported: keep the array in a field (`{ items: T[] } & { … }`)
 intersection_types.vlt:13:18: error: intersections of function types (overloads) are not supported

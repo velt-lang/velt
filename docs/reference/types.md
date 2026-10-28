@@ -1431,7 +1431,7 @@ console.log(t.kids[0].v); // 2
 A part may be a **type parameter** (`T & { $set: (v: T) => void }`, `TMain & TSub`), in a
 generic alias or written in a generic signature: the intersection is worked out where the type
 arguments are known, so a caller sees the object type with both parts' fields, and a type
-argument that can't be a part (a class, say) is reported there. A type argument inferred
+argument that can't be a part (an array, say) is reported there. A type argument inferred
 through such a parameter comes from the fields the object part names (`T = { n: number }` for a
 `Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
 for a value declared `A & { id: string }`), else from the whole argument
@@ -1624,10 +1624,22 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
   discriminants), TypeScript makes the type, or the field, `never`; Velt reports
   ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
-- Classes and structs are not parts (Velt classes are nominal, not structural): use
-  `Pick<C, …>` or a field-only interface. Arrays (also `Signal<T>` at an array `T`, reported at
-  the call) and function types (overloads) are not parts either; `T extends A & B` stays a
-  bound on two interfaces.
+- A class instance with object types (`Map<K, V> & { $set(v: Map<K, V>): void }`, sigx's
+  `Signal<T>` at a `Map`, or `T & { … }` at a class `T`) is a brand of the instance, as a
+  primitive's is ([branded types](#branded-types)): the value is the instance itself (`x as`
+  such a type keeps the object, `===` holds), with the class's members, `instanceof`,
+  iteration, spreads, printing and the reflective operations (`Object.keys`, `for...in`, `in`,
+  `Object.hasOwn`, `Object.assign`, `{ ...x }`, `JSON.stringify` see the class's fields). It
+  converts to the class; an instance converts to it implicitly when every member of the object
+  part is optional or a field, method or getter of the class of that type (`C & { y?: number }`,
+  `C & { inc(): number }`), else only with `as`. When the object part adds nothing to the class
+  (`C & { id: string }` where `C` declares `id: string`) the type is `C` itself. A member only the object part declares (`s.$set(v)`) is read
+  from the object at run time, as through `any`, and checked as the member's type then: a
+  proxy's `get` trap can provide it, and an instance that lacks it stops with a `TypeError` at
+  the read (Node reads `undefined`). Two classes (`A & B`) and structs are not parts (Velt
+  classes are nominal, not structural): use `Pick<C, …>` or a field-only interface. Arrays
+  (also `Signal<T>` at an array `T`, reported at the call) and function types (overloads) are
+  not parts either; `T extends A & B` stays a bound on two interfaces.
 - An interface with methods is a part: `I & { errors: number }` (and `A & B`, or `T & { … }` at
   an interface `T`) is an interface with every part's members, one whatever the order of the
   parts (`A & B` is `B & A`). An object literal implements it, a class that implements each
@@ -2289,7 +2301,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   or symbol key, not enumerable (the listings above skip it, `Reflect.ownKeys` lists it after
   the entries of its kind); reads, writes, `in` and `delete` run or test it, a write without a
   setter and a `delete` or redefinition of an accessor that is not configurable are Node's
-  `TypeError`. `Object.defineProperty(r, k, { value, enumerable: true, writable: true,
+  `TypeError`. The getter and setter may throw: the error leaves at the read or write that ran
+  them, where no `try` catches it yet (#1637), so it ends the process with Node's `Uncaught`
+  report and exit code 1. `Object.defineProperty(r, k, { value, enumerable: true, writable: true,
   configurable: true })` writes an entry; an enumerable accessor and other attributes are not
   supported yet. `Object.getOwnPropertyDescriptor(r, k)` describes an entry (`{ value,
   writable: true, enumerable: true, configurable: true }`) or an accessor (`{ get, set,
@@ -2307,6 +2321,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   variable, TS7053) are errors; an `any` key reads as through `any`. A key computed by a call or a
   condition and a well-known symbol (`[Symbol.iterator]`) are not supported yet, and neither is
   any other use of the cast: writing through it and keeping it are not supported yet.
+  On an `any` `x`, `(x as Record<K, V>)[k]` and `(x as Record<K, V>).k` read and write `x`
+  itself, as the assertion converts nothing in TypeScript: a read is a `V | undefined` (a `V`
+  where one is expected, a missing key then a `TypeError`), and a
+  value written is checked as a `V`, also by `??=`, `||=` and `&&=` (and `+=` on a number
+  member takes a number) (sigx's `toSignals` fills `{} as ToSignals<T>`, the record
+  of `any` values a deferred `{} as D` is, this way).
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
@@ -3747,7 +3767,15 @@ target whose `get` trap answers every key). A method called through a typed prox
 `this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
 `get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
 trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
-the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+the target's method, which then runs with `this` the proxy. A class getter read through a typed
+proxy that is a class instance brand (`s.twice` of sigx's `signal(new C())`) is the `get` trap's
+answer (its receiver is the proxy itself), checked as the getter's type, as for a field; a
+handler without a `get` trap runs the getter on the target. A trap that forwards it with
+`Reflect.get(target, key)` runs the getter on the target, as Node does, and one that forwards with
+`Reflect.get(target, key, receiver)` stops with a `TypeError` naming #823, since Node would run
+the getter with `this` the proxy (its reads through the traps). Without a brand, a class getter
+of a typed proxy runs on the target, which matches Node for a trap that forwards every key;
+running getters with `this` the receiver is #1732. A typed proxy passed where an object
 type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
 stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
 (Where a copy of a plain object could be told from the original, such a conversion is a compile

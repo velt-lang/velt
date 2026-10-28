@@ -375,6 +375,11 @@ fn has_param(cx: &Ctx, t: TyId) -> bool {
 
 /// Reports `t` at `span` if it has no JSON form (`true`: reported).
 fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
+    // A class instance brand (`crate::brands`) is written and read as its class.
+    let t = match cx.brand_base(t) {
+        Some(b) if cx.brand_operand(b) && !cx.brandable(b) => b,
+        _ => t,
+    };
     if !parse {
         let seen = crate::object_copies::Seen::Serialized;
         cx.object_copies.observe(t, span, seen);

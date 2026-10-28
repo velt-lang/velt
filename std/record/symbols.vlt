@@ -25,8 +25,31 @@ extend<K, V> Record<K, V> {
   /**
    * `Object.defineProperty(r, key, { get, set, configurable })`: the accessor replaces an entry
    * with the key. Defining again a property that is not configurable is Node's `TypeError`.
+   * The getter and setter may throw, as in JavaScript: an error they throw leaves at the read or
+   * write that ran them, which no `try` catches yet (#1637), so it ends the process with Node's
+   * `Uncaught` report. `__defineGetter` and `__defineSetter` define an accessor with only one.
    */
-  __defineAccessor(
+  __defineAccessor<E, F>(
+    key: K | symbol,
+    get: () => V throws E,
+    set: (value: V) => void throws F,
+    configurable: bool,
+  ) {
+    this.__putAccessor(key, uncaughtGet(get), uncaughtSet(set), configurable);
+  }
+
+  /** `Object.defineProperty(r, key, { get, configurable })` (`__defineAccessor`). */
+  __defineGetter<E>(key: K | symbol, get: () => V throws E, configurable: bool) {
+    this.__putAccessor(key, uncaughtGet(get), null, configurable);
+  }
+
+  /** `Object.defineProperty(r, key, { set, configurable })` (`__defineAccessor`). */
+  __defineSetter<F>(key: K | symbol, set: (value: V) => void throws F, configurable: bool) {
+    this.__putAccessor(key, null, uncaughtSet(set), configurable);
+  }
+
+  /** The accessor `key` names set to `get` and `set` (`__defineAccessor`). */
+  __putAccessor(
     key: K | symbol,
     get: (() => V) | null,
     set: ((value: V) => void) | null,
@@ -216,4 +239,47 @@ function keyText<K>(key: K | symbol): string {
     return String(key as symbol);
   }
   return String(key as K);
+}
+
+// An accessor `Object.defineProperty` defines, as the record holds it: an error it throws is
+// uncaught (`__defineAccessor`). An accessor that throws nothing is wrapped too: the record keeps
+// one function type for every accessor.
+function uncaughtGet<V, E>(get: () => V throws E): () => V {
+  return () => {
+    try {
+      return get();
+    } catch (e) {
+      return accessorUncaught<V, E>(e);
+    }
+  };
+}
+
+function uncaughtSet<V, E>(set: (value: V) => void throws E): (value: V) => void {
+  return (value: V) => {
+    try {
+      set(value);
+    } catch (e) {
+      accessorUncaught<void, E>(e);
+    }
+  };
+}
+
+declare function velt_rt_uncaught_now();
+
+// Reports `e` as uncaught and exits 1 at once, as Node does for an error nothing catches: the
+// rejection of a promise nothing awaits, reported when it is dropped (velt_rt_uncaught_now).
+function accessorUncaught<T, E>(e: E): T {
+  reportUncaught(e);
+  panic("ICE: an uncaught accessor error did not end the process");
+}
+
+// The report itself: dropping `p` reports it.
+function reportUncaught<E>(e: E) {
+  velt_rt_uncaught_now();
+  const p = rejectWith(e);
+}
+
+// Rejects with `e`.
+async function rejectWith<E>(e: E): Promise<void, E> {
+  throw e;
 }

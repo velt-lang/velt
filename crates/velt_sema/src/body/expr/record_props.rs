@@ -115,20 +115,21 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return Some(self.error_expr(span));
         }
-        let null = || synth(ast::ExprKind::Lit(ast::Lit::Null), span);
         let obj = self.expr(o, None, Want::Borrow);
         let call = if accessor {
             let conf = synth(
                 ast::ExprKind::Lit(ast::Lit::Bool(configurable == Some(true))),
                 span,
             );
-            let call_args = [
-                key.clone(),
-                get.unwrap_or_else(null),
-                set.unwrap_or_else(null),
-                conf,
-            ];
-            self.record_call(obj, "__defineAccessor", &call_args, span)
+            // The getter and setter may throw (std/record/symbols.vlt): each is a call's own
+            // argument, so what it throws is inferred from it.
+            let (method, call_args) = match (get, set) {
+                (Some(g), Some(s)) => ("__defineAccessor", vec![key.clone(), g, s, conf]),
+                (Some(g), None) => ("__defineGetter", vec![key.clone(), g, conf]),
+                (None, Some(s)) => ("__defineSetter", vec![key.clone(), s, conf]),
+                (None, None) => unreachable!("ICE: an accessor descriptor without an accessor"),
+            };
+            self.record_call(obj, method, &call_args, span)
         } else {
             let v = value.unwrap_or_else(|| synth(ast::ExprKind::Ident(undefined(span)), span));
             self.record_call(obj, "__setKeyed", &[key.clone(), v], span)

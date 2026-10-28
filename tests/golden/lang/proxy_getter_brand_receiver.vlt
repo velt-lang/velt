@@ -1,0 +1,90 @@
+// A class getter read on a class instance brand that is a typed proxy (sigx's
+// `signal(new C())`) runs the `get` trap with the proxy itself as the receiver, as Node does:
+// sigx's trap passes it on to `accessObserver(receiver, key)`, which later reads `receiver[key]`.
+// The read is marked on the proxy while the trap runs, so only a trap that forwards that very
+// read with `Reflect.get(target, key, receiver)` stops (proxy_getter_receiver); a nested read,
+// a throwing trap and a trap that forwards to another proxy leave the mark as it was.
+class Box {
+  n = 1;
+  get twice(): number {
+    return this.n * 2;
+  }
+  get thrice(): number {
+    return this.n * 3;
+  }
+}
+type S<T> = T & { $set(v: T): void };
+
+let seen: any = null;
+const p: S<Box> = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "twice") {
+      seen = r;
+    }
+    return Reflect.get(t, k);
+  },
+}) as S<Box>;
+console.log(p.twice, seen === p, typeof seen, seen.n, seen.twice);
+
+// A proxy that forwards with its receiver to a proxy that forwards without one.
+const log: string[] = [];
+const inner = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    log.push("in:" + String(k));
+    return Reflect.get(t, k);
+  },
+});
+const outer = new Proxy(inner, {
+  get(t: any, k: string | symbol, r: any) {
+    log.push("out:" + String(k) + ":" + String(r === outer));
+    return Reflect.get(t, k, r);
+  },
+}) as S<Box>;
+console.log(outer.n, log.join(","));
+log.length = 0;
+console.log(outer.twice, log.join(","));
+
+// A trap that throws once, and a getter read inside a trap's getter read.
+let calls = 0;
+const th = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "twice" && calls++ === 0) {
+      throw new Error("boom");
+    }
+    if (k === "thrice") {
+      return (r as S<Box>).twice + 100;
+    }
+    return Reflect.get(t, k);
+  },
+}) as S<Box>;
+try {
+  console.log(th.twice);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log(th.twice, th.thrice, th.n);
+
+// A field read forwarded with the receiver still reads the target.
+const fw = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    return Reflect.get(t, k, r);
+  },
+}) as S<Box>;
+console.log(fw.n);
+
+// An untyped read of the same key inside the trap of a brand's getter read is another read: its
+// trap forwards with the receiver and runs the getter on the target, as without the brand.
+let depth = 0;
+const re: S<Box> = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "twice" && depth === 0) {
+      depth++;
+      const inner = (r as any).twice;
+      depth--;
+      return inner + 1000;
+    }
+    return Reflect.get(t, k, r);
+  },
+}) as S<Box>;
+console.log(re.n);
+console.log(re.twice);
