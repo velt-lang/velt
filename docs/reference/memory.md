@@ -179,6 +179,7 @@ variables that refer to the same object (`const ys = xs; append(xs, ys)`) are al
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 So is a closure argument that takes over a variable another argument only borrows
 (`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
+The parameters of a closure (or of a function used as a value) may be one object, since a call through a function value can pass the same object twice; such a closure may pass two of them on to another closure, which is checked the same way (`mount(vnode, container)` calling `mountComponent(vnode, container)` in a renderer whose nested functions use its variables), but not to a named function that modifies one of them.
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A
