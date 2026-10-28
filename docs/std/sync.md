@@ -199,6 +199,43 @@ function main() {
 }
 ```
 
+## `Atom<T>`
+
+A `shared` value that threads read at once without a lock and replace whole, like Rust's
+`arc-swap`: `Atom.create(shared(config))`, kept in a `shared` object. Readers never wait and
+never write; a value it replaces is dropped once no thread can still be reading it.
+
+- `read((v) => …)` runs the callback on the current value, borrowed: reading it there costs no
+  count, the cheapest read, and whatever the callback keeps of it takes a reference of its own.
+- `load()` returns the current value as a reference of its own, to keep.
+- `store(v)` makes `v` the value, and `swap(v)` returns the one before.
+- `update((v) => …)` replaces the value with what the callback makes of it. Updates take turns, so
+  the callback runs once per update, unless a `store` or `swap` came in between (then it runs
+  again on the newer value). If it throws, nothing changes. The callback must not call `update`
+  on the same `Atom`: updates take turns, so it would wait for itself forever. While an update
+  waits for its turn and runs its callback, values replaced meanwhile stay allocated (memory,
+  not speed).
+
+At module level, use an `Atomic<shared<T> | null>` (`null` to start), which takes no lock.
+
+```ts
+import { Atom } from "velt:sync";
+
+interface Limits {
+  rps: u64;
+}
+
+class Gateway {
+  limits: Atom<Limits> = Atom.create(shared({ rps: 100 }));
+}
+
+function main() {
+  const g = shared(new Gateway());
+  g.limits.update((l) => shared({ rps: l.rps * 2 }));
+  console.log(g.limits.read((l) => l.rps)); // 200
+}
+```
+
 ## `ThreadLocal<T>`
 
 `const depth = new ThreadLocal<u32>(0)` is one value per thread: every thread starts with the
