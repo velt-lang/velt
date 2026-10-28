@@ -3644,8 +3644,13 @@ target, and `p.m(a)` reads `m` through `get` and calls what it returns. A `set` 
 returns `false` makes the assignment throw Node's `TypeError: 'set' on proxy: trap returned
 falsish for property 'k'` (what strict code gets). `Reflect.get(t, k)`, `Reflect.set(t, k, v)`
 and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a receiver, `Reflect.get`
-and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
-target, without running traps, as Node does.
+and `Reflect.set` pass it on to a target that is itself a proxy. On a proxy, `Reflect.set`
+answers what the `set` trap returns, `false` included, where `p.k = v` throws. A key access in
+a generic function (`s[k]` with `s: T` and `k: K extends keyof T`) runs the traps too, whether
+the proxy is an `any` or typed as its target. A function the `get` trap answers for a method
+call (`p.push(x)`) runs with the proxy as `this` when it uses `this` (a function expression
+with `this: any`, [Function expressions](functions.md#function-expressions)).
+`console.log(p)` prints the target, without running traps, as Node does.
 
 The handler's `ownKeys` trap lists the proxy's own keys and `getOwnPropertyDescriptor` describes one
 of them, so a proxy may have keys only its handler knows (an empty target). As in Node,

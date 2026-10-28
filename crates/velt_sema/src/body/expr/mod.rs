@@ -176,6 +176,8 @@ mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
+mod this_fn_call;
+mod this_fn_expr;
 mod this_param;
 mod this_type;
 mod three_state;
@@ -300,6 +302,15 @@ impl FnCx<'_, '_> {
             }
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
+            // A member call that may pass its object to a function taking `this` (this_fn_call.rs).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
+            } if self.this_fn_call_site(callee, type_args, *optional) => {
+                self.this_fn_member_call(callee, args, *optional, span)
+            }
             A::Call {
                 callee,
                 type_args,

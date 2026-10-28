@@ -174,11 +174,42 @@ impl FnLower<'_, '_> {
     /// have one type), with the value of the key's tag that selects each.
     fn key_fields(&mut self, object: &hir::Expr, key: &hir::Expr) -> (TyId, Vec<(i128, u32)>) {
         let oty = self.sub(object.ty);
-        let kty = self.sub(key.ty);
         let TyKind::Adt(d, _) = self.cx.kind(oty) else {
             ice(format_args!("a key access of {oty:?}"))
         };
-        let names: Vec<(i128, TyId)> = match self.cx.kind(kty) {
+        let fields = (self.key_names(key).into_iter())
+            .map(|(at, name)| {
+                let Some(k) = (self.cx.adt_def(d).fields.iter()).position(|f| f.name == name)
+                else {
+                    ice(format_args!("a key access of the missing field `{name}`"))
+                };
+                (at, k as u32)
+            })
+            .collect();
+        (oty, fields)
+    }
+
+    /// The property names the key `key` of `object[key]` may hold at this instantiation: one
+    /// per string literal of its type, with the value of the key's tag that selects each.
+    pub(super) fn key_names(&mut self, key: &hir::Expr) -> Vec<(i128, String)> {
+        let Some(lits) = self.key_literals(key) else {
+            let kty = self.sub(key.ty);
+            ice(format_args!("a key access by {kty:?}"))
+        };
+        lits.into_iter()
+            .map(|(at, lit)| match lit {
+                LitValue::Str(name) => (at, name),
+                other => ice(format_args!("a key access by {other:?}")),
+            })
+            .collect()
+    }
+
+    /// The literals the key `key` may hold at this instantiation (its literal type, or each
+    /// member of a union of them), with the value of the key's tag that selects each; `None`
+    /// for another key type.
+    pub(super) fn key_literals(&mut self, key: &hir::Expr) -> Option<Vec<(i128, LitValue)>> {
+        let kty = self.sub(key.ty);
+        let tys: Vec<(i128, TyId)> = match self.cx.kind(kty) {
             TyKind::Literal(_) => vec![(0, kty)],
             TyKind::Adt(e, _) if matches!(self.cx.hir.def(e), hir::Def::Enum(_)) => {
                 let c_like = self.cx.is_c_like_enum(e);
@@ -194,27 +225,19 @@ impl FnLower<'_, '_> {
                     })
                     .collect()
             }
-            _ => ice(format_args!("a key access by {kty:?}")),
+            _ => return None,
         };
-        let fields = names
-            .into_iter()
-            .map(|(at, lit)| {
-                let TyKind::Literal(LitValue::Str(name)) = self.cx.kind(lit) else {
-                    ice(format_args!("a key access by {lit:?}"))
-                };
-                let Some(k) = (self.cx.adt_def(d).fields.iter()).position(|f| f.name == name)
-                else {
-                    ice(format_args!("a key access of the missing field `{name}`"))
-                };
-                (at, k as u32)
+        tys.into_iter()
+            .map(|(at, lit)| match self.cx.kind(lit) {
+                TyKind::Literal(l) => Some((at, l)),
+                _ => None,
             })
-            .collect();
-        (oty, fields)
+            .collect()
     }
 
     /// Enter one block per field of `fields` (`key_fields`), switching on the tag of `key`
     /// when there are several; `join` is where each continues. Returns the blocks.
-    fn key_switch(&mut self, key: &hir::Expr, fields: &[(i128, u32)]) -> Vec<BlockId> {
+    pub(super) fn key_switch<F>(&mut self, key: &hir::Expr, fields: &[(i128, F)]) -> Vec<BlockId> {
         let blocks: Vec<BlockId> = fields.iter().map(|_| self.new_block()).collect();
         if let [only] = blocks[..] {
             self.goto(only);
@@ -243,6 +266,10 @@ impl FnLower<'_, '_> {
 
     /// `Intrinsic::KeyRead`: `object[key]`, the field shared, as `object.<key>` reads it.
     pub(super) fn key_read(&mut self, object: &hir::Expr, key: &hir::Expr, ty: TyId) -> Operand {
+        let oty = self.sub(object.ty);
+        if self.cx.is_dynamic(oty) {
+            return self.key_read_any(object, key, ty);
+        }
         let (oty, fields) = self.key_fields(object, key);
         let fty = self.sub(ty);
         self.expr(key);
@@ -258,7 +285,15 @@ impl FnLower<'_, '_> {
         for ((_, k), b) in fields.iter().zip(blocks) {
             self.switch_to(b);
             let fi = ftys[*k as usize];
-            let fp = self.field_place(&place, oty, *k);
+            // A proxiable object may be a proxy: its `get` trap answers.
+            let fp = match self.cx.proxiable(oty) {
+                true => {
+                    let hop = self.retained_hop(&place, oty);
+                    let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+                    self.proxy_read_at(&ptr, oty, *k)
+                }
+                false => self.field_place(&place, oty, *k),
+            };
             let v = self.share_value(Operand::Copy(fp), fi);
             // Keys whose fields have different types: the field as the union `T[K]`.
             let v = self.key_value_into(v, fi, fty);
@@ -278,6 +313,10 @@ impl FnLower<'_, '_> {
         key: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        let oty = self.sub(object.ty);
+        if self.cx.is_dynamic(oty) {
+            return self.key_write_any(object, key, value);
+        }
         let (oty, fields) = self.key_fields(object, key);
         let vty = self.sub(value.ty);
         let ftys = self.cx.adt_field_tys(oty);
@@ -338,11 +377,27 @@ impl FnLower<'_, '_> {
         for ((_, k), b) in fields.iter().zip(blocks) {
             self.switch_to(b);
             let fi = ftys[*k as usize];
-            let fp = self.field_place(&place, oty, *k);
+            let proxiable = self.cx.proxiable(oty);
+            let fp = (!proxiable).then(|| self.field_place(&place, oty, *k));
             let name = names.get(*k as usize).cloned().unwrap_or_default();
             // The field as the `TypeError`s name it, with its type as written.
             let field = format!("`{name}` ({})", self.field_type_name(fi));
             let stored = self.key_store_value(&Place::local(tmp), vty, fi, &field);
+            let Some(fp) = fp else {
+                // A proxy's `set` trap takes the value (`proxy_write`).
+                let target = hir::Expr {
+                    kind: hir::ExprKind::Field {
+                        base: Box::new(object.clone()),
+                        index: *k,
+                        mode: hir::UseMode::BorrowMut,
+                    },
+                    ty: fi,
+                    span: value.span,
+                };
+                self.proxy_store(&place, oty, *k, &target, stored);
+                self.goto(join);
+                continue;
+            };
             if !self.cx.is_unit(fi) {
                 self.drop_glue(fp.clone(), fi);
                 self.assign(fp.clone(), Rvalue::Use(stored));

@@ -1,0 +1,19 @@
+// A function expression taking `this` as the callback of `forEach` on a `Map` and a `Set`
+// read as `any` (an `object` narrowed with `instanceof`): each call passes the entry, with
+// `undefined` as `this`, next to an arrow callback whose parameters are `any`.
+const seen: string[] = [];
+const cb = function (this: any, v: any, k: any) {
+  seen.push(String(k) + "=" + String(v) + " (" + arguments.length + ")");
+};
+function visit(x: object): void {
+  if (x instanceof Map) {
+    x.forEach(cb);
+    x.forEach((v, k) => seen.push("arrow " + String(k) + "=" + String(v)));
+  } else if (x instanceof Set) {
+    x.forEach(cb);
+    x.forEach((v) => seen.push("arrow " + String(v)));
+  }
+}
+visit(new Map<string, number>([["a", 1], ["b", 2]]));
+visit(new Set<string>(["x"]));
+console.log(seen.join("\n"));
