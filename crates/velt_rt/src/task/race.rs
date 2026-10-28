@@ -9,10 +9,13 @@
 //! nobody else waits for) are cancelled, which nothing can observe. A loser that is ready to go
 //! on runs once before the race's awaiter continues (`local::give_up`).
 //!
-//! `race` takes the first child to settle. `race_ok` (`Promise.any`) takes the first to
-//! *fulfill*: its children's results are `Result<T, E>` slots (byte 0 is the tag, 0 = `Ok`), a
-//! rejection is dropped while other children are still running, and when every child rejected
-//! the last rejection is the result.
+//! `race` takes the first child to settle. Children that had settled already when the race was
+//! made, or are ready at its first poll, come first, in array order: JS subscribes to each
+//! promise in array order, and a settled promise queues its reaction at once, before any promise
+//! that settles later. `race_ok` (`Promise.any`) takes the first to *fulfill*: its children's
+//! results are `Result<T, E>` slots (byte 0 is the tag, 0 = `Ok`), a rejection is dropped while
+//! other children are still running, and when every child rejected the last rejection is the
+//! result.
 //!
 //! Allocation layout (align 16): `[Tail][VeltFut hdr (16)][result (result_size)]`; the result
 //! slot is at offset 16 like every `VeltFut`'s, and its size is only known at run time.
@@ -39,6 +42,9 @@ struct Tail {
     first_ok: bool,
     /// Some child is a holder of a shared promise ([`settled_holder`]).
     holders: bool,
+    /// What each child was when the race was made ([`settled_first`]); empty after the first
+    /// poll.
+    turns: Vec<Turn>,
 }
 
 const TAIL: usize = std::mem::size_of::<Tail>();
@@ -56,13 +62,20 @@ unsafe fn tail<'a>(f: *mut VeltFut) -> &'a mut Tail {
 unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let t = tail(f);
     let slot = (f as *mut u8).add(FUT_RESULT_OFFSET);
+    match t.children.as_ref() {
+        None => return READY,
+        // `Promise.race([])` never settles.
+        Some(c) if c.is_empty() => return PENDING,
+        Some(_) => {}
+    }
+    if !t.turns.is_empty() {
+        if let Some(r) = settled_first(t, slot, cx) {
+            return r;
+        }
+    }
     let Some(children) = t.children.as_mut() else {
         return READY;
     };
-    if children.is_empty() {
-        // `Promise.race([])` never settles.
-        return PENDING;
-    }
     if t.holders && !t.first_ok {
         if let Some(i) = settled_holder(children) {
             return win(t, i, cx);
@@ -108,6 +121,83 @@ unsafe fn settled_holder(children: &FuturesUnordered<Child>) -> Option<usize> {
         }
     }
     best.map(|(_, i)| i)
+}
+
+/// What a child future was when the race was made.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Turn {
+    /// Settled: a holder of a shared promise that settled, a started promise that finished, or
+    /// a converted promise (`Promise<T>` raced as a `Promise<T, E>`) of a shared one that did.
+    Settled,
+    /// Pending: such a promise that has not settled. Polling it now could run it (an adopted
+    /// started promise goes on inside the poll), ahead of a settled child later in the array.
+    Pending,
+    /// Anything else (`Promise.resolve(v)`, a runtime leaf): polling it only looks.
+    Other,
+}
+
+unsafe fn turn(f: *mut VeltFut) -> Turn {
+    use crate::task::shared::{is_shared, settled_at};
+    let settled = |h: *mut VeltFut| settled_at(h).is_some();
+    if is_shared(f) {
+        return if settled(f) {
+            Turn::Settled
+        } else {
+            Turn::Pending
+        };
+    }
+    if crate::task::local::is_started_node(f) {
+        return match crate::task::local::node_done(f) {
+            true => Turn::Settled,
+            false => Turn::Pending,
+        };
+    }
+    match crate::task::identity::converted_from(f) {
+        Some(h) if settled(h) => Turn::Settled,
+        Some(_) => Turn::Pending,
+        None => Turn::Other,
+    }
+}
+
+/// The first poll goes through the children in array order, as JS subscribes to them: the
+/// first that settled before the race was made, or that is ready when looked at, wins
+/// (`race_ok`: the first fulfilled; a rejection is dropped unless it is the last child), so a
+/// settled promise wins over any that settles later, whichever settled first in time.
+/// `Some(READY)` when one won, `Some(PENDING)` when the cooperative budget ran out (the turn is
+/// taken at the next poll), `None` when none won: the rest go on in a new set, which polls each
+/// of them (in array order) with its own waker.
+unsafe fn settled_first(t: &mut Tail, slot: *mut u8, cx: *mut c_void) -> Option<u32> {
+    if !super::coop::has_budget_remaining() {
+        context(cx).waker().wake_by_ref();
+        return Some(PENDING);
+    }
+    let mut rest: Vec<Child> = t.children.take()?.into_iter().collect();
+    rest.sort_unstable_by_key(|c| c.index);
+    let turns = std::mem::take(&mut t.turns);
+    let mut at = 0;
+    while at < rest.len() {
+        if turns.get(rest[at].index) == Some(&Turn::Pending) {
+            at += 1;
+            continue;
+        }
+        let mut w = rest.remove(at);
+        if Pin::new(&mut w).poll(context(cx)).is_pending() {
+            rest.insert(at, w);
+            at += 1;
+            continue;
+        }
+        drop(w);
+        if t.first_ok && *slot != 0 && !rest.is_empty() {
+            if let Some(d) = t.reject_drop {
+                d(slot);
+            }
+            continue;
+        }
+        give_up_in_order(rest.into_iter().collect());
+        return Some(READY);
+    }
+    t.children = Some(rest.into_iter().collect());
+    None
 }
 
 /// Child `i` (a settled holder) wins: its result goes to the race's slot, the others give up.
@@ -164,6 +254,7 @@ unsafe fn new_race(
     let f = base.add(TAIL) as *mut VeltFut;
     let dst = (f as *mut u8).add(FUT_RESULT_OFFSET);
     let holders = (0..n as usize).any(|i| crate::task::shared::is_shared(*futs.add(i)));
+    let turns = (0..n as usize).map(|i| turn(*futs.add(i))).collect();
     let children = (0..n as usize)
         .map(|i| Child {
             fut: SendPtr(*futs.add(i)),
@@ -178,6 +269,7 @@ unsafe fn new_race(
         reject_drop: first_ok.flatten(),
         first_ok: first_ok.is_some(),
         holders,
+        turns,
     });
     f.write(VeltFut {
         poll: race_poll,
