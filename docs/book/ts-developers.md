@@ -252,8 +252,8 @@ contents.
 - Functions may declare `throws A | B`; the compiler infers it otherwise, and checks it when
   written. Callbacks propagate errors: `xs.map((x) => parse(x))` throws what `parse` throws.
 - `attempt(() => f())` turns a throwing call into a value: `T | E`.
-- Index out of bounds, integer division by zero and failed assertions are **panics**: bugs that
-  stop the program (exit code 101) and can't be caught.
+- Index out of bounds and integer division by zero are **panics**: bugs that stop the program
+  (exit code 101) and can't be caught. A failed `assert` throws an `AssertionError`, as in Node.
 
 *Why*: no unwinding (each throwing call is a cheap check), and no error type is ever a
 surprise ([Error handling](errors.md)).

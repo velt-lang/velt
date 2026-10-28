@@ -30,9 +30,10 @@ test result: ok. 2 passed; 0 failed
 - A test is an `export function test_*()` with no parameters, or an
   `export async function test_*()`, which the runner awaits.
 - `assert(cond, msg?)`, `assertEq(actual, expected, msg?)` and `assertThrows(() => …)` are
-  built in. A failed assertion panics, which fails the test with the message and its source
-  location.
-- A test also fails if it throws an error it doesn't catch.
+  built in. A failed one throws an `AssertionError` (as Node's `assert` does), which fails the
+  test with the message and its source location; the next test runs.
+- A test also fails if it throws an error it doesn't catch, or panics (an index out of bounds),
+  which ends its process: the runner starts the file again from the next test.
 - Helpers that are not exported, or don't start with `test_`, are not run.
 - To check that something throws, `assertThrows` returns the error (and fails the test if
   nothing was thrown):
@@ -61,13 +62,14 @@ export function test_parses() {
 When a test fails, the runner shows why and where:
 
 ```
-FAILED test_parses_twice (exit code 101)
-    assertion `left == right` failed
+FAILED test_parses_twice
+    AssertionError: assertEq failed at tests/port.test.vlt:14:3
       left: 2
      right: 3
-    panic: assertEq failed at tests/port.test.vlt:14:3
-FAILED test_uncaught (exit code 1)
-    Uncaught ParseError: bad port: x at tests/port.test.vlt:5:15
+FAILED test_uncaught
+    ParseError: bad port: x at tests/port.test.vlt:5:15
+FAILED test_out_of_range (exit code 101)
+    panic: index out of bounds: the len is 1 but the index is 3 at tests/port.test.vlt:20:15
 ```
 
 ## Running tests
@@ -79,14 +81,36 @@ velt test --filter parse        # the tests whose name contains `parse`
 velt test --filter test_parse --exact  # just `test_parse`
 velt test --release             # optimized build
 velt test --watch               # rerun on every change
+velt test --jobs 1              # one test file at a time (default: one per core)
 velt test --no-run              # build the test programs without running them
 ```
 
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
-test failed, so it works in CI as is. `--watch` reruns the tests whenever a file they import, a
-test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
+test failed, so it works in CI as is. Each test file runs in a process of its own, several at
+once (`--jobs`), and its output is printed in file order, whatever finishes first. The tests of
+a file run one after another, in source order, in that process; one that ends it (a panic, a
+crash, `process.exit`) is reported, and a new process runs the tests after it. The runner itself
+is written in Velt: the standard library's `velt:test`, compiled into the test program. Run a
+test program by hand (`velt test --no-run` prints its path) and it runs its tests itself.
+`--watch` reruns the tests whenever a file they import, a test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
 above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
+
+## How tests are built
+
+The test files are compiled into one program, so the compiler runs once for all of them. Every
+module a program imports is evaluated when it starts
+([Modules](../reference/modules.md#scripts-top-level-statements)): in that program, each test
+file's process also evaluates the other test files and the modules they import. That is harmless
+for a file that only declares (imports, functions, classes, types, and constants made of
+literals), and most test files do. A test file whose evaluation runs code (statements at the top
+level, or a constant or static field initialized with a call, `const Page = component(...)`,
+or with something that can panic: `n!`, a cast like `raw as string`, an integer `/` or `%`)
+gets a program of its own, so other files never see what it does. So does a test file that
+imports such a module by a relative path (`import { DATA } from "./fixtures"`), directly or
+through other modules: if that code fails, only that file's tests fail ("exit code 1 before its
+tests ran"). Imports of packages are not followed; keep a package's top level free of side
+effects, as for any module.
 
 ## Testing servers
 

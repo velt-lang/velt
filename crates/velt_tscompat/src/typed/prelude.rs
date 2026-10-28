@@ -165,6 +165,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep test assertions out of code shared with TypeScript",
     ),
     (
+        "AssertionError",
+        "keep test assertions out of code shared with TypeScript (Node's is `node:assert`'s)",
+    ),
+    (
         "deepEqual",
         "compare the fields you need, or keep the comparison out of shared code",
     ),

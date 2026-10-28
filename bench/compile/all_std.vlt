@@ -127,6 +127,7 @@ import * as std_symbol from "velt:symbol";
 import * as std_sync from "velt:sync";
 import * as std_sync_epoch from "velt:sync/epoch";
 import * as std_task from "velt:task";
+import * as std_test from "velt:test";
 import * as std_this_fn from "velt:this_fn";
 import * as std_timers from "velt:timers";
 import * as std_typed_array from "velt:typed_array";

@@ -219,7 +219,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch]",
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
@@ -232,6 +232,10 @@ pub const COMMANDS: &[CommandHelp] = &[
             CPU,
             LOCKED,
             ("--watch", "rerun on every change"),
+            (
+                "--jobs <n>, -j <n>",
+                "run <n> test files at once (default: one per core)",
+            ),
             (
                 "--no-run",
                 "build the test programs without running them, and print their paths",

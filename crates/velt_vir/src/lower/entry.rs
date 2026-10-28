@@ -222,33 +222,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `Uncaught <Name>: <message>` (an `Error`) or `Uncaught <value>` (anything else) on stderr
     /// for the error value at `ep` (for a union, of the member it holds).
     pub(super) fn report_uncaught(&mut self, ep: &Place, err: TyId) {
-        if self.cx.is_union(err) {
-            let done = self.new_block();
-            self.for_each_member(ep, err, |lw, payload, m| {
-                let vt = lw.cx.ty(m);
-                let p = match vt {
-                    Ty::Unit => Place::local(lw.temp(Ty::U8)),
-                    _ => Place::local(lw.copy_to_temp(payload, vt)),
-                };
-                lw.report_uncaught(&p, m);
-                lw.goto(done);
-            });
-            self.switch_to(done);
-            return;
-        }
         // Only the first uncaught error is reported: another thread failing at the same time
         // waits for the process to end.
         self.call_rt(Rt::UncaughtReport, vec![], None);
         // Built whole and written in one write, so no other thread's output lands inside it.
         let (_, buf) = self.new_strbuf(0);
         self.push_text(&buf, "Uncaught ");
-        if let Some(root) = self.error_root(err) {
-            self.push_error_header(&buf, ep, err, root);
-        } else if self.cx.is_dynamic(err) {
-            self.push_dynamic_thrown(&buf, ep, err);
-        } else {
-            self.push_thrown_value(&buf, ep, err);
-        }
+        self.push_error_text(&buf, ep, err);
         self.push_throw_loc(&buf);
         self.push_text(&buf, "\n");
         const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
@@ -257,6 +237,35 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::StrbufFinish, vec![buf, tp.clone()], None);
         self.call_rt(Rt::WriteStr, vec![cint(2, Ty::U32), tp.clone()], None);
         self.call_rt(Rt::StrDrop, vec![tp], None);
+    }
+
+    /// What an uncaught report writes after `Uncaught ` for the error value at `ep` (for a
+    /// union, of the member it holds), appended to the builder at `buf`: Node's header for an
+    /// `Error`, else the value (the location follows: `push_throw_loc`). Also
+    /// `Intrinsic::ErrorText`, so a test runner reports a caught error as it would be reported
+    /// uncaught.
+    pub(super) fn push_error_text(&mut self, buf: &Operand, ep: &Place, err: TyId) {
+        if self.cx.is_union(err) {
+            let done = self.new_block();
+            self.for_each_member(ep, err, |lw, payload, m| {
+                let vt = lw.cx.ty(m);
+                let p = match vt {
+                    Ty::Unit => Place::local(lw.temp(Ty::U8)),
+                    _ => Place::local(lw.copy_to_temp(payload, vt)),
+                };
+                lw.push_error_text(buf, &p, m);
+                lw.goto(done);
+            });
+            self.switch_to(done);
+            return;
+        }
+        if let Some(root) = self.error_root(err) {
+            self.push_error_header(buf, ep, err, root);
+        } else if self.cx.is_dynamic(err) {
+            self.push_dynamic_thrown(buf, ep, err);
+        } else {
+            self.push_thrown_value(buf, ep, err);
+        }
     }
 
     /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
@@ -346,7 +355,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.
-    fn push_throw_loc(&mut self, buf: &Operand) {
+    pub(super) fn push_throw_loc(&mut self, buf: &Operand) {
         if self.cx.locs.is_none() {
             return;
         }
