@@ -216,11 +216,13 @@ Promises behave like JavaScript's, at Rust's cost:
 - `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order; rejects as soon
   as one promise rejects.
 - `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running to
-  completion.
+  completion. Of the promises that settled before the call, the first in array order wins, even
+  when a later one settled earlier, and it wins over any promise that settles after the call, as
+  in Node (a settled promise queues its reaction when `race` subscribes to it).
 - `Promise.allSettled(ps)`: a `PromiseSettledResult<T, E>[]`, where each element is
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
-- `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
-  (or the array is empty).
+- `Promise.any(ps): Promise<T>`: the first to fulfill (of promises fulfilled before the call,
+  the first in array order); `AggregateError` when all of them reject (or the array is empty).
 - The combinators leave the array and its promises as they are, as in JS: a program can read
   `ps` (its length, `await ps[0]`) after `await Promise.all(ps)`. They read the array once,
   when called: pushing to it, replacing an element or truncating it afterwards doesn't change

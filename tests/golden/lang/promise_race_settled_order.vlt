@@ -1,0 +1,87 @@
+// check: no leaks
+// `Promise.race` and `Promise.any` over promises that settled before the call (#1744): JS
+// subscribes in array order and a settled promise queues its reaction at once, so the first
+// settled one in array order wins, not the one that settled first, and before any promise that
+// settles later.
+function wait(ms: number, v: number): Promise<number> {
+  return new Promise((resolve) => setTimeout(() => resolve(v), ms));
+}
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(() => resolve(), ms));
+}
+async function after(ms: number, v: number): Promise<number> {
+  await sleep(ms);
+  return v;
+}
+async function fail(ms: number, v: number): Promise<number> {
+  await sleep(ms);
+  throw new Error("failed " + v);
+}
+async function returns(v: number): Promise<number> {
+  return v;
+}
+async function ticks(n: number, v: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await Promise.resolve();
+  }
+  return v;
+}
+async function main(): Promise<void> {
+  const a = wait(5, 1);
+  const b = wait(1, 2);
+  console.log("race pending", await Promise.race([a, b]));
+  await a;
+  console.log("race settled", await Promise.race([a, b]));
+  console.log("race settled, other order", await Promise.race([b, a]));
+  console.log("any settled", await Promise.any([a, b]));
+
+  // Shared async calls that settled in the opposite order.
+  const c = after(6, 3);
+  const d = after(1, 4);
+  await Promise.all([c, d]);
+  console.log("race async settled", await Promise.race([c, d]));
+  console.log("any async settled", await Promise.any([c, d]));
+
+  // A settled promise later in the array beats one that settles after the call.
+  const e = after(1, 5);
+  await e;
+  console.log("race settled vs ticks", await Promise.race([ticks(1, 6), e]));
+  console.log("race settled vs timer", await Promise.race([after(1, 7), e]));
+
+  // Settled once, not shared.
+  const f = after(6, 8);
+  const g = after(1, 9);
+  await sleep(20);
+  console.log("race unshared settled", await Promise.race([f, g]));
+
+  // Promise.any skips rejections in array order and takes the first fulfilled one.
+  const r = fail(1, 10);
+  r.catch(() => {});
+  const h = after(4, 11);
+  const k = after(1, 12);
+  await h;
+  console.log("any after rejection", await Promise.any([r, h, k]));
+  try {
+    await Promise.race([r, h]);
+  } catch (err) {
+    console.log("race rejected first", (err as Error).message);
+  }
+  console.log("race fulfilled first", await Promise.race([h, r]));
+  // A child ready when the race first looks (`Promise.resolve(v)`, an async call that returned)
+  // takes its turn in array order too.
+  const r2 = fail(0, 13);
+  r2.catch(() => {});
+  await sleep(2);
+  console.log("any resolve after rejection", await Promise.any([r2, Promise.resolve(30), h]));
+  console.log("any returned after rejection", await Promise.any([r2, returns(31), h]));
+  try {
+    await Promise.race([r2, Promise.resolve(32), h]);
+  } catch (err) {
+    console.log("race rejected before resolve", (err as Error).message);
+  }
+  console.log("race resolve before settled", await Promise.race([Promise.resolve(33), h]));
+  console.log("race settled before resolve", await Promise.race([h, Promise.resolve(34)]));
+  console.log("race then vs settled", await Promise.race([h.then((v) => v + 100), h]));
+  console.log("race ticks vs resolve", await Promise.race([ticks(1, 35), Promise.resolve(36)]));
+}
+main();

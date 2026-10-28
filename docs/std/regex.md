@@ -7,10 +7,30 @@ every string position, so `s.slice(m.index, m.end)` is the match. `exec(s)` and 
 regex with the `g` or `y` flag start at `lastIndex` and update it, as in JS; `exec(s, from)`
 takes the start offset explicitly and leaves `lastIndex` alone. A lone surrogate is not matched
 by `.` or a negated class yet (#377 phase 5), and an empty match steps over a whole surrogate
-pair (JavaScript without the `u` flag stops between its halves; #401).
+pair (JavaScript without the `u` flag stops between its halves; #401), except in a pattern that
+names a surrogate (below).
 
-- `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d u v` are accepted and change
-  nothing). Throws `RegExpError` (a `SyntaxError`, as in JS) for an invalid pattern, or an unknown or repeated flag.
+A pattern can name surrogates (`\uD800`, `[\uD800-\uDFFF]`, a lone surrogate in the pattern string,
+a class range reaching into them such as `[\x00-\uFFFF]`, or a negated class with a member next to
+them such as `[^\x00-\uD7FF]`), as JS allows. Without the `u` flag such a pattern matches code
+units, as in JS: a surrogate matches a lone one or either half of a pair, and `.`, negated classes
+and the empty match's step take one code unit (so does `[^]`, which also matches a lone surrogate
+in any pattern), so a match can start or end between the halves of a pair (a supplementary
+character written in such a pattern is two code units too). With `u` a pair is one code point:
+`[\uD800-\uDFFF]` matches only lone surrogates, and `\uD83D\uDE00` is U+1F600.
+
+```ts
+const NEEDS_ESCAPE = /["\\\x00-\x1f\uD800-\uDFFF]/;
+console.log(NEEDS_ESCAPE.test("plain"), NEEDS_ESCAPE.test("x\u{1F600}")); // false true
+console.log("a\u{1F600}".replace(/[\uDC00-\uDFFF]/, "?").length); // 3: the low half was replaced
+console.log(/[\uD800-\uDFFF]/u.test("\u{1F600}")); // false
+```
+
+Without the `u` flag, `\p` is the letter `p` and `\u` without four hex digits the letter `u`, as
+in JS (`/\u{2}/` matches `"uu"`); with it, `\p{…}` and `\P{…}` are Unicode property classes.
+
+- `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d` is accepted and changes
+  nothing; `u` and `v` change how surrogates and `\p` read, above). Throws `RegExpError` (a `SyntaxError`, as in JS) for an invalid pattern, or an unknown or repeated flag.
   Fields: `source`, `flags`, `global`, `sticky`, `groupCount`, `lastIndex` (a `number`, as in
   JS).
 - `test(s, from?)`, `exec(s, from?): RegExpMatch | null`.
