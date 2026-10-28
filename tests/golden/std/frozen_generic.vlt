@@ -1,3 +1,5 @@
+// check: unfreed blocks at most 4
+// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, kept until the program exits.)
 // A type parameter bounded by `Frozen` reads a `shared<V>` as a `V` in generic code: in place,
 // as for a written type, checked where the generic is used. Here a generic store over an object,
 // a string and an array.
@@ -23,6 +25,15 @@ class Store<V extends Frozen> {
   }
 }
 
+interface HasLimits {
+  limits: u64[];
+}
+
+// A field the bound declares is read on the value inside, as a method is.
+function limitCount<V extends Frozen & HasLimits>(s: shared<V>): usize {
+  return s.limits.length;
+}
+
 interface Cfg {
   name: string;
   limits: u64[];
@@ -34,6 +45,7 @@ function main() {
   c.put({ name: "a", limits: [1, 2] });
   const got = c.get();
   console.log(got == undefined ? "none" : got.name, c.read((v) => v.limits.length));
+  console.log(limitCount<Cfg>(shared({ name: "b", limits: [1, 2, 3] })));
   const s = new Store<string>();
   s.put("text");
   console.log(s.get(), s.read((v) => v.length));

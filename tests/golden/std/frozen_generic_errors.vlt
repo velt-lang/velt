@@ -39,6 +39,25 @@ function viaTag<T extends Tag>(v: T): Store<T> {
   return new Store<T>(v);
 }
 
+// A method that changes the value is refused on a `shared<V>` read in place (named `V`).
+interface Bump {
+  bump(): void;
+}
+
+struct Counter {
+  n: u64;
+}
+
+extend Counter implements Bump {
+  bump() {
+    this.n++;
+  }
+}
+
+function bumpShared<V extends Frozen & Bump>(s: shared<V>) {
+  s.bump();
+}
+
 // Both are only bounds: no value has them as its type.
 function boundsOnly() {
   const fv: Frozen = 1;

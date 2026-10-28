@@ -70,6 +70,22 @@ impl FnCx<'_, '_> {
         self.mk(call, inner, span)
     }
 
+    /// `s.f` on a `shared<T>` of an object type with a field or getter `f`, or of a type
+    /// parameter (its bounds' members, `bound_member`): the value inside's (#36). A getter is a
+    /// call on it, refused where it may modify it, as a method is (`ownership/patch.rs`).
+    pub(crate) fn shared_member_view(&mut self, obj: hir::Expr, name: &str) -> hir::Expr {
+        let TyKind::Shared(t) = *self.cx.ty.kind(obj.ty) else {
+            return obj;
+        };
+        if matches!(self.cx.ty.kind(t), TyKind::Param(_))
+            || self.field_of(t, name).is_some()
+            || self.has_getter(t, name)
+        {
+            return self.frozen_view(obj, Some(name));
+        }
+        obj
+    }
+
     /// `h`, or the value inside when it is a `shared<T>` that can be read like its `T`: for
     /// what takes any value and reads it (printing, spreading, `Object.keys`), as JavaScript
     /// sees the `T` itself.
