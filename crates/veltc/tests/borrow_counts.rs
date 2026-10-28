@@ -79,3 +79,11 @@ fn a_throwing_never_call_has_no_ok_path() {
     // The branch on the result's tag: the error goes on, the Ok side is unreachable.
     assert!(check.contains("unreachable"), "{check}");
 }
+
+#[test]
+fn quiet_methods_get_borrowed_receivers() {
+    let vir = vir("method");
+    let at = function(&vir, "CursorM2at(");
+    // `this.db` is lent to `offset` without a share and its release.
+    assert!(!at.contains("_Gdrop_") && !at.contains("-8_i64"), "{at}");
+}

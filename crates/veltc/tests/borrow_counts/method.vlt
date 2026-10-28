@@ -1,0 +1,32 @@
+// A method called directly is quiet like a function: `this.db.offset(n)` borrows `this.db`
+// without a count when `offset` only reads and computes.
+
+class Db {
+  pageSize: usize;
+  constructor(pageSize: usize) {
+    this.pageSize = pageSize;
+  }
+
+  offset(n: usize): usize {
+    return n == 1 ? 100 : (n - 1) * this.pageSize;
+  }
+}
+
+class Cursor {
+  db: Db;
+  constructor(db: Db) {
+    this.db = db;
+  }
+
+  at(n: usize): usize {
+    return this.db.offset(n) + 8;
+  }
+}
+
+function main() {
+  const db = new Db(4096);
+  const c = new Cursor(db);
+  // Held twice: cursors and their databases are counted objects.
+  const all = [c, new Cursor(db)];
+  console.log(c.at(1), all[1].at(3), all.length);
+}

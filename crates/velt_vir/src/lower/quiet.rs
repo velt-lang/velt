@@ -3,7 +3,8 @@
 //! anything. That is what a runtime extern guarantees too (`Stabilize::No` in call.rs).
 //!
 //! A function is quiet when its body runs no user code and drops nothing it did not make: it
-//! is not generic, a method, a closure, async or a generator; its statements are `let`s,
+//! is not generic, a closure, async or a generator (a method is asked about at a direct call,
+//! where its own body runs: `this.db.header(page)` borrows `this.db`); its statements are `let`s,
 //! assignments, `if`, `while`, `return`, `break` and `continue`, and expressions; it only
 //! assigns values that need no drop, to locals or through its params (elements and fields);
 //! and it only calls quiet functions, `velt_simd_*` externs and intrinsics that run no user
@@ -62,10 +63,11 @@ impl Cx<'_> {
         let hir::Def::Fn(f) = self.hir.def(def) else {
             return false;
         };
+        // A method is asked about only at a direct call (`call_def`), where its body is the one
+        // that runs; `this` is a param like any other.
         let q = f.generics == 0
             && !f.is_async
             && !f.is_generator
-            && f.self_ty.is_none()
             && f.captures.is_empty()
             && self.quiet_block(&f.body.block, level);
         self.quiet.insert((def, level), q);
