@@ -29,7 +29,8 @@
 //!   calls free: a release that drops the last reference frees the object (a runtime call), and
 //!   so does drop glue. Calls that cannot: runtime functions that only read, allocation and
 //!   buffer reallocation (a buffer is never a counted object), the string functions (they free
-//!   only string buffers), calls that never return and are not handed a member (the family is
+//!   only string buffers; also a string from a byte range of an array, which they only read),
+//!   the math functions, calls that never return and are not handed a member (the family is
 //!   not used after them; one that is handed a member runs with it, so it counts as freeing
 //!   when its body may free at all), and Velt functions that make only such calls (`Frees`,
 //!   computed callees first, after their own families are borrowed).
@@ -55,9 +56,12 @@ use crate::locals::Usage;
 /// Runtime functions that free no counted object, besides `super::READ_ONLY`: allocation, and
 /// the string functions, which free only string buffers (never a counted object) and run no
 /// code of the program (an error's message built for a throw: `corrupt(\`page ${n}\`)`).
-const NO_FREE: [&str; 17] = [
+const NO_FREE: [&str; 19] = [
     "velt_rt_alloc",
     "velt_rt_realloc",
+    // A string from a byte range of an array, which they only read.
+    "velt_rt_bytes_range_to_str",
+    "velt_rt_bytes_range_to_str_lossy",
     "velt_rt_str_clone",
     "velt_rt_str_drop",
     "velt_rt_str_concat",
@@ -125,6 +129,7 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
             let safe = e.noreturn
                 || NO_FREE.contains(&s)
                 || super::READ_ONLY.contains(&s)
+                || s.starts_with("velt_rt_math_")
                 || s.starts_with("velt_simd_")
                 || s.starts_with("velt_atomic_");
             !safe

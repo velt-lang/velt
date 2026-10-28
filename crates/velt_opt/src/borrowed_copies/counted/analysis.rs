@@ -70,6 +70,13 @@ impl Cx<'_> {
         Some(fam)
     }
 
+    /// Whether `s` writes a member with the root's own load.
+    fn loads_member(&self, fam: &Family, s: &Stmt) -> bool {
+        matches!(s, Stmt::Assign(d, rv) if d.proj.is_empty()
+            && fam.members.contains(&d.local)
+            && (d.local == fam.root || self.repeats_root_load(fam, rv)))
+    }
+
     /// Whether `rv` is the root's own load, `*p` of a register `p` written once.
     fn repeats_root_load(&self, fam: &Family, rv: &Rvalue) -> bool {
         let Some((_, root_rv)) = self.def_of(fam.root) else {
@@ -494,7 +501,10 @@ impl Cx<'_> {
             let block = &self.func.blocks[b];
             live |= uses.contains(&(b, block.stmts.len()));
             for si in (0..block.stmts.len()).rev() {
-                if (b, si) == fam.inc {
+                // Before the increment, or before the load the copy starts from (the root's, or
+                // its repeat for a nullable field, which the increment follows when the field
+                // is set), the copy holds no object yet.
+                if (b, si) == fam.inc || self.loads_member(fam, &block.stmts[si]) {
                     live = false;
                 } else if uses.contains(&(b, si)) {
                     live = true;
@@ -505,15 +515,18 @@ impl Cx<'_> {
                 work.extend(preds[b].iter().copied());
             }
         }
-        (0..n).filter(|&b| reach[b]).all(|b| {
-            let block = &self.func.blocks[b];
-            let Terminator::Call { callee, next, .. } = &block.term else {
-                return true;
-            };
-            let handed = uses.contains(&(b, block.stmts.len()));
-            let used = handed || live_in[next.0 as usize];
-            !used || !self.frees.may_free(callee, handed)
-        })
+        // A release of a family borrowed with this one (a glue call) goes away too.
+        (0..n)
+            .filter(|&b| reach[b] && !cut.contains_key(&b))
+            .all(|b| {
+                let block = &self.func.blocks[b];
+                let Terminator::Call { callee, next, .. } = &block.term else {
+                    return true;
+                };
+                let handed = uses.contains(&(b, block.stmts.len()));
+                let used = handed || live_in[next.0 as usize];
+                !used || !self.frees.may_free(callee, handed)
+            })
     }
 }
 
