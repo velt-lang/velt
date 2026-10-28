@@ -52,7 +52,9 @@ impl<'a> Printer<'a> {
             ItemKind::Extend(decl) => self.extend(decl),
             ItemKind::ExternFn(sig) => {
                 let asyncness = match (sig.is_system, sig.is_async) {
-                    (true, _) => "system ",
+                    // Not a system function (the check says why), but written as it was.
+                    (true, true) => "async system ",
+                    (true, false) => "system ",
                     (false, true) => "async ",
                     (false, false) => "",
                 };
