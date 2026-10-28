@@ -335,3 +335,87 @@ fn reaches_mutable_static_through_operands_and_relocations() {
         .collect();
     assert_eq!(reaches, [true, true, false]);
 }
+
+/// A chain of `n` nested aggregates, the innermost with its second field at `off`.
+fn chain(n: u32, off: u32) -> Vec<AggLayout> {
+    (0..n)
+        .map(|i| AggLayout {
+            name: format!("A{i}"),
+            size: 16,
+            align: 8,
+            fields: if i + 1 == n {
+                vec![(Ty::I64, 0), (Ty::I64, off)]
+            } else {
+                vec![(Ty::Agg(AggId(i + 1)), 0)]
+            },
+        })
+        .collect()
+}
+
+/// A chain of `n` statics, the last holding `last`.
+fn static_chain(n: u32, last: &[u8]) -> Vec<StaticData> {
+    (0..n)
+        .map(|i| StaticData {
+            bytes: if i + 1 == n {
+                last.to_vec()
+            } else {
+                vec![0; 8]
+            },
+            align: 8,
+            mutable: None,
+            relocs: if i + 1 == n {
+                vec![]
+            } else {
+                vec![(0, Const::Static(StaticId(i + 1)))]
+            },
+        })
+        .collect()
+}
+
+/// `f`: a local of the outermost aggregate of `aggs` and the address of the first of `statics`.
+fn deep_fingerprint(
+    aggs: Vec<AggLayout>,
+    statics: Vec<StaticData>,
+    poll: bool,
+    mode: Mode,
+) -> Fingerprint {
+    let mut f = Function::new("_V1f".into(), vec![], Ty::Unit, Linkage::Internal);
+    f.is_poll = poll;
+    f.locals.push(LocalDecl::new(Ty::Agg(AggId(0)), None));
+    f.locals.push(LocalDecl::new(Ty::Ptr, None));
+    f.blocks.push(BasicBlock {
+        stmts: vec![Stmt::Assign(
+            Place::local(Local(1)),
+            Rvalue::Use(Operand::Const(Const::Static(StaticId(0)), Ty::Ptr)),
+        )],
+        term: Terminator::Return(Operand::Const(Const::Unit, Ty::Unit)),
+    });
+    let program = Program {
+        aggs,
+        statics,
+        funcs: vec![f],
+        ..Program::default()
+    };
+    Canon::new(&program, mode).function(&program.funcs[0])
+}
+
+/// What hot reload cuts off deep down (aggregates past 16 levels, statics past 8) and leaves out
+/// (`is_poll`) still counts in link mode: code compiled into another object would be wrong.
+#[test]
+fn link_mode_sees_deep_layouts_statics_and_poll_functions() {
+    let base = |mode| deep_fingerprint(chain(20, 8), static_chain(12, b"a"), false, mode);
+    let changes = [
+        |mode| deep_fingerprint(chain(20, 12), static_chain(12, b"a"), false, mode),
+        |mode| deep_fingerprint(chain(20, 8), static_chain(12, b"b"), false, mode),
+    ];
+    for (i, change) in changes.iter().enumerate() {
+        assert_eq!(
+            base(Mode::HotReload),
+            change(Mode::HotReload),
+            "change {i}, hot reload"
+        );
+        assert_ne!(base(Mode::Link), change(Mode::Link), "change {i}, link");
+    }
+    let poll = deep_fingerprint(chain(20, 8), static_chain(12, b"a"), true, Mode::Link);
+    assert_ne!(base(Mode::Link), poll);
+}

@@ -162,7 +162,8 @@ and optionally *code* to define:
   closure *value* that the std wrapper calls through its trampoline, so editing a handler never
   touches the descriptor.
 
-**Classification** (`velt_codegen_cl/src/dev/`): each function key gets a 128-bit fingerprint of
+**Classification** (`velt_codegen_cl/src/dev/`; the fingerprint is `velt_vir::fingerprint`,
+`Mode::HotReload`): each function key gets a 128-bit fingerprint of
 its code that does not depend on ids (async state aggregates are fingerprinted by name, so code
 embedding a child's state is recompiled through its reference to the child's pinned `poll`
 instead). The restart rules, in order, each with its message: an ambiguous key changed; a layout

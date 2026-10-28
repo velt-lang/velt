@@ -233,7 +233,8 @@ impl<'p> Canon<'p> {
 
     /// Whether `func` reaches a static the program writes (`StaticData::mutable`): through its
     /// operands, and through the relocations of the statics it reaches. Its copy in another
-    /// object would write another word (module docs).
+    /// object would write another word (module docs). It looks only at `func`'s own code and
+    /// statics, not its callees', so it must run on every function of the link fixpoint.
     pub fn reaches_mutable_static(&self, func: &Function) -> bool {
         let mut seen = vec![false; self.program.statics.len()];
         let mut work: Vec<StaticId> = vec![];
