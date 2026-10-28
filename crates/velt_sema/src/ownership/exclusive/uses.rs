@@ -318,3 +318,34 @@ impl VisitMut for Nested<'_, '_, '_> {
         }
     }
 }
+
+/// A place as the message names it: `` `x.f` ``, or for a parameter of a wrapper the compiler
+/// made (`#arg0`, a function adapted to a function type, `callback_wrap.rs`), which the program
+/// never named, its position: "argument 1", "`.f` of argument 1".
+pub(super) fn shown(text: &str) -> String {
+    let Some(rest) = text.strip_prefix("#arg") else {
+        return format!("`{text}`");
+    };
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    let Ok(n) = rest[..digits].parse::<usize>() else {
+        return format!("`{text}`");
+    };
+    match &rest[digits..] {
+        "" => format!("argument {}", n + 1),
+        part => format!("`{part}` of argument {}", n + 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shown;
+
+    #[test]
+    fn wrapper_params_by_position() {
+        assert_eq!(shown("vnode"), "`vnode`");
+        assert_eq!(shown("a.items"), "`a.items`");
+        assert_eq!(shown("#arg0"), "argument 1");
+        assert_eq!(shown("#arg1.dom"), "`.dom` of argument 2");
+        assert_eq!(shown("#args"), "`#args`");
+    }
+}
