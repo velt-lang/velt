@@ -130,6 +130,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "ThreadLocal",
         "keep thread-shared state out of code shared with TypeScript",
     ),
+    (
+        "AtomicValue",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
     // TypeScript's has one type argument; Velt's two.
     (

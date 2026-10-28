@@ -27,6 +27,10 @@ pub(super) fn build_impls(cx: &mut Ctx) {
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
+            let span = cx.adt(d).map_or(velt_common::Span::DUMMY, |a| a.span);
+            if cx.refuse_atomic_value(b.iface, span) {
+                continue;
+            }
             if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
                 // A field with a getter and no setter leaves the implementation without setters.

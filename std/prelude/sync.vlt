@@ -223,3 +223,11 @@ export struct ThreadLocal<T> {
     __intrinsic_thread_local_set(this, v);
   }
 }
+
+/**
+ * The types an `Atomic` can hold: the integer types, `f32`, `f64`, `bool`, `string` and
+ * `shared` values (and `shared<U> | null`); the compiler knows which, so no type declares it. A
+ * type parameter bounded by it (`T extends AtomicValue`) may be an `Atomic`'s `T` in generic
+ * code, checked where the generic is instantiated.
+ */
+export interface AtomicValue {}
