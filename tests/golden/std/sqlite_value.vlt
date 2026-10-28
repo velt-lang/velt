@@ -16,7 +16,7 @@ import {
   textVal,
   toText,
 } from "velt:sqlite/exec/value";
-import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
 import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
 import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
 import { hexEncode } from "velt:encoding";
@@ -64,7 +64,7 @@ function describe(v: Val): string {
   if (v.t == NULL) {
     return "null";
   }
-  return `${typeName(v.t)} ${v.t == 4 ? hexEncode(v.b).toUpperCase() : toText(v)}`;
+  return `${typeName(v.t)} ${v.t == BLOB ? hexEncode(v.b).toUpperCase() : toText(v)}`;
 }
 
 function cDescribe(k: string, t: string | null): string {
@@ -247,7 +247,7 @@ function numbers(db: Database) {
     for (let i: usize = 0; i < vals.length; i++) {
       let got = describe(applyAffinity(vals[i], affs[c]));
       let want = cDescribe(rows[i].k, rows[i].t);
-      if (vals[i].t == 4) {
+      if (vals[i].t == BLOB) {
         // C's CAST of a BLOB to TEXT is its bytes; compare the class only.
         got = typeName(applyAffinity(vals[i], affs[c]).t);
         want = rows[i].k;
@@ -280,6 +280,13 @@ function arithmetic(db: Database) {
     realVal(1e308),
     textVal("3"),
     textVal("1.5x"),
+    // `%` takes integers as sqlite3VdbeIntValue does: exact, saturated, a text's integer prefix.
+    intVal(-9223372036854775807),
+    realVal(3.0),
+    textVal("3.0e2"),
+    textVal("1e5"),
+    textVal("1e-400"),
+    textVal("-1x"),
   ];
   fill(db, vals);
   let n = 0;
@@ -310,6 +317,52 @@ function arithmetic(db: Database) {
     describe(arith("/", vals[1], vals[2])),
     describe(arith("%", vals[1], vals[2])),
   );
+}
+
+struct Signed {
+  k: string;
+  v: number;
+}
+
+// A negative zero: `'-0'` reads as -0.0 in REAL arithmetic (as an INTEGER 0 in `+ 0`), and a
+// REAL column stores -0.0 as 0.0. C's text of -0.0 is "0.0", so its value's sign is compared.
+function negativeZero(db: Database) {
+  const cases: string[] = [
+    "0.5 * '-0'",
+    "'  -0  ' * 1.5",
+    "'-0' + 0",
+    "'-0' - 0.0",
+    "-0.0 * 1",
+    "'-0.0' + 0",
+  ];
+  const ops: Val[][] = [
+    [realVal(0.5), textVal("-0")],
+    [textVal("  -0  "), realVal(1.5)],
+    [textVal("-0"), intVal(0)],
+    [textVal("-0"), realVal(0.0)],
+    [realVal(-0.0), intVal(1)],
+    [textVal("-0.0"), intVal(0)],
+  ];
+  const opNames = ["*", "*", "+", "-", "*", "+"];
+  for (let i: usize = 0; i < cases.length; i++) {
+    const v = arith(opNames[i], ops[i][0], ops[i][1]);
+    const mine = `${typeName(v.t)}${v.t == REAL && v.r == 0 && 1 / v.r < 0 ? " -0.0" : ""}`;
+    const c: Signed =
+      db.prepare(`SELECT typeof(${cases[i]}) AS k, ${cases[i]} AS v`).get<Signed>()!;
+    const theirs = `${c.k}${c.k == "real" && c.v == 0 && 1 / c.v < 0 ? " -0.0" : ""}`;
+    console.log(`${cases[i]}: ${mine}${mine == theirs ? "" : ` (C: ${theirs})`}`);
+  }
+  db.exec("DROP TABLE IF EXISTS z; CREATE TABLE z (r REAL); INSERT INTO z VALUES (-0.0), ('-0')");
+  const rows: Signed[] = db.prepare("SELECT typeof(r) AS k, r AS v FROM z").all();
+  const stored = [applyAffinity(realVal(-0.0), A_REAL), applyAffinity(textVal("-0"), A_REAL)];
+  for (let i: usize = 0; i < 2; i++) {
+    const v = stored[i];
+    const mine = `${typeName(v.t)}${v.r == 0 && 1 / v.r < 0 ? " -0.0" : ""}`;
+    const theirs = `${rows[i].k}${rows[i].v == 0 && 1 / rows[i].v < 0 ? " -0.0" : ""}`;
+    console.log(
+      `${i == 0 ? "-0.0" : "'-0'"} in a REAL column: ${mine}${mine == theirs ? "" : ` (C: ${theirs})`}`,
+    );
+  }
 }
 
 // Comparison across storage classes and collations, every pair.
@@ -376,6 +429,7 @@ function main() {
   reals(db);
   numbers(db);
   arithmetic(db);
+  negativeZero(db);
   ordering(db);
   db.close();
 }

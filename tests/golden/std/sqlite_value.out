@@ -73,6 +73,14 @@ Inf -Inf
 "7 x" + 0 = integer 7 (prefix)
 + 0: 0 differ
 affinity: 0 differ
-arithmetic: 1280 results, 0 differ
+arithmetic: 2420 results, 0 differ
 real 9.2233720368547758e+18 real -9.2233720368547758e+18 real 9.2233720370002493e+18 real 9.2233720368547758e+18 integer 0
+0.5 * '-0': real -0.0
+'  -0  ' * 1.5: real -0.0
+'-0' + 0: integer
+'-0' - 0.0: real -0.0
+-0.0 * 1: real -0.0
+'-0.0' + 0: real
+-0.0 in a REAL column: real
+'-0' in a REAL column: real
 comparisons: 2523, 0 differ
