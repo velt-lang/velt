@@ -761,6 +761,8 @@ impl FnLower<'_, '_> {
             // members (any_object_fill.rs).
             self.any_object_fill(p, from, ty, &out, done);
         }
+        // A number of another numeric type (any_number.rs).
+        self.any_number_convert(p, from, ty, desc.clone(), &out, done);
         self.any_type_error(desc, ty);
         self.switch_to(done);
         Operand::Copy(out)

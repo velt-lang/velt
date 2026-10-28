@@ -131,6 +131,9 @@ pub(crate) enum Glue {
     ProxySet,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
     AnyIface,
+    /// `(data, desc, out) -> bool`: a number of another numeric type in an `any`, converted
+    /// (any_number.rs).
+    AnyNumeric,
     JsText,
     ViewDrop,
     MirrorDrop,
@@ -203,6 +206,7 @@ impl Glue {
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
+            Glue::AnyNumeric => "anynumeric",
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
             Glue::MirrorDrop => "mirrordrop",
@@ -256,7 +260,7 @@ impl Glue {
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
-            Glue::AnyIface => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
     }
@@ -323,6 +327,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
+            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty),
             Glue::JsText => lw.js_text_body(args[0], a(1), ty),
             Glue::ViewDrop => lw.view_drop_body(args[0], ty),
             Glue::MirrorDrop => {
