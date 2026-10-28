@@ -148,8 +148,7 @@ export class FormData extends ByteSource {
         out = out.concat(utf8Encode(`${head}${lines(v)}\r\n`));
       } else {
         const type = v.type.length > 0 ? v.type : "application/octet-stream";
-        const head =
-          `--${b}\r\nContent-Disposition: form-data; name="${name}"; filename="${escaped(v.name)}"\r\nContent-Type: ${type}\r\n\r\n`;
+        const head = `--${b}\r\nContent-Disposition: form-data; name="${name}"; filename="${escaped(v.name)}"\r\nContent-Type: ${type}\r\n\r\n`;
         out = out.concat(utf8Encode(head));
         out = out.concat(v.held());
         out = out.concat([13, 10]);
