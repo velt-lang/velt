@@ -53,6 +53,24 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Ptr, Rvalue::AddrOf(place))
     }
 
+    /// Whether `place` is a field (or element) of something rather than a whole local or the
+    /// target of a pointer local (`*p`), whose address `addr` takes without a new `AddrOf`.
+    pub(super) fn inside(place: &Place) -> bool {
+        !matches!(place.proj.as_slice(), [] | [Proj::Deref(_)])
+    }
+
+    /// The address glue reads a value of VIR type `vt` at `place` from: for a pointer inside
+    /// an object or aggregate, the address of a temporary copy of it, so the object holding it
+    /// is not address-taken and `heap_sroa` / `sroa` can still keep it in locals. Only for glue
+    /// that reads the value and never writes it back (drop and share glue read a pointer once).
+    pub(super) fn read_addr(&mut self, place: Place, vt: Ty) -> Operand {
+        if vt == Ty::Ptr && Self::inside(&place) {
+            let t = self.copy_to_temp(Operand::Copy(place), Ty::Ptr);
+            return self.addr(Place::local(t));
+        }
+        self.addr(place)
+    }
+
     /// Address of the memory holding an operand's value (constants are spilled first).
     pub(super) fn operand_addr(&mut self, op: Operand, ty: Ty) -> Operand {
         match op {

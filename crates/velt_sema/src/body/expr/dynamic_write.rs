@@ -54,7 +54,9 @@ impl FnCx<'_, '_> {
 
     /// `obj.f = v` / `obj[k] = v` (`target`) on an `any` `obj`. With `as_value`, the
     /// expression is also the value assigned (returned `true`), as in JavaScript (never the
-    /// member read back, which might run a getter).
+    /// member read back, which might run a getter). A plain `=` checks the value as `value_ty`
+    /// first, when there is one (`(x as Record<K, V>)[k] = v`, any_record_cast.rs).
+    #[allow(clippy::too_many_arguments)] // target parts + assignment parts
     pub(crate) fn dynamic_assign(
         &mut self,
         obj: hir::Expr,
@@ -62,6 +64,7 @@ impl FnCx<'_, '_> {
         target: &ast::Expr,
         value: &ast::Expr,
         as_value: bool,
+        value_ty: Option<hir::TyId>,
         span: Span,
     ) -> (hir::Expr, bool) {
         let Some(any) = self.any_ty() else {
@@ -72,6 +75,12 @@ impl FnCx<'_, '_> {
             Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
         if let Some(op) = op.filter(|_| !logical) {
+            if let Some(v) = value_ty.filter(|_| !self.compound_value_fits(value_ty, value)) {
+                // `(x as Record<K, number>)[k] += "s"`: TypeScript's TS2322.
+                let h = self.expr(value, Some(v), Want::Borrow);
+                self.coerce(h, v);
+                return (self.error_expr(span), false);
+            }
             let rmw = super::dynamic_arith::DynRmw::Assign(op, value);
             return (
                 self.dynamic_member_rmw(obj, target, rmw, as_value, span),
@@ -109,15 +118,24 @@ impl FnCx<'_, '_> {
             (obj, key)
         };
         if let Some(op) = op {
+            let assign = LogicalWrite {
+                op,
+                value,
+                value_ty,
+            };
             return (
-                self.dynamic_logical_assign(obj, key, op, value, stmts, span),
+                self.dynamic_logical_assign(obj, key, assign, stmts, span),
                 as_value,
             );
         }
-        let v = self.expr(value, Some(any), Want::Move);
+        let v = self.expr(value, Some(value_ty.unwrap_or(any)), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
         }
+        let v = match value_ty {
+            Some(t) => self.coerce(v, t),
+            None => v,
+        };
         let v = self.coerce(v, any);
         if !as_value {
             return (self.dynamic_set(obj, key, v, span), false);
@@ -154,11 +172,15 @@ impl FnCx<'_, '_> {
         &mut self,
         obj: hir::Expr,
         key: WriteKey,
-        op: ast::BinaryOp,
-        value: &ast::Expr,
+        assign: LogicalWrite<'_>,
         mut stmts: Vec<hir::Stmt>,
         span: Span,
     ) -> hir::Expr {
+        let LogicalWrite {
+            op,
+            value,
+            value_ty,
+        } = assign;
         let Some(any) = self.any_ty() else {
             return self.error_expr(span);
         };
@@ -186,12 +208,17 @@ impl FnCx<'_, '_> {
         let hint = self.f.assign_hint.take();
         let exp = match hint.filter(|t| self.new_of_class(value, *t)) {
             Some(t) => t,
-            None => any,
+            None => value_ty.unwrap_or(any),
         };
         let v = self.expr(value, Some(exp), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return self.error_expr(span);
         }
+        // `(x as Record<K, V>)[k] ??= v` checks `v` as a `V` (`any_record_cast.rs`).
+        let v = match value_ty {
+            Some(t) => self.coerce(v, t),
+            None => v,
+        };
         let v = self.coerce(v, any);
         let tmp = self.new_local("<assigned>", any, false, span, LocalKind::Temp);
         let t = self.mk(H::Local(tmp, UseMode::Borrow), any, span);
@@ -433,5 +460,29 @@ impl FnCx<'_, '_> {
         };
         matches!(self.cx.ty.kind(t), hir::TyKind::Adt(..))
             && self.cx.display(t).starts_with(&format!("{}<", name.name))
+    }
+}
+
+/// `obj[key] ??= v` (`||=`, `&&=`) on an `any`: the operator, the value, and the type the value
+/// is checked as first (`(x as Record<K, V>)[k] ??= v`, any_record_cast.rs).
+pub(super) struct LogicalWrite<'a> {
+    pub op: ast::BinaryOp,
+    pub value: &'a ast::Expr,
+    pub value_ty: Option<hir::TyId>,
+}
+
+impl FnCx<'_, '_> {
+    /// Can `x op= value` keep a member of type `value_ty` (`(x as Record<K, V>)[k] += v`)? A
+    /// number member takes only a number (`n += "s"` makes a string: TypeScript's TS2322); other
+    /// member types are checked at run time, as before.
+    fn compound_value_fits(&mut self, value_ty: Option<hir::TyId>, value: &ast::Expr) -> bool {
+        if !value_ty.is_some_and(|v| self.cx.ty.is_numeric(v)) {
+            return true;
+        }
+        let Some(t) = self.trial_type(value) else {
+            return true;
+        };
+        let t = self.cx.widened(t);
+        self.cx.ty.is_numeric(t) || self.cx.ty.is_bottom(t) || self.cx.dynamic(t).is_some()
     }
 }

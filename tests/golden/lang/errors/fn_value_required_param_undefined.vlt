@@ -1,0 +1,12 @@
+// A parameter without a default whose type has no `undefined` does not take the `undefined` an
+// optional parameter of the function type may pass: TypeScript reports TS2322 (#943). With a
+// default (`before: N1 | null = null`) it does, and the default applies.
+class N1 {
+  name = "n";
+}
+type MountFn = (tag: string, before?: N1 | null) => void;
+function mount(tag: string, before: N1 | null): void {
+  console.log(tag, before);
+}
+const o: { m: MountFn } = { m: mount };
+o.m("a");

@@ -2,6 +2,11 @@
 //! precomputed line tables, the per-function "current location" that every emitted statement
 //! records, and the ` at <path>:<line>:<col>` suffix of compiler-emitted panics.
 //!
+//! Texts compiled into the program name a standard-library file relative to the std root
+//! (`std/json/scan.vlt:12:3`), so they are the same on every machine: code compiled once and
+//! shared, such as a cached std object (#1728), must not carry one machine's paths. Debug info
+//! keeps the path as loaded, where a debugger finds the file.
+//!
 //! Functions defined in the standard library that panic on behalf of their caller (`unwrap`,
 //! `assert*`, …) *track the caller*, like Rust's `#[track_caller]`: a small one gets an instance
 //! per direct call site (`Work::Tracked`) whose panics report the call site, a larger one takes
@@ -30,8 +35,11 @@ pub(super) const ARG_LOC: SrcLoc = SrcLoc {
 
 /// Line tables of every source file, plus the paths reported in `vir::Program::files`.
 pub(super) struct LocMap {
-    /// Display path per `FileId` (forward slashes).
+    /// Display path per `FileId` (forward slashes), for debug info.
     pub files: Vec<String>,
+    /// Path per `FileId` in texts the program prints: as `files`, but `std/<path>` for a
+    /// standard-library file.
+    shown: Vec<String>,
     /// Byte offset of the start of each line, per file.
     line_starts: Vec<Vec<u32>>,
     /// Paths (per `FileId`) that belong to the standard library.
@@ -44,8 +52,15 @@ impl LocMap {
         let mut files = vec![];
         let mut line_starts = vec![];
         let mut std_files = vec![];
+        let mut shown = vec![];
         for (_, f) in sm.files() {
-            files.push(f.path.display().to_string().replace('\\', "/"));
+            let path = f.path.display().to_string().replace('\\', "/");
+            let in_std = std_root.and_then(|r| f.path.strip_prefix(r).ok());
+            shown.push(match in_std {
+                Some(rel) => format!("std/{}", rel.display().to_string().replace('\\', "/")),
+                None => path.clone(),
+            });
+            files.push(path);
             let starts = std::iter::once(0)
                 .chain(
                     f.src
@@ -56,10 +71,11 @@ impl LocMap {
                 )
                 .collect();
             line_starts.push(starts);
-            std_files.push(std_root.is_some_and(|r| f.path.starts_with(r)));
+            std_files.push(in_std.is_some());
         }
         LocMap {
             files,
+            shown,
             line_starts,
             std_files,
         }
@@ -93,10 +109,10 @@ impl LocMap {
             .unwrap_or(false)
     }
 
-    /// `path:line:col`.
+    /// `path:line:col`, a std file's path relative to the std root.
     pub(super) fn describe(&self, loc: SrcLoc) -> String {
         let path = self
-            .files
+            .shown
             .get(loc.file as usize)
             .map_or("?", |s| s.as_str());
         format!("{path}:{}:{}", loc.line, loc.col)
@@ -227,5 +243,20 @@ mod tests {
         }
         assert!(m.loc(Span::new(FileId(7), 0, 0)).is_none());
         assert_eq!(m.describe(at(9)), "a.vlt:4:3");
+    }
+
+    #[test]
+    fn std_files_are_shown_relative_to_the_std_root() {
+        let root = std::path::Path::new("/opt/velt/std");
+        let mut sm = SourceMap::new();
+        sm.add("/home/me/app.vlt", "x");
+        sm.add(root.join("json").join("scan.vlt"), "\n y");
+        let m = LocMap::new(&sm, Some(root));
+        let loc = |file, line, col| SrcLoc { file, line, col };
+        assert_eq!(m.describe(loc(0, 1, 1)), "/home/me/app.vlt:1:1");
+        assert_eq!(m.describe(loc(1, 2, 2)), "std/json/scan.vlt:2:2");
+        assert!(m.is_std_loc(loc(1, 2, 2)) && !m.is_std_loc(loc(0, 1, 1)));
+        // Debug info keeps the path a debugger opens.
+        assert_eq!(m.files[1], "/opt/velt/std/json/scan.vlt");
     }
 }

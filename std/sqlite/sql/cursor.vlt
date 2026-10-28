@@ -21,14 +21,15 @@ import {
 
 /**
  * How deep the parser may recurse: each parenthesis, right operand, NOT, CASE or unary operand
- * counts one level; a call, CAST, subquery or CTE two. A level costs up to about 5.6 KB of stack
- * in a release build (measured: Cranelift, arm64), so 200 levels stay within half of the
- * smallest stack the parser runs on: a worker thread's 2 MiB (the main thread has 8 MiB).
- * Expression trees are bounded separately at SQLite's 1000 (velt:sqlite/sql/expr); past this
- * bound the error is SQLite's for its parser stack. SQLite itself takes deeper nesting (its
- * parser keeps its stack on the heap).
+ * counts one level; a call, CAST, comparison operand, subquery or CTE two. Measured in release
+ * builds (Cranelift, arm64), every nesting production runs past 1,000 levels on an 8 MiB stack,
+ * which every thread running Velt code has, worker threads included (frames differ a little
+ * from one program to the next, as the inliner sees the whole program); the bound keeps a 2x
+ * margin: 500. Expression trees are bounded separately at SQLite's 1000
+ * (velt:sqlite/sql/expr); past this bound the error is SQLite's for its parser stack. SQLite
+ * itself takes deeper nesting (its parser keeps its stack on the heap).
  */
-const MAX_DEPTH: usize = 200;
+const MAX_DEPTH: usize = 500;
 
 /** A cursor over the tokens of one SQL text. */
 export abstract class TokenCursor {

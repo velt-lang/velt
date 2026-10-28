@@ -1,0 +1,525 @@
+// velt:sqlite/sql/statement — the statements of SQLite's grammar besides SELECT: INSERT (with
+// UPSERT and RETURNING), UPDATE, DELETE, CREATE TABLE / INDEX / VIEW, DROP, ALTER TABLE,
+// BEGIN / COMMIT / ROLLBACK / SAVEPOINT / RELEASE, PRAGMA and EXPLAIN. CREATE TABLE's
+// definitions are in velt:sqlite/sql/table.
+
+import { Parser } from "velt:sqlite/sql/parser";
+import {
+  SqlError,
+  T_EOF,
+  T_IDENT,
+  T_INTEGER,
+  T_OP,
+  T_REAL,
+  T_SEMI,
+  T_STRING,
+} from "velt:sqlite/sql/lexer";
+import {
+  E_COLUMN,
+  E_STAR,
+  Expr,
+  S_ALTER,
+  S_BEGIN,
+  S_COMMIT,
+  S_CREATE_INDEX,
+  S_CREATE_VIEW,
+  S_DELETE,
+  S_DROP,
+  S_EXPLAIN,
+  S_INSERT,
+  S_PRAGMA,
+  S_RELEASE,
+  S_ROLLBACK,
+  S_SAVEPOINT,
+  S_SELECT,
+  S_UPDATE,
+  Statement,
+  Upsert,
+} from "velt:sqlite/sql/ast";
+import {
+  columnDef,
+  columnNames,
+  conflictResolution,
+  createTable,
+  ifNotExists,
+  indexedColumns,
+  literal,
+  negated,
+  qualified,
+} from "velt:sqlite/sql/table";
+
+/** Parses the statements of `sql` (separated by `;`; empty ones are skipped). */
+export function parseAll(sql: string): Statement[] {
+  const p = new Parser(sql);
+  const out: Statement[] = [];
+  while (true) {
+    while (p.peek().kind == T_SEMI) {
+      p.advance();
+    }
+    if (p.peek().kind == T_EOF) {
+      return out;
+    }
+    out.push(statement(p));
+    if (p.peek().kind != T_SEMI && p.peek().kind != T_EOF) {
+      p.fail();
+    }
+  }
+}
+
+/** Parses exactly one statement (a trailing `;` is allowed). */
+export function parseOne(sql: string): Statement {
+  const all = parseAll(sql);
+  if (all.length != 1) {
+    throw new SqlError(all.length == 0 ? "no statement" : "more than one statement", 0);
+  }
+  return all[0];
+}
+
+/** One statement at the parser's position: EXPLAIN [QUERY PLAN], once, then the statement. */
+export function statement(p: Parser): Statement {
+  const from = p.peek().start;
+  let s: Statement;
+  if (p.eatKw("EXPLAIN")) {
+    s = new Statement(S_EXPLAIN);
+    if (p.eatKw("QUERY")) {
+      p.expectKw("PLAN");
+      s.queryPlan = true;
+    }
+    // Only once: `EXPLAIN EXPLAIN …` is a syntax error in SQLite (no recursion here).
+    s.inner = command(p);
+  } else {
+    s = command(p);
+  }
+  s.sql = p.text(from, p.peek().start).trimEnd();
+  return s;
+}
+
+/** A statement without EXPLAIN. */
+function command(p: Parser): Statement {
+  if (p.isKw("SELECT") || p.isKw("VALUES") || (p.isKw("WITH") && withSelect(p))) {
+    const s = new Statement(S_SELECT);
+    s.select = p.select();
+    return s;
+  }
+  if (p.isKw("WITH")) {
+    // WITH … INSERT / UPDATE / DELETE: the CTEs go on the statement's select.
+    throw new SqlError("WITH before INSERT, UPDATE or DELETE is not supported yet", p.peek().start);
+  }
+  if (p.isKw("INSERT") || p.isKw("REPLACE")) {
+    return insert(p);
+  }
+  if (p.eatKw("UPDATE")) {
+    return update(p);
+  }
+  if (p.eatKw("DELETE")) {
+    return remove(p);
+  }
+  if (p.eatKw("CREATE")) {
+    return create(p);
+  }
+  if (p.eatKw("DROP")) {
+    return drop(p);
+  }
+  if (p.eatKw("ALTER")) {
+    return alter(p);
+  }
+  if (p.eatKw("BEGIN")) {
+    const s = new Statement(S_BEGIN);
+    if (p.isKw("DEFERRED") || p.isKw("IMMEDIATE") || p.isKw("EXCLUSIVE")) {
+      s.mode = p.advance().upper;
+    }
+    transaction(p, s);
+    return s;
+  }
+  if (p.eatKw("COMMIT") || p.eatKw("END")) {
+    const s = new Statement(S_COMMIT);
+    transaction(p, s);
+    return s;
+  }
+  if (p.eatKw("ROLLBACK")) {
+    const s = new Statement(S_ROLLBACK);
+    transaction(p, s);
+    if (p.eatKw("TO")) {
+      p.eatKw("SAVEPOINT");
+      s.name = p.name();
+    }
+    return s;
+  }
+  if (p.eatKw("SAVEPOINT")) {
+    const s = new Statement(S_SAVEPOINT);
+    s.name = p.name();
+    return s;
+  }
+  if (p.eatKw("RELEASE")) {
+    const s = new Statement(S_RELEASE);
+    p.eatKw("SAVEPOINT");
+    s.name = p.name();
+    return s;
+  }
+  if (p.eatKw("PRAGMA")) {
+    return pragma(p);
+  }
+  p.fail();
+}
+
+/** `[TRANSACTION [name]]` after BEGIN, COMMIT, END or ROLLBACK (the name means nothing). */
+function transaction(p: Parser, s: Statement) {
+  if (p.eatKw("TRANSACTION") && p.isName()) {
+    s.transaction = p.name();
+  }
+}
+
+/** Whether WITH at the parser's position starts a SELECT (looks past the CTEs' parentheses). */
+function withSelect(p: Parser): bool {
+  let depth = 0;
+  let k: usize = 0;
+  while (true) {
+    const t = p.peekAt(k);
+    if (t.kind == T_EOF || t.kind == T_SEMI) {
+      return true;
+    }
+    if (t.kind == T_OP && t.text == "(") {
+      depth++;
+    } else if (t.kind == T_OP && t.text == ")") {
+      depth--;
+    } else if (
+      depth == 0 &&
+      t.kind == T_IDENT &&
+      (t.upper == "INSERT" || t.upper == "UPDATE" || t.upper == "DELETE" || t.upper == "REPLACE")
+    ) {
+      return false;
+    } else if (depth == 0 && t.kind == T_IDENT && (t.upper == "SELECT" || t.upper == "VALUES")) {
+      return true;
+    }
+    k++;
+  }
+}
+
+function names(p: Parser): string[] {
+  p.expectOp("(");
+  const out: string[] = [p.name()];
+  while (p.eatOp(",")) {
+    out.push(p.name());
+  }
+  p.expectOp(")");
+  return out;
+}
+
+function returning(p: Parser, s: Statement) {
+  if (!p.eatKw("RETURNING")) {
+    return;
+  }
+  const at = p.peek().start;
+  s.returning = p.resultColumns();
+  for (const r of s.returning) {
+    if (r.expr.kind == E_STAR && r.expr.table != "") {
+      throw new SqlError(`RETURNING may not use "TABLE.*" wildcards`, at);
+    }
+  }
+}
+
+/** `[schema.]name [AS alias]` of INSERT, UPDATE and DELETE (an alias needs AS). */
+function target(p: Parser, s: Statement) {
+  qualified(p, s);
+  if (p.eatKw("AS")) {
+    s.alias = p.name();
+  }
+}
+
+/** INDEXED BY name or NOT INDEXED, after UPDATE's or DELETE's table. */
+function indexHint(p: Parser, s: Statement) {
+  if (p.eatKw("INDEXED")) {
+    p.expectKw("BY");
+    s.indexedBy = p.name();
+  } else if (p.eatKw("NOT")) {
+    p.expectKw("INDEXED");
+    s.notIndexed = true;
+  }
+}
+
+function insert(p: Parser): Statement {
+  const s = new Statement(S_INSERT);
+  if (p.eatKw("REPLACE")) {
+    s.orConflict = "REPLACE";
+  } else {
+    p.expectKw("INSERT");
+    if (p.eatKw("OR")) {
+      s.orConflict = conflictResolution(p);
+    }
+  }
+  p.expectKw("INTO");
+  target(p, s);
+  if (p.isOp("(")) {
+    s.columns = names(p);
+  }
+  if (p.eatKw("DEFAULT")) {
+    // DEFAULT VALUES takes RETURNING, but no upsert.
+    p.expectKw("VALUES");
+    s.defaultValues = true;
+    returning(p, s);
+    return s;
+  }
+  if (p.isKw("VALUES") && !compoundValues(p)) {
+    p.advance();
+    while (true) {
+      const at = p.peek().start;
+      p.expectOp("(");
+      const row: Expr[] = [p.expr()];
+      while (p.eatOp(",")) {
+        row.push(p.expr());
+      }
+      p.expectOp(")");
+      if (s.rows.length > 0 && row.length != s.rows[0].length) {
+        throw new SqlError("all VALUES must have the same number of terms", at);
+      }
+      s.rows.push(row);
+      if (!p.eatOp(",")) {
+        break;
+      }
+    }
+  } else {
+    s.select = p.select();
+  }
+  while (p.isKw("ON") && p.isKwAt(1, "CONFLICT")) {
+    p.advance();
+    p.advance();
+    const u = upsert(p);
+    s.upserts.push(u);
+    if (u.target.length == 0) {
+      // Only the last ON CONFLICT may omit its target.
+      break;
+    }
+  }
+  returning(p, s);
+  return s;
+}
+
+/** VALUES followed by UNION, INTERSECT or EXCEPT is a compound select, not plain rows. */
+function compoundValues(p: Parser): bool {
+  let depth = 0;
+  let k: usize = 0;
+  while (true) {
+    const t = p.peekAt(k);
+    if (t.kind == T_EOF || t.kind == T_SEMI) {
+      return false;
+    }
+    if (t.kind == T_OP && t.text == "(") {
+      depth++;
+    } else if (t.kind == T_OP && t.text == ")") {
+      depth--;
+    } else if (
+      depth == 0 &&
+      t.kind == T_IDENT &&
+      (t.upper == "UNION" || t.upper == "EXCEPT" || t.upper == "INTERSECT")
+    ) {
+      return true;
+    } else if (depth == 0 && t.kind == T_IDENT && (t.upper == "ON" || t.upper == "RETURNING")) {
+      return false;
+    }
+    k++;
+  }
+}
+
+function upsert(p: Parser): Upsert {
+  const u = new Upsert();
+  if (p.isOp("(")) {
+    u.target = indexedColumns(p);
+    if (p.eatKw("WHERE")) {
+      u.targetWhere = p.expr();
+    }
+  }
+  p.expectKw("DO");
+  if (p.eatKw("NOTHING")) {
+    return u;
+  }
+  p.expectKw("UPDATE");
+  p.expectKw("SET");
+  u.doNothing = false;
+  assignments(p, u.setColumns, u.setValues);
+  if (p.eatKw("WHERE")) {
+    u.where = p.expr();
+  }
+  return u;
+}
+
+function assignments(p: Parser, columns: string[][], values: Expr[]) {
+  while (true) {
+    if (p.isOp("(")) {
+      columns.push(names(p));
+    } else {
+      columns.push([p.name()]);
+    }
+    p.expectOp("=");
+    values.push(p.expr());
+    if (!p.eatOp(",")) {
+      return;
+    }
+  }
+}
+
+function update(p: Parser): Statement {
+  const s = new Statement(S_UPDATE);
+  if (p.eatKw("OR")) {
+    s.orConflict = conflictResolution(p);
+  }
+  target(p, s);
+  indexHint(p, s);
+  p.expectKw("SET");
+  assignments(p, s.setColumns, s.setValues);
+  if (p.eatKw("FROM")) {
+    s.from = p.fromItems();
+  }
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  returning(p, s);
+  return s;
+}
+
+function remove(p: Parser): Statement {
+  const s = new Statement(S_DELETE);
+  p.expectKw("FROM");
+  target(p, s);
+  indexHint(p, s);
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  returning(p, s);
+  return s;
+}
+
+function create(p: Parser): Statement {
+  const temp = p.eatKw("TEMP") || p.eatKw("TEMPORARY");
+  if (p.eatKw("TABLE")) {
+    const s = createTable(p);
+    s.temp = temp;
+    return s;
+  }
+  if (p.eatKw("VIEW")) {
+    const s = new Statement(S_CREATE_VIEW);
+    s.temp = temp;
+    s.ifNotExists = ifNotExists(p);
+    qualified(p, s);
+    if (p.isOp("(")) {
+      s.columns = columnNames(p);
+    }
+    p.expectKw("AS");
+    s.select = p.select();
+    return s;
+  }
+  if (p.isKw("TRIGGER") || (!temp && p.isKw("VIRTUAL"))) {
+    throw new SqlError(`CREATE ${p.peek().upper} is not supported yet`, p.peek().start);
+  }
+  if (temp) {
+    // An index is never TEMP (its table decides).
+    p.fail();
+  }
+  const s = new Statement(S_CREATE_INDEX);
+  s.unique = p.eatKw("UNIQUE");
+  p.expectKw("INDEX");
+  s.ifNotExists = ifNotExists(p);
+  qualified(p, s);
+  p.expectKw("ON");
+  s.table = p.name();
+  s.indexed = indexedColumns(p);
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  return s;
+}
+
+function drop(p: Parser): Statement {
+  const s = new Statement(S_DROP);
+  const w = p.peek().upper;
+  if (p.peek().kind != T_IDENT || (w != "TABLE" && w != "INDEX" && w != "VIEW" && w != "TRIGGER")) {
+    p.fail();
+  }
+  p.advance();
+  s.what = w;
+  if (p.eatKw("IF")) {
+    p.expectKw("EXISTS");
+    s.ifExists = true;
+  }
+  qualified(p, s);
+  return s;
+}
+
+function alter(p: Parser): Statement {
+  const s = new Statement(S_ALTER);
+  p.expectKw("TABLE");
+  qualified(p, s);
+  if (p.eatKw("RENAME")) {
+    if (p.eatKw("TO")) {
+      s.action = "RENAME";
+      s.newName = p.name();
+      return s;
+    }
+    p.eatKw("COLUMN");
+    s.action = "RENAME COLUMN";
+    s.columns = [p.name()];
+    p.expectKw("TO");
+    s.newName = p.name();
+    return s;
+  }
+  if (p.eatKw("ADD")) {
+    p.eatKw("COLUMN");
+    s.action = "ADD COLUMN";
+    s.column = columnDef(p);
+    return s;
+  }
+  if (p.eatKw("DROP")) {
+    p.eatKw("COLUMN");
+    s.action = "DROP COLUMN";
+    s.columns = [p.name()];
+    return s;
+  }
+  p.fail();
+}
+
+function pragma(p: Parser): Statement {
+  const s = new Statement(S_PRAGMA);
+  qualified(p, s);
+  s.name = s.name.toLowerCase();
+  if (p.eatOp("=")) {
+    s.value = pragmaValue(p);
+  } else if (p.eatOp("(")) {
+    s.value = pragmaValue(p);
+    p.expectOp(")");
+  }
+  return s;
+}
+
+/**
+ * A pragma's value, as SQLite's grammar allows: a signed number (no digit separators), a
+ * string, or a name, upper case (ON, FULL, WAL, TRUE; the keywords ON, DELETE and DEFAULT too).
+ */
+function pragmaValue(p: Parser): Expr {
+  const t = p.peek();
+  if (p.isOp("+") || p.isOp("-")) {
+    const sign = p.advance();
+    const e = pragmaNumber(p);
+    return sign.text == "-" ? negated(e, sign.start) : e;
+  }
+  if (t.kind == T_INTEGER || t.kind == T_REAL) {
+    return pragmaNumber(p);
+  }
+  if (t.kind == T_STRING) {
+    return literal(p);
+  }
+  if (p.isName() || p.isKw("ON") || p.isKw("DELETE") || p.isKw("DEFAULT")) {
+    p.advance();
+    const e = new Expr(E_COLUMN, t.start);
+    e.name = t.upper;
+    return e;
+  }
+  p.fail();
+}
+
+/** An integer or a real, written without separators (`plus_num`). */
+function pragmaNumber(p: Parser): Expr {
+  const t = p.peek();
+  if ((t.kind != T_INTEGER && t.kind != T_REAL) || p.raw(t).includes("_")) {
+    p.fail();
+  }
+  return p.primary();
+}

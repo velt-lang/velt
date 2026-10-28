@@ -1,0 +1,59 @@
+// check: unfreed blocks at most 8
+// (The 8 blocks, kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4,
+// made at the first section, and this thread's list of retired values, 4 (its `shared` box, the
+// `Mutex`'s `Garbage` and its two arrays), made at its first retirement.)
+// What an `Atom` owns is freed: values it replaced (once the epoch drops them), values a failed
+// compare-and-swap in `update` made, values a throwing `update` never published, and the `Atom`
+// itself. Everything runs in `exercise`, so `main` holds no section while it drains.
+import { Atom } from "velt:sync";
+import { collect, outstanding } from "velt:sync/epoch";
+
+interface Item {
+  name: string;
+}
+
+class Refused extends Error {}
+
+function item(name: string): shared<Item> {
+  return shared({ name: name + " " + "x".repeat(30) });
+}
+
+function exercise(): string {
+  const a = Atom.create(item("a"));
+  const read = a.read((v) => v.name.slice(0, 1));
+  const loaded = a.load().name.slice(0, 1);
+  a.store(item("b"));
+  const before = a.swap(item("c")).name.slice(0, 1);
+  a.update((v) => item(v.name.slice(0, 1) + "d"));
+  try {
+    a.update((v) => {
+      throw new Refused("no");
+    });
+  } catch (e) {
+    // Nothing published.
+  }
+  // The first run's `store` comes in between: its compare-and-swap fails, and `f` runs again.
+  let runs = 0;
+  a.update((v) => {
+    runs++;
+    if (runs == 1) {
+      a.store(item("e"));
+    }
+    return item(v.name.slice(0, 1) + "f");
+  });
+  return `${read} ${loaded} ${before} ${a.load().name.slice(0, 2)} ${runs}`;
+}
+
+function drain(): u64 {
+  let rounds: u64 = 0;
+  while (outstanding() > 0 && rounds < 10) {
+    collect();
+    rounds++;
+  }
+  return outstanding();
+}
+
+function main() {
+  console.log(exercise());
+  console.log("outstanding", drain());
+}

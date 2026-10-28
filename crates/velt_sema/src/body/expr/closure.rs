@@ -294,6 +294,8 @@ impl FnCx<'_, '_> {
         frame.is_async = is_async;
         frame.return_site.ret_span = ret.filter(|_| !is_async).map(|t| t.span);
         frame.return_site.closure_at = Some(span);
+        // Lowered in the same instantiation, so under the same type tests.
+        frame.type_guards = self.f.type_guards.clone();
         for p in params.iter() {
             if let Some(t) = &p.ty {
                 self.cx.note_written_type(p.name.span, t.span);

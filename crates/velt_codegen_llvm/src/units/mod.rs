@@ -142,8 +142,15 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
     let (weights, static_refs, refs) = (&refs.weights, &refs.statics, &refs.funcs);
     let used = owner.iter().max().map_or(1, |&u| u + 1);
     let mut units: Vec<Unit> = (0..used).map(|_| Unit::default()).collect();
+    // An imported function (vir.rs invariant 11) is defined by no unit: every unit that refers
+    // to it declares it.
+    let imported: Vec<bool> = (program.funcs.iter())
+        .map(|f| f.linkage == vir::Linkage::Import)
+        .collect();
     for (i, &u) in owner.iter().enumerate() {
-        units[u].defines.push(i);
+        if !imported[i] {
+            units[u].defines.push(i);
+        }
     }
     let mut exported = vec![false; n];
     let mut static_owner: Vec<Option<usize>> = vec![None; n_statics];
@@ -158,7 +165,7 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
             .filter(|&&f| weights[f] <= IMPORT_CALLER_WEIGHT)
         {
             for &callee in &refs[f].calls {
-                if owner[callee] != u && weights[callee] <= IMPORT_WEIGHT {
+                if owner[callee] != u && weights[callee] <= IMPORT_WEIGHT && !imported[callee] {
                     imports.insert(callee);
                 }
             }
@@ -186,7 +193,7 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
         }
         unit.declares = referenced
             .into_iter()
-            .filter(|f| owner[*f] != u && !imports.contains(f))
+            .filter(|f| (owner[*f] != u || imported[*f]) && !imports.contains(f))
             .collect();
         unit.imports = imports.into_iter().collect();
         for s in statics {

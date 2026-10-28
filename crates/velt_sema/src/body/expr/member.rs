@@ -128,6 +128,9 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        if let Some(h) = self.any_as_record_member(object, prop, optional, exp, want, span) {
+            return h;
+        }
         if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
             // `this.NAME` / `this.f` in a static method: the class it was called on.
             if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
@@ -255,7 +258,7 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+        let obj = match self.dynamic_or_brand_get(obj, &prop.name, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
         };
@@ -334,7 +337,8 @@ impl FnCx<'_, '_> {
                 s.index_of(v, index, want, span)
             });
         }
-        if let Some(h) = self.process_env_index(object, index, span) {
+        let h = self.process_env_index(object, index, span);
+        if let Some(h) = h.or_else(|| self.any_as_record_index(object, index, exp, want, span)) {
             return h;
         }
         if let Some(h) = self.symbol_record_read(object, index, span) {

@@ -85,7 +85,7 @@ impl DebugInfo {
         let line = at.map_or(0, |l| l.line);
         let local = match function.linkage {
             Linkage::Internal if local => " | DISPFlagLocalToUnit",
-            Linkage::Internal | Linkage::Export => "",
+            Linkage::Internal | Linkage::Export | Linkage::Import => "",
         };
         let name = velt_vir::mangle::demangle(&function.symbol);
         let subprogram = self.node(format!(

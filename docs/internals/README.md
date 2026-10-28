@@ -51,6 +51,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      gets its own copy; a write through one name is copied to the other names that hold the
      same object on every path and are read later (a variable and an inlined method's
      `this`). When another name may hold the object on some paths only, it stays on the heap.
+     Fields holding counted values qualify too: lowering drops and shares a pointer field
+     from a copy of it, never through the field's address.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
    - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole,

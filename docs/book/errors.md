@@ -124,9 +124,10 @@ nobody awaits reports its error as uncaught. See [Async and concurrency](async.m
 ## Panics are bugs
 
 Some failures are programming errors, not conditions to handle: an index out of bounds,
-integer division by zero, a failed `assert`, `unwrap()` on `null`, an explicit `panic(msg)`.
-These **panic**: the program prints `panic: <message> at file:line:col` and exits with code
-101. Panics can't be caught.
+integer division by zero, `unwrap()` on `null`, an explicit `panic(msg)`. These **panic**: the
+program prints `panic: <message> at file:line:col` and exits with code 101. Panics can't be
+caught. A failed `assert` is not a panic: it throws an `AssertionError`, as in Node, so a test
+runner reports it and goes on ([Testing](testing.md)).
 
 An error that escapes `main` prints `Uncaught <Class>: <message> at file:line:col` and exits with
 code 1. It names the error's actual class, even when the function declared a base class such as

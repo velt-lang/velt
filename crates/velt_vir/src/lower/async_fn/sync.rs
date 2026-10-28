@@ -146,11 +146,16 @@ impl FnLower<'_, '_> {
             // assigning it by reference) is no cell, but the read keeps the box all the same.
             K::Local(l, _) => self.in_shared_cell(s) || self.body_changes(*l),
             K::Global(_) => self.in_shared_cell(s),
-            K::Field { .. }
-            | K::Index { .. }
-            | K::UnwrapSome(..)
-            | K::UnwrapVariant { .. }
-            | K::Downcast(_) => true,
+            // A narrowed variable (`x!`, `x` after `x == null` returned) changes only with the
+            // variable: a cell's or one the body assigns. (Not `in_shared_cell`, which notes
+            // the variable's own type as shared, not the narrowed one this would share.)
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                match &base.kind {
+                    K::Local(l, _) => self.info[l.0 as usize].in_cell || self.body_changes(*l),
+                    _ => true,
+                }
+            }
+            K::Field { .. } | K::Index { .. } => true,
             _ => false,
         }
     }

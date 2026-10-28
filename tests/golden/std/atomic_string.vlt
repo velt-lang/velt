@@ -1,0 +1,63 @@
+// `Atomic<string>`: a string threads read and replace at once without a lock. `load` reads it,
+// `store` and `exchange` replace it, and `compareExchange` compares contents (strings are values)
+// and returns whether it swapped. Tasks on 4 threads append to it with a compare-and-swap loop
+// while 4 others read it: no append is lost, and every string read is one some writer stored.
+import { collect } from "velt:sync/epoch";
+
+class Status {
+  text: Atomic<string> = new Atomic<string>("idle");
+}
+
+function longString(n: u64): string {
+  return "#".repeat(n as i64);
+}
+
+async function appender(s: shared<Status>, n: u64): Promise<u64> {
+  let done: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    while (true) {
+      const cur = s.text.load();
+      if (s.text.compareExchange(cur, cur + "x")) {
+        done++;
+        break;
+      }
+    }
+  }
+  return done;
+}
+
+async function reader(s: shared<Status>, n: u64): Promise<u64> {
+  let bad: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const t = s.text.load();
+    if (t.length > 0 && !t.startsWith("go")) {
+      bad++;
+    }
+  }
+  return bad;
+}
+
+async function main() {
+  const a = new Atomic<string>("first");
+  console.log(a.load(), a.load().length);
+  a.store("second " + longString(40));
+  console.log(a.load().length);
+  const before = a.exchange("third");
+  console.log(before.slice(0, 6), a.load());
+  console.log(a.compareExchange("nope", "x"), a.compareExchange("third", "fourth"), a.load());
+  console.log(a.compareExchangeWeak("fourth", "fifth") || a.load() == "fourth");
+
+  const s = shared(new Status());
+  s.text.store("go");
+  const ps: Promise<u64>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(appender(s, 500)));
+    ps.push(spawn(reader(s, 2000)));
+  }
+  let total: u64 = 0;
+  for (const n of await Promise.all(ps)) {
+    total += n;
+  }
+  collect();
+  console.log("appended", total, "length", s.text.load().length);
+}

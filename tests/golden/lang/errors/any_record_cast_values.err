@@ -1,0 +1,5 @@
+any_record_cast_values.vlt:4:40: error: mismatched types
+  = note: expected f64, found string
+any_record_cast_values.vlt:5:39: error: mismatched types
+any_record_cast_values.vlt:6:37: error: mismatched types
+  = note: expected f64, found boolean

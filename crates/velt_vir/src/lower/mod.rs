@@ -23,6 +23,7 @@ mod abi;
 mod adapters;
 mod adt;
 mod any;
+mod any_args;
 mod any_builtin;
 mod any_checks;
 mod any_delete;
@@ -53,6 +54,7 @@ mod assign_target;
 mod async_fn;
 mod atomic;
 mod atomic_ref;
+mod atomic_str;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -69,6 +71,7 @@ mod debug_vars;
 mod dispatch;
 mod drops;
 mod entry;
+mod epoch_sections;
 mod errors;
 mod expr;
 mod ext_exists;
@@ -85,6 +88,7 @@ mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
+mod key_any;
 mod keys;
 mod layout;
 mod literal_accessors;
@@ -121,10 +125,12 @@ mod strbuf;
 mod strings;
 mod symbols;
 mod template;
+mod this_fn;
 mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_tests;
 mod types;
 mod upcast;
 mod view_unswitch;
@@ -744,6 +750,10 @@ struct FnLower<'c, 'h> {
     direct_siblings: FxHashMap<LocalId, DefId>,
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
+    /// This function loads an `Atomic` of a `shared` value, so it runs in an epoch section
+    /// (epoch_sections.rs), unless it is one of `velt:sync/epoch`'s own (`epoch_exempt`).
+    ref_loads: bool,
+    epoch_exempt: bool,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,

@@ -1,0 +1,82 @@
+// `this` in a function expression with a `this: any` parameter is the object it is called on,
+// bound at the call as in Node: `call`, `apply`, `bind`, and method calls through a proxy.
+const fns: Record<string, Function> = {};
+fns.show = function (this: any, a: number, b: string) {
+  console.log("show", a, b, arguments.length, typeof this);
+  return a + 1;
+};
+fns.plain = function (this: any, x: any) {
+  // A plain call's `this` is `undefined` in a module (Node's script mode passes `globalThis`).
+  return String(this === undefined || typeof this === "object") + " " + String(x) + " " + arguments.length;
+};
+fns.count = function (this: any, ...args: any[]) {
+  // An arrow inside sees the function's `this` and `arguments`.
+  const twice = () => this.n * 2 + arguments.length;
+  return twice() + args.length;
+};
+fns.quiet = function (this: any) {
+  this.n = 10;
+};
+
+const show: any = fns.show;
+console.log(typeof show);
+console.log(show.call({ x: 1 }, 1, "b"));
+console.log(show.apply(null, [2, "c"]));
+const bound = show.bind([1, 2], 5);
+console.log(bound("z"));
+console.log(bound.call({ other: true }, "w"));
+const plain: any = fns.plain;
+console.log(plain(7));
+console.log(plain());
+
+const count: any = fns.count;
+console.log(count.call({ n: 4 }, 1, 2, 3));
+const target: any = { n: 1 };
+const quiet: any = fns.quiet;
+console.log(quiet.call(target), target.n);
+
+// Through a proxy: `p.m(...)` calls what the `get` trap answers with the proxy as `this`.
+const calls: string[] = [];
+const p: any = new Proxy({ n: 3 }, {
+  get(t, k, r) {
+    if (k === "count") {
+      return fns.count;
+    }
+    calls.push("get " + String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(p.count(9));
+console.log(calls.join(", "));
+
+// The instrumented array methods of a reactive library: run the method in a batch.
+let depth = 0;
+const arrayMethods: Record<string, Function> = {};
+arrayMethods.size = function (this: any, extra: number) {
+  depth++;
+  try {
+    return this.length + extra + depth;
+  } finally {
+    depth--;
+  }
+};
+const arr: any = new Proxy([1, 2, 3], {
+  get(t, k, r) {
+    if (typeof k === "string" && k in arrayMethods) {
+      return arrayMethods[k];
+    }
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(arr.size(10), depth);
+
+// Through an object held as `any`: `o.m(...)` passes `o`.
+const o: any = { n: 5, m: fns.count };
+console.log(o.m(1, 2));
+
+// Held as a `Function` (no other expected type): `call`, `apply` and `bind` pass the object.
+const direct = function (this: any, x: number) {
+  return this.base + x;
+};
+console.log(direct.call({ base: 10 }, 2), direct.apply({ base: 20 }, [3]));
+console.log(direct.bind({ base: 30 })(4));

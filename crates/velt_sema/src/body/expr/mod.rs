@@ -5,6 +5,7 @@ mod abstract_ctor;
 mod access;
 mod accessor_rmw;
 mod any_prim;
+mod any_record_cast;
 mod any_text;
 mod arg_order;
 mod args;
@@ -19,6 +20,7 @@ mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
+mod brand_members;
 mod builtins;
 mod call;
 mod call_apply;
@@ -57,6 +59,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
+mod proxy_getters;
 mod static_call;
 pub(crate) use env_globals::NODE_GLOBALS;
 pub(crate) use primitive_statics::primitive_this;
@@ -147,6 +150,7 @@ mod promise_new;
 mod promise_same;
 mod promise_then;
 mod promise_union;
+mod prop_values;
 mod proxy;
 mod push_items;
 mod record;
@@ -175,6 +179,8 @@ mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
+mod this_fn_call;
+mod this_fn_expr;
 mod this_param;
 mod this_type;
 mod three_state;
@@ -197,7 +203,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, TyId};
 pub(crate) use args::deferred;
 pub(crate) use atomic::static_atomic_init;
 pub(crate) use call_apply::{is_member_read, read_root};
@@ -206,16 +212,7 @@ pub(crate) use callables::{property_writes, PendingWrites};
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
-        // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
-        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
-            return self.coerce(h, exp);
-        }
-        let adapted = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
-            _ => None,
-        };
-        let h = match adapted {
+        let h = match self.adapted_fn_value(e, exp) {
             Some(h) => h,
             None => self.expr(e, Some(exp), want),
         };
@@ -250,6 +247,11 @@ impl FnCx<'_, '_> {
         let h = self.collapse_dynamic_option(h);
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
+        // The operand of a reflective operation sees a class instance brand's class.
+        let h = match !self.instance_args.is_empty() && self.instance_args.contains(&e.id) {
+            true => self.unbrand_instance(h),
+            false => h,
+        };
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
@@ -308,6 +310,15 @@ impl FnCx<'_, '_> {
             }
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
+            // A member call that may pass its object to a function taking `this` (this_fn_call.rs).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
+            } if self.this_fn_call_site(callee, type_args, *optional) => {
+                self.this_fn_member_call(callee, args, *optional, span)
+            }
             A::Call {
                 callee,
                 type_args,

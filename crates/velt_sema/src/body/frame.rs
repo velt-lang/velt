@@ -14,6 +14,9 @@ pub(crate) struct Frame {
     /// The checks of CPU extensions that hold where the code being checked runs: the `then`
     /// branches of the `if (u32x4.hasShaArm())` being checked, innermost last.
     pub cpu_guards: Vec<crate::hir::CpuTarget>,
+    /// The `typeIs<A, B>()` tests that hold where the code being checked runs: the `then`
+    /// branches of `if (typeIs<A, B>())` (`body::type_guards`), innermost last.
+    pub type_guards: Vec<(TyId, TyId)>,
     pub locals: Vec<LocalDef>,
     pub kinds: Vec<LocalKind>,
     pub scopes: Vec<Scope>,
@@ -200,6 +203,7 @@ impl Frame {
             kind,
             target: None,
             cpu_guards: vec![],
+            type_guards: vec![],
             locals: vec![],
             kinds: vec![],
             scopes: vec![Scope::default()],

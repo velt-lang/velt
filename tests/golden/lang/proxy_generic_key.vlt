@@ -1,0 +1,81 @@
+// `s[k]` in a generic function whose object is a proxy: the `get` and `set` traps run, as in
+// Node, whether the proxy is an `any` (`new Proxy(...)`) or typed as its target.
+function get<T extends object, K extends keyof T>(s: T, k: K): T[K] {
+  return s[k];
+}
+function put<T extends object, K extends keyof T>(s: T, k: K, v: T[K]): void {
+  s[k] = v;
+}
+
+const log: string[] = [];
+function traced<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(t, k, r) {
+      log.push("get " + String(k));
+      return Reflect.get(t, k, r);
+    },
+    set(t, k, v, r) {
+      log.push("set " + String(k) + "=" + String(v));
+      return Reflect.set(t, k, v, r);
+    },
+  });
+}
+
+// An untyped proxy (`any`).
+const p = new Proxy({ count: 1, name: "a" }, {
+  get(t, k, r) {
+    log.push("any get " + String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(get(p, "count"), get(p, "name"));
+put(p, "count", 5);
+console.log(get(p, "count"));
+for (const k of ["count", "name"] as ("count" | "name")[]) {
+  console.log(k, get(p, k));
+}
+const empty = new Proxy({ n: 2 }, {});
+const n: number = get(empty, "n");
+console.log(n + 1);
+
+// A typed proxy, keys of one type and of several.
+type State = { count: number; name: string; on: boolean };
+const s: State = traced({ count: 1, name: "a", on: false });
+console.log(get(s, "count"), get(s, "name"), get(s, "on"));
+put(s, "count", 2);
+put(s, "on", true);
+const keys: ("count" | "name")[] = ["count", "name"];
+for (const k of keys) {
+  console.log(k, get(s, k));
+}
+function setEach<T extends object, K extends keyof T>(o: T, ks: K[], v: T[K]): void {
+  for (const k of ks) {
+    o[k] = v;
+  }
+}
+setEach(s, ["count"], 7);
+console.log(s.count, s.name, s.on);
+
+// Plain objects are unchanged.
+const plain = { count: 9, name: "z" };
+put(plain, "name", "y");
+console.log(get(plain, "count"), get(plain, "name"));
+console.log(log.join("\n"));
+
+// Symbol and number keys reach the traps too.
+const sym = Symbol("k");
+const keyed = new Proxy({ [sym]: 1, a: 2 }, {
+  get(t: any, k: any) {
+    // The trap sees the symbol itself.
+    console.log("get", typeof k === "symbol" ? "symbol" : k);
+    return typeof k === "symbol" ? "from the trap" : t[k];
+  },
+});
+console.log(get(keyed, sym));
+const listed = new Proxy([10, 20, 30], {
+  get(t: any, k: any, r: any) {
+    console.log("get", String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(get(listed, 1));

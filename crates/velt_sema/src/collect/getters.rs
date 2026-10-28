@@ -302,7 +302,7 @@ fn local(name: &str, ty: TyId, span: Span) -> LocalDef {
     }
 }
 
-fn getter_def(
+pub(crate) fn getter_def(
     name: String,
     generics: u32,
     self_ty: TyId,

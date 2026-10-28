@@ -164,9 +164,21 @@ reads while an admin task swaps in a new one, or the root of a structure that wr
   When it did not, `v` is dropped. `compareExchangeWeak` may fail even when it holds
   `expected` (call it in a loop).
 
+An `Atomic<string>` works the same way: `load()`, `store(v)` and `exchange(v)` read and
+replace the string, and `compareExchange(expected, v)` compares contents (strings are values)
+and returns whether it made `v` the value. Each `store` boxes the string, so a store costs one
+allocation; a read costs a load. A module-level `const` `Atomic<string>` is kept with the
+module's other state (its box is made at run time), which tasks reach one at a time: keep a
+busy one in a field of a `shared` object instead.
+
 It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
-thread may be reading it: for now such values stay allocated until the program ends (freeing
-them safely is #1696's next step).
+thread may be reading it: it is freed once no thread can be (`velt:sync/epoch` below). A
+function that calls `load()` runs in a section for that, which the compiler opens and closes:
+a few nanoseconds per call, so a loop of loads costs one. The section lasts the whole call, so
+values replaced while a long-running plain function loops are freed only once it returns
+(memory, not speed): keep such loops in a function of their own that returns now and then. An `async` function's `load()` counts
+the value at once, which keeps it valid across its `await`s: read many values in a plain
+function it calls.
 
 ```ts
 interface Config {
@@ -184,6 +196,73 @@ function main() {
   if (before != null && now != null) {
     console.log(before.name, now.name, now.limit); // default strict 2
   }
+}
+```
+
+### `Atomic` in generic code
+
+A type parameter bounded by `AtomicValue` can be an `Atomic`'s `T`: `class Cell<T extends
+AtomicValue> { word: Atomic<T>; … }`. The prelude's `AtomicValue` is implemented by the integer
+types, `f32`, `f64`, `bool`, `string` and `shared<U>`, which the compiler knows (declaring it
+with `implements` or `extends` is an error, and a type parameter needs the bound itself), and
+the bound is checked where the generic is used (`new Cell<Obj>(…)` with a plain object is an
+error). Each use gets its type's instructions. Generic code has the operations every `AtomicValue` has alike: `load()`,
+`store(v)`, `exchange(v)` and `compareExchangeWeak(expected, v)` (in a loop: it returns whether
+it swapped for every `T`, where `compareExchange` returns the value before for a number).
+
+```ts
+class Cell<T extends AtomicValue> {
+  word: Atomic<T>;
+
+  constructor(v: T) {
+    this.word = new Atomic<T>(v);
+  }
+
+  replace(v: T): T {
+    return this.word.exchange(v);
+  }
+}
+
+function main() {
+  const c = new Cell<string>("a");
+  console.log(c.replace("b"), c.word.load()); // a b
+}
+```
+
+## `Atom<T>`
+
+A `shared` value that threads read at once without a lock and replace whole, like Rust's
+`arc-swap`: `Atom.create(shared(config))`, kept in a `shared` object. Readers never wait and
+never write; a value it replaces is dropped once no thread can still be reading it.
+
+- `read((v) => …)` runs the callback on the current value, borrowed: reading it there costs no
+  count, the cheapest read, and whatever the callback keeps of it takes a reference of its own.
+- `load()` returns the current value as a reference of its own, to keep.
+- `store(v)` makes `v` the value, and `swap(v)` returns the one before.
+- `update((v) => …)` replaces the value with what the callback makes of it. Updates take turns, so
+  the callback runs once per update, unless a `store` or `swap` came in between (then it runs
+  again on the newer value). If it throws, nothing changes. The callback must not call `update`
+  on the same `Atom`: updates take turns, so it would wait for itself forever. While an update
+  waits for its turn and runs its callback, values replaced meanwhile stay allocated (memory,
+  not speed).
+
+At module level, use an `Atomic<shared<T> | null>` (`null` to start), which takes no lock.
+
+```ts
+import { Atom } from "velt:sync";
+
+interface Limits {
+  rps: u64;
+}
+
+class Gateway {
+  limits: Atom<Limits> = Atom.create(shared({ rps: 100 }));
+}
+
+function main() {
+  const g = shared(new Gateway());
+  g.limits.update((l) => shared({ rps: l.rps * 2 }));
+  console.log(g.limits.read((l) => l.rps)); // 200
 }
 ```
 
@@ -331,9 +410,9 @@ function main() {
 ## `velt:sync/epoch`
 
 Epoch-based reclamation, written in Velt on `Atomic`, `ThreadLocal` and `Mutex`: a way to drop
-a `shared` value that other threads may still be reading, once none can be. The compiler will
-call it for the values an `Atomic` of a `shared` value replaces (#1696). Lock-free code of your
-own can call it too.
+a `shared` value that other threads may still be reading, once none can be. The compiler calls
+it for the values an `Atomic` of a `shared` value replaces, and opens a section around a
+function that loads one. Lock-free code of your own can call it too.
 
 - `pin()` enters a *section*, and `unpin()` leaves it. Sections nest; an `unpin()` without a
   `pin()` before it on the thread is an error. While a thread is in one,

@@ -130,6 +130,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "ThreadLocal",
         "keep thread-shared state out of code shared with TypeScript",
     ),
+    (
+        "AtomicValue",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
     // TypeScript's has one type argument; Velt's two.
     (
@@ -163,6 +167,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "assertThrows",
         "keep test assertions out of code shared with TypeScript",
+    ),
+    (
+        "AssertionError",
+        "keep test assertions out of code shared with TypeScript (Node's is `node:assert`'s)",
     ),
     (
         "deepEqual",
@@ -207,6 +215,14 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "spawn",
         "keep tasks and threads out of code shared with TypeScript",
+    ),
+    (
+        "typeIs",
+        "keep compile-time type tests out of code shared with TypeScript",
+    ),
+    (
+        "asType",
+        "keep compile-time type tests out of code shared with TypeScript",
     ),
     (
         "shared",

@@ -11,6 +11,11 @@
 // rt_abi_async.md §9.2). Neither is ever Copy
 // (copying one would duplicate the lock). Their methods are the only way to reach the value.
 
+// Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
+// and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
+// `atomic_ref.rs`).
+import { pin, unpin, retire } from "velt:sync/epoch";
+
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:
  * `shared(new Mutex<T>(x))`. `m.with((v) => …)` locks, runs the callback on the value, then
@@ -79,7 +84,8 @@ export struct RwLock<T> {
  * the CPU has none). `T` is an integer type, `f64`, `f32` or `bool`; a float's `add`, `sub`,
  * `max` and `min` are compare-and-swap loops. `T` may also be `shared<U>` or `shared<U> | null`:
  * `load`, `store` and `exchange` then move references, and `compareExchange` compares identity
- * and returns whether it swapped (docs/std/sync.md).
+ * and returns whether it swapped (docs/std/sync.md). An `Atomic<string>` is the same, except that
+ * `compareExchange` compares contents.
  *
  * Every method takes a memory ordering, `"seqcst"` when left out, as JavaScript's `Atomics`:
  * `"relaxed"` (only this word is atomic), `"acquire"` (later reads see what the thread that
@@ -109,7 +115,8 @@ export struct Atomic<T> {
    * Makes `v` the value if it is `expected`; returns the previous value, which is `expected`
    * when it did. `failure` is the ordering of the read when it did not (by default `order`
    * without its release part). On an `Atomic` of a `shared` value it compares identity (the same
-   * reference) and returns whether it made `v` the value; when it did not, `v` is dropped.
+   * reference), on an `Atomic<string>` contents, and returns whether it made `v` the value; when
+   * it did not, `v` is dropped.
    */
   compareExchange(
     expected: T,
@@ -216,3 +223,11 @@ export struct ThreadLocal<T> {
     __intrinsic_thread_local_set(this, v);
   }
 }
+
+/**
+ * The types an `Atomic` can hold: the integer types, `f32`, `f64`, `bool`, `string` and
+ * `shared` values (and `shared<U> | null`); the compiler knows which, so no type declares it. A
+ * type parameter bounded by it (`T extends AtomicValue`) may be an `Atomic`'s `T` in generic
+ * code, checked where the generic is instantiated.
+ */
+export interface AtomicValue {}

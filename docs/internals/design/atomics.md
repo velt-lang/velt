@@ -187,8 +187,8 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
   per constant, so a swap keeps its value.
-- ``` `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string` ``` (a type
-  parameter too: the instruction depends on the type).
+- ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
+  (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
@@ -492,9 +492,10 @@ on the pointer's bits, so backends see nothing new.
 - **`load`:** a load, uncounted: the reference is *borrowed*. Read in place (`a.load().f`, a
   borrowing argument) or bound by a `const` (sema `borrowed_load` binds it by reference, and
   lowering's `let_pat` binds the loaded pointer without a drop), it costs the load alone. A
-  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). A borrow
-  stays valid as long as retired references are never released; once reclamation frees them,
-  a borrow lives in an epoch section, and one still live where a section closes is counted.
+  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). The
+  function runs in an epoch section ("Sections"), so a borrow stays valid until it returns. In
+  an async function or a generator, `load` counts at once instead, inside a section of its
+  own, and sema binds such a `const` as a value.
 - **`store(v)` and `exchange(v)`:** `v` moves in, by an atomic exchange. `exchange` gives the
   caller a counted copy of the old reference.
 - **`compareExchange(expected, v)`:** a compare-and-swap of the pointers, so it compares
@@ -504,9 +505,9 @@ on the pointer's bits, so backends see nothing new.
   meanwhile (no ABA).
 - **Retiring:** the reference a store, an exchange or a successful compare-and-swap takes out of
   the word is *retired*, not released. Another thread may have loaded the pointer and not
-  counted it yet; releasing it could free the box under that increment. Until reclamation
-  (`velt:sync/epoch`, step 2c/2d) retires into per-thread lists freed after a grace period, a
-  retired reference is kept forever: memory-safe, but it stays allocated.
+  counted it yet; releasing it could free the box under that increment. Lowering calls
+  `velt:sync/epoch`'s `retire<U>` with it (none for null), which drops it once no thread in a
+  section can still read it.
 
 ## Reclamation (#1696 step 2d)
 
@@ -543,6 +544,86 @@ on the pointer's bits, so backends see nothing new.
   either mutant in 25 runs on an M4. So veltc `epoch_fences` checks the optimized LLVM IR: one
   `seqcst` fence in a program that only pins, two in one that only retires. Each mutant fails
   it.
+
+## Sections (#1696 step 2e)
+
+velt_vir `lower/epoch_sections.rs` places the sections. A function with a borrowed reference
+load (`FnLower::ref_loads`) calls `velt:sync/epoch`'s `pin` at its entry and `unpin` before each
+`Return`: the entry's code moves to a block of its own behind the `pin` call, and jumps to the
+entry are redirected there.
+- **Suspensions:** poll functions and generator resumes keep their dispatch in the entry block,
+  and a borrow must not outlive a suspension. So there each `load` is a section of its own:
+  `pin`, the load, the count, `unpin`. Sema binds `const c = a.load()` there by value.
+- **Nesting:** `pin` counts depth in a `ThreadLocal`, so a callee with loads of its own costs a
+  depth count, not a fence.
+- **Exempt:** `velt:sync/epoch`'s own functions (`FnLower::epoch_exempt`, by qualified name).
+  Its registry words are only ever set once, so its borrows need no section.
+- **Not done:** sections stay open across a loop's back edges, so a long synchronous loop
+  delays drops (memory only).
+- **Measured** (M4, release, load ~140): a `pin`/`unpin` pair costs 2–3 ns on one thread and
+  24–42 ns with 8 threads at once. A loop of 10M loads inside one call costs the same as with
+  no sections.
+- **Hold rule:** `shared_value` used to keep a counted hold on every narrowed handle
+  (`x` after `x == null` returned). That was one contended increment and decrement per `pin`
+  on the registry's box; a narrowed handle is now held only if what it narrows is replaceable.
+- **Tests:** `std/atomic_ref_sections`. A task on another thread is inside a function holding a
+  loaded value while main replaces it 10 times and collects 100 times: nothing is dropped
+  until it returns. Without sections, all 10 are dropped and the holder reads a freed string.
+
+## Strings (#1696 step 2f)
+
+A string is three words (rt_abi.md), so an `Atomic<string>`'s word points to a counted box
+holding one: the box a `shared<string>` has. velt_vir `Cx::adt_field_tys` lays the
+`Atomic<string>`'s field out as `shared<string>`, so its drop glue releases the box, and
+`new Atomic<string>(s)` boxes `s` (`adt_lit`). `lower/atomic_str.rs` lowers the methods:
+- **`load`:** the string in the box, borrowed, as a reference `load` is (the function's
+  section keeps the box). In an async function or a generator it is copied at once, inside a
+  section of its own.
+- **`store(v)` / `exchange(v)`:** box `v` and swap it in. `exchange` gives a copy of the string
+  before. The old box is retired as `shared<string>`.
+- **`compareExchange(expected, v)`:** compares contents. It loads the box (acquire), compares
+  its string with `expected`, and swaps the pointer if no writer replaced the box meanwhile. A
+  strong one reads again when another writer did; a weak one fails then. It returns `bool` and
+  drops `v`'s box when it did not swap.
+- **Not supported:** a static `Atomic<string>`, whose box is made at run time, stays in the
+  module state. `Atomic<string | null>` is not supported yet (`Atomic<shared<string> | null>`
+  is).
+
+## `Atom<T>` (#1696 step 3)
+
+`velt:sync`'s `Atom<T>` is plain Velt on the pieces above: a struct of an `Atomic<shared<T>>`
+and a `VersionLatch` for writers.
+- **Reads:** `read(f)` loads the value borrowed and hands it to the callback, with no count, in
+  the method's own epoch section. `load()` returns it counted.
+- **Writes:** `store` and `swap` are the `Atomic`'s.
+- **`update(f)`:** takes the latch, so updates take turns. It loads, calls `f`, and publishes
+  with a compare-and-swap. A `store` or `swap` that came in between makes it run `f` again on
+  the newer value. A throw leaves the value as it was, and `finally` lets the latch go.
+- **Measured** against Rust's `arc-swap` (M4, release, load ~70; 8 threads each reading 10M
+  times, then 4 writers and 4 readers):
+  - one `read` per call: 65–91 ms against 63–81 ms, about the same;
+  - reads in a loop: 42–51 ms against 63–81 ms;
+  - mixed: 166–187 ms against 546–626 ms, about 70% less time.
+
+  Each `read` opens a section; a raw `Atomic<shared<T>>` read in a loop inside one function
+  pays it once (6–13 ms).
+
+## Generic `Atomic<T>` (#1696 step 4.1)
+
+`Atomic<T>` with `T` a type parameter is allowed when `T` is bounded by the prelude's marker
+interface `AtomicValue` (std/prelude/sync.vlt). The compiler knows its implementations (no
+`extend` declares them): `Ctx::satisfies` takes the integer types, `f32`, `f64`, `bool`,
+`string`, `shared<U>` and `shared<U> | null`. The bound is checked where the generic is
+instantiated, as any interface bound is; lowering instantiates per type already, so `atomic_word` and
+`atomic_ref_value` see the substituted `T` and pick the instruction as for written types.
+- **Operations:** sema allows on such a `T` only those every `AtomicValue` has alike:
+  `load`, `store`, `exchange` and `compareExchangeWeak`. `compareExchange` returns the value
+  before for a number but whether it swapped for a reference, and `add` and the bitwise methods
+  exist for numbers only.
+- **Borrowing:** sema cannot tell a reference `load` from a number's in generic code, so
+  `const c = a.load()` there binds by value; lowering counts a reference then (no borrow).
+- **Lowering fix:** `atomic_place`'s fallback now substitutes the receiver's type.
+- **Why:** `ConcurrentMap<K, V>` (step 4) declares `Atomic<V>` arrays.
 
 ## Not in this design
 

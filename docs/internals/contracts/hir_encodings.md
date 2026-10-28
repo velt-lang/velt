@@ -121,6 +121,13 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
+- Error and value text (standard library only; `velt:test` and `assertEq` use them):
+  `Intrinsic::ErrorText` (`__intrinsic_error_text(e)`, `e` borrowed, any type) is what an
+  uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
+  (`__intrinsic_throw_loc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
+  on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
+  `Intrinsic::Inspect` (`__intrinsic_inspect(x)`, borrowed) is `x` as Node's `util.inspect`
+  writes it. Each yields an owned string.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only
@@ -786,8 +793,10 @@ whose receiver is always `Global(d)` of a module `const` initialized by such an 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
 `new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,
-`f64`, `bool`, `shared<U>` or `shared<U> | null` (sema rejects any other `T`, a type parameter
-too). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
+`f64`, `bool`, `shared<U>`, `shared<U> | null`, `string`, or a type parameter bounded by the
+prelude's `AtomicValue` (sema rejects any other `T`; on a type parameter only `AtomicLoad`,
+`AtomicStore`, the `AtomicRmw` exchange and `AtomicCasWeak` occur; lowering lays an `Atomic<string>`'s field out as `shared<string>`, atomics.md
+"Strings"). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
 (whether it swapped; atomics.md "References"); its value arguments are moved in, and its
 `expected` argument may be a `Share` that lowering reads through. A call of one of its methods
 is not a `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
@@ -1534,3 +1543,12 @@ at the start of the class's block or of the function's body (`body/expr/ctor_loc
 captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).
+
+## Type tests (std/prelude/type_tests.vlt; additive)
+
+`typeIs<A, B>()` and `asType<B>(x)` are ordinary `Call { Def(prelude fn, [A, B]) }` /
+`Call { Def(prelude fn, [B, A]), [x] }` nodes (sema `body/type_guards.rs` checks `asType`'s
+guard and refuses both as values). Lowering replaces them per instance (velt_vir
+`lower/type_tests.rs`): `typeIs` by the constant `A == B` (the `if` it guards then lowers one
+branch), `asType` by `x` itself when `A == B` and by a trap otherwise (only reachable in a
+branch the constant made dead).

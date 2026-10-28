@@ -1,0 +1,149 @@
+// A rejecting promise written into a field of an object literal whose type is `Promise<T>`
+// written without an error type takes its rejections there, as TypeScript lets it (sigx:
+// server-renderer render-core.ts `ctx._pendingAsync.push({ id, promise })`): an interface's
+// field, an object type's, a literal pushed to an array of them, a field given through
+// `return`, and a value of a `Record` literal (through an alias, a generic alias, inline,
+// returned, nested in an object type) or one set by index.
+
+class LoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LoadError";
+  }
+}
+
+async function load(name: string): Promise<string> {
+  if (name.startsWith("bad")) {
+    throw new LoadError(`cannot load ${name}`);
+  }
+  return `<${name}>`;
+}
+
+interface Pending {
+  id: number;
+  promise: Promise<string>;
+}
+
+type Job = { name: string; done: Promise<void> };
+
+interface RenderCtx {
+  pending: Pending[];
+}
+
+function queue(ctx: RenderCtx, id: number, name: string): void {
+  const rendered = (async () => {
+    const html = await load(name);
+    return html.toUpperCase();
+  })();
+  ctx.pending.push({ id, promise: rendered });
+}
+
+function direct(id: number, name: string): Pending {
+  return { id, promise: load(name) };
+}
+
+function job(name: string): Job {
+  const j: Job = {
+    name,
+    done: (async () => {
+      await load(name);
+    })(),
+  };
+  return j;
+}
+
+// `Record`s of promises: the literal's values (the only store into the record's type in each
+// function) reject with `LiteralError`, the value set by index with `IndexError`, so a lost
+// store of either kind is a compile error.
+class LiteralError extends Error {}
+
+class IndexError extends Error {}
+
+async function lit(name: string): Promise<string> {
+  throw new LiteralError(`literal ${name}`);
+}
+
+async function idx(name: string): Promise<string> {
+  throw new IndexError(`index ${name}`);
+}
+
+type Pages = Record<string, Promise<string>>;
+type Table<T> = Record<string, Promise<T>>;
+
+interface Site {
+  pages: Record<string, Promise<string>>;
+}
+
+function viaAlias(): Pages {
+  const r: Pages = { home: load("home"), broken: lit("alias") };
+  return r;
+}
+
+function inline(): Record<string, Promise<string>> {
+  const r: Record<string, Promise<string>> = { broken: lit("inline") };
+  return r;
+}
+
+function generic(): Table<string> {
+  const r: Table<string> = { broken: lit("generic") };
+  return r;
+}
+
+function returned(): Record<string, Promise<string>> {
+  return { broken: lit("returned") };
+}
+
+function nested(): Site {
+  return { pages: { broken: lit("nested") } };
+}
+
+function byIndex(): Pages {
+  const r: Pages = {};
+  r["late"] = idx("set");
+  return r;
+}
+
+async function show(tag: string, r: Record<string, Promise<string>>): Promise<void> {
+  for (const k of Object.keys(r)) {
+    try {
+      console.log(tag, k, await r[k]);
+    } catch (e) {
+      const kind =
+        e instanceof LiteralError
+          ? "LiteralError"
+          : e instanceof IndexError ? "IndexError" : "other";
+      console.log(tag, k, "failed:", kind, (e as Error).message);
+    }
+  }
+}
+
+async function main() {
+  const ctx: RenderCtx = { pending: [] };
+  queue(ctx, 1, "header");
+  queue(ctx, 2, "bad-footer");
+  ctx.pending.push(direct(3, "main"));
+  ctx.pending.push(direct(4, "bad-aside"));
+  for (const p of ctx.pending) {
+    try {
+      console.log(p.id, await p.promise);
+    } catch (e) {
+      console.log(p.id, "failed:", (e as Error).name, (e as Error).message);
+    }
+  }
+  for (const j of [job("a"), job("bad-b")]) {
+    try {
+      await j.done;
+      console.log(j.name, "done");
+    } catch (e) {
+      console.log(j.name, "failed:", (e as Error).message);
+    }
+  }
+  await show("alias", viaAlias());
+  await show("inline", inline());
+  await show("generic", generic());
+  await show("returned", returned());
+  await show("nested", nested().pages);
+  await show("index", byIndex());
+}
+
+main();

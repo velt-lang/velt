@@ -2,10 +2,10 @@ atomic_ref_errors.vlt:9:1: error: `add` needs an `Atomic` of a number, found `At
 
 atomic_ref_errors.vlt:10:1: error: `or` needs an `Atomic` of an integer or `bool`, found `Atomic<shared<Node>>`
 
-atomic_ref_errors.vlt:11:15: error: `Atomic<T>` needs a number type, `bool` or a `shared` value, found `Node`
+atomic_ref_errors.vlt:11:15: error: `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `Node`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one
 
-atomic_ref_errors.vlt:12:15: error: `Atomic<T>` needs a number type, `bool` or a `shared` value, found `{ v: u64 }`
+atomic_ref_errors.vlt:12:15: error: `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `{ v: u64 }`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one
 
 atomic_ref_errors.vlt:13:17: error: mismatched types

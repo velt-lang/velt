@@ -155,7 +155,7 @@ impl FnCx<'_, '_> {
                 | AssignTarget::Record(_)
                 | AssignTarget::Setter(_)
                 | AssignTarget::Indexer(_)
-                | AssignTarget::Dynamic(_)
+                | AssignTarget::Dynamic(..)
                 | AssignTarget::Keyed(..),
             ) => {}
         }

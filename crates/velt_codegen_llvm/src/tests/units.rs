@@ -125,6 +125,35 @@ fn huge_callers_import_nothing() {
     assert_eq!(main.declares, [0, 2]);
 }
 
+/// An imported function (vir.rs invariant 11) is defined by no unit, never copied in for
+/// inlining, and declared `hidden` by every unit that refers to it; so is it in one module.
+#[test]
+fn imported_functions_are_declared_never_defined() {
+    let mut p = program();
+    // `a`, kept with its body (for VIR inlining only): tiny, so it would otherwise be imported.
+    p.funcs[0].linkage = Linkage::Import;
+    let plan = plan_placed(&p, &SPLIT);
+    assert!(plan
+        .units
+        .iter()
+        .all(|u| !u.defines.contains(&0) && !u.imports.contains(&0)));
+    // `b` (unit 0) calls it, main (unit 2) calls it, c's vtable (defined by unit 1) holds it.
+    for u in &plan.units {
+        assert!(u.declares.contains(&0), "{u:?}");
+    }
+    let ir = crate::emit_ir(&p, "x86_64-unknown-linux-gnu").unwrap();
+    assert!(ir.contains("declare hidden i64 @\"a\"(i64)"), "{ir}");
+    assert!(
+        !ir.contains("define internal i64 @\"a\"(") && !ir.contains("@\"a\"(i64 %p0)"),
+        "{ir}"
+    );
+    // A declaration without blocks too.
+    p.funcs[0].blocks.clear();
+    velt_vir::verify(&p).unwrap();
+    let ir = crate::emit_ir(&p, "x86_64-unknown-linux-gnu").unwrap();
+    assert!(ir.contains("declare hidden i64 @\"a\"(i64)"), "{ir}");
+}
+
 /// `n` internal functions of 1 000 statements each (weight 1 001).
 fn sized(n: usize) -> Program {
     let mut pb = ProgramBuilder::new();

@@ -32,6 +32,19 @@ impl Ctx<'_> {
         }
     }
 
+    /// Reports `iface` named in an `extends` or `implements` at `span` if it is the prelude's
+    /// `AtomicValue`, whose types only the compiler decides; whether it was.
+    pub(crate) fn refuse_atomic_value(&mut self, iface: DefId, span: velt_common::Span) -> bool {
+        if Some(iface) != self.prelude_iface("AtomicValue") {
+            return false;
+        }
+        self.error(
+            velt_common::Diagnostic::error("`AtomicValue` cannot be extended or implemented", span)
+                .with_note("the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values"),
+        );
+        true
+    }
+
     /// An interface exported by the prelude under `name` (`Iterator`, `Iterable`).
     pub fn prelude_iface(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
@@ -534,14 +547,14 @@ impl Ctx<'_> {
         parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
     }
 
-    /// Is `t` a reference an `Atomic` word holds: `shared<U>` or `shared<U> | null`
+    /// Is `t` a reference an `Atomic` word holds: `shared<U>`, `shared<U> | null` or `string`
     /// (atomics.md "References")?
     pub fn atomic_ref(&self, t: TyId) -> bool {
-        let inner = match self.ty.kind(t) {
-            TyKind::Option(inner, _) => *inner,
-            _ => t,
-        };
-        matches!(self.ty.kind(inner), TyKind::Shared(_))
+        match self.ty.kind(t) {
+            TyKind::Shared(_) | TyKind::Str => true,
+            TyKind::Option(inner, _) => matches!(self.ty.kind(*inner), TyKind::Shared(_)),
+            _ => false,
+        }
     }
 
     /// `T` of an `Atomic<T>`.

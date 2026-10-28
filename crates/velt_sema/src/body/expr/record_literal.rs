@@ -366,7 +366,13 @@ impl FnCx<'_, '_> {
             ast::ObjectProp::KeyValue(_, value) => value.clone(),
             _ => synth(ast::ExprKind::Ident(name.clone()), name.span),
         };
-        Some(self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span))
+        // A promise as a value of a `Record` of promises goes into the site the literal is
+        // stored into, as `r[k] = p` does (`throws::promise_sites`).
+        let pushed = self.cx.fn_sites.target.map(|s| (value.span, s));
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, pushed);
+        let set = self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span);
+        self.cx.fn_sites.push = outer;
+        Some(set)
     }
 
     /// Is `t` (or it or nothing) a record of `to`'s key type with another value type (`...r` of

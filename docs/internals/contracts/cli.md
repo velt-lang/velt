@@ -6,7 +6,7 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--b
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
-velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]
+velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
@@ -55,6 +55,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
   build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
+  `test --jobs <n>` / `-j <n>` (additive): how many test files run at once (default: one per
+  core); the output is the same for any `n`, in file order.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
@@ -330,7 +332,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
   Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
   build that `link.exe` links emits none, leaving function symbols).
-- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
+- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler; a
+  standard-library file as `std/<path below the std root>`) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit
   code**. Compiler errors → exit code 1, nothing executed. Internal compiler errors → 101.

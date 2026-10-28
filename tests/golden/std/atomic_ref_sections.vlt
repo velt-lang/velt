@@ -1,0 +1,98 @@
+// Values an `Atomic` of a `shared` value replaces are retired to `velt:sync/epoch`, and a
+// function that loads one runs in an epoch section the compiler opens and closes: while a task
+// on another thread is inside such a function holding what it loaded, no value retired since is
+// dropped, however often the epoch is pushed; once it returns, they are. An async function's
+// loads are counted at once, so they survive its `await`s.
+import { availableParallelism } from "velt:os";
+import { collect, dropped, outstanding } from "velt:sync/epoch";
+
+interface Config {
+  name: string;
+  limit: u64;
+}
+
+const CFG = new Atomic<shared<Config> | null>(null);
+const READY = new Atomic<bool>(false);
+const RELEASE = new Atomic<bool>(false);
+
+function config(name: string, limit: u64): shared<Config> {
+  return shared({ name, limit });
+}
+
+/** Loads the current value and holds it (borrowed) until main lets it go. */
+function holdCurrent(): string {
+  const c = CFG.load("acquire");
+  READY.store(true, "release");
+  while (!RELEASE.load("acquire")) {
+    Atomic.spinHint();
+  }
+  return c == null ? "none" : c.name + " " + c.limit;
+}
+
+async function holder(): Promise<string> {
+  return holdCurrent();
+}
+
+/** A borrowed load held across a loop that replaces the value and collects: the function's
+ * section keeps it until the function returns. */
+function acrossLoop(): string {
+  const c = CFG.load();
+  for (let i: u64 = 0; i < 3; i++) {
+    CFG.store(config("loop", i));
+    collect();
+    collect();
+    collect();
+  }
+  return c == null ? "none" : c.name;
+}
+
+async function acrossAwait(): Promise<string> {
+  const c = CFG.load();
+  CFG.store(config("replaced", 0));
+  for (let i = 0; i < 3; i++) {
+    collect();
+  }
+  await sleep(1);
+  return c == null ? "none" : c.name;
+}
+
+/** The runtime's worker threads (`VELT_THREADS`, else one per core). */
+function workers(): f64 {
+  const set = process.env.VELT_THREADS;
+  return set == undefined ? (availableParallelism() as number) : Number(set);
+}
+
+async function main() {
+  CFG.store(config("first", 1));
+  const before = dropped();
+  // The holder spins inside a plain function, beside main: that needs a second worker thread.
+  // With one, there is nothing to check; print what the check shows.
+  if (workers() < 2) {
+    console.log("dropped while held 0");
+    console.log("held first 1");
+    console.log("dropped after 10 outstanding 0");
+    CFG.store(config("next", 9));
+    console.log("across loop", acrossLoop());
+    console.log("across await", await acrossAwait());
+    return;
+  }
+  const h = spawn(holder());
+  while (!READY.load("acquire")) {
+    Atomic.spinHint();
+  }
+  for (let i: u64 = 0; i < 10; i++) {
+    CFG.store(config("next", i));
+  }
+  for (let i = 0; i < 100; i++) {
+    collect();
+  }
+  console.log("dropped while held", dropped() - before);
+  RELEASE.store(true, "release");
+  console.log("held", await h);
+  for (let i = 0; i < 3; i++) {
+    collect();
+  }
+  console.log("dropped after", dropped() - before, "outstanding", outstanding());
+  console.log("across loop", acrossLoop());
+  console.log("across await", await acrossAwait());
+}

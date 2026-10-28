@@ -1,0 +1,38 @@
+// check: unfreed blocks at most 4
+// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, made at the first load's section
+// and kept until the program exits.)
+// An `Atomic<T>` in generic code frees what nothing replaces: a load bound to a variable (counted
+// there, since generic code cannot know it is a reference) and kept in a `T[]`, a failed
+// `compareExchangeWeak`, and the `Atomic` dropped as a field and in an array, for a `string`
+// and a `shared` value.
+
+interface Box {
+  n: u64;
+}
+
+class Cell<T extends AtomicValue> {
+  word: Atomic<T>;
+
+  constructor(v: T) {
+    this.word = new Atomic<T>(v);
+  }
+}
+
+function exercise<T extends AtomicValue>(first: T, other: T): u64 {
+  const c = new Cell<T>(first);
+  const kept: T[] = [];
+  const loaded = c.word.load();
+  kept.push(loaded);
+  kept.push(c.word.load());
+  const swapped = c.word.compareExchangeWeak(other, other);
+  const cells: Atomic<T>[] = [];
+  for (let i = 0; i < 3; i++) {
+    cells.push(new Atomic<T>(first));
+  }
+  return (kept.length as u64) + (swapped ? 100 : 0) + (cells.length as u64);
+}
+
+function main() {
+  console.log(exercise<string>("a " + "x".repeat(30), "b " + "y".repeat(30)));
+  console.log(exercise<shared<Box>>(shared({ n: 1 }), shared({ n: 2 })));
+}

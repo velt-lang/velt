@@ -1,0 +1,3 @@
+assert_cannot_throw_here.vlt:7:3: error: this function throws `AssertionError`, but the function type it is used as does not allow throwing
+assert_cannot_throw_here.vlt:12:3: error: this function throws `AssertionError`, but the function type it is used as does not allow throwing
+assert_cannot_throw_here.vlt:18:3: error: `toString` cannot throw (it throws `AssertionError`)

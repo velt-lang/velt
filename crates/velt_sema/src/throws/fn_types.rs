@@ -101,6 +101,10 @@ pub(crate) struct FnSites {
     /// Where the type of a field of an object literal's anonymous type is written in its value
     /// (`{ list: [] as Promise<T>[] }`), by def and field (the first literal of that shape).
     pub anon_written: FxHashMap<(DefId, u32), Span>,
+    /// Where the body of a type alias is written, by the span of a use of the alias (`const r:
+    /// Pages` with `type Pages = Record<string, Promise<string>>`): that use's sites are in the
+    /// body (`Ctx::site_in`).
+    pub alias_written: FxHashMap<Span, Span>,
     /// Async closures checked for a function type with a promise member in its result: the
     /// argument's span and the closure's (`promise_sites`).
     pub async_args: Vec<(Span, Span)>,

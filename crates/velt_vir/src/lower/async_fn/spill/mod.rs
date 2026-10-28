@@ -7,7 +7,7 @@
 //!    at the start or at the cancel-before-start block.
 //! 2. **Points-to**: a surviving pointer may point at a local that is not itself read after the
 //!    suspension (`p = &x; await; *p`), so every local whose address may reach a spilled local
-//!    is spilled too.
+//!    is spilled too (pts.rs).
 //! 3. **Layout**: `[result region @0] tag: u32, spilled locals…`; locals that are never needed
 //!    at the same time share bytes (interference in overlap.rs, first-fit placement).
 //! 4. **Rewrite**: every place rooted at a spilled local becomes `(*state).field…`, the
@@ -15,10 +15,15 @@
 
 mod flow;
 mod overlap;
+mod pts;
+#[cfg(test)]
+mod tests;
 
 use rustc_hash::FxHashMap;
 
-use flow::Bits;
+use flow::{Bits, Susp, Universe};
+use overlap::Interference;
+use pts::Set;
 
 use super::{CLOSE_BIT, DONE, DROP_BIT, PLACEHOLDER};
 use crate::lower::{ice, Cx};
@@ -38,57 +43,80 @@ pub(super) fn spill(
     name: &str,
     inputs: &[Local],
 ) -> (AggId, FxHashMap<Local, u32>) {
-    let (extra, seeds) = suspension_edges(f, inputs);
-    let needed = suspended_locals(f, &extra, &seeds);
-    let pts = flow::points_to(f);
-    let spilled = close_over_pointers(needed, &pts);
-    let interf = overlap::interference(f, &pts, &spilled, &extra, &seeds);
+    let (spilled, interf) = analyse(f, inputs);
     let (agg, fields) = layout(cx, f, &spilled, &interf, result, name);
     rewrite(f, agg, &fields);
     (agg, fields)
 }
 
-/// Suspension edges (suspending block → resume/cancel block) and seeds (start blocks with the
-/// inputs, written by whoever built the state) of the semantic CFG.
-type Edges = (Vec<(usize, usize)>, Vec<(usize, Bits)>);
+/// Steps 1 and 2 and the interference of step 3: the locals to spill, and which of them may
+/// not share bytes.
+fn analyse(f: &Function, inputs: &[Local]) -> (Bits, Interference) {
+    let susp = suspension(f, inputs);
+    let needed = suspended_locals(f, &susp);
+    let pts = pts::points_to(f);
+    let spilled = close_over_pointers(needed, &pts);
+    let interf = overlap::interference(f, &pts, &spilled, &susp);
+    (spilled, interf)
+}
 
-fn suspension_edges(f: &Function, inputs: &[Local]) -> Edges {
+/// The suspension edges (suspending block → resume/cancel block) and start blocks of the
+/// semantic CFG.
+fn suspension(f: &Function, inputs: &[Local]) -> Susp {
     let Terminator::Switch { cases, .. } = &f.blocks[0].term else {
         ice("poll function without a dispatch switch")
     };
-    let mut ins = Bits::new(f.locals.len());
-    for l in inputs {
-        ins.set(l.0 as usize);
-    }
     let pend = suspending_blocks(f);
-    let (mut extra, mut seeds) = (vec![], vec![]);
+    let (mut extra, mut starts) = (vec![], vec![]);
     for &(tag, blk) in cases {
         let k = tag & !(DROP_BIT | CLOSE_BIT);
         let to = blk.0 as usize;
         if k == 0 {
-            seeds.push((to, ins.clone()));
+            starts.push(to);
         } else if let Some(&from) = pend.get(&k) {
             extra.push((from, to));
         }
     }
-    (extra, seeds)
+    let inputs = inputs.iter().map(|l| l.0 as usize).collect();
+    Susp {
+        extra,
+        starts,
+        inputs,
+    }
 }
 
-/// Locals whose value must survive some suspension (step 1 of the module docs).
-fn suspended_locals(f: &Function, extra: &[(usize, usize)], seeds: &[(usize, Bits)]) -> Bits {
+/// Locals whose value must survive some suspension (step 1 of the module docs). Liveness is
+/// asked only at the resume/cancel and start blocks, and maybe-written only for the locals
+/// live there.
+fn suspended_locals(f: &Function, s: &Susp) -> Bits {
     let n = f.locals.len();
-    let live = flow::liveness(f);
-    let written = flow::maybe_written(f, extra, seeds);
-    let mut out = Bits::new(n);
-    for &(from, to) in extra {
-        let mut s = live[to].clone();
-        s.intersect(&written[from]);
-        out.union(&s);
+    let query: Vec<usize> = s
+        .extra
+        .iter()
+        .map(|e| e.1)
+        .chain(s.starts.iter().copied())
+        .collect();
+    let live = flow::live_in_at(f, &query);
+    let mut cands = Bits::new(n);
+    for &b in &query {
+        live[b].iter().for_each(|&l| cands.set(l));
     }
-    for (blk, ins) in seeds {
-        let mut s = live[*blk].clone();
-        s.intersect(ins);
-        out.union(&s);
+    let u = Universe::of_set(n, &cands);
+    let written = flow::maybe_written(f, s, &u);
+    let mut ins = Bits::new(n);
+    s.inputs.iter().for_each(|&l| ins.set(l));
+    let mut out = Bits::new(n);
+    for &(from, to) in &s.extra {
+        for &l in &live[to] {
+            if u.index(l).is_some_and(|i| written[from].get(i)) {
+                out.set(l);
+            }
+        }
+    }
+    for &b in &s.starts {
+        for &l in live[b].iter().filter(|&&l| ins.get(l)) {
+            out.set(l);
+        }
     }
     out
 }
@@ -114,7 +142,7 @@ fn suspending_blocks(f: &Function) -> FxHashMap<i128, usize> {
 }
 
 /// The live set plus every local whose address may be held by a spilled local.
-fn close_over_pointers(mut spilled: Bits, pts: &[Bits]) -> Bits {
+fn close_over_pointers(mut spilled: Bits, pts: &[Set]) -> Bits {
     let mut work: Vec<usize> = spilled.iter().collect();
     while let Some(x) = work.pop() {
         for y in pts[x].iter() {
@@ -134,7 +162,7 @@ fn layout(
     cx: &mut Cx,
     f: &Function,
     spilled: &Bits,
-    interf: &[Bits],
+    interf: &Interference,
     result: Ty,
     name: &str,
 ) -> (AggId, FxHashMap<Local, u32>) {
@@ -159,7 +187,7 @@ fn layout(
         let mut off = base.next_multiple_of(a);
         while let Some(&(_, o, os)) = placed
             .iter()
-            .find(|&&(p, o, os)| interf[l].get(p) && off < o + os && o < off + s)
+            .find(|&&(p, o, os)| interf.conflict(l, p) && off < o + os && o < off + s)
         {
             off = (o + os).next_multiple_of(a);
         }

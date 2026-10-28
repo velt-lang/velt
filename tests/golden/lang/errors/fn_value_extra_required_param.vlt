@@ -1,0 +1,19 @@
+// A function needing more arguments than a function type passes is not a value of that type,
+// in an object literal's field too: TypeScript reports TS2322 (#943). Only parameters with
+// defaults or optional ones may be left over.
+type Handler = (a: number) => void;
+
+interface Handlers {
+  on: Handler;
+}
+
+function two(a: number, b: number): void {
+  console.log(a + b);
+}
+
+function main(): void {
+  const h: Handlers = { on: two };
+  h.on(1);
+}
+
+main();

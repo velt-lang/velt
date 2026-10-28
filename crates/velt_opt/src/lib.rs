@@ -129,6 +129,9 @@ pub mod interp;
 #[path = "../tests/common/mod.rs"]
 mod testkit;
 
+#[cfg(test)]
+mod import_tests;
+
 /// How hard to optimize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {

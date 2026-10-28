@@ -36,7 +36,7 @@ pub(super) fn build(cx: &mut Ctx) {
             continue;
         }
         for (b, span) in implements {
-            if !target_ok(cx, e, &b, span) {
+            if cx.refuse_atomic_value(b.iface, span) || !target_ok(cx, e, &b, span) {
                 continue;
             }
             let Some(imp) = check(cx, e, &b, span) else {
