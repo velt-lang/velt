@@ -24,7 +24,7 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
-import { Reader } from "velt:json/reader";
+import { FLAG_COMMENTS, FLAG_REJECT_UNKNOWN, FLAG_TRAILING_COMMAS, Reader } from "velt:json/reader";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
 import "velt:json/writer";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
@@ -123,13 +123,13 @@ function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
     return flags;
   }
   if (options.unknownKeys == "reject") {
-    flags = flags | 1;
+    flags = flags | (FLAG_REJECT_UNKNOWN as i64);
   }
   if (options.comments == "skip") {
-    flags = flags | 16;
+    flags = flags | (FLAG_COMMENTS as i64);
   }
   if (options.trailingCommas == true) {
-    flags = flags | 32;
+    flags = flags | (FLAG_TRAILING_COMMAS as i64);
   }
   return flags;
 }

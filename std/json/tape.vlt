@@ -23,7 +23,7 @@ import {
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
 import { writeF64, writeString } from "velt:json/writer";
-import { shortPath } from "velt:json/reader";
+import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
@@ -356,9 +356,10 @@ export class TapeError {
  * that is not JSON, `JSON nested deeper than N levels at <path> (byte k)` past the limit.
  */
 export function parseTape(src: string, maxDepth: u32, jsonc: u32 = 0): Tape | TapeError {
-  const sc = new Scanner((jsonc & 16) != 0 ? blankComments(src) : src);
-  sc.comments = (jsonc & 16) != 0;
-  sc.trailingCommas = (jsonc & 32) != 0;
+  const comments = (jsonc & FLAG_COMMENTS) != 0;
+  const sc = new Scanner(comments ? blankComments(src) : src);
+  sc.comments = comments;
+  sc.trailingCommas = (jsonc & FLAG_TRAILING_COMMAS) != 0;
   return parseWith(sc, maxDepth, true);
 }
 
