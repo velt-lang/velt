@@ -23,6 +23,7 @@ mod literal;
 mod map;
 mod object;
 mod read;
+mod reader;
 mod rows_read;
 mod union;
 mod union_object;

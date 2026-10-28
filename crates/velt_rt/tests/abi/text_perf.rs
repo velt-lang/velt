@@ -87,22 +87,22 @@ fn json_reader_throughput_10mb() {
     let t = Instant::now();
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 1);
-        assert_eq!(velt_rt_json_reader_end(r), 1);
-        velt_rt_json_reader_free(r);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
+        velt_rt_json_reader_free(r as u64);
     }
     let skip = t.elapsed();
     // A generated `JSON.parse<User[]>` decoder.
     let t = Instant::now();
     let users = unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
         let mut users = Vec::new();
-        while velt_rt_json_reader_array_next(r) == STEP_MORE {
+        while velt_rt_json_reader_array_next(r as u64) == STEP_MORE {
             users.push(decode_user_object(r).unwrap());
         }
-        assert_eq!(velt_rt_json_reader_end(r), 1);
-        velt_rt_json_reader_free(r);
+        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
+        velt_rt_json_reader_free(r as u64);
         users
     };
     let decode = t.elapsed();

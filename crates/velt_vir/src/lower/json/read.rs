@@ -25,16 +25,48 @@ impl FnLower<'_, '_> {
         err: Local,
         ty: TyId,
     ) {
+        // The Velt reader (std/json/reader.vlt): over the text, or over the runtime's row
+        // reader for a driver's rows (`FLAG_ROWS`, `FLAG_CURSOR`).
         let r = self.temp(Ty::Ptr);
+        let fl = Operand::Copy(Place::local(flags));
+        let rows_bits = cint(super::FLAG_ROWS | super::FLAG_CURSOR, Ty::U32);
+        let bits = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::BitAnd, fl.clone(), rows_bits),
+        );
+        let is_rows = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bits, cint(0, Ty::U32)));
+        let (rows_bb, text_bb, made) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_rows, rows_bb, text_bb);
+        self.switch_to(rows_bb);
+        let h = self.temp(Ty::Ptr);
         self.call_rt(
             Rt::JsonReaderNewWith,
             vec![
                 Operand::Copy(Place::local(src)),
-                Operand::Copy(Place::local(flags)),
+                fl.clone(),
                 Operand::Copy(Place::local(depth)),
             ],
-            Some(Place::local(r)),
+            Some(Place::local(h)),
         );
+        let hv = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Cast(Operand::Copy(Place::local(h)), Ty::U64),
+        );
+        let rr = self.reader_call("overRows", vec![hv]);
+        self.assign(Place::local(r), Rvalue::Use(rr));
+        self.goto(made);
+        self.switch_to(text_bb);
+        let tr = self.reader_call(
+            "of",
+            vec![
+                Operand::Copy(Place::local(src)),
+                fl,
+                Operand::Copy(Place::local(depth)),
+            ],
+        );
+        self.assign(Place::local(r), Rvalue::Use(tr));
+        self.goto(made);
+        self.switch_to(made);
         let ca = self.cx.json_ctx_agg();
         let ctx = self.temp(Ty::Agg(ca));
         let (e0, e1) = (self.str_lit(""), self.str_lit(""));
@@ -69,7 +101,9 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
         let path = self.addr(proj(&Place::local(ctx), Proj::Field(1)));
         self.call_rt(Rt::StrDrop, vec![path], None);
-        self.call_rt(Rt::JsonReaderFree, vec![r_op], None);
+        self.reader_call("close", vec![r_op]);
+        let rt_ty = self.cx.json_reader_ty();
+        self.drop_glue(Place::local(r), rt_ty);
         self.terminate(Terminator::Return(Operand::Copy(Place::local(ok))));
     }
 
@@ -83,7 +117,7 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufPushStr, vec![fa.clone(), path], None);
         let expected = self.addr(proj(&Place::local(ctx), Proj::Field(0)));
         let args = vec![r, expected, fa.clone(), Operand::Copy(Place::local(err))];
-        self.call_rt(Rt::JsonError, args, None);
+        self.reader_rt(Rt::JsonError, args, None);
         self.call_rt(Rt::StrDrop, vec![fa], None);
     }
 
@@ -132,7 +166,7 @@ impl FnLower<'_, '_> {
         self.json_expect(Rt::JsonArrayStart, vec![ro.clone()], ctx, &expected, fail);
         for (i, &e) in es.iter().enumerate() {
             let more = self.temp(Ty::U8);
-            self.call_rt(
+            self.reader_rt(
                 Rt::JsonArrayNext,
                 vec![ro.clone()],
                 Some(Place::local(more)),
@@ -157,7 +191,7 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         let end = self.temp(Ty::U8);
-        self.call_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(end)));
+        self.reader_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(end)));
         let (done, bad) = (self.new_block(), self.new_block());
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(end)),
@@ -184,11 +218,30 @@ impl FnLower<'_, '_> {
 
     pub(in crate::lower) fn rt_u8(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
         let d = self.temp(Ty::U8);
-        self.call_rt(r, args, Some(Place::local(d)));
+        if Self::is_reader_rt(r) {
+            self.reader_rt(r, args, Some(Place::local(d)));
+        } else {
+            self.call_rt(r, args, Some(Place::local(d)));
+        }
         self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(d)), cint(0, Ty::U8)),
         )
+    }
+
+    /// Continue if `ok` (a bool), else fail with `expected`.
+    pub(super) fn json_ok_or_fail(
+        &mut self,
+        ok: Operand,
+        ctx: Local,
+        expected: &str,
+        fail: BlockId,
+    ) {
+        let (next, bad) = (self.new_block(), self.new_block());
+        self.branch(ok, next, bad);
+        self.switch_to(bad);
+        self.json_fail(ctx, expected, fail);
+        self.switch_to(next);
     }
 
     /// Continue if the rt call `r(args)` returned 1, else fail with `expected`.
@@ -339,7 +392,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Integers via `read_i64` (exact integers only), range-checked for narrower types.
+    /// Integers via `read_i64` (exact integers only), range-checked for narrower types; `u64`
+    /// via `Reader.readU64`, its whole range.
     fn json_read_int(
         &mut self,
         r: Local,
@@ -348,6 +402,10 @@ impl FnLower<'_, '_> {
         it: hir::IntTy,
         fail: BlockId,
     ) {
+        if it == hir::IntTy::U64 {
+            self.json_read_u64(r, place, ctx, fail);
+            return;
+        }
         let name = format!("{it:?}").to_lowercase();
         let t = self.temp(Ty::I64);
         let a = self.addr(Place::local(t));
@@ -373,6 +431,22 @@ impl FnLower<'_, '_> {
         self.assign(place.clone(), Rvalue::Use(c));
     }
 
+    /// A `u64`: `Reader.readU64` checks `[0, 2^64)` and leaves the bits in its `i64` result.
+    fn json_read_u64(&mut self, r: Local, place: &Place, ctx: Local, fail: BlockId) {
+        let t = self.temp(Ty::I64);
+        let a = self.addr(Place::local(t));
+        let ro = Operand::Copy(Place::local(r));
+        let ok = self.read_out(&ro, "readU64", "lastI64", &a, Ty::I64);
+        let ok = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, ok, cint(0, Ty::U8)));
+        let (next, bad) = (self.new_block(), self.new_block());
+        self.branch(ok, next, bad);
+        self.switch_to(bad);
+        self.json_fail(ctx, "u64", fail);
+        self.switch_to(next);
+        let c = self.cast_to(Operand::Copy(Place::local(t)), Ty::I64, Ty::U64);
+        self.assign(place.clone(), Rvalue::Use(c));
+    }
+
     /// `null` → none; anything else decodes the payload.
     fn json_read_option(
         &mut self,
@@ -394,7 +468,7 @@ impl FnLower<'_, '_> {
         }
         let ro = Operand::Copy(Place::local(r));
         let kind = self.temp(Ty::U32);
-        self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(kind)));
+        self.reader_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(kind)));
         let is_null = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(
@@ -411,7 +485,7 @@ impl FnLower<'_, '_> {
         // read as a `T`, which fails (`expected string at $.a`).
         if matches!(self.cx.kind(ty), TyKind::Option(_, Nothing::Undefined)) {
             let absent = self.temp(Ty::U8);
-            self.call_rt(
+            self.reader_rt(
                 Rt::JsonNullAbsent,
                 vec![ro.clone()],
                 Some(Place::local(absent)),
@@ -464,7 +538,7 @@ impl FnLower<'_, '_> {
         self.goto(head);
         self.switch_to(head);
         let k = self.temp(Ty::U8);
-        self.call_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(k)));
+        self.reader_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(k)));
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(k)),
             cases: vec![(1, body), (0, done)],

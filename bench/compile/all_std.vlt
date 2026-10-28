@@ -62,6 +62,8 @@ import * as std_http_server_request from "velt:http/server/request";
 import * as std_http_server_response from "velt:http/server/response";
 import * as std_http_stream from "velt:http/stream";
 import * as std_import_meta from "velt:import_meta";
+import * as std_json_reader from "velt:json/reader";
+import * as std_json_scan from "velt:json/scan";
 import * as std_jsx from "velt:jsx";
 import * as std_jsx_attrs from "velt:jsx/attrs";
 import * as std_jsx_attrs_controls from "velt:jsx/attrs/controls";

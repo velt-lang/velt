@@ -35,25 +35,25 @@ pub struct User {
 unsafe fn fail(r: *mut Reader, expected: &str, path: &str) -> String {
     let (e, p) = (borrow(expected), borrow(path));
     let mut out = MaybeUninit::uninit();
-    velt_rt_json_error(r, &e, &p, out.as_mut_ptr());
+    velt_rt_json_error(r as u64, &e, &p, out.as_mut_ptr());
     owned_text(out.assume_init())
 }
 
 unsafe fn read_string(r: *mut Reader, path: &str) -> Result<String, String> {
     let mut s = MaybeUninit::uninit();
-    if velt_rt_json_reader_read_string(r, s.as_mut_ptr()) == 0 {
+    if velt_rt_json_reader_read_string(r as u64, s.as_mut_ptr()) == 0 {
         return Err(fail(r, "string", path));
     }
     Ok(owned_text(s.assume_init()))
 }
 
 unsafe fn read_tags(r: *mut Reader) -> Result<Vec<String>, String> {
-    if velt_rt_json_reader_expect_array_start(r) == 0 {
+    if velt_rt_json_reader_expect_array_start(r as u64) == 0 {
         return Err(fail(r, "array", "$.tags"));
     }
     let mut tags = Vec::new();
     loop {
-        match velt_rt_json_reader_array_next(r) {
+        match velt_rt_json_reader_array_next(r as u64) {
             STEP_END => return Ok(tags),
             STEP_MORE => tags.push(read_string(r, &format!("$.tags[{}]", tags.len()))?),
             _ => return Err(fail(r, "array", "$.tags")),
@@ -71,22 +71,22 @@ unsafe fn read_member(
     match key {
         b"name" => (u.name, seen[0]) = (read_string(r, "$.name")?, true),
         b"age" => {
-            if velt_rt_json_reader_read_i64(r, &mut u.age) == 0 {
+            if velt_rt_json_reader_read_i64(r as u64, &mut u.age) == 0 {
                 return Err(fail(r, "i64", "$.age"));
             }
             seen[1] = true;
         }
         b"tags" => (u.tags, seen[2]) = (read_tags(r)?, true),
         b"email" => {
-            u.email = if velt_rt_json_reader_peek(r) == TOKEN_NULL {
-                velt_rt_json_reader_read_null(r);
+            u.email = if velt_rt_json_reader_peek(r as u64) == TOKEN_NULL {
+                velt_rt_json_reader_read_null(r as u64);
                 None
             } else {
                 Some(read_string(r, "$.email")?)
             }
         }
         _ => {
-            if velt_rt_json_reader_skip_value(r) == 0 {
+            if velt_rt_json_reader_skip_value(r as u64) == 0 {
                 let path = format!("$.{}", String::from_utf8_lossy(key));
                 return Err(fail(r, "value", &path));
             }
@@ -97,7 +97,7 @@ unsafe fn read_member(
 
 /// Decode one `User` object at the reader's position (error paths assume it is the root).
 pub unsafe fn decode_user_object(r: *mut Reader) -> Result<User, String> {
-    if velt_rt_json_reader_expect_object_start(r) == 0 {
+    if velt_rt_json_reader_expect_object_start(r as u64) == 0 {
         return Err(fail(r, "object", "$"));
     }
     let mut u = User {
@@ -109,7 +109,7 @@ pub unsafe fn decode_user_object(r: *mut Reader) -> Result<User, String> {
     let mut seen = [false; 3];
     loop {
         let mut key = MaybeUninit::<VeltStr>::uninit();
-        match velt_rt_json_reader_next_key(r, key.as_mut_ptr()) {
+        match velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()) {
             STEP_END => break,
             STEP_MORE => {
                 let mut key = key.assume_init();
@@ -130,7 +130,7 @@ pub unsafe fn decode_user_object(r: *mut Reader) -> Result<User, String> {
 
 unsafe fn decode_user_with(r: *mut Reader) -> Result<User, String> {
     let u = decode_user_object(r)?;
-    if velt_rt_json_reader_end(r) == 0 {
+    if velt_rt_json_reader_end(r as u64) == 0 {
         return Err(fail(r, "end of input", "$"));
     }
     Ok(u)
@@ -142,7 +142,7 @@ pub fn decode_user(src: &str) -> Result<User, String> {
     unsafe {
         let r = velt_rt_json_reader_new(&s);
         let res = decode_user_with(r);
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
         res
     }
 }
@@ -298,10 +298,10 @@ fn integers_and_numbers() {
         let mut v = 0.0;
         unsafe {
             let r = velt_rt_json_reader_new(&src);
-            assert_eq!(velt_rt_json_reader_peek(r), TOKEN_NUMBER);
-            assert_eq!(velt_rt_json_reader_read_f64(r, &mut v), 1);
-            assert_eq!(velt_rt_json_reader_end(r), 1);
-            velt_rt_json_reader_free(r);
+            assert_eq!(velt_rt_json_reader_peek(r as u64), TOKEN_NUMBER);
+            assert_eq!(velt_rt_json_reader_read_f64(r as u64, &mut v), 1);
+            assert_eq!(velt_rt_json_reader_end(r as u64), 1);
+            velt_rt_json_reader_free(r as u64);
         }
         assert_eq!(v.to_bits(), want.to_bits(), "{text}");
     }
@@ -312,40 +312,40 @@ fn peek_kinds_and_scalars() {
     let src = lit(r#" [null, true ,false,-1,"s",[],{}] "#);
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_peek(r), TOKEN_ARRAY_START);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_peek(r as u64), TOKEN_ARRAY_START);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
         let mut kinds = Vec::new();
-        while velt_rt_json_reader_array_next(r) == STEP_MORE {
-            let k = velt_rt_json_reader_peek(r);
+        while velt_rt_json_reader_array_next(r as u64) == STEP_MORE {
+            let k = velt_rt_json_reader_peek(r as u64);
             kinds.push(k);
             let mut b = 9u8;
             let ok = match k {
                 TOKEN_TRUE | TOKEN_FALSE => {
-                    let ok = velt_rt_json_reader_read_bool(r, &mut b);
+                    let ok = velt_rt_json_reader_read_bool(r as u64, &mut b);
                     assert_eq!(b, (k == TOKEN_TRUE) as u8);
                     ok
                 }
-                TOKEN_NULL => velt_rt_json_reader_read_null(r),
-                _ => velt_rt_json_reader_skip_value(r),
+                TOKEN_NULL => velt_rt_json_reader_read_null(r as u64),
+                _ => velt_rt_json_reader_skip_value(r as u64),
             };
             assert_eq!(ok, 1);
         }
         assert_eq!(kinds, [1, 2, 3, 4, 5, 6, 8]);
-        assert_eq!(velt_rt_json_reader_peek(r), TOKEN_EOF);
-        assert_eq!(velt_rt_json_reader_end(r), 1);
-        velt_rt_json_reader_free(r);
+        assert_eq!(velt_rt_json_reader_peek(r as u64), TOKEN_EOF);
+        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
+        velt_rt_json_reader_free(r as u64);
     }
     // After an error, everything fails and peek reports it.
     let src = lit("[1 2]");
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 1);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_ERROR);
-        assert_eq!(velt_rt_json_reader_peek(r), TOKEN_ERROR);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 0);
-        velt_rt_json_reader_free(r);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_ERROR);
+        assert_eq!(velt_rt_json_reader_peek(r as u64), TOKEN_ERROR);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 0);
+        velt_rt_json_reader_free(r as u64);
     }
 }
 
@@ -355,16 +355,16 @@ fn keys_borrow_unless_escaped() {
     let src = borrow(&doc);
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
         let mut got = Vec::new();
         loop {
             let mut key = MaybeUninit::<VeltStr>::uninit();
-            if velt_rt_json_reader_next_key(r, key.as_mut_ptr()) != STEP_MORE {
+            if velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()) != STEP_MORE {
                 break;
             }
             let key = key.assume_init();
             got.push((key.is_static(), owned_text(key)));
-            assert_eq!(velt_rt_json_reader_skip_value(r), 1);
+            assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
         }
         assert_eq!(
             got,
@@ -374,7 +374,7 @@ fn keys_borrow_unless_escaped() {
                 (true, String::new())
             ]
         );
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
     }
 }
 
@@ -404,43 +404,49 @@ fn mark_and_reset_look_ahead() {
     let src = lit(r#" {"user":"a","kind":"join"} "#);
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        let mark = velt_rt_json_reader_mark(r);
-        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        let mark = velt_rt_json_reader_mark(r as u64);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
         let mut tag = MaybeUninit::uninit();
         loop {
             let mut key = MaybeUninit::uninit();
-            assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), STEP_MORE);
+            assert_eq!(
+                velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()),
+                STEP_MORE
+            );
             if owned_text(key.assume_init()) == "kind" {
-                assert_eq!(velt_rt_json_reader_read_string(r, tag.as_mut_ptr()), 1);
+                assert_eq!(
+                    velt_rt_json_reader_read_string(r as u64, tag.as_mut_ptr()),
+                    1
+                );
                 break;
             }
-            assert_eq!(velt_rt_json_reader_skip_value(r), 1);
+            assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
         }
         assert_eq!(owned_text(tag.assume_init()), "join");
-        velt_rt_json_reader_reset(r, mark);
-        assert_eq!(velt_rt_json_reader_peek(r), TOKEN_OBJECT_START);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 1);
-        assert_eq!(velt_rt_json_reader_end(r), 1);
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_reset(r as u64, mark);
+        assert_eq!(velt_rt_json_reader_peek(r as u64), TOKEN_OBJECT_START);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
+        velt_rt_json_reader_free(r as u64);
     }
     // Reset clears an error seen while looking ahead, and keeps the "first element" state.
     let src = lit("[1.5, 2]");
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
-        let mark = velt_rt_json_reader_mark(r);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_MORE);
+        let mark = velt_rt_json_reader_mark(r as u64);
         let mut n = 0i64;
-        assert_eq!(velt_rt_json_reader_read_i64(r, &mut n), 0);
-        velt_rt_json_reader_reset(r, mark);
+        assert_eq!(velt_rt_json_reader_read_i64(r as u64, &mut n), 0);
+        velt_rt_json_reader_reset(r as u64, mark);
         let mut f = 0.0;
-        assert_eq!(velt_rt_json_reader_read_f64(r, &mut f), 1);
+        assert_eq!(velt_rt_json_reader_read_f64(r as u64, &mut f), 1);
         assert_eq!(f, 1.5);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
-        assert_eq!(velt_rt_json_reader_read_i64(r, &mut n), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_read_i64(r as u64, &mut n), 1);
         assert_eq!(n, 2);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_END);
-        velt_rt_json_reader_free(r);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_END);
+        velt_rt_json_reader_free(r as u64);
     }
 }
 
@@ -448,7 +454,7 @@ fn mark_and_reset_look_ahead() {
 fn options_reject_unknown_keys_and_limit_depth() {
     let msg = |r: *const Reader, path: &str| unsafe {
         let mut out = MaybeUninit::uninit();
-        velt_rt_json_error(r, &lit("value"), &borrow(path), out.as_mut_ptr());
+        velt_rt_json_error(r as u64, &lit("value"), &borrow(path), out.as_mut_ptr());
         owned_text(out.assume_init())
     };
     let src = lit(r#"{"a":1,"b":2}"#);
@@ -456,30 +462,33 @@ fn options_reject_unknown_keys_and_limit_depth() {
         // Unknown keys skipped by default, an error when rejected.
         for (flags, want) in [(0, 1), (FLAG_REJECT_UNKNOWN, 0)] {
             let r = velt_rt_json_reader_new_with(&src, flags, 0);
-            assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+            assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
             let mut key = MaybeUninit::uninit();
-            assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), STEP_MORE);
-            assert_eq!(velt_rt_json_reader_skip_unknown(r), want);
+            assert_eq!(
+                velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()),
+                STEP_MORE
+            );
+            assert_eq!(velt_rt_json_reader_skip_unknown(r as u64), want);
             if want == 0 {
                 assert_eq!(msg(r, "$.a"), "unknown field at $.a");
             }
-            velt_rt_json_reader_free(r);
+            velt_rt_json_reader_free(r as u64);
         }
     }
     // Depth counts the reader's own containers and those inside skipped values.
     let src = lit(r#"[[1],{"x":[[2]]}]"#);
     unsafe {
         let r = velt_rt_json_reader_new_with(&src, 0, 3);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 1); // [1]: depth 2
-        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
-        assert_eq!(velt_rt_json_reader_skip_value(r), 0); // {"x":[[2]]}: depth 4
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1); // [1]: depth 2
+        assert_eq!(velt_rt_json_reader_array_next(r as u64), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 0); // {"x":[[2]]}: depth 4
         assert_eq!(
             msg(r, "$[1]"),
             "JSON nested deeper than 3 levels at $[1] (byte 11)"
         );
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
     }
 }
 
@@ -501,17 +510,17 @@ fn a_source_with_lone_surrogates_gives_strings_that_know_it() {
     assert!(!unsafe { src.is_well_formed() });
     unsafe {
         let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
         let mut key = MaybeUninit::uninit();
-        assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), 1);
+        assert_eq!(velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()), 1);
         let key = key.assume_init();
         assert_eq!(key.as_bytes(), [&b"k"[..], &hi].concat());
         assert!(!key.is_well_formed());
-        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
         let mut items = vec![];
-        while velt_rt_json_reader_array_next(r) == 1 {
+        while velt_rt_json_reader_array_next(r as u64) == 1 {
             let mut s = MaybeUninit::uninit();
-            assert_eq!(velt_rt_json_reader_read_string(r, s.as_mut_ptr()), 1);
+            assert_eq!(velt_rt_json_reader_read_string(r as u64, s.as_mut_ptr()), 1);
             let s = s.assume_init();
             // The escaped one is decoded into a heap or inline string: its lone count is kept.
             assert!(!s.is_well_formed());
@@ -522,6 +531,6 @@ fn a_source_with_lone_surrogates_gives_strings_that_know_it() {
             items,
             [[&lo[..], b"x"].concat(), [&b"a\nb"[..], &hi].concat()]
         );
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
     }
 }
