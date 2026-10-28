@@ -4,6 +4,7 @@
 
 /** What a failed `assert`, `assertEq` or `assertThrows` throws (Node's `AssertionError`). */
 export class AssertionError extends Error {
+  /** An `AssertionError` with `message`, named `"AssertionError"`. */
   constructor(message: string) {
     super(message);
     this.name = "AssertionError";
