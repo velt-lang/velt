@@ -108,7 +108,8 @@ export struct Atomic<T> {
   /**
    * Makes `v` the value if it is `expected`; returns the previous value, which is `expected`
    * when it did. `failure` is the ordering of the read when it did not (by default `order`
-   * without its release part).
+   * without its release part). On an `Atomic` of a `shared` value it compares identity (the same
+   * reference) and returns whether it made `v` the value; when it did not, `v` is dropped.
    */
   compareExchange(
     expected: T,
