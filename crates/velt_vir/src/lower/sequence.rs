@@ -16,6 +16,9 @@ use crate::vir::{Operand, Place, Rvalue, Ty};
 pub(super) struct Later {
     /// Write to a local of the enclosing function (`i++`, a closure called through a value).
     pub(super) locals: bool,
+    /// With `locals`: the one local they write, when it is known (`dv.getUint8(q++)` writes
+    /// only `q`, so `dv` needs no hold).
+    pub(super) only: Option<hir::LocalId>,
     /// Change memory: a call, an assignment, `new`, `await` (`velt_sema::effects`).
     pub(super) memory: bool,
 }
@@ -23,8 +26,13 @@ pub(super) struct Later {
 impl Later {
     /// What evaluating `e` may do.
     pub(super) fn of(e: &hir::Expr) -> Later {
+        let only = match written_local(e) {
+            Written::One(l) => Some(l),
+            _ => None,
+        };
         Later {
             locals: writes_local(e),
+            only,
             memory: may_change_memory(e),
         }
     }
@@ -36,10 +44,22 @@ impl Later {
 
     /// Both effects.
     pub(super) fn or(self, o: Later) -> Later {
+        let only = match (self.locals, o.locals) {
+            (true, true) if self.only == o.only => self.only,
+            (true, true) => None,
+            (true, false) => self.only,
+            (false, _) => o.only,
+        };
         Later {
             locals: self.locals || o.locals,
+            only,
             memory: self.memory || o.memory,
         }
+    }
+
+    /// May the operands write the HIR local `l`?
+    pub(super) fn may_write(self, l: hir::LocalId) -> bool {
+        self.locals && self.only.is_none_or(|o| o == l)
     }
 }
 
@@ -94,6 +114,63 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
         }
         K::ArrayLit(xs) => any(xs),
         _ => true,
+    }
+}
+
+/// The locals evaluating `e` may write, as far as `written_local` tells them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Written {
+    Nothing,
+    One(hir::LocalId),
+    Unknown,
+}
+
+impl Written {
+    fn and(self, o: Written) -> Written {
+        match (self, o) {
+            (Written::Nothing, x) | (x, Written::Nothing) => x,
+            (Written::One(a), Written::One(b)) if a == b => Written::One(a),
+            _ => Written::Unknown,
+        }
+    }
+}
+
+/// The local evaluating `e` writes, when it writes just one and the shape says which: an
+/// assignment or update of a variable (`q++`, which is `{ let t = q; q += 1; t }`: the block's
+/// own temporaries are not visible to anything evaluated before it), whose parts write nothing
+/// else. `Unknown` for anything else that may write.
+fn written_local(e: &hir::Expr) -> Written {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Assign { place, value } | K::CompoundAssign { place, value, .. } => match &place.kind {
+            K::Local(l, _) => Written::One(*l).and(written_local(value)),
+            _ => Written::Unknown,
+        },
+        K::Block(b) => {
+            let mut w = Written::Nothing;
+            let mut own = vec![];
+            for st in &b.stmts {
+                let x = match &st.kind {
+                    hir::StmtKind::Let { local, init } => {
+                        own.push(*local);
+                        init.as_ref().map_or(Written::Nothing, written_local)
+                    }
+                    hir::StmtKind::Expr(x) => written_local(x),
+                    _ => Written::Unknown,
+                };
+                w = w.and(match x {
+                    Written::One(l) if own.contains(&l) => Written::Nothing,
+                    x => x,
+                });
+            }
+            let v = b.value.as_deref().map_or(Written::Nothing, written_local);
+            w.and(match v {
+                Written::One(l) if own.contains(&l) => Written::Nothing,
+                x => x,
+            })
+        }
+        _ if !writes_local(e) => Written::Nothing,
+        _ => Written::Unknown,
     }
 }
 
@@ -288,7 +365,14 @@ impl FnLower<'_, '_> {
             return true;
         }
         let named = self.locals[p.local.0 as usize].name.is_some();
-        named && later.locals
+        if !named || !later.locals {
+            return false;
+        }
+        match later.only {
+            // The one local the later operands write: is it this one?
+            Some(l) => self.info[l.0 as usize].vir == Some(p.local) && later.may_write(l),
+            None => true,
+        }
     }
 }
 
