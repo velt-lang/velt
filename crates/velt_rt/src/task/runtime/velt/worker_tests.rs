@@ -20,7 +20,8 @@ fn a_worker_thread_recurses_as_deep_as_the_main_thread() {
     }
     let frames = worker_thread()
         .spawn(|| {
-            let top = std::hint::black_box([0u8; 1]).as_ptr() as usize;
+            let mark = std::hint::black_box(0u8);
+            let top = &mark as *const u8 as usize;
             deep(top, 5 << 20)
         })
         .unwrap()
