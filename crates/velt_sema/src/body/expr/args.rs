@@ -502,11 +502,8 @@ impl FnCx<'_, '_> {
             let site = self.param_site(p);
             let outer_target = self.set_target(site);
             let want = want_of(p.mode);
-            let view = match system {
-                true => self.system_view_arg(&args[i], p.ty, want),
-                false => None,
-            };
-            let h = match (view, adapted, bound, arrow) {
+            let view = system.then(|| self.system_view_arg(&args[i], p.ty, want));
+            let h = match (view.flatten(), adapted, bound, arrow) {
                 (Some(h), ..) => h,
                 (None, Some(h), _, _) => h,
                 (None, None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
