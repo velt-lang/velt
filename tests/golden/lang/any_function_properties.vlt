@@ -49,3 +49,14 @@ for (let i = 0; i < 3; i++) {
 for (const k of made) {
   console.log(k(), k.v[1]);
 }
+
+// Every reference to a declared function is the same function.
+const h3: any = plus;
+console.log(h3.label, "label" in h3, h3 === h);
+
+// Each evaluation of an arrow is a new function, also without captures.
+const make = () => () => 1;
+const a1: any = make();
+const a2: any = make();
+a1.v = 1;
+console.log(a1.v, a2.v, a1 === a2);

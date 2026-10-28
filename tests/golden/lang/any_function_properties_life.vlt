@@ -1,0 +1,67 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// Properties of functions held as `any` (#924): freed with the function, one identity per
+// declared function, and copied with a function sent to another task.
+
+// Short-lived functions, every other one with properties: none sees another's.
+const seen: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const f: any = () => i;
+  if (i % 2 == 0) {
+    f.n = i;
+    f.box = { v: [i] };
+  }
+  seen.push(String(f.n));
+}
+console.log(seen.join(" "));
+
+// A declared function is one function, whichever reference reaches it.
+function decl(): number {
+  return 1;
+}
+(decl as any).y = 2;
+console.log((decl as any).y);
+function tag(f: any, v: number): any {
+  f.v = v;
+  return f;
+}
+const keep: any = decl;
+tag(keep, 10);
+console.log(keep.v, keep(), (decl as any) === keep);
+
+// `delete` and the keys after it.
+const g: any = () => 0;
+g.a = 1;
+g.b = { c: 2 };
+g.d = "x";
+console.log(delete g.b, Object.keys(g), "b" in g);
+g.b = 3;
+console.log(Object.keys(g), g.b);
+
+// A function sent to tasks while this one rewrites its property: each task has a copy.
+async function reader(f: any, n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const o = f.obj;
+    s += o.k;
+    if (i % 64 == 0) await Promise.resolve();
+  }
+  return s;
+}
+async function main(): Promise<void> {
+  const f: any = () => 1;
+  f.obj = { k: 1 };
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 4; t++) {
+    const h = f;
+    ps.push(spawn(reader(h, 5000)));
+  }
+  for (let i = 0; i < 5000; i++) {
+    f.obj = { k: 1 };
+    if (i % 64 == 0) await Promise.resolve();
+  }
+  let s = 0;
+  for (const p of ps) s += await p;
+  console.log(s);
+}
+await main();

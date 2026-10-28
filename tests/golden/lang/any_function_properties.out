@@ -7,3 +7,5 @@ plus 2 2
 0 0
 1 10
 2 20
+plus true true
+1 undefined false

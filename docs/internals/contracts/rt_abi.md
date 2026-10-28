@@ -615,24 +615,40 @@ void velt_rt_fnprop_set(uint8_t *env, const VeltStr *key, const uint8_t *value);
 uint8_t velt_rt_fnprop_delete(const uint8_t *env, const VeltStr *key);
 uint64_t velt_rt_fnprop_len(const uint8_t *env);
 void velt_rt_fnprop_key(const uint8_t *env, uint64_t i, VeltStr *out);
+uint8_t *velt_rt_fnprop_identity(const uint8_t *code);
+uint8_t *velt_rt_fnprop_identity_of(const uint8_t *code);
 ```
 
 Properties a program adds to a function value through `any` (velt_vir `lower/any_fn_props.rs`):
 JavaScript functions are objects. The function's identity is its closure environment (a
-program with writes through `any` gives every closure a counted one), so the table maps the
-environment's address to its properties in insertion order, each value an `any` (`{ data,
-table }`, 16 bytes). `get` answers the address of the value held (borrowed: the caller shares
-it at once) or null; `set` takes the `any` at `value` and drops the one it replaces after the
-store; `delete` answers 1 when there was one; `len` and `key` list the names (`key` writes an
-owned string).
+program with writes through `any` that holds functions there gives every closure a counted
+one), so the table maps the environment's address to its properties in insertion order, each
+value an `any` (`{ data, table }`, two pointers). `get` answers the address of the value held
+(borrowed: the caller shares it at once) or null; `set` takes the `any` at `value` and drops the
+one it replaces after the store; `delete` answers 1 when there was one; `len` and `key` list the
+names (`key` writes an owned string).
 
-The first `set` on an environment replaces its drop entry (its first word) with the runtime's,
-which calls the original and, with the last reference (a count of 1 in front of the
-environment), first removes the entry, puts the original drop entry back and drops the names
-and values. The values are dropped through their table's drop slot, and never under the
-table's lock. One table for the process, behind a lock. Both runtimes provide them
-(`velt_rt/src/fn_props.rs`, compiled into velt_rt_wasm too). Programs without a write through
-`any` never call them.
+A function value without an environment (a declared function's) is one function in
+JavaScript, whichever reference reaches it: `identity(code)` answers the environment the runtime
+keeps for the function with that code address (an environment holding nothing, made on first
+use, one more reference for the caller, which stores it into the value as its environment), and
+`identity_of(code)` the same without making one or counting it (null when there is none). A
+value converted to `any` gets it there, so `===`, `Map` keys and properties see one function.
+The table holds its reference to the end; with the leak counters on (`VELT_RC_STATS=1`), it is
+released at exit, as module state is.
+
+The first `set` on an environment replaces its drop entry (its first word) and its transfer
+entry (its third) with the runtime's. The drop calls the original and, with the last reference
+(a count of 1 in front of the environment), first removes the entry, puts the original entries
+back and drops the names and values. The transfer (the function enters another thread) moves a
+unique environment and transfers each value in place; a shared one is copied (by its original
+transfer entry, or as a new environment holding nothing), and the copy gets a share of each
+value, transferred, so every thread has properties of its own, as a copied object has members
+of its own. A tagged pointer (the many-threads check) goes to the original entry. Values are
+dropped, shared and transferred through their table's slots (8 bytes each on every target),
+never under the table's lock. One table for the process, behind a lock. Both runtimes provide
+them (`velt_rt/src/fn_props.rs`, compiled into velt_rt_wasm too). Programs without a write
+through `any` never call them.
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.

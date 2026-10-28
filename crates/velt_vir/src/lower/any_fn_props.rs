@@ -5,8 +5,8 @@
 //! the function's properties, keyed by its closure environment, which is the function's
 //! identity: a program that writes through `any` and holds functions there gives every closure
 //! a counted environment (`Boxing::fn_identity`), so copies of the function share it, and its
-//! properties; a function value without one (a declared function's) gets one from the runtime
-//! at its first property write.
+//! properties; a function value without one (a declared function's) has the identity the
+//! runtime keeps for its code, made at the first property write to any reference to it.
 //!
 //! A property read or call that finds nothing goes on as before: the built-in members of
 //! functions (`name`, `call`, ...) are not supported yet, and another key is `undefined`, as in
@@ -44,13 +44,39 @@ impl FnLower<'_, '_> {
             && matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
     }
 
-    /// The environment of the function value an `any`'s data pointer `data` stands for.
+    /// The identity of the function value an `any`'s data pointer `data` stands for: its
+    /// environment, or for one without (a declared function's value) the identity the runtime
+    /// keeps for its code, null while it has none.
     fn fn_env(&mut self, data: vir::Local, ty: TyId) -> Operand {
         let vp = self.any_value_place(data, ty);
-        self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&vp, Proj::Field(1)))),
-        )
+        let out = Place::local(self.temp(Ty::Ptr));
+        let env = Operand::Copy(proj(&vp, Proj::Field(1)));
+        self.assign(out.clone(), Rvalue::Use(env));
+        let (none, join) = (self.new_block(), self.new_block());
+        let nn = self.non_null(Operand::Copy(out.clone()));
+        self.branch(nn, join, none);
+        self.switch_to(none);
+        let code = Operand::Copy(proj(&vp, Proj::Field(0)));
+        self.call_rt(Rt::FnPropIdentityOf, vec![code], Some(out.clone()));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(out)
+    }
+
+    /// Give the function value at `fp` without an environment (a declared function's value)
+    /// the identity the runtime keeps for its code, as its environment: every `any` holding the
+    /// function then holds one function, which `===`, `Map` keys and properties see.
+    pub(super) fn fn_identity_into(&mut self, fp: &Place) {
+        let envp = proj(fp, Proj::Field(1));
+        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(envp.clone())));
+        let (none, join) = (self.new_block(), self.new_block());
+        let nn = self.non_null(env);
+        self.branch(nn, join, none);
+        self.switch_to(none);
+        let code = Operand::Copy(proj(fp, Proj::Field(0)));
+        self.call_rt(Rt::FnPropIdentity, vec![code], Some(envp));
+        self.goto(join);
+        self.switch_to(join);
     }
 
     /// Look property `key` up: the current block becomes the one where it is present, with the
@@ -131,26 +157,26 @@ impl FnLower<'_, '_> {
             self.any_set_refuse(v, ST_UNSUPPORTED);
             self.switch_to(next);
         }
-        // A function without an environment (a declared function's value) gets one at its
-        // first property write, as its identity: the function this `any` holds and every copy
-        // made of it from now on carry the properties.
+        // A function without an environment (a declared function's value) gets the identity
+        // the runtime keeps for its code, the same for every reference to the function; the
+        // value this `any` holds keeps it as its environment.
         let vp = self.any_value_place(data, ty);
-        let envp = proj(&vp, Proj::Field(1));
-        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(envp.clone())));
-        let (none, join) = (self.new_block(), self.new_block());
-        let nn = self.non_null(env);
-        self.branch(nn, join, none);
-        self.switch_to(none);
-        self.call_rt(Rt::FnPropIdentity, vec![], Some(envp.clone()));
-        self.goto(join);
-        self.switch_to(join);
-        let env = Operand::Copy(envp);
+        self.fn_identity_into(&vp);
+        let env = Operand::Copy(proj(&vp, Proj::Field(1)));
+        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(env));
+        let (yes, no) = (self.new_block(), self.new_block());
+        let nn = self.non_null(env.clone());
+        self.branch(nn, yes, no);
+        self.switch_to(yes);
         let (k, val) = (
             Operand::Copy(Place::local(key)),
             Operand::Copy(Place::local(v)),
         );
         self.call_rt(Rt::FnPropSet, vec![env, k, val], None);
         self.ret_status(ST_OK);
+        // A generic closure's value without an environment: no identity to carry them yet.
+        self.switch_to(no);
+        self.any_set_refuse(v, ST_UNSUPPORTED);
     }
 
     /// The `AnyHas` slot body of a function type: its properties, and what every function and

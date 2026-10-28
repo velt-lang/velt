@@ -5,10 +5,12 @@
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
+use super::any_glue::OBJECT_PROTO;
+use super::any_member::{ST_OK, ST_UNSUPPORTED};
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::{cint, FnLower};
-use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
@@ -275,5 +277,42 @@ impl FnLower<'_, '_> {
         self.terminate(crate::vir::Terminator::Unreachable);
         self.switch_to(ok);
         self.drop_glue(keys, keys_ty);
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
+    /// has no members of its own; `Object.prototype`'s come later.
+    pub(super) fn any_get_record(
+        &mut self,
+        data: vir::Local,
+        key: vir::Local,
+        out: &Place,
+        ty: TyId,
+    ) {
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
+        let get = self.plain_adt(ty).and_then(|(d, _)| {
+            self.dyn_members_of(d)
+                .into_iter()
+                .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
+        });
+        let ready = get.and_then(|m| self.ready(ty, &m));
+        let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.ret_status(ST_UNSUPPORTED);
+            self.switch_to(next);
+        }
+        let kvt = self.cx.ty(k);
+        let kp = self.deref_param(key, k);
+        let ks = self.share_value(Operand::Copy(kp), k);
+        let kslot = Place::local(self.copy_to_temp(ks, kvt));
+        let this = self.any_this(data, ty);
+        self.any_invoke(&r, this, vec![(kslot, k)], out);
+        self.ret_status(ST_OK);
     }
 }
