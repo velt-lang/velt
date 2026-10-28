@@ -884,8 +884,9 @@ reading such a global is an ICE, as it would mean a reference sema did not see. 
 look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
 `HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
 methods of the prelude's types, the modules in `EAGER`, and, in the glue built for a JSON
-intrinsic, the definitions of the module in `JSON_GLUE` it calls, which sema checks once
-checked code instantiates such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
+intrinsic, the definitions of the module in `JSON_GLUE` it calls and the prelude definitions
+`JSON_GLUE_PRELUDE` lists with that module, which sema checks once checked code instantiates
+such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
 `JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for `JsonStringify` and
 `DbBind`.
 

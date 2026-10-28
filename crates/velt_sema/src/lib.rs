@@ -440,13 +440,11 @@ fn check_timed(
         lock_free_callbacks,
         ..
     } = cx;
-    let defs = defs
-        .into_iter()
-        .map(|d| d.expect("ICE: definition left unfilled without an error"))
-        .collect();
     let program = hir::Program {
         types: ty.table,
-        defs,
+        defs: (defs.into_iter())
+            .map(|d| d.expect("ICE: definition left unfilled without an error"))
+            .collect(),
         entry,
         impls,
         // The HIR contract keeps std maps; the checker builds Fx maps.

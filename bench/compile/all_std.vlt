@@ -1,7 +1,9 @@
-// Compile-time benchmark input: imports every std module, so sema checks all of std and the
-// prelude (bench/nightly.sh divides its instructions by the code lines of all of std/, which
-// is only a cost per line when all of std is checked; crates/veltc/tests/bench_programs.rs
-// checks that no module is missing). A small main touches a few modules and names the globals
+// Compile-time benchmark input: imports every std module, so with VELT_EAGER_STD=1 sema checks
+// all of std and the prelude (without it, the prelude's free functions and statics this program
+// doesn't reach stay unchecked; docs/internals/design/lazy-std.md). bench/nightly.sh divides its
+// instructions with VELT_EAGER_STD=1 by the code lines of all of std/, which is only a cost per
+// line when all of std is checked; crates/veltc/tests/bench_programs.rs checks that no module is
+// missing and that all of std checks without diagnostics. A small main touches a few modules and names the globals
 // loaded on demand whose modules nothing imports (`Proxy` and `Reflect`,
 // std/prelude/global/proxy.vlt).
 import { existsSync } from "velt:fs";

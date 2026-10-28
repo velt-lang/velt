@@ -3,7 +3,7 @@
 use super::*;
 
 /// The `"__…"` names in the Rust sources under `dir` (string literals, with or without a module
-/// path before them).
+/// path or an owner before them: `"__x"`, `"…::__x"`, `"{}.__x"`).
 fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).expect("source directory") {
         let path = entry.expect("source entry").path();
@@ -21,7 +21,14 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
         let src = std::fs::read_to_string(&path).expect("source file");
         for (i, _) in src.match_indices("__") {
             let before = src[..i].chars().last();
-            if !matches!(before, Some('"') | Some(':')) {
+            if !matches!(before, Some('"') | Some(':') | Some('.')) {
+                continue;
+            }
+            // A definition of a std module outside the prelude (`"std/proxy::Proxy.__view"`):
+            // `every_std_definition_lowering_names_stays_checked` checks those.
+            let line = &src[src[..i].rfind('\n').map_or(0, |l| l + 1)..i];
+            let lit = line.rfind('"').map_or("", |q| &line[q + 1..]);
+            if lit.starts_with("std/") && !HELPERS.iter().any(|p| lit.starts_with(p)) {
                 continue;
             }
             let name: String = src[i..]
@@ -29,12 +36,18 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                 .collect();
             let after = src[i + name.len()..].chars().next();
-            // A literal name (`"__x"`, `"…::__x"`) or a prefix (`"__any{class}_"`).
+            // A literal name (`"__x"`, `"…::__x"`, `"{}.__x"`) or a prefix (`"__any{class}_"`).
             if matches!(after, Some('"') | Some('{')) && name.len() > 2 {
                 out.push(name);
             }
         }
     }
+}
+
+/// Is `name` (a short name) the last part of one of [`JSON_GLUE_PRELUDE`]'s definitions?
+fn in_json_glue_prelude(name: &str) -> bool {
+    (JSON_GLUE_PRELUDE.iter().flat_map(|l| l.iter()))
+        .any(|full| full.rsplit(['.', ':']).next() == Some(name))
 }
 
 #[test]
@@ -53,9 +66,12 @@ fn every_name_lowering_looks_up_is_a_helper() {
     // C preprocessor macros (`__AVX2__`, `__GCC_…`) and DWARF names are no definitions.
     let missing: Vec<&String> = (names.iter())
         .filter(|n| !n.ends_with("__") && !n.starts_with("__DWARF") && !n.starts_with("__GCC"))
-        .filter(|n| !is_helper(n))
+        .filter(|n| !is_helper(n) && !in_json_glue_prelude(n))
         .collect();
-    assert!(missing.is_empty(), "add to HELPER_NAMES: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "add to HELPER_NAMES (or, for one only JSON glue calls, to JSON_GLUE_PRELUDE): {missing:?}"
+    );
 }
 
 /// The `"std/<module>::<name>"` literals in the Rust sources under `dir`, outside tests.

@@ -96,3 +96,106 @@ fn errors_in_user_code_are_reported_as_before() {
     );
     assert!(e.contains("error"), "{e}");
 }
+
+/// A std module `velt:zzprobe` that re-exports what `velt:zzprobe/impl` (`impl_src`) declares,
+/// so that `impl` stays lazy when the program imports `velt:zzprobe`; `src` imports it.
+fn with_probe_std(impl_src: &str, src: &str) -> Program {
+    let mut l = common::programs::load_src(src);
+    let reexport = "export { Gadget, SpecialError, Base, Special } from \"velt:zzprobe/impl\";\n";
+    for (path, text) in [("std/zzprobe", reexport), ("std/zzprobe/impl", impl_src)] {
+        let file = l.sm.add(format!("{path}.vlt"), text.to_string());
+        let (ast, diags) = velt_syntax::parse_file(file, text);
+        assert!(diags.is_empty(), "parse errors in {path}");
+        l.modules.push(velt_sema::SourceModule {
+            path: path.to_string(),
+            is_std: true,
+            file,
+            ast,
+            imports: vec![],
+            jsx_runtime: None,
+        });
+    }
+    let n = l.modules.len();
+    l.modules[n - 2]
+        .imports
+        .push(("velt:zzprobe/impl".into(), "std/zzprobe/impl".into()));
+    l.modules[l.root]
+        .imports
+        .push(("velt:zzprobe".into(), "std/zzprobe".into()));
+    let (p, d) = l.check();
+    assert!(
+        p.is_some() && d.iter().all(|d| !d.is_error()),
+        "unexpected diagnostics:\n{}",
+        l.render(&d)
+    );
+    p.unwrap()
+}
+
+/// The classes of the probe's lazy module.
+const PROBE_IMPL: &str = "\
+export class Gadget { n: number = 1; constructor() {} toString(): string { return \"G\" + this.n; } }
+export class SpecialError extends Error {
+  constructor() { super(\"special\"); }
+  toJSON(): { s: string } { return { s: \"x\" }; }
+  __inspect(): string { return \"S\"; }
+}
+export class Base { constructor() {} }
+export class Special extends Base { constructor() { super(); } describe(): string { return \"special\"; } }
+";
+
+#[test]
+fn a_class_used_only_as_a_type_argument_has_its_methods_checked() {
+    // `probe<Gadget>` prints a `Gadget`, so lowering builds `Gadget.toString`; no expression or
+    // local of the program has a type that mentions `Gadget`, only the call's type argument.
+    let p = with_probe_std(
+        PROBE_IMPL,
+        "import { Gadget } from \"velt:zzprobe\";\n\
+         function probe<T>(): number {\n\
+           const xs: T[] = [];\n\
+           for (const x of xs) { console.log(`${x}`); console.log(x); }\n\
+           return xs.length;\n\
+         }\n\
+         function main() { console.log(probe<Gadget>()); }\n",
+    );
+    let names = unchecked(&p);
+    assert!(
+        !names.contains(&"std/zzprobe/impl::Gadget.toString".to_string()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn the_subclasses_of_a_used_class_have_their_methods_checked() {
+    // Printing an `Error` dispatches over every class that extends it, constructed or not.
+    let p = with_probe_std(
+        PROBE_IMPL,
+        "import { Gadget } from \"velt:zzprobe\";\n\
+         function main() { const e: Error = new Error(\"x\"); console.log(e); }\n",
+    );
+    let names = unchecked(&p);
+    for m in ["__inspect", "toJSON"] {
+        let f = format!("std/zzprobe/impl::SpecialError.{m}");
+        assert!(!names.contains(&f), "{f}: {names:?}");
+    }
+    // Hello world doesn't use `Base`, so its subclass stays unchecked.
+    assert!(
+        names.contains(&"std/zzprobe/impl::Special.describe".to_string()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_user_subclass_makes_the_std_subclasses_of_its_base_checked() {
+    // `JSON.stringify` of a `Base` value dispatches over `Special` too.
+    let p = with_probe_std(
+        PROBE_IMPL,
+        "import { Base } from \"velt:zzprobe\";\n\
+         class Mine extends Base { constructor() { super(); } }\n\
+         function main() { const b: Base = new Mine(); console.log(JSON.stringify(b)); }\n",
+    );
+    let names = unchecked(&p);
+    assert!(
+        !names.contains(&"std/zzprobe/impl::Special.describe".to_string()),
+        "{names:?}"
+    );
+}

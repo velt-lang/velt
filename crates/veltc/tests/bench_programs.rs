@@ -11,6 +11,8 @@
 //! existed, which shows as no call of the weak runtime (every release of a weak-capable type
 //! has one).
 
+mod no_window;
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -178,5 +180,26 @@ fn all_std_imports_every_std_module() {
         missing.is_empty(),
         "bench/compile/all_std.vlt does not import every std module; add:\n{}",
         missing.join("\n")
+    );
+}
+
+/// All of std type-checks (#1658): every program checks the std definitions it reaches only
+/// (docs/internals/design/lazy-std.md), so `velt check` of all_std.vlt with laziness off
+/// (`VELT_EAGER_STD=1`) is what checks every definition of std, the prelude's free functions
+/// included. It must report nothing, not even a warning.
+#[test]
+fn all_of_std_checks_without_diagnostics() {
+    let root = &root();
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "bench/compile/all_std.vlt"])
+        .current_dir(root)
+        .env("VELT_STD", root.join("std"))
+        .env("VELT_EAGER_STD", "1")
+        .output()
+        .expect("run velt check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && stderr.trim().is_empty(),
+        "velt check bench/compile/all_std.vlt with VELT_EAGER_STD=1:\n{stderr}"
     );
 }

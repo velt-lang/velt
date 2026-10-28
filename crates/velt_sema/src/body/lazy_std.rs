@@ -19,8 +19,10 @@
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]).
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
-//! reports everything in what a program imports, and bench/compile/all_std.vlt, which imports
-//! every module, checks all of std. The editor's analysis checks everything.
+//! reports everything in what a program imports, except the prelude's unreached free functions
+//! and statics. All of std is checked with laziness off (`VELT_EAGER_STD=1`), as veltc's
+//! `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The editor's
+//! analysis checks everything.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -30,7 +32,7 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
-/// `unpin` and `retire`) and calls them.
+/// `unpin` and `retire`, `this_fn`'s glue) and calls them.
 const EAGER: &[&str] = &[
     "std/sort",
     "std/proxy",
@@ -44,6 +46,18 @@ const EAGER: &[&str] = &[
 /// definitions are reached once checked code instantiates an intrinsic whose glue calls it
 /// (`lazy_std_json.rs`). What they call in other modules is reached from their code as usual.
 const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
+
+/// Per [`JSON_GLUE`] module: the prelude definitions (full names) that the same glue calls by
+/// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
+/// the reader's state). Deferred even when they are methods, and reached only with the module
+/// or by a reference in checked code, not by a use of their type: nothing else calls them.
+const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
+
+/// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
+/// ([`JSON_GLUE_PRELUDE`]).
+fn json_glue_prelude(name: &str) -> Option<usize> {
+    JSON_GLUE_PRELUDE.iter().position(|l| l.contains(&name))
+}
 
 /// The prelude's modules (path prefixes): lowering looks up the methods of their classes and
 /// some of their functions by name ([`is_helper`]), so only their other free functions and
@@ -154,6 +168,8 @@ pub(crate) struct Lazy {
     used: FxHashSet<DefId>,
     /// Per class or struct: its deferred methods and constructors.
     methods: FxHashMap<DefId, Vec<DefId>>,
+    /// Per class: the classes that extend it directly.
+    subclasses: FxHashMap<DefId, Vec<DefId>>,
     /// When the [`JSON_GLUE`] modules are reached.
     json: json::JsonReach,
 }
@@ -168,6 +184,7 @@ impl Lazy {
             types: FxHashSet::default(),
             used: FxHashSet::default(),
             methods: FxHashMap::default(),
+            subclasses: FxHashMap::default(),
             json: json::JsonReach::default(),
         }
     }
@@ -200,9 +217,18 @@ pub(crate) fn plan(cx: &mut Ctx) {
         .collect();
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
+        if let DefInfo::Adt(a) = &cx.info[i] {
+            if let Some(TyKind::Adt(base, _)) = a.base.map(|b| cx.ty.kind(b)) {
+                cx.lazy.subclasses.entry(*base).or_default().push(d);
+            }
+        }
         if let (DefInfo::Fn(f), true) = (&cx.info[i], deferred(cx, d)) {
             if let Some(k) = JSON_GLUE.iter().position(|m| *m == mods[f.module].path) {
                 cx.lazy.json.defs[k].push(d);
+            }
+            if let Some(k) = json_glue_prelude(&f.name) {
+                cx.lazy.json.defs[k].push(d);
+                continue;
             }
             if let (Some(o), FnKind::Method | FnKind::Ctor) = (f.owner, f.kind) {
                 cx.lazy.methods.entry(o).or_default().push(d);
@@ -218,6 +244,12 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
     }
     match &cx.info[d.0 as usize] {
         DefInfo::Fn(f) if f.source.is_none() => false,
+        DefInfo::Fn(f)
+            if cx.lazy.modules[f.module] == Mode::Helpers
+                && json_glue_prelude(&f.name).is_some() =>
+        {
+            true
+        }
         DefInfo::Fn(f) => match f.kind {
             FnKind::Free | FnKind::Static => match cx.lazy.modules[f.module] {
                 Mode::Eager => false,
@@ -324,15 +356,28 @@ pub(crate) fn reach(cx: &mut Ctx) {
 }
 
 /// Record the types `todo` and their parts as met; each class or struct met for the first time
-/// adds its deferred methods (and those of its base classes, and its fields' types) to `found`.
+/// adds its deferred methods (and those of its base classes, its subclasses and its fields'
+/// types) to `found`.
+///
+/// Its subclasses too: lowering's glue for a class value (`console.log`'s formatting,
+/// `JSON.stringify`, a member of `any`) dispatches over every class in the program that extends
+/// it (`velt_vir` `any_subclass_dispatch`, `json_descendants`), constructed or not, and so builds
+/// their methods (`__inspect`, `toJSON`, …).
 fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
-    while let Some(t) = todo.pop() {
-        if !cx.lazy.types.insert(t) {
+    let mut classes: Vec<DefId> = vec![];
+    loop {
+        if let Some(t) = todo.pop() {
+            if !cx.lazy.types.insert(t) {
+                continue;
+            }
+            let kind = cx.ty.kind(t).clone();
+            todo.extend(crate::types::children(&kind));
+            if let TyKind::Adt(d, _) = kind {
+                classes.push(d);
+            }
             continue;
         }
-        let kind = cx.ty.kind(t).clone();
-        todo.extend(crate::types::children(&kind));
-        let TyKind::Adt(d, _) = kind else { continue };
+        let Some(d) = classes.pop() else { break };
         if !cx.lazy.used.insert(d) {
             continue;
         }
@@ -340,6 +385,7 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
             todo.extend(a.fields.iter().map(|f| f.ty));
             todo.extend(a.base);
         }
+        classes.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         found.extend(cx.lazy.methods.get(&d).into_iter().flatten().copied());
     }
 }
@@ -463,9 +509,15 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
         }
         | E::FnRef(d, targs) => {
             sc.found.push(*d);
+            // A type argument is a used type: monomorphization builds the methods the callee
+            // calls on it (`probe<Gadget>()` printing a `T`).
+            sc.types.extend(targs);
             if !targs.is_empty() {
                 sc.calls.push((sc.cur, *d, targs.clone()));
             }
+        }
+        E::AdtLit { type_args, .. } | E::Variant { type_args, .. } | E::New { type_args, .. } => {
+            sc.types.extend(type_args)
         }
         E::Global(d) => sc.found.push(*d),
         E::Call {
@@ -478,15 +530,26 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             }
         }
         E::Call {
+            callee: Callee::Dyn {
+                method_type_args, ..
+            },
+            ..
+        } => {
+            sc.types.extend(method_type_args);
+            sc.generic_dispatch |= !method_type_args.is_empty();
+        }
+        E::Call {
             callee:
-                Callee::Dyn {
-                    method_type_args, ..
-                }
-                | Callee::ParamMethod {
-                    method_type_args, ..
+                Callee::ParamMethod {
+                    method_type_args,
+                    iface_args,
+                    ..
                 },
             ..
-        } if !method_type_args.is_empty() => sc.generic_dispatch = true,
+        } => {
+            sc.types.extend(method_type_args.iter().chain(iface_args));
+            sc.generic_dispatch |= !method_type_args.is_empty();
+        }
         _ => {}
     }
 }
