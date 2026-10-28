@@ -233,10 +233,10 @@ export struct ThreadLocal<T> {
 export interface AtomicValue {}
 
 /**
- * The types a `shared` value of is read in place, without a lock or a copy: what holds no
+ * The types whose `shared` values are read in place, without a lock or a copy: what holds no
  * `Mutex`, weak reference, promise, function or interface value, and no class with subclasses
- * or a `clone()` of its own. The compiler knows which, so no type declares it. With a type
- * parameter bounded by it (`V extends Frozen`), generic code reads a `shared<V>` as a `V`,
- * checked where the generic is instantiated.
+ * or a `clone()` of its own. The compiler knows which, so no type declares it (an `extends` or
+ * `implements` of it is an error). With a type parameter bounded by it (`V extends Frozen`),
+ * generic code reads a `shared<V>` as a `V`, checked where the generic is instantiated.
  */
 export interface Frozen {}

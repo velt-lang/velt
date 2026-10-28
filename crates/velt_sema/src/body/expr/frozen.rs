@@ -166,17 +166,6 @@ impl FnCx<'_, '_> {
     /// `Ctx::frozen_readable` with this body's type parameters bounded by the prelude's `Frozen`
     /// taken as readable (checked where the generic is instantiated).
     pub(crate) fn frozen_readable_here(&mut self, t: TyId) -> bool {
-        let frozen = self.cx.prelude_iface("Frozen");
-        let params = (0..self.bounds.len() as u32)
-            .filter(|&p| {
-                self.bounds[p as usize]
-                    .iter()
-                    .any(|b| Some(b.iface) == frozen)
-            })
-            .collect();
-        let saved = std::mem::replace(&mut self.cx.frozen_params, params);
-        let ok = self.cx.frozen_readable(t);
-        self.cx.frozen_params = saved;
-        ok
+        self.cx.frozen_readable_under(&self.bounds, t)
     }
 }

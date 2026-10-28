@@ -1,5 +1,6 @@
-// `Frozen` is the compiler's: a type holding a `Mutex` does not satisfy it, declaring it changes
-// nothing, and without the bound generic code cannot read a `shared<V>` as a `V`.
+// `Frozen` is the compiler's: a type holding a `Mutex` does not satisfy it, declaring it is an
+// error (and changes nothing), a type parameter satisfies it only through its own bound, and
+// without the bound generic code cannot read a `shared<V>` as a `V`.
 
 function unbounded<V>(s: shared<V>): V {
   return s;
@@ -23,5 +24,19 @@ class Claims implements Frozen {
 
 const g = new Store<Guarded>(new Guarded());
 const c = new Store<Claims>(new Claims());
+
+interface Sealed extends Frozen {}
+
+interface Tag {}
+
+extend<T extends Tag> T implements Frozen {}
+
+function viaSealed<T extends Sealed>(v: T): Store<T> {
+  return new Store<T>(v);
+}
+
+function viaTag<T extends Tag>(v: T): Store<T> {
+  return new Store<T>(v);
+}
 
 function main() {}

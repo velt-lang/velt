@@ -599,19 +599,14 @@ impl Ctx<'_> {
         if Some(b.iface) == self.prelude_iface("Frozen")
             && !matches!(self.ty.kind(ty), TyKind::Param(_))
         {
-            let frozen = self.prelude_iface("Frozen");
-            let params = (0..bounds.len() as u32)
-                .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
-                .collect();
-            let saved = std::mem::replace(&mut self.frozen_params, params);
-            let ok = self.frozen_readable(ty);
-            self.frozen_params = saved;
-            return ok;
+            return self.frozen_readable_under(bounds, ty);
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            // Only a direct `T extends AtomicValue`: nothing else can stand for the compiler's.
-            if Some(b.iface) == self.prelude_iface("AtomicValue") {
+            // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
+            // compiler's.
+            let known = [self.prelude_iface("AtomicValue"), self.prelude_iface("Frozen")];
+            if known.contains(&Some(b.iface)) {
                 return declared.contains(b);
             }
             if declared
@@ -656,6 +651,19 @@ impl Ctx<'_> {
             .impl_args(ty, b.iface)
             .is_some_and(|args| args == b.args);
         self.impl_scope = saved;
+        ok
+    }
+
+    /// `frozen_readable` of `t` with the type parameters bounded by the prelude's `Frozen` in
+    /// `bounds` taken as readable (checked where the generic is instantiated).
+    pub(crate) fn frozen_readable_under(&mut self, bounds: &[Vec<Bound>], t: TyId) -> bool {
+        let frozen = self.prelude_iface("Frozen");
+        let params = (0..bounds.len() as u32)
+            .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
+            .collect();
+        let saved = std::mem::replace(&mut self.frozen_params, params);
+        let ok = self.frozen_readable(t);
+        self.frozen_params = saved;
         ok
     }
 
