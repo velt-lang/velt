@@ -420,7 +420,9 @@ The first slice (host imports, the target and glue, `serve()`) differs from the 
   reader of its own (the literal turned into JSON) for the fields it stores. Tested with the
   real client: crates/veltc/tests/registry_worker.rs serves it from node with fake R2 and D1, and
   by hand under `wrangler dev`. Writing it found a client bug: `velt_http` couldn't read a
-  chunked response body, which it now decodes.
+  chunked response body, which it now decodes. Users sign up with GitHub (the OAuth web flow,
+  packages/registry/src/github.vlt): linked by GitHub's numeric id, a new registry token per
+  sign-in, tested against a fake GitHub (tests/workers/registry_server.mjs).
 - **`main` can't await a binding before `serve()`**: `velt_start` drives `main` with
   `block_on`, which ends the program when only a host promise is pending. Timers work there
   (`block_on` busy-waits for them), and handlers may await anything.

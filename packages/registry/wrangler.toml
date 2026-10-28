@@ -9,6 +9,9 @@ compatibility_date = "2026-10-01"
 # "true" lets anyone publish and turns owners off: for a private registry on a trusted network.
 REGISTRY_OPEN = "false"
 # ADMIN_TOKEN, which the admin API (users, owners) needs: `npx wrangler secret put ADMIN_TOKEN`.
+# Signing in with GitHub: the OAuth app's client id here, and its secret with
+# `npx wrangler secret put GITHUB_CLIENT_SECRET` (docs/tooling/registry-worker.md).
+# GITHUB_CLIENT_ID = "…"
 
 [[r2_buckets]]
 binding = "BLOBS"

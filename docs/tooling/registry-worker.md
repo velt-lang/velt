@@ -26,8 +26,32 @@ with `--local`, and put `ADMIN_TOKEN=…` in `.dev.vars`).
 
 Every write needs a user's token (`Authorization: Bearer <token>`, which `velt login` stores),
 and for an existing package one of its owners: the first user to publish a package owns it, and
-owners add others with `velt owner add`. Users are made through the admin API, with the
-`ADMIN_TOKEN` secret:
+owners add others with `velt owner add`. Users sign up with GitHub, or an administrator makes
+them.
+
+### Signing in with GitHub
+
+Opening `https://<worker>/login` in a browser signs in with GitHub. The first time, it makes a
+registry user named after the GitHub login (lowercase; `gh-` before a login that starts with a
+digit); the page then shows a registry token, once, for `velt login https://<worker>`. Signing in
+again shows a new token, and the previous one stops working. The user stays linked to the GitHub
+account's numeric id, so renaming the account on GitHub keeps the registry user. A login whose
+name an administrator already gave to another user is refused.
+
+To turn it on, register an OAuth app on GitHub (Settings → Developer settings → OAuth Apps)
+with the callback URL `https://<worker>/login/callback`, set `GITHUB_CLIENT_ID` under `[vars]`
+in `wrangler.toml`, and store the app's secret:
+
+```sh
+npx wrangler secret put GITHUB_CLIENT_SECRET
+```
+
+Without them, `/login` says that sign-in is not set up. The app asks for no scopes: the registry
+only reads who signed in.
+
+### Users by the administrator
+
+The admin API, with the `ADMIN_TOKEN` secret:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://<worker>/api/v1/_admin/users/alice
@@ -56,6 +80,6 @@ one, is never replaced. Native libraries are checked against their `native.json`
 version and target, the files it names, the export prefix).
 
 **Not yet** ([#1325](https://github.com/velt-lang/velt/issues/1325)): downloads go through the
-Worker rather than straight from R2 and the cache; users come from the admin API rather than
-GitHub sign-in; and `velt registry user` and `velt registry owner` work only on a registry
-directory.
+Worker rather than straight from R2 and the cache; `velt login` doesn't open the browser itself
+(the token is copied from the page); and `velt registry user` and `velt registry owner` work
+only on a registry directory.

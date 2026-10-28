@@ -31,6 +31,10 @@ struct Name {
   name: string;
 }
 
+struct Created {
+  created: number;
+}
+
 struct User {
   user: string;
 }
@@ -50,6 +54,46 @@ export class Store {
       .bind(hash)
       .first<Name>();
     return row == null ? null : row.name;
+  }
+
+  /** The user signed in with GitHub account `githubId`, if any. */
+  async userByGithub(githubId: number): Promise<string | null, CloudflareError> {
+    const row = await this.db
+      .prepare("SELECT name FROM users WHERE github_id = ?")
+      .bind(githubId)
+      .first<Name>();
+    return row == null ? null : row.name;
+  }
+
+  /** Adds user `name` for GitHub account `githubId`; false if the name is taken. */
+  async addGithubUser(
+    name: string,
+    githubId: number,
+    hash: string,
+  ): Promise<bool, CloudflareError> {
+    const r = await this.db
+      .prepare("INSERT OR IGNORE INTO users (name, token, github_id) VALUES (?, ?, ?)")
+      .bind(name, hash, githubId)
+      .run();
+    return r.changes > 0;
+  }
+
+  /** Remembers sign-in `state`, made at `now` (ms), and forgets those older than `oldest`. */
+  async saveState(state: string, now: number, oldest: number): Promise<void, CloudflareError> {
+    await this.db.batch([
+      this.db.prepare("DELETE FROM oauth_states WHERE created < ?").bind(oldest),
+      this.db.prepare("INSERT INTO oauth_states (state, created) VALUES (?, ?)").bind(state, now),
+    ]);
+  }
+
+  /** Whether `state` was made at `oldest` or later; it can't be used again either way. */
+  async takeState(state: string, oldest: number): Promise<bool, CloudflareError> {
+    const row = await this.db
+      .prepare("SELECT created FROM oauth_states WHERE state = ?")
+      .bind(state)
+      .first<Created>();
+    await this.db.prepare("DELETE FROM oauth_states WHERE state = ?").bind(state).run();
+    return row != null && row.created >= oldest;
   }
 
   async isUser(name: string): Promise<bool, CloudflareError> {

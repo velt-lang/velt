@@ -1,0 +1,225 @@
+// Signing in with GitHub (docs/tooling/registry-worker.md "Signing in with GitHub"): GitHub's
+// web flow for OAuth apps. `GET /login` sends the browser to GitHub with a one-time `state`;
+// GitHub sends it back to `GET /login/callback` with a `code`, which the Worker exchanges for an
+// access token to ask GitHub who signed in. The registry user is found by GitHub's numeric id,
+// or made, named after the GitHub login; the page shows a new registry token, once, for
+// `velt login`. Signing in again makes a new token, and the previous one stops working.
+//
+// Configuration: `GITHUB_CLIENT_ID` (a variable) and `GITHUB_CLIENT_SECRET` (a secret) of the
+// OAuth app, whose callback URL is `<registry>/login/callback`. `GITHUB_URL` and
+// `GITHUB_API_URL` replace https://github.com and https://api.github.com (tests use a fake).
+
+import { escapeHtml } from "velt:html";
+import { CloudflareError, envVar } from "velt:cloudflare";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { Rejected } from "./archive";
+import { hashToken, newToken } from "./auth";
+import { isValidUserName } from "./names";
+import { Registry } from "./publish";
+
+/** How long a sign-in may take, from `/login` to the callback. */
+const STATE_TTL_MS = 10 * 60 * 1000;
+
+struct AccessToken {
+  access_token?: string;
+  error?: string;
+  error_description?: string;
+}
+
+struct GithubUser {
+  id: number;
+  login: string;
+}
+
+struct App {
+  clientId: string;
+  clientSecret: string;
+  web: string;
+  api: string;
+}
+
+// The OAuth app, or null when GitHub sign-in isn't configured.
+function app(): App | null {
+  const clientId = envVar("GITHUB_CLIENT_ID") ?? "";
+  const clientSecret = envVar("GITHUB_CLIENT_SECRET") ?? "";
+  if (clientId == "" || clientSecret == "") {
+    return null;
+  }
+  return {
+    clientId: clientId,
+    clientSecret: clientSecret,
+    web: envVar("GITHUB_URL") ?? "https://github.com",
+    api: envVar("GITHUB_API_URL") ?? "https://api.github.com",
+  };
+}
+
+/** An HTML page (not cached: it may hold a token). */
+export function page(status: number, title: string, body: string): Response {
+  const html = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem}
+code,pre{font:14px ui-monospace,monospace;background:#f2f2f2;padding:.1rem .3rem;border-radius:4px}
+pre{padding:.8rem;overflow-x:auto}</style></head>
+<body><h1>${escapeHtml(title)}</h1>
+${body}
+</body></html>
+`;
+  return new Response(html, {
+    status: status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+/** `GET /login`: to GitHub. */
+export async function login(r: Registry, url: URL): Promise<Response, CloudflareError> {
+  const a = app();
+  if (a == null) {
+    return page(
+      404,
+      "GitHub sign-in is not set up",
+      "<p>This registry makes its users through its admin API.</p>",
+    );
+  }
+  const state = newToken();
+  const now = Date.now();
+  await r.store.saveState(state, now, now - STATE_TTL_MS);
+  try {
+    const target = new URL(`${a.web}/login/oauth/authorize`);
+    // `searchParams` is a copy in Velt (docs/std/url.md): set it back.
+    const params = target.searchParams;
+    params.set("client_id", a.clientId);
+    params.set("redirect_uri", `${url.origin}/login/callback`);
+    params.set("state", state);
+    params.set("allow_signup", "true");
+    target.searchParams = params;
+    return new Response("", {
+      status: 302,
+      headers: { location: target.href, "cache-control": "no-store" },
+    });
+  } catch (e) {
+    return page(
+      500,
+      "GitHub sign-in is misconfigured",
+      `<p><code>GITHUB_URL</code> is not a URL.</p>`,
+    );
+  }
+}
+
+// GitHub's access token for `code`; throws 502 when GitHub refuses it.
+async function exchange(
+  a: App,
+  code: string,
+  redirect: string,
+): Promise<string, Rejected | IoError | AbortError> {
+  const res = await fetch(`${a.web}/login/oauth/access_token`, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({
+      client_id: a.clientId,
+      client_secret: a.clientSecret,
+      code: code,
+      redirect_uri: redirect,
+    }),
+  });
+  let answer: AccessToken = {};
+  try {
+    answer = JSON.parse<AccessToken>(await res.text());
+  } catch (e) {
+    throw new Rejected(502, `GitHub's answer was not understood (status ${res.status})`);
+  }
+  const token = answer.access_token;
+  if (token == undefined || token == "") {
+    throw new Rejected(
+      502,
+      `GitHub refused the sign-in: ${answer.error_description ?? answer.error ?? `status ${res.status}`}`,
+    );
+  }
+  return token;
+}
+
+// Who signed in.
+async function whoIs(a: App, token: string): Promise<GithubUser, Rejected | IoError | AbortError> {
+  const res = await fetch(`${a.api}/user`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "user-agent": "velt-registry",
+    },
+  });
+  if (!res.ok) {
+    throw new Rejected(502, `GitHub didn't say who signed in (status ${res.status})`);
+  }
+  try {
+    return JSON.parse<GithubUser>(await res.text());
+  } catch (e) {
+    throw new Rejected(502, "GitHub's answer about the user was not understood");
+  }
+}
+
+/** The registry user name for GitHub login `login`: itself in lowercase, or `gh-` and it. */
+export function userName(login: string): string {
+  const lower = login.toLowerCase();
+  return isValidUserName(lower) ? lower : `gh-${lower}`;
+}
+
+/** `GET /login/callback?code=…&state=…`: back from GitHub. */
+export async function callback(r: Registry, url: URL): Promise<Response, CloudflareError> {
+  const a = app();
+  if (a == null) {
+    return page(
+      404,
+      "GitHub sign-in is not set up",
+      "<p>This registry makes its users through its admin API.</p>",
+    );
+  }
+  const state = url.searchParams.get("state") ?? "";
+  const code = url.searchParams.get("code") ?? "";
+  if (state == "" || !(await r.store.takeState(state, Date.now() - STATE_TTL_MS))) {
+    return page(
+      400,
+      "Sign-in expired",
+      `<p>The sign-in took too long or was used already. <a href="/login">Sign in again</a>.</p>`,
+    );
+  }
+  if (code == "") {
+    return page(
+      400,
+      "Sign-in canceled",
+      `<p>GitHub didn't send a code. <a href="/login">Sign in again</a>.</p>`,
+    );
+  }
+  let user: GithubUser = { id: 0, login: "" };
+  try {
+    user = await whoIs(a, await exchange(a, code, `${url.origin}/login/callback`));
+  } catch (e) {
+    const message = e instanceof Rejected ? e.message : `GitHub could not be reached: ${e}`;
+    return page(502, "Sign-in failed", `<p>${escapeHtml(message)}</p>`);
+  }
+  const token = newToken();
+  let name = await r.store.userByGithub(user.id);
+  if (name != null) {
+    await r.store.setToken(name, hashToken(token));
+  } else {
+    name = userName(user.login);
+    if (!(await r.store.addGithubUser(name, user.id, hashToken(token)))) {
+      return page(
+        409,
+        "Name taken",
+        `<p>This registry already has a user named <code>${escapeHtml(name)}</code> that isn't linked to your GitHub account. Ask its administrator.</p>`,
+      );
+    }
+  }
+  const origin = escapeHtml(url.origin);
+  return page(
+    200,
+    `Signed in as ${name}`,
+    `<p>Your registry token, shown once (signing in again makes a new one, and this one stops working):</p>
+<pre id="token">${escapeHtml(token)}</pre>
+<p>On your machine, run</p>
+<pre>velt login ${origin}</pre>
+<p>and paste the token. Then <code>velt publish</code> publishes as <code>${escapeHtml(name)}</code>.</p>`,
+  );
+}

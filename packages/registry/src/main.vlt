@@ -9,6 +9,7 @@ import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { CloudflareError, D1Database, R2Bucket } from "velt:cloudflare";
 import { Rejected } from "./archive";
+import { callback, login } from "./github";
 import { authorize, caller, hashToken, isOpen, newToken, requireAdmin } from "./auth";
 import { isValidPackageName, isValidUserName } from "./names";
 import {
@@ -318,6 +319,12 @@ async function route(
   const m = req.method;
   if (parts.length == 0 && m == "GET") {
     return await listing(r);
+  }
+  if (parts.length == 1 && parts[0] == "login" && m == "GET") {
+    return await login(r, url);
+  }
+  if (parts.length == 2 && parts[0] == "login" && parts[1] == "callback" && m == "GET") {
+    return await callback(r, url);
   }
   if (parts.length < 3 || parts[0] != "api" || parts[1] != "v1") {
     return text(404, "not found");

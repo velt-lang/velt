@@ -113,11 +113,20 @@ fn write(path: &Path, text: &str) {
     std::fs::write(path, text).expect("write");
 }
 
-#[test]
-fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
+/// The registry Worker built and served; `None` (with a note) when the tools are missing.
+struct Started {
+    _server: Server,
+    url: String,
+    /// `alice`'s token.
+    token: String,
+    work: PathBuf,
+    home: PathBuf,
+}
+
+fn start(name: &str) -> Option<Started> {
     if let Some(missing) = missing_tools() {
         println!("registry_worker: skipped (needs {missing})");
-        return;
+        return None;
     }
     let root = root();
     if !prebuilt() {
@@ -128,7 +137,7 @@ fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
             .expect("cargo build -p velt_rt_wasm");
         assert!(st.success(), "building velt_rt_wasm for {TRIPLE} failed");
     }
-    let work = work_dir::work_dir(&root, "registry-worker-test");
+    let work = work_dir::work_dir(&root, name);
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).expect("work dir");
     let build = work.join("build");
@@ -141,7 +150,6 @@ fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
             .expect("velt build"),
         "building packages/registry",
     );
-
     let mut child = no_window::command("node")
         .arg("--no-warnings")
         .arg(root.join("crates/veltc/tests/workers/registry_server.mjs"))
@@ -161,24 +169,49 @@ fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
     let [_, port, _, token] = words[..] else {
         panic!("unexpected first line from the registry server: {first:?}");
     };
-    let url = format!("http://127.0.0.1:{port}");
-    let home = work.join("home");
+    Some(Started {
+        url: format!("http://127.0.0.1:{port}"),
+        token: token.to_string(),
+        home: work.join("home"),
+        work,
+        _server: server,
+    })
+}
 
-    let lib = work.join("textkit");
+/// A package `name` at `version` in `dir`.
+fn package(dir: &Path, name: &str, version: &str) {
     write(
-        &lib.join("package.vlt"),
-        "import type { Package } from \"velt:package\";\n\n// A package for the registry Worker test.\nexport const pkg: Package = {\n  name: \"textkit\",\n  version: \"1.0.0\",\n  description: \"Small text helpers\",\n  keywords: [\"text\", \"strings\"],\n};\n",
+        &dir.join("package.vlt"),
+        &format!("import type {{ Package }} from \"velt:package\";\n\n// A package for the registry Worker test.\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"{version}\",\n  description: \"Small text helpers\",\n  keywords: [\"text\", \"strings\"],\n}};\n"),
     );
     write(
-        &lib.join("src/lib.vlt"),
+        &dir.join("src/lib.vlt"),
         "/** `s`, shouted. */\nexport function shout(s: string): string {\n  return `${s.toUpperCase()}!`;\n}\n",
     );
-    let refused = velt(&lib, &home, &url, "not-a-token", &["publish"]);
+}
+
+#[test]
+fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
+    let Some(Started {
+        url,
+        token,
+        work,
+        home,
+        _server,
+    }) = start("registry-worker-test")
+    else {
+        return;
+    };
+    let token = token.as_str();
+    let url = url.as_str();
+    let lib = work.join("textkit");
+    package(&lib, "textkit", "1.0.0");
+    let refused = velt(&lib, &home, url, "not-a-token", &["publish"]);
     assert!(!refused.status.success(), "{}", text(&refused));
     assert!(text(&refused).contains("a valid `Authorization: Bearer <token>` is required"));
-    let out = ok(velt(&lib, &home, &url, token, &["publish"]), "velt publish");
+    let out = ok(velt(&lib, &home, url, token, &["publish"]), "velt publish");
     assert!(out.contains("Published `textkit` 1.0.0"), "{out}");
-    let again = velt(&lib, &home, &url, token, &["publish"]);
+    let again = velt(&lib, &home, url, token, &["publish"]);
     assert!(
         text(&again).contains("is already published"),
         "{}",
@@ -195,13 +228,13 @@ fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
         "import { shout } from \"textkit\";\n\nfunction main() {\n  console.log(shout(\"hello from the registry worker\"));\n}\n",
     );
     ok(
-        velt(&app, &home, &url, token, &["add", "textkit"]),
+        velt(&app, &home, url, token, &["add", "textkit"]),
         "velt add",
     );
-    let run = ok(velt(&app, &home, &url, token, &["run"]), "velt run");
+    let run = ok(velt(&app, &home, url, token, &["run"]), "velt run");
     assert!(run.contains("HELLO FROM THE REGISTRY WORKER!"), "{run}");
     let found = ok(
-        velt(&app, &home, &url, token, &["search", "text"]),
+        velt(&app, &home, url, token, &["search", "text"]),
         "velt search",
     );
     assert!(
@@ -209,26 +242,131 @@ fn the_velt_client_publishes_to_and_installs_from_the_registry_worker() {
         "{found}"
     );
     let owners = ok(
-        velt(&app, &home, &url, token, &["owner", "list", "textkit"]),
+        velt(&app, &home, url, token, &["owner", "list", "textkit"]),
         "velt owner list",
     );
     assert!(owners.contains("alice"), "{owners}");
     let last = velt(
         &app,
         &home,
-        &url,
+        url,
         token,
         &["owner", "remove", "textkit", "alice"],
     );
     assert!(text(&last).contains("is the last owner"), "{}", text(&last));
     ok(
-        velt(&app, &home, &url, token, &["yank", "textkit@1.0.0"]),
+        velt(&app, &home, url, token, &["yank", "textkit@1.0.0"]),
         "velt yank",
     );
     let none = ok(
-        velt(&app, &home, &url, token, &["search", "text"]),
+        velt(&app, &home, url, token, &["search", "text"]),
         "velt search",
     );
     assert!(!none.contains("textkit  1.0.0"), "{none}");
-    drop(server);
+}
+
+/// `GET url` without following redirects: (status, `location`, body).
+fn get(url: &str) -> (u16, String, String) {
+    let r = velt_http::fetch("GET", url, &[], &[]).expect("GET");
+    let location = r.header("location").unwrap_or("").to_string();
+    (r.status, location, r.body_text().to_string())
+}
+
+/// A sign-in through GitHub with `code`: `(status, page)` of the callback.
+fn sign_in(url: &str, code: &str) -> (u16, String) {
+    let (status, location, _) = get(&format!("{url}/login"));
+    assert_eq!(status, 302, "GET /login");
+    let callback = format!("{url}/login/callback");
+    let want = format!(
+        "https://github.test/login/oauth/authorize?client_id=gh-client&redirect_uri={}",
+        callback.replace(':', "%3A").replace('/', "%2F")
+    );
+    assert!(location.starts_with(&want), "{location}");
+    let state = location
+        .split("state=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .expect("a state");
+    let (status, _, page) = get(&format!("{callback}?code={code}&state={state}"));
+    // A state is used once.
+    let (again, _, expired) = get(&format!("{callback}?code={code}&state={state}"));
+    assert_eq!(again, 400, "{expired}");
+    assert!(expired.contains("Sign-in expired"), "{expired}");
+    (status, page)
+}
+
+/// The token a successful sign-in shows.
+fn shown_token(page: &str) -> String {
+    let start = page
+        .find("<pre id=\"token\">")
+        .expect("a token on the page")
+        + 16;
+    page[start..start + page[start..].find("</pre>").expect("</pre>")].to_string()
+}
+
+#[test]
+fn users_sign_up_and_in_with_github() {
+    let Some(Started {
+        url,
+        work,
+        home,
+        _server,
+        ..
+    }) = start("registry-worker-github")
+    else {
+        return;
+    };
+    let url = url.as_str();
+    let (status, page) = sign_in(url, "code-alice");
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("Signed in as alice-gh"), "{page}");
+    assert!(page.contains(&format!("velt login {url}")), "{page}");
+    let first = shown_token(&page);
+
+    // The token publishes, as the GitHub user, who owns the new package.
+    let lib = work.join("ghkit");
+    package(&lib, "ghkit", "1.0.0");
+    ok(velt(&lib, &home, url, &first, &["publish"]), "velt publish");
+    let owners = ok(
+        velt(&lib, &home, url, &first, &["owner", "list", "ghkit"]),
+        "velt owner list",
+    );
+    assert!(owners.contains("alice-gh"), "{owners}");
+
+    // The same GitHub account, renamed since: the same registry user, a new token, the old
+    // one revoked.
+    let (status, page) = sign_in(url, "code-alice-renamed");
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("Signed in as alice-gh"), "{page}");
+    let second = shown_token(&page);
+    assert_ne!(first, second);
+    package(&lib, "ghkit", "1.1.0");
+    let old = velt(&lib, &home, url, &first, &["publish"]);
+    assert!(
+        text(&old).contains("a valid `Authorization: Bearer <token>` is required"),
+        "{}",
+        text(&old)
+    );
+    ok(
+        velt(&lib, &home, url, &second, &["publish"]),
+        "velt publish with the new token",
+    );
+
+    // A login that isn't a user name here gets `gh-`; one taken by another user is refused.
+    let (status, page) = sign_in(url, "code-9lives");
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("Signed in as gh-9lives"), "{page}");
+    let (status, page) = sign_in(url, "code-alice-twin");
+    assert_eq!(status, 409, "{page}");
+    assert!(
+        page.contains("already has a user named <code>alice</code>"),
+        "{page}"
+    );
+    // GitHub refuses a bad code.
+    let (status, page) = sign_in(url, "code-wrong");
+    assert_eq!(status, 502, "{page}");
+    assert!(
+        page.contains("GitHub refused the sign-in: The code passed is incorrect or expired."),
+        "{page}"
+    );
 }
