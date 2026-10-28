@@ -275,7 +275,8 @@ fn system_functions_are_bound_per_target() {
     let unused = format!("{PREAD}function main() {{}}\n");
     assert_eq!(lower_for(&unused, "wasm32-wasip1"), "");
     // std's fd API is behind such declarations: a program that does not call it compiles.
-    let fs = "import { readFileSync, openSync } from \"velt:fs\";\nfunction main() {\n  \
+    let fs = "import { readFileSync } from \"velt:fs\";\n\
+              import { openSync } from \"velt:fs/fd\";\nfunction main() {\n  \
               console.log(readFileSync(\"x\"));\n}\n";
     assert_eq!(lower_for(fs, "wasm32-wasip1"), "");
 }
