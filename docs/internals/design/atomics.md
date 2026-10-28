@@ -180,7 +180,13 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   moves there, and an awaited call on the same task changes it in place.
 - A module-level `const` whose type holds an `Atomic` is kept in the module state (made once),
   as a non-constant initializer is: evaluated at each use, every use would change a new atomic.
-  Its methods act on the word in the state's slot.
+  Its methods act on the word in the state's slot. Reaching a slot takes the module lock
+  (rt_abi.md), so tasks using it would run one at a time. A *static atomic*, `const X = new
+  Atomic<T>(literal)`, is therefore not kept there: its word is writable data in the program,
+  starting as the literal (`vir::StaticData::mutable`), and its methods act on it directly,
+  with no lock, from every thread, also in std (whose other module constants are not kept in
+  the module state). Every version in a `velt dev` session uses the session's one word
+  per constant, so a swap keeps its value.
 - ``` `Atomic<T>` needs a number type or `bool`, found `string` ``` (a type parameter too: the
   instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"

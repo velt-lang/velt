@@ -195,3 +195,15 @@ impl FnCx<'_, '_> {
 fn is_default(a: &hir::Expr, call: Span) -> bool {
     a.span == call
 }
+
+/// Is `init` `new Atomic<T>(literal)`, whose word the program's data holds (velt_vir
+/// `lower/static_atomic.rs`)?
+pub(crate) fn static_atomic_init(cx: &crate::ctx::Ctx, init: &hir::Expr) -> bool {
+    match &init.kind {
+        hir::ExprKind::AdtLit { def, fields, .. } => {
+            Some(*def) == cx.atomic_ty()
+                && fields.first().is_some_and(super::thread_local::is_literal)
+        }
+        _ => false,
+    }
+}

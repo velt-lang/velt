@@ -177,12 +177,17 @@ fn declare_all<M: Module>(
         )?));
     }
     let mut statics = Vec::with_capacity(program.statics.len());
-    for i in 0..program.statics.len() {
-        statics.push(
-            module
-                .declare_anonymous_data(false, false)
-                .map_err(|e| format!("codegen: declaring static #{i}: {e}"))?,
-        );
+    for (i, s) in program.statics.iter().enumerate() {
+        // A static atomic's word, in a `velt dev` version: the session's (dev/mod.rs), so
+        // every version changes the same one.
+        let declared = match (s.mutable, naming) {
+            (Some(id), Naming::Dev(_)) => {
+                let sym = velt_vir::atomic::static_symbol(id);
+                module.declare_data(&sym, Linkage::Import, true, false)
+            }
+            (mutable, _) => module.declare_anonymous_data(mutable.is_some(), false),
+        };
+        statics.push(declared.map_err(|e| format!("codegen: declaring static #{i}: {e}"))?);
     }
     let targets = RelocTargets {
         funcs: &funcs,
@@ -191,7 +196,9 @@ fn declare_all<M: Module>(
     };
     // Defined after all declarations: relocations may point at any function, extern or static.
     for (i, s) in program.statics.iter().enumerate() {
-        define_static(module, &targets, i, s)?;
+        if s.mutable.is_none() || !matches!(naming, Naming::Dev(_)) {
+            define_static(module, &targets, i, s)?;
+        }
     }
     let decls = Declarations {
         funcs,
@@ -306,7 +313,8 @@ struct RelocTargets<'a> {
     statics: &'a [DataId],
 }
 
-/// Statics are anonymous read-only data objects (no symbol clashes with user code). Relocated
+/// Statics are anonymous data objects (no symbol clashes with user code), read-only except
+/// static atomics' words. Relocated
 /// slots become absolute 8-byte address relocations (Abs8 / ADDR64) against their targets.
 fn define_static<M: Module>(
     module: &mut M,

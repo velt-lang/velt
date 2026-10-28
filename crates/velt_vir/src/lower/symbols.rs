@@ -70,6 +70,7 @@ impl Cx<'_> {
             bytes,
             align: 8,
             relocs,
+            mutable: None,
         });
         self.symbol_records.by_id.insert(id, s);
         if id >= REGISTERED_IDS {
@@ -88,6 +89,7 @@ impl Cx<'_> {
             bytes: vec![0u8; 8],
             align: 8,
             relocs: vec![],
+            mutable: None,
         });
         self.symbol_records.table = Some(t);
         t

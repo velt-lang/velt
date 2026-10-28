@@ -88,6 +88,7 @@ fn an_address_taken_function_has_no_parameter_facts() {
         bytes: vec![0; 8],
         align: 8,
         relocs: vec![(0, Const::Func(g))],
+        mutable: None,
     });
     let q = narrowed(&p);
     assert!(

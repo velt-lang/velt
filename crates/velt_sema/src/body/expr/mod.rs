@@ -198,6 +198,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
+pub(crate) use atomic::static_atomic_init;
 pub(crate) use call_apply::{is_member_read, read_root};
 pub(crate) use callables::{property_writes, PendingWrites};
 

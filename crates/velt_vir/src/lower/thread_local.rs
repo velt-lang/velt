@@ -32,9 +32,11 @@ impl FnLower<'_, '_> {
             t => t.scalar_size().unwrap_or(8) * 8,
         };
         let init = literal_word(&fields[0], vt, bits);
-        // Named by its qualified name, not its `DefId`: the same constant keeps its storage
-        // across `velt dev` versions in which other declarations come and go.
-        let (id, w) = (crate::tls::stable_id(&g.name), word(bits));
+        // Named by its qualified name and type, not its `DefId`: the same constant keeps its
+        // storage across `velt dev` versions in which other declarations come and go, and an
+        // edit changing its type gets new storage.
+        let id = crate::tls::stable_id(&format!("{}:{vt:?}", g.name));
+        let w = word(bits);
         match (i, args) {
             (Intrinsic::ThreadLocalGet, [_]) => {
                 let call = TlsCall::Get { id, bits, init };
@@ -88,7 +90,7 @@ impl FnLower<'_, '_> {
 }
 
 /// The word of `bits` a literal of VIR type `vt` is (sema `thread_local` checked the shape).
-fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
+pub(super) fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
     let (neg, lit) = match &e.kind {
         K::Unary {
             op: UnOp::Neg,

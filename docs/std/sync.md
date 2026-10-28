@@ -116,7 +116,10 @@ another thread (`const go = async () => …` with `spawn(go())`): such a closure
 captured for each call. The same holds for a plain closure whose promise goes to another task
 (`const go = () => work(c)` with `spawn(go())`). Share it (`const c = shared(new Hits())`), and every task
 changes the same atomics. A module-level `const` holding one is one atomic, made once, that
-every task changes: `const REQUESTS = new Atomic<u64>(0)`.
+every task changes: `const REQUESTS = new Atomic<u64>(0)`. Made from a literal like that, it
+is a word stored with the program, which threads change at once with no other cost; made from
+a computed value or inside an object, it is kept with the module's other state, which tasks
+reach one at a time.
 
 ```ts
 function bump(counter: Atomic<u32>): u32 {

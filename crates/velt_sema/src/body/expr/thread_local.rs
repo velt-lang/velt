@@ -121,7 +121,8 @@ impl FnCx<'_, '_> {
 }
 
 /// Is `e` a literal (a negative number is `-` applied to one)?
-fn is_literal(e: &hir::Expr) -> bool {
+/// A literal, or a negated number literal.
+pub(crate) fn is_literal(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Lit(_) => true,
         H::Unary {
