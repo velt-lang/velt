@@ -1,0 +1,102 @@
+// check: unfreed blocks at most 4
+// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, kept until the program exits.)
+// A `ConcurrentMap` with values other than `u64`: each is boxed once by `set`, copied by `get`,
+// read in place by `read`, and dropped once replaced or deleted. Enough keys to split leaves and
+// inner nodes, so values move between leaves; at the end every value is its key's, and nothing
+// but the epoch registry is left unfreed.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+interface Entry {
+  name: string;
+  tags: u64[];
+}
+
+const N: u64 = 5000;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+function strings() {
+  const m: ConcurrentMap<u64, string> = ConcurrentMap.create((3 * N) as usize);
+  console.log(m.get(1), m.has(1));
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(mix(i), `value ${i}`);
+  }
+  // Replace every third value, delete every fifth key.
+  for (let i: u64 = 0; i < N; i += 3) {
+    m.set(mix(i), `again ${i}`);
+  }
+  let deleted: u64 = 0;
+  for (let i: u64 = 0; i < N; i += 5) {
+    if (m.delete(mix(i))) {
+      deleted++;
+    }
+  }
+  let wrong: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    const want = i % 5 == 0 ? undefined : i % 3 == 0 ? `again ${i}` : `value ${i}`;
+    if (m.get(mix(i)) != want) {
+      wrong++;
+    }
+    if (m.has(mix(i)) != (want != undefined)) {
+      wrong++;
+    }
+  }
+  const len = m.read(mix(7), (v) => v.length);
+  console.log(
+    "deleted",
+    deleted,
+    "wrong",
+    wrong,
+    m.get(mix(7)),
+    len,
+    m.read(mix(6), (v) => v.toUpperCase()),
+    m.read(mix(5), (v) => v.length),
+  );
+  // Every key deleted, so leaves empty and are reused, then the map filled again.
+  for (let i: u64 = 0; i < N; i++) {
+    m.delete(mix(i));
+  }
+  let left: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.has(mix(i))) {
+      left++;
+    }
+  }
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(mix(N + i), `new ${i}`);
+  }
+  let refilled: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.get(mix(N + i)) == `new ${i}`) {
+      refilled++;
+    }
+  }
+  console.log("left", left, "refilled", refilled);
+}
+
+function objects() {
+  const m: ConcurrentMap<u64, Entry> = ConcurrentMap.create(1000);
+  for (let i: u64 = 0; i < 200; i++) {
+    m.set(i, { name: `e${i}`, tags: [i, i * 2] });
+  }
+  m.set(10, { name: "ten", tags: [] });
+  m.delete(11);
+  const e = m.get(10);
+  const sum = m.read(42, (v) => v.tags[0] + v.tags[1]);
+  console.log(e == undefined ? "none" : e.name, sum, m.get(11) == undefined, m.get(199)?.name);
+}
+
+function main() {
+  strings();
+  objects();
+  // `u64` values, the default, still sit in the tree.
+  const plain = ConcurrentMap.create(16);
+  plain.set(3, 30);
+  console.log(plain.get(3), plain.add(3, 1), plain.get(3));
+}

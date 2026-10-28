@@ -1,7 +1,8 @@
 # velt:collections/concurrent_map
 
-`import { ConcurrentMap } from "velt:collections/concurrent_map"`. A map from `u64` keys to `u64`
-values that many threads read and write at once: create it, share it
+`import { ConcurrentMap } from "velt:collections/concurrent_map"`. A map from `u64` keys to
+values that many threads read and write at once, `ConcurrentMap<u64, V>` (`V` is `u64` when not
+written): create it, share it
 (`shared(ConcurrentMap.create(n))`), and call its methods from any task. A lookup writes no
 shared memory, so readers on many cores never slow each other, and writers take a latch per
 node, never a lock for the whole map. For a map one task owns, [`BTreeMap`](btree_map.md) is
@@ -35,18 +36,27 @@ was measured on a slightly earlier version of the map, before its leaf splits go
   each and need more room than their number. A `set` of a key the map holds can need room too,
   when its leaf is full and splits first. `create` panics with a RangeError above 10^11
   entries.
-- `get(key): u64 | undefined`, `has(key)`.
+- `get(key): V | undefined`, `has(key)`.
+- `read(key, (v) => …)`: runs the callback on the value of `key`, the map's own (borrowed, not
+  copied), and returns what it returns, or `undefined` if the map has no `key`.
 - `set(key, value)`: adds `key` or replaces its value. The key `2^64 - 1` cannot be held (a
   RangeError); every lookup of it answers absent.
-- `add(key, delta): u64 | undefined`: adds `delta` to the value of `key` (wrapping) atomically
-  and returns the value before, or `undefined` if the map has no `key` (then nothing is added).
+- `add(key, delta): u64 | undefined`: for `u64` values, adds `delta` to the value of `key`
+  (wrapping) atomically and returns the value before, or `undefined` if the map has no `key`
+  (then nothing is added).
 - `delete(key): bool`, whether the map had it.
-- `getManyInto(keys, values): u64`: looks up at most 64 keys together into `values`; where bit
+- `getManyInto(keys, values): u64`: for `u64` values, looks up at most 64 keys together into `values`; where bit
   `i` of the result is set, `values[i]` is the value of `keys[i]` (`values` grows to
   `keys.length`). Unlike `BTreeMap.getMany`, which returns a new array, it fills the caller's, so
   a loop of batches allocates nothing. In a map larger than the caches it costs about half as
   much as the same `get`s: the keys descend the tree together, each one's next node loading while
   the others search theirs.
+
+A `u64` value sits in the tree, next to its key. Any other `V` (it must be `Frozen`, see
+[`shared` values in generic code](../sync.md#shared-values-in-generic-code): a string, an array,
+an object of plain fields) is boxed once by `set`, as a `shared<V>` beside the leaf: `get`
+copies it, `read` reads it in place, and one that `set` replaces or `delete` removes is dropped
+once no reader can still be reading it. Keys other than `u64` are planned (#1696).
 
 Each call is atomic on its own: a `get` sees a `set` of the same key either wholly or not at
 all. A sequence of calls is not one step: `m.set(k, (m.get(k) ?? 0) + 1)` can lose another
@@ -70,5 +80,8 @@ async function main() {
   const values: u64[] = [];
   const found = m.getManyInto([1, 2, 9999], values);
   console.log(found, values[0], values[1]); // 3 2 4
+  const names: ConcurrentMap<u64, string> = ConcurrentMap.create(100);
+  names.set(7, "seven");
+  console.log(names.get(7), names.read(7, (s) => s.length)); // seven 5
 }
 ```

@@ -1,0 +1,81 @@
+// A `ConcurrentMap<u64, string>` on worker threads: writers setting and replacing their own keys
+// while leaves split, a deleter removing a known set, and readers checking, in place, that every
+// value they find is their key's. A replaced or deleted value stays readable until no reader has
+// it; at the end every key has its last value.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const N: u64 = 20000;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+async function writer(m: shared<ConcurrentMap<u64, string>>, t: u64) {
+  for (let i = t; i < N; i += 3) {
+    m.set(mix(i), `first ${i}`);
+  }
+  for (let i = t; i < N; i += 3) {
+    m.set(mix(i), `${i}`);
+  }
+}
+
+async function deleter(m: shared<ConcurrentMap<u64, string>>): Promise<u64> {
+  let removed: u64 = 0;
+  for (let i: u64 = 0; i < N; i += 2) {
+    if (m.delete(mix(N + i))) {
+      removed++;
+    }
+  }
+  return removed;
+}
+
+async function reader(m: shared<ConcurrentMap<u64, string>>): Promise<u64> {
+  let wrong: u64 = 0;
+  for (let r = 0; r < 3; r++) {
+    for (let i: u64 = 0; i < N; i++) {
+      const ok = m.read(mix(i), (v) => {
+        const s: string = v;
+        return s == `${i}` || s == `first ${i}`;
+      });
+      if (ok == false) {
+        wrong++;
+      }
+    }
+  }
+  return wrong;
+}
+
+async function main() {
+  const m: ConcurrentMap<u64, string> = ConcurrentMap.create((3 * N) as usize);
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(mix(N + i), `${N + i}`);
+  }
+  const s = shared(m);
+  const ws: Promise<void>[] = [];
+  for (let t: u64 = 0; t < 3; t++) {
+    ws.push(spawn(writer(s, t)));
+  }
+  const d = spawn(deleter(s));
+  const rs: Promise<u64>[] = [spawn(reader(s)), spawn(reader(s))];
+  await Promise.all(ws);
+  const removed = await d;
+  let wrong: u64 = 0;
+  for (const w of await Promise.all(rs)) {
+    wrong += w;
+  }
+  let missing: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (s.get(mix(i)) != `${i}`) {
+      missing++;
+    }
+    const kept = s.get(mix(N + i));
+    if (i % 2 == 0 ? kept != undefined : kept != `${N + i}`) {
+      missing++;
+    }
+  }
+  console.log("removed", removed, "wrong", wrong, "missing", missing);
+}
