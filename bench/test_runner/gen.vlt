@@ -1,0 +1,51 @@
+// Writes a test suite for measuring `velt test`'s throughput: `<root>/velt/fNNN.test.vlt`, FILES
+// files of TESTS tests each, and the same tests for Vitest in `<root>/vitest/fNNN.test.ts`. Every
+// test does a little work (an array, a loop, a string) and checks it, and every one passes.
+//
+//   velt run bench/test_runner/gen.vlt <root> [FILES] [TESTS]   (default 50 files of 20 tests)
+import { existsSync, mkdirSync, removeSync, writeFileSync } from "velt:fs";
+import { args } from "velt:process";
+
+/** The body shared by both suites; `check(a, b)` is `assertEq` or `expect(a).toBe(b)`. */
+function body(n: number, check: (a: string, b: string) => string): string {
+  const name = `t${n}`;
+  return [
+    "  const xs: number[] = [];",
+    "  for (let k = 0; k < 100; k++) {",
+    `    xs.push(k * ${n});`,
+    "  }",
+    "  let sum = 0;",
+    "  for (const x of xs) {",
+    "    sum += x;",
+    "  }",
+    `  ${check("sum", String(4950 * n))};`,
+    `  ${check(`\`${name}\`.length`, String(name.length))};`,
+  ].join("\n");
+}
+
+function main() {
+  const a = args();
+  const root = a[0];
+  const files = Number(a[1] ?? "50");
+  const tests = Number(a[2] ?? "20");
+  if (existsSync(root)) {
+    removeSync(root, { recursive: true });
+  }
+  mkdirSync(`${root}/velt`, { recursive: true });
+  mkdirSync(`${root}/vitest`, { recursive: true });
+  for (let f = 0; f < files; f++) {
+    const id = String(f).padStart(3, "0");
+    const velt: string[] = [];
+    const vitest: string[] = ['import { expect, test } from "vitest";'];
+    for (let t = 0; t < tests; t++) {
+      const n = f * tests + t;
+      velt.push(`export function test_${t}() {\n${body(n, (x, y) => `assertEq(${x}, ${y})`)}\n}`);
+      vitest.push(
+        `test("test_${t}", () => {\n${body(n, (x, y) => `expect(${x}).toBe(${y})`)}\n});`,
+      );
+    }
+    writeFileSync(`${root}/velt/f${id}.test.vlt`, velt.join("\n\n") + "\n");
+    writeFileSync(`${root}/vitest/f${id}.test.ts`, vitest.join("\n\n") + "\n");
+  }
+  writeFileSync(`${root}/vitest/package.json`, '{ "type": "module", "private": true }\n');
+}

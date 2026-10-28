@@ -5,14 +5,23 @@
 //! import { __file, __test, __testAsync, __run } from "velt:test";
 //! import * as __velt_t0 from "./math.test.vlt";
 //! import * as __velt_t1 from "./io.test.vlt";
-//! async function main() {
+//! function __velt_r0() {
 //!   __file();
 //!   __test("test_add", __velt_t0.test_add);
+//! }
+//! function __velt_r1() {
 //!   __file();
 //!   __testAsync("test_read", __velt_t1.test_read);
+//! }
+//! async function main() {
+//!   __velt_r0();
+//!   __velt_r1();
 //!   await __run();
 //! }
 //! ```
+//! A function per file keeps `main` small whatever the number of tests: an `async` function's
+//! lowering (saving its locals across `await`s) grows with the square of its size, and a `main`
+//! registering 1,000 tests took seconds to compile.
 //! Everything else (choosing the file a process runs, running and reporting the tests, starting
 //! processes) is `velt:test`'s.
 
@@ -42,9 +51,8 @@ pub fn harness_source(files: &[HarnessFile]) -> String {
     for (i, f) in files.iter().enumerate() {
         let _ = writeln!(src, "import * as __velt_t{i} from \"{}\";", f.import_spec);
     }
-    src.push_str("\nasync function main() {\n");
     for (i, f) in files.iter().enumerate() {
-        src.push_str("  __file();\n");
+        let _ = writeln!(src, "\nfunction __velt_r{i}() {{\n  __file();");
         for t in f.tests {
             let register = match f.async_tests.contains(t) {
                 true => "__testAsync",
@@ -52,6 +60,11 @@ pub fn harness_source(files: &[HarnessFile]) -> String {
             };
             let _ = writeln!(src, "  {register}(\"{t}\", __velt_t{i}.{t});");
         }
+        src.push_str("}\n");
+    }
+    src.push_str("\nasync function main() {\n");
+    for i in 0..files.len() {
+        let _ = writeln!(src, "  __velt_r{i}();");
     }
     src.push_str("  await __run();\n}\n");
     src
@@ -89,10 +102,14 @@ mod tests {
             "{src}"
         );
         // The same test name in two files: each is reached through its own namespace.
-        let want = "  __file();\n  __test(\"test_x\", __velt_t0.test_x);\n  \
-                    __test(\"test_y\", __velt_t0.test_y);\n  __file();\n  \
+        let want = "function __velt_r0() {\n  __file();\n  \
+                    __test(\"test_x\", __velt_t0.test_x);\n  \
+                    __test(\"test_y\", __velt_t0.test_y);\n}\n\n\
+                    function __velt_r1() {\n  __file();\n  \
                     __test(\"test_x\", __velt_t1.test_x);\n  \
-                    __testAsync(\"test_z\", __velt_t1.test_z);\n  await __run();\n}\n";
+                    __testAsync(\"test_z\", __velt_t1.test_z);\n}\n\n\
+                    async function main() {\n  __velt_r0();\n  __velt_r1();\n  \
+                    await __run();\n}\n";
         assert!(src.ends_with(want), "{src}");
         let (_, diags) = velt_syntax::parse_file(velt_common::FileId(0), &src);
         assert!(diags.is_empty(), "{diags:?}\n{src}");
