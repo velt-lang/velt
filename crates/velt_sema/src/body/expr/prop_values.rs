@@ -7,13 +7,18 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId};
 
 impl FnCx<'_, '_> {
-    /// The value of property `name`: `value`, or the variable `name` for `{ name }`.
+    /// The value of property `name`: `value`, or the variable `name` for `{ name }`. A function
+    /// named there is adapted to an expected function type as an initializer is
+    /// (`adapted_prop_fn`).
     pub(super) fn prop_value(
         &mut self,
         name: &ast::Ident,
         value: Option<&ast::Expr>,
         exp: Option<TyId>,
     ) -> hir::Expr {
+        if let Some(h) = self.adapted_prop_fn(name, value, exp) {
+            return h;
+        }
         match value {
             Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
             None => self.ident_expr(name, exp, Want::Move),

@@ -1,0 +1,75 @@
+// A function whose parameters past those of a function type are optional or have defaults may
+// be used as a value of that type, as in TypeScript (#943): named in an object literal for a
+// field (`{ patch }`, `{ mount: mountAt }`), also a nested function that throws and a field of a
+// generic interface. The parameters it is not given take their defaults. A `T | null`
+// parameter with a default, given a `T | null | undefined` (an optional parameter of the
+// field's type), takes its default where the value is `undefined` and keeps a `null` (#930).
+
+class PatchError extends Error {}
+
+type PatchFn<N> = (a: N, b: N, tag: string) => void;
+type MountFn<N> = (a: N, tag: string, before?: N | null) => void;
+
+interface Renderer<N> {
+  patch: PatchFn<N>;
+  mount: MountFn<N>;
+  count: () => number;
+}
+
+function createRenderer<N>(failOn: string): Renderer<N> {
+  let calls = 0;
+  function patch(a: N, b: N, tag: string, ns: boolean | undefined = undefined): void {
+    calls++;
+    if (tag === failOn) {
+      throw new PatchError(`patch ${tag}`);
+    }
+    console.log("patch", a, b, tag, ns);
+  }
+  function mountAt(a: N, tag: string, before: N | null = null, svg: boolean = false): void {
+    calls++;
+    console.log("mount", a, tag, before, svg);
+  }
+  function count(extra: number = 0): number {
+    return calls + extra;
+  }
+  return { patch, mount: mountAt, count };
+}
+
+function label(n: number, prefix = "#", suffix?: string): string {
+  return prefix + n + (suffix ?? "");
+}
+
+function place(a: number, before: number | null = null): string {
+  return `${a}:${before}`;
+}
+
+interface Formatter {
+  format: (n: number) => string;
+}
+
+function main(): void {
+  const r = createRenderer<number>("bad");
+  r.patch(1, 2, "ok");
+  r.mount(3, "first");
+  r.mount(4, "second", 7);
+  r.mount(5, "third", null);
+  r.mount(6, "fourth", undefined);
+  try {
+    r.patch(1, 2, "bad");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log("calls", r.count());
+
+  const maybe: (number | null | undefined)[] = [1, null, undefined];
+  for (const m of maybe) {
+    console.log(place(0, m));
+  }
+
+  const f: Formatter = { format: label };
+  console.log(f.format(5));
+  const fs: Formatter[] = [{ format: label }, f];
+  console.log(fs.map((x) => x.format(6)).join(" "));
+}
+
+main();

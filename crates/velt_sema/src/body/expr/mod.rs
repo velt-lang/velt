@@ -197,7 +197,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, TyId};
 pub(crate) use args::deferred;
 pub(crate) use atomic::static_atomic_init;
 pub(crate) use call_apply::{is_member_read, read_root};
@@ -206,16 +206,7 @@ pub(crate) use callables::{property_writes, PendingWrites};
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
-        // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
-        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
-            return self.coerce(h, exp);
-        }
-        let adapted = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
-            _ => None,
-        };
-        let h = match adapted {
+        let h = match self.adapted_fn_value(e, exp) {
             Some(h) => h,
             None => self.expr(e, Some(exp), want),
         };

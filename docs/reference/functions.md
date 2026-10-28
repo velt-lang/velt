@@ -833,7 +833,9 @@ async function main() {
   `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
-  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out. A function with
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`, or `{ patch }` for a field
+  `patch: (a: VNode, b: VNode) => void` with `function patch(a: VNode, b: VNode, ns = false)`):
+  they are left out and take their defaults. A function with
   a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
   returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
