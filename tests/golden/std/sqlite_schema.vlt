@@ -1,0 +1,193 @@
+// The schema the Velt SQLite engine reads (velt:sqlite/schema, #1720) against C SQLite's own
+// account of the same file (pragma table_info, index_list, index_xinfo): columns, the rowid
+// alias, automatic indexes numbered as SQLite numbers them (constraints in source order, a
+// repeated key making no second index), collations, directions, WITHOUT ROWID tables, and an
+// index over a collation the engine does not know.
+import { open, Database } from "velt:sqlite";
+import { DbFile } from "velt:sqlite/format";
+import { Index, Table, loadSchema } from "velt:sqlite/schema";
+import { BINARY, NOCASE } from "velt:sqlite/record";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { readFileBytesSync, removeSync } from "velt:fs";
+
+const TABLES: string[] = [
+  "CREATE TABLE t1 (a, b, c, UNIQUE (c), PRIMARY KEY (a, b))",
+  "CREATE TABLE t2 (a UNIQUE PRIMARY KEY, b)",
+  "CREATE TABLE t3 (a PRIMARY KEY, b UNIQUE) WITHOUT ROWID",
+  "CREATE TABLE t4 (a INTEGER PRIMARY KEY UNIQUE, b UNIQUE)",
+  "CREATE TABLE t5 (a UNIQUE, b, UNIQUE (a), UNIQUE (b, a), UNIQUE (a COLLATE NOCASE), UNIQUE (a COLLATE BINARY))",
+  "CREATE TABLE t6 (a INTEGER PRIMARY KEY DESC, b UNIQUE)",
+  "CREATE TABLE t7 (a INTEGER, b UNIQUE, PRIMARY KEY (a DESC))",
+  "CREATE TABLE t8 (id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE UNIQUE, r TEXT COLLATE RTRIM, n INT NOT NULL DEFAULT 0, f FLOATING POINT, d DECIMAL(10, 2), blob, v VARCHAR(9))",
+  "CREATE INDEX t8_r ON t8 (r, n DESC)",
+  "CREATE INDEX t8_x ON t8 (name COLLATE BINARY, lower(name), id) WHERE n > 0",
+  "CREATE TABLE t9 (a TEXT, b INTEGER, c, PRIMARY KEY (b, a), UNIQUE (c)) WITHOUT ROWID",
+  "CREATE INDEX t9_a ON t9 (a DESC)",
+  "CREATE TABLE t10 (a INT PRIMARY KEY, b TEXT UNIQUE COLLATE RTRIM)",
+  "CREATE TABLE odd (a TEXT COLLATE NOCASE, b)",
+  "CREATE INDEX odd_a ON odd (a)",
+];
+
+struct Info {
+  name: string;
+  type: string;
+  notnull: i64;
+  dflt_value: string | null;
+  pk: i64;
+}
+
+struct IndexRow {
+  name: string;
+  unique: i64;
+  origin: string;
+  partial: i64;
+}
+
+struct XInfo {
+  cid: i64;
+  desc: i64;
+  coll: string;
+  key: i64;
+}
+
+struct Rowid {
+  same: i64;
+}
+
+function collName(c: u8): string {
+  return c == BINARY ? "BINARY" : c == NOCASE ? "NOCASE" : "RTRIM";
+}
+
+/** The rowid alias as C SQLite has it: the one INTEGER key column whose value is the rowid. */
+function cRowid(db: Database, t: string, cols: Info[]): string {
+  for (const c of cols) {
+    if (c.pk == 1 && c.type.toUpperCase() == "INTEGER") {
+      db.exec("SAVEPOINT probe");
+      db.exec(`INSERT INTO ${t} (${c.name}) VALUES (77)`);
+      const r: Rowid[] = db
+        .prepare(`SELECT rowid = ${c.name} AS same FROM ${t} WHERE ${c.name} = 77`)
+        .all();
+      db.exec("ROLLBACK TO probe; RELEASE probe");
+      return r.length == 1 && r[0].same == 1 ? c.name : "none";
+    }
+  }
+  return "none";
+}
+
+function describeIndex(ix: Index, t: Table): string {
+  const cols: string[] = [];
+  for (let i: usize = 0; i < ix.columns.length; i++) {
+    const p = ix.columns[i];
+    // The rowid alias is the rowid in an index; C SQLite names it by its column.
+    const alias = t.rowidColumn >= 0 ? t.columns[t.rowidColumn as usize].name : "rowid";
+    const name = p == -1 ? alias : p == -2 ? "expr" : t.columns[p as usize].name;
+    cols.push(`${name}${ix.desc[i] ? " desc" : ""} ${collName(ix.colls[i])}`);
+  }
+  return `${ix.name}${ix.unique ? " unique" : ""}${ix.partial ? " partial" : ""}: ${cols.join(", ")}`;
+}
+
+/** C SQLite's view of an index, in the same words. */
+function describeC(db: Database, r: IndexRow, cols: Info[]): string {
+  const xs: XInfo[] = db
+    .prepare(`SELECT cid, desc, coll, key FROM pragma_index_xinfo('${r.name}') ORDER BY seqno`)
+    .all();
+  const parts: string[] = [];
+  for (const x of xs) {
+    if (x.key == 0) {
+      continue;
+    }
+    const name = x.cid == -1 ? "rowid" : x.cid == -2 ? "expr" : cols[x.cid as usize].name;
+    parts.push(`${name}${x.desc == 1 ? " desc" : ""} ${x.coll.toUpperCase()}`);
+  }
+  return `${r.name}${r.unique == 1 ? " unique" : ""}${r.partial == 1 ? " partial" : ""}: ${parts.join(", ")}`;
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-sqlite-schema-${uuidv4()}.db`;
+  const db = open(path);
+  for (const sql of TABLES) {
+    db.exec(sql);
+  }
+  // An index over a collation C SQLite knows when it is made, renamed in the stored schema to
+  // one neither engine has: its order cannot be trusted for seeks.
+  db.exec(`
+    PRAGMA writable_schema = ON;
+    UPDATE sqlite_schema SET sql = replace(sql, 'NOCASE', 'FRENCH') WHERE name = 'odd';
+    PRAGMA writable_schema = OFF;
+  `);
+  db.close();
+  const c = open(path);
+  const schema = loadSchema(new DbFile(readFileBytesSync(path)));
+  let differ = 0;
+  for (const t of schema.tables) {
+    if (t.name == "sqlite_schema") {
+      continue;
+    }
+    const cols: Info[] = c
+      .prepare(
+        `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info('${t.name}') ORDER BY cid`,
+      )
+      .all();
+    const mine = t.columns
+      .map(
+        (
+          col,
+        ) => `${col.name} ${col.type}${col.notNull ? " not null" : ""}${col.hasDefault ? " default" : ""}`,
+      )
+      .join(", ");
+    const affs = t.columns.map((col) => String(col.affinity)).join("");
+    const theirs = cols
+      .map(
+        (
+          col,
+        ) => `${col.name} ${col.type}${col.notnull == 1 ? " not null" : ""}${col.dflt_value != null ? " default" : ""}`,
+      )
+      .join(", ");
+    const rowid = t.rowidColumn >= 0 ? t.columns[t.rowidColumn as usize].name : "none";
+    const cRow = t.withoutRowid || t.name == "odd" ? "none" : cRowid(c, t.name, cols);
+    console.log(
+      `${t.name}${t.withoutRowid ? " without rowid" : ""}: ${mine}; affinities ${affs}; rowid ${rowid}`,
+    );
+    if (rowid != cRow || mine != theirs) {
+      differ++;
+      console.log(`  C: ${theirs}; rowid ${cRow}`);
+    }
+    const rows: IndexRow[] = c
+      .prepare(
+        `SELECT name, "unique", origin, partial FROM pragma_index_list('${t.name}') ORDER BY name`,
+      )
+      .all();
+    for (const r of rows) {
+      let found: Index | null = null;
+      for (const ix of t.indexes) {
+        if (ix.name == r.name) {
+          found = ix;
+        }
+      }
+      if (found == null) {
+        // A WITHOUT ROWID table's primary key index is the table: no row in sqlite_schema.
+        const note = t.withoutRowid && r.origin == "pk" ? "the table itself" : "MISSING";
+        console.log(`  ${r.name} (${r.origin}): ${note}`);
+        if (note == "MISSING") {
+          differ++;
+        }
+        continue;
+      }
+      const got = describeIndex(found!, t);
+      const want = describeC(c, r, cols);
+      console.log(`  ${got}${found!.seekable ? "" : " (not seekable)"}`);
+      if (got != want && t.name != "odd") {
+        differ++;
+        console.log(`  C: ${want}`);
+      }
+    }
+    if (t.indexes.length > rows.length) {
+      differ++;
+      console.log(`  ${t.indexes.length} indexes, C has ${rows.length}`);
+    }
+  }
+  c.close();
+  removeSync(path);
+  console.log(`${differ} differ from C SQLite`);
+}

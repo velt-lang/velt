@@ -1,0 +1,78 @@
+real 1000000000000000.0
+real 10000000000000000.0
+real 1.0e+17
+real 0.0001
+real 1.0e-05
+real 0.1
+real 0.33333333333333332
+real 9.2233720370002493e+18
+real 123456789.12345679
+real 0.0
+real 1.0e+300
+real 4.9406564584124654e-324
+real 2.2250738585072014e-308
+real 1.7976931348623157e+308
+real 1.5
+real 100.0
+real 123456789012345.59
+real 1234567890123456.8
+real 0.30000000000000004
+real 0.66666666666666663
+real 9.2233720368547758e+18
+real 1.0e+21
+real 1.2345678901234567e+19
+real 0.000123
+real 5.0e-05
+real 1.25e-07
+real 99999999999999.984
+real 999999999999999.88
+real 9007199254740992.0
+real 49.47
+real -2.5
+real 1.0e+100
+real 1.0e-100
+real 0.30000000000000004
+real 1.0e+22
+real 1.0e+23
+reals: 4035 of 4035 as C SQLite writes them 
+Inf -Inf
+"0" + 0 = integer 0
+"12" + 0 = integer 12
+"-7" + 0 = integer -7
+"+5" + 0 = integer 5
+"  42  " + 0 = integer 42
+"12abc" + 0 = integer 12 (prefix)
+"abc" + 0 = integer 0 (prefix)
+"" + 0 = integer 0 (prefix)
+" " + 0 = integer 0 (prefix)
+"1.5" + 0 = real 1.5
+".5" + 0 = real 0.5
+"5." + 0 = real 5.0
+"-.5e1" + 0 = real -5.0
+"1e3" + 0 = real 1000.0
+"1E-2" + 0 = real 0.01
+"1e" + 0 = integer 1 (prefix)
+"1e+" + 0 = integer 1 (prefix)
+"0x10" + 0 = integer 0 (prefix)
+"1_000" + 0 = integer 1 (prefix)
+"00012" + 0 = integer 12
+"-0" + 0 = integer 0
+"1.0" + 0 = real 1.0
+"3.0e0" + 0 = real 3.0
+"123456789012345678" + 0 = integer 123456789012345678
+"-999999999999999999" + 0 = integer -999999999999999999
+"9223372036854775807" + 0 = integer 9223372036854775807
+"-9223372036854775808" + 0 = integer -9223372036854775808
+"9223372036854775808" + 0 = real 9.2233720368547758e+18
+"-9223372036854775809" + 0 = real -9.2233720368547758e+18
+"99999999999999999999" + 0 = real 1.0e+20
+"1e308" + 0 = real 1.0e+308
+"1e309" + 0 = real Inf
+"-1e309" + 0 = real -Inf
+"\t\n7\r" + 0 = integer 7
+"7 x" + 0 = integer 7 (prefix)
++ 0: 0 differ
+affinity: 0 differ
+arithmetic: 1280 results, 0 differ
+real 9.2233720368547758e+18 real -9.2233720368547758e+18 real 9.2233720370002493e+18 real 9.2233720368547758e+18 integer 0
+comparisons: 2523, 0 differ

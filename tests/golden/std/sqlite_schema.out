@@ -1,0 +1,34 @@
+t1: a , b , c ; affinities 000; rowid none
+  sqlite_autoindex_t1_1 unique: c BINARY
+  sqlite_autoindex_t1_2 unique: a BINARY, b BINARY
+t2: a , b ; affinities 00; rowid none
+  sqlite_autoindex_t2_1 unique: a BINARY
+t3 without rowid: a  not null, b ; affinities 00; rowid none
+  sqlite_autoindex_t3_1 (pk): the table itself
+  sqlite_autoindex_t3_2 unique: b BINARY
+t4: a INTEGER, b ; affinities 30; rowid a
+  sqlite_autoindex_t4_1 unique: a BINARY
+  sqlite_autoindex_t4_2 unique: b BINARY
+t5: a , b ; affinities 00; rowid none
+  sqlite_autoindex_t5_1 unique: a BINARY
+  sqlite_autoindex_t5_2 unique: b BINARY, a BINARY
+  sqlite_autoindex_t5_3 unique: a NOCASE
+t6: a INTEGER, b ; affinities 30; rowid none
+  sqlite_autoindex_t6_1 unique: a desc BINARY
+  sqlite_autoindex_t6_2 unique: b BINARY
+t7: a INTEGER, b ; affinities 30; rowid a
+  sqlite_autoindex_t7_1 unique: b BINARY
+t8: id INTEGER, name TEXT, r TEXT, n INT not null default, f FLOATING POINT, d DECIMAL(10, 2), blob , v VARCHAR(9); affinities 31133201; rowid id
+  sqlite_autoindex_t8_1 unique: name NOCASE
+  t8_r: r RTRIM, n desc BINARY
+  t8_x partial: name BINARY, expr BINARY, id BINARY
+t9 without rowid: a TEXT not null, b INTEGER not null, c ; affinities 130; rowid none
+  sqlite_autoindex_t9_1 (pk): the table itself
+  sqlite_autoindex_t9_2 unique: c BINARY
+  t9_a: a desc BINARY
+t10: a INT, b TEXT; affinities 31; rowid none
+  sqlite_autoindex_t10_1 unique: a BINARY
+  sqlite_autoindex_t10_2 unique: b RTRIM
+odd: a TEXT, b ; affinities 10; rowid none
+  odd_a: a BINARY (not seekable)
+0 differ from C SQLite
