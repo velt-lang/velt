@@ -110,7 +110,6 @@ import * as std_sort_merge from "velt:sort/merge";
 import * as std_sort_stable from "velt:sort/stable";
 import * as std_sqlite from "velt:sqlite";
 import * as std_sqlite_btree from "velt:sqlite/btree";
-import * as std_sqlite_exec_value from "velt:sqlite/exec/value";
 import * as std_sqlite_format from "velt:sqlite/format";
 import * as std_sqlite_real from "velt:sqlite/real";
 import * as std_sqlite_record from "velt:sqlite/record";
