@@ -263,12 +263,18 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "clean",
-        summary: "Remove the package's target/ directory",
-        usage: &["clean"],
+        summary: "Remove the package's target/ directory, or the build cache",
+        usage: &["clean [--cache]"],
         about: "Deletes <package>/target (build outputs, test binaries, docs) and reports the \
-                space freed.",
-        options: &[],
-        examples: &[("velt clean", "remove the build outputs of the current package")],
+                space freed. With --cache, deletes the build cache instead: the compiled code \
+                every build on this machine shares ($VELT_BUILD_CACHE, default \
+                $VELT_HOME/build-cache), which builds keep under $VELT_BUILD_CACHE_SIZE (2G) on \
+                their own.",
+        options: &[("--cache", "remove the machine's build cache instead of target/")],
+        examples: &[
+            ("velt clean", "remove the build outputs of the current package"),
+            ("velt clean --cache", "remove the build cache shared by all projects"),
+        ],
     },
     CommandHelp {
         name: "add",
@@ -596,6 +602,15 @@ const ENVIRONMENT: &[(&str, &str)] = &[
         "`static`: debug builds link the static runtime instead of the shared one",
     ),
     ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
+    (
+        "VELT_BUILD_CACHE",
+        "compiled code shared by every build on this machine (default $VELT_HOME/build-cache); \
+         `off` turns it off",
+    ),
+    (
+        "VELT_BUILD_CACHE_SIZE",
+        "how large the build cache may grow (default 2G)",
+    ),
     (
         "VELT_LLVM_BIN",
         "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",

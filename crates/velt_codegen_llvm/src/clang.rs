@@ -167,8 +167,15 @@ fn parse_version(text: &str) -> Option<ClangVersion> {
     })
 }
 
-/// Compile `ir` to an object file for `target` and return its bytes.
-pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResult<Vec<u8>> {
+/// Compile `ir` to an object file for `target` and return its bytes; from `cache` when this clang
+/// compiled the same IR with the same flags before (on this machine, in any build), else storing
+/// it there.
+pub(crate) fn compile_cached(
+    ir: &str,
+    target: &Target,
+    optimize: bool,
+    cache: Option<&dyn velt_codegen_cl::CodeCache>,
+) -> CodegenResult<(Vec<u8>, bool)> {
     let Some(clang) = find_clang() else {
         let what = rejected_clang().unwrap_or_else(|| "the LLVM backend needs clang".into());
         bail!(
@@ -177,20 +184,45 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
              use `--backend cranelift`"
         )
     };
-    let mut cmd = Command::new(&clang);
-    cmd.arg(if optimize { opt_flag() } else { "-O0" })
-        .args(["-c", "-x", "ir", "-Wno-override-module"])
-        .arg(format!("--target={}", target.triple))
-        .args(target.cpu_arg())
-        .args(target.deployment_target_arg());
+    let mut args: Vec<String> = vec![if optimize { opt_flag() } else { "-O0" }.into()];
+    args.extend(["-c", "-x", "ir", "-Wno-override-module"].map(String::from));
+    args.push(format!("--target={}", target.triple));
+    args.extend(target.cpu_arg());
+    args.extend(target.deployment_target_arg().map(String::from));
     if target.pic() {
-        cmd.arg("-fPIC");
+        args.push("-fPIC".into());
     }
     if target.outline_atomics() {
-        cmd.arg("-moutline-atomics");
+        args.push("-moutline-atomics".into());
     }
-    cmd.args(["-", "-o", "-"]);
-    run_piped(cmd, ir.as_bytes(), "clang").map_err(|e| unknown_cpu(e, target.cpu.as_deref()))
+    args.extend(["-", "-o", "-"].map(String::from));
+    // The key: this clang (path, size and time of its executable), its arguments (`-march=native`
+    // means this machine's CPU: the cache is the machine's), and the IR.
+    let key = cache.map(|_| {
+        let meta = std::fs::metadata(&clang).ok();
+        let stamp = meta.map(|m| (m.len(), m.modified().ok()));
+        let id = format!(
+            "clang {clang:?} {stamp:?} {args:?} {}",
+            velt_codegen_cl::host_triple()
+        );
+        let mut key = id.into_bytes();
+        key.push(0);
+        key.extend_from_slice(ir.as_bytes());
+        key
+    });
+    if let (Some(cache), Some(key)) = (cache, &key) {
+        if let Some(obj) = cache.get(key) {
+            return Ok((obj, true));
+        }
+    }
+    let mut cmd = Command::new(&clang);
+    cmd.args(&args);
+    let obj = run_piped(cmd, ir.as_bytes(), "clang")
+        .map_err(|e| unknown_cpu(e, target.cpu.as_deref()))?;
+    if let (Some(cache), Some(key)) = (cache, &key) {
+        cache.put(key, &obj);
+    }
+    Ok((obj, false))
 }
 
 /// The x86 features clang lets code for `-march=<cpu>` on `triple` use, as a mask over

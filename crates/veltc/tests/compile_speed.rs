@@ -175,6 +175,61 @@ fn debug_links_are_skipped_when_nothing_changed() {
     assert_eq!(text(&run_copy(&exe, "ho").stdout), "ho\n");
 }
 
+#[test]
+fn code_compiled_once_comes_from_the_build_cache() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let cache = cache.to_str().unwrap();
+    let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
+    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    // `(found, of)` from the codegen line of `-v`.
+    let build = || {
+        let o = velt(
+            dir,
+            &["build", "hello.vlt", "-v"],
+            &[("VELT_BUILD_CACHE", cache)],
+        );
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        let line = err
+            .lines()
+            .find(|l| l.contains("from the build cache"))
+            .unwrap_or_else(|| panic!("no cache counts:\n{err}"));
+        let counts: Vec<u32> = line
+            .split(['(', ' '])
+            .filter_map(|w| w.parse().ok())
+            .collect();
+        assert_eq!(counts.len(), 2, "{line}");
+        (counts[0], counts[1])
+    };
+    let (found, of) = build();
+    assert!(
+        found < of,
+        "a new cache has not seen the program: {found} of {of}"
+    );
+    let (found, of) = build();
+    assert_eq!(
+        found, of,
+        "compiling again takes every function from the cache"
+    );
+    // An edit compiles only the functions whose code changed: here `greet`. (Changing only a
+    // string would change none: functions refer to their data by a name the key leaves out.)
+    let edited = lib.replace(
+        "console.log(\"hi\");",
+        "console.log(\"ho\");\n  console.log(\"!\");",
+    );
+    std::fs::write(dir.join("lib.vlt"), edited).unwrap();
+    let (found, of) = build();
+    assert_eq!(found + 1, of, "{found} of {of}");
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert_eq!(text(&run_copy(&exe, "cached").stdout), "ho\n!\n");
+}
+
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
 /// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
 /// locked for a moment (an antivirus scan), so the relink must never target a file that ran.

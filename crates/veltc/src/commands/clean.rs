@@ -1,5 +1,6 @@
 //! `velt clean`: delete the package's `target/` directory (build outputs, test binaries, docs)
-//! and report how much space that freed.
+//! and report how much space that freed. `velt clean --cache`: delete the machine's build cache
+//! (`crate::build_cache`) instead.
 
 use std::path::Path;
 
@@ -29,6 +30,37 @@ pub fn clean_command() -> Result<(), String> {
         &format!(
             "{} ({files} file{}, {})",
             target.display(),
+            if files == 1 { "" } else { "s" },
+            human_bytes(bytes)
+        ),
+    );
+    Ok(())
+}
+
+/// `velt clean --cache`: remove the build cache that every build on this machine shares.
+pub fn clean_cache_command() -> Result<(), String> {
+    let Some(root) = crate::build_cache::root() else {
+        style::status(
+            "Clean",
+            "nothing to remove (the build cache is off: $VELT_BUILD_CACHE)",
+        );
+        return Ok(());
+    };
+    if !root.is_dir() {
+        style::status(
+            "Clean",
+            &format!("nothing to remove ({} does not exist)", root.display()),
+        );
+        return Ok(());
+    }
+    let (files, bytes) = measure(&root);
+    std::fs::remove_dir_all(&root)
+        .map_err(|e| format!("cannot remove `{}`: {e}", root.display()))?;
+    style::status(
+        "Removed",
+        &format!(
+            "{} ({files} file{}, {})",
+            root.display(),
             if files == 1 { "" } else { "s" },
             human_bytes(bytes)
         ),
