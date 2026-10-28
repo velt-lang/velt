@@ -2,7 +2,8 @@
 // Node's `readSync` and `writeSync` with typed arrays and `DataView`s: `offset` and `length`
 // count bytes of the view, whatever its element type, and its errors are Node's (this program
 // prints what `node` prints for it with `fs` from "node:fs").
-import * as fs from "velt:fs";
+import * as fs from "velt:fs/fd";
+import { writeFileSync } from "velt:fs";
 
 function attempt(f: () => string) {
   try {
@@ -14,7 +15,7 @@ function attempt(f: () => string) {
 
 function main() {
   const path = "velt_fs_fd_views_tmp.bin";
-  fs.writeFileSync(path, "hello world, byte views");
+  writeFileSync(path, "hello world, byte views");
   const fd = fs.openSync(path, "r");
   const u = new Uint8Array(8);
   console.log(fs.readSync(fd, u, 2, 4, 0), u.join(","));
