@@ -443,23 +443,22 @@ impl FnCx<'_, '_> {
             if self.cx.union_def(core).is_some()
                 || self.cx.lit_value(core).is_some()
                 || self.plain_enum(core).is_some()
+                || matches!(self.cx.ty.kind(core), TyKind::FnPtr { rest: false, .. })
             {
                 return self.dynamic_to_optional(h, exp, payload);
             }
         }
-        self.note_dynamic_iface(exp, span);
-        // An object type with optional or literal-typed fields, or a function with properties,
-        // may be built from the members of a value of another type (velt_vir
-        // `any_object_fill.rs`), which lowering reads through `any`.
-        if let TyKind::Adt(d, _) = self.cx.ty.kind(exp).clone() {
-            let fills = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
-            let fill = fills.iter().any(|f| {
-                f.optional || f.name == "#call" || self.cx.lit_value(f.declared).is_some()
-            });
-            if fill {
-                self.cx.note_dyn_members();
-            }
+        // A function: called through `any`, whatever types it was made with (dynamic_as_fn).
+        if let TyKind::FnPtr {
+            params,
+            rest: false,
+            ..
+        } = self.cx.ty.kind(exp).clone()
+        {
+            return self.dynamic_as_fn(h, exp, params.len());
         }
+        self.note_dynamic_iface(exp, span);
+        self.note_object_fill(exp);
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
     }

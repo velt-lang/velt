@@ -1,0 +1,31 @@
+// A function held as `any` converted to a function type it was not made with (#379): called
+// through `any`, its arguments and result converted, as Node calls it whatever its types.
+interface Ctx<T> {
+  v: T;
+}
+
+function reg(setup: (c: Ctx<number>) => string): any {
+  const f: any = () => 0;
+  f.s = setup;
+  return f;
+}
+
+const F = reg((c) => "x" + c.v);
+const s = F.s as (c: Ctx<any>) => string;
+console.log(s({ v: 1 }));
+
+// Made with `any` parameters, converted to number ones, and the other way round.
+const loose: any = (a: any, b: any) => a + b;
+const add = loose as (a: number, b: number) => number;
+console.log(add(2, 3));
+const strict: any = (n: number): number => n * 2;
+const twice = strict as (n: any) => any;
+console.log(twice(21));
+
+// From `unknown`, and an optional function type.
+const u: unknown = (name: string) => "hi " + name;
+const greet = u as (name: string) => string;
+console.log(greet("velt"));
+const maybe: any = undefined;
+const cb = maybe as (((n: number) => void) | undefined);
+console.log(cb === undefined);

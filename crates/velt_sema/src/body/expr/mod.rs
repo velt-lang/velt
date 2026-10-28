@@ -50,6 +50,7 @@ mod dynamic;
 mod dynamic_arith;
 mod dynamic_concat;
 mod dynamic_enum;
+mod dynamic_fill;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_optional;

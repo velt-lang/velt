@@ -42,6 +42,27 @@ impl FnCx<'_, '_> {
         Ok(g)
     }
 
+    /// A function held as `any` / `unknown` as a value of function type `exp` (of `n`
+    /// parameters, none of them a rest parameter): the closure `(a0, …) => f(a0, …)` over `f`, a
+    /// local holding the value, whose call goes through `any` (the arguments converted to the
+    /// held function's parameter types, a `TypeError` for one that doesn't convert, or for a
+    /// value that is no function) and whose result converts to `exp`'s, as JavaScript calls the
+    /// function whatever its declared types. Node checks nothing at the conversion either.
+    pub(super) fn dynamic_as_fn(&mut self, h: hir::Expr, exp: TyId, n: usize) -> hir::Expr {
+        let h = self.share_if_place(h);
+        // Called as an `any` (an `unknown` would have to be narrowed first).
+        let h = match self.any_ty() {
+            Some(any) if h.ty != any => {
+                let span = h.span;
+                self.intrinsic(hir::Intrinsic::AnyTo, vec![h], any, span)
+            }
+            _ => h,
+        };
+        self.forwarding(h, exp, (n, false), |s, arrow, exp| {
+            s.closure(arrow, Some(exp), true)
+        })
+    }
+
     /// `const g = <name>` of a named generic function (`const g: G = id`), or of a constant
     /// holding one: recorded, so a use of `g` as a function of fixed types is that function
     /// (`named_fn_of`).
@@ -177,18 +198,24 @@ impl FnCx<'_, '_> {
         (n, rest): (usize, bool),
         make: impl FnOnce(&mut Self, &ast::Expr, TyId) -> hir::Expr,
     ) -> hir::Expr {
+        // A dynamic value (`dynamic_as_fn`) takes what it is called with.
         let takes = self
             .cx
             .generic_sig(h.ty)
-            .map_or(0, |g| g.method.params.len());
+            .map_or(n, |g| g.method.params.len());
         let rest = rest && takes >= n;
         let n = n.min(takes);
         let span = h.span;
         self.push_scope();
         let (ty, at) = (h.ty, h.span);
-        let l = self.new_local(HELD, ty, false, at, crate::body::LocalKind::Temp);
+        // A dynamic value's local names it in a call's `TypeError` (`dynamic_as_fn`).
+        let held_name = match self.cx.generic_sig(ty) {
+            Some(_) => HELD.to_string(),
+            None => "the value converted to a function type".to_string(),
+        };
+        let l = self.new_local(&held_name, ty, false, at, crate::body::LocalKind::Temp);
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
-        scope.names.insert(HELD.to_string(), l);
+        scope.names.insert(held_name.clone(), l);
         let mut h = h;
         crate::body::places::set_place_mode(&mut h, hir::UseMode::Move);
         let stmts = vec![hir::Stmt {
@@ -226,7 +253,7 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let held = ast::Ident {
-            name: HELD.into(),
+            name: held_name,
             span,
         };
         let call = mk(ast::ExprKind::Call {
