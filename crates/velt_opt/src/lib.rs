@@ -35,6 +35,10 @@
 //! - `sroa`: splits aggregate locals whose address is never taken into per-field locals.
 //! - `copyprop`: forwards `a = b` copies of register-like scalar locals.
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
+//! - `thread_tags`: a jump into a block that only tests a local aggregate's field (the tag of
+//!   an inlined callee's `Result`) goes to the test's target directly when the jumping block
+//!   stored a constant there, so each return of an inlined throwing callee continues on its own
+//!   path.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
 //! - `module_state`: once the rounds are done, a function asks the runtime for the module state
@@ -102,6 +106,7 @@ mod scc;
 mod simplify_cfg;
 mod srclocs;
 mod sroa;
+mod thread_tags;
 mod timings;
 mod visit;
 mod vtable_loads;
@@ -308,6 +313,7 @@ fn speed_round(
         });
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
         changed |= t.time("dce", || dce::run(&program.aggs, func));
+        changed |= t.time("thread_tags", || thread_tags::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
     }
     changed

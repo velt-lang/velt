@@ -37,7 +37,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
    where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
-   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
+   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce`, `thread_tags` (a jump
+   into the test of an inlined callee's `Result` tag that the jumping block just set goes where
+   the tag sends it) and `simplify_cfg`; then
    `module_state` (a function asks the runtime for the module state block once per call, not
    at every access to a module-level `let`), `map_probe`, `borrowed_copies` (a string local that
    only reads a copy of a string, such as `const src = this.src;`, holds the source's words
