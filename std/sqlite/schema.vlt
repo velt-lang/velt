@@ -13,6 +13,7 @@ import {
   Statement,
 } from "velt:sqlite/sql/ast";
 import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
+import { SqlError } from "velt:sqlite/sql/lexer";
 
 /** Column affinities. */
 export const A_BLOB: u8 = 0; // "none"
@@ -66,6 +67,14 @@ export class Column {
   /** The column is the rowid (`INTEGER PRIMARY KEY`): not stored in the record (NULL there). */
   isRowid: bool = false;
   hasDefault: bool = false;
+  /** A generated column (`AS (…)`); `stored` when it is STORED, VIRTUAL otherwise. */
+  generated: bool = false;
+  stored: bool = false;
+  /**
+   * The column's field in the table's records: VIRTUAL generated columns have none (-1), and a
+   * WITHOUT ROWID table's records hold its primary key columns first.
+   */
+  field: i64 = -1;
 
   constructor(name: string, type: string) {
     this.name = name;
@@ -91,6 +100,8 @@ export class Index {
    * order it cannot compare in, so the index must not be used for seeks.
    */
   seekable: bool = true;
+  /** Why the index cannot be used (its CREATE INDEX does not parse), or "". */
+  unsupported: string = "";
 
   constructor(name: string, table: string, root: u32, unique: bool) {
     this.name = name;
@@ -108,8 +119,17 @@ export class Table {
   /** The position of the rowid alias column, or -1. */
   rowidColumn: i64 = -1;
   withoutRowid: bool = false;
+  /** A STRICT table: its ANY columns have no affinity. */
+  strict: bool = false;
   indexes: Index[] = [];
   sql: string;
+  /** "table", or "view" or "virtual table" (which this engine cannot read yet). */
+  kind: string = "table";
+  /**
+   * Why the table cannot be used, or "": its CREATE statement does not parse (the parser's
+   * message), or it is a view or a virtual table. `Schema.table` throws this for it.
+   */
+  unsupported: string = "";
 
   constructor(name: string, root: u32, sql: string) {
     this.name = name;
@@ -129,13 +149,37 @@ export class Table {
   }
 }
 
+/** One row of sqlite_schema, as stored: every row is kept, whether this engine can use it or not. */
+export struct SchemaRow {
+  type: string;
+  name: string;
+  tableName: string;
+  root: u32;
+  sql: string;
+}
+
 /** The schema of one database file. */
 export class Schema {
+  /** Tables, views and virtual tables, usable or not (`Table.unsupported`). */
   tables: Table[] = [];
+  /** Every row of sqlite_schema (tables, indexes, views, triggers), in its order. */
+  rows: SchemaRow[] = [];
   cookie: u32 = 0;
 
-  /** The table `name` (case-insensitive), or null. */
+  /**
+   * The table `name` (case-insensitive), or null if there is none. One this engine cannot use
+   * throws why (SqlError), so it never reads as missing.
+   */
   table(name: string): Table | null {
+    const t = this.find(name);
+    if (t != null && t!.unsupported != "") {
+      throw new SqlError(`${t!.name}: ${t!.unsupported}`, 0);
+    }
+    return t;
+  }
+
+  /** The table, view or virtual table `name` (case-insensitive), usable or not, or null. */
+  find(name: string): Table | null {
     const n = name.toUpperCase();
     for (const t of this.tables) {
       if (t.name.toUpperCase() == n) {
@@ -146,8 +190,11 @@ export class Schema {
   }
 }
 
-/** Reads the schema of `db`. Statements Velt cannot parse yet make their table unusable, not
- *  the database: they are skipped. */
+/**
+ * Reads the schema of `db`. Every sqlite_schema row is kept (`Schema.rows`); a table, view or
+ * virtual table this engine cannot use is in `tables` with why (`Table.unsupported`), and an
+ * index it cannot use is on its table with why (`Index.unsupported`).
+ */
 export function loadSchema(db: DbFile): Schema {
   const schema = new Schema();
   schema.cookie = db.schemaCookie;
@@ -155,35 +202,52 @@ export function loadSchema(db: DbFile): Schema {
   for (const c of ["type", "name", "tbl_name", "rootpage", "sql"]) {
     master.columns.push(new Column(c, c == "rootpage" ? "INT" : "TEXT"));
   }
+  fields(master, []);
   schema.tables.push(master);
   const pending: Statement[] = [];
+  const failed: string[] = [];
   const roots: u32[] = [];
   const names: string[] = [];
   const c = new Cursor(db, 1);
   let more = c.first();
   while (more) {
-    const kind = c.text(0);
-    const sql = c.text(4);
-    const root = c.int(3) as u32;
-    if (kind == "table" && sql != "") {
-      tryTable(schema, sql, root);
-    } else if (kind == "index") {
+    const row = SchemaRow {
+      type: c.text(0),
+      name: c.text(1),
+      tableName: c.text(2),
+      root: c.int(3) as u32,
+      sql: c.text(4),
+    };
+    schema.rows.push(row);
+    if (row.type == "table") {
+      schema.tables.push(table(row));
+    } else if (row.type == "view") {
+      const t = new Table(row.name, 0, row.sql);
+      t.kind = "view";
+      t.unsupported = "views are not supported yet";
+      schema.tables.push(t);
+    } else if (row.type == "index") {
       // Indexes after their tables; an automatic index (UNIQUE, PRIMARY KEY) has no SQL.
-      names.push(c.text(1));
-      roots.push(root);
-      if (sql != "") {
-        const s = tryParse(sql);
-        pending.push(s == null ? new Statement(0) : s!);
-      } else {
-        pending.push(new Statement(0));
-        // Remember the table for an automatic index.
-        pending[pending.length - 1].table = c.text(2);
+      names.push(row.name);
+      roots.push(row.root);
+      let s = new Statement(0);
+      let why = "";
+      if (row.sql != "") {
+        try {
+          s = parseOne(row.sql);
+        } catch (e) {
+          why = e.message;
+        }
       }
+      // Remember the table (an automatic index has only its name).
+      s.table = s.kind == S_CREATE_INDEX ? s.table : row.tableName;
+      pending.push(s);
+      failed.push(why);
     }
     more = c.next();
   }
   for (let i: usize = 0; i < pending.length; i++) {
-    addIndex(schema, pending[i], names[i], roots[i]);
+    addIndex(schema, pending[i], names[i], roots[i], failed[i]);
   }
   return schema;
 }
@@ -196,18 +260,37 @@ function tryParse(sql: string): Statement | null {
   }
 }
 
-function tryTable(schema: Schema, sql: string, root: u32) {
-  const s = tryParse(sql);
-  if (s == null || s!.kind != S_CREATE_TABLE) {
-    return;
+/** The table of a sqlite_schema row: usable, or with why not. */
+function table(row: SchemaRow): Table {
+  let st = new Statement(0);
+  try {
+    st = parseOne(row.sql);
+  } catch (e) {
+    const t = new Table(row.name, row.root, row.sql);
+    t.unsupported = e.message;
+    if (row.sql.toUpperCase().startsWith("CREATE VIRTUAL")) {
+      t.kind = "virtual table";
+    }
+    return t;
   }
-  const st = s!;
-  const t = new Table(st.name, root, sql);
+  if (st.kind != S_CREATE_TABLE) {
+    const t = new Table(row.name, row.root, row.sql);
+    t.unsupported = "not a CREATE TABLE statement";
+    return t;
+  }
+  const t = new Table(st.name, row.root, row.sql);
   t.withoutRowid = st.withoutRowid;
+  t.strict = st.strict;
   for (const d of st.columnDefs) {
     const col = new Column(d.name, d.type);
+    // In a STRICT table, ANY means no affinity at all.
+    if (st.strict && d.type.toUpperCase() == "ANY") {
+      col.affinity = A_BLOB;
+    }
     col.notNull = d.notNull;
     col.hasDefault = d.dflt != null;
+    col.generated = d.generated != null;
+    col.stored = d.stored;
     const coll = collationOf(d.collate);
     // An unknown collation keeps BINARY here; indexes over the column are marked not seekable.
     col.collation = coll < 0 ? BINARY : coll as u8;
@@ -236,6 +319,7 @@ function tryTable(schema: Schema, sql: string, root: u32) {
     t.columns[pk as usize].isRowid = true;
   }
   // A WITHOUT ROWID table's key columns are NOT NULL, declared or not (as SQLite enforces).
+  const keyCols: i64[] = [];
   if (t.withoutRowid) {
     for (const k of st.keys) {
       if (!k.primary) {
@@ -245,28 +329,77 @@ function tryTable(schema: Schema, sql: string, root: u32) {
         const i = c.expr.kind == E_COLUMN ? t.column(c.expr.name) : -1;
         if (i >= 0) {
           t.columns[i as usize].notNull = true;
+          if (!keyCols.includes(i)) {
+            keyCols.push(i);
+          }
         }
       }
     }
   }
-  schema.tables.push(t);
+  fields(t, keyCols);
+  return t;
 }
 
-function addIndex(schema: Schema, s: Statement, name: string, root: u32) {
+/**
+ * Each column's field in the records: the key columns `first` (a WITHOUT ROWID table's primary
+ * key), then the others in order, VIRTUAL generated columns left out (sqlite3TableColumnToStorage).
+ */
+function fields(t: Table, first: i64[]) {
+  let n: i64 = 0;
+  for (const i of first) {
+    t.columns[i as usize].field = n;
+    n++;
+  }
+  for (let i: usize = 0; i < t.columns.length; i++) {
+    const col = t.columns[i];
+    if (first.includes(i as i64) || (col.generated && !col.stored)) {
+      continue;
+    }
+    col.field = n;
+    n++;
+  }
+}
+
+function addIndex(schema: Schema, s: Statement, name: string, root: u32, why: string) {
+  if (why != "") {
+    // A CREATE INDEX that does not parse: on its table, unusable.
+    const t = schema.find(s.table);
+    if (t != null) {
+      const ix = new Index(name, t!.name, root, false);
+      ix.unsupported = why;
+      ix.seekable = false;
+      t!.indexes.push(ix);
+    }
+    return;
+  }
   if (s.kind == S_CREATE_INDEX) {
-    const t = schema.table(s.table);
+    const t = schema.find(s.table);
     if (t == null) {
       return;
     }
     const ix = new Index(name, t!.name, root, s.unique);
+    if (t!.unsupported != "") {
+      ix.unsupported = t!.unsupported;
+      ix.seekable = false;
+      t!.indexes.push(ix);
+      return;
+    }
     ix.partial = s.where != null;
     keyColumns(t!, ix, s.indexed);
     t!.indexes.push(ix);
     return;
   }
   /** An automatic index: sqlite_autoindex_<table>_<n>, for a UNIQUE or PRIMARY KEY constraint. */
-  const t = schema.table(s.table);
+  const t = schema.find(s.table);
   if (t == null) {
+    return;
+  }
+  if (t!.unsupported != "") {
+    // The index of a table this engine cannot use: kept, unusable for the same reason.
+    const ix = new Index(name, t!.name, root, true);
+    ix.unsupported = t!.unsupported;
+    ix.seekable = false;
+    t!.indexes.push(ix);
     return;
   }
   const def = tryParse(t!.sql);

@@ -33,6 +33,35 @@ kw: end INTEGER, offset TEXT not null default, left , right big, by  default, wi
   kw_left: left desc BINARY, offset BINARY
   sqlite_autoindex_kw_1 unique: left BINARY
   sqlite_autoindex_kw_2 unique: by BINARY, with BINARY
+r1: id INTEGER; affinities 3; rowid id
+p1: a INTEGER, b ; affinities 30; rowid a
+p2: a , b ; affinities 00; rowid none
+p3: a , b ; affinities 00; rowid none
+  sqlite_autoindex_p3_1 unique: a BINARY
+  sqlite_autoindex_p3_2 unique: b BINARY
+p4: a INTEGER, b TEXT; affinities 31; rowid none
+p5b: end INT, left TEXT, offset REAL; affinities 314; rowid none
+vt (virtual table): unsupported: vt: CREATE VIRTUAL is not supported yet
+vt_data: id INTEGER, block BLOB; affinities 30; rowid id
+vt_idx without rowid: segid  not null, term  not null, pgno ; affinities 000; rowid none
+  sqlite_autoindex_vt_idx_1 (pk): the table itself
+vt_content: id INTEGER, c0 ; affinities 30; rowid id
+vt_docsize: id INTEGER, sz BLOB; affinities 30; rowid id
+vt_config without rowid: k  not null, v ; affinities 00; rowid none
+  sqlite_autoindex_vt_config_1 (pk): the table itself
+pv (view): unsupported: pv: views are not supported yet
+p6: a INT, b  virtual, c INT stored, d TEXT; affinities 3031; rowid none
+w6 without rowid: x TEXT, v  virtual, k TEXT not null, s  stored; affinities 1010; rowid none
+  sqlite_autoindex_w6_1 (pk): the table itself
+s1: a ANY, b INT; affinities 03; rowid none
+s2: a ANY, b INT; affinities 23; rowid none
 odd: a TEXT, b ; affinities 10; rowid none
   odd_a: a BINARY (not seekable)
+p6 [a:0 b:-1 c:1 d:2] row 0: 5|(computed)|6|five (C: 5|10|6|five)
+p6 [a:0 b:-1 c:1 d:2] row 1: -1|(computed)|0|minus one (C: -1|-2|0|minus one)
+w6 [x:1 v:-1 k:0 s:2] row 0: x2|(computed)|k2|k2x2 (C: x2|2|k2|k2x2)
+w6 [x:1 v:-1 k:0 s:2] row 1: x1|(computed)|key one|key onex1 (C: x1|7|key one|key onex1)
+s1 strict: a ANY affinity 0, C stores '1' as text
+s2: a ANY affinity 2, C stores '1' as integer
+54 sqlite_schema rows: tiitititiitiiitiititiiitiitiitiiittttiittttttttvttttti
 0 differ from C SQLite

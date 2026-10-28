@@ -5,6 +5,7 @@
 // as names, and an index over a collation the engine does not know.
 import { open, Database } from "velt:sqlite";
 import { DbFile } from "velt:sqlite/format";
+import { Cursor } from "velt:sqlite/btree";
 import { Index, Table, loadSchema } from "velt:sqlite/schema";
 import { BINARY, NOCASE } from "velt:sqlite/record";
 import { tmpdir } from "velt:os";
@@ -29,6 +30,23 @@ const TABLES: string[] = [
   // with ON CONFLICT, constraints without commas and quoted types: the table loads, as in C SQLite.
   "CREATE TABLE kw (end INTEGER PRIMARY KEY, offset TEXT NOT NULL DEFAULT 'o', left UNIQUE, right 'big' int, by DEFAULT end, with REFERENCES t4 (a) MATCH FULL ON DELETE CASCADE, match [x] y, CHECK (offset <> '') ON CONFLICT ABORT UNIQUE (by, with))",
   "CREATE INDEX kw_left ON kw (left DESC, offset)",
+  // The statements a review found dropped without a word: each is in the schema now, usable
+  // or (the virtual table) unsupported with why.
+  "CREATE TABLE r1 (id INTEGER PRIMARY KEY)",
+  "CREATE TABLE p1 (a INTEGER PRIMARY KEY, b REFERENCES r1 (id) MATCH FULL)",
+  "CREATE TABLE p2 (a, b, CHECK (a > 0) ON CONFLICT FAIL)",
+  "CREATE TABLE p3 (a, b, UNIQUE (a) UNIQUE (b))",
+  `CREATE TABLE p4 (a "INTEGER", b 'TEXT')`,
+  "CREATE TABLE p5b (end INT, left TEXT, offset REAL)",
+  "CREATE VIRTUAL TABLE vt USING fts5 (x)",
+  "CREATE VIEW pv AS SELECT a FROM p2",
+  // Generated columns: a VIRTUAL one is not in the record, so the fields after it move up; a
+  // WITHOUT ROWID table's record holds its key first.
+  "CREATE TABLE p6 (a INT, b AS (a * 2), c INT GENERATED ALWAYS AS (a + 1) STORED, d TEXT)",
+  "CREATE TABLE w6 (x TEXT, v AS (length(k)), k TEXT PRIMARY KEY, s AS (k || x) STORED) WITHOUT ROWID",
+  // STRICT: ANY has no affinity there ('1' stays text), NUMERIC elsewhere.
+  "CREATE TABLE s1 (a ANY, b INT) STRICT",
+  "CREATE TABLE s2 (a ANY, b INT)",
   "CREATE TABLE odd (a TEXT COLLATE NOCASE, b)",
   "CREATE INDEX odd_a ON odd (a)",
 ];
@@ -39,6 +57,7 @@ struct Info {
   notnull: i64;
   dflt_value: string | null;
   pk: i64;
+  hidden: i64;
 }
 
 struct IndexRow {
@@ -53,6 +72,14 @@ struct XInfo {
   desc: i64;
   coll: string;
   key: i64;
+}
+
+struct Text {
+  v: string;
+}
+
+struct Kind {
+  k: string;
 }
 
 struct Rowid {
@@ -113,6 +140,11 @@ function main() {
   for (const sql of TABLES) {
     db.exec(sql);
   }
+  db.exec(`
+    INSERT INTO p6 (a, d) VALUES (5, 'five'), (-1, 'minus one');
+    INSERT INTO w6 (x, k) VALUES ('x1', 'key one'), ('x2', 'k2');
+    INSERT INTO s1 VALUES ('1', 2); INSERT INTO s2 VALUES ('1', 2);
+  `);
   // An index over a collation C SQLite knows when it is made, renamed in the stored schema to
   // one neither engine has: its order cannot be trusted for seeks.
   db.exec(`
@@ -128,16 +160,30 @@ function main() {
     if (t.name == "sqlite_schema") {
       continue;
     }
+    if (t.unsupported != "") {
+      // Kept, with why it cannot be used; using it throws that.
+      let thrown = "";
+      try {
+        schema.table(t.name);
+      } catch (e) {
+        thrown = e.message;
+      }
+      console.log(`${t.name} (${t.kind}): unsupported: ${thrown}`);
+      for (const ix of t.indexes) {
+        console.log(`  ${ix.name}: unsupported: ${ix.unsupported}`);
+      }
+      continue;
+    }
     const cols: Info[] = c
       .prepare(
-        `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info('${t.name}') ORDER BY cid`,
+        `SELECT name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo('${t.name}') ORDER BY cid`,
       )
       .all();
     const mine = t.columns
       .map(
         (
           col,
-        ) => `${col.name} ${col.type}${col.notNull ? " not null" : ""}${col.hasDefault ? " default" : ""}`,
+        ) => `${col.name} ${col.type}${col.notNull ? " not null" : ""}${col.hasDefault ? " default" : ""}${col.generated ? (col.stored ? " stored" : " virtual") : ""}`,
       )
       .join(", ");
     const affs = t.columns.map((col) => String(col.affinity)).join("");
@@ -145,7 +191,7 @@ function main() {
       .map(
         (
           col,
-        ) => `${col.name} ${col.type}${col.notnull == 1 ? " not null" : ""}${col.dflt_value != null ? " default" : ""}`,
+        ) => `${col.name} ${col.type}${col.notnull == 1 ? " not null" : ""}${col.dflt_value != null ? " default" : ""}${col.hidden == 3 ? " stored" : col.hidden == 2 ? " virtual" : ""}`,
       )
       .join(", ");
     const rowid = t.rowidColumn >= 0 ? t.columns[t.rowidColumn as usize].name : "none";
@@ -191,6 +237,43 @@ function main() {
       console.log(`  ${t.indexes.length} indexes, C has ${rows.length}`);
     }
   }
+  // Each row of p6 and w6 read field by field (the engine's record), against C SQLite's columns.
+  const file = new DbFile(readFileBytesSync(path));
+  for (const name of ["p6", "w6"]) {
+    const t = schema.table(name)!;
+    const want: Text[] = c
+      .prepare(
+        `SELECT ${t.columns.map((col) => `CAST(${col.name} AS TEXT)`).join(" || '|' || ")} AS v FROM ${name}`,
+      )
+      .all();
+    const rows: string[] = [];
+    const cur = new Cursor(file, t.root);
+    let more = cur.first();
+    while (more) {
+      rows.push(
+        t.columns
+          .map((col) => (col.field < 0 ? "(computed)" : cur.text(col.field as usize)))
+          .join("|"),
+      );
+      more = cur.next();
+    }
+    const fieldsOf = t.columns.map((col) => `${col.name}:${col.field}`).join(" ");
+    for (let i: usize = 0; i < rows.length; i++) {
+      console.log(`${name} [${fieldsOf}] row ${i}: ${rows[i]} (C: ${want[i].v})`);
+    }
+  }
+  // STRICT: the affinity of ANY, and what C SQLite stored for '1' under it.
+  for (const name of ["s1", "s2"]) {
+    const t = schema.table(name)!;
+    const k: Kind[] = c.prepare(`SELECT typeof(a) AS k FROM ${name}`).all();
+    console.log(
+      `${name}${t.strict ? " strict" : ""}: a ANY affinity ${t.columns[0].affinity}, C stores '1' as ${k[0].k}`,
+    );
+  }
+  // Every sqlite_schema row is kept.
+  console.log(
+    `${schema.rows.length} sqlite_schema rows: ${schema.rows.map((r) => r.type[0]).join("")}`,
+  );
   c.close();
   removeSync(path);
   console.log(`${differ} differ from C SQLite`);
