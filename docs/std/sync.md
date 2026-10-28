@@ -164,6 +164,13 @@ reads while an admin task swaps in a new one, or the root of a structure that wr
   When it did not, `v` is dropped. `compareExchangeWeak` may fail even when it holds
   `expected` (call it in a loop).
 
+An `Atomic<string>` works the same way: `load()`, `store(v)` and `exchange(v)` read and
+replace the string, and `compareExchange(expected, v)` compares contents (strings are values)
+and returns whether it made `v` the value. Each `store` boxes the string, so a store costs one
+allocation; a read costs a load. A module-level `const` `Atomic<string>` is kept with the
+module's other state (its box is made at run time), which tasks reach one at a time: keep a
+busy one in a field of a `shared` object instead.
+
 It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
 thread may be reading it: it is freed once no thread can be (`velt:sync/epoch` below). A
 function that calls `load()` runs in a section for that, which the compiler opens and closes:

@@ -33,11 +33,12 @@ impl FnLower<'_, '_> {
             TyKind::Adt(_, args) if args.len() == 1 => args[0],
             _ => return None,
         };
-        let inner = match self.cx.kind(t) {
-            TyKind::Option(inner, _) => inner,
-            _ => t,
+        let reference = match self.cx.kind(t) {
+            TyKind::Shared(_) | TyKind::Str => true,
+            TyKind::Option(inner, _) => matches!(self.cx.kind(inner), TyKind::Shared(_)),
+            _ => false,
         };
-        matches!(self.cx.kind(inner), TyKind::Shared(_)).then_some(t)
+        reference.then_some(t)
     }
 
     /// Is `e` the `load` of a reference word (a borrowed, uncounted reference)?
@@ -64,6 +65,9 @@ impl FnLower<'_, '_> {
         t: TyId,
     ) -> Operand {
         use Intrinsic as I;
+        if matches!(self.cx.kind(t), TyKind::Str) {
+            return self.atomic_str_intrinsic(i, args);
+        }
         match (i, args) {
             (I::AtomicLoad, [a, o]) => {
                 let (p, _, bits) = self.atomic_word(a);
@@ -173,7 +177,7 @@ impl FnLower<'_, '_> {
 
     /// Hands the reference `old` of type `t`, taken out of a word, to `velt:sync/epoch`'s
     /// `retire`, which drops it once no thread in a section can still read it (none for null).
-    fn retire(&mut self, old: Operand, t: TyId) {
+    pub(super) fn retire(&mut self, old: Operand, t: TyId) {
         let (shared_ty, nullable) = match self.cx.kind(t) {
             TyKind::Option(inner, _) => (inner, true),
             _ => (t, false),
