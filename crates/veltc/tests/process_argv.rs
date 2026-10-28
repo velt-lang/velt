@@ -163,3 +163,55 @@ fn test_files_see_themselves_as_the_script() {
     let text = stdout(&out);
     assert!(text.contains("test_script"), "{text}");
 }
+
+/// A prompt written before a blocking read of stdin is out before the program waits, as Node
+/// flushes stdout first: the caller reading it can answer. Without the flush both would wait.
+#[test]
+fn stdout_is_flushed_before_stdin_is_read() {
+    use std::io::{Read, Write};
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("prompt.vlt");
+    std::fs::write(
+        &file,
+        "import { readLineSync } from \"velt:stdin\";\n\
+         function main() {\n  console.log(\"name?\");\n  const n = readLineSync();\n  \
+         console.log(`hi ${n}`);\n}\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("prompt");
+    let built = velt()
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    stdout(&built);
+    let mut child = command(&exe)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut got = Vec::new();
+        let mut byte = [0u8; 1];
+        while out.read(&mut byte).unwrap_or(0) == 1 {
+            got.push(byte[0]);
+            if got.ends_with(b"name?\n") {
+                let _ = tx.send(());
+            }
+        }
+    });
+    let prompted = rx.recv_timeout(std::time::Duration::from_secs(60)).is_ok();
+    let mut input = child.stdin.take().unwrap();
+    let _ = input.write_all(b"ada\n");
+    drop(input);
+    let _ = child.wait();
+    assert!(
+        prompted,
+        "the prompt did not arrive before the program read stdin"
+    );
+}
