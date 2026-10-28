@@ -84,8 +84,9 @@ Reading it:
   the digest into the message with `set` as the Rust port does with `copy_from_slice` (it used
   to copy it byte by byte).
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
-- Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
-  through `fetch`.
+- Decompression (`flate2`, `brotli-decompressor`) had no row then: Velt code could reach it
+  only through `fetch`. See [gzip](#gzip) for `gunzip` and [Brotli](#brotli) for
+  `brotli_decode`.
 
 ## Hex
 
@@ -125,3 +126,46 @@ comes in short runs. `utf8DecodeLossy` keeps its byte loop: skipping ASCII 16 an
 a time took 2.4 times fewer instructions on ASCII text but 4 to 16 % more on text with short
 ASCII runs, also with runs of up to four bytes stepped over one at a time. `xorMask` and `utf8Valid` keep
 their runtime helpers.
+
+## gzip
+
+`gunzip` is `velt:compress/inflate`'s `gunzip` against `flate2` (its default `miniz_oxide`
+backend, the crate the runtime's `fetch` decoded gzip and deflate bodies with): the 1 MB JSON of
+`gen_inputs.rs`, gzip-compressed at the default level, decoded 50 times. Instructions executed
+(cachegrind, x86-64 Linux, 4 cores):
+
+| benchmark | Velt | Rust | Velt / Rust |
+|---|---:|---:|---:|
+| gunzip | 571 M | 628 M | 0.91 |
+
+About 180 M of Velt's are the CRC-32 the trailer is checked against (slicing-by-8 tables, 3.4
+instructions per byte), where `crc32fast` uses carry-less multiplication (PCLMULQDQ), which
+`velt:simd` does not have yet: with it the row would be near 0.65. The decoder refills its
+64-bit bit buffer with one 8-byte load per symbol, decodes a second literal without a refill,
+and copies matches 16 bytes at a time; its output is allocated without zeroing
+(`Buffer.allocUnsafe`), which was 21 % of the instructions before.
+
+## Brotli
+
+`brotli_decode` is `velt:compress/brotli`'s `brotliDecompress` against `brotli-decompressor`
+(the crate the runtime's `fetch` decoded `br` bodies with, read to the end through its
+`Decompressor` with a 64 KiB buffer): the 1 MB JSON of `gen_inputs.rs` at quality 5 and 11
+(window 2^22), 50 times each. Its inputs are written by `gen_inputs` with the `brotli` encoder
+crate. Instructions executed (cachegrind, `VELT_THREADS=1`, x86-64 Linux, 4 cores under load),
+and per quality (100 decodes of one input):
+
+| benchmark | Velt | Rust | Velt / Rust |
+|---|---:|---:|---:|
+| brotli_decode | 1,016 M | 1,400 M | 0.73 |
+| quality 5 only | 954 M | 1,379 M | 0.69 |
+| quality 11 only | 1,078 M | 1,424 M | 0.76 |
+
+Best of 9 interleaved wall-clock runs on the same (busy) machine: 80 ms against 205 ms; most of
+the Rust program's extra time is the kernel's (page faults of `read_to_end`'s growing `Vec`).
+A 2.3 KB JSON document (213 bytes at quality 11) decoded 20,000 times: 95 K instructions per
+decode against 171 K, mostly building the prefix code tables of the header.
+
+The decoder keeps the bit reader, output position and command state in locals of one loop and
+decodes prefix codes with one table lookup (two for codes over 8 bits) as the reference decoder
+does; the input sits in a buffer of its own followed by zeros, so the bit reader loads 8 bytes
+at a time with no check per byte and finds out afterwards whether a step read past the input.

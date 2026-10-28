@@ -9,10 +9,10 @@
 //! memory. Accessors return owned copies, so their results never dangle. While the handler is
 //! polled, accessors find its request in the worker's frame (`context.rs`) without the registry.
 
-use super::client::text_of;
 use super::owned_str;
 use super::req_body::ReqBody;
 use crate::bytes::VeltBytes;
+use crate::bytes_ops::text_of;
 use crate::registry::{Key, Registry};
 use crate::result::IoResult;
 use crate::str::VeltStr;

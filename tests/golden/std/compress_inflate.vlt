@@ -1,0 +1,159 @@
+// check: no leaks
+// velt:compress/inflate: gzip (one member and two), zlib and raw DEFLATE streams with dynamic,
+// fixed and stored blocks, decoded whole and fed one byte at a time with small reads (whose
+// pieces never exceed the size asked for); `deflate` as HTTP sends it, zlib or raw; empty input;
+// and the errors: a truncated stream, a wrong check, a bad header, an invalid block type.
+import {
+  gunzip,
+  inflate,
+  inflateHttp,
+  inflateRaw,
+  InflateDecoder,
+  InflateFormat,
+} from "velt:compress/inflate";
+import { CompressError } from "velt:compress/error";
+import { hexDecode } from "velt:encoding";
+
+// 400 words of text: dynamic Huffman blocks (Python's `zlib`, level 6).
+const GZIP =
+  "1f8b08000000000002ff7d56ed42c2400c7b95bd1ac2e1d0c9902fc5a7774deedaf486fe608eb6d7a6b9b4b8" +
+  "9fbf87c3713f6dae65b897e93abc9ce7afe330dfcbd9edbbf975d895edbc2b17b77dde0edb77ff761d97cfe3" +
+  "c4d0b7dbc7e9c264fb25bb7dca92ee0127cc08c59b99a6cdcfc3f3c3450c76b09969897338c3ac56dbc3a679" +
+  "41456c3c428be2243cda1d371ef418a416cf0a528cc7605859952e619168ac128de6b6d66ab58a1cd9982751" +
+  "c12878833a7c6de55004be66496e2b85104f3ba6761d7575d78e00b5126cc1eb2a5909f5866b12bd3a1c6fc1" +
+  "acc9270ff269a45040f59419e84265bd585245418c8921b91d240bea7bd071fd728d6b463b2947397b53fc69" +
+  "84cc69e1489d59aee25376db75a06a3c44f12137a72986e029cdcd88b08c909d4b77290b31f1192295467a5a" +
+  "8015e20eee138fce717f05dd68cb14b7bf94edd272d26f5a4d444a3cb164f4c635b1bde3789ebd585a3d46b9" +
+  "89d52bfa658b7f295c38a93b89b2c3c619cbbfb3d7492f6f383a7db4eb62d15592533e936a482d4908c56c83" +
+  "0554a697695c0fbbeebe00a7536bfd7a37c260ac5f5768289fa9fae85658394d5de54cbd7a25536cfc44849c" +
+  "48d2e56669828e5f2968ac8d665a05b1b863a62c5ab40a86d3e2a7f3e9a4e1bcacb6b5f29494562de65352fb" +
+  "864a3fe2b513950dfb143869bbb76b8d7655d9bac245d6f91f00428b95ec9dda8719e2b74f3185c674dee0fb" +
+  "05b3cb5123d8080000";
+const ZLIB =
+  "789c7556ed62c240087b95be9ad36add3aebfcdadcd3af247710eedc0fbb0a1c845cc0ed979fe178dacf9bdb" +
+  "383cc6f936bc5d96efd3b03cc68bdb77cb61d88ddb65375eddf6753f6e3ffcdb6d5a3fcf3343dfef9fe72b93" +
+  "edd7ecf619d7744f38614628decc346f7e9f9e1f2e62b083d54c4b9cc31966b5da1e362f2b2a62e3115a1427" +
+  "e1d1eeb8f1a0c720d5785690623c06436755ba8445a2b14a349adb5a2bd50a7264639e4405a3e00deaf0b596" +
+  "4311f8aa25b9ad14423ced94da75d4c55d3a02d442b005f755b212ca0d97247a75385e8359934f1ee4d348a1" +
+  "80ca2933d085ca7ab1a48a82981243723b4816d4b7a0e3fae51a7b461b2947397b53fc6984cc69e1489d592e" +
+  "e25376eb75a06a3c44f12137a72986e025cdd588b08c909d4b77290b31f1192295465a5a8015e20eee138fce" +
+  "717b05cd68cb14d7bf94edda72d26f5a4d444a3cb164f4c635b1bde3789ebd585a2d46b989ee15fdb2c5ff14" +
+  "2e9c949d44d961e34c3d153a7b8df4f286a3d347bb2c165d2539e52ba986d4928450cc365840657a99c67ed8" +
+  "75f705389d5aebd7bb110663fdba4243f94cd546d7c2ca69ea2a676ad52b9962e32722e444922e374b1574fc" +
+  "4a41637534d32a88c51d3365d1a255309c163f9d2f270de765b5f5ca53526ab5984f49ed1b2afd88974e5436" +
+  "ec53e0a4ed5eaf35da5565eb0a1759e77f00082d56b2776a1f6688df3ec5141ad37983ef0f2040488b";
+const RAW =
+  "7556ed62c240087b95be9ad36add3aebfcdadcd3af247710eedc0fbb0a1c845cc0ed979fe178dacf9bdb383c" +
+  "c6f936bc5d96efd3b03cc68bdb77cb61d88ddb65375eddf6753f6e3ffcdb6d5a3fcf3343dfef9fe72b93edd7" +
+  "ecf619d7744f38614628decc346f7e9f9e1f2e62b083d54c4b9cc31966b5da1e362f2b2a62e3115a1427e1d1" +
+  "eeb8f1a0c720d5785690623c06436755ba8445a2b14a349adb5a2bd50a7264639e4405a3e00deaf0b5964311" +
+  "f8aa25b9ad14423ced94da75d4c55d3a02d442b005f755b212ca0d97247a75385e8359934f1ee4d348a180ca" +
+  "2933d085ca7ab1a48a82981243723b4816d4b7a0e3fae51a7b461b2947397b53fc6984cc69e1489d592ee253" +
+  "76eb75a06a3c44f12137a72986e025cdd588b08c909d4b77290b31f1192295465a5a8015e20eee138fce717b" +
+  "05cd68cb14d7bf94edda72d26f5a4d444a3cb164f4c635b1bde3789ebd585a2d46b989ee15fdb2c5ff142e9c" +
+  "949d44d961e34c3d153a7b8df4f286a3d347bb2c165d2539e52ba986d4928450cc365840657a99c67ed875f7" +
+  "05389d5aebd7bb110663fdba4243f94cd546d7c2ca69ea2a676ad52b9962e32722e444922e374b1574fc4a41" +
+  "637534d32a88c51d3365d1a255309c163f9d2f270de765b5f5ca53526ab5984f49ed1b2afd88974e5436ec53" +
+  "e0a4ed5eaf35da5565eb0a1759e77f00082d56b2776a1f6688df3ec5141ad37983ef0f";
+// A short text in a stored block, and in a fixed-code block.
+const STORED =
+  "01cc0033ff56656c7420696e666c6174657320746869733a2061626361626361626361626361626361626361" +
+  "6263616263616263616263616263616263616263616263616263616263616263616263616263616263616263" +
+  "6162636162636162636162636162636162636162636162636162636162636162636162636162636162636162" +
+  "6361626361626361626361626361626361626361626361626361626361626361626361626361626361626361" +
+  "626361626361626361626361626361626361626361626361626361626320656e64";
+const FIXED = "0b4bcd2951c8cc4bcb492c492d5628c9c82cb652484c4a1e724821352f0500";
+// "ab" and "cd", two gzip members in a row.
+const TWO =
+  "1f8b08000000000002ff4b4c02006d48839e020000001f8b08000000000002ff4b4e0100da8fd64502000000";
+// GZIP with one bit of its CRC-32 flipped.
+const BAD_CRC =
+  "1f8b08000000000002ff7d56ed42c2400c7b95bd1ac2e1d0c9902fc5a7774deedaf486fe608eb6d7a6b9b4b8" +
+  "9fbf87c3713f6dae65b897e93abc9ce7afe330dfcbd9edbbf975d895edbc2b17b77dde0edb77ff761d97cfe3" +
+  "c4d0b7dbc7e9c264fb25bb7dca92ee0127cc08c59b99a6cdcfc3f3c3450c76b09969897338c3ac56dbc3a679" +
+  "41456c3c428be2243cda1d371ef418a416cf0a528cc7605859952e619168ac128de6b6d66ab58a1cd9982751" +
+  "c12878833a7c6de55004be66496e2b85104f3ba6761d7575d78e00b5126cc1eb2a5909f5866b12bd3a1c6fc1" +
+  "acc9270ff269a45040f59419e84265bd585245418c8921b91d240bea7bd071fd728d6b463b2947397b53fc69" +
+  "84cc69e1489d59aee25376db75a06a3c44f12137a72986e029cdcd88b08c909d4b77290b31f1192295467a5a" +
+  "8015e20eee138fce717f05dd68cb14b7bf94edd272d26f5a4d444a3cb164f4c635b1bde3789ebd585a3d46b9" +
+  "89d52bfa658b7f295c38a93b89b2c3c619cbbfb3d7492f6f383a7db4eb62d15592533e936a482d4908c56c83" +
+  "0554a697695c0fbbeebe00a7536bfd7a37c260ac5f5768289fa9fae85658394d5de54cbd7a25536cfc44849c" +
+  "48d2e56669828e5f2968ac8d665a05b1b863a62c5ab40a86d3e2a7f3e9a4e1bcacb6b5f29494562de65352fb" +
+  "864a3fe2b513950dfb143869bbb76b8d7655d9bac245d6f91f00428b95ec9dda8719e2b74f3185c674dee0fb" +
+  "05b3cb5023d8080000";
+
+function bytes(hex: string): u8[] {
+  return hexDecode(hex);
+}
+
+// What `format` decodes `data` to, fed one byte at a time and read `max` bytes at a time.
+function streamed(format: InflateFormat, data: u8[], max: i64): string throws CompressError {
+  const d = new InflateDecoder(format);
+  const out: u8[] = [];
+  for (let i: i64 = 0; i <= (data.length as i64); i++) {
+    if (i < (data.length as i64)) {
+      d.feed([data[i]]);
+    } else {
+      d.finish();
+    }
+    while (true) {
+      const piece = d.read(max);
+      if ((piece.length as i64) > max) {
+        console.log("a piece larger than asked for");
+      }
+      if (piece.length == 0) {
+        break;
+      }
+      for (const b of piece) {
+        out.push(b);
+      }
+    }
+  }
+  if (!d.done) {
+    console.log("not done");
+  }
+  return out.utf8Slice();
+}
+
+function attempt(what: string, f: () => u8[] throws CompressError) {
+  try {
+    console.log(what, f().length);
+  } catch (e) {
+    console.log(what, "rejected:", e.message);
+  }
+}
+
+function main() {
+  const text = gunzip(bytes(GZIP)).utf8Slice();
+  console.log(text.length, text.slice(0, 40));
+  console.log(inflate(bytes(ZLIB)).utf8Slice() == text, inflateRaw(bytes(RAW)).utf8Slice() == text);
+  console.log(
+    inflateHttp(bytes(ZLIB)).utf8Slice() == text,
+    inflateHttp(bytes(RAW)).utf8Slice() == text,
+  );
+  console.log(
+    inflateRaw(bytes(STORED)).utf8Slice().length,
+    inflateRaw(bytes(FIXED)).utf8Slice().length,
+  );
+  console.log(gunzip(bytes(TWO)).utf8Slice());
+  console.log(
+    streamed("gzip", bytes(GZIP), 7) == text,
+    streamed("zlib", bytes(ZLIB), 100) == text,
+    streamed("raw", bytes(RAW), 1) == text,
+    streamed("deflate", bytes(RAW), 3) == text,
+  );
+  console.log(streamed("raw", bytes(STORED), 5).length, streamed("gzip", bytes(TWO), 1));
+  console.log(gunzip([]).length, inflateHttp([]).length);
+
+  const g = bytes(GZIP);
+  attempt("truncated", () => gunzip(g.slice(0, 40)));
+  const badCrc = bytes(BAD_CRC);
+  attempt("bad crc", () => gunzip(badCrc));
+  attempt("bad header", () => inflate([1, 2, 3, 4]));
+  attempt("bad block type", () => inflateRaw([7, 0, 0]));
+  try {
+    streamed("gzip", g.slice(0, 40), 10);
+  } catch (e) {
+    console.log("truncated, streamed:", e.message);
+  }
+}

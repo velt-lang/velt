@@ -11,6 +11,7 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
+declare function velt_rt_bytes_uninit(n: u64): u8[];
 declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
@@ -242,6 +243,15 @@ export class Buffer {
   /** `n` zero bytes. */
   static alloc(n: usize): u8[] {
     return velt_rt_bytes_zeroed(n as u64);
+  }
+
+  /**
+   * `n` bytes whose contents are not set, as Node's `Buffer.allocUnsafe(n)`: whatever the memory
+   * held before (any byte values). For a buffer filled before it is read, where zeroing it first
+   * would write it twice.
+   */
+  static allocUnsafe(n: usize): u8[] {
+    return velt_rt_bytes_uninit(n as u64);
   }
 
   /**

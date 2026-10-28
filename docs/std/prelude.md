@@ -180,7 +180,9 @@ const n = buf.write("GET /");
 console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
 ```
 
-`Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
+`Buffer.alloc(n)` creates `n` zero bytes, and `Buffer.allocUnsafe(n)`, as in Node, `n` bytes whose
+values are whatever the memory held: for a buffer the program fills before it reads it (a
+decoder's output), which zeroing would write twice. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
 the decoded size for `base64`/`base64url` and `hex`.

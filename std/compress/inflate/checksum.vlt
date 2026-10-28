@@ -1,0 +1,76 @@
+// std/compress/inflate/checksum (std-internal): the checks a gzip member (CRC-32, RFC 1952 §8)
+// and a zlib stream (Adler-32, RFC 1950 §9) end with, computed as the output is made.
+//
+// CRC-32 takes eight bytes per step through the slicing-by-8 tables (one 16-byte load gives two
+// steps); Adler-32 sums 5552 bytes between reductions, the most that cannot overflow 32 bits.
+
+import { u8x16, u64x2 } from "velt:simd";
+import { CRC_TABLE } from "velt:compress/inflate/tables";
+
+// The vector load without its range check: `crc32` loads only where 16 bytes are left.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+
+/** The CRC-32 of `bytes[start..end]` after `crc` (0 to start). */
+export function crc32(crc: u32, bytes: u8[], start: i64, end: i64): u32 {
+  let c = (crc ^ 0xffffffff) as u64;
+  let i = start;
+  while (i + 16 <= end) {
+    const v = velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(bytes, i as u64));
+    c = step8(v.lane(0) ^ c);
+    c = step8(v.lane(1) ^ c);
+    i += 16;
+  }
+  while (i < end) {
+    c = (CRC_TABLE[((c ^ (bytes[i] as u64)) & 255) as i64] as u64) ^ (c >> 8);
+    i += 1;
+  }
+  return (c ^ 0xffffffff) as u32;
+}
+
+/** Eight bytes, the CRC so far XORed into their first four, through the tables. */
+function step8(a: u64): u64 {
+  return ((
+    CRC_TABLE[(1792 + (a & 255)) as i64] ^
+    CRC_TABLE[(1536 + ((a >> 8) & 255)) as i64] ^
+    CRC_TABLE[(1280 + ((a >> 16) & 255)) as i64] ^
+    CRC_TABLE[(1024 + ((a >> 24) & 255)) as i64] ^
+    CRC_TABLE[(768 + ((a >> 32) & 255)) as i64] ^
+    CRC_TABLE[(512 + ((a >> 40) & 255)) as i64] ^
+    CRC_TABLE[(256 + ((a >> 48) & 255)) as i64] ^
+    CRC_TABLE[(a >> 56) as i64]
+  ) as u64);
+}
+
+/** Adler-32's modulus, and the most bytes summed before reducing by it. */
+const BASE: u64 = 65521;
+const NMAX: i64 = 5552;
+
+/** The Adler-32 of `bytes[start..end]` after `adler` (1 to start). */
+export function adler32(adler: u32, bytes: u8[], start: i64, end: i64): u32 {
+  let a = (adler & 65535) as u64;
+  let b = (adler >> 16) as u64;
+  let i = start;
+  while (i < end) {
+    const stop = end - i > NMAX ? i + NMAX : end;
+    while (i + 4 <= stop) {
+      a += bytes[i] as u64;
+      b += a;
+      a += bytes[i + 1] as u64;
+      b += a;
+      a += bytes[i + 2] as u64;
+      b += a;
+      a += bytes[i + 3] as u64;
+      b += a;
+      i += 4;
+    }
+    while (i < stop) {
+      a += bytes[i] as u64;
+      b += a;
+      i += 1;
+    }
+    a %= BASE;
+    b %= BASE;
+  }
+  return ((b << 16) | a) as u32;
+}

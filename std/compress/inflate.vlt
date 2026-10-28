@@ -1,0 +1,399 @@
+// std/compress/inflate: DEFLATE decompression (docs/std/compress.md): raw DEFLATE (RFC 1951),
+// zlib (RFC 1950) and gzip (RFC 1952, several members in a row as one stream), in Velt.
+//
+// `gunzip`, `inflate` and `inflateRaw` decode a whole stream into one buffer, sized from the
+// gzip trailer's length when there is one. `InflateDecoder` decodes a stream that arrives in
+// pieces into chunks of a bounded size, so a small input that expands enormously is still
+// handed out a chunk at a time. Both check the stream's CRC-32 or Adler-32.
+
+import { CompressError } from "velt:compress/error";
+import { Blocks, FULL, NEED_INPUT, STREAM_END } from "velt:compress/inflate/blocks";
+import { MAX_MATCH, SLACK } from "velt:compress/inflate/codes";
+import { adler32, crc32 } from "velt:compress/inflate/checksum";
+
+export { CompressError } from "velt:compress/error";
+
+/**
+ * A compressed stream's wrapping: `"gzip"`, `"zlib"`, `"raw"` (DEFLATE alone), or `"deflate"`,
+ * HTTP's `content-encoding: deflate`: zlib, or raw DEFLATE when the stream does not start with a
+ * zlib header (as browsers and Node's `fetch` accept both).
+ */
+export type InflateFormat = "gzip" | "zlib" | "raw" | "deflate";
+
+const GZIP: i64 = 0;
+const ZLIB: i64 = 1;
+const RAW: i64 = 2;
+const AUTO: i64 = 3;
+
+/** Where the decoder is in its stream. */
+const HEAD: i64 = 0;
+const BODY: i64 = 1;
+const TRAIL: i64 = 2;
+const DONE: i64 = 3;
+/** After a gzip member: another one may follow, as `gzip` writes concatenated files. */
+const NEXT: i64 = 4;
+
+/** How far back a match may reach: what the output keeps when it is moved down. */
+const WINDOW: i64 = 32768;
+
+function formatOf(f: InflateFormat): i64 {
+  if (f == "gzip") {
+    return GZIP;
+  }
+  if (f == "zlib") {
+    return ZLIB;
+  }
+  return f == "raw" ? RAW : AUTO;
+}
+
+/** Decodes a stream fed in pieces (`feed`, then `finish`) into chunks (`read`). */
+export class InflateDecoder {
+  #b: Blocks = new Blocks();
+  #format: i64;
+  #state: i64 = HEAD;
+  #last: bool = false;
+  /** Whether a member (or the stream) has started: input that ends before one is empty. */
+  #started: bool = false;
+  /** The output not read yet is `out[rp..op]`; the check covers `out[..ck]`. */
+  #rp: i64 = 0;
+  #ck: i64 = 0;
+  #check: u32 = 0;
+  #size: u64 = 0;
+
+  constructor(format: InflateFormat) {
+    this.#format = formatOf(format);
+    if (this.#format == RAW) {
+      this.#state = BODY;
+    }
+  }
+
+  /** Queues more compressed bytes (`input` is kept, not copied, when nothing is left over). */
+  feed(input: u8[]) {
+    const b = this.#b;
+    if (input.length == 0) {
+      return;
+    }
+    // The whole bytes read ahead into the bit buffer go back, so they move with the rest.
+    b.ip -= (b.bc >> 3) as i64;
+    b.bb &= (1 << (b.bc & 7)) - 1;
+    b.bc &= 7;
+    if (b.ip >= (b.inp.length as i64)) {
+      b.inp = input;
+    } else {
+      b.inp = b.inp.slice(b.ip).concat(input);
+    }
+    b.ip = 0;
+  }
+
+  /** No more input follows. */
+  finish() {
+    this.#last = true;
+  }
+
+  /** Whether the stream has ended and every decoded byte was read. */
+  get done(): bool {
+    return this.#state == DONE && this.#rp == this.#b.op;
+  }
+
+  /**
+   * Up to `max` decoded bytes; `[]` when more input is needed first, or at the end (`done`).
+   * Throws `CompressError` for input that is not a valid stream, and for one that `finish()`
+   * cut short.
+   */
+  read(max: i64): u8[] throws CompressError {
+    const b = this.#b;
+    if (this.#rp == b.op) {
+      this.slide();
+      if ((b.out.length as i64) < b.op + max + MAX_MATCH + SLACK) {
+        const bigger: u8[] = Buffer.allocUnsafe((b.op + max + MAX_MATCH + SLACK) as usize);
+        bigger.set(b.out.slice(0, b.op), 0);
+        b.out = bigger;
+      }
+      this.advance(b.op + max, false);
+    }
+    let n = b.op - this.#rp;
+    if (n > max) {
+      n = max;
+    }
+    const chunk = b.out.slice(this.#rp, this.#rp + n);
+    this.#rp += n;
+    return chunk;
+  }
+
+  /** The whole stream, all input fed and finished (the one-shot functions). */
+  private all(hint: i64): u8[] throws CompressError {
+    const b = this.#b;
+    b.out = Buffer.allocUnsafe((hint + MAX_MATCH + SLACK) as usize);
+    this.advance(0, true);
+    if (this.#state != DONE) {
+      throw new CompressError("unexpected end of file");
+    }
+    const out = b.out;
+    b.out = [];
+    out.truncate(b.op);
+    return out;
+  }
+
+  /** Moves the last `WINDOW` bytes of output (all read) to the front of the buffer. */
+  private slide() {
+    const b = this.#b;
+    const keep = b.op - WINDOW;
+    if (keep <= 0 || b.op < (b.out.length as i64) / 2) {
+      return;
+    }
+    b.out.copyWithin(0, keep, b.op);
+    b.op -= keep;
+    this.#rp -= keep;
+    this.#ck -= keep;
+  }
+
+  /** Decodes until the output reaches `limit` (unless `grow`), the input runs out, or the end. */
+  private advance(limit: i64, grow: bool) throws CompressError {
+    const b = this.#b;
+    while (true) {
+      const state = this.#state;
+      if (state == BODY) {
+        const r = b.run(limit, this.#last, grow);
+        this.sum();
+        if (r != STREAM_END) {
+          return;
+        }
+        b.bb >>= b.bc & 7;
+        b.bc -= b.bc & 7;
+        b.unread();
+        this.#state = TRAIL;
+      } else if (state == HEAD) {
+        if (!this.head()) {
+          return;
+        }
+      } else if (state == TRAIL) {
+        if (!this.trail()) {
+          return;
+        }
+      } else if (state == NEXT) {
+        if (this.available() > 0) {
+          b.restart();
+          this.#state = HEAD;
+        } else if (this.#last) {
+          this.#state = DONE;
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+  }
+
+  /** Brings the stream's check up to the output made so far. */
+  private sum() {
+    const b = this.#b;
+    if (this.#ck == b.op) {
+      return;
+    }
+    if (this.#format == GZIP) {
+      this.#check = crc32(this.#check, b.out, this.#ck, b.op);
+      this.#size += (b.op - this.#ck) as u64;
+    } else if (this.#format == ZLIB) {
+      this.#check = adler32(this.#check, b.out, this.#ck, b.op);
+    }
+    this.#ck = b.op;
+  }
+
+  /** The bytes of input not taken yet. */
+  private available(): i64 {
+    const b = this.#b;
+    return (b.inp.length as i64) - b.ip;
+  }
+
+  /** The gzip or zlib header; false when it has not all arrived (an error at the end). */
+  private head(): bool throws CompressError {
+    const b = this.#b;
+    if (this.available() == 0) {
+      if (this.#last) {
+        if (this.#started) {
+          throw new CompressError("unexpected end of file");
+        }
+        this.#state = DONE;
+      }
+      return false;
+    }
+    if (this.#format == AUTO) {
+      this.#format = (b.inp[b.ip] & 15) == 8 ? ZLIB : RAW;
+    }
+    this.#started = true;
+    let used: i64 = 0;
+    if (this.#format == GZIP) {
+      used = gzipHeader(b.inp, b.ip);
+      this.#check = 0;
+      this.#size = 0;
+    } else if (this.#format == ZLIB) {
+      used = zlibHeader(b.inp, b.ip);
+      this.#check = 1;
+    }
+    if (used < 0) {
+      if (this.#last) {
+        throw new CompressError("unexpected end of file");
+      }
+      return false;
+    }
+    b.ip += used;
+    this.#state = BODY;
+    return true;
+  }
+
+  /** The member's or stream's trailer, checked; false when it has not all arrived. */
+  private trail(): bool throws CompressError {
+    const b = this.#b;
+    const format = this.#format;
+    const need = format == GZIP ? 8 : format == ZLIB ? 4 : 0;
+    if (this.available() < need) {
+      if (this.#last) {
+        throw new CompressError("unexpected end of file");
+      }
+      return false;
+    }
+    const inp = b.inp;
+    const at = b.ip;
+    if (format == GZIP) {
+      if (le32(inp, at) != this.#check) {
+        throw new CompressError("incorrect data check");
+      }
+      if (le32(inp, at + 4) != ((this.#size & 0xffffffff) as u32)) {
+        throw new CompressError("incorrect length check");
+      }
+      b.ip += 8;
+      this.#state = NEXT;
+      return true;
+    } else if (format == ZLIB) {
+      const want =
+        ((inp[at] as u32) << 24) |
+        ((inp[at + 1] as u32) << 16) |
+        ((inp[at + 2] as u32) << 8) |
+        (inp[at + 3] as u32);
+      if (want != this.#check) {
+        throw new CompressError("incorrect data check");
+      }
+      b.ip += 4;
+    }
+    this.#state = DONE;
+    return true;
+  }
+}
+
+/** The little-endian `u32` at `inp[at..at + 4]`. */
+function le32(inp: u8[], at: i64): u32 {
+  return (inp[at] as u32) |
+    ((inp[at + 1] as u32) << 8) |
+    ((inp[at + 2] as u32) << 16) |
+    ((inp[at + 3] as u32) << 24);
+}
+
+/** The length of the gzip header at `inp[at..]`, or -1 when it has not all arrived. */
+function gzipHeader(inp: u8[], at: i64): i64 throws CompressError {
+  const end = inp.length as i64;
+  if (end - at < 10) {
+    return end - at >= 1 && inp[at] != 31 ? bad("incorrect header check") : -1;
+  }
+  if (inp[at] != 31 || inp[at + 1] != 139) {
+    return bad("incorrect header check");
+  }
+  if (inp[at + 2] != 8) {
+    return bad("unknown compression method");
+  }
+  const flags = inp[at + 3];
+  if ((flags & 224) != 0) {
+    return bad("unknown header flags set");
+  }
+  let p = at + 10;
+  if ((flags & 4) != 0) {
+    if (end - p < 2) {
+      return -1;
+    }
+    p += 2 + ((inp[p] as i64) | ((inp[p + 1] as i64) << 8));
+    if (p > end) {
+      return -1;
+    }
+  }
+  // The file name and the comment end with a zero byte.
+  for (const flag of [8, 16]) {
+    if ((flags & (flag as u8)) != 0) {
+      const z = inp.indexOf(0, p);
+      if (z < 0) {
+        return -1;
+      }
+      p = z + 1;
+    }
+  }
+  if ((flags & 2) != 0) {
+    p += 2;
+    if (p > end) {
+      return -1;
+    }
+  }
+  return p - at;
+}
+
+/** The length of the zlib header at `inp[at..]` (2), or -1 when it has not all arrived. */
+function zlibHeader(inp: u8[], at: i64): i64 throws CompressError {
+  if ((inp.length as i64) - at < 2) {
+    return -1;
+  }
+  const cmf = inp[at] as i64;
+  const flg = inp[at + 1] as i64;
+  if ((cmf * 256 + flg) % 31 != 0) {
+    return bad("incorrect header check");
+  }
+  if ((cmf & 15) != 8) {
+    return bad("unknown compression method");
+  }
+  if ((cmf >> 4) > 7) {
+    return bad("invalid window size");
+  }
+  if ((flg & 32) != 0) {
+    return bad("need dictionary");
+  }
+  return 2;
+}
+
+function bad(message: string): i64 throws CompressError {
+  throw new CompressError(message);
+}
+
+/** The whole of a stream in `format`; `hint` is the size it is expected to decode to. */
+function whole(input: u8[], format: InflateFormat, hint: i64): u8[] throws CompressError {
+  const d = new InflateDecoder(format);
+  d.feed(input);
+  d.finish();
+  return d.all(hint);
+}
+
+/** The bytes a gzip stream (one or more members) decodes to. */
+export function gunzip(input: u8[]): u8[] throws CompressError {
+  // The last member's trailer gives its size (modulo 2^32): usually the whole output's.
+  const n = input.length as i64;
+  let hint = n * 4;
+  if (n >= 18) {
+    const size = le32(input, n - 4) as i64;
+    hint = size < n * 1032 ? size : n * 1032;
+  }
+  return whole(input, "gzip", hint);
+}
+
+/** The bytes a zlib stream decodes to. */
+export function inflate(input: u8[]): u8[] throws CompressError {
+  return whole(input, "zlib", (input.length as i64) * 4);
+}
+
+/** The bytes a raw DEFLATE stream decodes to. */
+export function inflateRaw(input: u8[]): u8[] throws CompressError {
+  return whole(input, "raw", (input.length as i64) * 4);
+}
+
+/**
+ * The bytes a body with HTTP's `content-encoding: deflate` decodes to: zlib, or raw DEFLATE
+ * without a zlib header.
+ */
+export function inflateHttp(input: u8[]): u8[] throws CompressError {
+  return whole(input, "deflate", (input.length as i64) * 4);
+}

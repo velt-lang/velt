@@ -1,0 +1,346 @@
+// std/compress/brotli/prefix (internal to velt:compress/brotli): prefix codes (RFC 7932 section
+// 3) read from the stream and turned into lookup tables.
+//
+// A table is `u32` entries `symbol << 16 | length`, indexed by the next 8 input bits (the
+// root). A code longer than 8 bits has its root entry point at a second-level table instead:
+// `offset << 16 | (8 + bits)`, the offset relative to the root, indexed by the next `bits`
+// input bits. This is the reference decoder's layout; one table lookup decodes most symbols.
+// Bits arrive first-bit-lowest, so a code's table index is its bits reversed.
+
+import { u32x4 } from "velt:simd";
+import { CompressError } from "velt:compress/error";
+import { Bits } from "velt:compress/brotli/bits";
+import { CODE_LENGTH_CODE, CODE_LENGTH_ORDER } from "velt:compress/brotli/tables";
+
+// Bits indexed by a table's root.
+const ROOT_BITS: usize = 8;
+
+const MAX_LENGTH: usize = 15;
+
+// `x`'s low `n` bits in reverse order (n <= 15).
+function reverse(x: u32, n: u32): u32 {
+  let v = x;
+  v = ((v & 0x5555) << 1) | ((v >> 1) & 0x5555);
+  v = ((v & 0x3333) << 2) | ((v >> 2) & 0x3333);
+  v = ((v & 0x0f0f) << 4) | ((v >> 4) & 0x0f0f);
+  v = ((v & 0x00ff) << 8) | ((v >> 8) & 0x00ff);
+  return v >> (16 - n);
+}
+
+// `n` elements, left as they are: each is written before it is read.
+function unfilled(n: usize): u16[] {
+  const out: u16[] = __intrinsic_array_with_capacity(n);
+  __intrinsic_array_set_len(out, n);
+  return out;
+}
+
+/** Reads prefix codes and builds their tables, with scratch space reused from code to code. */
+export class PrefixReader {
+  // Code lengths by symbol (the largest alphabet is 704 symbols).
+  lengths: u8[] = Buffer.alloc(704);
+  // Symbols per code length, then (`place`) where each length's symbols go in `sorted`.
+  count: u32[] = new Array<u32>(MAX_LENGTH + 2).fill(0);
+  place: u32[] = new Array<u32>(MAX_LENGTH + 2).fill(0);
+  // Symbols ordered by code length, then by value: the canonical order of their codes.
+  sorted: u16[] = unfilled(704);
+  // The table of the code length code (5-bit root, no second level).
+  lengthTable: u32[] = new Array<u32>(32).fill(0);
+
+  /**
+   * Reads the prefix code of an alphabet of `size` symbols and writes its table at
+   * `table[at]`, which has room for `MAX_TABLE_SIZE` entries. Returns the table's size.
+   */
+  read(br: Bits, size: usize, table: u32[], at: usize): usize throws CompressError {
+    const kind = br.read(2);
+    if (kind == 1) {
+      return this.readSimple(br, size, table, at);
+    }
+    const used = this.readLengths(br, size, kind as usize);
+    return build(table, at, used, ROOT_BITS, this.lengths, this.count, this.place, this.sorted);
+  }
+
+  // A simple prefix code (section 3.4): one to four symbols listed, lengths implied.
+  readSimple(br: Bits, size: usize, table: u32[], at: usize): usize throws CompressError {
+    const n = (br.read(2) + 1) as usize;
+    let width: u64 = 0;
+    while ((1 << width) < (size as u64)) {
+      width++;
+    }
+    const s0 = br.read(width) as usize;
+    const s1 = n > 1 ? br.read(width) as usize : 0;
+    const s2 = n > 2 ? br.read(width) as usize : 0;
+    const s3 = n > 3 ? br.read(width) as usize : 0;
+    if (s0 >= size || s1 >= size || s2 >= size || s3 >= size) {
+      throw new CompressError("brotli: invalid simple prefix code symbol");
+    }
+    if (n == 1) {
+      const entry = (s0 << 16) as u32;
+      table.fill(entry, at as i64, (at + 256) as i64);
+      return 256;
+    }
+    if (
+      s0 == s1 || (n > 2 && (s2 == s0 || s2 == s1)) || (n > 3 && (s3 == s0 || s3 == s1 || s3 == s2))
+    ) {
+      throw new CompressError("brotli: repeated symbol in a simple prefix code");
+    }
+    const lengths = this.lengths;
+    let used = s0 > s1 ? s0 : s1;
+    used = s2 > used ? s2 : used;
+    used = (s3 > used ? s3 : used) + 1;
+    lengths.fill(0, 0, used as i64);
+    if (n == 2) {
+      lengths[s0] = 1;
+      lengths[s1] = 1;
+    } else if (n == 3) {
+      lengths[s0] = 1;
+      lengths[s1] = 2;
+      lengths[s2] = 2;
+    } else if (br.read(1) == 0) {
+      lengths[s0] = 2;
+      lengths[s1] = 2;
+      lengths[s2] = 2;
+      lengths[s3] = 2;
+    } else {
+      lengths[s0] = 1;
+      lengths[s1] = 2;
+      lengths[s2] = 3;
+      lengths[s3] = 3;
+    }
+    const count = this.count;
+    count.fill(0);
+    count[lengths[s0] as usize]++;
+    count[lengths[s1] as usize]++;
+    if (n > 2) {
+      count[lengths[s2] as usize]++;
+    }
+    if (n > 3) {
+      count[lengths[s3] as usize]++;
+    }
+    return build(table, at, used, ROOT_BITS, lengths, count, this.place, this.sorted);
+  }
+
+  // The code length code of a complex prefix code (section 3.5), into `lengthTable`.
+  readLengthCode(br: Bits, skip: usize) throws CompressError {
+    const lengths = this.lengths;
+    const count = this.count;
+    lengths.fill(0, 0, 18);
+    count.fill(0);
+    let space: i64 = 32;
+    let codes = 0;
+    let last: usize = 0;
+    for (let i = skip; i < 18; i++) {
+      if (br.count < 4) {
+        br.fill();
+      }
+      const code = CODE_LENGTH_CODE[(br.bits & 15) as usize];
+      br.bits = br.bits >> ((code & 15) as u64);
+      br.count -= (code & 15) as u64;
+      const v = code >> 4;
+      const symbol = CODE_LENGTH_ORDER[i] as usize;
+      lengths[symbol] = v;
+      if (v != 0) {
+        count[v as usize]++;
+        space -= (32 as i64) >> (v as i64);
+        codes++;
+        last = symbol;
+        if (space <= 0) {
+          break;
+        }
+      }
+    }
+    if (codes != 1 && space != 0) {
+      throw new CompressError("brotli: invalid code length code");
+    }
+    if (codes == 1) {
+      // One symbol: it takes no bits.
+      this.lengthTable.fill((last << 16) as u32);
+      return;
+    }
+    build(this.lengthTable, 0, 18, 5, lengths, count, this.place, this.sorted);
+  }
+
+  // The code lengths of a complex prefix code into `lengths`, and how many there are of each
+  // into `count` (section 3.5). Returns the number of symbols up to the last with a code.
+  readLengths(br: Bits, size: usize, skip: usize): usize throws CompressError {
+    this.readLengthCode(br, skip);
+    const lengths = this.lengths;
+    const lengthTable = this.lengthTable;
+    const count = this.count;
+    count.fill(0);
+    let symbol: usize = 0;
+    let previous: u8 = 8;
+    let repeat: usize = 0;
+    let repeatLength: u8 = 0;
+    let space: i64 = 32768;
+    while (symbol < size && space > 0) {
+      if (br.count < 8) {
+        br.fill();
+      }
+      const e = lengthTable[(br.bits & 31) as usize];
+      br.bits = br.bits >> ((e & 255) as u64);
+      br.count -= (e & 255) as u64;
+      const code = (e >> 16) as u8;
+      if (code < 16) {
+        repeat = 0;
+        lengths[symbol] = code;
+        symbol++;
+        if (code != 0) {
+          count[code as usize]++;
+          previous = code;
+          space -= (32768 as i64) >> (code as i64);
+        }
+        continue;
+      }
+      const extra: u64 = code == 16 ? 2 : 3;
+      const value: u8 = code == 16 ? previous : 0;
+      if (repeatLength != value) {
+        repeat = 0;
+        repeatLength = value;
+      }
+      const old = repeat;
+      if (repeat > 0) {
+        repeat = (repeat - 2) << (extra as usize);
+      }
+      repeat += (br.read(extra) + 3) as usize;
+      const n = repeat - old;
+      if (symbol + n > size) {
+        throw new CompressError("brotli: code lengths past the alphabet");
+      }
+      lengths.fill(value, symbol as i64, (symbol + n) as i64);
+      symbol += n;
+      if (value != 0) {
+        count[value as usize] += n as u32;
+        space -= (n << ((15 - value) as usize)) as i64;
+      }
+    }
+    if (space != 0) {
+      throw new CompressError("brotli: incomplete or oversubscribed prefix code");
+    }
+    return symbol;
+  }
+}
+
+// Builds the table of the code given by `lengths[0..used]` (complete, at most 15 bits; `count`
+// has how many codes of each length there are) at `table[at]` with a `root`-bit root; returns
+// its size.
+function build(
+  table: u32[],
+  at: usize,
+  used: usize,
+  root: usize,
+  lengths: u8[],
+  count: u32[],
+  place: u32[],
+  sorted: u16[],
+): usize {
+  place[1] = 0;
+  for (let n: usize = 1; n < MAX_LENGTH; n++) {
+    place[n + 1] = place[n] + count[n];
+  }
+  for (let s: usize = 0; s < used; s++) {
+    const n = lengths[s] as usize;
+    if (n != 0) {
+      sorted[place[n] as usize] = s as u16;
+      place[n]++;
+    }
+  }
+  // Codes that fit the root: each fills every entry that starts with it. When no code is as
+  // long as the root, that is a repeating pattern of the longest one's width: filled once,
+  // then copied.
+  let width: usize = 1;
+  for (let m: usize = 1; m <= root; m++) {
+    if (count[m] > 0) {
+      width = m;
+    }
+  }
+  for (let m = root + 1; m <= MAX_LENGTH; m++) {
+    if (count[m] > 0) {
+      width = root;
+    }
+  }
+  const filled = (1 as usize) << width;
+  let code: u32 = 0;
+  let k: usize = 0;
+  let n: usize = 1;
+  for (; n <= root; n++) {
+    for (let left = count[n]; left > 0; left--) {
+      const entry = ((sorted[k] as u32) << 16) | (n as u32);
+      for (let i = reverse(code, n as u32) as usize; i < filled; i += (1 as usize) << n) {
+        table[at + i] = entry;
+      }
+      code++;
+      k++;
+    }
+    code = code << 1;
+  }
+  const rootSize = (1 as usize) << root;
+  if (filled < rootSize) {
+    let period = filled;
+    while (period < 4) {
+      table[at + period] = table[at + period - filled];
+      period++;
+    }
+    for (let i = period; i < rootSize; i += 4) {
+      u32x4.load(table, at + i - period).store(table, at + i);
+    }
+  }
+  return buildLong(table, at, root, n, code, k, count, sorted);
+}
+
+// The codes longer than the root, in second-level tables after it; returns the total size.
+function buildLong(
+  table: u32[],
+  at: usize,
+  root: usize,
+  first: usize,
+  start: u32,
+  firstSymbol: usize,
+  count: u32[],
+  sorted: u16[],
+): usize {
+  let size = (1 as usize) << root;
+  let code = start;
+  let k = firstSymbol;
+  let prefix: usize = 1 << 20;
+  let sub: usize = 0;
+  let subBits: usize = 0;
+  for (let n = first; n <= MAX_LENGTH; n++) {
+    while (count[n] > 0) {
+      const reversed = reverse(code, n as u32) as usize;
+      const head = reversed & ((1 << root) - 1);
+      if (head != prefix) {
+        // A new second-level table, as wide as the codes that share this prefix need.
+        prefix = head;
+        subBits = subTableBits(count, n, root);
+        sub = size;
+        size += (1 as usize) << subBits;
+        table[at + head] = ((sub as u32) << 16) | ((root + subBits) as u32);
+      }
+      const entry = ((sorted[k] as u32) << 16) | ((n - root) as u32);
+      const end = sub + ((1 as usize) << subBits);
+      for (let i = sub + (reversed >> root); i < end; i += (1 as usize) << (n - root)) {
+        table[at + i] = entry;
+      }
+      count[n]--;
+      code++;
+      k++;
+    }
+    code = code << 1;
+  }
+  return size;
+}
+
+// Index bits of the second-level table for the codes from length `n` on that remain.
+function subTableBits(count: u32[], n: usize, root: usize): usize {
+  let length = n;
+  let left: i64 = (1 as i64) << ((n - root) as i64);
+  while (length < MAX_LENGTH) {
+    left -= count[length] as i64;
+    if (left <= 0) {
+      break;
+    }
+    length++;
+    left = left << 1;
+  }
+  return length - root;
+}

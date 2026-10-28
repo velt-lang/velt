@@ -1,5 +1,5 @@
 // std/fetch/body: what a request or response body can be made from (`BodyInit`), the parts the
-// runtime takes (text or bytes, moved rather than copied, and the `content-type` they imply),
+// client and the server take (text or bytes, and the `content-type` they imply),
 // and `BodyStream`, a body read chunk by chunk.
 
 import { IoError } from "velt:io";
@@ -15,8 +15,8 @@ import { ArrayBuffer, BufferView } from "velt:typed_array/core";
 export type BodyInit = string | u8[] | BufferView | ArrayBuffer | URLSearchParams | BodyStream;
 
 /**
- * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; `velt_rt_http_fetch_send`
- * takes the first three).
+ * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; the `fetch` client sends
+ * the first three, std/fetch/client/send.vlt).
  */
 export struct BodyParts {
   kind: u32;

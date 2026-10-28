@@ -26,6 +26,39 @@ The server ignores it except on `/json-gzip`.
 
 ## Results
 
+### The client in Velt
+
+Since the client is Velt code (std/fetch/client/) on `velt:net`, with gzip and Brotli decoded by
+`velt:compress`, instead of hyper, `flate2` and `brotli-decompressor` in the runtime.
+Instructions each client executed (cachegrind's `I refs`, millions), Linux x86-64 container,
+4 cores; `main` at 692592c, built the same way:
+
+| Scenario | `main` (hyper client) | Velt client | reqwest 0.12 | Velt client / reqwest |
+|---|---:|---:|---:|---:|
+| `seq` | 405.4 | 164.3 | 645.8 | 0.25 |
+| `conc` | 3,640 | 1,474 | 5,957 | 0.25 |
+| `big` | 108.7 | 1.8 | 107.6 | 0.02 |
+| `json` | 681.9 | 659.5 | 783.3 | 0.84 |
+| `gzip` | 930.1 | 922.0 | 977.1 | 0.94 |
+
+Wall clock under cachegrind followed the same order (`seq`: 1,315 → 4,041 req/s against
+reqwest's 919; `big`: 128 → 365 MB/s). Where it comes from:
+
+- A request is written into one array with its small body and leaves in one write; the response
+  head is parsed in place in the connection's read buffer, and its headers become strings only
+  when read. A body that arrives with its head (most small responses) gives the connection back
+  to the pool at once, and `text()` decodes it from the read buffer.
+- A body of known length is read from the socket straight into an array of its size: `big`
+  copies nothing (hyper's client copied the 100 MB once).
+- `text()` validates UTF-8 before decoding (`Buffer.utf8Slice`, which now does so for every
+  caller), as #653 did for the old client.
+- gzip: `velt:compress/inflate` decodes the 1 MB in about 0.91 of `flate2`'s instructions
+  (bench/stdport `gunzip`), most of the rest being its CRC-32 (slicing-by-8 tables, where
+  `flate2` uses carry-less multiplication).
+- HTTP/1.1 only, as Node's `fetch`: HTTP/2 is not offered over TLS any more.
+
+### Before
+
 Instructions each client executed in user space (`COUNT=valgrind`: cachegrind's `I refs`, in
 millions, the mean of 2 runs, which differed by less than 0.2%), Ubuntu 20.04 in WSL 2 on a
 shared Windows machine. Wall-clock times on that machine vary by ±30% between runs, so they

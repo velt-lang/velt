@@ -1,0 +1,326 @@
+// std/fetch/client/body (std-internal): a response body as it arrives on its connection, its
+// framing undone (RFC 9112 §6): a `content-length`, chunks (`transfer-encoding: chunked`), or
+// everything until the server closes the connection.
+//
+// `all` receives the rest of a body into one array: one sized from `content-length` (up to
+// 128 MiB at first), read into straight from the socket, so a large download is copied once.
+// `next` hands the body over piece by piece, at most `max` bytes at a time. Once the body is
+// complete the connection goes back to the pool, unless the response said to close it.
+
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { asIo, Conn, failed } from "velt:fetch/client/conn";
+import {
+  BODY_CHUNKED,
+  BODY_CLOSE,
+  BODY_LENGTH,
+  BODY_NONE,
+  malformed,
+} from "velt:fetch/client/wire";
+
+/** The most a `content-length` sizes the buffer of `all` for before any of the body arrived. */
+const MAX_RESERVE: i64 = 134217728;
+/** Below this many bytes still to come, `next` copies out of the connection's buffer. */
+const DIRECT: i64 = 16384;
+
+/** Where a chunked body's reader is. */
+const SIZE: i64 = 0;
+const DATA: i64 = 1;
+const DATA_END: i64 = 2;
+const TRAILER: i64 = 3;
+
+function cut(): IoError {
+  return new IoError("ECONNRESET", "fetch failed: the connection closed before the body ended");
+}
+
+/** A response body still on its connection. */
+export class BodyReader {
+  private conn: Conn;
+  private framing: i64;
+  /** `BODY_LENGTH`: the bytes still to come; `BODY_CHUNKED`: those left of the chunk. */
+  private left: i64;
+  private phase: i64 = SIZE;
+  private keep: bool;
+  /** The body is complete (and the connection given back or closed). */
+  done: bool = false;
+
+  constructor(conn: Conn, framing: i64, length: i64, keep: bool) {
+    this.conn = conn;
+    this.framing = framing;
+    this.left = framing == BODY_LENGTH ? length : 0;
+    this.keep = keep;
+    if (framing == BODY_NONE || (framing == BODY_LENGTH && length == 0)) {
+      this.end();
+    }
+  }
+
+  /** The body is complete: the connection goes back to the pool when it can carry more. */
+  private end() {
+    this.done = true;
+    this.conn.release(this.keep && this.framing != BODY_CLOSE);
+  }
+
+  /** Stops receiving a body nobody will read: its connection is closed. */
+  abandon() {
+    if (!this.done) {
+      this.done = true;
+      this.conn.close();
+    }
+  }
+
+  /** The bytes of the body that have arrived on the connection and not been taken. */
+  private buffered(): i64 {
+    return this.conn.end - this.conn.pos;
+  }
+
+  /** Reads more from the connection: `cut()` at its end unless the body ends with it. */
+  private async more(): Promise<bool, IoError | AbortError> {
+    if (await this.conn.fill()) {
+      return true;
+    }
+    if (this.framing == BODY_CLOSE) {
+      this.end();
+      return false;
+    }
+    this.conn.close();
+    this.done = true;
+    throw cut();
+  }
+
+  /** The next piece of the body, at most `max` bytes; `[]` once it is complete. */
+  async next(max: i64): Promise<u8[], IoError | AbortError> {
+    while (!this.done) {
+      if (this.framing == BODY_CHUNKED && this.phase != DATA) {
+        await this.chunkHead();
+        continue;
+      }
+      let want = this.framing == BODY_CLOSE ? max : this.left < max ? this.left : max;
+      const have = this.buffered();
+      if (have == 0 && want >= DIRECT) {
+        // A large piece is read straight into an array of its own.
+        const piece = await this.direct(want);
+        if (piece.length > 0) {
+          return piece;
+        }
+        continue;
+      }
+      if (have == 0) {
+        if (!(await this.more())) {
+          return [];
+        }
+        continue;
+      }
+      if (want > have) {
+        want = have;
+      }
+      const c = this.conn;
+      const piece = c.buf.slice(c.pos, c.pos + want);
+      c.pos += want;
+      this.took(want);
+      return piece;
+    }
+    return [];
+  }
+
+  /** Up to `want` bytes read from the socket into a new array (none at the body's end). */
+  private async direct(want: i64): Promise<u8[], IoError | AbortError> {
+    const piece: u8[] = Buffer.allocUnsafe(want as usize);
+    const n = await this.readInto(piece, 0, want);
+    if (n == 0) {
+      return [];
+    }
+    piece.truncate(n);
+    this.took(n);
+    return piece;
+  }
+
+  /**
+   * Reads what arrives next on the connection into `out[from..to]`: the bytes read, 0 at the end
+   * of a body that ends with its connection.
+   */
+  private async readInto(out: u8[], from: i64, to: i64): Promise<i64, IoError | AbortError> {
+    const c = this.conn;
+    while (true) {
+      let n: number | null = 0;
+      try {
+        n = c.stream.tryRead(out, from as number, to as number);
+      } catch (e) {
+        c.close();
+        this.done = true;
+        throw failed(asIo(e));
+      }
+      if (n == null) {
+        if (this.framing == BODY_CLOSE) {
+          this.end();
+          return 0;
+        }
+        c.close();
+        this.done = true;
+        throw cut();
+      }
+      if (n > 0) {
+        return n as i64;
+      }
+      await c.wait();
+    }
+  }
+
+  /** `n` bytes of the body were taken: the body (or chunk) may be complete. */
+  private took(n: i64) {
+    if (this.framing == BODY_LENGTH) {
+      this.left -= n;
+      if (this.left == 0) {
+        this.end();
+      }
+    } else if (this.framing == BODY_CHUNKED) {
+      this.left -= n;
+      if (this.left == 0) {
+        this.phase = DATA_END;
+      }
+    }
+  }
+
+  /** The rest of the body, in one array. */
+  async all(): Promise<u8[], IoError | AbortError> {
+    if (this.done) {
+      return [];
+    }
+    if (this.framing == BODY_LENGTH) {
+      return await this.allSized();
+    }
+    let out: u8[] = Buffer.allocUnsafe(65536);
+    let at: i64 = 0;
+    while (true) {
+      const piece = await this.next(1 << 30);
+      const n = piece.length as i64;
+      if (n == 0) {
+        break;
+      }
+      if (at + n > (out.length as i64)) {
+        let size = (out.length as i64) * 2;
+        if (size < at + n) {
+          size = at + n;
+        }
+        const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+        bigger.set(out.slice(0, at), 0);
+        out = bigger;
+      }
+      out.set(piece, at as usize);
+      at += n;
+    }
+    out.truncate(at);
+    return out;
+  }
+
+  /** `all` for a body of known length: read into its array, which is copied only past 128 MiB. */
+  private async allSized(): Promise<u8[], IoError | AbortError> {
+    const c = this.conn;
+    const total = this.left;
+    let out: u8[] = Buffer.allocUnsafe((total < MAX_RESERVE ? total : MAX_RESERVE) as usize);
+    let at = this.buffered();
+    if (at > total) {
+      at = total;
+    }
+    out.set(c.buf.slice(c.pos, c.pos + at), 0);
+    c.pos += at;
+    while (at < total) {
+      if (at == (out.length as i64)) {
+        const size = at * 2 < total ? at * 2 : total;
+        const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+        bigger.set(out, 0);
+        out = bigger;
+      }
+      at += await this.readInto(out, at, out.length as i64);
+    }
+    this.left = 0;
+    this.end();
+    return out;
+  }
+
+  /** A chunk's size line, the CRLF after its data, or the trailer after the last one. */
+  private async chunkHead(): Promise<void, IoError | AbortError> {
+    const c = this.conn;
+    while (true) {
+      const lf = c.buf.indexOf(10, c.pos);
+      if (lf < 0 || lf >= c.end) {
+        if (this.buffered() > 4096) {
+          throw this.bad("chunk size line");
+        }
+        await this.more();
+        continue;
+      }
+      const line = c.pos;
+      c.pos = lf + 1;
+      if (this.phase == DATA_END) {
+        if (lf - line > 1 || (lf - line == 1 && c.buf[line] != 13)) {
+          throw this.bad("chunk end");
+        }
+        this.phase = SIZE;
+        return;
+      }
+      if (this.phase == TRAILER) {
+        // The trailer's fields are ignored; it ends with an empty line.
+        if (lf == line || (lf - line == 1 && c.buf[line] == 13)) {
+          this.end();
+        }
+        return;
+      }
+      const size = chunkSize(c.buf, line, lf);
+      if (size < 0) {
+        throw this.bad("chunk size");
+      }
+      if (size == 0) {
+        this.phase = TRAILER;
+      } else {
+        this.left = size;
+        this.phase = DATA;
+      }
+      return;
+    }
+  }
+
+  private bad(what: string): IoError {
+    this.conn.close();
+    this.done = true;
+    return malformed(what);
+  }
+}
+
+/** The hex size of a chunk-size line `buf[s..lf]` (extensions after `;` ignored), or -1. */
+function chunkSize(buf: u8[], s: i64, lf: i64): i64 {
+  let n: i64 = 0;
+  let digits: i64 = 0;
+  let i = s;
+  while (i < lf) {
+    const c = buf[i] as i64;
+    let d: i64 = -1;
+    if (c >= 48 && c <= 57) {
+      d = c - 48;
+    } else if ((c | 32) >= 97 && (c | 32) <= 102) {
+      d = (c | 32) - 87;
+    } else {
+      break;
+    }
+    n = n * 16 + d;
+    digits += 1;
+    if (digits > 15) {
+      return -1;
+    }
+    i += 1;
+  }
+  if (digits == 0) {
+    return -1;
+  }
+  // What may follow the digits: whitespace, extensions, the CR.
+  while (i < lf) {
+    const c = buf[i];
+    if (c == 59) {
+      break;
+    }
+    if (c != 32 && c != 9 && c != 13) {
+      return -1;
+    }
+    i += 1;
+  }
+  return n;
+}

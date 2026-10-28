@@ -1,0 +1,262 @@
+// std/compress/brotli/decoder (internal to velt:compress/brotli): the decoder's driver: it runs
+// the stream's parts in order (headers, uncompressed and metadata blocks, commands) as far as
+// the input and the room for output allow, and keeps the output buffer.
+//
+// Input may stop anywhere. A step that can run out of it (a header, or a command step within 16
+// bytes of the input's end) starts from a saved state: when it turns out to have needed more
+// input than there is, the state is put back and the step is run again once more input came
+// (or, after the last input, the stream is truncated). Away from the end the command loop runs
+// without saving anything.
+//
+// The output buffer keeps what back-references can still reach (the window) and what has not
+// been read; `brotliDecompress` keeps all of it, which is then the result.
+
+import { u8x16 } from "velt:simd";
+import { CompressError } from "velt:compress/error";
+import { decodeCommands, FAILED, META_DONE } from "velt:compress/brotli/commands";
+import { readHeader } from "velt:compress/brotli/header";
+import {
+  Cursor,
+  State,
+  STAGE_COMMAND,
+  STAGE_COPY,
+  STAGE_DONE,
+  STAGE_END,
+  STAGE_HEADER,
+  STAGE_METADATA,
+  STAGE_STREAM,
+  STAGE_UNCOMPRESSED,
+} from "velt:compress/brotli/state";
+
+/** `run` stopped because the output reached its limit. */
+export const FULL: i64 = 0;
+/** `run` needs more input to go on. */
+export const HUNGRY: i64 = 1;
+/** The stream is complete. */
+export const DONE: i64 = 2;
+
+// Room kept past the output limit: the most a step writes past it (16-byte stores).
+const SLACK: usize = 64;
+
+/** A Brotli decoder's driver over its `State`. */
+export class Decoder {
+  s: State = new State();
+  // The state before a step that may run out of input.
+  saved: Cursor = new Cursor();
+  savedBits: u64 = 0;
+  savedCount: u64 = 0;
+  savedPos: usize = 0;
+
+  /**
+   * Decodes until the output reaches `limit` (an index in `s.out`; as much as possible when it
+   * is larger than the stream) or the input runs out or the stream ends. Throws on invalid
+   * data, and on input that ends (after the last of it) before the stream does.
+   */
+  run(limit: usize): i64 throws CompressError {
+    const s = this.s;
+    const c = s.cur;
+    while (true) {
+      const stage = c.stage;
+      if (stage >= STAGE_COMMAND && stage <= STAGE_COPY) {
+        const status = this.commands(limit);
+        if (status != DONE) {
+          return status;
+        }
+      } else if (stage == STAGE_STREAM || stage == STAGE_HEADER) {
+        if (stage == STAGE_STREAM && s.br.avail == 0) {
+          // No input at all is an empty body (as Node's `fetch` takes it), not a broken stream.
+          return s.br.finished ? this.finish() : HUNGRY;
+        }
+        if (!this.header()) {
+          return HUNGRY;
+        }
+      } else if (stage == STAGE_UNCOMPRESSED || stage == STAGE_METADATA) {
+        const status = this.raw(limit);
+        if (status != DONE) {
+          return status;
+        }
+      } else if (stage == STAGE_END) {
+        if (!s.isLast) {
+          c.stage = STAGE_HEADER;
+        } else if (!s.br.alignToByte()) {
+          throw new CompressError("brotli: invalid padding at the end of the stream");
+        } else {
+          c.stage = STAGE_DONE;
+        }
+      } else {
+        return this.finish();
+      }
+    }
+  }
+
+  // The stream is complete: input past its end is an error.
+  finish(): i64 throws CompressError {
+    const s = this.s;
+    s.cur.stage = STAGE_DONE;
+    if (s.br.pos < s.br.avail) {
+      throw new CompressError("brotli: data after the end of the stream");
+    }
+    return DONE;
+  }
+
+  save() {
+    const br = this.s.br;
+    this.saved.copyFrom(this.s.cur);
+    this.savedBits = br.bits;
+    this.savedCount = br.count;
+    this.savedPos = br.pos;
+  }
+
+  // After a step that read past the input: puts the state saved before it back, to run the
+  // step again when more input came, or throws when no more will.
+  restore() throws CompressError {
+    const br = this.s.br;
+    if (br.finished) {
+      throw new CompressError("brotli: truncated stream");
+    }
+    this.s.cur.copyFrom(this.saved);
+    br.bits = this.savedBits;
+    br.count = this.savedCount;
+    br.pos = this.savedPos;
+  }
+
+  // A header, as one step; false when the input ran out first.
+  header(): bool throws CompressError {
+    const s = this.s;
+    this.save();
+    try {
+      readHeader(s);
+    } catch (e) {
+      if (!s.br.overran()) {
+        throw e;
+      }
+    }
+    if (s.br.overran()) {
+      this.restore();
+      return false;
+    }
+    if (s.cur.stage == STAGE_COMMAND || s.cur.stage == STAGE_UNCOMPRESSED) {
+      s.metaEnd = s.cur.outPos + (s.cur.metaLeft as usize);
+    }
+    return true;
+  }
+
+  // Commands until the meta-block ends (DONE: go on), or FULL or HUNGRY.
+  commands(limit: usize): i64 throws CompressError {
+    const s = this.s;
+    const br = s.br;
+    while (true) {
+      const end = this.room(limit);
+      if (s.cur.outPos >= end) {
+        return FULL;
+      }
+      let status: i64;
+      if (br.pos + 16 <= br.avail) {
+        status = decodeCommands(s, (br.avail - 16) as i64, end);
+      } else {
+        this.save();
+        status = decodeCommands(s, -1, end);
+        if (br.overran()) {
+          this.restore();
+          return HUNGRY;
+        }
+      }
+      if (status == FAILED) {
+        throw new CompressError(s.error);
+      }
+      if (status == META_DONE) {
+        s.cur.stage = STAGE_END;
+        return DONE;
+      }
+    }
+  }
+
+  // The bytes of an uncompressed meta-block (copied) or a metadata block (skipped).
+  raw(limit: usize): i64 throws CompressError {
+    const s = this.s;
+    const br = s.br;
+    const c = s.cur;
+    const copying = c.stage == STAGE_UNCOMPRESSED;
+    while (c.metaLeft > 0) {
+      let n = c.metaLeft as usize;
+      if (n > br.avail - br.pos) {
+        n = br.avail - br.pos;
+      }
+      if (copying) {
+        const end = this.room(limit);
+        if (n > end - c.outPos) {
+          n = end - c.outPos;
+        }
+        copyIn(s.out, c.outPos, br.buf, br.pos, n);
+        c.outPos += n;
+      }
+      br.pos += n;
+      c.metaLeft -= n as i64;
+      if (c.metaLeft == 0) {
+        break;
+      }
+      if (copying && c.outPos >= limit) {
+        return FULL;
+      }
+      if (br.pos >= br.avail) {
+        if (br.finished) {
+          throw new CompressError("brotli: truncated stream");
+        }
+        return HUNGRY;
+      }
+    }
+    c.stage = STAGE_END;
+    return DONE;
+  }
+
+  // Makes room in `s.out` for output up to `limit` (or the meta-block's end, if that is
+  // sooner) and returns that end. Drops read output that is out of the window's reach first.
+  room(limit: usize): usize {
+    const s = this.s;
+    const c = s.cur;
+    let end = limit < s.metaEnd ? limit : s.metaEnd;
+    if (end + SLACK <= s.out.length) {
+      return end;
+    }
+    if (!s.keepAll) {
+      const reach = c.outPos > s.maxBackward ? c.outPos - s.maxBackward : 0;
+      const drop = s.readPos < reach ? s.readPos : reach;
+      if (drop > 0) {
+        s.out.copyWithin(0, drop as i64, c.outPos as i64);
+        c.outPos -= drop;
+        s.readPos -= drop;
+        s.metaEnd -= drop;
+        s.base += drop;
+        end -= drop;
+      }
+    }
+    // Grow so that the output fills at most half of the buffer (each move above then makes
+    // room for at least as many bytes as it moves).
+    if (end + SLACK > s.out.length || (!s.keepAll && 2 * (end + SLACK) > s.out.length)) {
+      let size = 2 * (end + SLACK);
+      if (s.keepAll) {
+        // All of it is kept: grow by half, or to the meta-block's end.
+        const half = s.out.length + s.out.length / 2;
+        size = end + SLACK > half ? end + SLACK : half;
+      }
+      const grown: u8[] = __intrinsic_array_with_capacity(size);
+      __intrinsic_array_set_len(grown, size);
+      grown.set(s.out);
+      s.out = grown;
+    }
+    return end;
+  }
+}
+
+// `n` bytes from `src[from]` to `dst[at]`, sixteen at a time where both have room.
+function copyIn(dst: u8[], at: usize, src: u8[], from: usize, n: usize) {
+  let i: usize = 0;
+  while (i + 16 <= n) {
+    u8x16.load(src, from + i).store(dst, at + i);
+    i += 16;
+  }
+  while (i < n) {
+    dst[at + i] = src[from + i];
+    i++;
+  }
+}

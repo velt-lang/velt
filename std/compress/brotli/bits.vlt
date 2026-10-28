@@ -1,0 +1,118 @@
+// std/compress/brotli/bits (internal to velt:compress/brotli): the input of a Brotli stream and
+// the bit reader over it.
+//
+// The input is kept in one buffer of its own, followed by at least `PAD` zero bytes, so the
+// reader loads eight bytes at a time (one 16-byte vector load) without a check per byte; bits
+// past the input read as zeros. Whether a step read past the input is found afterwards, from the
+// bit position (`overran`): the decoder then waits for more input or reports a truncated stream.
+// The hot loop of commands.vlt copies `bits`, `count` and `pos` into locals and refills the same
+// way; the methods here are for the headers.
+
+import { u8x16 } from "velt:simd";
+
+/**
+ * Zero bytes kept after the input. A step of the command loop starts at most 8 bytes past the
+ * input (at a byte position that a committed step reached) and reads at most 21 bytes more, so
+ * its 16-byte loads end within 53 bytes of the input: twice that leaves a margin.
+ */
+export const PAD: usize = 128;
+
+/** The input buffer and the bit reader's position in it. */
+export class Bits {
+  /** The input received so far (from `start` of the stream's unread part), then zeros. */
+  buf: u8[] = Buffer.alloc(PAD);
+  /** Bytes of input in `buf`. */
+  avail: usize = 0;
+  /** Whether all of the input has arrived. */
+  finished: bool = false;
+  /** The next byte to load into `bits`. */
+  pos: usize = 0;
+  /** Unread bits, the next one lowest; past `count` they are the following input or zero. */
+  bits: u64 = 0;
+  /** How many bits of `bits` are unread. */
+  count: u64 = 0;
+
+  /** Whether the reader went past the input: the last step needed more than there is. */
+  overran(): bool {
+    return ((this.pos * 8) as u64) - this.count > ((this.avail * 8) as u64);
+  }
+
+  /** Makes at least 56 bits unread. Past the buffer, zeros (and `overran` tells). */
+  fill() {
+    const c = this.count;
+    if (c < 56) {
+      if (this.pos + 16 <= this.buf.length) {
+        const word = u8x16.load(this.buf, this.pos).asU64x2().lane(0);
+        this.bits = this.bits | (word << c);
+      }
+      this.pos += ((63 - c) >> 3) as usize;
+      this.count = c | 56;
+    }
+  }
+
+  /** The next `n` bits (at most 32) as a number, first bit lowest. */
+  read(n: u64): u64 {
+    if (this.count < n) {
+      this.fill();
+    }
+    const v = this.bits & ((1 << n) - 1);
+    this.bits = this.bits >> n;
+    this.count -= n;
+    return v;
+  }
+
+  /** The next symbol of the prefix code whose lookup table starts at `table[at]` (prefix.vlt). */
+  symbol(table: u32[], at: usize): usize {
+    if (this.count < 15) {
+      this.fill();
+    }
+    let e = table[at + ((this.bits & 255) as usize)];
+    if ((e & 255) > 8) {
+      this.bits = this.bits >> 8;
+      this.count -= 8;
+      const sub = ((e & 255) - 8) as u64;
+      e = table[at + ((e >> 16) as usize) + ((this.bits & ((1 << sub) - 1)) as usize)];
+    }
+    const n = (e & 255) as u64;
+    this.bits = this.bits >> n;
+    this.count -= n;
+    return (e >> 16) as usize;
+  }
+
+  /**
+   * Skips to the next byte boundary; false if a skipped bit is set (RFC 7932 requires zeros).
+   * Then gives back the whole bytes left in `bits`, so `pos` is the next unread byte.
+   */
+  alignToByte(): bool {
+    const skip = this.count & 7;
+    const ok = (this.bits & ((1 << skip) - 1)) == 0;
+    this.pos -= (this.count >> 3) as usize;
+    this.bits = 0;
+    this.count = 0;
+    return ok;
+  }
+
+  /** Appends `chunk` to the input, first dropping the bytes before `pos`, which are read. */
+  append(chunk: u8[]) {
+    // Give back the whole bytes in `bits` first: those past the input were loaded as zeros,
+    // and `chunk` brings their real values.
+    this.pos -= (this.count >> 3) as usize;
+    this.count = this.count & 7;
+    this.bits = this.bits & ((1 << this.count) - 1);
+    const keep = this.avail - (this.pos < this.avail ? this.pos : this.avail);
+    const drop = this.avail - keep;
+    if (keep + chunk.length + PAD > this.buf.length) {
+      const grown = Buffer.alloc(2 * (keep + chunk.length) + PAD);
+      grown.set(this.buf.slice(drop as i64, this.avail as i64));
+      this.buf = grown;
+    } else if (drop > 0) {
+      // Bytes past the input must stay zero: clear what the move leaves behind.
+      this.buf.copyWithin(0, drop as i64, this.avail as i64);
+      this.buf.fill(0, keep as i64, this.avail as i64);
+    }
+    this.pos -= drop;
+    this.avail = keep;
+    this.buf.set(chunk, this.avail);
+    this.avail += chunk.length;
+  }
+}

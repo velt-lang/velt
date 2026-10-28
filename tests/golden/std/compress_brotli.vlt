@@ -1,0 +1,177 @@
+// check: no leaks
+// velt:compress/brotli: known streams (empty, metadata, uncompressed, static dictionary words
+// with transforms, a 16 MiB window), streaming with the input fed one byte at a time and read
+// in small chunks, a stream that expands a thousandfold read in bounded chunks, and the errors:
+// truncated, garbage, data after the end, a reserved bit set.
+import { brotliDecompress, BrotliDecoder } from "velt:compress/brotli";
+import { CompressError } from "velt:compress/error";
+import { hexDecode } from "velt:encoding";
+
+// Node's `zlib.brotliCompressSync("hello brotli")`.
+const HELLO = "8b058068656c6c6f2062726f746c6903";
+// An empty stream: one empty last meta-block.
+const EMPTY = "3b";
+// A metadata block of three bytes ("abc", skipped), then an empty last meta-block.
+const METADATA = "2c0161626303";
+// 200 pseudo-random bytes (`noise(200, 1)`): an uncompressed meta-block.
+const RAW =
+  "8b63806c82a562cb808d10d632be89c8513ebf6c929f34ddfa8c9f63c9960ef6e348a3528c8a3fcc2f044e39" +
+  "a3fc5b94492f8f032e7549a20098f95befd61248a23cd7a8168839e91f803558fac9f6095d9c927919701323" +
+  "42aa04168bad0ae6dbb1855ddcb4749032b8fe38a6684b514a33dbbfe6476d5eeadf9e9a24b268ab923be928" +
+  "5bda9693c08fdb43ecc4699f455f0c891e9118b378c54b315ef26e3465a93f6127625c36a9e54d42ca5da87e" +
+  "07b03fcb76a87206397b81f3780420e5427a2084a0c14cf5d665d403";
+// English and HTML at quality 11: words of the static dictionary, some transformed.
+const TEXT =
+  "1bc200208cd3a5f612d9c24a81cada39ad6758181693229bf1ade443298512b63c60ef2b78aecb134dda9476" +
+  "3eddd5e755d4ca28718efd368659f38c0e11e1f76c1dc459a2b7baa4423bcd7621a2d8da80f218e93f945979" +
+  "860cb25ff1c6c1f58ce448811f708c8e8ad71f918456169b5d2754e5cca59304";
+// `far()` with a 16 MiB window: its last 1 KiB copies its first from 5 MiB back.
+const FAR =
+  "9fff0750f867004e078b3b445415f66921f0d9dfb9f74fa3d78dfaec4e90e32c2f3bad61d1c9f2eab450ffe0" +
+  "d879e06508816ab7e924787eae2dc72e9723fd0c784732cab553f33f4108d21460502815da491a01aec4b8d2" +
+  "9ff4e0e30d32dcc1e9cc5b1bdce02bc976b21d38b4c0a4ed0cab6f3ba15d28eba9cfef00df8f55216d302f6d" +
+  "e3ca1c345119eb96c9b902fe1d808553a7a48bf13fb28b2addb7a1018727c0baf5eb6a28d8c8e9549554d970" +
+  "14e3f3ccacb96bd438d732a29bf631f3f7b9174b9b477ce1db7982a4a9dbde7c3ce86c300ab2319cd4eb033e" +
+  "2fcaa7fd4ab4a4c0c4eef87edde35a25208bd9a6ab72384dcbec510d042496b857c275de92f5b8d8ec553ea1" +
+  "ae312cf073819347d55b307cbc5ffcf4702ee81b1a06570ccc2328dbf8044441357a8843e349b8295e575d1c" +
+  "8fa0d0d25de085b98989ac3d3cdf4a4c6828fcd78d36b6f234e042a9b3c95a25d422b12aa3a1982b2b80aff7" +
+  "2857a2fde3d50476fcd2fbd838bc9819b0a57a1e15437ab14b1b1b59a90a504bf0c7adde7e46b0eb4cf322fb" +
+  "c8166669e92349987a9e7ee4a01e3912cd9b27d1cf94c300332043609b1614eaa840dd335d100a281a315d54" +
+  "da38d707ffc7b3fd3eea70e70d73d85f18596c721686e82c41a768cc67ebc340107895f540da10618dff857d" +
+  "f4c68e1a5f00949fe0e4aebcb43374e56fd9b67052f2467a6285d53e2c9cb4f82a504296143e7edadd20f252" +
+  "e0a67c9d89c79b718911046ee9007a4b6fad9f693216ff413d65a5f78f958d7d5582d0df3c947d8e71ebc73b" +
+  "a0d0820bd822d8395bf2677515ffdf9e6300ae3c8cdb401173a051c4009fc040b74064f2be38b2c0da852c33" +
+  "77445aafffce73146cb65b99d897dd9364a260ecbe81152b1a43e492af0a9072ae2605f57a2c204897c57651" +
+  "e8f3de286dac29e7004698379e477d4f11bcc4efbf830602757fc07eb622e90b6b4b26678b5aff5c4cadf2f0" +
+  "f30659cdecae9bcf6ea24c5bd8b58f743de6ff43a7c53d2693ffdeb6773859e34d7b48fe993117fbdd7d7c46" +
+  "ffc3cb8f51a1bde5686158ee8c6dedb469fb18e26b63631d44827bfadb61bf32dd38ffbccb541a285581b7ec" +
+  "a19fa41363db9522440c2d5ff94ae85ac6973ec86c6822cbf0d0731824a9c3eaea7236f53d4da6e987991805" +
+  "c2e04b882c67d36c9c92bf9f3cf946ede66b5f8a4ba1c8be2c702f2806c7c83903a2d4cd5d529a1d2ff84501" +
+  "1b0c2cac38160ecdcfc3d43af33fcb61841f60d694fa4e77ff6340aa0a2762c54287c115d3cde01ec47c7c8c" +
+  "cfb175a09d3c097b04aa00378e1d6ebda987868f2aadc62a5fb3554932a31b2c12d38d824b267ea5937b9bb2" +
+  "f21392d42df224e4fc123c526219eb29d6c4d89fba7e722e6930b20930ed6e62f7908316771c8475fe73ffa2" +
+  "c594093bcc3df3b839a0f6067ad60ddfb9cb4751c62c80cfc38eb52133fc0cff1a870680d09d0e40";
+// 3 MiB of zeros, from 14 bytes.
+const BOMB = "9fffff2ff82700e2b14020f7fe05";
+
+// `n` pseudo-random bytes: the top byte of a 64-bit linear congruential generator from `seed`.
+function noise(n: usize, seed: u64): u8[] {
+  const out = Buffer.alloc(n);
+  let x = seed;
+  for (let i: usize = 0; i < n; i++) {
+    x = x * 6364136223846793005 + 1442695040888963407;
+    out[i] = (x >> 56) as u8;
+  }
+  return out;
+}
+
+// 1 KiB of noise, 5 MiB of zeros, the same 1 KiB again.
+function far(): u8[] {
+  const n: usize = 5 * 1024 * 1024;
+  const out = Buffer.alloc(n + 2048);
+  const head = noise(1024, 2);
+  out.set(head, 0);
+  out.set(head, n + 1024);
+  return out;
+}
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Decodes `input` fed `step` bytes at a time, reading at most `max` bytes per call; also
+// reports the largest chunk read.
+function streamed(input: u8[], step: usize, max: i64): u8[] throws CompressError {
+  const d = new BrotliDecoder();
+  const parts: u8[][] = [];
+  let total: usize = 0;
+  let largest: usize = 0;
+  let i: usize = 0;
+  while (!d.done || i < input.length) {
+    if (i < input.length) {
+      const end = i + step < input.length ? i + step : input.length;
+      d.feed(input.slice(i as i64, end as i64));
+      i = end;
+    } else {
+      d.finish();
+    }
+    while (true) {
+      const chunk = d.read(max);
+      if (chunk.length == 0) {
+        break;
+      }
+      largest = chunk.length > largest ? chunk.length : largest;
+      total += chunk.length;
+      parts.push(chunk);
+    }
+  }
+  const out = Buffer.alloc(total);
+  let at: usize = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  console.log(`  streamed ${total} bytes in ${parts.length} chunks of at most ${largest}`);
+  return out;
+}
+
+function error(input: u8[]): string {
+  try {
+    const out = brotliDecompress(input);
+    return `decoded ${out.length} bytes`;
+  } catch (e) {
+    return e instanceof CompressError ? `CompressError: ${e.message}` : "other";
+  }
+}
+
+function streamError(input: u8[]): string {
+  try {
+    streamed(input, 1, 7);
+    return "decoded";
+  } catch (e) {
+    return e instanceof CompressError ? `CompressError: ${e.message}` : "other";
+  }
+}
+
+function main() {
+  console.log("nothing:", brotliDecompress([]).length, streamed([], 1, 7).length);
+  console.log("hello:", brotliDecompress(hexDecode(HELLO)).utf8Slice());
+  console.log("empty:", brotliDecompress(hexDecode(EMPTY)).length);
+  console.log("metadata:", brotliDecompress(hexDecode(METADATA)).length);
+  console.log("raw:", same(brotliDecompress(hexDecode(RAW)), noise(200, 1)));
+  const text = brotliDecompress(hexDecode(TEXT));
+  console.log("text:", text.utf8Slice().trimEnd());
+  console.log("text one byte at a time:");
+  console.log(same(streamed(hexDecode(TEXT), 1, 3), text));
+  const expected = far();
+  console.log("far:", same(brotliDecompress(hexDecode(FAR)), expected));
+  console.log("far one byte at a time:");
+  console.log(same(streamed(hexDecode(FAR), 1, 4096), expected));
+  console.log("bomb:");
+  const zeros = streamed(hexDecode(BOMB), 14, 65536);
+  console.log(zeros.length, zeros.indexOf(1));
+
+  const compressed = hexDecode(TEXT);
+  console.log("truncated:", error(compressed.slice(0, 60)));
+  console.log("truncated streaming:", streamError(compressed.slice(0, 60)));
+  console.log("cut before the last byte:", error(compressed.slice(0, -1)));
+  console.log("garbage:", error(utf8("this is not brotli at all")));
+  console.log("garbage streaming:", streamError(utf8("this is not brotli at all")));
+  console.log("data after the end:", error(compressed.concat([0])));
+  console.log("data after the end streaming:", streamError(compressed.concat([0])));
+  console.log("reserved bit:", error(hexDecode("3c0161626303")));
+}
+
+function utf8(s: string): u8[] {
+  const out = Buffer.alloc(Buffer.byteLength(s));
+  out.write(s);
+  return out;
+}

@@ -1,9 +1,12 @@
 # fetch
 
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
-WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
-connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
-HTTPS, and redirects followed as the standard says. A request sent on a *reused* pooled
+WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt
+on [`velt:net`](net.md) (`std/fetch/client/`): HTTP/1.1 with keep-alive connections pooled per
+origin and shared by every task (HTTP/2 is not used, as in Node's `fetch`), TLS from the runtime
+for HTTPS, bodies decoded by [`velt:compress`](compress.md), and redirects followed as the
+standard says. A pooled connection idle for more than a second is checked before it is reused,
+and one idle for a minute is closed. A request sent on a *reused* pooled
 connection that the server had closed (it fails before any response) is sent once more, on
 another connection, when its method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`,
 `DELETE`), as Go's client does; `POST` and `PATCH` are never sent twice, and neither is a request
@@ -41,9 +44,9 @@ error: check `res.ok`. `fetch` rejects when there is no response:
   before anything is sent. A redirect loop (more than 20) or a redirect with `redirect: "error"`
   fails with `fetch failed: …`.
 - The signal's `AbortError` (from [`velt:task`](task.md)) when `init.signal` is aborted: a
-  `TimeoutError`, which extends `AbortError`, for `AbortSignal.timeout(ms)`. Aborting cancels
-  the request in the runtime (it is dropped and its connection closed), also while the body is
-  received.
+  `TimeoutError`, which extends `AbortError`, for `AbortSignal.timeout(ms)`. Aborting stops
+  the request where it waits (connecting, sending, waiting for the response or receiving its
+  body) and closes its connection.
 
 `RequestInit` has the standard's fields that make sense outside a browser:
 
@@ -95,9 +98,10 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   body is `""` in any coding, as in Node. A body
   that does not decode fails the read with `IoError` (`fetch failed: invalid compressed body:
   …`).
-- The status text, URL and headers stay readable after the body was read; they are copied out
-  of the runtime the first time you read them, so a response whose headers you never look at
-  costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
+- The status text, URL and headers stay readable after the body was read; the headers are
+  kept as received and made into strings the first time you read them, so a response whose
+  headers you never look at costs nothing for them. A small body that arrives with the head
+  gives its connection back to the pool at once, whether or not you read it. `headers` is read-only, as in JS (a getter): change the `Headers` it
   returns, not the property. Dropping a response whose body was not read closes its
   connection.
 - `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
