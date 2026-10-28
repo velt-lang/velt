@@ -35,6 +35,11 @@ pub(crate) use velt::coop as velt_coop;
 pub(crate) use velt::io as velt_io;
 
 use super::compiled::{Borrowed, Compiled};
+
+/// The stack of every thread that runs tasks: 8 MiB, as the main thread has on every platform
+/// (docs/tooling/platforms.md), so code recurses as deep in a task as in `main` (Rust's
+/// default for a spawned thread is 2 MiB). Only reserved: pages are committed as they are used.
+pub(crate) const TASK_THREAD_STACK: usize = 8 << 20;
 use super::{PollFn, SendPtr};
 use crate::panic::ThrowLoc;
 use std::cell::Cell;

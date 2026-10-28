@@ -160,6 +160,7 @@ pub mod atomic;
 mod lower;
 pub mod mangle;
 pub mod simd;
+pub mod tls;
 mod verify;
 
 #[cfg(test)]

@@ -50,6 +50,7 @@ mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod atomic;
+mod atomic_ref;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -112,11 +113,13 @@ mod simd;
 mod spread_object;
 mod srcloc;
 mod stabilize;
+mod static_atomic;
 mod stmt;
 mod strbuf;
 mod strings;
 mod symbols;
 mod template;
+mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
@@ -406,6 +409,9 @@ struct Cx<'h> {
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
     tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
+    /// The data of each static atomic used so far, `None` for a global that is not one
+    /// (static_atomic.rs).
+    static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,

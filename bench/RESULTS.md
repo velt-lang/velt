@@ -1029,6 +1029,66 @@ unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object,
 by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
 it now costs O(log n)).
 
+## JSON corpora (#1657, 2026-10-28)
+
+`MEASURE=instructions bench/json/corpora/run.sh 3 50`: the three files every JSON library reports
+on (`fetch.sh`: canada.json, 2.25 MB of GeoJSON floats; citm_catalog.json, 1.73 MB of wide
+objects and integers; twitter.json, 0.63 MB of text with non-ASCII), each parsed into a dynamic
+value 50 times (`value`) and parsed once then written back 50 times (`write`), by Velt (LLVM
+release), serde_json, sonic-rs, simd-json and Node.
+
+- **What is measured**: the whole process, start-up and the file read included, with no separate
+  warm-up; the fewest instructions retired (`/usr/bin/time -l`) of 3 runs, and in brackets per
+  input byte (x 50 rounds). Instructions, not time, because the machine was loaded (load average
+  85–110) and wall clock moved by ±30% between runs. Start-up is small next to 50 rounds: an
+  empty run retires about 1.4 M instructions for Velt and 3.8 M for `node -e 0`. Instructions
+  understate what SIMD parsers gain per instruction and ignore cache misses, so read them as
+  work done, not speed.
+- **What each builds**: Velt's `JSON.parseValue` builds a flat tape (#1660); serde_json a
+  `Value` tree with `preserve_order` (IndexMap, objects keep insertion order) and
+  `float_roundtrip` (exact floats, as Velt and Node parse them; without it canada's numbers do
+  not round-trip); sonic-rs its own DOM; simd-json an `OwnedValue`, whose objects are halfbrown
+  maps that do not keep order, and which copies the input buffer every round because its API
+  parses in place; Node `JSON.parse` / `JSON.stringify`.
+- **Checks**: for `value`, every program prints the same top-level member count. For `write`,
+  each prints the last text it wrote; Velt's must equal Node's byte for byte (both follow
+  JavaScript's number formatting), and the Rust rows must parse back to the same value as
+  Node's (they print numbers their own way, such as `1.0`, and simd-json reorders objects).
+- Not covered yet (#1657): typed parse (`JSON.parse<T>` against serde derive structs) and a Bun
+  column.
+
+Apple M4, macOS 27.0.1 (arm64), rustc 1.99.0, serde_json 1.0.154, sonic-rs 0.5.10, simd-json
+0.19.0, Node 24.11.1, Velt at 0d0efe524 (main). Billions of
+instructions (per input byte); fewer is better:
+
+| corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
+|---|---|---:|---:|---:|---:|---:|
+| canada | value | 7.40 G (66/B) | 5.39 G (48/B) | 1.85 G (16/B) | 4.50 G (40/B) | 5.98 G (53/B) |
+| canada | write | 5.54 G (49/B) | 1.67 G (15/B) | 1.98 G (18/B) | 2.48 G (22/B) | 6.69 G (59/B) |
+| citm_catalog | value | 2.57 G (30/B) | 2.68 G (31/B) | 0.61 G (7/B) | 1.90 G (22/B) | 2.32 G (27/B) |
+| citm_catalog | write | 0.61 G (7/B) | 0.46 G (5/B) | 0.57 G (7/B) | 0.49 G (6/B) | 1.36 G (16/B) |
+| twitter | value | 1.39 G (44/B) | 1.06 G (34/B) | 0.26 G (8/B) | 0.78 G (25/B) | 1.03 G (33/B) |
+| twitter | write | 0.36 G (11/B) | 0.29 G (9/B) | 0.26 G (8/B) | 0.27 G (9/B) | 0.88 G (28/B) |
+
+Velt's dynamic parse retires 1.2–1.4x Node's instructions on canada and twitter and about the
+same as serde_json on citm_catalog; sonic-rs does 4–5.3x less work than Velt. Velt writes
+citm_catalog and twitter within 1.35x of serde_json and simd-json and with 2.2–2.4x fewer
+instructions than Node, but canada
+(floats) takes 3.3x serde_json's instructions: number formatting is the gap there. On x86-64 Linux (i9-8950HK, load average 26–43, Node 26.12; `nice bench/json/corpora/run.sh 2 50`,
+best wall time in ms and MB/s, measured in review with sonic-rs 0.3 and simd-json 0.14; with
+0.5 and 0.19, sonic-rs canada `write` went from about 1120 to 753 ms and `value` from 755 to
+664 ms, simd-json canada `value` from 2245 to 2050 ms, the rest within the noise) the shape is
+the same, except that Velt's canada `write` also trails Node's:
+
+| corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
+|---|---|---:|---:|---:|---:|---:|
+| canada | value | 3149 (36 MB/s) | 2722 (41 MB/s) | 795 (142 MB/s) | 2228 (51 MB/s) | 2469 (46 MB/s) |
+| canada | write | 2133 (53 MB/s) | 731 (154 MB/s) | 1035 (109 MB/s) | 878 (128 MB/s) | 1155 (97 MB/s) |
+| citm_catalog | value | 1034 (84 MB/s) | 1026 (84 MB/s) | 374 (231 MB/s) | 1014 (85 MB/s) | 881 (98 MB/s) |
+| citm_catalog | write | 261 (331 MB/s) | 210 (411 MB/s) | 201 (430 MB/s) | 210 (411 MB/s) | 543 (159 MB/s) |
+| twitter | value | 627 (50 MB/s) | 492 (64 MB/s) | 152 (207 MB/s) | 450 (70 MB/s) | 487 (65 MB/s) |
+| twitter | write | 137 (230 MB/s) | 120 (264 MB/s) | 93 (340 MB/s) | 148 (213 MB/s) | 327 (97 MB/s) |
+
 ## Generators (`bench/iter`, #62 phase 2, 2026-10-03)
 
 `bench/iter/run.sh` (`run.ps1`): 20 × 30M values summed modulo a prime (a loop-carried

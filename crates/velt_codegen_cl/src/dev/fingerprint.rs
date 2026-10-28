@@ -107,6 +107,10 @@ impl<'p> Canon<'p> {
             return 0;
         };
         let mut out = format!("{} {:?}", data.align, data.bytes);
+        // Static atomics with the same starting value are different words.
+        if let Some(id) = data.mutable {
+            let _ = write!(out, " M{id:x}");
+        }
         for (offset, target) in &data.relocs {
             let _ = write!(out, " @{offset}=");
             match target {

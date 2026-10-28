@@ -43,6 +43,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "atomic_cas_weak" => I::AtomicCasWeak,
         "atomic_fence" => I::AtomicFence,
         "atomic_spin_hint" => I::AtomicSpinHint,
+        "thread_local_get" => I::ThreadLocalGet,
+        "thread_local_set" => I::ThreadLocalSet,
         "array_rotate_right" => I::ArrayRotateRight,
         "array_rotate_left" => I::ArrayRotateLeft,
         "array_swap_nested" => I::ArraySwapNested,
@@ -288,6 +290,7 @@ impl FnCx<'_, '_> {
         let mutex = self.cx.mutex_ty();
         let rwlock = self.cx.rwlock_ty();
         let atomic_def = self.cx.atomic_ty();
+        let thread_local_def = self.cx.thread_local_ty();
         let (t0, e0, n0) = (
             self.cx.ty.param(0),
             self.cx.ty.param(1),
@@ -303,6 +306,7 @@ impl FnCx<'_, '_> {
         let shared = ty.intern(TyKind::Shared(t));
         let u8_ = ty.intern(TyKind::Int(IntTy::U8));
         let atomic = atomic_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
+        let tl = thread_local_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
         match i {
             I::Spawn | I::SpawnHandled => (vec![(pt, O)], pt, true),
             I::Sleep => (vec![(i64_, C)], ty.promise(unit), false),
@@ -360,6 +364,8 @@ impl FnCx<'_, '_> {
             ),
             I::AtomicFence => (vec![(u8_, C)], unit, false),
             I::AtomicSpinHint => (vec![], unit, false),
+            I::ThreadLocalGet => (vec![(tl, B)], t, true),
+            I::ThreadLocalSet => (vec![(tl, B), (t, C)], unit, true),
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),

@@ -27,6 +27,7 @@ impl FnLower<'_, '_> {
                 | I::AtomicSpinHint,
                 _,
             ) => self.atomic_intrinsic(i, args),
+            (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
             (I::YieldDelegate, [g]) => self.yield_delegate(g),

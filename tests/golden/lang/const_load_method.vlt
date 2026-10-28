@@ -1,0 +1,31 @@
+// `const x: T = o.load()` where `load` is an ordinary method (not an `Atomic`'s): checked as any
+// typed `const`, a read-only array annotation widening it and a promise keeping its flow site.
+class Item {
+  n: u64 = 1;
+}
+
+class Loader {
+  items: Item[] = [new Item(), new Item()];
+
+  load(): Item[] {
+    return this.items;
+  }
+
+  async loadLater(): Promise<u64> {
+    return 7;
+  }
+}
+
+class Later {
+  load(): Promise<u64> {
+    return new Loader().loadLater();
+  }
+}
+
+async function main() {
+  const l = new Loader();
+  const xs: readonly Item[] = l.load();
+  console.log(xs.length, xs[0].n);
+  const p: Promise<u64> = new Later().load();
+  console.log(await p);
+}

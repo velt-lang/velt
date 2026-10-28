@@ -11,6 +11,7 @@ export class AggregateError extends Error {
   /** An error with the given `message`. */
   constructor(message: string) {
     super(message);
+    this.name = "AggregateError";
   }
 }
 
@@ -26,20 +27,19 @@ export async function promiseAllSettled<T, E>(
   if (ps.length == 0) {
     return out;
   }
-  ps.reverse();
-  while (true) {
-    const p = ps.pop();
-    if (p == null) {
-      // Node settles in the callback it runs for the last promise: one microtask later.
-      await velt_rt_microtask();
-      return out;
-    }
+  // The promises as they are at the call, as JS reads them: the caller may still hold the
+  // array and change it while this waits (and JS leaves the array as it is).
+  const snap = ps.slice();
+  for (let i = 0; i < snap.length; i++) {
     try {
-      out.push({ status: "fulfilled", value: await p });
+      out.push({ status: "fulfilled", value: await snap[i] });
     } catch (e) {
       out.push({ status: "rejected", reason: e });
     }
   }
+  // Node settles in the callback it runs for the last promise: one microtask later.
+  await velt_rt_microtask();
+  return out;
 }
 
 /**

@@ -104,13 +104,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let pel = self.elem_ty(aty);
         // What each child leaves in its slot (`Result<T, E>` when it can reject).
         let elem = self.cx.promise_slot(pel);
-        let v = self.consume(ps);
-        if self.dead() {
+        let Some(ap) = self.promise_array(ps, aty, pel) else {
             return unit();
-        }
+        };
         let arr_agg = self.cx.array_agg();
-        let arr = self.copy_to_temp(v, Ty::Agg(arr_agg));
-        let ap = Place::local(arr);
         let n = self.rvalue_temp(
             Ty::U64,
             Rvalue::Use(Operand::Copy(proj(&ap, Proj::Field(1)))),
@@ -165,6 +162,28 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.rt_value(Rt::FutBox, args, ty)
     }
 
+    /// The inline `{ data, len, cap }` header of the promise array `ps` (type `aty`, element
+    /// `pel`), whose promises the caller hands to the runtime (`None` when evaluating `ps`
+    /// diverges). A boxed array (one the program shares: `loads` still read after
+    /// `Promise.all(loads)`) keeps its promises, as in JS: the header is a copy whose elements
+    /// share them, and the box reference is released at the end of the statement.
+    fn promise_array(&mut self, ps: &hir::Expr, aty: TyId, pel: TyId) -> Option<Place> {
+        let v = self.consume(ps);
+        if self.dead() {
+            return None;
+        }
+        let arr_agg = self.cx.array_agg();
+        if !self.cx.boxed(aty) {
+            return Some(Place::local(self.copy_to_temp(v, Ty::Agg(arr_agg))));
+        }
+        let b = self.own_value(v, aty);
+        let bp = self.place_of(b, aty);
+        let src = self.content(&bp, aty);
+        let arr = Place::local(self.temp(Ty::Agg(arr_agg)));
+        self.clone_array(&src, &arr, pel);
+        Some(arr)
+    }
+
     /// `Promise.race(ps)`: `velt_rt_race` takes the futures and moves the winner's result slot
     /// (`Result<T, E>` when they can reject: awaiting the race rethrows) into its own; only the
     /// pointer array is freed here. `first_ok` (`Promise.any`): `velt_rt_race_ok`, which skips
@@ -175,13 +194,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let elem = self.cx.promise_slot(pel);
         // Promises that cannot reject have plain `T` slots: the first to settle fulfilled.
         let first_ok = first_ok && self.cx.promise_error(pel).is_some();
-        let v = self.consume(ps);
-        if self.dead() {
+        let Some(ap) = self.promise_array(ps, aty, pel) else {
             return unit();
-        }
-        let arr_agg = self.cx.array_agg();
-        let arr = self.copy_to_temp(v, Ty::Agg(arr_agg));
-        let ap = Place::local(arr);
+        };
         let futs = Operand::Copy(proj(&ap, Proj::Field(0)));
         let n = Operand::Copy(proj(&ap, Proj::Field(1)));
         let et = self.cx.ty(elem);

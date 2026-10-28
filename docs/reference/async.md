@@ -221,6 +221,10 @@ Promises behave like JavaScript's, at Rust's cost:
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
+- The combinators leave the array and its promises as they are, as in JS: a program can read
+  `ps` (its length, `await ps[0]`) after `await Promise.all(ps)`. They read the array once,
+  when called: pushing to it, replacing an element or truncating it afterwards doesn't change
+  the result.
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
@@ -578,7 +582,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   An `Atomic` is used where it is, never copied or shared, and binding a part of a `shared`
   value that holds one to a variable is an error. See [Atomics and velt:sync](../std/sync.md),
   which also has `Backoff` and `VersionLatch` (optimistic lock coupling) for lock-free data
-  structures.
+  structures, and `ThreadLocal<T>`, a module constant with one value per thread.
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
   runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
   runs it alone, exactly as `with` does (a writer that has waited a while holds new readers

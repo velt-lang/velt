@@ -486,6 +486,19 @@ impl Ctx<'_> {
         self.prelude_adt("Atomic")
     }
 
+    /// `struct ThreadLocal<T> { init: T }` from the prelude.
+    pub fn thread_local_ty(&self) -> Option<DefId> {
+        self.prelude_adt("ThreadLocal")
+    }
+
+    /// `T` of a `ThreadLocal<T>`.
+    pub fn thread_local_value(&self, t: TyId) -> Option<TyId> {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.thread_local_ty() => args.first().copied(),
+            _ => None,
+        }
+    }
+
     /// Does a deep copy of a value of `t` copy an `Atomic` (in the value, its arrays, payloads
     /// or the objects it holds; not behind a `shared`, nor in a function, interface or `any`
     /// value)?
@@ -519,6 +532,16 @@ impl Ctx<'_> {
             k => crate::types::children(&k),
         };
         parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
+    }
+
+    /// Is `t` a reference an `Atomic` word holds: `shared<U>` or `shared<U> | null`
+    /// (atomics.md "References")?
+    pub fn atomic_ref(&self, t: TyId) -> bool {
+        let inner = match self.ty.kind(t) {
+            TyKind::Option(inner, _) => *inner,
+            _ => t,
+        };
+        matches!(self.ty.kind(inner), TyKind::Shared(_))
     }
 
     /// `T` of an `Atomic<T>`.

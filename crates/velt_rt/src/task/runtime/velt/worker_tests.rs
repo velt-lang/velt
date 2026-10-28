@@ -7,6 +7,30 @@ fn idle_task() -> Arc<Task> {
 }
 
 #[test]
+fn a_worker_thread_recurses_as_deep_as_the_main_thread() {
+    // Recurses until 5 MiB of stack are in use (measured, whatever a frame's size): past Rust's
+    // 2 MiB default for a spawned thread, within the 8 MiB the main thread has.
+    fn deep(top: usize, need: usize) -> usize {
+        let frame = std::hint::black_box([1u8; 1024]);
+        let here = frame.as_ptr() as usize;
+        if top.abs_diff(here) >= need {
+            return 1;
+        }
+        deep(top, need) + std::hint::black_box(frame)[0] as usize
+    }
+    let frames = worker_thread()
+        .spawn(|| {
+            let mark = std::hint::black_box(0u8);
+            let top = &mark as *const u8 as usize;
+            deep(top, 5 << 20)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(frames > 1);
+}
+
+#[test]
 fn tasks_handed_back_go_through_the_inbox_and_wake_the_worker() {
     // The monitor's rescue hands tasks back to a worker that may have parked meanwhile: they
     // must be where its park check looks, and it must be woken.
@@ -311,4 +335,141 @@ fn a_watch_hurries_the_monitor_only_while_it_naps_for_a_whole_tick() {
     assert!(!monitor.hurry.load(Ordering::SeqCst));
     // Not hurried: the nap lasts its time and says so.
     assert!(!monitor.nap(Duration::from_millis(1)));
+}
+
+/// `n` workers of their own (not the runtime's), all awake, with no poll started since tick 0.
+fn stalled_workers(n: usize) -> &'static [Shared] {
+    Box::leak(
+        (0..n)
+            .map(|_| new_shared())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    )
+}
+
+/// Queues `n` tasks (not pinned) on `w` and `k` more in its inbox: its queue's and inbox's
+/// lengths.
+fn fill(w: &Shared, n: usize, k: usize) -> (usize, usize) {
+    let task = || super::super::task::make(async {}, 0, false).0;
+    lock(&w.queue).extend_io((0..n).map(|_| task()));
+    send_back(w, (0..k).map(|_| task()).collect());
+    (lock(&w.queue).len(), w.inbox_len.load(Ordering::SeqCst))
+}
+
+/// A tick at which every worker of [`stalled_workers`] counts as stalled.
+const LATE: u64 = 10;
+
+#[test]
+fn a_rescue_with_no_worker_to_take_the_tasks_moves_nothing() {
+    // One worker running a long poll, every spare started: sending its tasks back to its own
+    // inbox at every tick only copied them under the lock it needs (#1673).
+    let ws = stalled_workers(1);
+    let before = fill(&ws[0], 1000, 10);
+    assert!(stalled(&ws[0], LATE));
+    rescue_of(ws, 1, 0, LATE, || None);
+    let after = (
+        lock(&ws[0].queue).len(),
+        ws[0].inbox_len.load(Ordering::SeqCst),
+    );
+    assert_eq!(after, before, "the queue or the inbox changed");
+    assert_eq!(lock(&ws[0].inbox).len(), 10);
+    assert_eq!(crate::task::quiet::moving_here(), 0);
+}
+
+#[test]
+fn a_rescue_moves_nothing_to_a_worker_stalled_too() {
+    let ws = stalled_workers(2);
+    let before = fill(&ws[0], 1000, 10);
+    rescue_of(ws, 2, 0, LATE, || None);
+    assert_eq!(
+        (
+            lock(&ws[0].queue).len(),
+            ws[0].inbox_len.load(Ordering::SeqCst)
+        ),
+        before
+    );
+    assert_eq!(
+        ws[1].inbox_len.load(Ordering::SeqCst),
+        0,
+        "moved to a stalled worker"
+    );
+}
+
+#[test]
+fn a_rescue_moves_the_inbox_and_half_the_queue_to_a_worker_that_can_take_them() {
+    // Another worker making progress takes them; with none, a spare that starts does.
+    for spare in [false, true] {
+        let ws = stalled_workers(2);
+        fill(&ws[0], 1000, 10);
+        let up = if spare {
+            1
+        } else {
+            ws[1].progress.store(LATE, Ordering::Relaxed);
+            2
+        };
+        let mut started = false;
+        rescue_of(ws, up, 0, LATE, || {
+            started = true;
+            Some(1)
+        });
+        assert_eq!(started, spare, "a spare started needlessly, or none did");
+        assert_eq!(lock(&ws[0].queue).len(), 500);
+        assert_eq!(ws[0].inbox_len.load(Ordering::SeqCst), 0);
+        assert_eq!(ws[1].inbox_len.load(Ordering::SeqCst), 510);
+        assert_eq!(crate::task::quiet::moving_here(), 0);
+    }
+}
+
+#[test]
+fn velt_rescue_0_turns_the_stall_rescue_off() {
+    assert!(!rescues(Some("0")));
+    assert!(!rescues(Some(" 0\n")));
+    for on in [None, Some(""), Some("1"), Some("no")] {
+        assert!(rescues(on), "{on:?}");
+    }
+    // One worker in a long poll, a spare left: off, its tasks stay and no spare starts.
+    let ws = stalled_workers(2);
+    let before = fill(&ws[0], 1000, 10);
+    let mut spares = 0;
+    stall_duties(ws, 1, LATE, false, || {
+        spares += 1;
+        Some(1)
+    });
+    assert_eq!(spares, 0, "a spare started");
+    assert_eq!(
+        (
+            lock(&ws[0].queue).len(),
+            ws[0].inbox_len.load(Ordering::SeqCst)
+        ),
+        before
+    );
+    // On, the same tick moves them to the spare.
+    stall_duties(ws, 1, LATE, true, || {
+        spares += 1;
+        Some(1)
+    });
+    assert_eq!(spares, 1);
+    assert_eq!(ws[1].inbox_len.load(Ordering::SeqCst), 510);
+}
+
+#[test]
+fn workers_stalling_in_the_same_tick_share_one_spare() {
+    // Two workers computing, none other started: the spare started for the first serves the
+    // second too, as a worker not stalled (not a spare each).
+    let ws = stalled_workers(3);
+    fill(&ws[0], 1000, 10);
+    fill(&ws[1], 1000, 10);
+    let mut spares = 0;
+    stall_duties(ws, 2, LATE, true, || {
+        spares += 1;
+        // As `start_spare` does: awake, with progress at this tick.
+        ws[2].progress.store(LATE, Ordering::Relaxed);
+        Some(2)
+    });
+    assert_eq!(spares, 1, "a spare per stalled worker");
+    assert_eq!(ws[2].inbox_len.load(Ordering::SeqCst), 1020);
+    for w in &ws[..2] {
+        assert_eq!(w.inbox_len.load(Ordering::SeqCst), 0);
+        assert_eq!(lock(&w.queue).len(), 500);
+    }
 }

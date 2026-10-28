@@ -180,9 +180,15 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   moves there, and an awaited call on the same task changes it in place.
 - A module-level `const` whose type holds an `Atomic` is kept in the module state (made once),
   as a non-constant initializer is: evaluated at each use, every use would change a new atomic.
-  Its methods act on the word in the state's slot.
-- ``` `Atomic<T>` needs a number type or `bool`, found `string` ``` (a type parameter too: the
-  instruction depends on the type).
+  Its methods act on the word in the state's slot. Reaching a slot takes the module lock
+  (rt_abi.md), so tasks using it would run one at a time. A *static atomic*, `const X = new
+  Atomic<T>(literal)`, is therefore not kept there: its word is writable data in the program,
+  starting as the literal (`vir::StaticData::mutable`), and its methods act on it directly,
+  with no lock, from every thread, also in std (whose other module constants are not kept in
+  the module state). Every version in a `velt dev` session uses the session's one word
+  per constant, so a swap keeps its value.
+- ``` `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string` ``` (a type
+  parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
@@ -214,11 +220,22 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
    → `u64`, bbtree's benchmark) in pure Velt: optimistic coupling through inner nodes, leaves
    latched, `Atomic<u64>` slots, the step-2 map's nodes and inline keys. Benchmarked against
    bbtree's `BBTreeMap` (sync) on 1–N threads.
-3. **Reclamation**: an atomic slot of `shared<T>` that can be replaced (`swap`, `compareExchange`)
-   with a protected `load()` (the hazard pointers of the `atom` branch's runtime, exposed per
-   slot). `Atom<T>` (#708) is then a Velt struct in std, and so are generic keys and values for
-   the concurrent map (a replaced key or value is retired, not freed, while a reader may hold
-   it).
+3. **Reclamation, in Velt** (approved on #1696, 2026-10-27; replaces the `atom` branch's runtime
+   hazard pointers: nothing of it is in Rust). Three language features, then std code on them:
+   - **`ThreadLocal<T>`** (implemented): a module constant with one value per thread, a number
+     or `bool`, emitted as the platform's thread-local storage by both backends (OS thread keys
+     where Cranelift has none: `velt dev`, arm64 Windows). Contracts: hir_encodings.md,
+     rt_abi.md "Thread-local values".
+   - **`Atomic<shared<T>>` and `Atomic<string>`**: a word owning one reference to an immutable
+     value. `store`/`exchange`/`compareExchange` move references; `load()` is a frozen borrow
+     (#36's rules) that counts nothing; a replaced value is retired, not released.
+   - **Read sections placed by the compiler**: opened at the first protected `load`, closed
+     before each `await`, `yield`, return and at loop back edges; a borrow live at a close is
+     counted there (one atomic increment). No new rule for users.
+   - **`velt:sync/epoch`**: epoch-based reclamation (one store and fence per section) on
+     `Atomic<u64>` and `ThreadLocal`, with per-thread retire lists. Then `Atom<T>` (#708's API)
+     as a std struct, and `ConcurrentMap<K, V>` with string keys (inline prefix and tag, keys
+     compared 16 bytes at a time in Velt, #1697) and retired values.
 
 ## Results of step 1
 
@@ -465,6 +482,67 @@ from before the free holds an older version. Leaves are not merged, and the root
 
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
 and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two small arrays.
+
+## References (#1696 step 2b)
+
+`Atomic<shared<T>>` and `Atomic<shared<T> | null>`: the word is the pointer of one counted
+reference that the `Atomic` owns. It is its field, so the struct's drop glue releases it, and
+null is none. Lowering (velt_vir `lower/atomic_ref.rs`) uses the 64-bit `velt_atomic_*` externs
+on the pointer's bits, so backends see nothing new.
+- **`load`:** a load, uncounted: the reference is *borrowed*. Read in place (`a.load().f`, a
+  borrowing argument) or bound by a `const` (sema `borrowed_load` binds it by reference, and
+  lowering's `let_pat` binds the loaded pointer without a drop), it costs the load alone. A
+  consumer that keeps it counts it, as for any borrowed place (`consume`'s share). A borrow
+  stays valid as long as retired references are never released; once reclamation frees them,
+  a borrow lives in an epoch section, and one still live where a section closes is counted.
+- **`store(v)` and `exchange(v)`:** `v` moves in, by an atomic exchange. `exchange` gives the
+  caller a counted copy of the old reference.
+- **`compareExchange(expected, v)`:** a compare-and-swap of the pointers, so it compares
+  identity. It returns whether it swapped, as `bool` (sema types the call so; the declared
+  `T` is for numbers), and `v` is dropped when it did not. `expected` is only read: a place
+  argument is not shared first. Its owner keeps it alive, so its address cannot be reused
+  meanwhile (no ABA).
+- **Retiring:** the reference a store, an exchange or a successful compare-and-swap takes out of
+  the word is *retired*, not released. Another thread may have loaded the pointer and not
+  counted it yet; releasing it could free the box under that increment. Until reclamation
+  (`velt:sync/epoch`, step 2c/2d) retires into per-thread lists freed after a grace period, a
+  retired reference is kept forever: memory-safe, but it stays allocated.
+
+## Reclamation (#1696 step 2d)
+
+`velt:sync/epoch` (std/sync/epoch.vlt) is epoch-based reclamation in Velt.
+- **State:** a global epoch, a static `Atomic<u64>` moving in steps of 2. Per thread, a slot:
+  an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
+  `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes
+  at its first `retire` (a thread that only reads makes none). Slots live in chunks of 64,
+  linked from a static `Atomic<shared<Chunk> | null>` and never freed; their states are 16
+  words apart, a 128-byte line each. A thread finds its slot through `ThreadLocal<u64>`, its
+  number + 1.
+- **`pin` / `unpin`:** store the global epoch with the bit into this thread's state, then a
+  `seqcst` fence; `unpin` stores 0 (release). Nesting is counted in a `ThreadLocal`.
+- **`retire<T>(v)`:** a `seqcst` fence, then the current epoch (crossbeam's `push_bag`): paired
+  with `pin`'s fence, the epoch it reads is at least the one current when `v` was unlinked, so
+  `v` cannot expire while a reader that could reach it is still in its section. It pushes `v` as
+  an interface value (`Held<T>` owning the `shared<T>`) with that epoch onto this thread's list.
+  Every 64 retirements it calls `collect`.
+- **A stray `unpin()`** (at depth 0) panics: wrapping the depth would make every later `pin()`
+  on that thread announce nothing.
+- **`collect`:** loads the epoch, a `seqcst` fence (pairs with `pin`'s), and moves it on by a
+  compare-and-swap if no state is active at an older epoch. Then it drops, on every thread's
+  list, what was retired at least two steps before. Draining every list stands in for a
+  thread-exit hook, which Velt does not have.
+- **Reads:** the registry words are only ever set once (null to a chunk), so the module reads
+  them as uncounted borrows without sections of its own.
+- **Tests:** `std/epoch` (one thread, nesting), `std/epoch_threads` (a task on another thread
+  in a nested section blocks every drop; 8 threads retiring at once drop each value once) and
+  `std/epoch_unpin` (the stray `unpin()` error). `std/epoch_threads` catches a section that
+  closes early (20 of 20 runs, debug and release) and an advance that ignores active threads.
+  A missing fence (in `pin` or `retire`) shows only when a reader on a weakly ordered CPU
+  dereferences a value dropped too soon, which no run can be counted on to hit: 2e's threaded
+  goldens, freeing for real under the debug runtime's use-after-free checks, did not catch
+  either mutant in 25 runs on an M4. So veltc `epoch_fences` checks the optimized LLVM IR: one
+  `seqcst` fence in a program that only pins, two in one that only retires. Each mutant fails
+  it.
 
 ## Not in this design
 

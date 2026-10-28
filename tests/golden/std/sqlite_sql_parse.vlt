@@ -1,0 +1,429 @@
+// The SQL parser of the Velt SQLite engine (velt:sqlite/sql, #1720): expressions with SQLite's
+// precedence, SELECT with joins, CTEs, compound cores, parameters, and SQLite's error messages.
+import { Parser } from "velt:sqlite/sql/parser";
+import {
+  Expr,
+  FromItem,
+  OrderTerm,
+  Select,
+  E_NULL,
+  E_INT,
+  E_REAL,
+  E_STRING,
+  E_BLOB,
+  E_PARAM,
+  E_COLUMN,
+  E_UNARY,
+  E_BINARY,
+  E_CALL,
+  E_CASE,
+  E_CAST,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_BETWEEN,
+  E_LIKE,
+  E_IS,
+  E_ISNULL,
+  E_EXISTS,
+  E_SUBQUERY,
+  E_COLLATE,
+  E_STAR,
+  E_ROW,
+  E_TRUE,
+  E_FALSE,
+} from "velt:sqlite/sql/ast";
+import { SqlError } from "velt:sqlite/sql/lexer";
+
+function list(xs: Expr[]): string {
+  return xs.map((x) => show(x)).join(" ");
+}
+
+function show(e: Expr | null): string {
+  if (e == null) {
+    return "_";
+  }
+  const k = e.kind;
+  if (k == E_NULL) {
+    return "NULL";
+  }
+  if (k == E_TRUE) {
+    return "TRUE";
+  }
+  if (k == E_FALSE) {
+    return "FALSE";
+  }
+  if (k == E_INT) {
+    return e.text != "" ? `int!${e.text}` : `${e.ival}`;
+  }
+  if (k == E_REAL) {
+    return `${e.rval}r`;
+  }
+  if (k == E_STRING) {
+    return `'${e.text}'`;
+  }
+  if (k == E_BLOB) {
+    return `x'${e.text}'`;
+  }
+  if (k == E_PARAM) {
+    return `${e.text}#${e.ival}`;
+  }
+  if (k == E_COLUMN) {
+    return e.table != "" ? `${e.table}.${e.name}` : e.name;
+  }
+  if (k == E_STAR) {
+    return e.table != "" ? `${e.table}.*` : "*";
+  }
+  if (k == E_UNARY) {
+    return `(${e.op} ${show(e.a)})`;
+  }
+  if (k == E_BINARY) {
+    return `(${e.op} ${show(e.a)} ${show(e.b)})`;
+  }
+  if (k == E_CALL) {
+    return `${e.name}(${e.distinct ? "DISTINCT " : ""}${e.star ? "*" : list(e.args)})${e.filter != null ? " FILTER " + show(e.filter) : ""}`;
+  }
+  if (k == E_CASE) {
+    return `(CASE ${show(e.a)} [${list(e.args)}] ELSE ${show(e.b)})`;
+  }
+  if (k == E_CAST) {
+    return `(CAST ${show(e.a)} AS ${e.name})`;
+  }
+  if (k == E_IN_LIST) {
+    return `(${e.not ? "NOT " : ""}IN ${show(e.a)} [${list(e.args)}])`;
+  }
+  if (k == E_IN_SELECT) {
+    return `(${e.not ? "NOT " : ""}IN ${show(e.a)} ${sel(e.select!)})`;
+  }
+  if (k == E_BETWEEN) {
+    return `(${e.not ? "NOT " : ""}BETWEEN ${show(e.a)} ${show(e.b)} ${show(e.c)})`;
+  }
+  if (k == E_LIKE) {
+    return `(${e.not ? "NOT " : ""}${e.op} ${show(e.a)} ${show(e.b)} ${show(e.c)})`;
+  }
+  if (k == E_IS) {
+    return `(IS${e.not ? " NOT" : ""} ${show(e.a)} ${show(e.b)})`;
+  }
+  if (k == E_ISNULL) {
+    return `(${e.not ? "NOTNULL" : "ISNULL"} ${show(e.a)})`;
+  }
+  if (k == E_EXISTS) {
+    return `(${e.not ? "NOT " : ""}EXISTS ${sel(e.select!)})`;
+  }
+  if (k == E_SUBQUERY) {
+    return sel(e.select!);
+  }
+  if (k == E_COLLATE) {
+    return `(COLLATE ${show(e.a)} ${e.name})`;
+  }
+  if (k == E_ROW) {
+    return `(ROW ${list(e.args)})`;
+  }
+  return "?";
+}
+
+function order(o: OrderTerm): string {
+  return show(o.expr) + (o.desc ? " DESC" : "") + (o.nulls != 0 ? " N" + String(o.nulls) : "");
+}
+
+function fromItem(f: FromItem): string {
+  let out = "j" + String(f.join) + (f.natural ? "n" : "") + ":";
+  out += f.subquery != null ? sel(f.subquery!) : (f.schema != "" ? f.schema + "." : "") + f.name;
+  if (f.args.length > 0) {
+    out += "(" + list(f.args) + ")";
+  }
+  if (f.alias != "") {
+    out += " " + f.alias;
+  }
+  if (f.on != null) {
+    out += " ON " + show(f.on);
+  }
+  if (f.using.length > 0) {
+    out += " USING " + f.using.join(",");
+  }
+  if (f.indexedBy != "") {
+    out += " INDEXED " + f.indexedBy;
+  }
+  if (f.notIndexed) {
+    out += " NOT INDEXED";
+  }
+  return out;
+}
+
+function sel(s: Select): string {
+  let out = "{";
+  if (s.with.length > 0) {
+    out += `WITH${s.recursive ? " RECURSIVE" : ""} ${s.with.map((c) => c.name + "(" + c.columns.join(",") + ") AS " + sel(c.select)).join(", ")} `;
+  }
+  for (const c of s.cores) {
+    if (c.op != 0) {
+      out += ` op${c.op} `;
+    }
+    if (c.values.length > 0) {
+      out += `VALUES ${c.values.map((r) => "[" + list(r) + "]").join(" ")}`;
+      continue;
+    }
+    out += `SELECT${c.distinct ? " DISTINCT" : ""} ${c.columns.map((r) => show(r.expr) + (r.alias != "" ? " AS " + r.alias : "")).join(", ")}`;
+    if (c.from.length > 0) {
+      out += " FROM " + c.from.map((f) => fromItem(f)).join(", ");
+    }
+    if (c.where != null) {
+      out += ` WHERE ${show(c.where)}`;
+    }
+    if (c.groupBy.length > 0) {
+      out += ` GROUP ${list(c.groupBy)}`;
+    }
+    if (c.having != null) {
+      out += ` HAVING ${show(c.having)}`;
+    }
+  }
+  if (s.orderBy.length > 0) {
+    out += ` ORDER ${s.orderBy.map((o) => order(o)).join(", ")}`;
+  }
+  if (s.limit != null) {
+    out += ` LIMIT ${show(s.limit)}`;
+  }
+  if (s.offset != null) {
+    out += ` OFFSET ${show(s.offset)}`;
+  }
+  return out + "}";
+}
+
+const CASES: string[] = [
+  "SELECT 1 + 2 * 3 - 4 / 5 % 6",
+  "SELECT a || b || c, -x, - -1, ~5, +y, -9223372036854775808, 9223372036854775808, 0x7fffffffffffffff, 0xffffffffffffffff, 1e3, .5, 1.5e-3, 99999999999999999999",
+  "SELECT * FROM t WHERE a = 1 AND b != 2 OR NOT c <> 3 AND d == 4",
+  "SELECT a FROM t WHERE x IS NULL AND y IS NOT NULL AND z ISNULL AND w NOTNULL AND v NOT NULL AND u IS NOT DISTINCT FROM 1",
+  "SELECT a BETWEEN 1 AND 2 AND b NOT BETWEEN c AND d, e IN (1, 2, 3), f NOT IN (SELECT g FROM h), i IN t2, j IN ()",
+  "SELECT name LIKE 'a%' ESCAPE '\\', name NOT GLOB '*x*', CASE WHEN a THEN 1 WHEN b THEN 2 ELSE 3 END, CASE x WHEN 1 THEN 'one' END",
+  "SELECT CAST(x AS INTEGER), CAST(y AS VARCHAR(10)), CAST(z AS DOUBLE PRECISION), count(*), count(DISTINCT a), sum(b) FILTER (WHERE b > 0), max(a, b, c)",
+  "SELECT p.id, p.body, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC, p.id DESC LIMIT 20",
+  "SELECT a, b c, d 'e', \"f g\", [h i], `j` FROM t1 AS x LEFT OUTER JOIN t2 y USING (k, l) NATURAL JOIN t3 CROSS JOIN t4, t5 INDEXED BY i5 WHERE EXISTS (SELECT 1) AND NOT EXISTS (SELECT 2)",
+  "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) SELECT i FROM n",
+  "SELECT a FROM t UNION SELECT b FROM u INTERSECT SELECT c FROM v EXCEPT SELECT d FROM w ORDER BY 1 NULLS LAST LIMIT 5, 10",
+  "VALUES (1, 'a'), (2, 'b')",
+  "SELECT ?, ?, ?5, ?, :name, @name, $x, :name, ?2",
+  "SELECT a COLLATE NOCASE = b, (1, 2) = (3, 4), x -> '$.a', x ->> '$.b', a & b | c << 2 >> 1, a < b = c > d",
+  "SELECT DISTINCT a FROM t GROUP BY a, b HAVING count(*) > 1 LIMIT 10 OFFSET 5",
+  "SELECT * FROM (SELECT 1 AS x) s, json_each('[1]') j, generate_series(1, 9)",
+  "SELECT 'it''s', \"say \"\"hi\"\"\", x'00FF', TRUE, FALSE, true(), CURRENT_TIMESTAMP -- comment\n /* block */",
+  "SELECT 1 +",
+  "SELECT a FROM WHERE",
+  "SELECT 'abc",
+  "SELECT 12abc",
+  "SELECT x'0'",
+  "SELECT a FROM t ORDER BY",
+  "SELECT ?0",
+  "SELECT f(x) OVER ()",
+  "SELECT 1 = NOT 0, 1 = NOT 0 AND 0, 0 = NOT 0 = 0, 1 + NOT 0, NOT EXISTS (SELECT 1)",
+  "SELECT like(1, 2), glob('a', 'a'), match(1, 2), regexp(1, 2), a LIKE b",
+  "SELECT 0x00000000000000001, 0x000000000000000000000000000ff, 0x00000000000000000",
+  "SELECT - -9223372036854775808, -(-9223372036854775808), - - 5",
+  "SELECT 123456789012345678, 999999999999999999, -123456789012345678",
+  "ſelect 1",
+  "SELECT 2 BETWEEN 1 = 1 AND 3, 5 BETWEEN 1 AND 3 = 0",
+  "SELECT 1_000, 1_000.5, 0x1_0, 1e1_0, 1.5_0, 0xf_f",
+  "SELECT 1__0",
+  "SELECT 1_",
+  "SELECT 1._5",
+  "SELECT a COLLATE x COLLATE y = b COLLATE z",
+  // `/*` at the very end is `/` then `*` (tokenize.c); any longer unclosed comment runs to the end.
+  "SELECT 1/*",
+  "SELECT 1/**",
+  // IN [schema.]table and IN a table-valued function.
+  "SELECT 1 IN main.t, 2 NOT IN json_each('[1]'), 3 IN main.json_each('[1]', 2), 4 IN t(), 5 IN 't', 6 IN left",
+  // Type names: words or strings, then (n) or (n, m) of signed numbers only.
+  "SELECT CAST(x AS 'int'), CAST(x AS INT 'x' y), CAST(x AS INT(+1)), CAST(x AS NUMERIC(-1, 2.5)), CAST(x AS generated), CAST(x AS \"int\")",
+  "SELECT CAST(x AS INT(foo))",
+  "SELECT CAST(x AS INT(1_0))",
+  "SELECT CAST(x AS INT(1, 2, 3))",
+  "SELECT CAST(x AS INT((1)))",
+  "SELECT CAST(x AS left)",
+  // `t.*` is a result column on its own: no alias, no operand, no argument.
+  "SELECT t.*, 't'.*, left.*, 't'.a FROM t AS left",
+  "SELECT t.* AS x FROM t",
+  "SELECT t.* + 1 FROM t",
+  "SELECT count(t.*) FROM t",
+  // A string alias; ON and USING after a comma join; join words in any order (sqlite3JoinType).
+  "SELECT * FROM t 'x', u, v ON 1, w USING (a) LEFT NATURAL JOIN y OUTER LEFT JOIN z INNER CROSS JOIN q LEFT RIGHT JOIN r NATURAL FULL OUTER JOIN s",
+  "SELECT * FROM t LEFT INNER JOIN u",
+  "SELECT * FROM t OUTER JOIN u",
+  "SELECT * FROM t LEFT foo JOIN u",
+  "SELECT * FROM t left \"outer\" JOIN u",
+  "SELECT * FROM t LEFT OUTER NATURAL INNER JOIN u",
+  "SELECT * FROM t ON 1",
+  "SELECT * FROM t USING (a)",
+  "SELECT * FROM t ON 1 WHERE 1",
+  "SELECT * FROM t ON a DO",
+  // A collation is a name or a string, not a join word.
+  "SELECT 1 COLLATE 'x', 1 COLLATE end",
+  "SELECT 1 COLLATE left",
+  "SELECT * FROM t NOT INDEXED, json_each('[1]') NOT INDEXED",
+  // VALUES rows have one length; ORDER BY and LIMIT follow a SELECT core, not VALUES.
+  "VALUES (1, 2), (3)",
+  "SELECT 1 UNION VALUES (1), (2, 3)",
+  "VALUES (1) ORDER BY 1",
+  "SELECT 1 UNION VALUES (1) LIMIT 1",
+  "VALUES (1) UNION SELECT 1 ORDER BY 1",
+  // ESCAPE's operand binds like `<` (parse.y's %right ESCAPE above the comparisons): the
+  // escape is `c < d`, and `=` ends it.
+  "SELECT a LIKE b ESCAPE c < d, a LIKE b ESCAPE c = d, a NOT GLOB b ESCAPE c & d",
+  // NOT after an operand must start NOT IN / LIKE / BETWEEN / NULL; RAISE only in a trigger.
+  "SELECT 1 NOT x",
+  "SELECT 1 NOT",
+  "SELECT raise(ABORT, 'x')",
+  "SELECT raise(1)",
+  // Keywords that are names here (SQLite's %fallback ID, join words, FILTER/OVER/WINDOW by
+  // context): columns, tables, aliases, calls.
+  "SELECT end, offset, left, by, with, glob(1, 2), like, indexed, x FROM cast, raise, left AS right, t end",
+  "SELECT count(*) filter, count(*) over, 1 window, count(*) FILTER (WHERE 1) FROM t",
+  "SELECT 1 LIMIT offset OFFSET 1",
+  "SELECT \"count\"(*), [abs](1)",
+];
+
+/** Every SQLite keyword (and some words that are not keywords), lower case. */
+const KEYWORDS: string[] = (
+  "abort action add after all alter always analyze and as asc attach autoincrement before " +
+  "begin between by cascade case cast check collate column commit conflict constraint create " +
+  "cross current current_date current_time current_timestamp database default deferrable " +
+  "deferred delete desc detach distinct do drop each else end escape except exclude exclusive " +
+  "exists explain fail filter first following for foreign from full generated glob group " +
+  "groups having if ignore immediate in index indexed initially inner insert instead " +
+  "intersect into is isnull join key last left like limit match materialized natural no not " +
+  "nothing notnull null nulls of offset on or order others outer over partition plan pragma " +
+  "preceding primary query raise range recursive references regexp reindex release rename " +
+  "replace restrict returning right rollback row rows savepoint select set table temp " +
+  "temporary then ties to transaction trigger unbounded union unique update using vacuum " +
+  "values view virtual when where window with without rowid strict true false"
+).split(" ");
+
+/**
+ * Where each keyword is tried: a column, a qualified column, a table, a table alias with AS and
+ * bare, a column alias with AS and bare, an operand, a call, a CTE, an ORDER BY term, a type.
+ */
+const FORMS: string[] = [
+  "SELECT % FROM t",
+  "SELECT t.% FROM t",
+  "SELECT * FROM %",
+  "SELECT * FROM t AS %",
+  "SELECT * FROM t %",
+  "SELECT 1 AS %",
+  "SELECT 1 %",
+  "SELECT 1 + %",
+  "SELECT %(1)",
+  "WITH % AS (SELECT 1) SELECT 1",
+  "SELECT 1 FROM t ORDER BY %",
+  "SELECT CAST(1 AS %)",
+];
+
+/** Whether `sql` parses as one SELECT. */
+function accepts(sql: string): bool {
+  try {
+    const p = new Parser(sql);
+    p.select();
+    return p.peek().kind == 0;
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return false;
+    }
+    throw e;
+  }
+}
+
+function main() {
+  // Expression trees up to SQLite's height limit (1000), and past it: chains of binary
+  // operators, prefix operators, nesting; parentheses and COLLATE add no level. The parser's
+  // own recursion is bounded too ("Recursion limit"), so deep input is an error, never a stack
+  // overflow. Compound SELECTs and FROM lists have SQLite's limits. Trees this deep are not
+  // printed: only the height.
+  const deep: string[] = [
+    "SELECT 1" + "+1".repeat(999),
+    "SELECT 1" + "+1".repeat(1000),
+    "SELECT 1" + "+1".repeat(5000),
+    "SELECT 1" + " AND 1".repeat(999),
+    "SELECT 1" + " OR 1".repeat(1000),
+    "SELECT 'a'" + " || 'a'".repeat(1000),
+    "SELECT 1" + " BETWEEN 1 AND 1".repeat(1000),
+    "SELECT a" + " ISNULL".repeat(999) + " FROM t",
+    "SELECT a" + " ISNULL".repeat(1000) + " FROM t",
+    "SELECT 1" + " COLLATE x".repeat(5000),
+    "SELECT " + "NOT ".repeat(999) + "1",
+    "SELECT " + "NOT ".repeat(1000) + "1",
+    "SELECT " + "- ".repeat(999) + "1",
+    "SELECT " + "- ".repeat(1000) + "1",
+    "SELECT " + "CAST(".repeat(999) + "1" + " AS INT)".repeat(999),
+    "SELECT " + "1+(".repeat(999) + "1" + ")".repeat(999),
+    "SELECT " + "(".repeat(1000) + "1" + ")".repeat(1000),
+    "SELECT " + "(".repeat(5000) + "1" + ")".repeat(5000),
+    "SELECT " + "f(".repeat(500) + "1" + ")".repeat(500),
+    "SELECT " + "f(".repeat(3000) + "1" + ")".repeat(3000),
+    "SELECT " + "(SELECT ".repeat(500) + "1" + ")".repeat(500),
+    "SELECT " + "(SELECT ".repeat(3000) + "1" + ")".repeat(3000),
+    "SELECT " + "(".repeat(5000),
+    "SELECT 1" + " UNION SELECT 1".repeat(499),
+    "SELECT 1" + " UNION SELECT 1".repeat(500),
+    "SELECT 1 FROM t" + " JOIN t".repeat(63),
+    "SELECT 1 FROM t" + " JOIN t".repeat(64),
+    "SELECT 1 FROM t" + ", t".repeat(200),
+  ];
+  // A chain of BETWEEN low bounds nests (`a BETWEEN b BETWEEN c AND d AND e` is valid): it is
+  // bounded like any nesting, never a stack overflow.
+  deep.push("SELECT 1" + " BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  deep.push("SELECT 1" + " NOT BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  // Every production that nests, 10,000 deep: bounded, never a stack overflow (a level of
+  // each costs the stack it measures, velt:sqlite/sql/cursor's MAX_DEPTH).
+  deep.push("WITH a AS (".repeat(10000) + "SELECT 1" + ") SELECT 1".repeat(10000));
+  deep.push("SELECT * FROM " + "(SELECT * FROM ".repeat(10000) + "t" + ")".repeat(10000));
+  deep.push("SELECT " + "CASE WHEN ".repeat(10000) + "1" + " THEN 1 END".repeat(10000));
+  deep.push("SELECT " + "EXISTS (SELECT ".repeat(10000) + "1" + ")".repeat(10000));
+  deep.push("SELECT " + "1 IN (".repeat(10000) + "1" + ")".repeat(10000));
+  deep.push("SELECT " + "1 IN f(".repeat(10000) + "1" + ")".repeat(10000));
+  deep.push("SELECT " + "f(1) FILTER (WHERE ".repeat(10000) + "1" + ")".repeat(10000));
+  deep.push("SELECT 1 LIMIT " + "(SELECT 1 LIMIT ".repeat(10000) + "1" + ")".repeat(10000));
+  deep.push("SELECT " + "(VALUES (".repeat(10000) + "1" + "))".repeat(10000));
+  deep.push("SELECT " + "CAST(".repeat(10000) + "1" + " AS INT)".repeat(10000));
+  // SQLite's 32766 parameters: `?`, `?NNN` and names alike.
+  deep.push("SELECT ?32766, ?");
+  deep.push("SELECT " + "?, ".repeat(32766) + "?");
+  const names: string[] = [];
+  for (let i = 0; i < 32767; i++) {
+    names.push(`:p${i}`);
+  }
+  deep.push("SELECT " + names.slice(0, 32766).join(", ") + ", :p0, ?1");
+  deep.push("SELECT " + names.join(", "));
+  // A run of COLLATE is one node, however long: the tree can be walked.
+  console.log(sel(new Parser("SELECT 1" + " COLLATE x".repeat(5000) + " COLLATE y").select()));
+  for (const sql of deep) {
+    const head = sql.length > 24 ? sql.slice(0, 24) + "…" : sql;
+    try {
+      const s = new Parser(sql).select();
+      console.log(`${head} (${sql.length} bytes): height ${s.height}, ${s.cores.length} cores`);
+    } catch (e) {
+      if (e instanceof SqlError) {
+        console.log(`${head} (${sql.length} bytes): error at ${e.at}: ${e.message}`);
+      } else {
+        throw e;
+      }
+    }
+  }
+  // The keyword sweep: + where the keyword is accepted, - where it is a syntax error, in the
+  // order of FORMS; the expected marks are /usr/bin/sqlite3 3.54's.
+  for (const kw of KEYWORDS) {
+    console.log(`${kw} ${FORMS.map((f) => (accepts(f.replaceAll("%", kw)) ? "+" : "-")).join("")}`);
+  }
+  for (const sql of CASES) {
+    try {
+      const p = new Parser(sql);
+      const s = p.select();
+      if (p.peek().kind != 0) {
+        p.fail();
+      }
+      console.log(sel(s));
+    } catch (e) {
+      if (e instanceof SqlError) {
+        console.log(`error at ${e.at}: ${e.message}`);
+      } else {
+        throw e;
+      }
+    }
+  }
+}

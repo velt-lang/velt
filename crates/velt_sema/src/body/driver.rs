@@ -281,8 +281,14 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     }
     // A constant holding an `Atomic` is one word the program changes in place (atomics.md):
-    // evaluated at each use, every use would change a new one.
-    if let (Some(_), false) = (&init, stored) {
+    // evaluated at each use, every use would change a new one. `new Atomic<T>(literal)` is
+    // that word in the program's data instead, with no module state (a static atomic).
+    let static_atomic = !mutable
+        && owner.is_none()
+        && init
+            .as_ref()
+            .is_some_and(|i| super::expr::static_atomic_init(cx, i));
+    if let (Some(_), false) = (&init, stored || static_atomic) {
         if !cx.modules[module].is_std && ty != cx.ty.error && cx.holds_atomic(ty) {
             stored = true;
         }

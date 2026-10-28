@@ -17,7 +17,8 @@
 //!   frames; Windows arm64 has none yet.
 //!
 //! Runtime functions resolve through the symbol table the host passes in (`velt_rt`'s
-//! `ABI_SYMBOLS`); C library functions (`memcpy`, `fmod`, ...) through `c_symbols` on Unix (no
+//! `ABI_SYMBOLS`); kernel32's `Tls*` functions through `win_symbols` on Windows; C library
+//! functions (`memcpy`, `fmod`, ...) through `c_symbols` on Unix (no
 //! dynamic loader needed: a static musl `velt` has none) and the loaded CRT on Windows.
 
 mod classify;
@@ -61,6 +62,14 @@ pub struct DevSession {
     swaps: u32,
     /// Register each version's line tables with debuggers (`debug_info::jit`).
     debug_info: bool,
+    /// The slot of each `ThreadLocal`'s operating-system key, by its id (`velt_vir::tls`): one
+    /// per constant for the whole session, which every version imports, so code of different
+    /// versions reads and writes the same value. Never freed (code may use it until the end).
+    tls_keys: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
+    /// The word of each static atomic, by its id (`vir::StaticData::mutable`): one per constant
+    /// for the whole session, starting as the first version's value, which every version
+    /// imports. Never freed.
+    static_atomics: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
 }
 
 /// A program loaded by [`DevSession::load`]; valid as long as its session lives.
@@ -97,6 +106,8 @@ impl DevSession {
             running: None,
             swaps: 0,
             debug_info: true,
+            tls_keys: FxHashMap::default(),
+            static_atomics: FxHashMap::default(),
         }
     }
 
@@ -201,7 +212,9 @@ impl DevSession {
         timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Vec<Option<usize>>, String> {
         let (names, new_slots) = self.names(program, define);
-        let imports = self.imports(program, &names)?;
+        let mut imports = self.imports(program, &names)?;
+        imports.extend(self.tls_key_slots(program));
+        imports.extend(self.static_atomic_words(program));
         let inputs = version::Inputs {
             names: &names,
             imports: &imports,
@@ -287,6 +300,42 @@ impl DevSession {
             })
             .collect();
         (names, slots)
+    }
+
+    /// The session's key slot of each `ThreadLocal` the program uses, made on first sight.
+    fn tls_key_slots(&mut self, program: &vir::Program) -> Vec<(String, usize)> {
+        let mut out = vec![];
+        for e in &program.externs {
+            let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) else {
+                continue;
+            };
+            let slot = self.tls_keys.entry(call.id()).or_default();
+            let address = &**slot as *const std::sync::atomic::AtomicU64 as usize;
+            let name = velt_vir::tls::key_symbol(call.id());
+            if !out.iter().any(|(n, _)| *n == name) {
+                out.push((name, address));
+            }
+        }
+        out
+    }
+
+    /// The session's word of each static atomic the program uses, made on first sight.
+    fn static_atomic_words(&mut self, program: &vir::Program) -> Vec<(String, usize)> {
+        let mut out = vec![];
+        for s in &program.statics {
+            let Some(id) = s.mutable else {
+                continue;
+            };
+            let word = self.static_atomics.entry(id).or_insert_with(|| {
+                let mut start = [0u8; 8];
+                let n = s.bytes.len().min(8);
+                start[..n].copy_from_slice(&s.bytes[..n]);
+                Box::new(u64::from_le_bytes(start).into())
+            });
+            let address = &**word as *const std::sync::atomic::AtomicU64 as usize;
+            out.push((velt_vir::atomic::static_symbol(id), address));
+        }
+        out
     }
 
     /// Addresses of the references a version does not define: trampolines of existing keys and

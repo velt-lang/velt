@@ -11,6 +11,7 @@ use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::{CodegenError, Context};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleError};
+use rustc_hash::FxHashMap;
 use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
@@ -43,6 +44,9 @@ pub(crate) struct Declarations {
     /// import nothing defines must not reach the linker, even unreferenced).
     pub externs: Vec<Option<FuncId>>,
     pub statics: Vec<DataId>,
+    /// The thread-local data object of each `ThreadLocal` constant, by its id, where the ISA
+    /// has thread-local storage (tls.rs).
+    pub tls: FxHashMap<u64, DataId>,
     pub call_conv: CallConv,
 }
 
@@ -126,7 +130,36 @@ fn declare_all<M: Module>(
         Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
     };
     let mut externs = Vec::with_capacity(program.externs.len());
+    let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
     for e in &program.externs {
+        // A thread-local value: inline on thread-local storage, or a function this module
+        // defines on the operating system's thread keys (tls.rs).
+        if let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) {
+            let (params, ret) = call.signature();
+            if e.params != params || e.ret != ret {
+                bail!("ICE: `{}` declared with another signature", e.symbol);
+            }
+            if crate::tls::native(module) {
+                crate::tls::data(module, &mut tls, call)?;
+                externs.push(None);
+                continue;
+            }
+            let sig = make_signature(call_conv, &e.params, e.ret)?;
+            let id = declare_function(
+                module,
+                call_conv,
+                &e.symbol,
+                &e.params,
+                e.ret,
+                Linkage::Local,
+            )?;
+            // A `velt dev` version imports the session's key slot (dev/mod.rs), so every
+            // version of the program uses one key per constant.
+            let shared = matches!(naming, Naming::Dev(_));
+            crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig, shared)?;
+            externs.push(Some(id));
+            continue;
+        }
         // Operations emitted inline (function/simd.rs, function/atomic.rs): nothing to link.
         if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
@@ -144,12 +177,17 @@ fn declare_all<M: Module>(
         )?));
     }
     let mut statics = Vec::with_capacity(program.statics.len());
-    for i in 0..program.statics.len() {
-        statics.push(
-            module
-                .declare_anonymous_data(false, false)
-                .map_err(|e| format!("codegen: declaring static #{i}: {e}"))?,
-        );
+    for (i, s) in program.statics.iter().enumerate() {
+        // A static atomic's word, in a `velt dev` version: the session's (dev/mod.rs), so
+        // every version changes the same one.
+        let declared = match (s.mutable, naming) {
+            (Some(id), Naming::Dev(_)) => {
+                let sym = velt_vir::atomic::static_symbol(id);
+                module.declare_data(&sym, Linkage::Import, true, false)
+            }
+            (mutable, _) => module.declare_anonymous_data(mutable.is_some(), false),
+        };
+        statics.push(declared.map_err(|e| format!("codegen: declaring static #{i}: {e}"))?);
     }
     let targets = RelocTargets {
         funcs: &funcs,
@@ -158,12 +196,15 @@ fn declare_all<M: Module>(
     };
     // Defined after all declarations: relocations may point at any function, extern or static.
     for (i, s) in program.statics.iter().enumerate() {
-        define_static(module, &targets, i, s)?;
+        if s.mutable.is_none() || !matches!(naming, Naming::Dev(_)) {
+            define_static(module, &targets, i, s)?;
+        }
     }
     let decls = Declarations {
         funcs,
         externs,
         statics,
+        tls,
         call_conv,
     };
     Ok((decls, defs))
@@ -272,7 +313,8 @@ struct RelocTargets<'a> {
     statics: &'a [DataId],
 }
 
-/// Statics are anonymous read-only data objects (no symbol clashes with user code). Relocated
+/// Statics are anonymous data objects (no symbol clashes with user code), read-only except
+/// static atomics' words. Relocated
 /// slots become absolute 8-byte address relocations (Abs8 / ADDR64) against their targets.
 fn define_static<M: Module>(
     module: &mut M,

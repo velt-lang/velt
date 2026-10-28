@@ -1,0 +1,127 @@
+// check: no leaks
+// `Promise.all`, `race`, `any` and `allSettled` over an array the program still reads
+// afterwards (a shared array): the combinator leaves the array and its promises as they are,
+// as in JS. The generator is the shape of sigx's server renderer (#379): a destructured
+// `ssrLoads` array, awaited by an async closure on one path and yielded on the other.
+// Node prints the same.
+function wait(ms: number, v: number): Promise<number> {
+  return new Promise((resolve) => setTimeout(() => resolve(v), ms));
+}
+function fail(ms: number, msg: string): Promise<number> {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms));
+}
+
+function make(n: number): { name: string; loads: Promise<void>[] } {
+  const loads: Promise<void>[] = [];
+  for (let i = 0; i < n; i++) {
+    loads.push(Promise.resolve());
+  }
+  return { name: "c" + n, loads };
+}
+function* render(n: number, deferred: boolean, out: string[]): Generator<{ p: Promise<any> }, void, unknown> {
+  const { name, loads } = make(n);
+  if (deferred) {
+    const later = (async () => {
+      await Promise.all(loads);
+      out.push("deferred " + name + " " + loads.length);
+    })();
+    void later;
+  } else {
+    yield { p: Promise.all(loads) };
+    out.push("blocking " + name + " " + loads.length);
+  }
+}
+async function drive(n: number, deferred: boolean, out: string[]): Promise<void> {
+  for (const s of render(n, deferred, out)) {
+    await s.p;
+  }
+}
+
+function plain(): number {
+  const loads: Promise<void>[] = [Promise.resolve()];
+  const all = Promise.all(loads);
+  void all;
+  return loads.length;
+}
+
+async function main(): Promise<void> {
+  const out: string[] = [];
+  await drive(2, false, out);
+  await drive(3, true, out);
+  await wait(1, 0);
+  console.log(out.join("\n"));
+  console.log("plain", plain());
+
+  const ps: Promise<number>[] = [wait(20, 1), wait(1, 2)];
+  console.log("race", await Promise.race(ps), ps.length);
+  console.log("all", await Promise.all(ps), ps.length);
+  console.log("any", await Promise.any(ps), ps.length);
+  const settled = await Promise.allSettled(ps);
+  console.log("allSettled", settled.map((s) => s.status).join(","), ps.length);
+  ps.push(fail(2, "boom"));
+  try {
+    await Promise.all(ps);
+  } catch (e) {
+    console.log("caught", (e as Error).message, ps.length);
+  }
+  const again = await Promise.allSettled(ps);
+  console.log("allSettled", again.map((s) => s.status).join(","), ps.length);
+  console.log("kept", await ps[0], await ps[1]);
+
+  // Each combinator reads the array once, when called: changes after the call (a push, an
+  // element replaced, the array truncated) don't reach the result.
+  const a: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pa = Promise.all(a);
+  a.push(wait(1, 3));
+  a[0] = wait(1, 9);
+  console.log("all after push", await pa, a.length);
+  const a2: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pa2 = Promise.all(a2);
+  a2.length = 0;
+  console.log("all after truncate", await pa2, a2.length);
+
+  const r: Promise<number>[] = [wait(5, 1), wait(3, 2)];
+  const pr = Promise.race(r);
+  r.push(wait(1, 3));
+  r[1] = wait(1, 9);
+  console.log("race after push", await pr, r.length);
+  const r2: Promise<number>[] = [wait(5, 1), wait(3, 2)];
+  const pr2 = Promise.race(r2);
+  r2.length = 0;
+  console.log("race after truncate", await pr2, r2.length);
+
+  const y: Promise<number>[] = [fail(1, "no"), wait(3, 2)];
+  const py = Promise.any(y);
+  y.push(wait(1, 3));
+  y[1] = wait(1, 9);
+  console.log("any after push", await py, y.length);
+  const y2: Promise<number>[] = [fail(1, "no"), wait(3, 2)];
+  const py2 = Promise.any(y2);
+  y2.length = 0;
+  console.log("any after truncate", await py2, y2.length);
+
+  const b: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pb = Promise.allSettled(b);
+  b.push(wait(1, 3));
+  b[0] = wait(1, 9);
+  const sb = await pb;
+  console.log("allSettled after push", sb.length, sb.map((s) => (s.status == "fulfilled" ? s.value : -1)).join(","), b.length);
+  const c: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pc = Promise.allSettled(c);
+  c.length = 0;
+  console.log("allSettled after truncate", (await pc).length, c.length);
+
+  const none: Promise<number>[] = [];
+  try {
+    await Promise.any(none);
+  } catch (e) {
+    console.log("any of none", (e as Error).name, (e as Error).message);
+  }
+  const rejected: Promise<number>[] = [fail(1, "x"), fail(2, "y")];
+  try {
+    await Promise.any(rejected);
+  } catch (e) {
+    console.log("any rejected", (e as Error).name, rejected.length);
+  }
+}
+main();

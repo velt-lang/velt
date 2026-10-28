@@ -46,7 +46,12 @@ const WINDOWS: Platform = Platform {
         "msvcrt.lib",
     ],
     shared_native_libs: &["kernel32.lib", "msvcrt.lib"],
-    base_args: &["/NOLOGO", "/SUBSYSTEM:CONSOLE", "/INCREMENTAL:NO"],
+    base_args: &[
+        "/NOLOGO",
+        "/SUBSYSTEM:CONSOLE",
+        "/INCREMENTAL:NO",
+        crate::WINDOWS_STACK,
+    ],
     debug_args: &["/DEBUG"],
     release_args: &["/OPT:REF", "/OPT:ICF"],
 };
@@ -252,6 +257,20 @@ pub(crate) fn msvc_linker(_target: &str) -> Result<Command, String> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn windows_main_thread_gets_the_stack_of_the_other_platforms() {
+        let req = LinkRequest {
+            target: "x86_64-pc-windows-msvc",
+            objects: &[],
+            runtime_lib: Path::new("velt_rt.lib"),
+            output: Path::new("out.exe"),
+            release: true,
+            native: &[],
+        };
+        let args = msvc_args(&req).unwrap();
+        assert!(args.iter().any(|a| a == "/STACK:8388608"), "{args:?}");
+    }
 
     #[test]
     fn macos_links_for_the_oldest_supported_version() {

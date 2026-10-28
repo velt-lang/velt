@@ -32,6 +32,7 @@ mod stmt;
 #[cfg(test)]
 mod storage_tests;
 mod terminator;
+mod tls;
 
 use rustc_hash::FxHashMap;
 

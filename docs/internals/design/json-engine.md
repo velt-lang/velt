@@ -190,14 +190,19 @@ runtime cost. The PR reports the change in build time and IR size.
 
 ### 2. Benchmarks that others publish
 
-Add the corpora every JSON library reports on to `bench/json`:
+Add the corpora every JSON library reports on to `bench/json/corpora`:
 - `twitter.json`: mixed, with non-ASCII strings;
 - `citm_catalog.json`: wide objects and many integers;
 - `canada.json`: floats.
 
-`bench/json/fetch.sh` downloads them with pinned SHA-256s; they are not committed. Each corpus
-runs as a typed parse, a `parseValue`, and a stringify of the result. The comparison rows are
-serde_json, sonic-rs and simd-json (Rust), Node and Bun.
+`bench/json/corpora/fetch.sh` downloads them with pinned SHA-256s; they are not committed.
+`bench/json/corpora/run.sh` next to it runs each corpus as a typed parse, a `parseValue`, and a
+stringify of the result. The comparison rows are serde_json, sonic-rs and simd-json (Rust), Node
+and Bun.
+
+Landed (#1746): the `parseValue` and stringify rows against serde_json, sonic-rs, simd-json and
+Node, with the first results in `bench/RESULTS.md` ("JSON corpora"). Still to come: the typed
+parse rows and the Bun column.
 
 Targets:
 - typed parse faster than serde_json on all three corpora, and at sonic-rs's speed on

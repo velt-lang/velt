@@ -66,6 +66,7 @@ mod hasher_tests;
 mod holds_promise;
 mod hooks;
 pub mod ide;
+mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
 mod infer;
@@ -105,6 +106,7 @@ mod script_tdz;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
+mod thread_locals;
 mod throws;
 mod timings;
 mod ts_protocol;
@@ -624,6 +626,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::clone_reused(cx, &moved.reused)
     });
     timings::pass("atomic_copies::check", || atomic_copies::check(cx));
+    timings::pass("thread_locals::check", || thread_locals::check(cx));
     timings::pass("ownership::box_cells", || {
         ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
     });

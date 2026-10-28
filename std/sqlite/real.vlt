@@ -1,0 +1,446 @@
+// velt:sqlite/real — a REAL's text as SQLite writes it (`CAST(r AS TEXT)`, the sqlite3 shell):
+// `printf("%!.17g", r)`, with SQLite's own decimal conversion (sqlite3FpDecode in util.c, public
+// domain) ported to Velt so the digits match byte for byte. The conversion finds 18 significant
+// digits with a 64x64-bit product against a table of powers of ten, rounds them to 17, and tries
+// shorter forms that still read back as the same double (so 0.1 is "0.1", not
+// "0.10000000000000001"). `%!g` keeps a ".0" on integral values and switches to an exponent
+// below 1e-4 or from 1e17 on.
+
+/** pow(10, p) for p in 0..26, shifted left so the top bit is set (util.c's aBase). */
+const BASE: u64[] = [
+  0x8000000000000000,
+  0xa000000000000000,
+  0xc800000000000000,
+  0xfa00000000000000,
+  0x9c40000000000000,
+  0xc350000000000000,
+  0xf424000000000000,
+  0x9896800000000000,
+  0xbebc200000000000,
+  0xee6b280000000000,
+  0x9502f90000000000,
+  0xba43b74000000000,
+  0xe8d4a51000000000,
+  0x9184e72a00000000,
+  0xb5e620f480000000,
+  0xe35fa931a0000000,
+  0x8e1bc9bf04000000,
+  0xb1a2bc2ec5000000,
+  0xde0b6b3a76400000,
+  0x8ac7230489e80000,
+  0xad78ebc5ac620000,
+  0xd8d726b7177a8000,
+  0x878678326eac9000,
+  0xa968163f0a57b400,
+  0xd3c21bcecceda100,
+  0x84595161401484a0,
+  0xa56fa5b99019a5c8,
+];
+
+/** pow(10, 27 * (i - 13)) (index 13 is the special case 1e-1), the top 64 bits (aScale). */
+const SCALE: u64[] = [
+  0x8049a4ac0c5811ae,
+  0xcf42894a5dce35ea,
+  0xa76c582338ed2621,
+  0x873e4f75e2224e68,
+  0xda7f5bf590966848,
+  0xb080392cc4349dec,
+  0x8e938662882af53e,
+  0xe65829b3046b0afa,
+  0xba121a4650e4ddeb,
+  0x964e858c91ba2655,
+  0xf2d56790ab41c2a2,
+  0xc428d05aa4751e4c,
+  0x9e74d1b791e07e48,
+  0xcccccccccccccccc,
+  0xcecb8f27f4200f3a,
+  0xa70c3c40a64e6c51,
+  0x86f0ac99b4e8dafd,
+  0xda01ee641a708de9,
+  0xb01ae745b101e9e4,
+  0x8e41ade9fbebc27d,
+  0xe5d3ef282a242e81,
+  0xb9a74a0637ce2ee1,
+  0x95f83d0a1fb69cd9,
+  0xf24a01a73cf2dccf,
+  0xc3b8358109e84f07,
+  0x9e19db92b4e31ba9,
+];
+
+/** The next 32 bits of each SCALE entry (aScaleLo). */
+const SCALE_LO: u64[] = [
+  0x205b896d,
+  0x52064cad,
+  0xaf2af2b8,
+  0x5a7744a7,
+  0xaf39a475,
+  0xbd8d794e,
+  0x547eb47b,
+  0x0cb4a5a3,
+  0x92f34d62,
+  0x3a6a07f9,
+  0xfae27299,
+  0xaa97e14c,
+  0x775ea265,
+  0xcccccccc,
+  0x00000000,
+  0x999090b6,
+  0x69a028bb,
+  0xe80e6f48,
+  0x5ec05dd0,
+  0x14588f14,
+  0x8f1668c9,
+  0x6d953e2c,
+  0x4abdaf10,
+  0xbc633b39,
+  0x0a862f81,
+  0x6c07a2c2,
+];
+
+const M32: u64 = 0xffffffff;
+const BIT63: u64 = 0x8000000000000000;
+const BIT52: u64 = 0x10000000000000;
+
+/** A 128-bit (or 96-bit) quantity: the high 64 bits and the bits below them. */
+struct Wide {
+  hi: u64;
+  lo: u64;
+}
+
+/** a * b as 128 bits. */
+function mul128(a: u64, b: u64): Wide {
+  const a0 = a & M32;
+  const a1 = a >> 32;
+  const b0 = b & M32;
+  const b1 = b >> 32;
+  const a0b0 = a0 * b0;
+  const a0b1 = a0 * b1;
+  const a1b0 = a1 * b0;
+  const t = (a0b0 >> 32) + (a0b1 & M32) + (a1b0 & M32);
+  return Wide {
+    hi: a1 * b1 + (a0b1 >> 32) + (a1b0 >> 32) + (t >> 32),
+    lo: (a0b0 & M32) | ((t & M32) << 32),
+  };
+}
+
+/** The upper 96 bits of (a << 32 | aLo) * b: the top 64 in `hi`, the next 32 in `lo`. */
+function mul160(a: u64, aLo: u64, b: u64): Wide {
+  const x2 = a >> 32;
+  const x1 = a & M32;
+  const y1 = b >> 32;
+  const y0 = b & M32;
+  const x2y1 = x2 * y1;
+  const x2y0 = x2 * y0;
+  const x1y1 = x1 * y1;
+  const x1y0 = x1 * y0;
+  const x0y1 = aLo * y1;
+  const x0y0 = aLo * y0;
+  let r3 = (x2y1 & M32) + (x2y0 >> 32) + (x1y1 >> 32);
+  let r2 = (x2y0 & M32) + (x1y1 & M32) + (x1y0 >> 32) + (x0y1 >> 32);
+  const r1 = (x1y0 & M32) + (x0y1 & M32) + (x0y0 >> 32);
+  r2 += r1 >> 32;
+  r3 += r2 >> 32;
+  return Wide { hi: ((x2y1 >> 32) << 32) + r3, lo: r2 & M32 };
+}
+
+/** The top 64 bits of pow(10, p) (and the next 32 in `lo`), p in -348..347. */
+function powerOfTen(p: i64): Wide {
+  let g: i64 = 0;
+  let n: i64 = 0;
+  if (p < 0) {
+    if (p == -1) {
+      return Wide { hi: SCALE[13], lo: SCALE_LO[13] };
+    }
+    // C's truncating division and remainder, then n brought into 0..26.
+    g = -(-p / 27);
+    n = -(-p % 27);
+    if (n != 0) {
+      g--;
+      n += 27;
+    }
+  } else if (p < 27) {
+    return Wide { hi: BASE[p as usize], lo: 0 };
+  } else {
+    g = p / 27;
+    n = p % 27;
+  }
+  const s = SCALE[(g + 13) as usize];
+  const sLo = SCALE_LO[(g + 13) as usize];
+  if (n == 0) {
+    return Wide { hi: s, lo: sLo };
+  }
+  const w = mul160(s, sLo, BASE[n as usize]);
+  if ((w.hi & BIT63) == 0) {
+    return Wide { hi: (w.hi << 1) | ((w.lo >> 31) & 1), lo: ((w.lo << 1) | 1) & M32 };
+  }
+  return w;
+}
+
+/** floor(log2(10^p)) and floor(log10(2^p)), as util.c approximates them. */
+function pwr10to2(p: i64): i64 {
+  return (p * 108853) >> 15;
+}
+
+function pwr2to10(p: i64): i64 {
+  return (p * 78913) >> 18;
+}
+
+function leadingZeros(m: u64): i64 {
+  let n: i64 = 0;
+  let x = m;
+  if (x <= 0x00000000ffffffff) {
+    n += 32;
+    x = x << 32;
+  }
+  if (x <= 0x0000ffffffffffff) {
+    n += 16;
+    x = x << 16;
+  }
+  if (x <= 0x00ffffffffffffff) {
+    n += 8;
+    x = x << 8;
+  }
+  if (x <= 0x0fffffffffffffff) {
+    n += 4;
+    x = x << 4;
+  }
+  if (x <= 0x3fffffffffffffff) {
+    n += 2;
+    x = x << 2;
+  }
+  if (x <= 0x7fffffffffffffff) {
+    n += 1;
+  }
+  return n;
+}
+
+/** A decimal approximation d * 10^p of m * 2^e (m's top bit set), with 18 digits in d. */
+struct Decimal {
+  d: u64;
+  p: i64;
+}
+
+function toDecimal(m: u64, e: i64): Decimal {
+  const p = 17 - pwr2to10(e + 63);
+  let h = mul128(m, powerOfTen(p).hi).hi;
+  h = h >> ((-(e + pwr10to2(p) + 2)) as u64);
+  return Decimal { d: (h + ((h << 1) & 2)) >> 1, p: -p };
+}
+
+/** The double nearest d * 10^p (sqlite3Fp10Convert2, after Russ Cox's fpfmt). */
+function toDouble(d: u64, p: i64): f64 {
+  if (p < -348) {
+    return 0;
+  }
+  if (p > 347) {
+    return Infinity;
+  }
+  const b = 64 - leadingZeros(d);
+  const lp = pwr10to2(p);
+  let e = 53 - b - lp;
+  if (e > 1074) {
+    if (e >= 1130) {
+      return 0;
+    }
+    e = 1074;
+  }
+  const s = (-(e - (64 - b) + lp + 3)) as u64;
+  const pw = powerOfTen(p);
+  let pwrHi = pw.hi;
+  let pwrLo = pw.lo;
+  if (pwrLo != 0) {
+    pwrHi++;
+    pwrLo = ~pwrLo & M32;
+  }
+  const x = d << ((64 - b) as u64);
+  const w = mul128(x, pwrHi);
+  let hi = w.hi;
+  const mid1 = w.lo >> 32;
+  let sticky: u64 = 1;
+  if ((hi & ((1 << s) - 1)) == 0) {
+    const mid2 = mul128(x, pwrLo << 32).hi >> 32;
+    // u32 arithmetic in C: the difference wraps.
+    sticky = ((mid1 + 0x100000000 - mid2) & M32) > 1 ? 1 : 0;
+    if (mid1 < mid2) {
+      hi--;
+    }
+  }
+  let u = (hi >> s) | sticky;
+  if (u >= (1 << 55) - 2) {
+    u = (u >> 1) | (u & 1);
+    e--;
+  }
+  let m = (u + 1 + ((u >> 2) & 1)) >> 2;
+  if (e <= -972) {
+    return Infinity;
+  }
+  if ((m & BIT52) != 0) {
+    m = (m & ~BIT52) | (((1075 - e) as u64) << 52);
+  }
+  return f64.fromBits(m);
+}
+
+/** The digits of `r` (> 0, finite) rounded as sqlite3FpDecode(r, 17, 20) does, and `iDP`. */
+class Digits {
+  /** Digit values; z[0] is a spare slot for a carry out of the first digit. */
+  z: u8[] = [];
+  first: usize = 1;
+  n: usize = 0;
+  iDP: i64 = 0;
+}
+
+function decode(r: f64): Digits {
+  const out = new Digits();
+  const bits = r.toBits();
+  let e = ((bits >> 52) & 0x7ff) as i64;
+  let v = bits & 0x000fffffffffffff;
+  if (e == 0) {
+    const nn = leadingZeros(v);
+    v = v << (nn as u64);
+    e = -1074 - nn;
+  } else {
+    v = (v << 11) | BIT63;
+    e -= 1086;
+  }
+  const dec = toDecimal(v, e);
+  // Its decimal digits, most significant first, after the spare slot.
+  const rev: u8[] = [];
+  let d = dec.d;
+  while (d > 0) {
+    rev.push((d % 10) as u8);
+    d = d / 10;
+  }
+  out.z.push(0);
+  for (let i = rev.length; i > 0; i--) {
+    out.z.push(rev[i - 1]);
+  }
+  let n = rev.length;
+  out.iDP = (n as i64) + dec.p;
+  const z = out.z;
+  let iRound: usize = 17;
+  if (iRound < n) {
+    iRound = shorter(r, z, n, dec.p, out.iDP);
+    n = iRound;
+    if (z[1 + iRound] >= 5) {
+      // Round up, carrying into the spare slot if every digit was 9.
+      let j = iRound;
+      while (true) {
+        z[j]++;
+        if (z[j] <= 9) {
+          break;
+        }
+        z[j] = 0;
+        if (j == 1) {
+          z[0] = 1;
+          out.first = 0;
+          n++;
+          out.iDP++;
+          break;
+        }
+        j--;
+      }
+    }
+  }
+  while (z[out.first + n - 1] == 0) {
+    n--;
+  }
+  out.n = n;
+  return out;
+}
+
+/**
+ * The digits to keep of 18 or more (`z[1..1+n)`, value z * 10^exp): 17, or fewer when a run of
+ * nines or zeros at digits 14-16 hides a shorter form that reads back as `r`.
+ */
+function shorter(r: f64, z: u8[], n: usize, exp: i64, iDP: i64): usize {
+  if (z[1 + 15] == 9 && z[1 + 14] == 9) {
+    let jj: usize = 14;
+    while (jj > 0 && z[jj] == 9) {
+      jj--;
+    }
+    let v2: u64 = 1;
+    if (jj > 0) {
+      v2 = 0;
+      for (let k: usize = 0; k < jj; k++) {
+        v2 = v2 * 10 + (z[1 + k] as u64);
+      }
+      v2++;
+    }
+    if (r == toDouble(v2, exp + (n as i64) - (jj as i64))) {
+      return jj + 1;
+    }
+  } else if (iDP >= (n as i64) || (z[1 + 15] == 0 && z[1 + 14] == 0 && z[1 + 13] == 0)) {
+    let jj: usize = 13;
+    while (z[jj] == 0) {
+      jj--;
+    }
+    let v2: u64 = 0;
+    for (let k: usize = 0; k < jj; k++) {
+      v2 = v2 * 10 + (z[1 + k] as u64);
+    }
+    if (r == toDouble(v2, exp + (n as i64) - (jj as i64))) {
+      return jj + 1;
+    }
+  }
+  return 17;
+}
+
+/**
+ * A REAL as SQLite prints it (`%!.17g`): up to 17 significant digits, fewer when they read back
+ * as the same double; ".0" on integral values; an exponent (two digits at least) below 1e-4 and
+ * from 1e17 on. Infinities are "Inf" and "-Inf"; -0.0 is "0.0".
+ */
+export function realText(r: f64): string {
+  if (r != r) {
+    return "NaN";
+  }
+  if (r == Infinity) {
+    return "Inf";
+  }
+  if (r == -Infinity) {
+    return "-Inf";
+  }
+  if (r == 0) {
+    return "0.0";
+  }
+  const neg = r < 0;
+  const dg = decode(neg ? -r : r);
+  let out = neg ? "-" : "";
+  const exp = dg.iDP - 1;
+  if (exp < -4 || exp > 16) {
+    // d.ddd…e±XX
+    out += digit(dg, 0) + ".";
+    out += dg.n > 1 ? digitRun(dg, 1, dg.n) : "0";
+    const a = exp < 0 ? -exp : exp;
+    out += exp < 0 ? "e-" : "e+";
+    out += a < 10 ? "0" + String(a) : String(a);
+    return out;
+  }
+  // ddd.ddd: the integer digits (zero-padded), then the fraction, at least one digit.
+  if (exp < 0) {
+    out += "0.";
+    for (let i: i64 = -1; i > exp; i--) {
+      out += "0";
+    }
+    return out + digitRun(dg, 0, dg.n);
+  }
+  const whole = (exp + 1) as usize;
+  const j = whole < dg.n ? whole : dg.n;
+  out += digitRun(dg, 0, j);
+  for (let i = j; i < whole; i++) {
+    out += "0";
+  }
+  return out + "." + (j < dg.n ? digitRun(dg, j, dg.n) : "0");
+}
+
+function digit(dg: Digits, i: usize): string {
+  return String(dg.z[dg.first + i]);
+}
+
+function digitRun(dg: Digits, from: usize, to: usize): string {
+  let s = "";
+  for (let i = from; i < to; i++) {
+    s += digit(dg, i);
+  }
+  return s;
+}

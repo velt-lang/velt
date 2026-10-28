@@ -116,7 +116,10 @@ another thread (`const go = async () => …` with `spawn(go())`): such a closure
 captured for each call. The same holds for a plain closure whose promise goes to another task
 (`const go = () => work(c)` with `spawn(go())`). Share it (`const c = shared(new Hits())`), and every task
 changes the same atomics. A module-level `const` holding one is one atomic, made once, that
-every task changes: `const REQUESTS = new Atomic<u64>(0)`.
+every task changes: `const REQUESTS = new Atomic<u64>(0)`. Made from a literal like that, it
+is a word stored with the program, which threads change at once with no other cost; made from
+a computed value or inside an object, it is kept with the module's other state, which tasks
+reach one at a time.
 
 ```ts
 function bump(counter: Atomic<u32>): u32 {
@@ -145,6 +148,88 @@ function main() {
 An array of atomics inside a `shared` value never moves or shrinks while the value lives, so its
 words are memory every thread may read and write in place, which no thread can free under
 another: what a lock-free structure needs.
+
+### An `Atomic` of a `shared` value
+
+An `Atomic<shared<T>>` (or `Atomic<shared<T> | null>`) holds one reference to an immutable
+value, which threads read and replace at once without a lock: a configuration every request
+reads while an admin task swaps in a new one, or the root of a structure that writers rebuild.
+- `load()` gives the current value. Reading it costs one load and no count, also through a
+  `const` (`const c = CONFIG.load()`) or a function it is passed to; what keeps it (a return, a
+  store, a closure, a task) takes a reference of its own, which keeps seeing that value.
+- `store(v)` makes `v` the value.
+- `exchange(v)` makes `v` the value and gives the one before.
+- `compareExchange(expected, v)` makes `v` the value only if the `Atomic` still holds
+  `expected` itself (the same reference, not an equal value), and returns whether it did.
+  When it did not, `v` is dropped. `compareExchangeWeak` may fail even when it holds
+  `expected` (call it in a loop).
+
+It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
+thread may be reading it: for now such values stay allocated until the program ends (freeing
+them safely is #1696's next step).
+
+```ts
+interface Config {
+  name: string;
+  limit: u64;
+}
+
+const CONFIG = new Atomic<shared<Config> | null>(null);
+
+function main() {
+  CONFIG.store(shared({ name: "default", limit: 10 }));
+  const before = CONFIG.load();
+  CONFIG.store(shared({ name: "strict", limit: 2 }));
+  const now = CONFIG.load();
+  if (before != null && now != null) {
+    console.log(before.name, now.name, now.limit); // default strict 2
+  }
+}
+```
+
+## `ThreadLocal<T>`
+
+`const depth = new ThreadLocal<u32>(0)` is one value per thread: every thread starts with the
+value given (a literal), `get()` reads this thread's and `set(v)` changes this thread's. `T` is a
+number type or `bool`. It is for code that keeps per-thread state, such as which slot of a
+shared table is this thread's, or a counter a thread updates without sharing its cache line.
+
+A task moves to another thread only at an `await`, so between two `await`s it reads its own
+writes. After an `await` it may be on another thread with another value: a value a task needs
+across an `await` belongs in a variable.
+
+```ts
+const calls = new ThreadLocal<u64>(0);
+
+function work(n: u64): u64 {
+  calls.set(calls.get() + 1);
+  return n * 2;
+}
+
+async function job(n: u64): Promise<u64> {
+  // No `await` between these: the task stays on one thread.
+  const before = calls.get();
+  work(n);
+  work(n);
+  return calls.get() - before;
+}
+
+async function main() {
+  const ps: Promise<u64>[] = [];
+  for (let i: u64 = 0; i < 4; i++) {
+    ps.push(spawn(job(i)));
+  }
+  console.log(await Promise.all(ps)); // [ 2, 2, 2, 2 ]
+}
+```
+
+Only a module `const` holds one, and `get` and `set` are called on that constant: a local, a
+parameter or a copy of it is an error (``a `ThreadLocal` is read and written through the module
+constant that holds it``). A thread's value holds no object, since nothing drops it when the
+thread ends: keep objects in a structure indexed by a per-thread number. Programs reach the
+value through the platform's thread-local storage (a few instructions; a call on macOS and in
+Linux debug builds);
+`velt dev` and arm64 Windows debug builds use the operating system's thread keys (a call).
 
 ## `Backoff`
 
@@ -240,5 +325,42 @@ function main() {
   const p = new Point();
   move(p, 2, 3);
   console.log(sum(p)); // 5
+}
+```
+
+## `velt:sync/epoch`
+
+Epoch-based reclamation, written in Velt on `Atomic`, `ThreadLocal` and `Mutex`: a way to drop
+a `shared` value that other threads may still be reading, once none can be. The compiler will
+call it for the values an `Atomic` of a `shared` value replaces (#1696). Lock-free code of your
+own can call it too.
+
+- `pin()` enters a *section*, and `unpin()` leaves it. Sections nest; an `unpin()` without a
+  `pin()` before it on the thread is an error. While a thread is in one,
+  no value retired since it entered, nor one retired before that it can still reach, is
+  dropped. Entering costs a store and a fence, and leaving a store. Keep a section between two
+  `await`s: a section belongs to the thread it was entered on, and a task may resume on another
+  thread after an `await`, where its `unpin()` is an error (and the first thread stays pinned).
+- `retire(v)` hands over a `shared` value just taken out of where other threads find it. It is
+  dropped once every thread that was in a section then has left it.
+- `collect()` moves the global epoch on if every thread in a section has seen it, then drops
+  what was retired two epochs or more before, on every thread's list. It returns how many it
+  dropped. `retire` calls it every 64 retirements.
+- `pending()` counts this thread's values not dropped yet, `outstanding()` every thread's, and
+  `dropped()` all values dropped so far.
+
+```ts
+import { pin, unpin, retire, collect, pending } from "velt:sync/epoch";
+
+interface Item {
+  n: u64;
+}
+
+function main() {
+  retire(shared({ n: 1 }));
+  pin();
+  console.log(collect(), pending()); // 0 1: this thread may still read it
+  unpin();
+  console.log(collect(), pending()); // 1 0
 }
 ```
