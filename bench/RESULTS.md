@@ -1465,3 +1465,35 @@ that the three are within noise of each other for `random_4k` (Velt 824 ms, Rust
 Build cost of a program using the fd API (`openSync` + `readSync` + `closeSync`) against one
 using `readFileBytesSync` (Rust runtime): 8,215 against 2,427 lines of `--emit llvm`, and a
 `velt build --release` of 0.54–0.63 s against 0.19–0.39 s (same loaded machine).
+
+## Byte views: decoding b-tree page cells (`bench/typed_array/page_cells`, #1718, 2026-10-28)
+
+SQLite-like b-tree pages (64 pages of 4 KiB, 26,181 cells) in a `Uint8Array`, decoded in plain
+TypeScript: per cell a 2-byte big-endian cell pointer, a 4-byte big-endian child page number and
+a varint key. Four Velt programs read the same bytes: a `DataView` per page (`getUint16`,
+`getUint32`, `getUint8`), a `subarray` per page with shifts, the whole `Uint8Array` with shifts,
+and Velt's `u8[]` with integer types (the baseline the views should reach); Rust reads `&[u8]`
+with `u16::from_be_bytes` / `u32::from_be_bytes` (bounds-checked). User-space instructions per
+cell (`/usr/bin/time -l`, macOS arm64; the difference between 110 and 10 rounds, so building the
+pages cancels out), LLVM release:
+
+| program | before | after |
+|---|---:|---:|
+| `DataView` | 188.6 | 67.9 |
+| `subarray` per page | 116.1 | 108.9 |
+| whole `Uint8Array` | 109.9 | 105.6 |
+| `u8[]`, integer types | 59.9 | 60.9 |
+| Rust `&[u8]` | 40.8 | 40.8 |
+
+What changed: a `DataView` big-endian load checks its range once and reads its bytes as one load
+and a byte swap (`ldrh`+`rev16`, `ldr`+`rev`); a counter that starts from a bounded local (`q =
+at + 4` before a varint loop) is an integer to `numrep`; a conversion `i as usize` uses the facts
+the branches before it established (`i >= 0`); a throwing callee's `Result`, once inlined, lives
+in registers (`enum_sroa`), so the `number` a `DataView` read returns is an integer to the
+passes after it; and a receiver is no longer counted around a call whose later arguments only
+write another local (`dv.getUint8(q++)`).
+
+What is left, per cell: the views check each access twice (the view's length, as JS requires,
+and the buffer's current length, which keeps them memory-safe); the varint's position is still
+converted to a double and back in the `Uint8Array` programs; and the key and the sum are
+`number`s (doubles), as in JS, where Rust and the `u8[]` program use `u64`.

@@ -59,6 +59,8 @@ function main() {
   `getFloat64` / `setInt8` … `setFloat64` at any byte offset, big-endian unless the
   `littleEndian` argument is `true`. An access outside the view throws `RangeError`
   (`Offset is outside the bounds of the DataView`).
+  A big-endian `getUint16` / `getUint32` (and `getInt*`) checks its range and reads its bytes
+  as one load and a byte swap (`bench/typed_array/page_cells`).
 - **Errors** are `RangeError`s with V8's messages: `Invalid typed array length: -1`,
   `start offset of Uint16Array should be a multiple of 2`, `offset is out of bounds` (`set`),
   `Invalid array buffer length`, ….

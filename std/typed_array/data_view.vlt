@@ -11,6 +11,8 @@ import {
   inspectBuffer,
   load16,
   load32,
+  loadBE16,
+  loadBE32,
   load64,
   store16,
   store32,
@@ -98,8 +100,8 @@ export class DataView extends BufferView {
   }
 
   private uint16(byteOffset: number, littleEndian: bool): u16 {
-    const x = load16(this.buf.bytes, this.at(byteOffset, 2));
-    return littleEndian ? x : swap16(x);
+    const at = this.at(byteOffset, 2);
+    return littleEndian ? load16(this.buf.bytes, at) : loadBE16(this.buf.bytes, at);
   }
 
   /** The 32-bit signed integer at `byteOffset`. */
@@ -113,8 +115,8 @@ export class DataView extends BufferView {
   }
 
   private uint32(byteOffset: number, littleEndian: bool): u32 {
-    const x = load32(this.buf.bytes, this.at(byteOffset, 4));
-    return littleEndian ? x : swap32(x);
+    const at = this.at(byteOffset, 4);
+    return littleEndian ? load32(this.buf.bytes, at) : loadBE32(this.buf.bytes, at);
   }
 
   /** The 32-bit float at `byteOffset`. */

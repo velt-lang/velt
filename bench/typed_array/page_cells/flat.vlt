@@ -1,0 +1,31 @@
+// The whole `Uint8Array` with shifts and a base offset per page.
+import { PAGE, PAGES, run } from "./pages";
+
+function viaFlat(all: Uint8Array): number {
+  let sum = 0;
+  for (let p = 0; p < PAGES; p++) {
+    const base = p * PAGE;
+    const n = (all[base + 3] << 8) | all[base + 4];
+    for (let i = 0; i < n; i++) {
+      const c = base + 12 + 2 * i;
+      const at = base + ((all[c] << 8) | all[c + 1]);
+      const child =
+        ((all[at] << 24) | (all[at + 1] << 16) | (all[at + 2] << 8) | all[at + 3]) >>> 0;
+      let key = 0;
+      let q = at + 4;
+      for (let j = 0; j < 8; j++) {
+        const b = all[q++];
+        key = key * 128 + (b & 127);
+        if (b < 128) {
+          break;
+        }
+      }
+      sum += child + key;
+    }
+  }
+  return sum;
+}
+
+function main() {
+  run(viaFlat);
+}

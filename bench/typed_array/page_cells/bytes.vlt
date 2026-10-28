@@ -1,0 +1,41 @@
+// Velt's `u8[]` with integer types: the baseline the views should match (not TypeScript).
+import { build, cellCount, PAGE, PAGES } from "./pages";
+
+function viaBytes(all: u8[]): number {
+  let sum: u64 = 0;
+  for (let p: usize = 0; p < PAGES; p++) {
+    const base = p * PAGE;
+    const n = ((all[base + 3] as usize) << 8) | (all[base + 4] as usize);
+    for (let i: usize = 0; i < n; i++) {
+      const c = base + 12 + 2 * i;
+      const at = base + (((all[c] as usize) << 8) | (all[c + 1] as usize));
+      const child =
+        ((all[at] as u64) << 24) |
+        ((all[at + 1] as u64) << 16) |
+        ((all[at + 2] as u64) << 8) |
+        (all[at + 3] as u64);
+      let key: u64 = 0;
+      let q = at + 4;
+      for (let j = 0; j < 8; j++) {
+        const b = all[q++];
+        key = key * 128 + ((b & 127) as u64);
+        if (b < 128) {
+          break;
+        }
+      }
+      sum += child + key;
+    }
+  }
+  return sum as number;
+}
+
+function main() {
+  const rounds = Number(process.argv[2]);
+  const all = build();
+  const bytes = all.toBytes();
+  let check = 0;
+  for (let r = 0; r < rounds; r++) {
+    check += viaBytes(bytes);
+  }
+  console.log(cellCount(all), check);
+}

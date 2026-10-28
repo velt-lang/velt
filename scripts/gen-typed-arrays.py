@@ -309,10 +309,22 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   __index(i: number): number {
-    if (!(i >= 0 && i < this.count()) || i != Math.trunc(i)) {
-      panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
+    // One test per branch, so the compiler knows `i` is in range where it converts it.
+    if (!(i >= 0)) {
+      this.outOfBounds(i);
+    }
+    if (!(i < this.count())) {
+      this.outOfBounds(i);
+    }
+    if (i != Math.trunc(i)) {
+      this.outOfBounds(i);
     }
     return this.get(i as usize);
+  }
+
+  // `xs[i]` outside the array (cold).
+  private outOfBounds(i: number): never {
+    panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
