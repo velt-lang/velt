@@ -179,7 +179,17 @@ variables that refer to the same object (`const ys = xs; append(xs, ys)`) are al
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 So is a closure argument that takes over a variable another argument only borrows
 (`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
-The parameters of a closure (or of a function used as a value) may be one object, since a call through a function value can pass the same object twice; such a closure may pass two of them on to another closure, which is checked the same way (`mount(vnode, container)` calling `mountComponent(vnode, container)` in a renderer whose nested functions use its variables), but not to a named function that modifies one of them.
+The parameters of a closure (or of a function used as a value) may be one object, since a call
+through a function value can pass the same object twice. Such a closure may pass two of them on
+whole to another closure, which is checked the same way (`mount(vnode, container)` calling
+`mountComponent(vnode, container)` in a renderer whose nested functions use its variables). Passing
+them to a named function that modifies one of them is still an error, and so is a part of one with
+another (`mountComponent(vnode.kids[0], container)`). A function that modifies a parameter and is
+also used as a value gets the caller's object for it. When something else may change that object
+while the call runs (a later argument that calls a function value replacing the field passed first,
+as in `pushes[0](p.log, swaps[0](p))`, or the callee itself when the argument is a part of an object
+it also gets, as in `works[0](p.log, p)`), the parameter is the object the argument was when it was
+evaluated, as in JS: the object's type is then reference-counted.
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A

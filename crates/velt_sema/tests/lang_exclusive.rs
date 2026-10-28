@@ -234,3 +234,59 @@ fn function_values_may_write_what_they_receive() {
         "{r}"
     );
 }
+
+/// A renderer whose nested functions are closures that call each other: `mount` passes its
+/// params on to `mountComponent` (`call`), which modifies the vnode.
+fn renderer(call: &str) -> String {
+    format!(
+        "type V = {{ type: any; dom: any; kids: V[] }};
+         type S = (v: V) => V;
+         function touch(v: V): any {{ v.kids.push({{ type: \"t\", dom: null, kids: [] }}); return null; }}
+         function make<E = any>(insert: (v: V, c: E) => void) {{
+           function mount(vnode: V, container: E, before: any = null): void {{
+             if (typeof vnode.type === \"object\") {{ {call}; return; }}
+             insert(vnode, container);
+             for (const k of vnode.kids) mount(k, container, null);
+           }}
+           function mountComponent(vnode: V, container: E, before: any, setup: S): void {{
+             vnode.dom = before;
+             mount(setup(vnode), container, null);
+           }}
+           return (v: V, c: E): void => {{ mount(v, c); }};
+         }}
+         function main() {{
+           const r = make<V>((v, c) => {{ c.kids.push(v); }});
+           const v: V = {{ type: {{ __setup: (x: V): V => ({{ type: \"p\", dom: null, kids: [] }}) }}, dom: null, kids: [] }};
+           r(v, v);
+         }}"
+    )
+}
+
+#[test]
+fn closures_pass_params_that_may_be_one_object_on_to_closures() {
+    // `mountComponent` was checked with its params as one object (#1383).
+    ok_src(&renderer(
+        "mountComponent(vnode, container, before, vnode.type.__setup as S)",
+    ));
+}
+
+#[test]
+fn closures_passing_params_on_keep_other_conflicts() {
+    // A part of one param with another: `mountComponent` was checked with a vnode and a
+    // container that can't hold it.
+    let r = err_src(&renderer(
+        "mountComponent(vnode.kids[0], container, before, vnode.type.__setup as S)",
+    ));
+    assert!(
+        r.contains("cannot use `vnode.kids[..]` here: this call may modify `container`"),
+        "{r}"
+    );
+    // A param changed while another argument is evaluated.
+    let r = err_src(&renderer(
+        "mountComponent({ type: \"y\", dom: null, kids: [] }, container, touch(vnode), vnode.type.__setup as S)",
+    ));
+    assert!(
+        r.contains("cannot use `vnode` here: this call may modify `container`"),
+        "{r}"
+    );
+}
