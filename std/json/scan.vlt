@@ -107,6 +107,18 @@ export class Scanner {
   decoded: string = "";
   /** The last number token had no fraction and no exponent. */
   integer: bool = false;
+  /**
+   * The last number token's digits, read while lexing it (so that a decoder's number is not
+   * read twice): `digitsValue` is its digits as an integer (wrapped past 19 digits) and
+   * `exponent` the power of ten that scales it, its sign is `negative`. `small`: an integer of
+   * at most 15 digits (below 2^53, so exact as an `f64` too). `exact`: at most 19 digits and an
+   * exponent of at most 5 digits, so `digitsValue` and `exponent` are the token's value.
+   */
+  small: bool = false;
+  exact: bool = false;
+  digitsValue: u64 = 0;
+  exponent: i64 = 0;
+  negative: bool = false;
   /** The last error: its detail and byte offset. */
   code: u8 = OK;
   at: usize = 0;
@@ -167,37 +179,96 @@ export class Scanner {
   /** Lexes a number at the current position (`-` or a digit): `start`..`end`, `integer`. */
   number(): bool {
     const start = this.pos;
-    if (this.byteIs(MINUS)) {
-      this.pos++;
+    const len = this.len;
+    let pos = start;
+    const negative = pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == MINUS;
+    if (negative) {
+      pos++;
     }
-    if (this.byteIs(ZERO)) {
-      this.pos++;
-    } else if (this.pos < this.len && this.digitAt(this.pos)) {
-      this.digits();
+    // The digits accumulate into `w` (wrapping past 19 of them: `exact` is false then).
+    const first = pos;
+    let w: u64 = 0;
+    if (pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == ZERO) {
+      pos++;
     } else {
-      return this.fail(INVALID_NUMBER);
+      while (pos < len) {
+        const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+        if (d > 9) {
+          break;
+        }
+        w = w * 10 + (d as u64);
+        pos++;
+      }
+      if (pos == first) {
+        this.pos = pos;
+        return this.fail(INVALID_NUMBER);
+      }
     }
+    const whole = pos - first;
+    let q: i64 = 0;
     let integer = true;
-    if (this.byteIs(DOT)) {
-      this.pos++;
-      if (!this.digits()) {
-        return false;
+    if (pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == DOT) {
+      pos++;
+      const fraction = pos;
+      while (pos < len) {
+        const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+        if (d > 9) {
+          break;
+        }
+        w = w * 10 + (d as u64);
+        pos++;
       }
+      if (pos == fraction) {
+        this.pos = pos;
+        return this.fail(INVALID_NUMBER);
+      }
+      q = -((pos - fraction) as i64);
       integer = false;
     }
-    if (this.byteIs(101) || this.byteIs(69)) {
-      this.pos++;
-      if (this.byteIs(PLUS) || this.byteIs(MINUS)) {
-        this.pos++;
+    let exact = whole + ((-q) as usize) <= 19;
+    if (pos < len) {
+      const e = __intrinsic_str_byte_at(this.src, pos as u64);
+      if (e == 101 || e == 69) {
+        pos++;
+        let eneg = false;
+        if (pos < len) {
+          const sign = __intrinsic_str_byte_at(this.src, pos as u64);
+          if (sign == PLUS || sign == MINUS) {
+            eneg = sign == MINUS;
+            pos++;
+          }
+        }
+        const digits = pos;
+        let x: i64 = 0;
+        while (pos < len) {
+          const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+          if (d > 9) {
+            break;
+          }
+          x = x * 10 + (d as i64);
+          pos++;
+        }
+        if (pos == digits) {
+          this.pos = pos;
+          return this.fail(INVALID_NUMBER);
+        }
+        // A longer exponent: the general parser.
+        if (pos - digits > 5) {
+          exact = false;
+        }
+        q += eneg ? -x : x;
+        integer = false;
       }
-      if (!this.digits()) {
-        return false;
-      }
-      integer = false;
     }
+    this.pos = pos;
     this.start = start;
-    this.end = this.pos;
+    this.end = pos;
     this.integer = integer;
+    this.small = integer && whole <= 15;
+    this.exact = exact;
+    this.digitsValue = w;
+    this.exponent = q;
+    this.negative = negative;
     return true;
   }
 
@@ -409,21 +480,6 @@ export class Scanner {
       this.pos++;
     }
     return v;
-  }
-
-  private digits(): bool {
-    const start = this.pos;
-    while (this.pos < this.len && this.digitAt(this.pos)) {
-      this.pos++;
-    }
-    if (this.pos == start) {
-      return this.fail(INVALID_NUMBER);
-    }
-    return true;
-  }
-
-  private digitAt(i: usize): bool {
-    return __intrinsic_str_byte_at(this.src, i as u64) - ZERO <= 9;
   }
 
   private byteIs(b: u8): bool {

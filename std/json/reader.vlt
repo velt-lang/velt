@@ -21,11 +21,11 @@ import {
   TOO_DEEP,
   TRAILING,
   UNEXPECTED_CHAR,
-  numberF64,
   numberI64,
   numberU64,
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
+import { decimalValue } from "velt:number/parse";
 
 declare function velt_rt_json_reader_free(r: u64);
 declare function velt_rt_json_reader_peek(r: u64): u32;
@@ -376,7 +376,7 @@ export class Reader extends Scanner {
       }
       return false;
     }
-    this.num = numberF64Of(this);
+    this.num = this.numberValue();
     return true;
   }
 
@@ -390,6 +390,11 @@ export class Reader extends Scanner {
         return ok;
       }
       return false;
+    }
+    if (this.small) {
+      const m = this.digitsValue as i64;
+      this.int = this.negative ? -m : m;
+      return true;
     }
     const v = numberI64Of(this);
     if (v == null) {
@@ -615,6 +620,26 @@ export class Reader extends Scanner {
       this.syntaxFailed();
     }
     return false;
+  }
+
+  // The value of the number token just lexed: from the digits the scanner read when that is
+  // exact (velt:number/parse's `decimalValue`), else by the general parser.
+  private numberValue(): f64 {
+    const w = this.digitsValue;
+    const neg = this.negative;
+    if (this.small) {
+      return neg ? -(w as f64) : w as f64;
+    }
+    if (this.exact) {
+      if (w == 0) {
+        return neg ? -0.0 : 0;
+      }
+      const r = decimalValue(w, this.exponent);
+      if (r.ok) {
+        return neg ? -r.value : r.value;
+      }
+    }
+    return Number(utf8Substring(this.src, this.start, this.end));
   }
 
   private numberStart(): bool {
@@ -847,10 +872,6 @@ export class Reader extends Scanner {
 }
 
 // The number token's value.
-function numberF64Of(r: Reader): f64 {
-  return numberF64(r.src, r.start, r.end, r.integer);
-}
-
 function numberI64Of(r: Reader): i64 | null {
   return numberI64(r.src, r.start, r.end, r.integer);
 }
