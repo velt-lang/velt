@@ -221,6 +221,10 @@ Promises behave like JavaScript's, at Rust's cost:
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
+- The combinators leave the array and its promises as they are, as in JS: a program can read
+  `ps` (its length, `await ps[0]`) after `await Promise.all(ps)`. They read the array once,
+  when called: pushing to it, replacing an element or truncating it afterwards doesn't change
+  the result.
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
