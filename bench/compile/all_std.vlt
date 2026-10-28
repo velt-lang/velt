@@ -53,6 +53,7 @@ import * as std_fetch_request from "velt:fetch/request";
 import * as std_fetch_response from "velt:fetch/response";
 import * as std_fetch_streams from "velt:fetch/streams";
 import * as std_fetch_typed from "velt:fetch/typed";
+import * as std_fs_fd from "velt:fs/fd";
 import * as std_fs_stream from "velt:fs_stream";
 import * as std_hash from "velt:hash";
 import * as std_html from "velt:html";

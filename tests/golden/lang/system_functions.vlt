@@ -1,0 +1,86 @@
+// requires: unix
+// `declare system function` binds a function of the C library: buffers are `u8[]` (written) or
+// `readonly u8[]` (read), optionally a range `start, end` of one; paths are `readonly u8[]`
+// ending in 0; `struct flock` and `struct stat` are Velt structs whose fields name the C
+// struct's (any order, any subset), copied in and back; `lastOsError()` reads `errno`.
+import { lastOsError } from "velt:os";
+import { platform } from "velt:os";
+
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function close(fd: i32): i32;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pwrite(
+  fd: i32,
+  buf: readonly u8[],
+  start: usize,
+  end: usize,
+  offset: i64,
+): isize;
+declare system function lseek(fd: i32, offset: i64, whence: i32): i64;
+declare system function ftruncate(fd: i32, length: i64): i32;
+declare system function unlink(path: readonly u8[]): i32;
+
+struct Lock {
+  l_type: i16;
+  l_whence: i16;
+  l_start: i64;
+  l_len: i64;
+  l_pid: i32;
+}
+
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+declare system function fcntl$lock(fd: i32, cmd: i32, lock: Lock): i32;
+
+// Fields in another order than C's, and only some of them.
+struct Size {
+  st_size: i64;
+  st_mode: u32;
+}
+
+declare system function fstat(fd: i32, st: Size): i32;
+
+function cString(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s) + 1);
+  b.write(s);
+  return b;
+}
+
+const PATH = "velt_system_functions_tmp.bin";
+
+function main() {
+  const mac = platform() == "darwin";
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const trunc: i32 = mac ? 0x400 : 0x200;
+
+  // A failure leaves `errno`: ENOENT is 2 everywhere.
+  console.log(open(cString("velt_system_functions_missing/x"), 0, 0), lastOsError());
+  console.log(close(-1), lastOsError() == 9);
+
+  const fd = open(cString(PATH), 2 | creat | trunc, 0o600);
+  console.log(fd >= 0);
+  const text: u8[] = Buffer.alloc(32);
+  const n = text.write("[system functions]");
+  // Bytes 1..n-1 of the array (no brackets), at offset 0.
+  console.log(pwrite(fd, text, 1, (n - 1) as usize, 0));
+  const back: u8[] = Buffer.alloc(8);
+  const got = pread(fd, back, 7);
+  console.log(got, back.utf8Slice(0, got as number));
+  console.log(lseek(fd, 0, 2), ftruncate(fd, 6));
+
+  const st: Size = { st_size: -1, st_mode: 0 };
+  console.log(fstat(fd, st), st.st_size, (st.st_mode & 0o170000) == 0o100000, st.st_mode & 0o777);
+
+  // A write lock on the whole file; F_GETLK from this process reports it unlocked.
+  const F_GETFD = 1;
+  console.log(fcntl(fd, F_GETFD, 0) >= 0);
+  const wrlck: i16 = mac ? 3 : 1;
+  const unlck: i16 = 2;
+  const lk: Lock = { l_type: wrlck, l_whence: 0, l_start: 0, l_len: 0, l_pid: 0 };
+  const setlk: i32 = mac ? 8 : 6;
+  const getlk: i32 = mac ? 7 : 5;
+  console.log(fcntl$lock(fd, setlk, lk));
+  const probe: Lock = { l_type: wrlck, l_whence: 0, l_start: 0, l_len: 0, l_pid: -1 };
+  console.log(fcntl$lock(fd, getlk, probe), probe.l_type == unlck);
+
+  console.log(close(fd), unlink(cString(PATH)), unlink(cString(PATH)), lastOsError());
+}

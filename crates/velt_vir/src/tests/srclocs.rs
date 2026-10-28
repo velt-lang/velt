@@ -40,6 +40,7 @@ fn lower_located(p: &Program, sm: &SourceMap) -> crate::vir::Program {
         native_inits: &[],
         cell_checks: false,
         debug_info: false,
+        target: None,
     };
     let v = crate::lower_with(p, &opts);
     if let Err(errs) = crate::verify(&v) {

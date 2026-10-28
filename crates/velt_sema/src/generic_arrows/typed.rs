@@ -468,6 +468,7 @@ fn decl(
             ret: Some(ret),
             throws,
             is_async,
+            is_system: false,
             is_generator: false,
             this_param: None,
             span,

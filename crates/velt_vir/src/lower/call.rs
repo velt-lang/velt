@@ -21,7 +21,8 @@ impl FnLower<'_, '_> {
         match callee {
             hir::Callee::Intrinsic(i) => self.intrinsic(*i, args, ty),
             hir::Callee::Def(def, targs) => match self.cx.hir.def(*def) {
-                hir::Def::Fn(_) => {
+                hir::Def::Fn(f) => {
+                    self.note_std_call(*def, f.span);
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                     if let Some(v) = self.type_test_call(*def, &targs, args) {
                         return v;
@@ -30,6 +31,7 @@ impl FnLower<'_, '_> {
                     self.after_super_inits(*def);
                     v
                 }
+                hir::Def::ExternFn(x) if x.system.is_some() => self.system_call(*def, args),
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),
                 _ => ice("call of a non-function definition"),
             },

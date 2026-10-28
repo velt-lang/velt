@@ -1,0 +1,32 @@
+// requires: unix
+// `lastOsError()` reads the errno slot of the thread, as C's `errno`: after an `await`, other
+// tasks' system calls may have replaced it (and the task may resume on another worker thread),
+// so only the value read before the `await`, kept in a local, is pinned here. `close(-1)` sets
+// EBADF (9); `unlink` of a path under a directory that doesn't exist sets ENOENT (2).
+import { lastOsError } from "velt:os";
+
+declare system function close(fd: i32): i32;
+declare system function unlink(path: readonly u8[]): i32;
+
+async function a(): Promise<i32[]> {
+  close(-1);
+  const before = lastOsError();
+  await Promise.resolve(0);
+  return [before, lastOsError()];
+}
+
+async function b(): Promise<i32> {
+  const p: u8[] = Buffer.alloc(Buffer.byteLength("/nonexistent-velt-golden/x") + 1);
+  p.write("/nonexistent-velt-golden/x");
+  unlink(p);
+  return lastOsError();
+}
+
+async function main() {
+  const pa = a();
+  const pb = b();
+  const [before, after] = await pa;
+  console.log(`before the await: ${before}`);
+  console.log(`after the await: a number (${typeof after == "number"}), not necessarily ${before}`);
+  console.log(`b: ${await pb}`);
+}

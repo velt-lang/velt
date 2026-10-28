@@ -57,6 +57,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,
                 is_async: f.is_async,
+                system: f.system.clone(),
                 span: f.span,
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),

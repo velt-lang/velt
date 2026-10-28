@@ -71,7 +71,36 @@ fn declare_function() {
     };
     assert_eq!(sig.name.name, "velt_print");
     assert_eq!(sig.params.len(), 2);
+    assert!(!sig.is_system);
     assert!(m.items[1].exported);
+}
+
+/// `declare system function`: `system` is a word only between `declare` and `function` (a
+/// function or a variable may still be named `system`); `readonly u8[]` parses as itself.
+#[test]
+fn declare_system_function() {
+    let m = parse_ok(
+        "declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+         export declare system function fcntl$lock(fd: i32, cmd: i32, lock: Lock): i32;
+         function system(): i32 { return 1; }
+         declare function system2(): i32;",
+    );
+    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(sig.is_system && !sig.is_async);
+    assert_eq!(sig.name.name, "pwrite");
+    let TypeExprKind::Named { path, .. } = &sig.params[1].ty.kind else {
+        panic!("{:?}", sig.params[1].ty.kind)
+    };
+    assert_eq!(path[0].name, "ReadonlyArray");
+    let ItemKind::ExternFn(sig) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(sig.is_system && m.items[1].exported);
+    assert_eq!(sig.name.name, "fcntl$lock");
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "system"));
+    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
 }
 
 #[test]

@@ -446,6 +446,20 @@ value or a `u64` where a 64-bit pointer is expected, but WebAssembly links only 
 signatures (wasm32 pointers are 32 bits). `crates/velt_rt/tests/std_externs.rs` compares every
 declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
+`declare system function` (docs/reference/system-functions.md) is not this ABI: it binds a C
+library function, not the runtime, and lowering (velt_vir `lower/system.rs`) calls it with the
+C signature the table of system functions (velt_vir `system/`) states for the target. Integers
+are passed as themselves; a `u8[]` / `readonly u8[]` parameter is two C arguments, its `ptr`
+and `len` (or `ptr + start` and `end - start` for a declared range, checked); a path is its
+`ptr`, after checking that the last element is 0; a struct is the address of a zeroed temporary
+in the C layout, filled from the Velt struct's fields by name and copied back after the call;
+a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit integers
+(pointers converted), and on Apple arm64 come after zeros up to eight integer arguments, so
+they land in the stack slots a variadic callee reads. Right after each system call, the `int`
+that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
+thread-local value (`velt_tls_*_32_0` of `velt:os::lastOsError:I32`, crate::tls), and
+`lastOsError()` reads that value; on Windows it is a call of `GetLastError`. One symbol has one signature, so the forms of `fcntl` share it.
+
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,

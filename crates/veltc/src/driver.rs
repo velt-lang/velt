@@ -288,6 +288,7 @@ fn sema_stage(
             std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,
+            &opts.target(),
             &mut sess.diagnostics,
         );
     }
@@ -307,6 +308,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let t = Instant::now();
     let std_root = loader::std_root();
     let native_inits = crate::native::inits(opts.packages.as_ref());
+    let target = opts.target();
     let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
@@ -319,6 +321,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // information (they refer to its files); release builds with `-g` keep line information
         // only, and their optimizations stay as they are.
         debug_info: !opts.release && opts.debug_vars && line_info,
+        target: Some(&target),
     };
     let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
         Ok(p) => p,

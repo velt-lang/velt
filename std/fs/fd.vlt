@@ -1,0 +1,564 @@
+// velt:fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a module of
+// its own so that a program importing `velt:fs` does not compile it. It is Velt code over system functions (docs/reference/system-functions.md):
+// each call is one call of the C library, with nothing in between. On macOS and Linux; calling
+// it for another target is a compile error that names the system function it lacks.
+//
+// Errors are Node's: an `IoError` whose `code` is the errno's name and whose message is libuv's
+// (`ENOENT: no such file or directory, open 'a.txt'`), and `RangeError`s and `TypeError`s with
+// Node's messages for arguments it rejects.
+
+import { IoError } from "velt:io";
+import { Stats } from "velt:fs";
+import { platform } from "velt:os";
+import { utf8Encode } from "velt:encoding";
+
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function close(fd: i32): i32;
+declare system function read(fd: i32, buf: u8[], start: usize, end: usize): isize;
+declare system function write(fd: i32, buf: readonly u8[], start: usize, end: usize): isize;
+declare system function pread(fd: i32, buf: u8[], start: usize, end: usize, offset: i64): isize;
+declare system function pwrite(
+  fd: i32,
+  buf: readonly u8[],
+  start: usize,
+  end: usize,
+  offset: i64,
+): isize;
+declare system function fsync(fd: i32): i32;
+declare system function fdatasync(fd: i32): i32;
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+declare system function ftruncate(fd: i32, length: i64): i32;
+declare system function fstat(fd: i32, st: Stat): i32;
+declare system function unlink(path: readonly u8[]): i32;
+declare system function lastOsError(): i32;
+
+/** The fields of `struct stat` `fstatSync` reads (the table maps them per target). */
+export struct Stat {
+  st_mode: u32;
+  st_size: i64;
+  st_mtime: i64;
+  st_mtime_nsec: i64;
+}
+
+const EINTR: i32 = 4;
+const MAX_SAFE: number = 9007199254740991;
+const MAX_INT32: number = 2147483647;
+
+function isMac(): bool {
+  return platform() == "darwin";
+}
+
+// ───────────────────────────── errors ─────────────────────────────
+
+// The Linux number of a macOS errno (they agree below 35).
+function linuxErrno(e: i32): i32 {
+  switch (e) {
+    case 11:
+      return 35; // EDEADLK
+    case 35:
+      return 11; // EAGAIN
+    case 45:
+      return 95; // ENOTSUP
+    case 62:
+      return 40; // ELOOP
+    case 63:
+      return 36; // ENAMETOOLONG
+    case 66:
+      return 39; // ENOTEMPTY
+    case 69:
+      return 122; // EDQUOT
+    case 77:
+      return 37; // ENOLCK
+    case 78:
+      return 38; // ENOSYS
+    case 84:
+      return 75; // EOVERFLOW
+  }
+  return e < 35 ? e : -1;
+}
+
+// libuv's name and message of a Linux errno.
+function errnoName(e: i32): string {
+  switch (e) {
+    case 1:
+      return "EPERM";
+    case 2:
+      return "ENOENT";
+    case 4:
+      return "EINTR";
+    case 5:
+      return "EIO";
+    case 6:
+      return "ENXIO";
+    case 9:
+      return "EBADF";
+    case 11:
+      return "EAGAIN";
+    case 12:
+      return "ENOMEM";
+    case 13:
+      return "EACCES";
+    case 16:
+      return "EBUSY";
+    case 17:
+      return "EEXIST";
+    case 18:
+      return "EXDEV";
+    case 20:
+      return "ENOTDIR";
+    case 21:
+      return "EISDIR";
+    case 22:
+      return "EINVAL";
+    case 23:
+      return "ENFILE";
+    case 24:
+      return "EMFILE";
+    case 26:
+      return "ETXTBSY";
+    case 27:
+      return "EFBIG";
+    case 28:
+      return "ENOSPC";
+    case 29:
+      return "ESPIPE";
+    case 30:
+      return "EROFS";
+    case 32:
+      return "EPIPE";
+    case 35:
+      return "EDEADLK";
+    case 36:
+      return "ENAMETOOLONG";
+    case 37:
+      return "ENOLCK";
+    case 38:
+      return "ENOSYS";
+    case 39:
+      return "ENOTEMPTY";
+    case 40:
+      return "ELOOP";
+    case 75:
+      return "EOVERFLOW";
+    case 95:
+      return "ENOTSUP";
+    case 122:
+      return "EDQUOT";
+  }
+  return "UNKNOWN";
+}
+
+function errnoText(e: i32): string {
+  switch (e) {
+    case 1:
+      return "operation not permitted";
+    case 2:
+      return "no such file or directory";
+    case 4:
+      return "interrupted system call";
+    case 5:
+      return "i/o error";
+    case 6:
+      return "no such device or address";
+    case 9:
+      return "bad file descriptor";
+    case 11:
+      return "resource temporarily unavailable";
+    case 12:
+      return "not enough memory";
+    case 13:
+      return "permission denied";
+    case 16:
+      return "resource busy or locked";
+    case 17:
+      return "file already exists";
+    case 18:
+      return "cross-device link not permitted";
+    case 20:
+      return "not a directory";
+    case 21:
+      return "illegal operation on a directory";
+    case 22:
+      return "invalid argument";
+    case 23:
+      return "file table overflow";
+    case 24:
+      return "too many open files";
+    case 26:
+      return "text file is busy";
+    case 27:
+      return "file too large";
+    case 28:
+      return "no space left on device";
+    case 29:
+      return "invalid seek";
+    case 30:
+      return "read-only file system";
+    case 32:
+      return "broken pipe";
+    case 35:
+      return "resource deadlock avoided";
+    case 36:
+      return "name too long";
+    case 37:
+      return "no locks available";
+    case 38:
+      return "function not implemented";
+    case 39:
+      return "directory not empty";
+    case 40:
+      return "too many symbolic links encountered";
+    case 75:
+      return "value too large for defined data type";
+    case 95:
+      return "operation not supported on socket";
+    case 122:
+      return "disk quota exceeded";
+  }
+  return "unknown error";
+}
+
+/**
+ * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any), as Node
+ * writes it: `ENOENT: no such file or directory, open 'a.txt'`.
+ */
+export function osError(e: i32, syscall: string, path: string | null = null): IoError {
+  const n = isMac() ? linuxErrno(e) : e;
+  const code = errnoName(n);
+  const at = path == null ? "" : ` '${path}'`;
+  return new IoError(code, `${code}: ${errnoText(n)}, ${syscall}${at}`);
+}
+
+// The value of an integer argument as Node checks it (`validateInteger`).
+function integer(name: string, v: number, min: number, max: number): i64 {
+  if (v >= min && v <= max && Math.floor(v) == v) {
+    return v as i64;
+  }
+  throw outOfRange(name, v, min, max);
+}
+
+function outOfRange(name: string, v: number, min: number, max: number): RangeError {
+  const must = Math.floor(v) != v ? "an integer" : `>= ${min} && <= ${max}`;
+  return new RangeError(
+    `The value of "${name}" is out of range. It must be ${must}. Received ${v}`,
+  );
+}
+
+function descriptor(fd: number): i32 {
+  return integer("fd", fd, 0, MAX_INT32) as i32;
+}
+
+// ───────────────────────────── open and close ─────────────────────────────
+
+// Node's flag strings, each between spaces.
+const FLAG_FORMS = " r rs sr r+ rs+ sr+ w wx xw w+ wx+ xw+ a ax xa as sa a+ ax+ xa+ as+ sa+ ";
+
+// The `open` flags of one of Node's flag strings (libuv adds `O_CLOEXEC`): `r` reads, `w`
+// truncates or creates, `a` appends or creates; `+` also the other direction, `x` fails if the
+// file exists, `s` writes through.
+function openFlags(flags: string): i32 {
+  if (flags.length == 0 || flags.includes(" ") || !FLAG_FORMS.includes(` ${flags} `)) {
+    throw new TypeError(`The argument 'flags' is invalid. Received '${flags}'`);
+  }
+  const mac = isMac();
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const plus = flags.includes("+");
+  let f: i32 = plus ? 2 : 1; // O_RDWR, O_WRONLY
+  if (flags.includes("r")) {
+    f = plus ? 2 : 0;
+  } else if (flags.includes("w")) {
+    f |= creat | (mac ? 0x400 : 0x200); // O_TRUNC
+  } else {
+    f |= creat | (mac ? 0x8 : 0x400); // O_APPEND
+  }
+  if (flags.includes("x")) {
+    f |= mac ? 0x800 : 0x80; // O_EXCL
+  }
+  if (flags.includes("s")) {
+    f |= mac ? 0x80 : 0x101000; // O_SYNC
+  }
+  return f | (mac ? 0x1000000 : 0x80000); // O_CLOEXEC
+}
+
+/**
+ * Opens `path` and returns its file descriptor (Node's `fs.openSync`). `flags` is one of Node's
+ * strings (`"r"`, `"r+"`, `"w"`, `"wx"`, `"w+"`, `"a"`, `"ax"`, `"a+"`, ... and the `s`
+ * forms) or the system's `O_*` bits as a number; `mode` is the permission of a file it
+ * creates (before the umask).
+ */
+export function openSync(path: string, flags: string | number = "r", mode: number = 0o666): number {
+  const oflag: i32 =
+    typeof flags == "string"
+      ? openFlags(flags)
+      : integer("flags", flags, -MAX_INT32 - 1, MAX_INT32) as i32;
+  const perm = integer("mode", mode, 0, 4294967295) as u32;
+  const c = cPath(path);
+  while (true) {
+    const fd = open(c, oflag, perm);
+    if (fd >= 0) {
+      return fd as number;
+    }
+    const e = lastOsError();
+    if (e != EINTR) {
+      throw osError(e, "open", path);
+    }
+  }
+}
+
+// `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it).
+function cPath(path: string): u8[] {
+  if (path.includes("\0")) {
+    throw new TypeError(
+      `The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${path}'`,
+    );
+  }
+  const c = utf8Encode(path);
+  c.push(0);
+  return c;
+}
+
+/** Removes the file `path` (Node's `fs.unlinkSync`; not a directory: `EPERM` or `EISDIR`). */
+export function unlinkSync(path: string) {
+  // `c` is a variable, not a temporary, so its free runs at the end of the function, after
+  // `lastOsError` has read errno (the compiler also captures errno right after the call).
+  const c = cPath(path);
+  if (unlink(c) != 0) {
+    throw osError(lastOsError(), "unlink", path);
+  }
+}
+
+/** Closes the file descriptor `fd` (Node's `fs.closeSync`). */
+export function closeSync(fd: number) {
+  if (close(descriptor(fd)) != 0) {
+    throw osError(lastOsError(), "close");
+  }
+}
+
+// ───────────────────────────── read and write ─────────────────────────────
+
+// The byte offset in a buffer of `size` bytes, as Node validates it: `null` or left out is 0
+// (Node's options default), else an integer in [0, size] for a write (a write may start at the
+// end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
+function bufferOffset(size: usize, offset: number | null | undefined, read: bool): i64 {
+  if (offset == null) {
+    return 0;
+  }
+  const off = integer("offset", offset, 0, MAX_SAFE);
+  if (!read && off > (size as i64)) {
+    throw tooLarge("offset", size as i64, off);
+  }
+  return off;
+}
+
+// How many bytes of a `size`-byte buffer a `readSync` reads from `off`: left out is the rest
+// (Velt's typed API has no options object, so omitting `length` reads to the end); `null` is 0
+// (Node's `length |= 0` of `null`); a number is truncated to a 32-bit integer (`1.5` → 1,
+// `2**32` → 0, `2**32 + 3` → 3). Checked by `checkRead` after the zero-length and empty-buffer
+// cases, in Node's order.
+function readLength(size: usize, off: i64, length: number | null | undefined): i64 {
+  if (length === undefined) {
+    const rest = (size as i64) - off;
+    return rest > 0 ? rest : 0;
+  }
+  return length == null ? 0 : ((length | 0) as i64);
+}
+
+// Node's `validateOffsetLengthRead`: the length is `>= 0` and fits `size - off`.
+function checkRead(size: usize, off: i64, len: i64) {
+  if (len < 0) {
+    throw outOfRangeAtLeast("length", 0, len);
+  }
+  if (off + len > (size as i64)) {
+    throw tooLarge("length", (size as i64) - off, len);
+  }
+}
+
+// How many bytes of a `size`-byte buffer a `writeSync` writes from `off`: left out or `null` is
+// the rest (Node's `typeof length !== 'number'`); a number is used as it is (truncated), and
+// must fit `size - off`.
+function writeLength(size: usize, off: i64, length: number | null | undefined): i64 {
+  if (length == null) {
+    const rest = (size as i64) - off;
+    return rest > 0 ? rest : 0;
+  }
+  const len = length as i64;
+  if (off + len > (size as i64)) {
+    throw tooLarge("length", (size as i64) - off, len);
+  }
+  return len;
+}
+
+function tooLarge(name: string, max: i64, v: i64): RangeError {
+  return new RangeError(
+    `The value of "${name}" is out of range. It must be <= ${max}. Received ${v}`,
+  );
+}
+
+function outOfRangeAtLeast(name: string, min: i64, v: i64): RangeError {
+  return new RangeError(
+    `The value of "${name}" is out of range. It must be >= ${min}. Received ${v}`,
+  );
+}
+
+// A `readSync` position: left out, `null` or `undefined` is the file's own position, which the
+// read advances; otherwise the byte to start at, validated strictly (an integer in [-1,
+// MAX_SAFE]; `1.5` or `-2` is a `RangeError`, as Node's `validatePosition`).
+function readPosition(p: number | null | undefined): i64 {
+  if (p == null) {
+    return -1;
+  }
+  return integer("position", p, -1, MAX_SAFE);
+}
+
+// A `writeSync` position: left out, `null` or `undefined`, or any value that is not a
+// non-negative integer within range (a negative, a fraction, too large), is the file's own
+// position (as Node's write binding uses -1 for those); otherwise the byte to write at.
+function writePosition(p: number | null | undefined): i64 {
+  if (p != null && p >= 0 && p <= MAX_SAFE && Math.floor(p) == p) {
+    return p as i64;
+  }
+  return -1;
+}
+
+/**
+ * Reads up to `length` bytes into `buffer` from byte `offset` on (Node's `fs.readSync`): at
+ * `position` in the file, or at the file's own position (which then advances) when `position`
+ * is left out, `null` or -1. Returns the number of bytes read, 0 at the end of the file.
+ * `offset` defaults to 0 and `length` to the rest of the buffer; a number is coerced as Node
+ * does (`length` truncated to a 32-bit integer, `position` validated strictly). Velt's typed
+ * API takes positional arguments, not Node's `(fd, buffer, options)` object.
+ */
+export function readSync(
+  fd: number,
+  buffer: u8[],
+  offset: number | null = 0,
+  length?: number | null,
+  position?: number | null,
+): number {
+  const f = descriptor(fd);
+  const size = buffer.length as usize;
+  const off = bufferOffset(size, offset, true);
+  const len = readLength(size, off, length);
+  if (len == 0) {
+    return 0;
+  }
+  if (size == 0) {
+    throw new TypeError("The argument 'buffer' is empty and cannot be written. Received <Buffer >");
+  }
+  checkRead(size, off, len);
+  const start = off as usize;
+  const end = (off + len) as usize;
+  const at = readPosition(position);
+  while (true) {
+    const n = at < 0 ? read(f, buffer, start, end) : pread(f, buffer, start, end, at);
+    if (n >= 0) {
+      return n as number;
+    }
+    const e = lastOsError();
+    if (e != EINTR) {
+      throw osError(e, "read");
+    }
+  }
+}
+
+/**
+ * Writes `length` bytes of `buffer` from byte `offset` on (Node's `fs.writeSync`): at
+ * `position` in the file, or at the file's own position when `position` is left out, `null` or
+ * not a valid byte offset (at its end for a file opened to append). Returns the number of bytes
+ * written. `offset` defaults to 0 and `length` to the rest of the buffer. A string is written
+ * as UTF-8, and its third argument is then the position.
+ */
+export function writeSync(
+  fd: number,
+  buffer: u8[] | string,
+  offset: number | null = null,
+  length?: number | null,
+  position?: number | null,
+): number {
+  const f = descriptor(fd);
+  if (typeof buffer == "string") {
+    return writeBytes(f, utf8Encode(buffer), 0, null, offset);
+  }
+  return writeBytes(f, buffer, offset ?? 0, length, position);
+}
+
+function writeBytes(
+  f: i32,
+  buffer: u8[],
+  offset: number | null,
+  length: number | null | undefined,
+  position: number | null | undefined,
+): number {
+  const size = buffer.length as usize;
+  const off = bufferOffset(size, offset, false);
+  const len = writeLength(size, off, length);
+  const start = off as usize;
+  const end = (off + len) as usize;
+  const at = writePosition(position);
+  while (true) {
+    const n = at < 0 ? write(f, buffer, start, end) : pwrite(f, buffer, start, end, at);
+    if (n >= 0) {
+      return n as number;
+    }
+    const e = lastOsError();
+    if (e != EINTR) {
+      throw osError(e, "write");
+    }
+  }
+}
+
+// ───────────────────────────── sync, truncate, stat ─────────────────────────────
+
+// macOS: `F_FULLFSYNC` (to the disk itself), else `F_BARRIERFSYNC`, else `fsync`, as libuv.
+function fullSync(f: i32): i32 {
+  if (fcntl(f, 51, 0) == 0 || fcntl(f, 85, 0) == 0) {
+    return 0;
+  }
+  return fsync(f);
+}
+
+/** Flushes the file's data and metadata to the disk (Node's `fs.fsyncSync`). */
+export function fsyncSync(fd: number) {
+  const f = descriptor(fd);
+  if ((isMac() ? fullSync(f) : fsync(f)) != 0) {
+    throw osError(lastOsError(), "fsync");
+  }
+}
+
+/** Flushes the file's data to the disk (Node's `fs.fdatasyncSync`). */
+export function fdatasyncSync(fd: number) {
+  const f = descriptor(fd);
+  if ((isMac() ? fullSync(f) : fdatasync(f)) != 0) {
+    throw osError(lastOsError(), "fdatasync");
+  }
+}
+
+/** Sets the file's size to `len` bytes, cutting or extending it with zeros (Node's `fs.ftruncateSync`). */
+export function ftruncateSync(fd: number, len: number = 0) {
+  const f = descriptor(fd);
+  const n = integer("len", len, -MAX_SAFE, MAX_SAFE);
+  if (ftruncate(f, n < 0 ? 0 : n) != 0) {
+    throw osError(lastOsError(), "ftruncate");
+  }
+}
+
+/**
+ * The metadata of the open file `fd` (Node's `fs.fstatSync`): its size, modification time and
+ * type, from the system's `fstat`.
+ */
+export function fstatSync(fd: number): Stats {
+  const f = descriptor(fd);
+  const st: Stat = { st_mode: 0, st_size: 0, st_mtime: 0, st_mtime_nsec: 0 };
+  if (fstat(f, st) != 0) {
+    throw osError(lastOsError(), "fstat");
+  }
+  const kind = st.st_mode & 0o170000;
+  return {
+    size: st.st_size as u64,
+    mtimeMs:
+      (st.st_mtime as number) * 1000 + Math.floor((st.st_mtime_nsec as number) / 1000) / 1000,
+    file: kind == 0o100000,
+    dir: kind == 0o040000,
+    symlink: kind == 0o120000,
+  };
+}

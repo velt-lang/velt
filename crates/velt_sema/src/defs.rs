@@ -224,6 +224,9 @@ pub(crate) struct FnInfo<'m> {
     pub owner: Option<DefId>,
     /// `declare async function` (M3 rt futures); other async functions are rejected in M2.
     pub is_async: bool,
+    /// `declare system function` (`hir::ExternFnDef::system`): per parameter, whether its type
+    /// was written `readonly` (a buffer the C function only reads). `None` for anything else.
+    pub system: Option<Vec<bool>>,
     /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
     /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
     /// with the generator's final error type as `E` (`generators.rs`).

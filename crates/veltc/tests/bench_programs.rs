@@ -45,8 +45,24 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Whether one of the program's first lines says `// requires: unix` or `// requires: windows`
+/// (as in the goldens) and this host is the other: the program is not checked here.
+fn other_os_only(path: &Path) -> bool {
+    let src = std::fs::read_to_string(path).unwrap_or_default();
+    let wants = |what: &str| {
+        src.lines()
+            .take(10)
+            .filter_map(|l| l.trim().strip_prefix("// requires:"))
+            .any(|names| names.split_whitespace().any(|n| n == what))
+    };
+    (wants("unix") && cfg!(windows)) || (wants("windows") && !cfg!(windows))
+}
+
 /// Compiles one program to verified VIR; `Some(message)` when it fails.
 fn compile(path: &Path) -> Option<String> {
+    if other_os_only(path) {
+        return None;
+    }
     let opts = BuildOptions {
         input: path.to_path_buf(),
         emit: Emit::Vir,

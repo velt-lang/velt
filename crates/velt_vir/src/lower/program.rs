@@ -27,6 +27,10 @@ impl<'h> Cx<'h> {
             view_fn: None,
             uses_placement: false,
             cell_checks: false,
+            target: String::new(),
+            unavailable: vec![],
+            std_calls: FxHashMap::default(),
+            system_aggs: FxHashMap::default(),
             no_await_steps: false,
             types,
             aggs: vec![AggLayout {

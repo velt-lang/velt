@@ -1,0 +1,11 @@
+// requires: unix
+// A range of a buffer must lie inside the array (`start <= end <= length`): the call stops the
+// program otherwise, as an index out of bounds does.
+declare system function write(fd: i32, buf: readonly u8[], start: usize, end: usize): isize;
+
+function main() {
+  const b: u8[] = Buffer.alloc(3);
+  b.write("ok\n");
+  console.log(write(1, b, 0, 3));
+  console.log(write(1, b, 2, 4));
+}

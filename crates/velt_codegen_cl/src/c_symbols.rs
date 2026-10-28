@@ -56,9 +56,75 @@ pub(crate) fn lookup(name: &str) -> Option<*const u8> {
         "nearbyintf" => nearbyintf as *const u8,
         "fma" => fma as *const u8,
         "fmaf" => fmaf as *const u8,
+        _ => return system(name),
+    };
+    Some(address)
+}
+
+/// The system functions of the host (velt_vir's table, `declare system function`): the C
+/// library's, by the symbols the table links. Their signatures do not matter here, only their
+/// addresses.
+#[cfg(unix)]
+fn system(name: &str) -> Option<*const u8> {
+    mod c {
+        use std::ffi::{c_char, c_int, c_void};
+        // Only addresses are taken; Rust checks the signatures of the ones its standard library
+        // uses too, so they are the C library's (`off_t` is 64 bits on every table's target).
+        extern "C" {
+            pub fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+            pub fn close(fd: c_int) -> c_int;
+            pub fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;
+            pub fn write(fd: c_int, buf: *const c_void, n: usize) -> isize;
+            pub fn pread(fd: c_int, buf: *mut c_void, n: usize, at: i64) -> isize;
+            pub fn pwrite(fd: c_int, buf: *const c_void, n: usize, at: i64) -> isize;
+            pub fn fsync(fd: c_int) -> c_int;
+            pub fn fdatasync(fd: c_int) -> c_int;
+            pub fn ftruncate(fd: c_int, len: i64) -> c_int;
+            pub fn lseek(fd: c_int, at: i64, whence: c_int) -> i64;
+            pub fn unlink(path: *const c_char) -> c_int;
+            pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+            #[cfg_attr(
+                all(target_os = "macos", target_arch = "x86_64"),
+                link_name = "fstat$INODE64"
+            )]
+            pub fn fstat(fd: c_int, st: *mut c_void) -> c_int;
+            #[cfg(target_os = "macos")]
+            pub fn __error() -> *mut c_int;
+            #[cfg(not(target_os = "macos"))]
+            pub fn __errno_location() -> *mut c_int;
+        }
+    }
+    let host = velt_vir::system::host_triple();
+    let f = velt_vir::system::table(&host)
+        .iter()
+        .find(|f| f.symbol == name)?;
+    let address = match f.name {
+        "open" => c::open as *const u8,
+        "close" => c::close as *const u8,
+        "read" => c::read as *const u8,
+        "write" => c::write as *const u8,
+        "pread" => c::pread as *const u8,
+        "pwrite" => c::pwrite as *const u8,
+        "fsync" => c::fsync as *const u8,
+        "fdatasync" => c::fdatasync as *const u8,
+        "ftruncate" => c::ftruncate as *const u8,
+        "lseek" => c::lseek as *const u8,
+        "unlink" => c::unlink as *const u8,
+        "fcntl" => c::fcntl as *const u8,
+        "fstat" => c::fstat as *const u8,
+        #[cfg(target_os = "macos")]
+        "lastOsError" => c::__error as *const u8,
+        #[cfg(not(target_os = "macos"))]
+        "lastOsError" => c::__errno_location as *const u8,
         _ => return None,
     };
     Some(address)
+}
+
+/// Windows keeps `cranelift-jit`'s lookup through the loaded modules (kernel32's included).
+#[cfg(not(unix))]
+fn system(_: &str) -> Option<*const u8> {
+    None
 }
 
 #[cfg(test)]
@@ -91,6 +157,20 @@ mod tests {
             .chain(["fmod".into(), "fmodf".into()])
         {
             assert!(super::lookup(&name).is_some(), "no address for `{name}`");
+        }
+    }
+
+    /// Every system function of the host has an address (`velt run` calls them in the JIT).
+    #[cfg(unix)]
+    #[test]
+    fn covers_the_system_functions() {
+        let host = velt_vir::system::host_triple();
+        for f in velt_vir::system::table(&host) {
+            assert!(
+                super::lookup(f.symbol).is_some(),
+                "no address for `{}`",
+                f.symbol
+            );
         }
     }
 }

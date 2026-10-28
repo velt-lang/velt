@@ -224,3 +224,158 @@ fn std_driver_records_reach_the_compiler() {
     );
     assert_eq!(d, "", "{d}");
 }
+
+/// Diagnostics of lowering `src` (a program without packages) for `target`: what
+/// `velt build --target` reports before code generation.
+fn lower_for(src: &str, target: &str) -> String {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main.vlt");
+    write(&main, src);
+    let opts = BuildOptions {
+        input: main,
+        target: Some(target.into()),
+        ..Default::default()
+    };
+    let mut sess = Session::new();
+    match driver::compile_to_vir(&mut sess, &opts) {
+        Ok(_) => String::new(),
+        Err(_) => sess.render_diagnostics(),
+    }
+}
+
+const PREAD: &str = "declare system function pread(fd: i32, buf: u8[], offset: i64): isize;\n";
+
+/// A system function is bound per target: the declaration is checked against the table of the
+/// target, a target without it accepts the declaration, and a call of it there is the error.
+#[test]
+fn system_functions_are_bound_per_target() {
+    let call = format!(
+        "{PREAD}function main() {{\n  const b: u8[] = [0];\n  console.log(pread(0, b, 0));\n}}\n"
+    );
+    for t in [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+    ] {
+        assert_eq!(lower_for(&call, t), "", "{t}");
+    }
+    let d = lower_for(&call, "wasm32-wasip1");
+    assert!(
+        d.contains("system function `pread` is not available on wasm32-wasip1"),
+        "{d}"
+    );
+    assert!(d.contains("`main` calls it"), "{d}");
+    assert!(d.contains("this target has no system functions"), "{d}");
+    let d = lower_for(&call, "x86_64-pc-windows-msvc");
+    assert!(
+        d.contains("is available on aarch64-apple-darwin, x86_64-apple-darwin"),
+        "{d}"
+    );
+    // Declared but never called: nothing to report anywhere.
+    let unused = format!("{PREAD}function main() {{}}\n");
+    assert_eq!(lower_for(&unused, "wasm32-wasip1"), "");
+    // std's fd API is behind such declarations: a program that does not call it compiles.
+    let fs = "import { readFileSync } from \"velt:fs\";\n\
+              import { openSync } from \"velt:fs/fd\";\nfunction main() {\n  \
+              console.log(readFileSync(\"x\"));\n}\n";
+    assert_eq!(lower_for(fs, "wasm32-wasip1"), "");
+    // A call of std's fd API where the target lacks its system functions is reported at the
+    // program's call, once per call, as the std function it called.
+    let fd = "import * as fs from \"velt:fs/fd\";\nfunction main() {\n  \
+              const fd = fs.openSync(\"x\", \"r\");\n  fs.closeSync(fd);\n}\n";
+    for t in ["x86_64-pc-windows-msvc", "wasm32-wasip1"] {
+        let d = lower_for(fd, t);
+        assert!(
+            d.contains(&format!(
+                "main.vlt:3:14: error: `openSync` (velt:fs/fd) is not available on {t}"
+            )) && d.contains(&format!(
+                "main.vlt:4:3: error: `closeSync` (velt:fs/fd) is not available on {t}"
+            )) && d.contains("it calls the system function `open`")
+                && d.matches("error:").count() == 2,
+            "{d}"
+        );
+    }
+}
+
+/// `struct flock` has another layout on Linux than on macOS: a struct naming its fields fits
+/// both, and Windows has its own functions (checked though untested there).
+#[test]
+fn struct_layouts_and_windows_declarations_check() {
+    let lock =
+        "struct Lock {\n  l_type: i16;\n  l_whence: i16;\n  l_start: i64;\n  l_len: i64;\n  \
+                l_pid: i32;\n}\ndeclare system function fcntl(fd: i32, cmd: i32, lock: Lock): \
+                i32;\nfunction main() {\n  const l: Lock = { l_type: 1, l_whence: 0, l_start: \
+                0, l_len: 0, l_pid: 0 };\n  console.log(fcntl(0, 5, l));\n}\n";
+    assert_eq!(lower_for(lock, "x86_64-unknown-linux-gnu"), "");
+    assert_eq!(lower_for(lock, "aarch64-apple-darwin"), "");
+    let win = "struct Overlapped {\n  Offset: u32;\n  OffsetHigh: u32;\n  InternalHigh: usize;\n}\n\
+               declare system function ReadFile(file: usize, buf: u8[], ov: Overlapped): i32;\n\
+               declare system function CreateFileW(name: readonly u16[], access: u32, share: u32, \
+               disposition: u32, flags: u32): usize;\n\
+               declare system function lastOsError(): i32;\n\
+               function main() {\n  const n: u16[] = [120, 0];\n  const h = CreateFileW(n, 0x80000000, 1, 3, 0x80);\n  \
+               const ov: Overlapped = { Offset: 0, OffsetHigh: 0, InternalHigh: 0 };\n  const b: u8[] = [0, 0];\n  \
+               console.log(ReadFile(h, b, ov), ov.InternalHigh, lastOsError());\n}\n";
+    // `ReadFile` waits for an `OVERLAPPED`: checked, but a call of it is an error for now.
+    let d = lower_for(win, "x86_64-pc-windows-msvc");
+    assert!(
+        d.contains("system function `ReadFile` is not available on x86_64-pc-windows-msvc")
+            && d.contains("no target can call it yet"),
+        "{d}"
+    );
+    let open = win.replace("ReadFile(h, b, ov)", "h != 0");
+    assert_eq!(lower_for(&open, "x86_64-pc-windows-msvc"), "");
+    let bad = "declare system function ReadFile(file: u64, buf: u8[], n: u32): i32;\nfunction main() {}\n";
+    let d = lower_for(bad, "x86_64-pc-windows-msvc");
+    assert!(
+        d.contains("`file` is a C `HANDLE`: declare it `usize`, not `u64`"),
+        "{d}"
+    );
+}
+
+/// The system functions' struct layouts of the host are the C library's (`libc`'s
+/// definitions; velt_vir's table states them per target).
+#[cfg(unix)]
+#[test]
+fn host_layouts_match_the_c_library() {
+    use std::mem::{offset_of, size_of as sz};
+    use velt_vir::system::{host_triple, table, Param, Struct};
+    let host = host_triple();
+    let layout = |f: &str, p: &str| {
+        let has = |q: &Param| matches!(q, Param::Struct { name, .. } if *name == p);
+        let f = table(&host)
+            .iter()
+            .find(|x| x.name == f && x.params.iter().any(has))
+            .unwrap();
+        f.params
+            .iter()
+            .find_map(|q| match q {
+                Param::Struct { layout, .. } => Some(*layout),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let off = |s: &Struct, n: &str| s.fields.iter().find(|f| f.name == n).unwrap().offset as usize;
+    let fl = layout("fcntl", "lock");
+    assert_eq!(fl.size as usize, sz::<libc::flock>());
+    assert_eq!(off(fl, "l_start"), offset_of!(libc::flock, l_start));
+    assert_eq!(off(fl, "l_len"), offset_of!(libc::flock, l_len));
+    assert_eq!(off(fl, "l_pid"), offset_of!(libc::flock, l_pid));
+    assert_eq!(off(fl, "l_type"), offset_of!(libc::flock, l_type));
+    assert_eq!(off(fl, "l_whence"), offset_of!(libc::flock, l_whence));
+    let st = layout("fstat", "st");
+    assert_eq!(st.size as usize, sz::<libc::stat>());
+    assert_eq!(off(st, "st_size"), offset_of!(libc::stat, st_size));
+    assert_eq!(off(st, "st_mode"), offset_of!(libc::stat, st_mode));
+    assert_eq!(off(st, "st_ino"), offset_of!(libc::stat, st_ino));
+    assert_eq!(off(st, "st_nlink"), offset_of!(libc::stat, st_nlink));
+    assert_eq!(off(st, "st_blocks"), offset_of!(libc::stat, st_blocks));
+    assert_eq!(off(st, "st_blksize"), offset_of!(libc::stat, st_blksize));
+    assert_eq!(off(st, "st_mtime"), offset_of!(libc::stat, st_mtime));
+    assert_eq!(
+        off(st, "st_mtime_nsec"),
+        offset_of!(libc::stat, st_mtime_nsec)
+    );
+    assert_eq!(off(st, "st_uid"), offset_of!(libc::stat, st_uid));
+    assert_eq!(off(st, "st_rdev"), offset_of!(libc::stat, st_rdev));
+}

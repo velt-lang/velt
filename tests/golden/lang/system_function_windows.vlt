@@ -1,0 +1,46 @@
+// requires: windows
+// The Windows system functions a program can call: a file made with `CreateFileW`, grown with
+// `SetFilePointerEx` and `SetEndOfFile`, flushed, measured with `GetFileSizeEx` (a struct the
+// call writes), and closed twice; the second `CloseHandle` fails with ERROR_INVALID_HANDLE (6),
+// which `lastOsError()` reads. (`ReadFile`, `WriteFile`, `LockFileEx` and `UnlockFileEx` are not
+// callable yet: docs/reference/system-functions.md.)
+import { lastOsError } from "velt:os";
+import { removeSync } from "velt:fs";
+
+struct LargeInteger {
+  QuadPart: i64;
+}
+
+declare system function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  disposition: u32,
+  flags: u32,
+): usize;
+declare system function SetFilePointerEx(file: usize, distance: i64, method: u32): i32;
+declare system function SetEndOfFile(file: usize): i32;
+declare system function FlushFileBuffers(file: usize): i32;
+declare system function GetFileSizeEx(file: usize, size: LargeInteger): i32;
+declare system function CloseHandle(handle: usize): i32;
+
+function main() {
+  // "velt_system_function_windows.bin", UTF-16, with its 0.
+  const text = "velt_system_function_windows.bin";
+  const name: u16[] = [];
+  for (let i = 0; i < text.length; i++) {
+    name.push(text.charCodeAt(i) as u16);
+  }
+  name.push(0);
+  const invalid: usize = 0 - (1 as usize);
+  // GENERIC_READ | GENERIC_WRITE, no sharing, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL.
+  const h = CreateFileW(name, 0xc0000000, 0, 2, 0x80);
+  console.log(h != invalid);
+  console.log(SetFilePointerEx(h, 4096, 0), SetEndOfFile(h), FlushFileBuffers(h));
+  const size: LargeInteger = { QuadPart: 0 };
+  console.log(GetFileSizeEx(h, size), size.QuadPart);
+  const first = CloseHandle(h);
+  const second = CloseHandle(h);
+  console.log(first, second, lastOsError());
+  removeSync(text);
+}

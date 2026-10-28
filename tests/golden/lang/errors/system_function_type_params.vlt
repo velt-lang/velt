@@ -1,0 +1,6 @@
+// A system function's C signature fixes every type, so its declaration has no type parameters.
+declare system function close<T>(fd: i32): i32;
+
+function main() {
+  console.log(close<string>(-1));
+}
