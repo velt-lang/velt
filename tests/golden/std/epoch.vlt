@@ -1,0 +1,26 @@
+// velt:sync/epoch on one thread: a retired value is kept while this thread is in a section and
+// dropped by the first `collect` that moves the epoch two steps past its retiring; sections nest.
+import { pin, unpin, retire, collect, pending } from "velt:sync/epoch";
+
+interface Item {
+  n: u64;
+}
+
+function main() {
+  for (let i: u64 = 0; i < 10; i++) {
+    retire(shared({ n: i }));
+  }
+  console.log("pending", pending());
+  pin();
+  pin();
+  console.log("pinned", collect(), collect(), collect(), pending());
+  unpin();
+  console.log("still pinned", collect(), collect(), pending());
+  unpin();
+  console.log("unpinned", collect(), collect(), pending());
+  // 200 retirements: every 64th tries to collect on its own.
+  for (let i: u64 = 0; i < 200; i++) {
+    retire(shared({ n: i }));
+  }
+  console.log("left", pending() < 200);
+}
