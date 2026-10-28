@@ -14,10 +14,39 @@ exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`).
   indentation, as in Node, and 0 or less writes no whitespace) or a string (its first 10
   characters, such as `"	"`; empty: no whitespace); every member and element goes on its own
   line, `"key": value` gets a space after the colon, and an empty array or object stays `[]` /
-  `{}`. `replacer` is `null` or an array
+  `{}`. `replacer` is `null`, an array
   of keys (strings, or numbers written as `String(n)`): objects at any depth keep only those
-  keys, in the array's order. A replacer function is not supported yet (a compile error);
-  `JSON.stringify(x)` alone writes no whitespace.
+  keys, in the array's order; or a function `(key: string, value: JsonValue) => JsonValue |
+  undefined` (the prelude's `JsonReplacer`), called as JavaScript calls it: first with the key
+  `""` and the value passed (as a `JsonValue`), then with each member and element of what it
+  returned. `undefined` leaves a member out and writes an array element as `null`; for the value
+  itself it throws a `TypeError` (JavaScript returns `undefined`, but Velt's `JSON.stringify`
+  returns a string). A function written in place annotates its value parameter, `(key, value:
+  JsonValue) => …`, until #924: the value is a `JsonValue`, not a JavaScript value, so `typeof
+  value` and arithmetic on it would not do what they do in Node; read it with `isNumber()`,
+  `asNumber()` and the other `JsonValue` methods. `JSON.stringify(x)` alone writes no
+  whitespace.
+
+```ts
+type User = { name: string; password: string; age: i64 };
+
+const u: User = { name: "ada", password: "pw", age: 36 };
+console.log(JSON.stringify(u, (key, value: JsonValue) => (key == "password" ? undefined : value)));
+// {"name":"ada","age":36}
+```
+
+- `JSON.parse(text, reviver)` waits for #924 (its second argument is the options). Until then,
+  `JSON.parseValue(text).revive(reviver)` does what it does: the same function type, applied as
+  JavaScript applies a reviver, from the innermost values out (each member's result replaces
+  it; `undefined` deletes it), and last to the value itself under the key `""`. It returns a new
+  `JsonValue`; `undefined` for the value itself throws a `TypeError`.
+
+```ts
+const v = JSON.parseValue(`{"price": 12.5, "tax": 0.2}`).revive((key, value: JsonValue) =>
+  value.isNumber() ? JsonValue.of(value.asNumber()! * 100) : value,
+);
+console.log(v.stringify()); // {"price":1250,"tax":20}
+```
 
 ```ts
 interface Item {
@@ -126,7 +155,7 @@ console.log(JSON.stringify({ a: new Field(), list: [new Field()] }));
   array element, a union member, a `Map` or `Record` value): decoding fills the fields without
   running a constructor, so it would bypass the class's factories and their checks. Decode a
   plain object type and call the factory instead. `JSON.stringify` writes such a class as
-  usual, and `Value` (whose constructor is private too) decodes: the runtime makes it.
+  usual, and `Value` (whose constructor is private too) decodes: std makes it.
 
 ```ts
 class Money {
@@ -171,6 +200,23 @@ console.log(text, m.cents); // {"cents":250} 250
     `JsonError` instead of crashing. A typed decoder uses stack space for every level: raise
     the limit only as far as your data needs, since a limit in the thousands can overflow the
     stack on a deep enough document.
+  - `comments: "skip"` reads line (`//`) and block comments as whitespace, and
+    `trailingCommas: true` accepts a comma before `]` and `}`: JSONC, the format of
+    `tsconfig.json` and editor settings. Node's `JSON.parse` has neither. With either option a
+    malformed document fails with Velt's own message (`invalid JSON at $.paths[2]: unexpected
+    character ']' (byte 126)`), since Node's would describe the comment itself.
+
+    ```ts
+    type Settings = { name: string; paths: string[] };
+
+    const text = `{
+      // the project
+      "name": "app",
+      "paths": ["src", "lib",], /* lib last */
+    }`;
+    const s = JSON.parse<Settings>(text, { comments: "skip", trailingCommas: true });
+    console.log(s.name, s.paths.length); // app 2
+    ```
 
   `JSON.parseValue(text, options)` (and `JsonValue.parse`, `v.as<T>(options)`) take the same
   options and the same default depth limit; `unknownKeys` has no effect on a `Value`.
@@ -233,6 +279,10 @@ console.log(text, m.cents); // {"cents":250} 250
     middle of a large object (more than 16 members), `at` on it costs O(log n): the first such
     `at` takes O(n) to index the remaining members, and later edits keep that index up to date
     in O(log n) each, until the object is compacted
+  - cost of reading a parsed value: `at`, `len` and `keys` are O(1) per member; `get` compares
+    the keys of an object of at most 16 members in place, and looks a key of a larger one up in
+    a hash index that its first `get` builds (O(n) once). So walking a whole value is linear in
+    its size
   - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
   - `stringify()`: keys in JavaScript's key order, as `JSON.parse` and editing keep them:
     array-index keys such as `"2"` first, ascending, then the others in insertion order
@@ -247,10 +297,16 @@ console.log(text, m.cents); // {"cents":250} 250
     shows as `hi`. Call `stringify()` for the JSON text (`{"a":1,"b":[2,"x"],"c":null}`)
 
   A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
-  was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
-  handle shares before changing it (copy-on-write, one node at a time). To change a nested
-  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. Only the
-  runtime makes `JsonValue`s: the constructor is private, so `new JsonValue(…)` is an error
+  was `set` into, or through a child handle from `get`/`at`. A parsed value is a position in
+  its document, kept as one flat array (no allocation per value; a string is made only when it
+  is read), which its children share. So a child from `get`/`at`, and a `JsonValue` field that
+  `JSON.parse<T>` decoded, keeps the whole document alive, its source text included, as long as
+  it lives: a small value kept from a large document holds all of it
+  (`JsonValue.parse(child.stringify())` makes a copy of its own). Editing a value first turns
+  it into a tree of its own, which then copies a node another value shares before changing it
+  (copy-on-write, one node at a time). To change a nested
+  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. Only std
+  makes `JsonValue`s: the constructor is private, so `new JsonValue(…)` is an error
   (use the static methods above; a JSON `null` is made only with `JsonValue.of(null)`), and a
   class cannot `extends` `JsonValue` (hold one in a field instead).
 

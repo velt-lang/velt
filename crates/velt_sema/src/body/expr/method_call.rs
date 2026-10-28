@@ -32,6 +32,15 @@ impl FnCx<'_, '_> {
         };
         // A branded value has its primitive's (or its class's) methods.
         let recv = self.unbrand(recv);
+        if prop.name == "revive"
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Adt(d, _) if self.cx.is_json_value(*d))
+            && args
+                .first()
+                .and_then(|a| self.json_callback_typed(a, "`JsonValue.revive`"))
+                == Some(false)
+        {
+            return self.error_expr(span);
+        }
         // A `shared<T>` has `T`'s methods (#36): they read the value inside, and one that
         // modifies its receiver is an error (`frozen_write`).
         let recv = match matches!(self.cx.ty.kind(recv.ty), TyKind::Shared(_))

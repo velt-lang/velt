@@ -210,16 +210,25 @@ impl FnLower<'_, '_> {
         top: bool,
         depth: &Operand,
     ) {
-        // The handle field is a `u64` in Velt, a `const VeltJson*` for the runtime.
-        let h = self.field_place(place, ty, 0);
-        let hty = self.cx.adt_field_tys(ty)[0];
-        let ht = self.cx.ty(hty);
-        let h = self.cast_to(Operand::Copy(h), ht, Ty::Ptr);
+        // A runtime handle of its own (a tape value's is a tree made for this), freed after.
+        let _ = ty;
+        let v = Operand::Copy(place.clone());
+        let h = self.json_value_call("__runtimeHandle", vec![v]);
+        let h = self.copy_to_temp(h, Ty::U64);
+        let hp = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Cast(Operand::Copy(Place::local(h)), Ty::Ptr),
+        );
         let top = cint(top as i128, Ty::U8);
         let depth = depth.clone();
         self.call_rt(
             Rt::StrbufPushInspectJson,
-            vec![buf.clone(), h, top, depth],
+            vec![buf.clone(), hp, top, depth],
+            None,
+        );
+        self.call_rt(
+            Rt::JsonValueFree,
+            vec![Operand::Copy(Place::local(h))],
             None,
         );
     }

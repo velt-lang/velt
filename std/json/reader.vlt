@@ -13,6 +13,7 @@
 // messages.
 
 import {
+  blankComments,
   EXPECTED_COLON,
   EXPECTED_COMMA_BRACE,
   EXPECTED_COMMA_BRACKET,
@@ -26,6 +27,7 @@ import {
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
 import { decimalValue } from "velt:number/parse";
+import { parseWith, Tape, TapeError } from "velt:json/tape";
 
 declare function velt_rt_json_reader_free(r: u64);
 declare function velt_rt_json_reader_peek(r: u64): u32;
@@ -93,6 +95,10 @@ export const STEP_ERROR: u8 = 2;
 /** `Reader` flags (`JSON.parse` options). */
 export const FLAG_REJECT_UNKNOWN: u32 = 1;
 export const FLAG_NULL_NOT_ABSENT: u32 = 2;
+/** JSONC: comments are whitespace; a comma may come before `]` and `}`. (4 and 8 are the
+ *  runtime's row flags.) */
+export const FLAG_COMMENTS: u32 = 16;
+export const FLAG_TRAILING_COMMAS: u32 = 32;
 
 // Why the reader stopped (`failed`).
 const NONE: u8 = 0;
@@ -128,8 +134,14 @@ export class Reader extends Scanner {
   /** The last number read. */
   num: f64 = 0;
   int: i64 = 0;
-  /** The last value `readValue` built (a runtime `JsonValue` handle). */
+  /**
+   * The value `readValue` read from a driver's rows: a runtime `JsonValue` handle. (A value
+   * read from text is the tape `readValue` returns: no field of the reader holds a tape, so a
+   * program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
+   */
   handle: u64 = 0;
+  /** `readValue` read a value from a driver's rows (`handle`; 0 is JSON null). */
+  rowsValue: bool = false;
   /**
    * The last key of `nextKey`: its raw bytes, or its text when it had escapes. Kept apart from
    * the last token, so that a decoder can still name the key after reading or skipping its value.
@@ -143,8 +155,10 @@ export class Reader extends Scanner {
 
   /** A reader over JSON text, with `FLAG_*` options and a nesting limit (0: none). */
   constructor(src: string, flags: u32, maxDepth: u32) {
-    super(src);
+    super((flags & FLAG_COMMENTS) != 0 ? blankComments(src) : src);
     this.rejectUnknown = (flags & FLAG_REJECT_UNKNOWN) != 0;
+    this.comments = (flags & FLAG_COMMENTS) != 0;
+    this.trailingCommas = (flags & FLAG_TRAILING_COMMAS) != 0;
     this.nullNotAbsent = (flags & FLAG_NULL_NOT_ABSENT) != 0;
     this.maxDepth = maxDepth == 0 ? ~(0 as usize) : maxDepth as usize;
   }
@@ -180,7 +194,7 @@ export class Reader extends Scanner {
     return this.int;
   }
 
-  /** The handle of the last `readValue`. */
+  /** The handle of the last `readValue` from rows. */
   lastHandle(): u64 {
     return this.handle;
   }
@@ -528,34 +542,42 @@ export class Reader extends Scanner {
     this.failed = NONE;
   }
 
-  /** One complete value of any kind, built as a runtime `JsonValue` tree: `handle` after true. */
-  readValue(): bool {
-    // The glue takes `handle` as the value even when this fails (the decoder's out-parameter
-    // must then own nothing): a failed read leaves 0, not the handle of the value before.
+  /**
+   * One complete value of any kind, for a `JsonValue`: a tape over this reader's source (its
+   * value 0). For a driver's rows, null with `rowsValue` set and the runtime tree in `handle`.
+   * Null on failure.
+   */
+  readValue(): Tape | null {
+    // A failed read leaves `handle` 0 and `rowsValue` false: the value before is not the
+    // decoder's to own (its out-parameter must own nothing on failure).
     this.handle = 0;
+    this.rowsValue = false;
     if (!this.valueStart(0, 0)) {
       if (this.rows != 0 && this.failed == ROWS) {
         let out = ReaderHandle { v: 0 };
-        const ok = velt_rt_json_reader_read_value(this.rows, out) == 1;
-        if (ok) {
+        this.rowsValue = velt_rt_json_reader_read_value(this.rows, out) == 1;
+        if (this.rowsValue) {
           this.handle = out.v;
         }
-        return ok;
       }
-      return false;
+      return null;
     }
-    // Checked here (with the nesting left), then built from its text.
-    const start = this.pos;
-    if (!(this.walk(this.depthLeft(), false) || this.syntaxFailed())) {
-      return false;
+    const limit = this.depthLeft();
+    if (limit == 0) {
+      // No container fits; `parseWith` takes a limit of 0 as none.
+      const c = this.peekNonWs();
+      if (c == 123 || c == 91) {
+        this.fail(TOO_DEEP);
+        this.syntaxFailed();
+        return null;
+      }
     }
-    let out = ReaderHandle { v: 0 };
-    let err = "";
-    if (!velt_rt_json_parse_value_with(utf8Substring(this.src, start, this.pos), 0, out, err)) {
-      panic(`ICE: a checked JSON value did not parse: ${err}`);
+    const r = parseWith(this, limit > 0xffffffff ? 0 : limit == 0 ? 1 : limit as u32, false);
+    if (r instanceof TapeError) {
+      this.syntaxFailed();
+      return null;
     }
-    this.handle = out.v;
-    return true;
+    return r as Tape;
   }
 
   /** Only whitespace may follow the top-level value. */
@@ -575,9 +597,10 @@ export class Reader extends Scanner {
     if (this.rows != 0) {
       return velt_rt_json_error(this.rows, expected, path);
     }
-    // Text that is not JSON fails as in Node, wherever the decoder stopped.
+    // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
+    // Node does not read).
     let node = "";
-    if (velt_rt_json_node_syntax(this.src, node)) {
+    if (!this.comments && !this.trailingCommas && velt_rt_json_node_syntax(this.src, node)) {
       return node;
     }
     const where = shortPath(path);
@@ -620,26 +643,6 @@ export class Reader extends Scanner {
       this.syntaxFailed();
     }
     return false;
-  }
-
-  // The value of the number token just lexed: from the digits the scanner read when that is
-  // exact (velt:number/parse's `decimalValue`), else by the general parser.
-  private numberValue(): f64 {
-    const w = this.digitsValue;
-    const neg = this.negative;
-    if (this.small) {
-      return neg ? -(w as f64) : w as f64;
-    }
-    if (this.exact) {
-      if (w == 0) {
-        return neg ? -0.0 : 0;
-      }
-      const r = decimalValue(w, this.exponent);
-      if (r.ok) {
-        return neg ? -r.value : r.value;
-      }
-    }
-    return Number(utf8Substring(this.src, this.start, this.end));
   }
 
   private numberStart(): bool {
@@ -685,6 +688,14 @@ export class Reader extends Scanner {
     }
     if (b == 44 && !first) {
       this.pos++;
+      if (this.trailingCommas && this.peekNonWs() == close) {
+        // JSONC: a comma before the closing bracket.
+        this.pos++;
+        if (this.depth > 0) {
+          this.depth--;
+        }
+        return STEP_END;
+      }
       return STEP_MORE;
     }
     if (first) {
@@ -767,6 +778,10 @@ export class Reader extends Scanner {
         const b = this.peekNonWs();
         if (b == 44) {
           this.pos++;
+          if (this.trailingCommas && this.peekNonWs() == (object ? 125 : 93)) {
+            // JSONC: the comma before the closing bracket; it closes below.
+            continue;
+          }
           if (object && !this.keyColon()) {
             return false;
           }

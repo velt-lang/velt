@@ -5,24 +5,43 @@
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
 // throw a `SyntaxError` `JsonError` ("expected string at $.name"). The stringify glue writes a
-// `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.#handle)`.
+// `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes one with
+// `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
+// makes for it (freed after).
 //
-// `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
-// runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is the null handle,
-// which a `JsonValue` holds for JSON null).
+// `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
+// flat array per document, velt:json/tape), which its children share. A value built or edited
+// here is a tree of reference-counted runtime nodes behind an opaque `u64` handle
+// (rt_abi_async.md §3.2; 0 is the null handle, which a `JsonValue` holds for JSON null); an edit
+// turns a tape value into such a tree first.
 // Values have value semantics: `set`/`delete`/`push`/`setAt` copy a node another handle shares
 // before changing it (copy-on-write), so an edit never shows through a clone, a parent or a
-// child handle. Every `JsonValue` owns one reference (`get`/`at`/`clone` return new
-// ones; children stay valid after their parent is released), released by the `[Symbol.dispose]()` drop
-// hook. A value that contains a `JsonValue` has no automatic deep `clone()` (sema rejects it: the
-// generated copy could not take a new reference).
+// child. Every `JsonValue` owns one reference to its tape or tree (`get`/`at`/`clone` return
+// new ones; children stay valid after their parent is released); a tree's is released by the
+// `[Symbol.dispose]()` drop hook. A value that contains a `JsonValue` has no automatic deep
+// `clone()` (sema rejects it: the generated copy could not take a new reference).
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
-import "velt:json/reader";
+import { Reader } from "velt:json/reader";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
 import "velt:json/writer";
+// `JSON.parseValue`'s documents: one flat tape each (Velt code).
+import {
+  parseTape,
+  Tape,
+  TapeError,
+  T_NULL,
+  T_FALSE,
+  T_TRUE,
+  T_NUMBER,
+  T_STRING,
+  T_ARRAY,
+  T_OBJECT,
+} from "velt:json/tape";
+
+declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
 declare function velt_rt_json_parse_value(src: string, out: JsonHandleSlot, err: string): bool;
 declare function velt_rt_json_parse_value_with(
@@ -86,8 +105,34 @@ export class JsonError extends SyntaxError {
  *   `unknown field at $.key` (default "ignore": it is skipped).
  * - `maxDepth`: the deepest nesting of arrays and objects allowed (default 128, like serde_json:
  *   a typed decoder recurses per level, so a much higher limit can overflow the stack).
+ * - `comments`: "skip" reads line (`//`) and block comments as whitespace (JSONC, as in
+ *   `tsconfig.json`; default "error").
+ * - `trailingCommas`: true accepts a comma before `]` and `}` (JSONC; default false).
  */
-export type JsonParseOptions = { unknownKeys?: "ignore" | "reject"; maxDepth?: i64 };
+export type JsonParseOptions = {
+  unknownKeys?: "ignore" | "reject";
+  maxDepth?: i64;
+  comments?: "error" | "skip";
+  trailingCommas?: bool;
+};
+
+// The reader's flags for `options` on top of `base` (std/json/reader.vlt `FLAG_*`).
+function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
+  let flags = base;
+  if (options == null) {
+    return flags;
+  }
+  if (options.unknownKeys == "reject") {
+    flags = flags | 1;
+  }
+  if (options.comments == "skip") {
+    flags = flags | 16;
+  }
+  if (options.trailingCommas == true) {
+    flags = flags | 32;
+  }
+  return flags;
+}
 
 // `maxDepth` when the options leave it out.
 const DEFAULT_MAX_DEPTH: i64 = 128;
@@ -110,9 +155,11 @@ function jsonMaxDepth(options: JsonParseOptions | null): i64 {
 /**
  * Converts values to and from the JavaScript Object Notation (JSON) format. Unlike JS, it is
  * typed: `stringify` and `parse` are generated for the static type at compile time, `parse<T>`
- * checks the text against `T` and throws `JsonError` instead of returning `any`, and there is
- * no `reviver`. `stringify` takes JS's `replacer` as an array of keys (or `null`) and its
- * `space`. `parseValue` reads a document of any shape.
+ * checks the text against `T` and throws `JsonError` instead of returning `any`. There is no
+ * `JSON.parse(text, reviver)` until #924; `JSON.parseValue(text).revive(reviver)` does what it
+ * does. `stringify` takes JS's `replacer` (an array of
+ * keys, `null`, or a `JsonReplacer` function) and its `space`. `parseValue` reads a document
+ * of any shape.
  */
 export class JSON {
   /**
@@ -129,11 +176,7 @@ export class JSON {
    * `options.unknownKeys` is "reject".
    */
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
-    let flags: i64 = 0;
-    if (options != null && options.unknownKeys == "reject") {
-      flags = 1;
-    }
-    return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
+    return __intrinsic_json_parse<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
   }
 
   /**
@@ -144,44 +187,55 @@ export class JSON {
    * field a `null` its type can't hold).
    */
   static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
-    let flags: i64 = 2;
-    if (options != null && options.unknownKeys == "reject") {
-      flags = 3;
-    }
-    return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
+    return __intrinsic_json_parse<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
   }
 
-  /** Parses any JSON document (throws `JsonError`); of the options only `maxDepth` applies. */
+  /**
+   * Parses any JSON document (throws `JsonError`); the options are `maxDepth`, `comments` and
+   * `trailingCommas`.
+   */
   static parseValue(text: string, options: JsonParseOptions | null = null): JsonValue {
     return JsonValue.parse(text, options);
   }
 }
 
 /**
- * A JSON value of any shape, as `JSON.parseValue` returns it (`velt:json` calls it `Value`): a
- * tree of reference-counted runtime nodes. It has value semantics: an edit copies a node another
- * value shares first (copy-on-write), so it never shows through a clone, a parent or a child.
- * Accessors on the wrong kind return null / 0. `JSON.stringify` and `JSON.parse<T>` read and
- * write the tree. Only the runtime makes one: the constructor is private, so safe code cannot
- * forge a runtime pointer, and no class can extend `JsonValue`.
+ * A JSON value of any shape, as `JSON.parseValue` returns it (`velt:json` calls it `Value`). It
+ * has value semantics: an edit never shows through a clone, a parent or a child. Accessors on
+ * the wrong kind return null / 0. `JSON.stringify` and `JSON.parse<T>` read and write it. Only
+ * std makes one: the constructor is private, so no class can extend `JsonValue`.
+ *
+ * Two forms (#1660). A parsed value is a position on a tape (velt:json/tape): reading it makes
+ * nothing, and its children share the tape. A value built or edited here (`object()`, `set`, …)
+ * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
+ * (which stays the first field: compiled glue writes it); an edit turns a tape value into such
+ * a tree first, so it never shows through the tape.
  */
 export class JsonValue {
   #handle: u64;
+  #tape: Tape | null;
+  #node: u32;
 
-  // A `JsonValue` owning the runtime handle `h`.
-  private constructor(h: u64) {
+  // A `JsonValue` owning the runtime handle `h`, or value `node` of tape `t`.
+  private constructor(h: u64, t: Tape | null = null, node: u32 = 0) {
     this.#handle = h;
+    this.#tape = t;
+    this.#node = node;
+  }
+
+  // Value `node` of tape `t`.
+  private static onTape(t: Tape, node: u32): JsonValue {
+    return new JsonValue(0, t, node);
   }
 
   /** Parses any JSON document, like `JSON.parseValue` (throws `JsonError`). */
   static parse(text: string, options: JsonParseOptions | null = null): JsonValue {
     const depth = jsonMaxDepth(options) as u32;
-    let slot = JsonHandleSlot { handle: 0 };
-    let err = "";
-    if (!velt_rt_json_parse_value_with(text, depth, slot, err)) {
-      throw new JsonError(err);
+    const r = parseTape(text, depth, jsonFlags(options, 0) as u32);
+    if (r instanceof TapeError) {
+      throw new JsonError(r.message);
     }
-    return new JsonValue(slot.handle);
+    return JsonValue.onTape(r as Tape, 0);
   }
 
   // A `JsonValue` owning `h`, or null for the runtime's null handle.
@@ -218,13 +272,29 @@ export class JsonValue {
 
   /** The JSON form of any value `JSON.stringify` accepts. */
   static from<T>(x: T): JsonValue {
-    const text = JSON.stringify(x);
-    let slot = JsonHandleSlot { handle: 0 };
-    let err = "";
-    if (!velt_rt_json_parse_value(text, slot, err)) {
-      panic(`JsonValue.from: ${err}`);
+    const r = parseTape(JSON.stringify(x), 0);
+    if (r instanceof TapeError) {
+      panic(`JsonValue.from: ${r.message}`);
     }
-    return new JsonValue(slot.handle);
+    return JsonValue.onTape(r as Tape, 0);
+  }
+
+  /**
+   * `JSON.parse(text, reviver)`'s second step, as JavaScript applies it: from the innermost
+   * values out, `reviver(key, value)` gives each member's new value (`undefined`: the member is
+   * deleted; an array element becomes `null`), and last the value itself, under the key `""`.
+   * Returns the new value; this one is unchanged. `undefined` for the value itself throws a
+   * `TypeError` (JavaScript returns `undefined`, which a `JsonValue` can't be). The reviver's
+   * value parameter must be written `v: JsonValue` until #924.
+   */
+  revive(reviver: JsonReplacer): JsonValue {
+    const out = jsonRevived("", this, reviver);
+    if (out == undefined) {
+      throw new TypeError(
+        "JsonValue.revive: the reviver returned undefined for the value itself (JSON.parse would return undefined; a JsonValue can't be undefined)",
+      );
+    }
+    return out;
   }
 
   /** Decodes this value into a `T`, like `JSON.parse<T>` (throws `JsonError`). */
@@ -232,16 +302,70 @@ export class JsonValue {
     return JSON.parse<T>(this.stringify(), options);
   }
 
+  // A tape value becomes a runtime tree (before an edit).
+  private toTree() {
+    const t = this.#tape;
+    if (t == null) {
+      return;
+    }
+    this.#handle = treeOf(t, this.#node);
+    this.#tape = null;
+  }
+
+  /**
+   * A runtime handle of its own to this value (for the compiler's glue and edits: the caller
+   * frees it with `velt_rt_json_value_free`): another reference to the tree, or a tree made from
+   * the tape.
+   */
+  private __runtimeHandle(): u64 {
+    const t = this.#tape;
+    if (t != null) {
+      return treeOf(t, this.#node);
+    }
+    return velt_rt_json_value_clone(this.#handle);
+  }
+
+  /**
+   * Reads one value with `r` (compiled glue: a `JsonValue` field being decoded): null when the
+   * reader failed. Private: the glue calls it by name.
+   */
+  private static __fromReader(r: Reader): JsonValue | null {
+    const t = r.readValue();
+    if (t != null) {
+      return JsonValue.onTape(t, 0);
+    }
+    if (r.rowsValue) {
+      return new JsonValue(r.lastHandle());
+    }
+    return null;
+  }
+
+  /** Appends this value as `JSON.stringify` writes it to the builder `out` (compiled glue). */
+  private __writeJson(out: string): void {
+    const t = this.#tape;
+    if (t != null) {
+      const node = this.#node;
+      t.write(out, node);
+      return;
+    }
+    const h = this.#handle;
+    velt_rt_strbuf_push_json_value(out, h);
+  }
+
   /** Sets object member `key` (an existing key keeps its position); false if not an object. */
   set(key: string, value: JsonValue): bool {
+    this.toTree();
+    const h = value.__runtimeHandle();
     let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_set(slot, key, value.#handle);
+    const ok = velt_rt_json_value_set(slot, key, h);
     this.#handle = slot.handle;
+    velt_rt_json_value_free(h);
     return ok;
   }
 
   /** Removes object member `key`; false if absent or not an object. */
   delete(key: string): bool {
+    this.toTree();
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_delete(slot, key);
     this.#handle = slot.handle;
@@ -250,9 +374,12 @@ export class JsonValue {
 
   /** Appends to an array; false if not an array. */
   push(value: JsonValue): bool {
+    this.toTree();
+    const h = value.__runtimeHandle();
     let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_push(slot, value.#handle);
+    const ok = velt_rt_json_value_push(slot, h);
     this.#handle = slot.handle;
+    velt_rt_json_value_free(h);
     return ok;
   }
 
@@ -261,14 +388,22 @@ export class JsonValue {
     if (i < 0) {
       return false;
     }
+    this.toTree();
+    const h = value.__runtimeHandle();
     let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_set_at(slot, i as u64, value.#handle);
+    const ok = velt_rt_json_value_set_at(slot, i as u64, h);
     this.#handle = slot.handle;
+    velt_rt_json_value_free(h);
     return ok;
   }
 
   /** Object member `key`, or null (not an object, or no such key). */
   get(key: string): JsonValue | null {
+    const t = this.#tape;
+    if (t != null) {
+      const v = t.find(this.#node, key);
+      return v < 0 ? null : JsonValue.onTape(t, v as u32);
+    }
     return JsonValue.wrap(velt_rt_json_value_get(this.#handle, key));
   }
 
@@ -277,6 +412,10 @@ export class JsonValue {
    * `JSON.parse` sees an absent `T | null` field and an explicit `null` alike).
    */
   has(key: string): bool {
+    const t = this.#tape;
+    if (t != null) {
+      return t.find(this.#node, key) >= 0;
+    }
     return this.get(key) != null;
   }
 
@@ -285,47 +424,86 @@ export class JsonValue {
     if (i < 0) {
       return null;
     }
+    const t = this.#tape;
+    if (t != null) {
+      const v = t.child(this.#node, i);
+      return v < 0 ? null : JsonValue.onTape(t, v as u32);
+    }
     return JsonValue.wrap(velt_rt_json_value_at(this.#handle, i as u64));
   }
 
   /** Array length, object member count, string length (UTF-16 code units); 0 otherwise. */
   len(): i64 {
+    const t = this.#tape;
+    if (t != null) {
+      const k = t.kind(this.#node);
+      if (k == T_STRING) {
+        return t.units(this.#node);
+      }
+      return k == T_ARRAY || k == T_OBJECT ? t.count(this.#node) : 0;
+    }
     return velt_rt_json_value_len(this.#handle) as i64;
+  }
+
+  // The kind as the runtime numbers them (`KIND_*`).
+  private kind(): u32 {
+    const t = this.#tape;
+    if (t != null) {
+      const k = t.kind(this.#node);
+      if (k == T_NULL) {
+        return KIND_NULL;
+      }
+      if (k == T_TRUE || k == T_FALSE) {
+        return KIND_BOOL;
+      }
+      if (k == T_NUMBER) {
+        return KIND_NUMBER;
+      }
+      if (k == T_STRING) {
+        return KIND_STRING;
+      }
+      return k == T_ARRAY ? KIND_ARRAY : KIND_OBJECT;
+    }
+    return velt_rt_json_value_kind(this.#handle);
   }
 
   /** Whether this value is JSON `null`. */
   isNull(): bool {
     // The null handle (from the runtime) is JSON null too.
-    return velt_rt_json_value_kind(this.#handle) <= KIND_NULL;
+    return this.kind() <= KIND_NULL;
   }
 
   /** Whether this value is a boolean. */
   isBool(): bool {
-    return velt_rt_json_value_kind(this.#handle) == KIND_BOOL;
+    return this.kind() == KIND_BOOL;
   }
 
   /** Whether this value is a number. */
   isNumber(): bool {
-    return velt_rt_json_value_kind(this.#handle) == KIND_NUMBER;
+    return this.kind() == KIND_NUMBER;
   }
 
   /** Whether this value is a string. */
   isString(): bool {
-    return velt_rt_json_value_kind(this.#handle) == KIND_STRING;
+    return this.kind() == KIND_STRING;
   }
 
   /** Whether this value is an array. */
   isArray(): bool {
-    return velt_rt_json_value_kind(this.#handle) == KIND_ARRAY;
+    return this.kind() == KIND_ARRAY;
   }
 
   /** Whether this value is an object. */
   isObject(): bool {
-    return velt_rt_json_value_kind(this.#handle) == KIND_OBJECT;
+    return this.kind() == KIND_OBJECT;
   }
 
   /** The value if it is a number, else null. */
   asNumber(): f64 | null {
+    const t = this.#tape;
+    if (t != null) {
+      return t.kind(this.#node) == T_NUMBER ? t.number(this.#node) : null;
+    }
     if (!this.isNumber()) {
       return null;
     }
@@ -334,6 +512,11 @@ export class JsonValue {
 
   /** The value if it is a boolean, else null. */
   asBool(): bool | null {
+    const t = this.#tape;
+    if (t != null) {
+      const k = t.kind(this.#node);
+      return k == T_TRUE ? true : k == T_FALSE ? false : null;
+    }
     if (!this.isBool()) {
       return null;
     }
@@ -342,6 +525,10 @@ export class JsonValue {
 
   /** The value if it is a string, else null. */
   asString(): string | null {
+    const t = this.#tape;
+    if (t != null) {
+      return t.kind(this.#node) == T_STRING ? t.text(this.#node) : null;
+    }
     let out = "";
     if (velt_rt_json_value_as_str(this.#handle, out)) {
       return out;
@@ -349,9 +536,24 @@ export class JsonValue {
     return null;
   }
 
-  /** Object keys in document order; empty for non-objects. */
+  /**
+   * Object keys in JavaScript's order, as `Object.keys` gives them: array-index keys such as
+   * `"2"` first, ascending, then the others in document order (a repeated key once, at its
+   * first place); empty for non-objects.
+   */
   keys(): string[] {
     const out: string[] = [];
+    const t = this.#tape;
+    if (t != null) {
+      if (t.kind(this.#node) != T_OBJECT) {
+        return out;
+      }
+      const n = t.count(this.#node);
+      for (let i: i64 = 0; i < n; i++) {
+        out.push(t.text(t.member(this.#node, i) as u32));
+      }
+      return out;
+    }
     if (!this.isObject()) {
       return out;
     }
@@ -366,24 +568,129 @@ export class JsonValue {
 
   /** Same as `JSON.stringify(this)`. */
   stringify(): string {
+    const t = this.#tape;
+    if (t != null) {
+      return t.stringify(this.#node);
+    }
     return velt_rt_json_value_stringify(this.#handle);
   }
 
   /** Another reference to the same value: O(1) (edits copy on write, so they stay apart). */
   clone(): JsonValue {
+    const t = this.#tape;
+    if (t != null) {
+      return JsonValue.onTape(t, this.#node);
+    }
     return new JsonValue(velt_rt_json_value_clone(this.#handle));
   }
 
   /** Drop hook: releases this reference (values taken with `get` or `at` stay valid). */
   [Symbol.dispose]() {
-    velt_rt_json_value_free(this.#handle);
-    this.#handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_json_value_free(this.#handle);
+      this.#handle = 0;
+    }
   }
+}
+
+// A runtime tree made from value `node` of tape `t` (its JSON text, parsed by the runtime).
+function treeOf(t: Tape, node: u32): u64 {
+  const text = t.stringify(node);
+  let slot = JsonHandleSlot { handle: 0 };
+  let err = "";
+  if (!velt_rt_json_parse_value_with(text, 0, slot, err)) {
+    panic(`ICE: a tape's JSON text did not parse: ${err}`);
+  }
+  return slot.handle;
 }
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
 // the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
+/**
+ * A replacer function of `JSON.stringify(value, replacer, space)`: called with each key and the
+ * JSON form of its value (the value passed itself under the key `""` first), it returns the
+ * value to write there, or `undefined` to leave a member out (an array element is then `null`).
+ */
+export type JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined;
+
+// `JSON.stringify(value, replacer)` (the compiler calls it): `text` is `JSON.stringify(value)`,
+// which `replacer` rewrites as JavaScript applies it, from the top: its result for a key is
+// what is written there, and the members of that result are replaced in turn. `undefined` for
+// the value itself throws a `TypeError` (JavaScript returns `undefined`; this returns a string).
+function jsonReplaceWith(text: string, replacer: JsonReplacer): string {
+  let root = JsonValue.of(null);
+  try {
+    // At any depth: `stringify` writes values nested deeper than the default limit too.
+    root = JsonValue.parse(text, { maxDepth: 4294967295 });
+  } catch (e) {
+    // `text` is `JSON.stringify`'s own output.
+    panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
+  }
+  const out = jsonReplaced("", root, replacer);
+  if (out == undefined) {
+    throw new TypeError(
+      "JSON.stringify: the replacer returned undefined for the value itself (JavaScript would return undefined; Velt's JSON.stringify returns a string)",
+    );
+  }
+  return out.stringify();
+}
+
+function jsonReplaced(
+  key: string,
+  value: JsonValue,
+  replacer: JsonReplacer,
+): JsonValue | undefined {
+  const r = replacer(key, value);
+  if (r == undefined) {
+    return undefined;
+  }
+  if (r.isArray()) {
+    const out = JsonValue.array();
+    const n = r.len();
+    for (let i: i64 = 0; i < n; i++) {
+      const e = jsonReplaced(String(i), r.at(i)!, replacer);
+      out.push(e ?? JsonValue.of(null));
+    }
+    return out;
+  }
+  if (r.isObject()) {
+    const out = JsonValue.object();
+    for (const k of r.keys()) {
+      const e = jsonReplaced(k, r.get(k)!, replacer);
+      if (e != undefined) {
+        out.set(k, e);
+      }
+    }
+    return out;
+  }
+  return r;
+}
+
+// `value.revive(reviver)`: its members revived first (in place of the value's own), then it.
+function jsonRevived(key: string, value: JsonValue, reviver: JsonReplacer): JsonValue | undefined {
+  if (value.isArray()) {
+    const out = JsonValue.array();
+    const n = value.len();
+    for (let i: i64 = 0; i < n; i++) {
+      const e = jsonRevived(String(i), value.at(i)!, reviver);
+      out.push(e ?? JsonValue.of(null));
+    }
+    return reviver(key, out);
+  }
+  if (value.isObject()) {
+    const out = JsonValue.object();
+    for (const k of value.keys()) {
+      const e = jsonRevived(k, value.get(k)!, reviver);
+      if (e != undefined) {
+        out.set(k, e);
+      }
+    }
+    return reviver(key, out);
+  }
+  return reviver(key, value);
+}
+
 function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {
   if (!filter && gap.length == 0) {
     return text;

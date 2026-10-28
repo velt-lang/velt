@@ -1,0 +1,40 @@
+// Wide parsed objects are read in linear time (#1660): `get` of every key, `at` over every
+// member and `stringify`, of an object with plain keys, one with array-index keys (written in
+// descending order) and one with a repeated key. Each of these once searched the keys for every
+// member, which took minutes for these sizes.
+function build(n: i64, index: bool, repeat: bool): string {
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    parts.push(index ? `"${n - 1 - i}":${n - 1 - i}` : `"k${i}":${i}`);
+  }
+  if (repeat) {
+    parts.push(`"k0":-1`);
+  }
+  return "{" + parts.join(",") + "}";
+}
+
+function main() {
+  const n: i64 = 30000;
+  const plain = JSON.parseValue(build(n, false, false));
+  let sum: f64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    sum += plain.get(`k${i}`)!.asNumber()!;
+  }
+  console.log(plain.len(), sum, plain.get("k") == null, plain.has(`k${n - 1}`));
+
+  const index = JSON.parseValue(build(n, true, false));
+  const text = index.stringify();
+  let first: f64 = 0;
+  for (let i: i64 = 0; i < index.len(); i++) {
+    first += (i as f64) * index.at(i)!.asNumber()!;
+  }
+  console.log(text.length, text.substring(0, 24), index.keys()[(n - 1) as usize], first);
+
+  const repeated = JSON.parseValue(build(n, false, true));
+  let at: f64 = 0;
+  for (let i: i64 = 0; i < repeated.len(); i++) {
+    at += repeated.at(i)!.asNumber()!;
+  }
+  console.log(repeated.len(), repeated.get("k0")!.asNumber(), at, repeated.stringify().length);
+  console.log(repeated.keys().slice(0, 3).join(","));
+}

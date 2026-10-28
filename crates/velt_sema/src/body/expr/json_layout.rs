@@ -11,8 +11,8 @@ use crate::ctx::Item;
 use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `JSON.stringify(value, replacer, space?)` on the prelude's `JSON`; `None` for any other
-    /// call.
+    /// `JSON.stringify(value, replacer, space?)` on the prelude's `JSON`, or the error for
+    /// `JSON.parse(text, reviver)` (`json_parse_reviver`); `None` for any other call.
     pub(super) fn json_stringify_layout(
         &mut self,
         callee: &ast::Expr,
@@ -35,7 +35,10 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.json_literal_iface(callee, type_args, args, None, span) {
             return Some(h);
         }
-        if prop.name != "stringify" || args.len() < 2 || o.name != "JSON" {
+        if !matches!(prop.name.as_str(), "stringify" | "parse")
+            || args.len() < 2
+            || o.name != "JSON"
+        {
             return None;
         }
         if self.is_local_name("JSON") {
@@ -46,13 +49,24 @@ impl FnCx<'_, '_> {
         {
             return None;
         }
+        if prop.name == "parse" {
+            return self.json_parse_reviver(&args[1], span);
+        }
         if args.len() > 3 {
             self.arg_count_error("`JSON.stringify`", 1, 3, args.len(), span);
             self.check_args_loose(args);
             return Some(self.error_expr(span));
         }
         let text = self.call(callee, type_args, &args[..1], false, None, span);
-        let (keys, filter) = self.json_replacer(&args[1]);
+        let (text, keys, filter) = match self.json_replacer_fn(&args[1]) {
+            // A replacer function rewrites the text first; then only `space` lays it out.
+            Ok(f) => {
+                let str_ = self.cx.ty.str_;
+                let text = self.json_helper_call("jsonReplaceWith", vec![text, f], str_, span);
+                (text, self.str_lit("", span), false)
+            }
+            Err((keys, filter)) => (text, keys, filter),
+        };
         let (helper, gap) = match args.get(2) {
             Some(a) => self.json_gap(a),
             None => ("jsonRelayout", self.str_lit("", span)),
@@ -63,13 +77,42 @@ impl FnCx<'_, '_> {
         Some(self.json_helper_call(helper, vec![text, keys, filter, gap], str_, span))
     }
 
-    /// The replacer: its keys' JSON text and whether it filters (`null`: no).
-    fn json_replacer(&mut self, a: &ast::Expr) -> (hir::Expr, bool) {
-        let span = a.span;
+    /// The replacer, checked once: a function (an arrow or function expression, or a function
+    /// value) is checked as the prelude's `JsonReplacer`,
+    /// `(key: string, value: JsonValue) => JsonValue | undefined`, and is returned as `Ok`; an
+    /// array of keys or `null` gives `Err` with what `json_replacer` makes of it.
+    fn json_replacer_fn(&mut self, a: &ast::Expr) -> Result<hir::Expr, (hir::Expr, bool)> {
+        let helper = self.cx.prelude_fn("jsonReplaceWith");
+        let pty = helper.and_then(|d| self.cx.try_fn(d)?.params.get(1).map(|p| p.ty));
+        // An arrow or function expression must write its value parameter `JsonValue`
+        // (`json_callbacks`); its other parameters take their types from `JsonReplacer`.
+        match self.json_callback_typed(a, "`JSON.stringify`") {
+            Some(false) => return Ok(self.error_expr(a.span)),
+            Some(true) if pty.is_some() => {
+                let pty = pty.expect("ICE: checked");
+                let h = self.expr(a, Some(pty), Want::Borrow);
+                return Ok(self.coerce(h, pty));
+            }
+            _ => {}
+        }
         if is_null(a) {
-            return (self.str_lit("", span), false);
+            return Err((self.str_lit("", a.span), false));
         }
         let h = self.expr(a, None, Want::Borrow);
+        if let (TyKind::FnPtr { .. } | TyKind::Closure(_), Some(pty)) = (self.cx.ty.kind(h.ty), pty)
+        {
+            // Any other function is a `JsonReplacer` as a whole, or the error below.
+            match self.try_coerce(h, pty) {
+                Ok(h) => return Ok(h),
+                Err(h) => return Err(self.json_replacer(h, a.span)),
+            }
+        }
+        Err(self.json_replacer(h, a.span))
+    }
+
+    /// The replacer `h` (checked; not a function, not `null`): its keys' JSON text and whether
+    /// it filters.
+    fn json_replacer(&mut self, h: hir::Expr, span: Span) -> (hir::Expr, bool) {
         let str_ = self.cx.ty.str_;
         let elem = self.cx.ty.array_elem(h.ty).map(|e| self.cx.widened(e));
         let helper = match elem {
@@ -87,7 +130,7 @@ impl FnCx<'_, '_> {
         if h.ty != self.cx.ty.error {
             let note = match self.cx.ty.kind(h.ty) {
                 TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                    "a replacer function is not supported yet: pass an array of keys, or build the value to write first"
+                    "a replacer function takes `(key: string, value: JsonValue)` and returns `JsonValue | undefined`"
                 }
                 _ => "pass an array of the keys to write (strings or numbers), or `null`",
             };
@@ -152,6 +195,8 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
+        // `jsonReplaceWith` throws a `TypeError` for a root replaced by `undefined`.
+        self.call_throws(d, &[], ty, span);
         let kind = H::Call {
             callee: Callee::Def(d, vec![]),
             args,

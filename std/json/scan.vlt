@@ -119,6 +119,10 @@ export class Scanner {
   digitsValue: u64 = 0;
   exponent: i64 = 0;
   negative: bool = false;
+  /** JSONC (`JSON.parse` options): the text had its comments blanked (`blankComments`); a
+   *  comma may come before `]` and `}`. */
+  comments: bool = false;
+  trailingCommas: bool = false;
   /** The last error: its detail and byte offset. */
   code: u8 = OK;
   at: usize = 0;
@@ -145,6 +149,28 @@ export class Scanner {
     }
     this.pos = pos;
     return -1;
+  }
+
+  /**
+   * The value of the number token just lexed: from the digits the scanner read when that is
+   * exact (velt:number/parse's `decimalValue`), else by the general parser.
+   */
+  numberValue(): f64 {
+    const w = this.digitsValue;
+    const neg = this.negative;
+    if (this.small) {
+      return neg ? -(w as f64) : w as f64;
+    }
+    if (this.exact) {
+      if (w == 0) {
+        return neg ? -0.0 : 0;
+      }
+      const r = decimalValue(w, this.exponent);
+      if (r.ok) {
+        return neg ? -r.value : r.value;
+      }
+    }
+    return Number(utf8Substring(this.src, this.start, this.end));
   }
 
   /** The last error's text. */
@@ -751,4 +777,77 @@ export function numberI64(src: string, start: usize, end: usize, integer: bool):
     return acc;
   }
   return acc == min ? null : -acc;
+}
+
+/**
+ * JSONC: `src` with its line (`// …`) and block (`/* … *\/`) comments outside strings turned
+ * into spaces (newlines kept), so every byte keeps its offset and the scanner never meets a
+ * comment: strict JSON pays nothing for JSONC. An unclosed `/*` and a `/` that starts no comment
+ * stay, so the scan fails at that byte, as it did when the scanner skipped comments itself.
+ */
+export function blankComments(src: string): string {
+  const n = __intrinsic_str_byte_len(src);
+  let i: usize = 0;
+  let from: usize = 0;
+  let out = "";
+  while (i < n) {
+    const b = __intrinsic_str_byte_at(src, i as u64);
+    if (b == QUOTE) {
+      // A string: skip to its closing quote, past escapes.
+      i++;
+      while (i < n) {
+        const c = __intrinsic_str_byte_at(src, i as u64);
+        if (c == BACKSLASH) {
+          i += 2;
+          continue;
+        }
+        i++;
+        if (c == QUOTE) {
+          break;
+        }
+      }
+      continue;
+    }
+    if (b != 47 || i + 1 >= n) {
+      i++;
+      continue;
+    }
+    const next = __intrinsic_str_byte_at(src, (i + 1) as u64);
+    let end = i;
+    if (next == 47) {
+      end = i + 2;
+      while (end < n && __intrinsic_str_byte_at(src, end as u64) != 10) {
+        end++;
+      }
+    } else if (next == 42) {
+      let j = i + 2;
+      while (
+        j + 1 < n &&
+        !(
+          __intrinsic_str_byte_at(src, j as u64) == 42 &&
+          __intrinsic_str_byte_at(src, (j + 1) as u64) == 47
+        )
+      ) {
+        j++;
+      }
+      if (j + 1 >= n) {
+        // Unclosed: left for the scan to fail at.
+        break;
+      }
+      end = j + 2;
+    } else {
+      i++;
+      continue;
+    }
+    out += utf8Substring(src, from, i);
+    for (let k = i; k < end; k++) {
+      out += __intrinsic_str_byte_at(src, k as u64) == 10 ? "\n" : " ";
+    }
+    i = end;
+    from = end;
+  }
+  if (from == 0) {
+    return src;
+  }
+  return out + utf8Substring(src, from, n);
 }

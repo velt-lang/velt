@@ -97,6 +97,7 @@ import * as std_http_stream from "velt:http/stream";
 import * as std_import_meta from "velt:import_meta";
 import * as std_json_reader from "velt:json/reader";
 import * as std_json_scan from "velt:json/scan";
+import * as std_json_tape from "velt:json/tape";
 import * as std_json_writer from "velt:json/writer";
 import * as std_jsx from "velt:jsx";
 import * as std_jsx_attrs from "velt:jsx/attrs";

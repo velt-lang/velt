@@ -1,0 +1,18 @@
+{"name":"ada","age":36,"tags":["a","b"]}
+{
+  "name": "ada",
+  "password": "pw",
+  "age": 72,
+  "tags": [
+    "a",
+    "b"
+  ]
+}
+{"name":"ada","password":"pw","age":36,"tags":["a",null]}
+TypeError
+{"wrapped":true}
+[1,"x"]
+{"name":"ada","age":36} 77
+402
+{"a":10,"b":[10,20,{"c":30}],"date":"2026-10-27"} a,0,1,c,2,b,date,drop,
+TypeError
