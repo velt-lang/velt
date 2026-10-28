@@ -596,6 +596,10 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
+            // Only a direct `T extends AtomicValue`: nothing else can stand for the compiler's.
+            if Some(b.iface) == self.prelude_iface("AtomicValue") {
+                return declared.contains(b);
+            }
             if declared
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b))

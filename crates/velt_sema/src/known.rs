@@ -32,6 +32,19 @@ impl Ctx<'_> {
         }
     }
 
+    /// Reports `iface` named in an `extends` or `implements` at `span` if it is the prelude's
+    /// `AtomicValue`, whose types only the compiler decides; whether it was.
+    pub(crate) fn refuse_atomic_value(&mut self, iface: DefId, span: velt_common::Span) -> bool {
+        if Some(iface) != self.prelude_iface("AtomicValue") {
+            return false;
+        }
+        self.error(
+            velt_common::Diagnostic::error("`AtomicValue` cannot be extended or implemented", span)
+                .with_note("the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values"),
+        );
+        true
+    }
+
     /// An interface exported by the prelude under `name` (`Iterator`, `Iterable`).
     pub fn prelude_iface(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {

@@ -53,4 +53,31 @@ function shaped(o: Shaped): Shaped {
   return viaObj<Shaped>(o);
 }
 
+// Nor through a type parameter: one bounded by an interface declared to extend `AtomicValue`,
+// or by an interface a blanket `extend` makes an `AtomicValue`, does not satisfy the bound.
+struct Q {
+  a: u64;
+  s: string;
+}
+
+extend Q implements Shaped {}
+
+function viaParam<T extends AtomicValue>(v: T, w: T): T {
+  const a = new Atomic<T>(v);
+  a.store(w);
+  return a.exchange(v);
+}
+
+function outer<T extends Shaped>(v: T, w: T): T {
+  return viaParam<T>(v, w);
+}
+
+interface Tag {}
+
+extend<T extends Tag> T implements AtomicValue {}
+
+function tagged<T extends Tag>(v: T, w: T): T {
+  return viaParam<T>(v, w);
+}
+
 function main() {}

@@ -42,6 +42,10 @@ fn flatten(cx: &mut Ctx, d: DefId, done: &mut Vec<bool>, stack: &mut Vec<DefId>)
             cx.err("interface inheritance cycle", span);
             continue;
         }
+        let span = cx.iface(d).map_or(Span::DUMMY, |i| i.span);
+        if cx.refuse_atomic_value(p.iface, span) {
+            continue;
+        }
         flatten(cx, p.iface, done, stack);
         ok_parents.push(p);
     }
