@@ -534,14 +534,14 @@ impl Ctx<'_> {
         parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
     }
 
-    /// Is `t` a reference an `Atomic` word holds: `shared<U>` or `shared<U> | null`
+    /// Is `t` a reference an `Atomic` word holds: `shared<U>`, `shared<U> | null` or `string`
     /// (atomics.md "References")?
     pub fn atomic_ref(&self, t: TyId) -> bool {
-        let inner = match self.ty.kind(t) {
-            TyKind::Option(inner, _) => *inner,
-            _ => t,
-        };
-        matches!(self.ty.kind(inner), TyKind::Shared(_))
+        match self.ty.kind(t) {
+            TyKind::Shared(_) | TyKind::Str => true,
+            TyKind::Option(inner, _) => matches!(self.ty.kind(*inner), TyKind::Shared(_)),
+            _ => false,
+        }
     }
 
     /// `T` of an `Atomic<T>`.

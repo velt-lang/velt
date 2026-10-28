@@ -187,8 +187,8 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
   per constant, so a swap keeps its value.
-- ``` `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string` ``` (a type
-  parameter too: the instruction depends on the type).
+- ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
+  (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
@@ -569,6 +569,25 @@ entry are redirected there.
 - **Tests:** `std/atomic_ref_sections`. A task on another thread is inside a function holding a
   loaded value while main replaces it 10 times and collects 100 times: nothing is dropped
   until it returns. Without sections, all 10 are dropped and the holder reads a freed string.
+
+## Strings (#1696 step 2f)
+
+A string is three words (rt_abi.md), so an `Atomic<string>`'s word points to a counted box
+holding one: the box a `shared<string>` has. velt_vir `Cx::adt_field_tys` lays the
+`Atomic<string>`'s field out as `shared<string>`, so its drop glue releases the box, and
+`new Atomic<string>(s)` boxes `s` (`adt_lit`). `lower/atomic_str.rs` lowers the methods:
+- **`load`:** the string in the box, borrowed, as a reference `load` is (the function's
+  section keeps the box). In an async function or a generator it is copied at once, inside a
+  section of its own.
+- **`store(v)` / `exchange(v)`:** box `v` and swap it in. `exchange` gives a copy of the string
+  before. The old box is retired as `shared<string>`.
+- **`compareExchange(expected, v)`:** compares contents. It loads the box (acquire), compares
+  its string with `expected`, and swaps the pointer if no writer replaced the box meanwhile. A
+  strong one reads again when another writer did; a weak one fails then. It returns `bool` and
+  drops `v`'s box when it did not swap.
+- **Not supported:** a static `Atomic<string>`, whose box is made at run time, stays in the
+  module state. `Atomic<string | null>` is not supported yet (`Atomic<shared<string> | null>`
+  is).
 
 ## Not in this design
 

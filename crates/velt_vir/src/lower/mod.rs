@@ -51,6 +51,7 @@ mod assign_target;
 mod async_fn;
 mod atomic;
 mod atomic_ref;
+mod atomic_str;
 mod attempt;
 mod boxes;
 mod boxing;

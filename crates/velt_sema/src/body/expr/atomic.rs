@@ -58,7 +58,7 @@ impl FnCx<'_, '_> {
             _ => {
                 let shown = self.cx.display(t);
                 let d = Diagnostic::error(
-                    format!("`Atomic<T>` needs a number type, `bool` or a `shared` value, found `{shown}`"),
+                    format!("`Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `{shown}`"),
                     span,
                 )
                 .with_note(
@@ -219,7 +219,10 @@ pub(crate) fn static_atomic_init(cx: &crate::ctx::Ctx, init: &hir::Expr) -> bool
     match &init.kind {
         hir::ExprKind::AdtLit { def, fields, .. } => {
             Some(*def) == cx.atomic_ty()
-                && fields.first().is_some_and(super::thread_local::is_literal)
+                // A `string`'s word points to a box made at run time: kept in the module state.
+                && fields
+                    .first()
+                    .is_some_and(|f| super::thread_local::is_literal(f) && f.ty != cx.ty.str_)
         }
         _ => false,
     }

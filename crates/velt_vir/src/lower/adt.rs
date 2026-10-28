@@ -20,6 +20,17 @@ impl FnLower<'_, '_> {
             }
             return Operand::Copy(obj);
         }
+        // `new Atomic<string>(s)`: the box holding `s` (atomic_str.rs).
+        if let TyKind::Adt(d, args) = self.cx.kind(ty) {
+            if args.len() == 1
+                && matches!(self.cx.kind(args[0]), TyKind::Str)
+                && super::atomic::is_atomic(self.cx, d)
+            {
+                let v = self.consume(&fields[0]);
+                let b = self.box_str(v);
+                return self.build_agg(ty, vec![b]);
+            }
+        }
         // A `presence` field given `FieldAbsent` is `null` with its flag clear; any other value
         // sets the flag (the flags are stored after the fields, `Cx::presence_slot`).
         let mut ops = self.consume_each(fields);

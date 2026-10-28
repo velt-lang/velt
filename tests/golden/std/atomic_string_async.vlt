@@ -1,0 +1,44 @@
+// An async function's `load()` of an `Atomic<string>` copies the string at once, inside an
+// epoch section of its own: writers that replace it and collect at every step can never free
+// the box between the load and the copy. Async tasks on 4 threads read while 4 others replace
+// and collect; every string read is whole (its two halves agree).
+import { collect } from "velt:sync/epoch";
+
+class Status {
+  text: Atomic<string> = new Atomic<string>("0:0");
+}
+
+async function writer(s: shared<Status>, id: u64, n: u64): Promise<u64> {
+  for (let i: u64 = 1; i <= n; i++) {
+    const v = id * 1000000 + i;
+    s.text.store(`${v}:${v}`);
+    collect();
+  }
+  return 0;
+}
+
+async function reader(s: shared<Status>, n: u64): Promise<u64> {
+  let torn: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const t = s.text.load("acquire");
+    const at = t.indexOf(":");
+    if (at < 0 || t.slice(0, at) != t.slice(at + 1)) {
+      torn++;
+    }
+  }
+  return torn;
+}
+
+async function main() {
+  const s = shared(new Status());
+  const ps: Promise<u64>[] = [];
+  for (let t: u64 = 1; t <= 4; t++) {
+    ps.push(spawn(writer(s, t, 400000)));
+    ps.push(spawn(reader(s, 1200000)));
+  }
+  let torn: u64 = 0;
+  for (const n of await Promise.all(ps)) {
+    torn += n;
+  }
+  console.log("torn", torn);
+}

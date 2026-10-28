@@ -1,7 +1,7 @@
-atomic_errors.vlt:4:10: error: `Atomic<T>` needs a number type, `bool` or a `shared` value, found `T`
+atomic_errors.vlt:4:10: error: `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `T`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one
 
-atomic_errors.vlt:7:15: error: `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string`
+atomic_errors.vlt:7:15: error: `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null`
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one
 
 atomic_errors.vlt:10:8: error: mismatched types

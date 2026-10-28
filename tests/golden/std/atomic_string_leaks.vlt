@@ -1,0 +1,26 @@
+// check: unfreed blocks at most 4
+// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, kept until the program exits.)
+// What an `Atomic<string>` owns is freed when nothing replaces it: loads into a binding and as
+// a temporary, failed compare-and-swaps (contents differ), and the `Atomic` dropped as a local,
+// a class field and in an array, with heap strings throughout.
+
+class Holder {
+  text: Atomic<string> = new Atomic<string>("held " + "x".repeat(40));
+}
+
+function main() {
+  const a = new Atomic<string>("first " + "y".repeat(40));
+  const kept = a.load();
+  console.log(kept.length, a.load().length);
+  console.log(
+    a.compareExchange("nope", "z".repeat(50)),
+    a.compareExchangeWeak("nope", "w".repeat(50)),
+  );
+  const h = new Holder();
+  console.log(h.text.load().length);
+  const cells: Atomic<string>[] = [];
+  for (let i = 0; i < 3; i++) {
+    cells.push(new Atomic<string>("cell " + "c".repeat(40 + i)));
+  }
+  console.log(cells[2].load().length, a.load().slice(0, 5));
+}
