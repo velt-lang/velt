@@ -287,9 +287,7 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
-    /// Evaluate a system function's argument for its effects only (the call is not made: the
-    /// target lacks the function). `xs.subarray(b, e)` (`Intrinsic::Subarray`) is no value of
-    /// its own out
+    /// Zeros before the variadic arguments on Apple arm64 (`APPLE_VARIADIC_REGS`).
     fn variadic_padding(&mut self, cargs: &mut Vec<Operand>, ctys: &mut Vec<Ty>) {
         let apple_arm = matches!(
             system::target_os(&self.cx.target),
