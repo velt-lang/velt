@@ -54,7 +54,12 @@ impl FnCx<'_, '_> {
         if !self.cx.frozen_readable(inner) {
             return h;
         }
-        self.cx.frozen_reads = true;
+        // `velt:sync/epoch`, which the prelude imports for every program, reads its registry
+        // in place: that alone does not make a program one that reads `shared` values.
+        let m = &self.cx.modules[self.module];
+        if !(m.is_std && m.path == "std/sync/epoch") {
+            self.cx.frozen_reads = true;
+        }
         let span = h.span;
         let mut h = h;
         set_place_mode(&mut h, UseMode::Borrow);

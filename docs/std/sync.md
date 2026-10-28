@@ -165,8 +165,13 @@ reads while an admin task swaps in a new one, or the root of a structure that wr
   `expected` (call it in a loop).
 
 It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
-thread may be reading it: for now such values stay allocated until the program ends (freeing
-them safely is #1696's next step).
+thread may be reading it: it is freed once no thread can be (`velt:sync/epoch` below). A
+function that calls `load()` runs in a section for that, which the compiler opens and closes:
+a few nanoseconds per call, so a loop of loads costs one. The section lasts the whole call, so
+values replaced while a long-running plain function loops are freed only once it returns
+(memory, not speed): keep such loops in a function of their own that returns now and then. An `async` function's `load()` counts
+the value at once, which keeps it valid across its `await`s: read many values in a plain
+function it calls.
 
 ```ts
 interface Config {
@@ -331,9 +336,9 @@ function main() {
 ## `velt:sync/epoch`
 
 Epoch-based reclamation, written in Velt on `Atomic`, `ThreadLocal` and `Mutex`: a way to drop
-a `shared` value that other threads may still be reading, once none can be. The compiler will
-call it for the values an `Atomic` of a `shared` value replaces (#1696). Lock-free code of your
-own can call it too.
+a `shared` value that other threads may still be reading, once none can be. The compiler calls
+it for the values an `Atomic` of a `shared` value replaces, and opens a section around a
+function that loads one. Lock-free code of your own can call it too.
 
 - `pin()` enters a *section*, and `unpin()` leaves it. Sections nest; an `unpin()` without a
   `pin()` before it on the thread is an error. While a thread is in one,

@@ -1,7 +1,8 @@
 // `Atomic<shared<T>>` and `Atomic<shared<T> | null>`: the word owns one counted reference.
 // `load` gives a counted copy, `store` and `exchange` move a reference in (`exchange` gives the
 // old one back), `compareExchange` compares identity and gives whether it swapped. Values a
-// store replaces are kept until reclamation frees them, so this file has no leak check.
+// store replaces are dropped by `velt:sync/epoch` at its own pace, so this file has no leak
+// check.
 
 interface Config {
   name: string;

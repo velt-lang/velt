@@ -11,6 +11,11 @@
 // rt_abi_async.md §9.2). Neither is ever Copy
 // (copying one would duplicate the lock). Their methods are the only way to reach the value.
 
+// Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
+// and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
+// `atomic_ref.rs`).
+import { pin, unpin, retire } from "velt:sync/epoch";
+
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:
  * `shared(new Mutex<T>(x))`. `m.with((v) => …)` locks, runs the callback on the value, then
