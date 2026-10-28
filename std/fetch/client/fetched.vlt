@@ -56,8 +56,9 @@ export class Fetched {
 
   /** Whether the body arrives decoded (its `content-encoding` no longer applies). */
   decoded(): bool {
+    // Null: too many codings, a body that is never decoded (reading it fails).
     const c = this.codings;
-    return c == null || c.length > 0;
+    return c != null && c.length > 0;
   }
 
   /** Throws once a body has been read: each response's body is received once. */
