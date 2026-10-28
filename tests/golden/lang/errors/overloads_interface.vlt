@@ -1,7 +1,8 @@
-// Overloaded interface methods are not supported yet.
-interface I {
-  m(x: string): string;
-  m(x: number): number;
+// Overloaded interface methods that return `void` (an event emitter's `on`) are not supported
+// yet; other overloaded interface methods are (overloads_interface_methods.vlt).
+interface Emitter {
+  on(ev: "a", f: (x: number) => void): void;
+  on(ev: "b", f: (x: string) => void): void;
 }
 
 function main() {}

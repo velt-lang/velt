@@ -3,9 +3,9 @@
 //! method that takes every form.
 //!
 //! Before collection, the signatures `m(a: A): X; m(a: A, b: B): Y;` become one required
-//! method that takes every form, `m(a: A, b?: B): X | Y` (each parameter the union of the
-//! signatures' types there, optional where a signature leaves it out; the result the union of
-//! theirs), and a default method `m#k` per signature whose body calls it: `return
+//! method that takes every form, `m(a: A, b?: B): any` (each parameter and the result the
+//! signatures' type when they agree, else `any`; a parameter optional where a signature leaves
+//! it out), and a default method `m#k` per signature whose body calls it: `return
 //! this.m(a, b);`, its result converted to the signature's with a check, as for an overloaded
 //! function (`crate::overloads`). A call `x.m(args)` picks the first signature that accepts it
 //! (`body::expr::overload_call`), so its result has that signature's type.
@@ -106,6 +106,7 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
     for (i, p) in longest.params.iter().enumerate() {
         let mut tys: Vec<ast::TypeExpr> = vec![];
         let mut optional = false;
+        let mut missing = false;
         for s in sigs {
             match s.params.get(i) {
                 Some(q) => {
@@ -114,12 +115,19 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
                         true => strip_undefined(&q.ty),
                         false => q.ty.clone(),
                     };
-                    add_member(&mut tys, t);
+                    if !tys.iter().any(|o| same_type(o, &t)) {
+                        tys.push(t);
+                    }
                 }
-                None => optional = true,
+                None => (optional, missing) = (true, true),
             }
         }
-        let ty = union(tys, p.span);
+        // The signatures' type when they agree, else `any`: an implementation takes every form
+        // (TypeScript's usual `definition?: any`), and each signature passes its own.
+        let ty = match (tys.len(), missing) {
+            (1, false) => tys.remove(0),
+            _ => named("any", p.span),
+        };
         let mut param = p.clone();
         param.optional = optional;
         match optional {
@@ -142,13 +150,20 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
         }
         params.push(param);
     }
-    let mut rets = vec![];
-    for s in sigs {
-        add_member(&mut rets, s.ret.clone()?);
+    // One result type when the signatures agree, else `any`: each implementation's result is
+    // checked against every signature's (`body::expr::iface_overload_impls`), and each
+    // signature's method converts the result to its own type.
+    let ret = first.ret.clone()?;
+    let same = (sigs.iter()).all(|s| s.ret.as_ref().is_some_and(|r| same_type(r, &ret)));
+    if !same && first.is_async {
+        return None;
     }
     let mut sig = first.clone();
     sig.params = params;
-    sig.ret = Some(union(rets, first.span));
+    sig.ret = Some(match same {
+        true => ret,
+        false => named("any", first.span),
+    });
     Some(sig)
 }
 
@@ -170,19 +185,6 @@ fn strip_undefined(t: &ast::TypeExpr) -> ast::TypeExpr {
     }
 }
 
-/// Adds `t` (or its members, for a union) to `out` unless written there already.
-fn add_member(out: &mut Vec<ast::TypeExpr>, t: ast::TypeExpr) {
-    if let ast::TypeExprKind::Union(ps) = &t.kind {
-        for p in ps {
-            add_member(out, p.clone());
-        }
-        return;
-    }
-    if !out.iter().any(|o| same_type(o, &t)) {
-        out.push(t);
-    }
-}
-
 fn union(mut tys: Vec<ast::TypeExpr>, span: velt_common::Span) -> ast::TypeExpr {
     match tys.len() {
         1 => tys.remove(0),
@@ -190,5 +192,18 @@ fn union(mut tys: Vec<ast::TypeExpr>, span: velt_common::Span) -> ast::TypeExpr 
             kind: ast::TypeExprKind::Union(tys),
             span,
         },
+    }
+}
+
+fn named(name: &str, span: velt_common::Span) -> ast::TypeExpr {
+    ast::TypeExpr {
+        kind: ast::TypeExprKind::Named {
+            path: vec![ast::Ident {
+                name: name.to_string(),
+                span,
+            }],
+            args: vec![],
+        },
+        span,
     }
 }

@@ -91,6 +91,7 @@ mod iface_nested;
 mod iface_notes;
 mod iface_object;
 mod iface_object_setters;
+mod iface_overload_impls;
 mod iface_write;
 mod in_keys;
 mod in_place_chain;

@@ -226,12 +226,16 @@ function main() {
   argument), an overloaded function is the first signature that fits it; elsewhere
   (`const g = f`) it is its implementation.
 - An interface may declare a method more than once (`directive(name: string, def: Def): App;
-  directive(name: string): Def | undefined;`). An implementation, in a class or an object
-  literal, is one method that takes every form: each parameter the union of the signatures'
-  types there, optional where one of them leaves it out (`directive(name: string, def?: Def)`),
-  and a result the union of theirs (`App | Def | undefined`) or narrower. A call takes the first
-  signature that accepts it, and its result is tested as above. Generic signatures, rest
-  parameters and `void` results there are not supported yet.
+  directive(name: string): Def | undefined;`). As in TypeScript, an implementation, in an object
+  literal or a class, is one method that fits every signature: its result is `any` or a type
+  every signature's result takes (a result `App | Def | undefined` is an error there, TS2416).
+  An object literal's method may take each parameter as the signatures write it or wider
+  (`definition?: any`); a class's takes `any` where the signatures differ or one leaves the
+  parameter out (`directive(name: string, definition?: any): any`), and their shared type
+  elsewhere, and returns `any` where the signatures' results differ, since a class method
+  implements an interface method with exactly its types. A call takes the first signature that
+  accepts it, and its result is tested as above. Generic signatures, rest parameters and `void`
+  results there are not supported yet.
 - `velt doc` shows the signatures, not the implementation.
 - Not supported yet: overloaded constructors, overloads of a function declared inside a
   function, and several declarations of one name that each have a body (overloads in Velt's own form, chosen by the most specific parameter types).

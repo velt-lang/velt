@@ -1,5 +1,7 @@
-// Overloaded interface methods (TypeScript's form, sigx's `App.directive`): one method of the
-// object literal takes every form, and a call has the type of the signature it matches.
+// Overloaded interface methods (TypeScript's form, sigx's `App.directive`): one method takes
+// every form, written as sigx writes it (`definition?: any): any`) in an object literal and a
+// class, or with a result every signature takes; a call has the type of the signature it
+// matches.
 interface Def {
   name: string;
 }
@@ -13,7 +15,7 @@ interface App {
 function makeApp(): App {
   const dirs = new Map<string, Def>();
   const app: App = {
-    directive(name: string, definition?: Def): App | Def | undefined {
+    directive(name: string, definition?: any): any {
       if (definition === undefined) return dirs.get(name);
       dirs.set(name, definition);
       return app;
@@ -33,7 +35,7 @@ console.log(found?.name, app.directive("missing"));
 
 class Registry implements App {
   defs: Def[] = [];
-  directive(name: string, definition?: Def): App | Def | undefined {
+  directive(name: string, definition?: any): any {
     if (definition === undefined) return this.defs.find((d) => d.name === name);
     this.defs.push(definition);
     return this;
@@ -45,6 +47,18 @@ class Registry implements App {
 
 const reg: App = new Registry();
 console.log(reg.directive("a", { name: "a" }).label(), reg.directive("a")?.name);
+
+// Signatures that agree on the result: an implementation returns that type.
+interface Sizer {
+  size(x: string): number;
+  size(x: number[]): number;
+}
+const sizer: Sizer = {
+  size(x: string | number[]): number {
+    return typeof x === "string" ? x.length : x.length;
+  },
+};
+console.log(sizer.size("abc"), sizer.size([1, 2]));
 
 // A signature whose result holds `undefined` out of the implementation's wider result.
 function lookup(name: string): Def | undefined;
