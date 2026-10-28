@@ -1,0 +1,85 @@
+// check: no leaks
+// `Blob`, `File` and `FormData` (#573): made, sliced and read; a form sent as
+// `multipart/form-data` (as undici writes it) and read back with `formData()`, also by a server
+// it is uploaded to; a urlencoded body as a form; a blob body's type as its `content-type`; and
+// headers given as name-value pairs. Valid TypeScript; prints what Node 22 prints.
+import { serve } from "velt:http";
+
+function show(v: FormDataEntryValue | null): string {
+  if (v == null) {
+    return "null";
+  }
+  if (typeof v == "string") {
+    return JSON.stringify(v);
+  }
+  return `${v.name} ${v.type} ${v.size}`;
+}
+
+const b = new Blob(["héllo", new Uint8Array([33])], { type: "Text/Plain" });
+console.log(b.size, b.type, await b.text(), await b.slice(-3).text(), b.slice(1, 3, "x/y").type);
+const f = new File(["abc"], "a.txt", { type: "text/plain", lastModified: 5 });
+console.log(f.name, f.size, f.type, f.lastModified, f instanceof Blob);
+const fd = new FormData();
+fd.append("a", "1\n2");
+fd.append("file", f);
+fd.append("b", new Blob(["zz"]));
+fd.append("c", new Blob(["zz"]), "c.bin");
+console.log(show(fd.get("a")), fd.getAll("a").length, fd.has("b"), show(fd.get("b")), show(fd.get("c")));
+const r = new Response(fd);
+const ct = r.headers.get("content-type") ?? "";
+console.log(ct.replace(/\d+$/, "N"));
+const t = await r.text();
+console.log(JSON.stringify(t.replaceAll(ct.slice(30), "BOUNDARY")));
+const back = await new Response(t, { headers: { "content-type": ct } }).formData();
+for (const [k, v] of back) {
+  console.log(k, show(v), typeof v == "string" ? "" : await v.text());
+}
+const u = await new Response("x=1&y=%20", {
+  headers: { "content-type": "application/x-www-form-urlencoded" },
+}).formData();
+console.log(show(u.get("x")), show(u.get("y")));
+try {
+  await new Response("x").formData();
+} catch (e) {
+  console.log((e as Error).message);
+}
+const bl = await new Response("abc", { headers: { "content-type": "A/b" } }).blob();
+console.log(bl.size, bl.type);
+const rb = new Response(new Blob(["q"], { type: "x/q" }));
+console.log(rb.headers.get("content-type"), await rb.text());
+fd.set("a", "3");
+fd.delete("b");
+console.log([...fd.keys()]);
+console.log(JSON.stringify(new Blob([]).type), JSON.stringify(new Blob(["a"], { type: "é" }).type));
+console.log((await b.bytes()).length, (await b.arrayBuffer()).byteLength);
+const req = new Request("http://x.test/", { method: "POST", body: fd });
+console.log((req.headers.get("content-type") ?? "").startsWith("multipart/form-data; boundary="));
+const rf = await req.formData();
+console.log(show(rf.get("a")), show(rf.get("file")));
+let streamed = 0;
+for await (const c of new Blob(["str", "eam"]).stream()) {
+  streamed += c.length;
+}
+console.log(streamed);
+
+const pairs = new Headers([
+  ["accept", "text/html"],
+  ["accept", "application/json"],
+]);
+console.log(pairs.get("accept"));
+
+async function upload(req: Request): Promise<Response> {
+  const form = await req.formData();
+  const file = form.get("file");
+  const size = file == null || typeof file == "string" ? -1 : file.size;
+  return new Response(`${show(form.get("a"))} ${size}`);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, upload);
+  const res = await fetch(`http://127.0.0.1:${server.port}/`, { method: "POST", body: fd });
+  console.log(await res.text());
+  await server.shutdown();
+}
+
+await main();

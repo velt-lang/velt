@@ -20,6 +20,10 @@ cachegrind instead and prints the instructions it executed (`I refs`). It needs 
 works in WSL and VMs where `perf` can't count, and the count varies far less between runs than
 times on a busy machine.
 
+The nightly benchmark guard (`bench/nightly.sh`) counts `bench/fetch/loopback.vlt` instead: the
+client against a Velt server in the same process (small, JSON and gzip bodies, sequential), which
+needs no Rust build and whose count repeats to within about 0.2%.
+
 The reqwest client is built with reqwest's `gzip` feature (for `gzip`), so it sends
 `accept-encoding: gzip` in every scenario; Velt and Node send `accept-encoding: gzip, deflate`.
 The server ignores it except on `/json-gzip`.

@@ -1,0 +1,41 @@
+// velt:fetch/forms: the body readers of `Response` and `Request` that give a `Blob` or a
+// `FormData`, `blob()` and `formData()`. `extend` blocks of their own, loaded (with the blob and
+// form code) only by programs that call them (std/prelude/global/fetch_forms.vlt).
+
+import { AbortError } from "velt:task";
+import { IoError } from "velt:io";
+import { Request } from "velt:fetch/request";
+import { Response } from "velt:fetch/response";
+import { Blob } from "velt:fetch/blob";
+import { FormData, parseForm } from "velt:fetch/form";
+
+extend Response {
+  /** The body as a `Blob` whose type is the `content-type` ("" without one). */
+  async blob(): Promise<Blob, IoError | AbortError> {
+    const bytes = await this.rawBytes();
+    return Blob.adopt(bytes, (this.headers.get("content-type") ?? "").toLowerCase());
+  }
+
+  /**
+   * The body as a `FormData`: a `multipart/form-data` or `application/x-www-form-urlencoded`
+   * body, as its `content-type` says (`IoError` "EINVAL", JS: `TypeError`, for any other).
+   */
+  async formData(): Promise<FormData, IoError | AbortError> {
+    const bytes = await this.rawBytes();
+    return parseForm(bytes, this.headers.get("content-type"));
+  }
+}
+
+extend Request {
+  /** The body as a `Blob` whose type is the `content-type` ("" without one). */
+  async blob(): Promise<Blob, IoError | AbortError> {
+    const bytes = await this.rawBytes();
+    return Blob.adopt(bytes, (this.headers.get("content-type") ?? "").toLowerCase());
+  }
+
+  /** The body as a `FormData` (see `Response.formData`). */
+  async formData(): Promise<FormData, IoError | AbortError> {
+    const bytes = await this.rawBytes();
+    return parseForm(bytes, this.headers.get("content-type"));
+  }
+}

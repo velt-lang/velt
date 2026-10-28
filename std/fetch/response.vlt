@@ -23,9 +23,11 @@ import {
   bodyParts,
   collect,
   impliedType,
+  sourceType,
 } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 import { Fetched } from "velt:fetch/client/fetched";
+import { tee } from "velt:fetch/tee";
 
 declare function velt_rt_http_resp_drop(r: u64);
 // A server response (std/http): the text body is taken (moved out, left empty), the bytes copied.
@@ -143,6 +145,14 @@ export class Response {
       }
       this.#stream = parts.stream;
       implied = type != 0 ? type : parts.implied;
+      const st = sourceType(body);
+      if (st != null && type == 0) {
+        // A blob's or form's type: a header of its own, unless `init` named one.
+        const h = this.headers;
+        if (!h.has("content-type")) {
+          h.set("content-type", st);
+        }
+      }
     }
     const fields = this.#fields;
     if (fields == null) {
@@ -303,6 +313,75 @@ export class Response {
       return "error";
     }
     return this.#remote != null ? "basic" : "default";
+  }
+
+  /**
+   * A copy of the response whose body can be read on its own: a streamed or fetched body is
+   * teed, each chunk going to both. Throws `IoError` "EINVAL" (JS: `TypeError`) when the body
+   * was already read.
+   */
+  clone(): Response throws IoError {
+    if (this.#used) {
+      throw new IoError("EINVAL", "Response.clone: Body has already been consumed.");
+    }
+    const r = new Response();
+    r.#code = this.#code;
+    r.#remote = this.#remote;
+    r.#source = this.#source;
+    r.#str = this.#str;
+    const data = this.#data;
+    if (data != null) {
+      r.#data = data.slice();
+    }
+    const f = this.#fetched;
+    if (f != null) {
+      // Both read the head from here on; the body (if any) goes to both through a tee, which
+      // now owns the connection.
+      r.#reason = this.statusText;
+      if (f.decoded()) {
+        this.decodedRemote().decoded = true;
+        r.#remote = this.#remote;
+      }
+      const h = Headers.adopt(this.headers.raw());
+      h.frozen = true;
+      r.#fields = h;
+      this.#fetched = null;
+      if (this.#source == RUNTIME) {
+        this.split(r, bodyOf(new Held(f)));
+      }
+      return r;
+    }
+    r.#reason = this.#reason;
+    const fields = this.#fields;
+    if (fields != null) {
+      r.#fields = new Headers(fields);
+    } else {
+      r.#implied = this.#implied;
+    }
+    const s = this.#stream;
+    this.#stream = null;
+    if (this.#source == STREAM && s != null) {
+      this.split(r, s[Symbol.asyncIterator]());
+    }
+    return r;
+  }
+
+  // The body `chunks` teed between this response and its clone `r`, both now streamed.
+  private split(r: Response, chunks: AsyncIterator<u8[], IoError | AbortError>) {
+    const [mine, theirs] = tee(chunks);
+    this.#source = STREAM;
+    this.#stream = BodyStream.adopt(mine);
+    r.#source = STREAM;
+    r.#stream = BodyStream.adopt(theirs);
+  }
+
+  // `#remote`, for a fetched response (which has one).
+  private decodedRemote(): Remote {
+    const remote = this.#remote;
+    if (remote == null) {
+      panic("ICE: a fetched response without its remote state");
+    }
+    return remote;
   }
 
   // `body` is in velt:fetch/streams, loaded with the streams it gives
@@ -466,13 +545,12 @@ export class Response {
       const [list, type] = fields.serverFlat();
       headers = list;
       implied = type;
-    } else if (this.#source == RUNTIME) {
+    } else if (this.#fetched != null) {
       headers = this.headers.raw();
-      const f = this.#fetched;
-      if (f != null && f.decoded()) {
-        // The body arrives decoded: the coding it was sent in no longer applies.
-        headers = withoutCoding(headers);
-      }
+    }
+    if (this.decoded()) {
+      // The body arrives decoded: the coding it was sent in no longer applies.
+      headers = withoutCoding(headers);
     }
     let none = "";
     return velt_rt_http_resp_build(
@@ -484,6 +562,16 @@ export class Response {
       [],
       implied,
     );
+  }
+
+  // Whether a fetched body arrives decoded (its `content-encoding` no longer applies).
+  private decoded(): bool {
+    const f = this.#fetched;
+    if (f != null) {
+      return f.decoded();
+    }
+    const remote = this.#remote;
+    return remote != null && remote.decoded;
   }
 
   // The body std/http copies into a server response once `toServer` built it (std only): null
@@ -552,13 +640,39 @@ function withoutCoding(list: string[]): string[] {
   return out;
 }
 
-// What only a fetched response has: the signal that aborts its body, its URL and `redirected`.
+// What only a fetched response has: the signal that aborts its body, its URL and `redirected`,
+// and (once it was cloned) whether its body arrives decoded.
 class Remote {
   signal: AbortSignal | null;
   url: string | null = null;
   redirected: bool | null = null;
+  decoded: bool = false;
 
   constructor(signal: AbortSignal | null) {
     this.signal = signal;
+  }
+}
+
+// A fetched body teed by `clone`: dropped with the last reader, it closes a connection whose body
+// nobody finished reading.
+class Held {
+  fetched: Fetched;
+
+  constructor(fetched: Fetched) {
+    this.fetched = fetched;
+  }
+
+  [Symbol.dispose]() {
+    this.fetched.close();
+  }
+}
+
+async function* bodyOf(held: Held): AsyncGenerator<u8[], IoError | AbortError> {
+  while (true) {
+    const chunk = await held.fetched.chunk();
+    if (chunk.length == 0) {
+      return;
+    }
+    yield chunk;
   }
 }

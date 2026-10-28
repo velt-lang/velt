@@ -4,8 +4,8 @@ The prelude is the part of the standard library that every module sees without a
 lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone`, `spawn`,
 `shared`) is implemented by the compiler.
 
-Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
-([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
+Node's web globals need no import either: `fetch`, `Request`, `Response`, `Headers`, `Blob`,
+`File` and `FormData` ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
 `AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
 `RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
 `TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`

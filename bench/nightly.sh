@@ -51,9 +51,12 @@ if [ -z "$VELT" ]; then
 fi
 
 # The benchmarks: CPU-bound programs whose work does not depend on timing (bench/async/timers
-# sleeps, the HTTP and database benchmarks need servers and load generators).
+# sleeps, the HTTP and database benchmarks need servers and load generators). bench/fetch is the
+# `fetch` client against a server in the same process, over loopback: its count repeats to within
+# about 0.2% (#601).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
-  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt)
+  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt
+  "$ROOT"/bench/fetch/*.vlt)
 # NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
 for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
   BENCHES+=("$ROOT/bench/$dir"/*.vlt)

@@ -10,7 +10,6 @@
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { TcpStream } from "velt:net";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
-import { delay } from "velt:timers";
 import { Target } from "velt:fetch/client/target";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
@@ -263,9 +262,13 @@ function bare(hostname: string): string {
   return hostname.startsWith("[") ? hostname.slice(1, (hostname.length as i64) - 1) : hostname;
 }
 
-/** `GAVE_UP` after `CONNECT_MS`, unless `stop` ends it first. */
+/**
+ * `GAVE_UP` after `CONNECT_MS`, unless `stop` ends it first. The runtime's `sleep` itself races
+ * `stop`, so it is dropped when it loses (a `delay` around it would keep the timer, and the
+ * process, alive for the rest of the 10 seconds).
+ */
 async function expire(stop: AbortSignal): Promise<IoResult<u64>> {
-  await Promise.race([delay(CONNECT_MS), stop.whenAborted()]);
+  await Promise.race([sleep(CONNECT_MS), stop.whenAborted()]);
   return gaveUp();
 }
 

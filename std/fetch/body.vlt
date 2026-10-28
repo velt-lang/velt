@@ -70,7 +70,12 @@ export function bodyParts(body: BodyInit | null): BodyParts {
     return { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
   }
   if (body instanceof ByteSource) {
-    // A `ReadableStream`: its `Uint8Array` chunks, read as the body is.
+    // A blob or form: its bytes (its type is set by `sourceType`); a `ReadableStream`: its
+    // `Uint8Array` chunks, read as the body is.
+    const whole = body.__wholeBody();
+    if (whole != null) {
+      return { kind: 2, text: "", bytes: whole, stream: null, implied: 0 };
+    }
     const stream = BodyStream.adopt(body.__byteChunks());
     return { kind: 3, text: "", bytes: [], stream: stream, implied: 0 };
   }
@@ -86,6 +91,18 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   // A copy: the body's bytes may become an `ArrayBuffer` (`arrayBuffer()`, `bytes()`), whose
   // bytes nothing else may hold (a view reads them without a range check, typed_array/buffer).
   return { kind: 2, text: "", bytes: body.slice(), stream: null, implied: 0 };
+}
+
+/**
+ * The `content-type` a body made of a blob or form implies (a blob's type, a form's
+ * `multipart/form-data; boundary=…`), set unless the headers name one; null for any other body.
+ */
+export function sourceType(body: BodyInit | null): string | null {
+  if (body instanceof ByteSource) {
+    const t = body.__type();
+    return t.length > 0 ? t : null;
+  }
+  return null;
 }
 
 /** The bytes of a stream, in one array. */

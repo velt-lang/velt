@@ -1,0 +1,329 @@
+// velt:fetch/form: the WHATWG `FormData` (docs/std/fetch.md): named text fields and files, which
+// a `Response` or `Request` body sends as `multipart/form-data` (RFC 7578, as undici writes it),
+// and which `formData()` reads back from such a body or a `application/x-www-form-urlencoded` one.
+
+import { IoError } from "velt:io";
+import { URLSearchParams } from "velt:url";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { ByteSource } from "velt:streams/byte_source";
+import { Blob, File } from "velt:fetch/blob";
+
+/** A field's value: text, or a file. */
+export type FormDataEntryValue = string | File;
+
+export class FormData extends ByteSource {
+  #names: string[] = [];
+  #values: FormDataEntryValue[] = [];
+  // The multipart boundary, chosen when the form is first sent.
+  #boundary: string = "";
+
+  constructor() {
+    super();
+  }
+
+  /**
+   * Adds field `name`. A blob is held as a `File`: named `filename`, else its own name (a
+   * `File`'s) or "blob".
+   */
+  append(name: string, value: string | Blob, filename?: string) {
+    this.#names.push(name);
+    this.#values.push(entry(value, filename));
+  }
+
+  /** Sets the first field named `name` to the value and removes the others (appends if none). */
+  set(name: string, value: string | Blob, filename?: string) {
+    const v = entry(value, filename);
+    const names: string[] = [];
+    const values: FormDataEntryValue[] = [];
+    let found = false;
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      if (this.#names[i] == name) {
+        if (found) {
+          continue;
+        }
+        found = true;
+        names.push(name);
+        values.push(v);
+      } else {
+        names.push(this.#names[i]);
+        values.push(this.#values[i]);
+      }
+    }
+    if (!found) {
+      names.push(name);
+      values.push(v);
+    }
+    this.#names = names;
+    this.#values = values;
+  }
+
+  /** The first value of field `name`, or null. */
+  get(name: string): FormDataEntryValue | null {
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      if (this.#names[i] == name) {
+        return this.#values[i];
+      }
+    }
+    return null;
+  }
+
+  /** Every value of field `name`, in order. */
+  getAll(name: string): FormDataEntryValue[] {
+    const out: FormDataEntryValue[] = [];
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      if (this.#names[i] == name) {
+        out.push(this.#values[i]);
+      }
+    }
+    return out;
+  }
+
+  has(name: string): bool {
+    return this.#names.includes(name);
+  }
+
+  /** Removes every field named `name`. */
+  delete(name: string) {
+    const names: string[] = [];
+    const values: FormDataEntryValue[] = [];
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      if (this.#names[i] != name) {
+        names.push(this.#names[i]);
+        values.push(this.#values[i]);
+      }
+    }
+    this.#names = names;
+    this.#values = values;
+  }
+
+  /** The field names, in order (repeats included). */
+  keys(): string[] {
+    return this.#names.clone();
+  }
+
+  /** The values, in order. */
+  values(): FormDataEntryValue[] {
+    return this.#values.clone();
+  }
+
+  /** `[name, value]` pairs, in order. */
+  entries(): [string, FormDataEntryValue][] {
+    const out: [string, FormDataEntryValue][] = [];
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      out.push([this.#names[i], this.#values[i]]);
+    }
+    return out;
+  }
+
+  forEach(f: (value: FormDataEntryValue, name: string) => void) {
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      f(this.#values[i], this.#names[i]);
+    }
+  }
+
+  *[Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]> {
+    for (const e of this.entries()) {
+      yield e;
+    }
+  }
+
+  // The boundary between the parts, made once: `----formdata-undici-0` and 11 random digits.
+  private boundary(): string {
+    if (this.#boundary.length == 0) {
+      const n = Math.floor(Math.random() * 1e11) as i64;
+      this.#boundary = `----formdata-undici-0${`${n}`.padStart(11, "0")}`;
+    }
+    return this.#boundary;
+  }
+
+  __wholeBody(): u8[] | null {
+    const b = this.boundary();
+    let out: u8[] = [];
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      const name = escaped(this.#names[i]);
+      const v = this.#values[i];
+      if (typeof v == "string") {
+        const head = `--${b}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n`;
+        out = out.concat(utf8Encode(`${head}${lines(v)}\r\n`));
+      } else {
+        const type = v.type.length > 0 ? v.type : "application/octet-stream";
+        const head =
+          `--${b}\r\nContent-Disposition: form-data; name="${name}"; filename="${escaped(v.name)}"\r\nContent-Type: ${type}\r\n\r\n`;
+        out = out.concat(utf8Encode(head));
+        out = out.concat(v.held());
+        out = out.concat([13, 10]);
+      }
+    }
+    return out.concat(utf8Encode(`--${b}--\r\n`));
+  }
+
+  __type(): string {
+    return `multipart/form-data; boundary=${this.boundary()}`;
+  }
+
+  /** How `console.log` shows a form, like Node: its fields. */
+  __inspect() {
+    return this.entries();
+  }
+}
+
+/** A value as a form holds it. */
+function entry(value: string | Blob, filename: string | undefined): FormDataEntryValue {
+  if (typeof value == "string") {
+    return value;
+  }
+  if (value instanceof File && filename == null) {
+    return value;
+  }
+  let name = filename ?? "blob";
+  let modified: i64 | null = null;
+  if (value instanceof File) {
+    modified = value.lastModified;
+  }
+  return new File([value], name, { type: value.type, lastModified: modified ?? Date.now() });
+}
+
+/** A name in a part's header: line breaks and quotes escaped, as undici writes them. */
+function escaped(s: string): string {
+  return s.replaceAll("\n", "%0A").replaceAll("\r", "%0D").replaceAll('"', "%22");
+}
+
+/** Text with each line break (`\r\n`, `\r`, `\n`) as `\r\n`. */
+function lines(s: string): string {
+  if (!s.includes("\r") && !s.includes("\n")) {
+    return s;
+  }
+  return s.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replaceAll("\n", "\r\n");
+}
+
+function notForm(): IoError {
+  return new IoError(
+    "EINVAL",
+    `Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded".`,
+  );
+}
+
+function malformed(): IoError {
+  return new IoError("EINVAL", "Failed to parse body as FormData.");
+}
+
+/**
+ * The form a body of `contentType` holds (std only: `formData()`): `multipart/form-data` or
+ * `application/x-www-form-urlencoded`, else `IoError` "EINVAL" (JS: `TypeError`).
+ */
+export function parseForm(bytes: u8[], contentType: string | null): FormData throws IoError {
+  const ct = contentType ?? "";
+  const essence = ct.split(";")[0].trim().toLowerCase();
+  if (essence == "application/x-www-form-urlencoded") {
+    const form = new FormData();
+    for (const [k, v] of new URLSearchParams(utf8DecodeLossy(bytes)).entries()) {
+      form.append(k, v);
+    }
+    return form;
+  }
+  if (essence != "multipart/form-data") {
+    throw notForm();
+  }
+  const b = param(ct, "boundary");
+  if (b == null || b.length == 0) {
+    throw malformed();
+  }
+  return multipart(bytes, utf8Encode(`--${b}`));
+}
+
+/** Parameter `name` of a header value (`; name=value` or `; name="value"`), or null. */
+function param(value: string, name: string): string | null {
+  const parts = value.split(";");
+  for (let i: i64 = 1; i < (parts.length as i64); i++) {
+    const p = parts[i].trim();
+    const eq = p.indexOf("=");
+    if (eq < 0 || p.slice(0, eq).trim().toLowerCase() != name) {
+      continue;
+    }
+    const v = p.slice(eq + 1).trim();
+    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+      return v.slice(1, (v.length as i64) - 1);
+    }
+    return v;
+  }
+  return null;
+}
+
+/** Where `needle` first occurs in `hay` at or after `from`, or -1. */
+function find(hay: u8[], needle: u8[], from: i64): i64 {
+  const n = needle.length as i64;
+  const last = (hay.length as i64) - n;
+  const first = needle[0];
+  for (let i = from; i <= last; i++) {
+    if (hay[i] != first) {
+      continue;
+    }
+    let j: i64 = 1;
+    while (j < n && hay[i + j] == needle[j]) {
+      j += 1;
+    }
+    if (j == n) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** What ends a part's header. */
+const HEAD_END: u8[] = [13, 10, 13, 10];
+
+/** The parts of a `multipart/form-data` body whose delimiter is `delim` (`--boundary`). */
+function multipart(bytes: u8[], delim: u8[]): FormData throws IoError {
+  const form = new FormData();
+  const n = bytes.length as i64;
+  const dl = delim.length as i64;
+  let at = find(bytes, delim, 0);
+  if (at < 0) {
+    throw malformed();
+  }
+  const crlf: u8[] = [13, 10];
+  const next = crlf.concat(delim);
+  while (true) {
+    at += dl;
+    if (at + 2 <= n && bytes[at] == 45 && bytes[at + 1] == 45) {
+      return form;
+    }
+    if (at + 2 > n || bytes[at] != 13 || bytes[at + 1] != 10) {
+      throw malformed();
+    }
+    at += 2;
+    const headEnd = find(bytes, HEAD_END, at);
+    if (headEnd < 0) {
+      throw malformed();
+    }
+    let name: string | null = null;
+    let filename: string | null = null;
+    let type = "";
+    for (const line of utf8DecodeLossy(bytes.slice(at, headEnd)).split("\r\n")) {
+      const colon = line.indexOf(":");
+      if (colon < 0) {
+        continue;
+      }
+      const field = line.slice(0, colon).trim().toLowerCase();
+      const value = line.slice(colon + 1).trim();
+      if (field == "content-disposition") {
+        name = param(value, "name");
+        filename = param(value, "filename");
+      } else if (field == "content-type") {
+        type = value;
+      }
+    }
+    const start = headEnd + 4;
+    const end = find(bytes, next, start);
+    if (end < 0 || name == null) {
+      throw malformed();
+    }
+    const body = bytes.slice(start, end);
+    if (filename != null) {
+      form.append(name, new File([body], filename, { type: type }));
+    } else {
+      form.append(name, utf8DecodeLossy(body));
+    }
+    at = end + 2;
+  }
+}

@@ -114,19 +114,56 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
   in tests. A string body implies `content-type: text/plain;charset=UTF-8` and form fields
   `application/x-www-form-urlencoded;charset=UTF-8`, unless `headers` set one; a constructed
-  response makes no `Headers` until you read `headers`.
+  response makes no `Headers` until you read `headers`. A [`Blob`](#blob-file-and-formdata)
+  body implies its `type`, and a `FormData` body `multipart/form-data; boundary=…`.
+- `await res.blob()` and `await res.formData()` read the body as a
+  [`Blob`](#blob-file-and-formdata) (its type the `content-type`) or a `FormData` (a
+  `multipart/form-data` or `application/x-www-form-urlencoded` body; any other fails with
+  `IoError` "EINVAL").
+- `res.clone()` is a copy whose body can be read on its own, also at the same time as the
+  original's: a streamed or fetched body is teed, each chunk going to both, and a chunk one of
+  them has not read waits in memory for it, as in Node. Cloning a response whose body was read
+  throws `IoError` "EINVAL" (`Response.clone: Body has already been consumed.`).
 
 ## `Request`
 
 `new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
-`url`, `method`, `headers`, `redirect`, `signal` (`AbortSignal | null`: JS gives every request
-a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`
-and `body` (a [`ReadableStream`](streams.md) of `Uint8Array`s, `null` without a body). `fetch(request)` sends it
+`url`, `method`, `headers`, `redirect`, `signal` (the `init.signal`, else one that is never
+aborted, as in JS), `bodyUsed`, the body readers `text()`, `json<T>()`, `bytes()`,
+`arrayBuffer()`, `blob()`, `formData()` and `body` (a [`ReadableStream`](streams.md) of
+`Uint8Array`s, `null` without a body), and `clone()` (as `Response.clone()`; a received
+request's body is teed too). `fetch(request)` sends it
 (its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
 a stream is read whole before the request is sent (**Planned**: streamed uploads).
 
 A [server](http.md#the-request) hands its handler a `Request` for what it received: its `url`
 is absolute, its headers are immutable, and its body is received while it is read.
+
+## `Blob`, `File` and `FormData`
+
+Global, as in Node. `new Blob(parts?: (string | Uint8Array | ArrayBuffer | DataView | u8[] |
+Blob)[], { type? })` holds the bytes of its parts (text as UTF-8) with a media type (lowercased;
+`""` if it is not printable ASCII): `size`, `type`, `slice(start?, end?, contentType?)`
+(negative indices count from the end), and the readers `text()`, `bytes(): Uint8Array`,
+`arrayBuffer()` and `stream()` (a [`ReadableStream`](streams.md) of `Uint8Array`s). `new
+File(parts, name, { type?, lastModified? })` is a `Blob` with a `name` and a `lastModified`
+time (milliseconds; default now).
+
+`FormData` holds named fields, text or files: `append(name, value: string | Blob, filename?)`
+(a blob is held as a `File` named `filename`, its own name, or `"blob"`), `set`, `get(name):
+string | File | null`, `getAll`, `has`, `delete`, `forEach`, `keys()`, `values()`, `entries()`
+and `for...of`. As a body it is sent as `multipart/form-data`, the way undici writes it (line
+breaks in text values as CRLF, a file without a type as `application/octet-stream`).
+
+```ts
+async function upload(url: string, report: string): Promise<number> {
+  const form = new FormData();
+  form.append("title", "Weekly report");
+  form.append("file", new Blob([report], { type: "text/csv" }), "report.csv");
+  const res = await fetch(url, { method: "POST", body: form });
+  return res.status;
+}
+```
 
 ## `BodyStream`
 
@@ -154,7 +191,8 @@ async function main() {
 ## `Headers`
 
 Case-insensitive, in insertion order, with repeated names: `new Headers(init?: Headers |
-Record<string, string>)`, `append(name, value)`, `set`, `delete`, `get(name): string | null`
+Record<string, string> | [string, string][])` (pairs keep repeated names:
+`new Headers([["accept", "text/html"], ["accept", "application/json"]])`), `append(name, value)`, `set`, `delete`, `get(name): string | null`
 (repeated values joined with `", "`), `has`, `getSetCookie(): string[]`, `forEach((value,
 name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the names
 lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values have
@@ -209,7 +247,9 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   with a `cause`, and the signal's `AbortError` / `TimeoutError` where Node throws a
   `DOMException` (or the abort reason).
 - `res.json()` needs the type of the data (above).
-- There is no `Blob` or `FormData`, and a `Request` without a signal has `signal == null`.
+- A `Request` given a signal has that signal as its `signal`; Node gives it one that follows
+  it.
+- `console.log` shows a `File` as a `Blob` (`File { size, type }`), without its name and time.
 - `res.body` and `req.body` have no `pipeTo()`, `pipeThrough()`, `tee()` or BYOB reader
   ([streams](streams.md)).
 - Mistakes JS reports with a catchable `RangeError` or `TypeError` stop the program instead,
@@ -224,7 +264,6 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   added with (`Headers { 'content-type': … }` for `"Content-Type"`). A printed `Request` shows
   Node's values for the options Velt does not have (`mode: 'cors'`, `cache: 'default'`, …), and
   its `url` as it was given (Node normalizes it: `http://a.com/` for `http://a.com`).
-- **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
 
 ```ts
 async function download(url: string): Promise<number> {
