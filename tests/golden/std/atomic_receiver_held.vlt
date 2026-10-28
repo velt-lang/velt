@@ -1,0 +1,17 @@
+// A struct holding an `Atomic`, the receiver of its method while a later argument writes a
+// local (`k++`): the method changes the struct's own atomic, not a copy held against that write.
+struct Counter {
+  n: Atomic<u64>;
+
+  bumpBy(k: u64): void {
+    this.n.add(k);
+  }
+}
+
+function main() {
+  const c: Counter = { n: new Atomic<u64>(0) };
+  let k: u64 = 2;
+  c.bumpBy(k++);
+  c.bumpBy(k++);
+  console.log(c.n.load(), k);
+}

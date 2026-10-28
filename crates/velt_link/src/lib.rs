@@ -180,6 +180,11 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
     }
 }
 
+/// The main thread's stack on Windows: 8 MiB, as on Linux and macOS (and the WebAssembly
+/// stack, `wasm.rs`), instead of the 1 MiB `link.exe` reserves by default, so that a program
+/// recurses as deep on every platform.
+const WINDOWS_STACK: &str = "/STACK:8388608";
+
 /// How the error starts when the linker program cannot be started (see [`with_bundled_reason`]).
 const LINKER_NOT_RUN: &str = "failed to run linker";
 

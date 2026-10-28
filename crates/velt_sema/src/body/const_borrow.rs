@@ -24,6 +24,13 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) -> Result<(), Option<hir::Expr>> {
+        if let Some(e) = v
+            .init
+            .as_ref()
+            .filter(|e| v.kind == ast::VarKind::Const && is_load(e))
+        {
+            return self.borrowed_load(v, e, name, ann, span, out);
+        }
         let Some(e) = v.init.as_ref().filter(|e| {
             v.kind == ast::VarKind::Const
                 && (is_member_or_index(e) || (self.cx.held_borrows && is_this(e)))
@@ -69,6 +76,55 @@ impl FnCx<'_, '_> {
         Ok(())
     }
 
+    /// `const c = a.load()` of an `Atomic` of a `shared` value binds `c` by reference: the load
+    /// is uncounted, and its reference stays valid (atomics.md "References"). Any other
+    /// `.load()` call goes back to the ordinary declaration.
+    fn borrowed_load(
+        &mut self,
+        v: &ast::VarDecl,
+        e: &ast::Expr,
+        name: &ast::Ident,
+        ann: Option<TyId>,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) -> Result<(), Option<hir::Expr>> {
+        // Checked as the ordinary declaration checks it (`simple_decl`), which gets it back when
+        // it is no reference load.
+        let h = match ann {
+            Some(t) if v.ty.as_ref().is_some_and(crate::body::is_readonly_array) => {
+                let h = self.expr(e, Some(t), Want::Move);
+                self.readonly_array_arg(h, t)
+            }
+            Some(t) => {
+                let site =
+                    (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
+                self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
+            }
+            None => self.copy_init(e, name, Want::Move),
+        };
+        let reference = match &h.kind {
+            H::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::AtomicLoad),
+                args,
+            } => args.first().is_some_and(|a| {
+                self.cx
+                    .atomic_value(a.ty)
+                    .is_some_and(|t| self.cx.atomic_ref(t))
+            }),
+            _ => false,
+        };
+        if !reference {
+            return Err(Some(h));
+        }
+        let ty = ann.unwrap_or(h.ty);
+        let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);
+        self.f.const_refs.insert(local);
+        self.note_checked_copy(local, ann.is_none(), Some(e));
+        let pat = self.pat(P::Binding(local, UseMode::Borrow), ty, name.span);
+        Self::push(out, S::LetPat { pat, init: h }, span);
+        Ok(())
+    }
+
     /// Is `h` the method's or constructor's own `this` (an object: `const me = this` names the
     /// same object, so it refers to `this` instead of sharing it; `ownership::exclusive`
     /// makes it a share where the two names are used together)?
@@ -106,6 +162,16 @@ fn is_this(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => is_this(inner),
+        _ => false,
+    }
+}
+
+/// `x.load(…)`: a call that may be an `Atomic`'s load.
+fn is_load(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Call { callee, .. } => matches!(&callee.kind,
+            ast::ExprKind::Member { prop, optional: false, .. } if prop.name == "load"),
+        ast::ExprKind::Paren(inner) => is_load(inner),
         _ => false,
     }
 }

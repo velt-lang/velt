@@ -484,6 +484,68 @@ impl Ctx<'_> {
         }
     }
 
+    /// A type built while a body was checked (a generator's or a function value's, a `catch`
+    /// variable's) missed what a function in a recursion throws, because that function's body
+    /// was still being checked. Keep what the functions `srcs` call (through any depth of calls)
+    /// throw in the final inference for the next check, where a call to one whose body is
+    /// still being checked counts it ([`Ctx::recursion_hint`]), as TypeScript has no error
+    /// types to annotate. True when the program is checked again for it.
+    pub(crate) fn recursion_found_late(&mut self, srcs: &[crate::defs::ThrowSrc]) -> bool {
+        if self.fn_sites.last {
+            return false;
+        }
+        let mut grew = false;
+        let mut todo = srcs.to_vec();
+        let mut seen: Vec<DefId> = vec![];
+        while let Some(s) = todo.pop() {
+            let crate::defs::ThrowSrc::Call(d, ..) = s else {
+                continue;
+            };
+            if d.0 as usize >= self.collected_defs || seen.contains(&d) {
+                continue;
+            }
+            seen.push(d);
+            let Some(f) = self.try_fn(d) else {
+                continue;
+            };
+            if f.declared_throws.is_some_and(|t| !t.from_body) {
+                continue;
+            }
+            todo.extend(f.throw_srcs.iter().cloned());
+            if let Some(t) = f.throws {
+                grew |= self.add_recursion_hint(d, t);
+            }
+        }
+        if grew {
+            self.fn_sites.grew = true;
+        }
+        grew
+    }
+
+    /// Add the members of `t` to the hint of function `d` for the next check; true when new.
+    fn add_recursion_hint(&mut self, d: DefId, t: TyId) -> bool {
+        let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
+            .map(|m| self.port(m, 0))
+            .collect();
+        let Some(ms) = ms else {
+            return false;
+        };
+        let span = self.def_spans[d.0 as usize];
+        let mut all = match self.fn_sites.found.hints.get(&d) {
+            Some((s, old)) if *s == span => old.clone(),
+            _ => vec![],
+        };
+        let before = all.len();
+        for m in ms {
+            if !all.contains(&m) {
+                all.push(m);
+            }
+        }
+        let new = all.len() > before;
+        self.fn_sites.found.hints.insert(d, (span, all));
+        new
+    }
+
     /// What the previous check inferred function `d` throws (see [`FnTypeSeeds::hints`]).
     pub(crate) fn recursion_hint(&mut self, d: DefId) -> Option<TyId> {
         let (span, ms) = self.fn_sites.seeds.hints.get(&d)?.clone();

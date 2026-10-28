@@ -149,6 +149,44 @@ An array of atomics inside a `shared` value never moves or shrinks while the val
 words are memory every thread may read and write in place, which no thread can free under
 another: what a lock-free structure needs.
 
+### An `Atomic` of a `shared` value
+
+An `Atomic<shared<T>>` (or `Atomic<shared<T> | null>`) holds one reference to an immutable
+value, which threads read and replace at once without a lock: a configuration every request
+reads while an admin task swaps in a new one, or the root of a structure that writers rebuild.
+- `load()` gives the current value. Reading it costs one load and no count, also through a
+  `const` (`const c = CONFIG.load()`) or a function it is passed to; what keeps it (a return, a
+  store, a closure, a task) takes a reference of its own, which keeps seeing that value.
+- `store(v)` makes `v` the value.
+- `exchange(v)` makes `v` the value and gives the one before.
+- `compareExchange(expected, v)` makes `v` the value only if the `Atomic` still holds
+  `expected` itself (the same reference, not an equal value), and returns whether it did.
+  When it did not, `v` is dropped. `compareExchangeWeak` may fail even when it holds
+  `expected` (call it in a loop).
+
+It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
+thread may be reading it: for now such values stay allocated until the program ends (freeing
+them safely is #1696's next step).
+
+```ts
+interface Config {
+  name: string;
+  limit: u64;
+}
+
+const CONFIG = new Atomic<shared<Config> | null>(null);
+
+function main() {
+  CONFIG.store(shared({ name: "default", limit: 10 }));
+  const before = CONFIG.load();
+  CONFIG.store(shared({ name: "strict", limit: 2 }));
+  const now = CONFIG.load();
+  if (before != null && now != null) {
+    console.log(before.name, now.name, now.limit); // default strict 2
+  }
+}
+```
+
 ## `ThreadLocal<T>`
 
 `const depth = new ThreadLocal<u32>(0)` is one value per thread: every thread starts with the

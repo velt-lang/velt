@@ -319,12 +319,17 @@ pub(super) fn start(n: usize) {
 }
 
 fn start_thread(index: usize) {
-    let started = std::thread::Builder::new()
-        .name("velt-worker".into())
-        .spawn(move || run(index));
+    let started = worker_thread().spawn(move || run(index));
     if let Err(e) = started {
         fatal(e);
     }
+}
+
+/// A worker thread, with the stack every thread that runs tasks has.
+fn worker_thread() -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name("velt-worker".into())
+        .stack_size(super::super::TASK_THREAD_STACK)
 }
 
 /// Starts the next spare worker (the monitor's thread only); its index, or `None` once all

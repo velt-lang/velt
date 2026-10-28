@@ -7,6 +7,30 @@ fn idle_task() -> Arc<Task> {
 }
 
 #[test]
+fn a_worker_thread_recurses_as_deep_as_the_main_thread() {
+    // Recurses until 5 MiB of stack are in use (measured, whatever a frame's size): past Rust's
+    // 2 MiB default for a spawned thread, within the 8 MiB the main thread has.
+    fn deep(top: usize, need: usize) -> usize {
+        let frame = std::hint::black_box([1u8; 1024]);
+        let here = frame.as_ptr() as usize;
+        if top.abs_diff(here) >= need {
+            return 1;
+        }
+        deep(top, need) + std::hint::black_box(frame)[0] as usize
+    }
+    let frames = worker_thread()
+        .spawn(|| {
+            let mark = std::hint::black_box(0u8);
+            let top = &mark as *const u8 as usize;
+            deep(top, 5 << 20)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(frames > 1);
+}
+
+#[test]
 fn tasks_handed_back_go_through_the_inbox_and_wake_the_worker() {
     // The monitor's rescue hands tasks back to a worker that may have parked meanwhile: they
     // must be where its park check looks, and it must be woken.

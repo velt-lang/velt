@@ -54,14 +54,15 @@ impl FnCx<'_, '_> {
     fn atomic_value_ty(&mut self, t: TyId, span: Span) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error => true,
+            _ if self.cx.atomic_ref(t) => true,
             _ => {
                 let shown = self.cx.display(t);
                 let d = Diagnostic::error(
-                    format!("`Atomic<T>` needs a number type or `bool`, found `{shown}`"),
+                    format!("`Atomic<T>` needs a number type, `bool` or a `shared` value, found `{shown}`"),
                     span,
                 )
                 .with_note(
-                    "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`",
+                    "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one",
                 );
                 self.cx.error(d);
                 false
@@ -109,9 +110,12 @@ impl FnCx<'_, '_> {
             let kind = self.cx.ty.kind(t);
             let int = matches!(kind, TyKind::Int(_));
             let float = matches!(kind, TyKind::Float(_));
+            let reference = self.cx.atomic_ref(t);
             let wrong = match op.map(|o| RMW[o as usize]) {
                 Some("add" | "sub" | "max" | "min") => (!int && !float).then_some("a number"),
-                Some("and" | "or" | "xor") => float.then_some("an integer or `bool`"),
+                Some("and" | "or" | "xor") => {
+                    (float || reference).then_some("an integer or `bool`")
+                }
                 _ => None,
             };
             if let Some(needs) = wrong {
@@ -155,6 +159,19 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        // On a reference, `compareExchange` gives whether it swapped (atomics.md "References"):
+        // the reference it replaced is retired, not handed out.
+        let ret = match (i, args.first()) {
+            (Intrinsic::AtomicCas, Some(a))
+                if self
+                    .cx
+                    .atomic_value(a.ty)
+                    .is_some_and(|t| self.cx.atomic_ref(t)) =>
+            {
+                self.cx.ty.bool_
+            }
+            _ => ret,
+        };
         let mut out: Vec<hir::Expr> = args.drain(..recv + values).collect();
         if let Some(op) = op {
             out.push(self.u8_lit(op, span));
