@@ -1,0 +1,135 @@
+// check: no leaks
+// The `fetch` client keeps HTTP/1.1 framing its own and reads responses as strictly as Node,
+// against a server that writes HTTP by hand (velt:net):
+// - a caller's `content-length` must match the body and `transfer-encoding` is refused (else a
+//   header could smuggle a second request onto the connection);
+// - only 301, 302, 303, 307 and 308 are followed (a 300 or 304 with `location` is returned);
+// - a status below 100, a header name that is not a token, a control character in a header
+//   value or the reason phrase, and both `transfer-encoding` and `content-length` are refused;
+//   150 headers are fine;
+// - a chunked trailer that never ends fails once it is larger than a head may be.
+import { listen, TcpStream } from "velt:net";
+import { IoError } from "velt:io";
+
+const many: string[] = [];
+for (let i = 0; i < 150; i++) {
+  many.push(`x-h${i}: ${i}\r\n`);
+}
+
+const RESPONSES: Map<string, string> = new Map([
+  ["/300", "HTTP/1.1 300 Multiple Choices\r\nlocation: /echo\r\ncontent-length: 0\r\n\r\n"],
+  ["/304", "HTTP/1.1 304 Not Modified\r\nlocation: /echo\r\n\r\n"],
+  ["/status", "HTTP/1.1 099 Low\r\ncontent-length: 0\r\n\r\n"],
+  ["/name", "HTTP/1.1 200 OK\r\nX-Bad : v\r\ncontent-length: 0\r\n\r\n"],
+  ["/nul", "HTTP/1.1 200 OK\r\nx-nul: a\u0000b\r\ncontent-length: 0\r\n\r\n"],
+  ["/reason", "HTTP/1.1 200 O\rK\r\ncontent-length: 0\r\n\r\n"],
+  [
+    "/both",
+    "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ncontent-length: 3\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
+  ],
+  ["/many", `HTTP/1.1 200 OK\r\n${many.join("")}content-length: 2\r\n\r\nok`],
+]);
+
+/** The request heads in `input` once whole, with their bodies (by `content-length`). */
+function request(input: string): [string, string, number] | null {
+  const end = input.indexOf("\r\n\r\n");
+  if (end < 0) {
+    return null;
+  }
+  const head = input.slice(0, end);
+  const at = head.indexOf("\r\ncontent-length: ");
+  const length = at < 0 ? 0 : parseInt(head.slice(at + 18).split("\r\n")[0], 10);
+  if (input.length < end + 4 + length) {
+    return null;
+  }
+  return [head, input.slice(end + 4, end + 4 + length), end + 4 + length];
+}
+
+async function serveOne(conn: TcpStream) {
+  let input = "";
+  while (true) {
+    const r = request(input);
+    if (r == null) {
+      const more = await conn.readString();
+      if (more == "") {
+        break;
+      }
+      input += more;
+      continue;
+    }
+    const [head, body, used] = r;
+    input = input.slice(used);
+    const path = head.split(" ")[1];
+    if (path == "/echo") {
+      const lengths = head.split("\r\n").filter((l) => l.startsWith("content-length:"));
+      const text = `${lengths.join(",")} body=${body}`;
+      await conn.write(`HTTP/1.1 200 OK\r\ncontent-length: ${text.length}\r\n\r\n${text}`);
+      continue;
+    }
+    if (path == "/trailer") {
+      await conn.write("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n");
+      const line = `x-t: ${"t".repeat(1000)}\r\n`;
+      try {
+        while (true) {
+          await conn.write(line);
+        }
+      } catch (e) {
+        break;
+      }
+    }
+    await conn.write(RESPONSES.get(path) ?? "HTTP/1.1 500 Unknown\r\ncontent-length: 0\r\n\r\n");
+  }
+  conn.close();
+}
+
+async function failure(url: string): Promise<string> {
+  try {
+    const res = await fetch(url);
+    return `ok ${res.status} ${await res.text()}`;
+  } catch (e) {
+    return e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+  }
+}
+
+async function post(url: string, headers: Record<string, string>): Promise<string> {
+  try {
+    const res = await fetch(url, { method: "POST", body: "abcd", headers: headers });
+    return await res.text();
+  } catch (e) {
+    return e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+  }
+}
+
+async function main() {
+  const listener = await listen("127.0.0.1:0");
+  const base = `http://127.0.0.1:${listener.port}`;
+  spawn(async () => {
+    while (true) {
+      let conn: TcpStream;
+      try {
+        conn = await listener.accept();
+      } catch (e) {
+        return;
+      }
+      spawn(serveOne(conn));
+    }
+  });
+
+  console.log(await post(`${base}/echo`, {}));
+  console.log(await post(`${base}/echo`, { "content-length": "4" }));
+  console.log(await post(`${base}/echo`, { "content-length": "3" }));
+  console.log(await post(`${base}/echo`, { "transfer-encoding": "chunked" }));
+  // The connection is still in step: the next request gets its own response.
+  console.log(await post(`${base}/echo`, {}));
+
+  for (const path of ["/300", "/304"]) {
+    const res = await fetch(`${base}${path}`);
+    console.log(path, res.status, res.redirected, res.headers.get("location"));
+  }
+  for (const path of ["/status", "/name", "/nul", "/reason", "/both", "/many", "/trailer"]) {
+    console.log(path, await failure(`${base}${path}`));
+  }
+  listener.close();
+}
+
+await main();

@@ -9,8 +9,9 @@
 //! the leak counters of the debug runtime see. Its entries are stream handles, so it owns no
 //! Velt memory.
 //!
-//! A stream idle longer than [`CHECK_IDLE`] is checked before it is handed out: a read that finds
-//! the end of the stream (the server closed it), unexpected bytes or an error closes it instead.
+//! Every stream is checked before it is handed out: a read that finds the end of the stream (the
+//! server closed it, however shortly before), unexpected bytes or an error closes it instead, so
+//! a request that may not be sent twice (a POST) never goes out on a connection already closed.
 //! Streams idle longer than [`MAX_IDLE`] are closed when their key is next asked for, and a key
 //! keeps at most [`MAX_PER_KEY`] streams.
 
@@ -25,8 +26,6 @@ use std::time::{Duration, Instant};
 const MAX_PER_KEY: usize = 512;
 /// A stream idle this long is closed rather than reused.
 const MAX_IDLE: Duration = Duration::from_secs(60);
-/// A stream idle this long is checked before it is reused.
-const CHECK_IDLE: Duration = Duration::from_secs(1);
 
 /// FNV-1a over the key's bytes: keys are a handful of origins the program chose, so a seeded
 /// hash's cost (SipHash, several hundred instructions per request) buys nothing.
@@ -115,10 +114,10 @@ pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr) -> StreamHandle
         for s in stale {
             velt_rt_tcp_close(s);
         }
-        let Some((s, since)) = found else {
+        let Some((s, _)) = found else {
             return StreamHandle::NULL;
         };
-        if since.elapsed() < CHECK_IDLE || still_open(s) {
+        if still_open(s) {
             return s;
         }
         velt_rt_tcp_close(s);
@@ -128,11 +127,7 @@ pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr) -> StreamHandle
 /// Whether idle stream `s` can carry another request: a read finds nothing yet (not the end of
 /// the stream, nor bytes nobody asked for, nor an error).
 fn still_open(s: StreamHandle) -> bool {
-    let Some(obj) = STREAMS.get(s) else {
-        return false;
-    };
-    let mut probe = [0u8; 1];
-    matches!(obj.try_read_into(&mut probe), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock)
+    STREAMS.get(s).is_some_and(|obj| obj.idle_open())
 }
 
 #[cfg(test)]
@@ -144,10 +139,10 @@ mod tests {
     }
 
     #[test]
-    fn unparks_what_was_parked_last_first() {
+    fn a_stream_that_is_not_open_is_never_handed_out() {
         let k = key("http://park-test:1");
-        // Handles that are not open: parking keeps them as they are, and a fresh one is handed
-        // back without a check.
+        // Handles that are not open: parked, then found closed when asked for, however
+        // recently they were parked.
         let (a, b) = (StreamHandle::from_bits(11), StreamHandle::from_bits(12));
         // SAFETY: valid strings.
         unsafe {
@@ -155,8 +150,6 @@ mod tests {
             velt_rt_tcp_park(a, &k);
             velt_rt_tcp_park(b, &k);
             assert_eq!(velt_rt_tcp_unpark(&key("http://other:1")).bits(), 0);
-            assert_eq!(velt_rt_tcp_unpark(&k).bits(), 12);
-            assert_eq!(velt_rt_tcp_unpark(&k).bits(), 11);
             assert_eq!(velt_rt_tcp_unpark(&k).bits(), 0);
         }
     }

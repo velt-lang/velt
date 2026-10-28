@@ -62,8 +62,19 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 Requests send `accept: */*`, `user-agent: velt` and, like Node, `accept-encoding: gzip,
 deflate` (`br, gzip, deflate` over HTTPS, chosen again for each redirect hop) unless you set
 them. Following a redirect
-works as in browsers and Node: a 303 (and a 301 or 302 after a POST) becomes a GET without a
+works as in browsers and Node: only 301, 302, 303, 307 and 308 are followed (a 300 or 304 is
+returned as it is), a 303 (and a 301 or 302 after a POST) becomes a GET without a
 body, and `authorization`, `cookie` and a `host` you set are not sent to another origin.
+
+The body's framing is the client's own, as in Node: `content-length` is written from the body
+(one you set must agree with it, else `IoError` "EINVAL" `Request body length does not match
+content-length header`), and setting `transfer-encoding` fails with `IoError` "EINVAL"
+(`invalid transfer-encoding header`), so a header cannot make the server read another body than
+the one sent. Responses are read as strictly as Node reads them: a status below 100, a header
+name that is not a token, a control character in a header value or the reason phrase, both
+`transfer-encoding` and `content-length`, or a chunked trailer larger than a head may be (400
+KiB) fail with `IoError` "EPROTO". A connection taken from the pool is checked first, so a
+request never goes out on one the server has closed meanwhile.
 
 HTTPS trusts Mozilla's root certificates (compiled in, so the result does not depend on the
 machine) plus `ca`. An untrusted certificate fails with `IoError`.
@@ -259,6 +270,8 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   fetched response or a received request.
 - A compressed body cut off before its stream ends fails the read with `IoError`; Node returns
   the part that decoded. Silently truncated data is a bug source Velt does not copy.
+- Response heads are accepted where Node is stricter in two ways: lines may end with a bare LF,
+  and a head may be up to 400 KiB (Node: 16 KiB).
 - WebAssembly programs have no network: `fetch` rejects with `IoError` `ENOTSUP`.
 - `console.log` shows header names in lowercase, where Node keeps the case a name was first
   added with (`Headers { 'content-type': … }` for `"Content-Type"`). A printed `Request` shows

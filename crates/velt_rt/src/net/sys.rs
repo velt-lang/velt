@@ -130,6 +130,14 @@ impl TcpStream {
     }
 
     /// The socket, for `socket2` (shutdown).
+    /// Whether an idle socket is still open: a look at what has arrived, without taking it and
+    /// without waiting (a system call, not the reactor's possibly stale readiness), finds
+    /// nothing yet. The end of the stream, unexpected bytes or an error mean it is not.
+    pub fn idle_open(&self) -> bool {
+        let mut probe = [std::mem::MaybeUninit::<u8>::uninit()];
+        matches!(self.sock_ref().peek(&mut probe), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+    }
+
     pub fn sock_ref(&self) -> socket2::SockRef<'_> {
         match self {
             TcpStream::Tokio(s) => socket2::SockRef::from(s),

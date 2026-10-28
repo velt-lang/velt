@@ -2,11 +2,13 @@
 // The `fetch` client against a server that writes HTTP/1.1 by hand (velt:net): a chunked body
 // with extensions and a trailer, a `100 Continue` before the response, a body that ends with the
 // connection, a response written a byte at a time, reason phrases, keep-alive connections
-// reused, a pooled connection the server closed (sent again for a GET, not for a POST), a
+// reused, a pooled connection the server closed (never used again: a GET and a POST both go out
+// on a new connection, as in Node), a
 // chunked gzip body read whole and as it arrives, and a response that is not HTTP.
 import { connect, listen, TcpStream } from "velt:net";
 import { hexDecode } from "velt:encoding";
 import { IoError } from "velt:io";
+import { Channel, channel } from "velt:channel";
 
 let accepted = 0;
 
@@ -26,7 +28,7 @@ const RESPONSES: Map<string, string> = new Map([
   ["/garbage", "SMTP is not HTTP\r\n\r\n"],
 ]);
 
-async function serveOne(conn: TcpStream) {
+async function serveOne(conn: TcpStream, closed: Channel<string>) {
   let input = "";
   while (true) {
     const end = input.indexOf("\r\n\r\n");
@@ -67,7 +69,9 @@ async function serveOne(conn: TcpStream) {
     }
     await conn.write(RESPONSES.get(path) ?? "HTTP/1.1 500 Unknown\r\ncontent-length: 0\r\n\r\n");
     if (path == "/stale" || path == "/garbage") {
-      break;
+      conn.close();
+      await closed.send(path);
+      return;
     }
   }
   conn.close();
@@ -76,6 +80,8 @@ async function serveOne(conn: TcpStream) {
 async function main() {
   const listener = await listen("127.0.0.1:0");
   const base = `http://127.0.0.1:${listener.port}`;
+  // What the server closed without saying so, as it closes it.
+  const closed = channel<string>(4);
   spawn(async () => {
     while (true) {
       let conn: TcpStream;
@@ -85,7 +91,7 @@ async function main() {
         return;
       }
       accepted += 1;
-      spawn(serveOne(conn));
+      spawn(serveOne(conn, closed));
     }
   });
 
@@ -105,16 +111,19 @@ async function main() {
   }
   console.log("new connections for three requests:", accepted - before);
 
-  // The server closes the connection after `/stale`, without saying so: the pooled connection
-  // fails a GET before any response, which is sent again on a new one; a POST is not.
+  // The server closes the connection after `/stale`, without saying so. Taken from the pool, the
+  // connection is found closed (or, if the close arrives later, a GET that fails before any
+  // response is sent again): the next request goes out on a new connection. A POST, which may
+  // not be sent twice, too: the client checks every pooled connection before using it.
   console.log(await (await fetch(`${base}/stale`)).text());
   console.log("after stale:", await (await fetch(`${base}/keep`)).text());
   await (await fetch(`${base}/stale`)).text();
+  await closed.receive();
   try {
-    await fetch(`${base}/keep`, { method: "POST", body: "x" });
-    console.log("post sent again");
+    const res = await fetch(`${base}/keep`, { method: "POST", body: "x" });
+    console.log("post after stale:", await res.text());
   } catch (e) {
-    console.log("post failed:", e.message.startsWith("fetch failed"));
+    console.log("post failed:", e.message);
   }
 
   console.log("gzip:", await (await fetch(`${base}/gzip`)).text());
@@ -133,5 +142,7 @@ async function main() {
   } catch (e) {
     console.log("garbage:", e instanceof IoError ? e.code : "", e.message);
   }
+  await closed.receive();
+  closed.close();
   listener.close();
 }

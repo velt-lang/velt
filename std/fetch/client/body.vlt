@@ -3,7 +3,9 @@
 // everything until the server closes the connection.
 //
 // `all` receives the rest of a body into one array: one sized from `content-length` (up to
-// 128 MiB at first), read into straight from the socket, so a large download is copied once.
+// 4 MiB at first, doubled as the body arrives, so a length the server only claims costs
+// nothing), read into straight from the socket. A read straight into a piece of its own takes
+// at most 256 KiB, however much the body or a chunk claims to have left.
 // `next` hands the body over piece by piece, at most `max` bytes at a time. Once the body is
 // complete the connection goes back to the pool, unless the response said to close it.
 
@@ -19,7 +21,11 @@ import {
 } from "velt:fetch/client/wire";
 
 /** The most a `content-length` sizes the buffer of `all` for before any of the body arrived. */
-const MAX_RESERVE: i64 = 134217728;
+const MAX_RESERVE: i64 = 4194304;
+/** The most one read straight into a piece of its own takes. */
+const MAX_DIRECT: i64 = 262144;
+/** The most a chunked body's trailer may hold (as a response head). */
+const MAX_TRAILER: i64 = 409600;
 /** Below this many bytes still to come, `next` copies out of the connection's buffer. */
 const DIRECT: i64 = 16384;
 
@@ -40,6 +46,8 @@ export class BodyReader {
   /** `BODY_LENGTH`: the bytes still to come; `BODY_CHUNKED`: those left of the chunk. */
   private left: i64;
   private phase: i64 = SIZE;
+  /** The bytes of the trailer read so far. */
+  private trailer: i64 = 0;
   private keep: bool;
   /** The body is complete (and the connection given back or closed). */
   done: bool = false;
@@ -124,8 +132,9 @@ export class BodyReader {
 
   /** Up to `want` bytes read from the socket into a new array (none at the body's end). */
   private async direct(want: i64): Promise<u8[], IoError | AbortError> {
-    const piece: u8[] = Buffer.allocUnsafe(want as usize);
-    const n = await this.readInto(piece, 0, want);
+    const size = want < MAX_DIRECT ? want : MAX_DIRECT;
+    const piece: u8[] = Buffer.allocUnsafe(size as usize);
+    const n = await this.readInto(piece, 0, size);
     if (n == 0) {
       return [];
     }
@@ -191,7 +200,7 @@ export class BodyReader {
     let out: u8[] = Buffer.allocUnsafe(65536);
     let at: i64 = 0;
     while (true) {
-      const piece = await this.next(1 << 30);
+      const piece = await this.next(MAX_DIRECT);
       const n = piece.length as i64;
       if (n == 0) {
         break;
@@ -212,7 +221,7 @@ export class BodyReader {
     return out;
   }
 
-  /** `all` for a body of known length: read into its array, which is copied only past 128 MiB. */
+  /** `all` for a body of known length: read into its array, which is copied only past 4 MiB. */
   private async allSized(): Promise<u8[], IoError | AbortError> {
     const c = this.conn;
     const total = this.left;
@@ -262,6 +271,11 @@ export class BodyReader {
         // The trailer's fields are ignored; it ends with an empty line.
         if (lf == line || (lf - line == 1 && c.buf[line] == 13)) {
           this.end();
+        } else {
+          this.trailer += lf + 1 - line;
+          if (this.trailer > MAX_TRAILER) {
+            throw this.bad("trailer too large");
+          }
         }
         return;
       }

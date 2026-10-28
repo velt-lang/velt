@@ -70,6 +70,11 @@ export class ClientRequest {
   }
 }
 
+/** The statuses the Fetch standard follows ("redirect status"); a 300 or 304 is returned. */
+function redirects(s: i64): bool {
+  return s == 301 || s == 302 || s == 303 || s == 307 || s == 308;
+}
+
 /** Methods that may be sent twice (RFC 9110 §9.2.2). */
 function idempotent(m: string): bool {
   return m == "GET" || m == "HEAD" || m == "OPTIONS" || m == "TRACE" || m == "PUT" || m == "DELETE";
@@ -88,7 +93,7 @@ export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortEr
     const req = encode(o.method, t, o.headers, acceptEncoding(t.https), o.kind, o.text, o.bytes);
     const [conn, head] = await exchange(o, t, req);
     const s = head.status;
-    const location = s >= 300 && s < 400 && o.redirect != MANUAL ? head.location() : null;
+    const location = redirects(s) && o.redirect != MANUAL ? head.location() : null;
     if (location == null) {
       return received(conn, head, t.href, redirected);
     }

@@ -7,7 +7,7 @@ pieces: pieces
 new connections for three requests: 0
 stale
 after stale: kept
-post failed: true
+post after stale: kept
 gzip: hello gzip
 gzip streamed: hello gzip
 garbage: EPROTO fetch failed: invalid HTTP response: status line
