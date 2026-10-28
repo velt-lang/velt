@@ -76,7 +76,7 @@ if (close(-1) != 0) {
 Every declaration is checked against the table of the target being compiled for. An unknown
 name, a wrong parameter count, a wrong integer type, a pointer written as an integer, a buffer
 declared with the wrong direction, a `string` where the function takes a path, a struct with a
-field the C struct lacks, a function parameter (no callbacks), `async` or a missing result are
+field the C struct lacks, a function parameter (no callbacks), `async`, type parameters or a missing result are
 errors that show the C prototype and the declaration that would match:
 
 ```text

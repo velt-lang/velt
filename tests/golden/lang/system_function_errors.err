@@ -17,3 +17,4 @@ a range of the buffer `buf` is two `usize` parameters after it, `start` and `end
 `st` is a `struct stat *`: declare it as a `struct` whose fields are fields of `struct stat`, not `Handle`
 `declare function fdatasync` is not allowed
 `fdatasync` is a system function: `declare system function fdatasync(...)` binds the C library's
+a system function is synchronous: `declare system function`, not `async`

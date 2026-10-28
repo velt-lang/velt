@@ -228,6 +228,12 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         );
         throws = None;
     }
+    if kind == FnKind::Extern && sig.is_system && !sig.generics.is_empty() {
+        cx.err(
+            "a system function has no type parameters: its C signature fixes every type",
+            sig.generics[0].name.span,
+        );
+    }
     let f = cx.fn_info_mut(d);
     if kind == FnKind::Extern && sig.is_system {
         f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());

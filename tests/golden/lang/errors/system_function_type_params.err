@@ -1,0 +1,2 @@
+system_function_type_params.vlt:2:31
+error: a system function has no type parameters: its C signature fixes every type

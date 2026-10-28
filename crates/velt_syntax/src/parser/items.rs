@@ -169,14 +169,20 @@ impl<'a> Parser<'a> {
     }
 
     /// `declare [async] function name(...): R;` or `declare system function name(...): R;`
+    /// (`declare async system function` too, which the system function check rejects)
     /// (`system` is a word only there: a function of the platform's C library).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         self.bump(); // declare
+        // `declare async system function` parses, so the check can say why it is not one.
+        let async_system = self.at_kw(Kw::Async)
+            && self.nth_word(1, "system")
+            && self.nth(2) == Tok::Kw(Kw::Function);
+        let mut is_async = async_system && self.eat_kw(Kw::Async);
         let is_system = self.at_word("system") && self.nth(1) == Tok::Kw(Kw::Function);
         if is_system {
             self.bump(); // system
         }
-        let is_async = self.eat_kw(Kw::Async);
+        is_async |= self.eat_kw(Kw::Async);
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_system = is_system;
         if sig.is_generator {

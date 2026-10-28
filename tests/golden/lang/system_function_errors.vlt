@@ -27,5 +27,6 @@ class Handle {
 
 declare system function fstat(fd: i32, st: Handle): i32;
 declare function fdatasync(fd: i32): i32;
+declare async system function fchmod(fd: i32, mode: u32): Promise<i32>;
 
 function main() {}

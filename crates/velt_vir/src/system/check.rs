@@ -10,7 +10,7 @@ use super::{base_name, overloads, Func, Int, Param, Ret, Struct, TARGETS};
 pub enum Mismatch {
     /// No target has a function of this name; `close` is the most similar one, if any.
     Unknown { close: Option<&'static str> },
-    /// `declare async system function` or generics.
+    /// `declare async system function` (type parameters are sema's error).
     Form(&'static str),
     /// No overload of the target (or, for a function this target lacks, of a target that has
     /// it) has this signature: per overload, the first difference, and the declarations that
