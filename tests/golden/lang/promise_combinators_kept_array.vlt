@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   console.log(out.join("\n"));
   console.log("plain", plain());
 
-  const ps: Promise<number>[] = [wait(20, 1), wait(1, 2)];
+  const ps: Promise<number>[] = [wait(20, 1), Promise.resolve(2)];
   console.log("race", await Promise.race(ps), ps.length);
   console.log("all", await Promise.all(ps), ps.length);
   console.log("any", await Promise.any(ps), ps.length);
@@ -80,12 +80,12 @@ async function main(): Promise<void> {
   a2.length = 0;
   console.log("all after truncate", await pa2, a2.length);
 
-  const r: Promise<number>[] = [wait(40, 1), wait(3, 2)];
+  const r: Promise<number>[] = [wait(40, 1), Promise.resolve(2)];
   const pr = Promise.race(r);
   r.push(wait(1, 3));
   r[1] = wait(1, 9);
   console.log("race after push", await pr, r.length);
-  const r2: Promise<number>[] = [wait(40, 1), wait(3, 2)];
+  const r2: Promise<number>[] = [wait(40, 1), Promise.resolve(2)];
   const pr2 = Promise.race(r2);
   r2.length = 0;
   console.log("race after truncate", await pr2, r2.length);
