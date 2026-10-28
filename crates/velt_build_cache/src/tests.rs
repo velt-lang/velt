@@ -260,15 +260,26 @@ fn clear_and_collection_remove_only_the_caches_own_files() {
     cache.collect_garbage(0);
     assert!(root.join("notes.txt").exists() && root.join("v1/x").exists());
 
+    // A directory with other files in it is used, but never adopted.
     cache.put("k", b"a", b"1");
-    assert!(root.join(MARKER).exists());
+    assert_eq!(cache.get("k", b"a").as_deref(), Some(&b"1"[..]));
+    assert!(!root.join(MARKER).exists());
+    assert!(cache.clear().is_err());
+    assert!(root.join("v1/x").exists());
+
+    // Adopted, a root keeps what the cache did not make when it is cleared.
+    let shared = tmp.path().join("shared");
+    let cache = Cache::new(&shared, DEFAULT_LIMIT);
+    cache.put("k", b"a", b"1");
+    assert!(shared.join(MARKER).exists());
+    std::fs::write(shared.join("notes.txt"), b"mine").unwrap();
     cache.clear().unwrap();
     assert_eq!(cache.get("k", b"a"), None);
     assert!(
-        root.join("notes.txt").exists(),
+        shared.join("notes.txt").exists(),
         "a file the cache did not make"
     );
-    assert!(!root.join(MARKER).exists() && !root.join(LAYOUT).exists());
+    assert!(!shared.join(MARKER).exists() && !shared.join(LAYOUT).exists());
     // An empty root goes too.
     let alone = tmp.path().join("alone");
     let cache = Cache::new(&alone, DEFAULT_LIMIT);
@@ -276,6 +287,51 @@ fn clear_and_collection_remove_only_the_caches_own_files() {
     cache.clear().unwrap();
     assert!(!alone.exists());
     cache.clear().unwrap();
+}
+
+/// File entries are plain files handed out by path, checked before that: a damaged one is a
+/// miss and is stored again. Garbage collection counts and removes them like other entries.
+#[test]
+fn file_entries_are_handed_out_by_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(&tmp.path().join("cache"), DEFAULT_LIMIT);
+    let src = tmp.path().join("std.o");
+    let object = vec![0x7f; 3 * LARGE];
+    std::fs::write(&src, &object).unwrap();
+    let key = Key([4; 32]);
+    assert_eq!(cache.path_of("std", &key), None);
+    assert!(cache.put_file("std", &key, &src));
+    let path = cache.path_of("std", &key).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        object,
+        "the file as it was, no header"
+    );
+    assert_eq!(cache.usage().entries, 1);
+
+    // Damaged: a miss, removed, then stored again.
+    std::fs::write(&path, b"truncated").unwrap();
+    assert_eq!(cache.path_of("std", &key), None);
+    assert!(!path.exists());
+    assert!(cache.put_file("std", &key, &src));
+    assert_eq!(cache.path_of("std", &key), Some(path.clone()));
+
+    // `touch` keeps a used file over an older one.
+    let old = Key([5; 32]);
+    assert!(cache.put_file("std", &old, &src));
+    let long_ago = SystemTime::now() - Duration::from_secs(3600 * 30);
+    for k in [key, old] {
+        let p = files::path(&cache.files_dir("std"), &k);
+        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+        f.set_modified(long_ago).unwrap();
+    }
+    cache.touch("std", &key);
+    let usage = cache.usage();
+    // Room for one of the two entries.
+    cache.collect_garbage(usage.bytes * 9 / 10);
+    assert!(cache.path_of("std", &key).is_some(), "touched");
+    assert_eq!(cache.path_of("std", &old), None, "used longest ago");
+    assert!(!files::sidecar(&files::path(&cache.files_dir("std"), &old)).exists());
 }
 
 #[test]

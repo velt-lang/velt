@@ -45,6 +45,65 @@ pub(crate) fn put(dir: &Path, key: &Key, value: &[u8]) -> bool {
     whole || write_atomically(&path, &with_header(value)).is_ok()
 }
 
+/// File entries (`Cache::put_file`): a plain file, which a linker can read as it is, and beside
+/// it a sidecar (`<name>.check`) holding the header. The file is written before the sidecar, so
+/// a reader that finds them out of step has a miss (and removes both), never wrong code.
+pub(crate) fn put_file(dir: &Path, key: &Key, src: &Path) -> bool {
+    let path = path(dir, key);
+    if checked_file(&path) {
+        return true;
+    }
+    let Ok(value) = fs::read(src) else {
+        return false;
+    };
+    let mut header = Vec::with_capacity(HEADER);
+    header.extend_from_slice(&(value.len() as u64).to_le_bytes());
+    header.extend_from_slice(&checksum(&value).to_le_bytes());
+    write_atomically(&path, &value).is_ok() && write_atomically(&sidecar(&path), &header).is_ok()
+}
+
+/// The path of `key`'s file entry when it passes its check (marking it used), else `None`.
+pub(crate) fn path_of(dir: &Path, key: &Key) -> Option<PathBuf> {
+    let path = path(dir, key);
+    if !checked_file(&path) {
+        return None;
+    }
+    touch_if_old(&path, &fs::metadata(&path).ok()?);
+    Some(path)
+}
+
+/// Mark `key`'s file entry used now (an object a link used, say).
+pub(crate) fn touch(dir: &Path, key: &Key) {
+    if let Ok(f) = fs::OpenOptions::new().write(true).open(path(dir, key)) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+/// Whether the file entry at `path` matches its sidecar; one that does not is removed.
+fn checked_file(path: &Path) -> bool {
+    let whole = (|| {
+        let header = fs::read(sidecar(path)).ok()?;
+        let value = fs::read(path).ok()?;
+        let mut bytes = header;
+        bytes.extend_from_slice(&value);
+        checked(bytes)
+    })();
+    if whole.is_none() && (path.exists() || sidecar(path).exists()) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(sidecar(path));
+    }
+    whole.is_some()
+}
+
+/// The sidecar of a file entry.
+pub(crate) fn sidecar(path: &Path) -> PathBuf {
+    path.with_extension("check")
+}
+
+pub(crate) fn is_sidecar(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "check")
+}
+
 /// `value` behind its header.
 fn with_header(value: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(HEADER + value.len());

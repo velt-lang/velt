@@ -7,6 +7,8 @@
 //!   by side instead of overwriting each other's.
 //! - Layout: `<root>/v3/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
 //!   packed into a few files per kind (`pack`); larger ones (objects) are a file each (`files`).
+//!   File entries ([`Cache::put_file`], [`Cache::path_of`]) are plain files in `<kind>/files/`,
+//!   handed out by path, for whoever must pass a file on (a linker): the cached std object.
 //!   Writers in several processes at once are safe, and readers never see half an entry.
 //! - Size: the cache stays under a limit (default [`DEFAULT_LIMIT`], `$VELT_BUILD_CACHE_SIZE`),
 //!   counted as the disk space its files take (whole blocks). A hit marks its entry used (at
@@ -182,13 +184,25 @@ impl Cache {
         stored
     }
 
-    /// Write the root's marker, once per process, before the first entry.
+    /// Write the root's marker, once per process, before the first entry: into a new or empty
+    /// root, or one holding only what the cache makes (a cache from before the marker). A root
+    /// with other files is never adopted: entries are still stored there, but `clear` and garbage
+    /// collection leave it alone.
     fn mark(&self) {
         if self.marked.swap(true, Ordering::Relaxed) {
             return;
         }
         let marker = self.root.join(MARKER);
-        if !marker.exists() {
+        if marker.exists() {
+            return;
+        }
+        let ours = fs::read_dir(&self.root).map_or(true, |entries| {
+            entries.flatten().all(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                is_layout(&name) || OWNED.contains(&name.as_str())
+            })
+        });
+        if ours {
             let _ = fs::create_dir_all(&self.root);
             let _ = fs::write(marker, MARKER_TEXT);
         }
@@ -214,6 +228,41 @@ impl Cache {
 
     fn large_dir(&self, kind: &str) -> PathBuf {
         self.dir.join(kind).join("large")
+    }
+
+    fn files_dir(&self, kind: &str) -> PathBuf {
+        self.dir.join(kind).join("files")
+    }
+
+    /// Store the file at `src` as `key`'s file entry of `kind`: a copy kept as a plain file, so
+    /// that [`Self::path_of`] can hand its path to a linker. `false` if it could not be stored.
+    pub fn put_file(&self, kind: &str, key: &Key, src: &Path) -> bool {
+        self.mark();
+        let stored = files::put_file(&self.files_dir(kind), key, src);
+        if stored {
+            let len = fs::metadata(src).map_or(0, |m| m.len());
+            self.written.fetch_add(len, Ordering::Relaxed);
+        }
+        stored
+    }
+
+    /// The path of `key`'s file entry of `kind`, once it passes its check (one that fails is
+    /// removed), marking it used. The file stays until garbage collection finds it unused for
+    /// longest; a link that uses it for long should [`Self::touch`] it.
+    pub fn path_of(&self, kind: &str, key: &Key) -> Option<PathBuf> {
+        files::path_of(&self.files_dir(kind), key)
+    }
+
+    /// Mark `key`'s file entry of `kind` used now.
+    pub fn touch(&self, kind: &str, key: &Key) {
+        files::touch(&self.files_dir(kind), key);
+    }
+
+    /// The files of `kind`'s large and file entries (with sidecars and temporary files).
+    fn entry_files(&self, kind: &str) -> Vec<PathBuf> {
+        let mut all = files::files_under(&self.large_dir(kind));
+        all.extend(files::files_under(&self.files_dir(kind)));
+        all
     }
 
     /// The kinds on disk.
@@ -276,7 +325,7 @@ impl Cache {
                     .map(|e| (e.time, u64::from(e.len) + record));
                 items.extend(sizes);
             }
-            for path in files::files_under(&self.large_dir(&kind)) {
+            for path in self.entry_files(&kind) {
                 let Ok(meta) = fs::metadata(&path) else {
                     continue;
                 };
@@ -287,7 +336,10 @@ impl Cache {
                     }
                     continue;
                 }
-                items.push((minutes(used), files::disk_size(&meta)));
+                // A sidecar goes with its file (and counts as overhead).
+                if !files::is_sidecar(&path) {
+                    items.push((minutes(used), files::disk_size(&meta)));
+                }
             }
         }
         let mut cutoff = 0;
@@ -311,10 +363,11 @@ impl Cache {
             for n in 0..pack::SHARDS {
                 let _ = packs.compact(n, cutoff);
             }
-            for path in files::files_under(&self.large_dir(&kind)) {
+            for path in self.entry_files(&kind) {
                 let used = fs::metadata(&path).and_then(|m| m.modified());
-                if used.is_ok_and(|t| minutes(t) < cutoff) {
+                if !files::is_sidecar(&path) && used.is_ok_and(|t| minutes(t) < cutoff) {
                     let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(files::sidecar(&path));
                 }
             }
         }
@@ -345,12 +398,12 @@ impl Cache {
                 .iter()
                 .map(|(_, e)| e.len() as u64)
                 .sum::<u64>();
-            for path in files::files_under(&self.large_dir(&kind)) {
+            for path in self.entry_files(&kind) {
                 if files::is_temp(&path) {
                     continue;
                 }
                 if let Ok(meta) = fs::metadata(&path) {
-                    usage.entries += 1;
+                    usage.entries += u64::from(!files::is_sidecar(&path));
                     usage.bytes += files::disk_size(&meta);
                 }
             }
