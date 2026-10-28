@@ -63,11 +63,16 @@ fn check_object(bytes: &[u8], fmt: BinaryFormat, arch: Architecture, program: &P
     for f in &program.funcs {
         let s = find(&obj_name(fmt, &f.symbol))
             .unwrap_or_else(|| panic!("{ctx}: {} missing", f.symbol));
-        assert!(s.is_definition(), "{ctx}: {} must be defined", f.symbol);
         match f.linkage {
             Linkage::Export => assert!(s.is_global(), "{ctx}: {} must be global", f.symbol),
             Linkage::Internal => assert!(s.is_local(), "{ctx}: {} must be local", f.symbol),
+            // Defined by another object of the link (vir.rs invariant 11).
+            Linkage::Import => {
+                assert!(s.is_undefined(), "{ctx}: {} must be undefined", f.symbol);
+                continue;
+            }
         }
+        assert!(s.is_definition(), "{ctx}: {} must be defined", f.symbol);
     }
     // Every extern that is actually referenced must be an undefined symbol.
     let mut undefined = 0;

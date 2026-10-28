@@ -125,3 +125,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `velt_opt`: dead-code elimination keeps described locals; `numrep` moves a description to
   the narrowed local; inlined locals lose theirs. Backends turn them into debugger variables
   or ignore them.
+
+## Imported functions (additive VIR extension)
+- `vir::Linkage::Import` (vir.rs invariant 11; #1728, design/std-object.md): a function defined
+  in another object of the same executable, such as the cached std object. It has no blocks (a
+  declaration; the only functions without an entry block) or a body kept only for `velt_opt` to
+  inline; the printer shows a declaration as `fn#<i> import <symbol>(<params>) -> <ret>`.
+- Backends declare it under its symbol and never emit its body: LLVM `declare hidden` with its
+  param attributes, in every codegen unit that refers to it (no unit defines or copies it);
+  Cranelift a `Linkage::Import` function.
+- `velt_opt`: treated as `Export` for anything that rewrites a signature, param attributes or
+  caller assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may
+  clone one only when its body is kept, and the clone is the program's own `Internal` function. `keys::disambiguate` never renames an
+  `Import` symbol.

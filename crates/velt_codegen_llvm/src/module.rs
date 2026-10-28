@@ -69,8 +69,10 @@ pub(crate) fn emit_module(
     optimized: bool,
 ) -> CodegenResult<String> {
     validate_aggregates(program)?;
+    let imported = |i: &usize| program.funcs[*i].linkage == Linkage::Import;
     let unit = Unit {
-        defines: (0..program.funcs.len()).collect(),
+        defines: (0..program.funcs.len()).filter(|i| !imported(i)).collect(),
+        declares: (0..program.funcs.len()).filter(imported).collect(),
         statics: (0..program.statics.len()).collect(),
         ..Unit::default()
     };
@@ -238,7 +240,8 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
         .get(index)
         .ok_or_else(|| format!("ICE: unit declares unknown function #{index}"))?;
     let linkage = match func.linkage {
-        Linkage::Internal => "hidden",
+        // Imported: defined `hidden` by the object the link adds (vir.rs invariant 11).
+        Linkage::Internal | Linkage::Import => "hidden",
         Linkage::Export => "dso_local",
     };
     let params = parameters(func, false)?;
@@ -335,6 +338,12 @@ pub(crate) fn define_prefix(func: &vir::Function, how: Definition) -> CodegenRes
         (Linkage::Internal, Definition::Own) => "internal",
         (Linkage::Internal, Definition::Shared) => "hidden",
         (Linkage::Internal, Definition::Import) => "available_externally hidden",
+        (Linkage::Import, _) => {
+            return Err(format!(
+                "ICE: `{}` is imported (vir.rs invariant 11) but was planned as a definition",
+                func.symbol
+            ))
+        }
     };
     Ok(format!("define {linkage} {}", abi_ret(func.ret)?))
 }

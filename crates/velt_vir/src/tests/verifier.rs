@@ -260,3 +260,26 @@ fn verify_rejects_misused_atomic_externs() {
     ));
     expect_err(&p, "the address of `velt_atomic_load_8_acq` is taken");
 }
+
+/// Invariant 11: only an imported function may have no blocks; it prints as a declaration.
+#[test]
+fn only_imported_functions_have_no_blocks() {
+    let mut p = base_program();
+    let decl = Function::new(
+        "_V3stdN4twice".into(),
+        vec![Ty::I64],
+        Ty::I64,
+        Linkage::Import,
+    );
+    p.funcs.push(decl);
+    crate::verify(&p).unwrap();
+    assert!(
+        p.to_string().contains(&format!(
+            "fn#{} import _V3stdN4twice(i64) -> i64\n",
+            p.funcs.len() - 1
+        )),
+        "{p}"
+    );
+    p.funcs.last_mut().unwrap().linkage = Linkage::Internal;
+    expect_err(&p, "has no blocks");
+}
