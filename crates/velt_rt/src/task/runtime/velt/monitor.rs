@@ -178,7 +178,20 @@ impl MonitorSleep {
     }
 }
 
+/// Environment variable that turns off the stall rescue when `0` (diagnostics only, see
+/// [`rescues`]).
+pub(super) const RESCUE_ENV: &str = "VELT_RESCUE";
+
+/// Whether the monitor rescues stalled workers, from the value of [`RESCUE_ENV`]: unless it is
+/// `0`. Off, no spare starts and no task moves away from a long poll, so the instructions a
+/// program executes no longer depend on how the OS (or valgrind, which runs one thread at a
+/// time) schedules the workers: for counting them (bench/nightly.sh), not for running programs.
+pub(super) fn rescues(value: Option<&str>) -> bool {
+    value.map(str::trim) != Some("0")
+}
+
 pub(super) fn run() {
+    let rescue_on = rescues(std::env::var(RESCUE_ENV).ok().as_deref());
     let mut next_tick = Instant::now() + TICK;
     let mut last_pass = Instant::now();
     // Hurried wakes in a row that moved nothing.
@@ -225,10 +238,25 @@ pub(super) fn run() {
         }
         next_tick = now + TICK;
         let now = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
-        for (i, w) in ws.iter().enumerate().take(started()) {
-            if stalled(w, now) {
-                rescue(i, now);
-            }
+        stall_duties(ws, started(), now, rescue_on, start_spare);
+    }
+}
+
+/// The monitor's tick `now` over the workers `ws`, of which the first `up` have started: the
+/// rescue of each stalled one ([`rescue_of`]), unless rescues are off ([`rescues`]).
+pub(super) fn stall_duties(
+    ws: &[Shared],
+    up: usize,
+    now: u64,
+    rescue_on: bool,
+    mut spare: impl FnMut() -> Option<usize>,
+) {
+    if !rescue_on {
+        return;
+    }
+    for i in 0..up {
+        if stalled(&ws[i], now) {
+            rescue_of(ws, up, i, now, &mut spare);
         }
     }
 }
@@ -309,19 +337,14 @@ pub(super) fn stalled(w: &Shared, now: u64) -> bool {
         && now.saturating_sub(w.progress.load(Ordering::Relaxed)) >= STALL_TICKS
 }
 
-/// Does the duties of worker `i`, stalled: a turn of its reactor (I/O and due timers), then its
-/// inbox (the tasks that woke) and half of its queue to another worker, which becomes their
-/// home. Pinned tasks stay.
-pub(super) fn rescue(i: usize, now: u64) {
-    rescue_of(workers(), started(), i, now, start_spare);
-}
-
-/// [`rescue`] among the workers `ws`, of which the first `up` have started, with `spare` to
-/// start another. The tasks move only when a worker can take them: one asleep, one not stalled
-/// itself, or a spare that starts. With none (one worker and every spare started, or every
-/// other worker stalled too) they stay where they are: sent back to the same worker, or on to
-/// another stalled one, they would only be moved again at every tick, hundreds of thousands
-/// of them under the inbox lock the worker needs (#1673).
+/// Does the duties of worker `i`, stalled, among the workers `ws`, of which the first `up` have
+/// started (`spare` starts another): a turn of its reactor (I/O and due timers), then its inbox
+/// (the tasks that woke) and half of its queue to another worker, which becomes their home.
+/// Pinned tasks stay. The tasks move only when a worker can take them: one asleep, one not
+/// stalled itself, or a spare that starts. With none (one worker and every spare started, or
+/// every other worker stalled too) they stay where they are: sent back to the same worker, or
+/// on to another stalled one, they would only be moved again at every tick, hundreds of
+/// thousands of them under the inbox lock the worker needs (#1673).
 pub(super) fn rescue_of(
     ws: &[Shared],
     up: usize,

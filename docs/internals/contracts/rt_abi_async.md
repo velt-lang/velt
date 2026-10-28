@@ -297,6 +297,7 @@ taking it over (the tasks keep their home). The monitor does the duties of a wor
 started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
 of its queue to another worker that can take them (one asleep, one not stalled itself, or a
 spare that starts, up to four), each 1 ms tick while the stall lasts; with none, they stay.
+`VELT_RESCUE=0` turns the rescue off, for counting instructions (`bench/nightly.sh`).
 It also starts spawned tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
 first poll of a spawned task with tasks never polled behind it, while another started worker
 sleeps, publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)

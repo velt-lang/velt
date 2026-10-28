@@ -395,3 +395,35 @@ fn a_rescue_moves_the_inbox_and_half_the_queue_to_a_worker_that_can_take_them() 
         assert_eq!(crate::task::quiet::moving_here(), 0);
     }
 }
+
+#[test]
+fn velt_rescue_0_turns_the_stall_rescue_off() {
+    assert!(!rescues(Some("0")));
+    assert!(!rescues(Some(" 0\n")));
+    for on in [None, Some(""), Some("1"), Some("no")] {
+        assert!(rescues(on), "{on:?}");
+    }
+    // One worker in a long poll, a spare left: off, its tasks stay and no spare starts.
+    let ws = stalled_workers(2);
+    let before = fill(&ws[0], 1000, 10);
+    let mut spares = 0;
+    stall_duties(ws, 1, LATE, false, || {
+        spares += 1;
+        Some(1)
+    });
+    assert_eq!(spares, 0, "a spare started");
+    assert_eq!(
+        (
+            lock(&ws[0].queue).len(),
+            ws[0].inbox_len.load(Ordering::SeqCst)
+        ),
+        before
+    );
+    // On, the same tick moves them to the spare.
+    stall_duties(ws, 1, LATE, true, || {
+        spares += 1;
+        Some(1)
+    });
+    assert_eq!(spares, 1);
+    assert_eq!(ws[1].inbox_len.load(Ordering::SeqCst), 510);
+}
