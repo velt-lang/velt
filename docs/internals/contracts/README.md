@@ -44,7 +44,9 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
   hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
-  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
+  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller; a
+  location in a standard-library file reads `std/<path below the std root>`, the same on every
+  machine, while debug info keeps the path as loaded), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
   rt_abi.md).
 - `velt_opt` keeps `locs` aligned with every statement it moves, splits or deletes; inlined code
