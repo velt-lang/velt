@@ -594,6 +594,20 @@ impl Ctx<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
             ) || self.atomic_ref(ty);
         }
+        // The prelude's `Frozen`: a type `frozen_readable` takes (type parameters through their
+        // own `Frozen` bounds).
+        if Some(b.iface) == self.prelude_iface("Frozen")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            let frozen = self.prelude_iface("Frozen");
+            let params = (0..bounds.len() as u32)
+                .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
+                .collect();
+            let saved = std::mem::replace(&mut self.frozen_params, params);
+            let ok = self.frozen_readable(ty);
+            self.frozen_params = saved;
+            return ok;
+        }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
             // Only a direct `T extends AtomicValue`: nothing else can stand for the compiler's.

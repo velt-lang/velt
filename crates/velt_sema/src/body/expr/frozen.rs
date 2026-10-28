@@ -12,7 +12,7 @@ use velt_syntax::ast;
 
 use crate::body::places::{frozen_root, set_place_mode};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyKind, UseMode};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     /// The object of `s[i]`: a `shared<string>`, `shared<T[]>` or `shared` typed array read as
@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
         if member == Some("clone") || self.cx.atomic_int(h.ty).is_some() {
             return h;
         }
-        if !self.cx.frozen_readable(inner) {
+        if !self.frozen_readable_here(inner) {
             return h;
         }
         // `velt:sync/epoch`, which the prelude imports for every program, reads its registry
@@ -84,7 +84,7 @@ impl FnCx<'_, '_> {
     /// methods are its atomics)?
     pub(crate) fn unreadable_shared(&mut self, ty: hir::TyId) -> bool {
         match *self.cx.ty.kind(ty) {
-            TyKind::Shared(t) => !self.cx.ty.is_int(t) && !self.cx.frozen_readable(t),
+            TyKind::Shared(t) => !self.cx.ty.is_int(t) && !self.frozen_readable_here(t),
             _ => false,
         }
     }
@@ -92,10 +92,16 @@ impl FnCx<'_, '_> {
     /// Why the `shared<T>` type `shared` (one `frozen_readable` refuses) is not read like its `T`.
     pub(crate) fn unreadable_shared_note(&mut self, shared: hir::TyId) -> String {
         let f = self.cx.display(shared);
-        let e = match *self.cx.ty.kind(shared) {
-            TyKind::Shared(t) => self.cx.display(t),
-            _ => f.clone(),
+        let inner = match *self.cx.ty.kind(shared) {
+            TyKind::Shared(t) => Some(t),
+            _ => None,
         };
+        let e = inner.map_or_else(|| f.clone(), |t| self.cx.display(t));
+        if inner.is_some_and(|t| matches!(self.cx.ty.kind(t), TyKind::Param(_))) {
+            return format!(
+                "`{f}` is read like a `{e}` only when `{e}` is bounded by `Frozen` (`{e} extends Frozen`, checked where the generic is used)"
+            );
+        }
         format!(
             "`{f}` cannot be read like a `{e}`: other threads read it at the same time, so it \
              is read in place only when nothing in `{e}` could change it or run code on it \
@@ -153,5 +159,24 @@ impl FnCx<'_, '_> {
             format!("cannot modify a `{tn}`: a shared value is read-only, since other tasks read it at the same time"),
             span,
         );
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `Ctx::frozen_readable` with this body's type parameters bounded by the prelude's `Frozen`
+    /// taken as readable (checked where the generic is instantiated).
+    pub(crate) fn frozen_readable_here(&mut self, t: TyId) -> bool {
+        let frozen = self.cx.prelude_iface("Frozen");
+        let params = (0..self.bounds.len() as u32)
+            .filter(|&p| {
+                self.bounds[p as usize]
+                    .iter()
+                    .any(|b| Some(b.iface) == frozen)
+            })
+            .collect();
+        let saved = std::mem::replace(&mut self.cx.frozen_params, params);
+        let ok = self.cx.frozen_readable(t);
+        self.cx.frozen_params = saved;
+        ok
     }
 }

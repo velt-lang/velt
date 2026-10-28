@@ -1,0 +1,27 @@
+// `Frozen` is the compiler's: a type holding a `Mutex` does not satisfy it, declaring it changes
+// nothing, and without the bound generic code cannot read a `shared<V>` as a `V`.
+
+function unbounded<V>(s: shared<V>): V {
+  return s;
+}
+
+class Store<V extends Frozen> {
+  v: V;
+
+  constructor(v: V) {
+    this.v = v;
+  }
+}
+
+class Guarded {
+  lock: Mutex<u64> = new Mutex<u64>(0);
+}
+
+class Claims implements Frozen {
+  f: () => void = () => {};
+}
+
+const g = new Store<Guarded>(new Guarded());
+const c = new Store<Claims>(new Claims());
+
+function main() {}

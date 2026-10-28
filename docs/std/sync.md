@@ -229,6 +229,41 @@ function main() {
 }
 ```
 
+### `shared` values in generic code
+
+A `shared<T>` is read like its `T` (in place, no lock, no copy) only when nothing in `T` could
+change it or run code on it. Generic code does not know what a type parameter will be, so it
+needs the prelude's `Frozen` bound to read a `shared<V>` as a `V`: `class Store<V extends
+Frozen>`. Like `AtomicValue`, the compiler knows which types are `Frozen` (declaring it is an
+error, and a type parameter needs the bound itself), and checks the bound where the generic is used: a type holding a `Mutex`, a
+function or interface value, a weak reference or a promise is not. A callback still gets the
+`shared<V>` itself (`read(f: (v: shared<V>) => R)`): a function value might change what it is
+given.
+
+```ts
+class Store<V extends Frozen> {
+  cell: Atomic<shared<V> | null> = new Atomic<shared<V> | null>(null);
+
+  put(v: V) {
+    this.cell.store(shared(v));
+  }
+
+  get(): V | undefined {
+    const s = this.cell.load("acquire");
+    if (s == null) {
+      return undefined;
+    }
+    return s;
+  }
+}
+
+function main() {
+  const s = new Store<string>();
+  s.put("hello");
+  console.log(s.get()); // hello
+}
+```
+
 ## `Atom<T>`
 
 A `shared` value that threads read at once without a lock and replace whole, like Rust's

@@ -625,6 +625,16 @@ instantiated, as any interface bound is; lowering instantiates per type already,
 - **Lowering fix:** `atomic_place`'s fallback now substitutes the receiver's type.
 - **Why:** `ConcurrentMap<K, V>` (step 4) declares `Atomic<V>` arrays.
 
+## The `Frozen` bound (#1696 step 4.2b)
+
+Sema reads a `shared<T>` as a `T` only when `Ctx::frozen_readable` accepts `T`, and a type
+parameter never was. The prelude's marker interface `Frozen` is compiler-known like
+`AtomicValue`: `Ctx::satisfies` decides it for a concrete type with `frozen_readable`, and
+inside a generic body `FnCx::frozen_readable_here` sets `Ctx::frozen_params` to the parameters
+bounded by it, which `frozen_readable_in` then takes as readable. Lowering is unchanged: at
+instantiation the type is concrete and the frozen machinery reads it as for a written type.
+`ConcurrentMap<K, V>` (step 4.3) stores a non-`u64` `V` as `shared<V>` and returns it this way.
+
 ## Not in this design
 
 - `Atomics.wait` / `notify` (futex): blocking a worker thread stalls its tasks; an async-aware

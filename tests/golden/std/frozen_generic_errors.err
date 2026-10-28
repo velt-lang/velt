@@ -1,0 +1,9 @@
+frozen_generic_errors.vlt:24:21: error: the type `Guarded` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:25:21: error: the type `Claims` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:5:10: error: mismatched types
+  = note: expected V, found shared<V>
+  = note: `shared<V>` is read like a `V` only when `V` is bounded by `Frozen` (`V extends Frozen`, checked where the generic is used)

@@ -286,9 +286,9 @@ impl Ctx<'_> {
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Shared(_) => return true,
-            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
-                return false
-            }
+            // `T extends Frozen` in the body being checked: whatever it is, it is readable.
+            TyKind::Param(p) => return self.frozen_params.contains(&p),
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return false,
             TyKind::Adt(d, _)
                 if Some(d) == self.mutex_ty()
                     || Some(d) == self.rwlock_ty()

@@ -1,0 +1,44 @@
+// A type parameter bounded by `Frozen` reads a `shared<V>` as a `V` in generic code: in place,
+// as for a written type, checked where the generic is used. Here a generic store over an object,
+// a string and an array.
+
+class Store<V extends Frozen> {
+  cell: Atomic<shared<V> | null> = new Atomic<shared<V> | null>(null);
+
+  put(v: V) {
+    this.cell.store(shared(v));
+  }
+
+  get(): V | undefined {
+    const s = this.cell.load("acquire");
+    if (s == null) {
+      return undefined;
+    }
+    return s;
+  }
+
+  read<R>(f: (v: shared<V>) => R): R | undefined {
+    const s = this.cell.load("acquire");
+    return s == null ? undefined : f(s);
+  }
+}
+
+interface Cfg {
+  name: string;
+  limits: u64[];
+}
+
+function main() {
+  const c = new Store<Cfg>();
+  console.log(c.get() == undefined);
+  c.put({ name: "a", limits: [1, 2] });
+  const got = c.get();
+  console.log(got == undefined ? "none" : got.name, c.read((v) => v.limits.length));
+  const s = new Store<string>();
+  s.put("text");
+  console.log(s.get(), s.read((v) => v.length));
+  const xs = new Store<u64[]>();
+  xs.put([3, 4, 5]);
+  const arr = xs.get();
+  console.log(arr == undefined ? 0 : arr.length, xs.read((v) => v[2]));
+}
