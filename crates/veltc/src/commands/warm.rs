@@ -2,12 +2,13 @@
 //!
 //! The warm-up programs (`<prefix>/share/velt/warm/*.vlt`; in a checkout, the std goldens that
 //! `share/velt/warm/programs.txt` lists) together reach most of std and its common generic
-//! instances. Each is compiled in debug, to an
-//! object only, for this machine's CPU (what `velt run` and `velt test` build for) and for the
+//! instances. Each is built in debug, as an executable (what `velt build`, `velt run` and `velt
+//! test` build: an object alone compiles some code differently), for this machine's CPU (what `velt run` and `velt test` build for) and for the
 //! target's default CPU (what `velt build` builds for). The build cache then holds std's
 //! functions, so a project's first build compiles little more than its own code. A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
-//! start `velt cache warm --background` after installing a version.
+//! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
+//! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,6 +20,9 @@ const CPUS: [Option<&str>; 2] = [Some("native"), None];
 
 /// `velt cache warm [--background]`.
 pub fn warm_command(background: bool) -> Result<(), String> {
+    if background && !wanted_in_background() {
+        return Ok(());
+    }
     let Some(root) = crate::build_cache::root() else {
         eprintln!("velt: the build cache is off ($VELT_BUILD_CACHE): nothing to warm");
         return Ok(());
@@ -75,7 +79,15 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))
 }
 
-/// Compile `program` to an object in `out` for `cpu`, by a child `velt build`, so one program
+/// Whether the installers' background warm-up should run: not in CI (`$CI`), whose cache is
+/// thrown away with the runner, nor when `$VELT_CACHE_WARM` is `off`.
+fn wanted_in_background() -> bool {
+    let set = |name: &str| std::env::var(name).is_ok_and(|v| !v.is_empty());
+    let off = std::env::var("VELT_CACHE_WARM").is_ok_and(|v| crate::build_cache::is_off(&v));
+    !set("CI") && !off
+}
+
+/// Build `program` as an executable in `out` for `cpu`, by a child `velt build`, so one program
 /// that fails stops nothing else. The build stamp is off: an unchanged stamp would skip codegen.
 fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
     let Ok(exe) = std::env::current_exe() else {
@@ -84,8 +96,8 @@ fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
     let mut cmd = Command::new(exe);
     cmd.arg("build")
         .arg(program)
-        .args(["--emit", "obj", "-o"])
-        .arg(out.join("warm.o"))
+        .arg("-o")
+        .arg(out.join(if cfg!(windows) { "warm.exe" } else { "warm" }))
         .env("VELT_BUILD_STAMP", "off")
         .env_remove(super::cpu::CPU_VAR)
         .stdin(Stdio::null())
@@ -182,31 +194,19 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 /// The list of warm-up programs in a checkout.
 const LIST: &str = "programs.txt";
 
-/// `$VELT_SHARE/warm`; else `<prefix>/share/velt/warm` beside `<prefix>/bin/velt`; else, in a
-/// checkout, `share/velt/warm` of the first directory above the executable with a `Cargo.toml`.
+/// `$VELT_SHARE/warm`; else `share/velt/warm` beside the std this velt uses
+/// (`crate::loader::std_root`: `<prefix>/std` installed, the checkout's `std/` in one, wherever
+/// its target directory is), so the programs and the std they exercise come from one place.
 fn warm_dir() -> Option<PathBuf> {
     if let Some(share) = std::env::var_os("VELT_SHARE").filter(|s| !s.is_empty()) {
         return Some(Path::new(&share).join("warm")).filter(|d| d.is_dir());
     }
-    warm_dir_for_exe(&std::env::current_exe().ok()?)
+    warm_dir_of_std(&crate::loader::std_root()?)
 }
 
-fn warm_dir_for_exe(exe: &Path) -> Option<PathBuf> {
-    let exe_dir = exe.parent()?;
-    let installed = exe_dir
-        .file_name()
-        .filter(|n| *n == "bin")
-        .and_then(|_| exe_dir.parent())
-        .map(Path::to_path_buf);
-    let checkout = exe_dir
-        .ancestors()
-        .find(|d| d.join("Cargo.toml").is_file())
-        .map(Path::to_path_buf);
-    [installed, checkout]
-        .into_iter()
-        .flatten()
-        .map(|prefix| prefix.join("share").join("velt").join("warm"))
-        .find(|d| d.is_dir())
+fn warm_dir_of_std(std: &Path) -> Option<PathBuf> {
+    let warm = std.parent()?.join("share").join("velt").join("warm");
+    warm.is_dir().then_some(warm)
 }
 
 #[cfg(test)]
@@ -219,18 +219,15 @@ mod tests {
         let prefix = tmp.path().join("prefix");
         let warm = prefix.join("share/velt/warm");
         std::fs::create_dir_all(&warm).unwrap();
-        std::fs::create_dir_all(prefix.join("bin")).unwrap();
-        assert_eq!(warm_dir_for_exe(&prefix.join("bin/velt")), Some(warm));
+        std::fs::create_dir_all(prefix.join("std")).unwrap();
+        assert_eq!(warm_dir_of_std(&prefix.join("std")), Some(warm));
 
+        // A checkout: beside its std, whatever directory the executable is in.
         let repo = tmp.path().join("repo");
         let warm = repo.join("share/velt/warm");
         std::fs::create_dir_all(&warm).unwrap();
-        std::fs::create_dir_all(repo.join("target/debug")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "").unwrap();
-        assert_eq!(
-            warm_dir_for_exe(&repo.join("target/debug/velt")),
-            Some(warm.clone())
-        );
+        assert_eq!(warm_dir_of_std(&repo.join("std")), Some(warm.clone()));
+        assert_eq!(warm_dir_of_std(&tmp.path().join("other/std")), None);
         std::fs::write(warm.join("b.vlt"), "").unwrap();
         std::fs::write(warm.join("a.vlt"), "").unwrap();
         std::fs::write(warm.join("notes.md"), "").unwrap();

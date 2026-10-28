@@ -456,15 +456,16 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `clean --cache` removes the build cache's directory instead (same output; the cache turned off
   → `Clean nothing to remove (the build cache is off: $VELT_BUILD_CACHE)`).
 - `cache warm [--background]` (additive, #1612): with the build cache on, builds each
-  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `<prefix>/share/velt/warm`, else
-  `share/velt/warm` of the checkout above the executable) with a child `velt build <file> --emit
-  obj` (`VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
+  root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
+  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
   writes the marker `<cache>/warm/<hex>` (SHA-256 of the version line and the executable's size
   and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time
   (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
   others ran. `--background` starts `velt cache warm` detached (own process group, lowest
-  priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns. The cache off →
+  priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns; it does nothing
+  when `$CI` is set (non-empty) or `$VELT_CACHE_WARM` is `off`. The cache off →
   a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
   after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
   failures).

@@ -113,7 +113,7 @@ How `velt` finds its parts (first match wins):
 | standard library | `$VELT_STD` → `<exe dir>/../std` when the executable is in a `bin/` directory → the `std/` of the source checkout it was built in → `<exe dir>/std` |
 | linker | `$VELT_LINKER` (`bundled`, `system` or a linker program) → the bundled lld (`<exe dir>/../lib/velt/lld`, in a checkout the Rust toolchain's `rust-lld`) with the target's kit (`lib/targets/<triple>/`) → the system linker: Windows: MSVC `link.exe` found through the registry and vswhere; Linux and macOS: `cc` (Linux static links use `-fuse-ld=mold` / `lld` when `mold` / `ld.lld` is on `PATH`) |
 | debugger scripts | `$VELT_SHARE/lldb/velt_lldb.py` → `<exe dir>/../share/velt/lldb/` when the executable is in a `bin/` directory → `editors/lldb/` of the source checkout it was built in |
-| warm-up programs | `$VELT_SHARE/warm` → `<exe dir>/../share/velt/warm` when the executable is in a `bin/` directory → `share/velt/warm` of the source checkout above it |
+| warm-up programs | `$VELT_SHARE/warm` → `share/velt/warm` beside the standard library above (`<prefix>/share/velt/warm` installed, the source checkout's in a dev build) |
 | clang (`--release`) | `$VELT_CLANG` → `clang` on `PATH` → standard install directories (`C:\Program Files\LLVM\bin`, Homebrew, `/usr/bin`, `clang-NN` on `PATH`); versions older than 16 are skipped |
 
 **Debug builds link the shared runtime** (milliseconds instead of the seconds a static link of

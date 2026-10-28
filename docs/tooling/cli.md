@@ -153,7 +153,8 @@ A build never compiles the same thing twice:
   (`share/velt/warm/`) that reach most of std, for this machine's CPU (what `velt run` and
   `velt test` build for) and the default one (`velt build`). A project's first build then
   compiles little more than its own code. It runs once per Velt version; `velt cache warm` runs
-  it in the foreground, `--background` detached.
+  it in the foreground, `--background` detached. The installers skip it in CI (`CI` set), where
+  the cache goes away with the runner, and when `VELT_CACHE_WARM=off`.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
   the build cache)`) and when a build was up to date.
 
