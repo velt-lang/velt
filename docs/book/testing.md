@@ -88,11 +88,11 @@ velt test --no-run              # build the test programs without running them
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
 test failed, so it works in CI as is. Each test file runs in a process of its own, several at
 once (`--jobs`), and its output is printed in file order, whatever finishes first. The tests of
-a file run one after another, in source order, in that process; one that ends it (a panic,
-`process.exit`) is reported, and a new process runs the tests after it. The runner itself is
-written in Velt: the standard library's `velt:test`, compiled into the test program. Run a test
-program by hand (`velt test --no-run` prints its path) and it runs its tests itself. `--watch` reruns the tests whenever a file they import, a
-test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
+a file run one after another, in source order, in that process; one that ends it (a panic, a
+crash, `process.exit`) is reported, and a new process runs the tests after it. The runner itself
+is written in Velt: the standard library's `velt:test`, compiled into the test program. Run a
+test program by hand (`velt test --no-run` prints its path) and it runs its tests itself.
+`--watch` reruns the tests whenever a file they import, a test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
 above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
 
@@ -104,7 +104,8 @@ module a program imports is evaluated when it starts
 file's process also evaluates the other test files and the modules they import. That is harmless
 for a file that only declares (imports, functions, classes, types, and constants made of
 literals), and most test files do. A test file whose evaluation runs code (statements at the top
-level, or a constant or static field initialized with a call, `const Page = component(...)`)
+level, or a constant or static field initialized with a call, `const Page = component(...)`,
+or with something that can panic: `n!`, a cast like `raw as string`, an integer `/` or `%`)
 gets a program of its own, so other files never see what it does. So does a test file that
 imports such a module by a relative path (`import { DATA } from "./fixtures"`), directly or
 through other modules: if that code fails, only that file's tests fail ("exit code 1 before its

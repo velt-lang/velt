@@ -443,7 +443,9 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   both values): throw an `AssertionError` (an `Error`, as Node's `assert` does) when they fail.
   `assertThrows(() => f(), msg?)` returns the error `f` throws and throws an `AssertionError`
   if it returns normally. `panic(msg)` panics, for bugs: it ends the program and can't be
-  caught.
+  caught. In a function that can't throw (a sort comparator, a promise executor, `toString`),
+  `assert` is a compile error, as any throw is; check an invariant there with
+  `if (!cond) panic(msg)` ([Errors](../reference/errors.md)).
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
   a deeply equal value, in any order (a key is matched as `get` matches it, and an object key

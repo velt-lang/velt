@@ -19,6 +19,7 @@ import { exec, ExecResult } from "velt:child_process";
 import { readFileSync } from "velt:fs";
 
 declare function velt_rt_clear_throw_loc(): void;
+declare function velt_rt_flush(): void;
 
 /** One registered test. */
 class Test {
@@ -122,6 +123,9 @@ export async function __run() {
     const from = Number(process.env.VELT_TEST_FROM ?? "0");
     const mark = `${MARK}${process.env.VELT_TEST_MARK ?? ""}:: `;
     console.log(`${mark}start`);
+    // Stdout to the runner is a pipe, so buffered: a crash (a stack overflow, a segfault) would
+    // lose what is still in the buffer. Each marker is written out before what comes next runs.
+    velt_rt_flush();
     await runTests(files[Number(file) as usize], from as usize, mark);
     process.exit(0);
   } else if (plan != null) {
@@ -156,6 +160,7 @@ async function runTests(file: TestFile, from: usize, mark: string | null): Promi
     }
     if (error == null) {
       console.log(mark != null ? `${mark}ok ${t.name}` : `ok ${t.name}`);
+      velt_rt_flush();
       continue;
     }
     failed++;
@@ -170,6 +175,7 @@ async function runTests(file: TestFile, from: usize, mark: string | null): Promi
         console.log(`    ${line}`);
       }
     }
+    velt_rt_flush();
   }
   return failed;
 }

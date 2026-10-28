@@ -260,6 +260,23 @@ export async function test_rejected() {
 }
 ";
 
+/// Crashes in its second test, losing nothing printed before (stdout to the runner is a pipe).
+const S: &str = "\
+function rec(n: number): number {
+  return rec(n + 1) + 1;
+}
+
+export function test_before() {
+  console.log(\"before\");
+}
+
+export function test_overflows() {
+  console.log(rec(0));
+}
+
+export function test_after() {}
+";
+
 #[test]
 fn what_a_test_does_cannot_break_the_run() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
@@ -270,8 +287,11 @@ fn what_a_test_does_cannot_break_the_run() {
     write(dir, "t/g.test.vlt", G);
     write(dir, "t/h.test.vlt", "export function test_h() {}\n");
 
+    write(dir, "t/s.test.vlt", S);
+
     let o = velt_test(dir, &["t"]);
-    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    // Paths are printed as given, `t\f.test.vlt` on Windows.
+    let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     let f = block(&stdout, "f.test.vlt");
     assert_eq!(
@@ -300,5 +320,12 @@ fn what_a_test_does_cannot_break_the_run() {
         ],
         "{stdout}"
     );
-    assert!(stdout.contains("5 passed; 3 failed"), "{stdout}");
+    let s = block(&stdout, "s.test.vlt");
+    assert_eq!(s[1..3], ["before", "ok test_before"], "{stdout}");
+    assert!(
+        s[3].starts_with("FAILED test_overflows (exit code "),
+        "{stdout}"
+    );
+    assert_eq!(s.last(), Some(&"ok test_after"), "{stdout}");
+    assert!(stdout.contains("7 passed; 4 failed"), "{stdout}");
 }

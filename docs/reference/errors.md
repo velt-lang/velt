@@ -196,7 +196,18 @@ nothing; `null` means success).
   `Error`, as Node's `assert` throws), which can. Like any error, it is part of the inferred
   error type of the function that calls them: a function with `throws ParseError` that calls
   `assert` must allow `AssertionError` too (`throws ParseError | AssertionError`), and a `catch`
-  that handles only `ParseError` no longer covers everything the block throws.
+  that handles only `ParseError` no longer covers everything the block throws. Where nothing may
+  throw (a sort comparator or a promise executor, whose function types don't allow throwing, and
+  `toString`), `assert` is a compile error; an invariant check there is `if (!cond) panic(msg)`:
+
+  ```ts
+  const xs = [3, 1, 2];
+  xs.sort((a, b) => {
+    if (Number.isNaN(a - b)) panic("not comparable");
+    return a - b;
+  });
+  console.log(xs.join(",")); // 1,2,3
+  ```
 - There is no `Result` type, no `Ok`/`Err` and no postfix `?`: errors propagate by themselves,
   and values use unions.
 

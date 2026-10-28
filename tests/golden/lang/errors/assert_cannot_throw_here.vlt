@@ -1,0 +1,28 @@
+// A failed `assert` throws an `AssertionError`, so it can't be used where nothing may throw: a
+// sort comparator, a promise executor, `toString`. There, an invariant check is
+// `if (!cond) panic(msg)` (docs/reference/errors.md).
+
+const xs = [3, 1, 2];
+xs.sort((a, b) => {
+  assert(a != b);
+  return a - b;
+});
+
+const p = new Promise<i64>((res) => {
+  assert(xs.length > 0);
+  res(1);
+});
+
+class Point {
+  x: i64 = 0;
+  toString(): string {
+    assert(this.x >= 0);
+    return `${this.x}`;
+  }
+}
+
+// What compiles instead.
+xs.sort((a, b) => {
+  if (a == b) panic("equal keys");
+  return a - b;
+});

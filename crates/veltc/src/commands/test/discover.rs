@@ -204,7 +204,10 @@ pub fn runs_code(module: &ast::Module) -> bool {
     })
 }
 
-/// Does evaluating `e` only make a value, without calling anything?
+/// Does evaluating `e` only make a value, without calling anything or failing? `n!`, a cast of a
+/// value that isn't a literal (`raw as string`) and integer `/` and `%` (by zero) can panic, and in
+/// a shared program that would stop every file's tests, so they count as running code; `as const`
+/// and a cast of a literal can't fail.
 fn inert(e: &ast::Expr) -> bool {
     use ast::ExprKind as E;
     let prop = |p: &ast::ObjectProp| match p {
@@ -214,9 +217,15 @@ fn inert(e: &ast::Expr) -> bool {
     match &e.kind {
         E::Lit(_) | E::Ident(_) | E::Arrow { .. } | E::Function(_) => true,
         E::Template { exprs, .. } => exprs.iter().all(inert),
-        E::Unary { expr, .. } | E::Spread(expr) | E::Paren(expr) | E::NonNull(expr) => inert(expr),
-        E::Cast { expr, .. } => inert(expr),
-        E::Binary { lhs, rhs, .. } => inert(lhs) && inert(rhs),
+        E::Unary { expr, .. } | E::Spread(expr) | E::Paren(expr) => inert(expr),
+        E::Cast { expr, ty } => {
+            let as_const = matches!(&ty.kind, ast::TypeExprKind::Named { path, args }
+                if args.is_empty() && path.len() == 1 && path[0].name == "const");
+            (as_const || matches!(expr.kind, E::Lit(_))) && inert(expr)
+        }
+        E::Binary { op, lhs, rhs } => {
+            !matches!(op, ast::BinaryOp::Div | ast::BinaryOp::Rem) && inert(lhs) && inert(rhs)
+        }
         E::Cond { cond, then, els } => inert(cond) && inert(then) && inert(els),
         E::Array(items) => items.iter().all(inert),
         E::Object(props) | E::StructLit { props, .. } => props.iter().all(prop),
@@ -363,6 +372,14 @@ mod tests {
         assert!(runs(
             "const T = `${make()}`;\nfunction make(): i64 { return 1; }\n"
         ));
+        assert!(!runs("const P = { x: 1 } as const;\nconst H = 0.5 * 2;\n"));
+        // What can panic while the module is evaluated.
+        assert!(runs(
+            "const n: string | null = null;\nconst m = n!;\nexport function test_a() {}\n"
+        ));
+        assert!(runs("const raw: any = 1;\nconst s = raw as string;\n"));
+        assert!(runs("const z: i64 = 0;\nconst q: i64 = 10 / z;\n"));
+        assert!(runs("const z: i64 = 0;\nconst q: i64 = 10 % z;\n"));
         assert!(runs("class C { static { console.log(1); } }\n"));
         assert!(runs(
             "class C { static n: i64 = make(); }\nfunction make(): i64 { return 1; }\n"
