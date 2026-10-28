@@ -17,8 +17,11 @@
 //!   object), given the address of a member, which is taken for nothing else;
 //! - its values never leave it: a member is copied only into members, compared, read and
 //!   written through, and passed to calls (which borrow it); it is never stored, returned, cast
-//!   or put into an aggregate, and its address is never taken. Members other than `r` are only
-//!   written with member values or null;
+//!   or put into an aggregate, and its address is taken only for release glue. A pointer into
+//!   the object (`&(*m).rows`, a register written once) is a use wherever it goes, and leaves
+//!   no more than a member does. Members other than `r` are only written with member values,
+//!   null, or `r`'s own load repeated (the plain copy of a nullable field, which the share then
+//!   overwrites with the same pointer);
 //! - every path from the increment to a return passes a release (a member's null test that
 //!   finds it null counts): so no call took the reference over, and no member was overwritten
 //!   while holding it;
@@ -252,6 +255,8 @@ struct Family {
     members: FxHashSet<Local>,
     /// Registers holding a member's address, only ever handed to release glue.
     glue_addrs: FxHashSet<Local>,
+    /// Registers holding the address of a part of a member's object (`&(*m).rows`).
+    derived: FxHashSet<Local>,
     /// Count pointers: registers holding a member less 8.
     counts: FxHashSet<Local>,
     /// The increment's store.

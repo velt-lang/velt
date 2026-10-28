@@ -40,6 +40,10 @@ enum Between {
     ClosureCall,
     /// A string runtime function (an error message built): frees no counted object.
     StringExtern,
+    /// A pointer into the object (`&(*v).len`) read through.
+    InteriorPointer,
+    /// That pointer stored into the object holding the source.
+    InteriorPointerEscapes,
 }
 
 struct Kit {
@@ -180,6 +184,15 @@ fn program(between: Between) -> (Program, FuncId) {
         Between::StringExtern => {
             let args = vec![copy_local(this), copy_local(this), copy_local(this)];
             b = call(&mut fb, b, Callee::Extern(k.concat), args)
+        }
+        Between::InteriorPointer | Between::InteriorPointerEscapes => {
+            let (ip, y) = (fb.local(Ty::Ptr), fb.local(Ty::U64));
+            fb.assign(b, ip, Rvalue::AddrOf(field_of(v, k.arr, 1)));
+            fb.assign(b, y, Rvalue::Use(copy_place(deref(ip, Ty::U64))));
+            if between == Between::InteriorPointerEscapes {
+                let to = field_of(this, k.obj, 0);
+                fb.push(b, Stmt::Assign(to, Rvalue::Use(copy_local(ip))));
+            }
         }
         Between::QuietCallWithData => {
             b = fb.call(b, Callee::Func(k.quiet), vec![copy_local(v)], Some(tmp))
@@ -325,6 +338,7 @@ fn a_copy_only_read_borrows() {
         Between::NoReturn,
         Between::NoReturnFreeing,
         Between::StringExtern,
+        Between::InteriorPointer,
     ] {
         assert!(borrowed(b), "{b:?}");
     }
@@ -341,6 +355,7 @@ fn a_copy_something_may_free_or_take_keeps_its_count() {
         Between::SharedAgain,
         Between::NoReturnWithData,
         Between::ClosureCall,
+        Between::InteriorPointerEscapes,
     ] {
         assert!(!borrowed(b), "{b:?}");
     }

@@ -35,6 +35,7 @@ impl Cx<'_> {
         }
         let params = self.func.params.len();
         let glue_addrs = self.glue_addrs(&members)?;
+        let derived = self.derived(&members)?;
         for &m in &members {
             let scalar = self.func.locals[m.0 as usize].ty == velt_vir::vir::Ty::Ptr;
             let ok = (m.0 as usize) >= params
@@ -51,6 +52,7 @@ impl Cx<'_> {
             root: r,
             members,
             glue_addrs,
+            derived,
             counts,
             inc,
             releases: vec![],
@@ -68,6 +70,20 @@ impl Cx<'_> {
         Some(fam)
     }
 
+    /// Whether `rv` is the root's own load, `*p` of a register `p` written once.
+    fn repeats_root_load(&self, fam: &Family, rv: &Rvalue) -> bool {
+        let Some((_, root_rv)) = self.def_of(fam.root) else {
+            return false;
+        };
+        let Rvalue::Use(Operand::Copy(src)) = root_rv else {
+            return false;
+        };
+        let stable_base = matches!(src.proj.as_slice(), [Proj::Deref(_)])
+            && self.usage.is_register(src.local)
+            && self.usage.get(src.local).defs == 1;
+        stable_base && rv == root_rv
+    }
+
     /// The registers taking a member's address, when every such address goes only to release
     /// glue as its one argument (`None` when some address goes elsewhere).
     fn glue_addrs(&self, members: &FxHashSet<Local>) -> Option<FxHashSet<Local>> {
@@ -76,7 +92,7 @@ impl Cx<'_> {
             let Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
                 continue;
             };
-            if !members.contains(&p.local) {
+            if !members.contains(&p.local) || !p.proj.is_empty() {
                 continue;
             }
             let reg = self.usage.is_register(d.local) && self.usage.get(d.local).defs == 1;
@@ -94,7 +110,29 @@ impl Cx<'_> {
         let only_glue = addrs
             .iter()
             .all(|a| glue_reads.get(a).copied().unwrap_or(0) == self.usage.get(*a).reads);
+
         only_glue.then_some(addrs)
+    }
+
+    /// The registers written once with the address of a part of a member's object
+    /// (`&(*m).rows`): pointers into it, whose uses are uses of the object (`None` when such an
+    /// address goes into another kind of local).
+    fn derived(&self, members: &FxHashSet<Local>) -> Option<FxHashSet<Local>> {
+        let mut out = FxHashSet::default();
+        for s in self.func.blocks.iter().flat_map(|b| &b.stmts) {
+            let Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
+                continue;
+            };
+            if !members.contains(&p.local) || !matches!(p.proj.first(), Some(Proj::Deref(_))) {
+                continue;
+            }
+            let reg = self.usage.is_register(d.local) && self.usage.get(d.local).defs == 1;
+            if !reg || !d.proj.is_empty() {
+                return None;
+            }
+            out.insert(d.local);
+        }
+        Some(out)
     }
 
     /// `call g(a)` of release glue `g` with no result: `a`.
@@ -248,9 +286,13 @@ impl Cx<'_> {
         if fam.members.contains(&d) {
             match dst.proj.first() {
                 None => {
-                    // The root's definition (a load), the null of a drop flag, or a copy.
+                    // The root's definition (a load), the null of a drop flag, a copy, or the
+                    // plain copy of a nullable field the root's load repeats once it found the
+                    // field set (`c = this.cursor; if (c != null) { r = this.cursor; r.count++;
+                    // c = r }`): the same pointer, or null.
                     let root = d == fam.root;
                     let ok = root
+                        || self.repeats_root_load(fam, rv)
                         || match rv {
                             Rvalue::Use(op) if is_int(op, 0) => true,
                             Rvalue::Use(op) => {
@@ -271,9 +313,15 @@ impl Cx<'_> {
             }
         }
         if let Rvalue::AddrOf(p) = rv {
-            // Only the address release glue is given.
+            // The address release glue is given, or a pointer into the object (a use).
             let glue = fam.glue_addrs.contains(&d) && fam.members.contains(&p.local);
-            w.bail |= !glue && (fam.members.contains(&p.local) || fam.counts.contains(&p.local));
+            let inside = fam.derived.contains(&d) && fam.members.contains(&p.local);
+            if inside {
+                w.uses.insert(at);
+            }
+            w.bail |= !glue
+                && !inside
+                && (fam.members.contains(&p.local) || fam.counts.contains(&p.local));
             return;
         }
         // A member's value may only be copied into a member, offset to its count word, or
@@ -299,7 +347,11 @@ impl Cx<'_> {
         let Operand::Copy(p) = op else { return };
         if fam.counts.contains(&p.local) {
             w.bail = true;
-        } else if fam.members.contains(&p.local) {
+        } else if fam.members.contains(&p.local) || fam.derived.contains(&p.local) {
+            if fam.derived.contains(&p.local) {
+                // Read through or handed on: a use of the object either way.
+                w.uses.insert(at);
+            }
             match p.proj.first() {
                 None => w.bail |= !value_ok,
                 Some(Proj::Deref(_)) => {
@@ -321,7 +373,9 @@ impl Cx<'_> {
                 for a in args {
                     // Passed to the call, which borrows it.
                     self.operand(fam, w, at, a, true);
-                    if local_of(a).is_some_and(|m| fam.members.contains(&m)) {
+                    if local_of(a)
+                        .is_some_and(|m| fam.members.contains(&m) || fam.derived.contains(&m))
+                    {
                         w.uses.insert(at);
                     }
                 }
