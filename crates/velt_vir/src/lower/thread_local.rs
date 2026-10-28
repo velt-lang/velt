@@ -100,6 +100,8 @@ pub(super) fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
     };
     let w = match lit {
         K::Lit(Lit::Bool(b)) => u64::from(*b),
+        // A static atomic's reference word that starts empty.
+        K::Lit(Lit::Null) => 0,
         K::Lit(Lit::Int(n)) if vt.is_float() => float_bits(*n as f64, neg, vt),
         K::Lit(Lit::Float(f)) if vt.is_float() => float_bits(*f, neg, vt),
         K::Lit(Lit::Int(n)) => {

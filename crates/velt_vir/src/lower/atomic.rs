@@ -16,6 +16,14 @@ use crate::vir::{BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty, UnOp};
 impl FnLower<'_, '_> {
     pub(super) fn atomic_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr]) -> Operand {
         use Intrinsic as I;
+        let instance = !matches!(i, I::AtomicFence | I::AtomicSpinHint);
+        if let Some(t) = args
+            .first()
+            .filter(|_| instance)
+            .and_then(|a| self.atomic_ref_value(a))
+        {
+            return self.atomic_ref_intrinsic(i, args, t);
+        }
         match (i, args) {
             (I::AtomicFence, [o]) => self.atomic_call(AtomicCall::Fence(order(o)), vec![]),
             (I::AtomicSpinHint, []) => self.atomic_call(AtomicCall::SpinHint, vec![]),
@@ -98,7 +106,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The address of the word of the `Atomic<T>` receiver `a`, `T`'s VIR type, and its width.
-    fn atomic_word(&mut self, a: &hir::Expr) -> (Operand, Ty, u32) {
+    pub(super) fn atomic_word(&mut self, a: &hir::Expr) -> (Operand, Ty, u32) {
         let aty = self.sub(a.ty);
         let p = self.atomic_place(a);
         let cell = self.field_place(&p, aty, 0);
@@ -109,7 +117,7 @@ impl FnLower<'_, '_> {
         let bits = match vt {
             Ty::Bool => 8,
             Ty::F32 => 32,
-            Ty::F64 => 64,
+            Ty::F64 | Ty::Ptr => 64,
             t if t.is_int() => t.scalar_size().unwrap_or(8) * 8,
             t => ice(format_args!("Atomic<T> of VIR type {t:?}")),
         };
@@ -372,7 +380,7 @@ fn lit(e: &hir::Expr) -> u128 {
 }
 
 /// The ordering an `Atomic*` intrinsic's argument numbers.
-fn order(e: &hir::Expr) -> Order {
+pub(super) fn order(e: &hir::Expr) -> Order {
     match lit(e) {
         0 => Order::Relaxed,
         1 => Order::Acquire,

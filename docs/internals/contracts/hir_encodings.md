@@ -786,7 +786,10 @@ whose receiver is always `Global(d)` of a module `const` initialized by such an 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
 `new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,
-`f64` or `bool` (sema rejects any other `T`, a type parameter too). A call of one of its methods
+`f64`, `bool`, `shared<U>` or `shared<U> | null` (sema rejects any other `T`, a type parameter
+too). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
+(whether it swapped; atomics.md "References"); its value arguments are moved in, and its
+`expected` argument may be a `Share` that lowering reads through. A call of one of its methods
 is not a `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
 `AtomicRmw` (with the operation as a `u8` literal), `AtomicCas`, `AtomicCasWeak`, and the static
 `AtomicFence` and `AtomicSpinHint`. The receiver is the first argument, a `Borrow` place, which

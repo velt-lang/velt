@@ -50,6 +50,7 @@ mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod atomic;
+mod atomic_ref;
 mod attempt;
 mod boxes;
 mod boxing;
