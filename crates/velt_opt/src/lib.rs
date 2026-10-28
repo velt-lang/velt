@@ -32,6 +32,9 @@
 //! - `addr_forward`: places through a pointer that always holds `&a…` name `a…` directly.
 //! - `heap_sroa`: heap objects that never escape the function (`new` of a small class whose
 //!   methods were inlined) live in aggregate locals instead; no allocation, no free.
+//! - `enum_sroa`: splits enum locals (a throwing callee's `Result` once inlined) used only
+//!   through their tag and variant fields into one local per slot, so the payload is a value
+//!   the scalar passes track.
 //! - `sroa`: splits aggregate locals whose address is never taken into per-field locals.
 //! - `copyprop`: forwards `a = b` copies of register-like scalar locals.
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
@@ -83,6 +86,7 @@ mod dce;
 mod dead_fills;
 mod dead_funcs;
 mod divisions;
+mod enum_sroa;
 mod frame_slots;
 mod fresh;
 mod frozen;
@@ -296,6 +300,7 @@ fn speed_round(
         changed |= t.time("heap_sroa", || {
             heap_sroa::run(&program.aggs, allocator, func)
         });
+        changed |= t.time("enum_sroa", || enum_sroa::run(&program.aggs, func));
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
         changed |= t.time("dce", || dce::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
