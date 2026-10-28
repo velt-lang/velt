@@ -216,6 +216,15 @@ export class Cursor {
       }
       const h = this.db.header(page);
       const t = data[h];
+      // A page below the root must be of the root's kind, as SQLite's getAndInitPage checks: a
+      // retyped page would otherwise read as a leaf of the other kind and skip its subtrees.
+      if (
+        this.table ? t != LEAF_TABLE && t != INTERIOR_TABLE : t != LEAF_INDEX && t != INTERIOR_INDEX
+      ) {
+        throw new CorruptError(
+          `page ${page} is not ${this.table ? "a table" : "an index"} b-tree page`,
+        );
+      }
       this.pages.push(page);
       this.cells.push(0);
       if (t == LEAF_TABLE || t == LEAF_INDEX) {
@@ -550,7 +559,8 @@ export class Cursor {
 
 /**
  * Body bytes of the one-byte serial types (0 to 127); the reserved 10 and 11 count as more
- * than any payload, so the one check after the loop catches them too.
+ * than any payload, so the one check after the loop catches them too. 2^32 cannot wrap: a
+ * header has at most 2^31 bytes, so the sum stays below 2^64.
  */
 const SIZES: usize[] = [
   0,
@@ -563,8 +573,8 @@ const SIZES: usize[] = [
   8,
   0,
   0,
-  1099511627776,
-  1099511627776,
+  4294967296,
+  4294967296,
   0,
   0,
   1,

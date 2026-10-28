@@ -93,6 +93,10 @@ function main() {
     CREATE TABLE s (id INTEGER PRIMARY KEY, v);
     CREATE INDEX s_v ON s (v);
     INSERT INTO s VALUES (1, 'hello'), (2, zeroblob(3000)), (3, 42);
+    CREATE TABLE u (v);
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000)
+    INSERT INTO u SELECT printf('%050d', i) FROM n;
+    CREATE INDEX u_v ON u (v);
     CREATE TABLE t (id INTEGER PRIMARY KEY, v);
     WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
     INSERT INTO t SELECT i, printf('%050d', i) FROM n;
@@ -102,6 +106,7 @@ function main() {
   let s: u32 = 0;
   let t: u32 = 0;
   let sv: u32 = 0;
+  let uv: u32 = 0;
   for (const r of rs) {
     if (r.name == "s") {
       s = r.rootpage as u32;
@@ -109,9 +114,11 @@ function main() {
       t = r.rootpage as u32;
     } else if (r.name == "s_v") {
       sv = r.rootpage as u32;
+    } else if (r.name == "u_v") {
+      uv = r.rootpage as u32;
     }
   }
-  const roots: u32[] = [s, t, sv];
+  const roots: u32[] = [s, t, sv, uv];
   const base = readFileBytesSync(path);
   removeSync(path);
   const pages = readU32(base, 28);
@@ -202,6 +209,18 @@ function main() {
   d = copy(base);
   d[page(t)] = 7;
   attempt("unknown page type", d, roots);
+  // A page below the root of the other kind of tree (SQLite's getAndInitPage): a table leaf
+  // made an index leaf, and an interior page of u_v (three levels) made a table interior page,
+  // which would otherwise read as a leaf and skip its subtrees.
+  d = copy(base);
+  d[page(right)] = 10;
+  attempt("table leaf retyped as an index leaf", d, roots);
+  const uvChild = readU32(base, page(uv) + readU16(base, page(uv) + 12));
+  d = copy(base);
+  if (d[page(uvChild)] == 2) {
+    d[page(uvChild)] = 5;
+  }
+  attempt("index interior page retyped as a table page", d, roots);
 
   // The last page's first cell moved to its last 4 bytes, all 0xff: the varints run past the
   // end of the file. (If the last page is not a leaf of t, the scan reads past it anyway.)
@@ -246,6 +265,94 @@ function main() {
   d[16] = 3;
   d[17] = 0;
   attempt("page size 768", d, roots);
+  // The header checks C SQLite makes when it opens a file: the read version (offset 19) at most
+  // 2, where 2 (WAL) reads as the last checkpoint, and the payload fractions 64, 32, 32.
+  d = copy(base);
+  d[19] = 3;
+  attempt("read version 3", d, roots);
+  d = copy(base);
+  d[18] = 2;
+  d[19] = 2;
+  attempt("WAL mode (read version 2)", d, roots);
+  d = copy(base);
+  d[21] = 63;
+  attempt("max payload fraction 63", d, roots);
+  d = copy(base);
+  d[23] = 33;
+  attempt("leaf payload fraction 33", d, roots);
   attempt("file cut short", base.slice(0, 60), roots);
   attempt("file cut mid-page", base.slice(0, ((pages as i64) - 1) * 1024 + 10), roots);
+  wrapping();
+}
+
+/**
+ * A 17 MiB file made in memory: one row whose record header is 2^24 bytes of serial type 10.
+ * Each counts as more body than any payload has, and the sum must not wrap around to fit.
+ */
+function wrapping() {
+  const P: usize = 65536;
+  const hsize: usize = (1 << 24) + 4;
+  const payload: u8[] = [];
+  pushVarint(payload, hsize as u64);
+  for (let i: usize = 0; i < 1 << 24; i++) {
+    payload.push(10);
+  }
+  const keep = localSize(P, true, hsize);
+  const overflow = (hsize - keep + P - 5) / (P - 4);
+  const pages = 1 + overflow;
+  const d: u8[] = [];
+  for (let i: usize = 0; i < pages * P; i++) {
+    d.push(0);
+  }
+  const magic = "SQLite format 3";
+  for (let i: usize = 0; i < 15; i++) {
+    d[i] = magic.charCodeAt(i as i64) as u8;
+  }
+  d[16] = 0;
+  d[17] = 1;
+  d[18] = 1;
+  d[19] = 1;
+  d[21] = 64;
+  d[22] = 32;
+  d[23] = 32;
+  put32(d, 24, 1);
+  put32(d, 28, pages as u32);
+  put32(d, 44, 4);
+  put32(d, 56, 1);
+  put32(d, 92, 1);
+  // Page 1: a table leaf with one cell at 200, its payload spilling onto pages 2, 3, ….
+  d[100] = 13;
+  put16(d, 103, 1);
+  put16(d, 105, 200);
+  put16(d, 108, 200);
+  const h: u8[] = [];
+  pushVarint(h, hsize as u64);
+  h.push(1);
+  let at: usize = 200;
+  for (const b of h) {
+    d[at] = b;
+    at++;
+  }
+  for (let i: usize = 0; i < keep; i++) {
+    d[at + i] = payload[i];
+  }
+  put32(d, at + keep, 2);
+  let from = keep;
+  for (let pg: usize = 2; pg <= pages; pg++) {
+    const base = (pg - 1) * P;
+    put32(d, base, pg < pages ? (pg + 1) as u32 : 0);
+    let k: usize = 0;
+    while (k < P - 4 && from < hsize) {
+      d[base + 4 + k] = payload[from];
+      k++;
+      from++;
+    }
+  }
+  try {
+    const c = new Cursor(new DbFile(d), 1);
+    c.first();
+    console.log(`2^24 serial types 10 (${d.length} bytes): ${c.columnCount()} columns, no error`);
+  } catch (e) {
+    console.log(`2^24 serial types 10 (${d.length} bytes): ${e.message}`);
+  }
 }

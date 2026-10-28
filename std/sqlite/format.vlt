@@ -55,7 +55,8 @@ export function readU32(data: u8[], at: usize): u32 {
 
 /**
  * A database file held in memory. `pageSize` and `usable` (the page size less the reserved
- * bytes at the end of each page) come from the header.
+ * bytes at the end of each page) come from the header. A file in WAL mode reads correctly only
+ * as checkpointed: this reader does not read the `-wal` file beside it.
  */
 export class DbFile {
   data: u8[];
@@ -82,6 +83,17 @@ export class DbFile {
     }
     if (pageSize < 512 || (pageSize & (pageSize - 1)) != 0) {
       throw new CorruptError(`page size ${pageSize}`);
+    }
+    // The read version (offset 19): 1 is a rollback journal, 2 is WAL; anything newer is a
+    // format this reader does not know (C SQLite refuses it too). A file in WAL mode reads as
+    // its last checkpoint: pages still in its `-wal` file are not read.
+    if (data[19] > 2) {
+      throw new CorruptError(`file format read version ${data[19]} is not supported`);
+    }
+    // The payload fractions (offsets 21 to 23) must be 64, 32 and 32: the local payload sizes
+    // assume them.
+    if (data[21] != 64 || data[22] != 32 || data[23] != 32) {
+      throw new CorruptError(`payload fractions ${data[21]}, ${data[22]}, ${data[23]}`);
     }
     this.data = data;
     this.pageSize = pageSize;
