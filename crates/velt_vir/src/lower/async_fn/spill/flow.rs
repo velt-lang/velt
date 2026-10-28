@@ -6,10 +6,10 @@
 //!   suspended (set the tag, returned 0), not from the dispatch block.
 //!
 //! Both are per-local problems (a local's facts never depend on another local's), so they are
-//! computed only where and for whom they are asked: liveness per local by walking back from
-//! its uses (cost: the size of its live range), maybe-written over a [`Universe`] of the
-//! locals in question. A large function with one `await` costs time linear in its size, not
-//! blocks × locals.
+//! computed per local and only where they are asked: liveness by walking back from the local's
+//! uses, maybe-written by walking forward from its writes through the blocks it is live into
+//! (only there can it matter: see [`Graph::written`]). The cost is the size of the live ranges,
+//! not blocks × locals.
 
 use crate::lower::successors;
 use crate::vir::{Function, Operand, Place, Proj, Rvalue, Stmt, Terminator};
@@ -20,7 +20,8 @@ pub(super) struct Bits(Vec<u64>);
 
 #[cfg(test)]
 thread_local! {
-    /// Words of every `Bits` made or cloned: the work of the dense dataflow, which tests bound.
+    /// Work done by the analysis (words of dense sets made, cloned or combined, and steps of the
+    /// per-local walks and sweeps), which tests bound.
     pub(super) static WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -47,8 +48,12 @@ impl Bits {
     pub(super) fn set(&mut self, i: usize) {
         self.0[i / 64] |= 1 << (i % 64);
     }
+    pub(super) fn clear(&mut self, i: usize) {
+        self.0[i / 64] &= !(1 << (i % 64));
+    }
     /// `self |= other`; returns whether anything was added.
     pub(super) fn union(&mut self, other: &Bits) -> bool {
+        count_words(self.0.len());
         let mut changed = false;
         for (a, b) in self.0.iter_mut().zip(&other.0) {
             let n = *a | b;
@@ -58,14 +63,21 @@ impl Bits {
         changed
     }
     pub(super) fn intersect(&mut self, other: &Bits) {
+        count_words(self.0.len());
         for (a, b) in self.0.iter_mut().zip(&other.0) {
             *a &= b;
         }
     }
     pub(super) fn minus(&mut self, other: &Bits) {
+        count_words(self.0.len());
         for (a, b) in self.0.iter_mut().zip(&other.0) {
             *a &= !b;
         }
+    }
+    /// Number of members.
+    pub(super) fn count(&self) -> usize {
+        count_words(self.0.len());
+        self.0.iter().map(|w| w.count_ones() as usize).sum()
     }
     /// The set indexes in ascending order.
     pub(super) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
@@ -103,6 +115,10 @@ impl Universe {
     }
     pub(super) fn len(&self) -> usize {
         self.members.len()
+    }
+    /// The local of index `i`.
+    pub(super) fn local(&self, i: usize) -> usize {
+        self.members[i]
     }
     /// Index of local `l`, if it is a member.
     pub(super) fn index(&self, l: usize) -> Option<usize> {
@@ -197,7 +213,7 @@ pub(super) fn term_acc<'a>(t: &'a Terminator, out: &mut Vec<Acc<'a>>) {
 }
 
 /// Accesses of block `b`: statements in order, then the terminator.
-fn block_acc(f: &Function, b: usize) -> Vec<Acc<'_>> {
+pub(super) fn block_acc(f: &Function, b: usize) -> Vec<Acc<'_>> {
     let mut out = vec![];
     for s in &f.blocks[b].stmts {
         stmt_acc(s, &mut out);
@@ -213,113 +229,257 @@ pub(super) fn has_deref(p: &Place) -> bool {
 /// Live-in locals (ascending) of every block in `query`; other blocks get an empty list.
 ///
 /// A local is live into block `b` if some path from `b`'s start reaches a use of it without
-/// first passing a whole write. Each local is traced back from the blocks that use it before
-/// any whole write in them, through predecessors, stopping at blocks that kill it.
+/// first passing a whole write (over the CFG, dispatch edges included).
 pub(super) fn live_in_at(f: &Function, query: &[usize]) -> Vec<Vec<usize>> {
-    let (n, nb) = (f.locals.len(), f.blocks.len());
-    // Per local: blocks with an upward-exposed use, and blocks that kill it.
-    let mut gens: Vec<Vec<u32>> = vec![vec![]; n];
-    let mut kills: Vec<Vec<u32>> = vec![vec![]; n];
-    // `killed[l] == b + 1`: local `l` was killed earlier in block `b` (same for `genned`).
-    let (mut killed, mut genned) = (vec![0u32; n], vec![0u32; n]);
-    for b in 0..nb {
-        let mark = b as u32 + 1;
-        for acc in block_acc(f, b) {
-            let (p, uses, kill) = match acc {
-                Acc::Read(p) | Acc::Addr(p) => (p, true, false),
-                Acc::Write(p) if has_deref(p) => (p, true, false),
-                Acc::Write(p) => (p, false, p.proj.is_empty()),
-            };
-            let l = p.local.0 as usize;
-            if kill {
-                if killed[l] != mark {
-                    killed[l] = mark;
-                    kills[l].push(b as u32);
-                }
-            } else if uses && killed[l] != mark && genned[l] != mark {
-                genned[l] = mark;
-                gens[l].push(b as u32);
-            }
-        }
-    }
-    let mut preds: Vec<Vec<u32>> = vec![vec![]; nb];
-    for (b, blk) in f.blocks.iter().enumerate() {
-        for s in successors(&blk.term) {
-            preds[s.0 as usize].push(b as u32);
-        }
-    }
-    let mut is_query = vec![false; nb];
+    let ev = block_events(f);
+    let mut g = Graph::new(f, &[], false);
+    let mut is_query = vec![false; f.blocks.len()];
     for &q in query {
         is_query[q] = true;
     }
-    let mut out = vec![vec![]; nb];
-    // `seen[b] == l + 1`: `l` is known live into `b` (same for `kill_mark`).
-    let (mut seen, mut kill_mark) = (vec![0u32; nb], vec![0u32; nb]);
-    let mut work = vec![];
-    for l in 0..n {
-        let mark = l as u32 + 1;
-        for &b in &kills[l] {
-            kill_mark[b as usize] = mark;
-        }
-        for &b in &gens[l] {
-            if seen[b as usize] != mark {
-                seen[b as usize] = mark;
-                work.push(b as usize);
+    let mut out = vec![vec![]; f.blocks.len()];
+    for l in 0..f.locals.len() {
+        for b in g.live_in(&ev.gens[l], &ev.kills[l]) {
+            if is_query[b as usize] {
+                out[b as usize].push(l);
             }
         }
-        while let Some(b) = work.pop() {
-            if is_query[b] {
-                out[b].push(l);
+    }
+    out
+}
+
+/// Count `n` units of analysis work (tests bound it; nothing otherwise).
+pub(super) fn count_work(n: usize) {
+    count_words(n);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests force the per-local analyses (`Some(true)`) or the dense ones (`Some(false)`).
+    pub(super) static FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Work of a dense analysis over `points` program points (blocks, and the instructions that
+/// access a member) and a universe of `members` locals, in the units of [`Graph`]'s steps
+/// (a step of a walk costs about as much as a few words of a dense set).
+pub(super) fn dense_cost(points: usize, members: usize) -> usize {
+    4 * points * members.div_ceil(64).max(1)
+}
+
+/// Has a per-local analysis that took `steps` cost more than the dense one (`dense`) would?
+/// Then it gives way: per-local walks cost the total size of the live ranges, which is more
+/// than dense sets when many values are live over long stretches of code.
+pub(super) fn over_budget(steps: usize, dense: usize) -> bool {
+    #[cfg(test)]
+    if let Some(per_local) = FORCE.with(|f| f.get()) {
+        return !per_local;
+    }
+    steps > dense
+}
+
+/// A set of blocks, emptied in O(1) by [`Marks::clear`], for one walk per local.
+pub(super) struct Marks {
+    v: Vec<u32>,
+    cur: u32,
+}
+
+impl Marks {
+    pub(super) fn new(nb: usize) -> Self {
+        Marks {
+            v: vec![0; nb],
+            cur: 1,
+        }
+    }
+    pub(super) fn clear(&mut self) {
+        self.cur += 1;
+    }
+    pub(super) fn get(&self, b: usize) -> bool {
+        self.v[b] == self.cur
+    }
+    /// Adds `b`; returns whether it was new.
+    pub(super) fn set(&mut self, b: usize) -> bool {
+        let new = self.v[b] != self.cur;
+        self.v[b] = self.cur;
+        new
+    }
+}
+
+/// A function's blocks for the per-local walks: liveness predecessors and successors (the CFG,
+/// plus the suspension edges when asked), and the successors of the semantic CFG (ordinary
+/// edges except those leaving the dispatch block 0, plus the suspension edges).
+pub(super) struct Graph {
+    pub(super) preds: Vec<Vec<u32>>,
+    pub(super) succs: Vec<Vec<u32>>,
+    sem: Vec<Vec<u32>>,
+    live: Marks,
+    in_w: Marks,
+    seen: Marks,
+    stop: Marks,
+    stack: Vec<usize>,
+    /// Blocks and edges visited by the walks so far.
+    pub(super) steps: usize,
+}
+
+impl Graph {
+    pub(super) fn new(f: &Function, extra: &[(usize, usize)], live_extra: bool) -> Self {
+        let nb = f.blocks.len();
+        let mut preds = vec![vec![]; nb];
+        let mut succs = vec![vec![]; nb];
+        let mut sem = vec![vec![]; nb];
+        for (b, blk) in f.blocks.iter().enumerate() {
+            for s in successors(&blk.term) {
+                preds[s.0 as usize].push(b as u32);
+                succs[b].push(s.0);
+                if b != 0 {
+                    sem[b].push(s.0);
+                }
             }
-            for &p in &preds[b] {
+        }
+        for &(from, to) in extra {
+            if live_extra {
+                preds[to].push(from as u32);
+                succs[from].push(to as u32);
+            }
+            sem[from].push(to as u32);
+        }
+        Graph {
+            preds,
+            succs,
+            sem,
+            live: Marks::new(nb),
+            in_w: Marks::new(nb),
+            seen: Marks::new(nb),
+            stop: Marks::new(nb),
+            stack: vec![],
+            steps: 0,
+        }
+    }
+
+    /// The blocks a local is live into: those that use it before any whole write (`gens`), and
+    /// back through predecessors from them, not into a block that writes it whole before using
+    /// it (`kills`). Also remembered for [`Graph::is_live_in`] and [`Graph::written`].
+    pub(super) fn live_in(&mut self, gens: &[u32], kills: &[u32]) -> Vec<u32> {
+        self.live.clear();
+        self.stop.clear();
+        for &b in kills {
+            self.stop.set(b as usize);
+        }
+        let mut out = vec![];
+        for &b in gens {
+            if self.live.set(b as usize) {
+                self.stack.push(b as usize);
+            }
+        }
+        while let Some(b) = self.stack.pop() {
+            out.push(b as u32);
+            self.steps += 1 + self.preds[b].len();
+            count_work(1 + self.preds[b].len());
+            for &p in &self.preds[b] {
                 let p = p as usize;
-                if seen[p] != mark && kill_mark[p] != mark {
-                    seen[p] = mark;
-                    work.push(p);
+                if !self.stop.get(p) && self.live.set(p) {
+                    self.stack.push(p);
+                }
+            }
+        }
+        out
+    }
+
+    /// Is the local of the last [`Graph::live_in`] live into `b`?
+    pub(super) fn is_live_in(&self, b: usize) -> bool {
+        self.live.get(b)
+    }
+
+    /// After [`Graph::live_in`] for the same local: where it may have been written, from the
+    /// blocks that write it or take its address (`writes`) and the `starts` it is an input of.
+    /// Only blocks it is live into are entered: maybe-written matters only where the local is
+    /// live, and there it holds exactly when a path from a write reaches the point through
+    /// blocks it is live into (after the last write on the path nothing kills it, so it is
+    /// live all the way; semantic edges are liveness edges).
+    pub(super) fn written(&mut self, writes: &[u32], starts: &[usize]) {
+        self.in_w.clear();
+        self.seen.clear();
+        for &b in writes {
+            if self.seen.set(b as usize) {
+                self.stack.push(b as usize);
+            }
+        }
+        for &b in starts {
+            if self.live.get(b) {
+                self.in_w.set(b);
+                if self.seen.set(b) {
+                    self.stack.push(b);
+                }
+            }
+        }
+        while let Some(b) = self.stack.pop() {
+            self.steps += 1 + self.sem[b].len();
+            count_work(1 + self.sem[b].len());
+            for &t in &self.sem[b] {
+                let t = t as usize;
+                if self.live.get(t) {
+                    self.in_w.set(t);
+                    if self.seen.set(t) {
+                        self.stack.push(t);
+                    }
                 }
             }
         }
     }
-    out
+
+    /// After [`Graph::written`]: may the local be written at the start of `b`, a block it is
+    /// live into?
+    pub(super) fn written_in(&self, b: usize) -> bool {
+        self.in_w.get(b)
+    }
+
+    /// After [`Graph::written`]: may it be written at the end of `b`, a block it is live out of
+    /// (`b` writes it, or it is live into `b` and written at its start)?
+    pub(super) fn written_out(&self, b: usize) -> bool {
+        self.seen.get(b)
+    }
 }
 
-/// Maybe-written set (over universe `u`) at the end of every block over the semantic CFG:
-/// ordinary edges except those leaving the dispatch block 0, plus the suspension edges; the
-/// start blocks are entered with the inputs written.
-pub(super) fn maybe_written(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
-    let nb = f.blocks.len();
-    let mut out = vec![Bits::new(u.len()); nb];
-    for (b, w) in out.iter_mut().enumerate() {
+/// Per local, the blocks of its plain accesses (no extension through pointers): blocks that use
+/// it before any whole write, blocks that write it whole before any use, and blocks that write
+/// it directly or take its address.
+pub(super) struct BlockEvents {
+    pub(super) gens: Vec<Vec<u32>>,
+    pub(super) kills: Vec<Vec<u32>>,
+    pub(super) writes: Vec<Vec<u32>>,
+}
+
+pub(super) fn block_events(f: &Function) -> BlockEvents {
+    let n = f.locals.len();
+    let mut ev = BlockEvents {
+        gens: vec![vec![]; n],
+        kills: vec![vec![]; n],
+        writes: vec![vec![]; n],
+    };
+    // `decided[l] == b + 1`: `l`'s gen/kill status in block `b` is known (same for `wrote`).
+    let (mut decided, mut wrote) = (vec![0u32; n], vec![0u32; n]);
+    for b in 0..f.blocks.len() {
+        let mark = b as u32 + 1;
         for acc in block_acc(f, b) {
-            if let Acc::Write(p) | Acc::Addr(p) = acc {
-                if let Some(i) = u.index(p.local.0 as usize).filter(|_| !has_deref(p)) {
-                    w.set(i);
+            let (p, uses, kill, write) = match acc {
+                Acc::Read(p) => (p, true, false, false),
+                Acc::Addr(p) => (p, true, false, !has_deref(p)),
+                Acc::Write(p) if has_deref(p) => (p, true, false, false),
+                Acc::Write(p) => (p, false, p.proj.is_empty(), true),
+            };
+            let l = p.local.0 as usize;
+            if write && wrote[l] != mark {
+                wrote[l] = mark;
+                ev.writes[l].push(b as u32);
+            }
+            if decided[l] != mark && (uses || kill) {
+                decided[l] = mark;
+                if uses {
+                    ev.gens[l].push(b as u32);
+                } else {
+                    ev.kills[l].push(b as u32);
                 }
             }
         }
     }
-    let ins = u.project(&s.inputs);
-    for &b in &s.starts {
-        out[b].union(&ins);
-    }
-    let edges = semantic_edges(f, &s.extra);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &(from, to) in &edges {
-            let src = out[from].clone();
-            changed |= out[to].union(&src);
-        }
-    }
-    out
-}
-
-/// Edges of the semantic CFG: ordinary edges except those leaving the dispatch block 0, plus
-/// `extra` (suspending block → resume/cancel block).
-pub(super) fn semantic_edges(f: &Function, extra: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    let mut edges: Vec<(usize, usize)> = extra.to_vec();
-    for (b, blk) in f.blocks.iter().enumerate().skip(1) {
-        edges.extend(successors(&blk.term).iter().map(|s| (b, s.0 as usize)));
-    }
-    edges
+    ev
 }

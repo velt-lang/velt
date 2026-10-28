@@ -13,6 +13,7 @@
 //! 4. **Rewrite**: every place rooted at a spilled local becomes `(*state).field…`, the
 //!    placeholder state type is patched, and the remaining locals are renumbered.
 
+mod dense;
 mod flow;
 mod overlap;
 mod pts;
@@ -21,7 +22,7 @@ mod tests;
 
 use rustc_hash::FxHashMap;
 
-use flow::{Bits, Susp, Universe};
+use flow::{Bits, Graph, Susp, Universe};
 use overlap::Interference;
 use pts::Set;
 
@@ -86,8 +87,8 @@ fn suspension(f: &Function, inputs: &[Local]) -> Susp {
 }
 
 /// Locals whose value must survive some suspension (step 1 of the module docs). Liveness is
-/// asked only at the resume/cancel and start blocks, and maybe-written only for the locals
-/// live there.
+/// asked only at the resume/cancel and start blocks; maybe-written only for the locals live at
+/// a resume/cancel block, per local over its live range (flow.rs).
 fn suspended_locals(f: &Function, s: &Susp) -> Bits {
     let n = f.locals.len();
     let query: Vec<usize> = s
@@ -97,28 +98,49 @@ fn suspended_locals(f: &Function, s: &Susp) -> Bits {
         .chain(s.starts.iter().copied())
         .collect();
     let live = flow::live_in_at(f, &query);
-    let mut cands = Bits::new(n);
-    for &b in &query {
-        live[b].iter().for_each(|&l| cands.set(l));
-    }
-    let u = Universe::of_set(n, &cands);
-    let written = flow::maybe_written(f, s, &u);
     let mut ins = Bits::new(n);
     s.inputs.iter().for_each(|&l| ins.set(l));
     let mut out = Bits::new(n);
-    for &(from, to) in &s.extra {
-        for &l in &live[to] {
-            if u.index(l).is_some_and(|i| written[from].get(i)) {
-                out.set(l);
-            }
-        }
-    }
     for &b in &s.starts {
         for &l in live[b].iter().filter(|&&l| ins.get(l)) {
             out.set(l);
         }
     }
-    out
+    // Per local: the suspending blocks whose resume or cancel block it is live into.
+    let mut after: Vec<Vec<usize>> = vec![vec![]; n];
+    for &(from, to) in &s.extra {
+        live[to].iter().for_each(|&l| after[l].push(from));
+    }
+    let ev = flow::block_events(f);
+    // Liveness over the CFG plus the suspension edges bounds where maybe-written can matter: a
+    // local live into a resume block is live out of the block that suspended.
+    let mut g = Graph::new(f, &s.extra, true);
+    let cands = (0..n).filter(|&l| !after[l].is_empty());
+    let budget = flow::dense_cost(f.blocks.len(), cands.clone().count());
+    let mut per_local = out.clone();
+    for l in cands.clone() {
+        g.live_in(&ev.gens[l], &ev.kills[l]);
+        g.written(&ev.writes[l], if ins.get(l) { &s.starts } else { &[] });
+        if after[l].iter().any(|&from| g.written_out(from)) {
+            per_local.set(l);
+        }
+        if flow::over_budget(g.steps, budget) {
+            // Dense maybe-written over the candidates instead (same result).
+            let mut set = Bits::new(n);
+            cands.for_each(|l| set.set(l));
+            let u = Universe::of_set(n, &set);
+            let written = dense::maybe_written(f, s, &u);
+            for &(from, to) in &s.extra {
+                for &l in &live[to] {
+                    if u.index(l).is_some_and(|i| written[from].get(i)) {
+                        out.set(l);
+                    }
+                }
+            }
+            return out;
+        }
+    }
+    per_local
 }
 
 /// Block that suspends with tag `k` (its last statement stores `k` into the tag), per `k`.
