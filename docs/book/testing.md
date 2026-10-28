@@ -79,14 +79,31 @@ velt test --filter parse        # the tests whose name contains `parse`
 velt test --filter test_parse --exact  # just `test_parse`
 velt test --release             # optimized build
 velt test --watch               # rerun on every change
+velt test --jobs 1              # one test file at a time (default: one per core)
 velt test --no-run              # build the test programs without running them
 ```
 
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
-test failed, so it works in CI as is. `--watch` reruns the tests whenever a file they import, a
+test failed, so it works in CI as is. Each test file runs in a process of its own, several at
+once (`--jobs`), and its output is printed in file order, whatever finishes first. The tests of
+a file run one after another, in source order; when one fails, the file's process ends and a
+new one runs the tests after it. `--watch` reruns the tests whenever a file they import, a
 test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
 above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
+
+## How tests are built
+
+The test files are compiled into one program, so the compiler runs once for all of them. Every
+module a program imports is evaluated when it starts
+([Modules](../reference/modules.md#scripts-top-level-statements)): in that program, each test
+file's process also evaluates the other test files and the modules they import. That is harmless
+for a file that only declares (imports, functions, classes, types, and constants made of
+literals), and most test files do. A test file whose evaluation runs code (statements at the top
+level, or a constant or static field initialized with a call, `const Page = component(...)`)
+gets a program of its own, so other files never see what it does. The modules under `src/` that
+test files import are evaluated in every file's process: keep their top level free of side
+effects, as for any module.
 
 ## Testing servers
 

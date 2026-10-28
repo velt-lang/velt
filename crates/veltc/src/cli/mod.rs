@@ -146,6 +146,8 @@ pub enum Command {
         json: bool,
         /// `--cpu`.
         cpu: Option<String>,
+        /// `--jobs <n>`: how many test files run at once.
+        jobs: Option<usize>,
     },
     /// `velt fmt [paths...] [--check]`: no paths → the current package's `src/` (or the cwd).
     Fmt { paths: Vec<PathBuf>, check: bool },

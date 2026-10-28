@@ -73,11 +73,17 @@ pub struct TestFunctions {
     pub async_tests: Vec<String>,
     /// `test_*` functions that cannot run, with the reason.
     pub skipped: Vec<(String, &'static str)>,
+    /// The module runs code when it is evaluated ([`runs_code`]), so it gets a harness of its
+    /// own instead of sharing one with the other test files.
+    pub runs_code: bool,
 }
 
 /// Collect `test_*` functions from a parsed test module.
 pub fn test_functions(module: &ast::Module) -> TestFunctions {
-    let mut found = TestFunctions::default();
+    let mut found = TestFunctions {
+        runs_code: runs_code(module),
+        ..Default::default()
+    };
     for item in &module.items {
         let ast::ItemKind::Function(f) = &item.kind else {
             continue;
@@ -104,6 +110,43 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
         }
     }
     found
+}
+
+/// Does evaluating `module` do anything but declare? Every module a program imports is evaluated
+/// when it starts (docs/reference/modules.md), so a test file in a shared harness is evaluated in
+/// every test file's process: only one that just declares can share one. Top-level statements,
+/// and a variable or static field initialized with a call (`const C = component(...)`), run code;
+/// literals, names, operators and functions do not.
+pub fn runs_code(module: &ast::Module) -> bool {
+    module.items.iter().any(|item| match &item.kind {
+        ast::ItemKind::Function(f) => velt_syntax::is_script_main(&f.sig.name),
+        ast::ItemKind::Var(v) => v.init.as_ref().is_some_and(|e| !inert(e)),
+        ast::ItemKind::Class(t) | ast::ItemKind::Struct(t) => t
+            .fields
+            .iter()
+            .any(|f| f.is_static && f.default.as_ref().is_some_and(|e| !inert(e))),
+        _ => false,
+    })
+}
+
+/// Does evaluating `e` only make a value, without calling anything?
+fn inert(e: &ast::Expr) -> bool {
+    use ast::ExprKind as E;
+    let prop = |p: &ast::ObjectProp| match p {
+        ast::ObjectProp::KeyValue(_, v) | ast::ObjectProp::Spread(v) => inert(v),
+        ast::ObjectProp::Shorthand(_) | ast::ObjectProp::Method(_) => true,
+    };
+    match &e.kind {
+        E::Lit(_) | E::Ident(_) | E::Arrow { .. } | E::Function(_) => true,
+        E::Template { exprs, .. } => exprs.iter().all(inert),
+        E::Unary { expr, .. } | E::Spread(expr) | E::Paren(expr) | E::NonNull(expr) => inert(expr),
+        E::Cast { expr, .. } => inert(expr),
+        E::Binary { lhs, rhs, .. } => inert(lhs) && inert(rhs),
+        E::Cond { cond, then, els } => inert(cond) && inert(then) && inert(els),
+        E::Array(items) => items.iter().all(inert),
+        E::Object(props) | E::StructLit { props, .. } => props.iter().all(prop),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +260,37 @@ mod tests {
         assert_eq!(found.async_tests, ["test_io"]);
         let skipped: Vec<&str> = found.skipped.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(skipped, ["test_hidden", "test_param"]);
+    }
+
+    #[test]
+    fn declarations_and_constants_do_not_run_code() {
+        let runs = |src: &str| {
+            let (module, diags) = velt_syntax::parse_file(FileId(0), src);
+            assert!(diags.is_empty(), "{diags:?}");
+            test_functions(&module).runs_code
+        };
+        assert!(!runs(
+            "import { f } from \"./f\";\n\
+             const LINE = `a b`;\n\
+             const N = -1 + 2;\n\
+             const XS = [1, 2, ...[3]];\n\
+             const O = { a: 1, b: \"x\" as string };\n\
+             const G = () => f();\n\
+             class C { static readonly K: i64 = 3; }\n\
+             interface I { x: i64 }\n\
+             type T = i64;\n\
+             export function test_a() {}\n"
+        ));
+        assert!(runs("console.log(\"hi\");\nexport function test_a() {}\n"));
+        assert!(runs(
+            "const C = make();\nfunction make(): i64 { return 1; }\n"
+        ));
+        assert!(runs(
+            "const T = `${make()}`;\nfunction make(): i64 { return 1; }\n"
+        ));
+        assert!(runs("class C { static { console.log(1); } }\n"));
+        assert!(runs(
+            "class C { static n: i64 = make(); }\nfunction make(): i64 { return 1; }\n"
+        ));
     }
 }
