@@ -37,6 +37,9 @@ function main() {
   attempt(() => `${fs.readSync(fd, b, 0, 4, 1.5)}`);
   attempt(() => `${fs.readSync(fd, b, 0, 4, -2)}`);
   console.log(fs.readSync(fd, b, 0, 4, null), b.utf8Slice(0, 4));
+  const none: u8[] = Buffer.alloc(0);
+  console.log(fs.readSync(fd, none, 0, 0, 0));
+  attempt(() => `${fs.readSync(fd, none, 0, 1, 0)}`);
   fs.closeSync(fd);
 
   const w = fs.openSync(path, "r+");

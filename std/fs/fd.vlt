@@ -352,25 +352,24 @@ function bufferOffset(size: usize, offset: number | null | undefined, read: bool
 // How many bytes of a `size`-byte buffer a `readSync` reads from `off`: left out is the rest
 // (Velt's typed API has no options object, so omitting `length` reads to the end); `null` is 0
 // (Node's `length |= 0` of `null`); a number is truncated to a 32-bit integer (`1.5` → 1,
-// `2**32` → 0, `2**32 + 3` → 3), then it must be `>= 0` and fit `size - off`.
+// `2**32` → 0, `2**32 + 3` → 3). Checked by `checkRead` after the zero-length and empty-buffer
+// cases, in Node's order.
 function readLength(size: usize, off: i64, length: number | null | undefined): i64 {
   if (length === undefined) {
     const rest = (size as i64) - off;
     return rest > 0 ? rest : 0;
   }
-  // `null | 0` is 0, a number truncates to a 32-bit integer. A zero-length read returns 0
-  // before any bound is checked (Node's `if (length === 0) return 0`), so the caller stops.
-  const len = length == null ? 0 : ((length | 0) as i64);
-  if (len == 0) {
-    return 0;
-  }
+  return length == null ? 0 : ((length | 0) as i64);
+}
+
+// Node's `validateOffsetLengthRead`: the length is `>= 0` and fits `size - off`.
+function checkRead(size: usize, off: i64, len: i64) {
   if (len < 0) {
     throw outOfRangeAtLeast("length", 0, len);
   }
   if (off + len > (size as i64)) {
     throw tooLarge("length", (size as i64) - off, len);
   }
-  return len;
 }
 
 // How many bytes of a `size`-byte buffer a `writeSync` writes from `off`: left out or `null` is
@@ -445,6 +444,7 @@ export function readSync(
   if (size == 0) {
     throw new TypeError("The argument 'buffer' is empty and cannot be written. Received <Buffer >");
   }
+  checkRead(size, off, len);
   const start = off as usize;
   const end = (off + len) as usize;
   const at = readPosition(position);
