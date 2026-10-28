@@ -117,8 +117,9 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The top-level text of a value that may hold containers.
-    fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// The top-level text of a value that may hold containers; for any value, Node's
+    /// `util.inspect` (a string quoted, as inside an array: `Intrinsic::Inspect`).
+    pub(in crate::lower) fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         {
             {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is

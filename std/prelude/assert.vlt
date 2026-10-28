@@ -1,22 +1,31 @@
-// Prelude: runtime assertions for tests and invariants. Failures panic (exit code 101).
+// Prelude: assertions for tests and invariants. A failed one throws an `AssertionError`, as
+// Node's `assert` does: `velt test` reports it as the test's failure and runs the next test;
+// elsewhere it is an uncaught error like any other (exit code 1).
 
-/** Panics with `msg` (exit code 101) unless `cond` is true. */
+/** What a failed `assert`, `assertEq` or `assertThrows` throws (Node's `AssertionError`). */
+export class AssertionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AssertionError";
+  }
+}
+
+/** Throws an `AssertionError` with `msg` unless `cond` is true. */
 export function assert(cond: bool, msg: string = "assertion failed") {
   if (!cond) {
-    panic(msg);
+    throw new AssertionError(msg);
   }
 }
 
 /**
- * Deep equality (`deepEqual`: contents, not identity). On failure prints both values to stderr,
- * then panics.
+ * Deep equality (`deepEqual`: contents, not identity). On failure throws an `AssertionError`
+ * whose message shows both values, as Node's `util.inspect` writes them (`'a'`, `[ 1, 2 ]`).
  */
 export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
   if (!__intrinsic_eq(left, right)) {
-    console.error("assertion `left == right` failed");
-    console.error("  left:", left);
-    console.error(" right:", right);
-    panic(msg);
+    const l = __intrinsic_inspect(left);
+    const r = __intrinsic_inspect(right);
+    throw new AssertionError(`${msg}\n  left: ${l}\n right: ${r}`);
   }
 }
 
@@ -31,8 +40,8 @@ export function deepEqual<T>(a: T, b: T): bool {
 
 /**
  * Calls `f` and returns the error it throws, so a test can check it
- * (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); panics if `f` returns
- * normally.
+ * (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); throws an
+ * `AssertionError` if `f` returns normally.
  */
 export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected an error"): E {
   try {
@@ -40,7 +49,7 @@ export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected 
   } catch (e) {
     return e;
   }
-  panic(msg);
+  throw new AssertionError(msg);
 }
 
 /**

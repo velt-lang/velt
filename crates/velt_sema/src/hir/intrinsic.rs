@@ -12,6 +12,19 @@ pub enum Intrinsic {
     PrintErr,
     /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
     ToString,
+    /// `(e: borrow T) -> string` (`__intrinsic_error_text`): what the report of `e` thrown and
+    /// not caught writes after `Uncaught ` and before the location: Node's header for an
+    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt:test`
+    /// reports a failed test with it.
+    ErrorText,
+    /// `() -> string` (`__intrinsic_throw_loc`): ` at <path>:<line>:<col>` of the last `throw`
+    /// on this thread, as an uncaught report ends, or `""` when not known (read it first thing
+    /// in the `catch`).
+    ThrowLoc,
+    /// `(x: borrow T) -> string` (`__intrinsic_inspect`): `x` as Node's `util.inspect` writes
+    /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
+    /// messages that show values, such as a failed `assertEq`.
+    Inspect,
     /// (Str borrow, Str borrow) → new owned Str.
     StrConcat,
     /// `s.length` → usize (byte length in POC).

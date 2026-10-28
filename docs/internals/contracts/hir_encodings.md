@@ -121,6 +121,13 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
+- Error and value text (standard library only; `velt:test` and `assertEq` use them):
+  `Intrinsic::ErrorText` (`__intrinsic_error_text(e)`, `e` borrowed, any type) is what an
+  uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
+  (`__intrinsic_throw_loc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
+  on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
+  `Intrinsic::Inspect` (`__intrinsic_inspect(x)`, borrowed) is `x` as Node's `util.inspect`
+  writes it. Each yields an owned string.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only

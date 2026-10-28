@@ -486,6 +486,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::Print
         | I::PrintErr
         | I::ToString
+        | I::ErrorText
+        | I::Inspect
         | I::TemplateToString
         | I::JsonStringify
         | I::Clone
@@ -518,6 +520,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::ThrowLoc
         | I::AnyTo
         | I::AnyTypeof
         | I::AnyIsArray

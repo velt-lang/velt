@@ -439,9 +439,11 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
 
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
-- `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
-  panics, for bugs. `assertThrows(() => f(), msg?)` returns the error `f` throws and panics if
-  it returns normally.
+- `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`; the message shows
+  both values): throw an `AssertionError` (an `Error`, as Node's `assert` does) when they fail.
+  `assertThrows(() => f(), msg?)` returns the error `f` throws and throws an `AssertionError`
+  if it returns normally. `panic(msg)` panics, for bugs: it ends the program and can't be
+  caught.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
   a deeply equal value, in any order (a key is matched as `get` matches it, and an object key

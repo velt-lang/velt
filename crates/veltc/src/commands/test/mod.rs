@@ -13,7 +13,6 @@
 //! lists them (`--json`: as JSON, which the VS Code extension's "Debug test" reads).
 
 pub(crate) mod discover;
-mod exec;
 mod harness;
 
 use std::collections::HashSet;
@@ -29,7 +28,7 @@ use crate::driver::{self, BuildOptions, Session};
 use crate::style::{paint, Stream, Style};
 
 /// `FAILED`, red on a terminal.
-pub(super) fn failed() -> String {
+fn failed() -> String {
     paint(Stream::Stdout, Style::Error, "FAILED")
 }
 
@@ -60,7 +59,8 @@ struct Run<'o> {
     packages: Option<vpm::PackageGraph>,
     /// The CPU the harnesses are built for (`super::cpu`).
     cpu: Option<String>,
-    passed: usize,
+    /// Tests that failed before running (files that do not parse) or, with `--no-run`, did not
+    /// build.
     failed: usize,
     /// Every file the builds read (for `--watch`).
     watched: Vec<PathBuf>,
@@ -170,7 +170,6 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         out_dir,
         cpu: super::cpu::for_running_here(cpu, &host, opts.release),
         packages: project.map(|p| p.graph),
-        passed: 0,
         failed: 0,
         watched,
         builds: 0,
@@ -182,40 +181,28 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
     for file in &files {
         planned.extend(run.plan(file)?);
     }
-    if opts.no_run {
-        for p in &planned {
-            run.build_only(p);
-        }
-    } else {
-        run.run(&planned);
-    }
     if let (Some(filter), 0) = (&opts.filter, run.selected) {
         if !opts.json {
             eprintln!("no tests match `{filter}`");
         }
     }
-    if opts.no_run {
-        if opts.json {
-            print_json(&run.harnesses, run.diagnostics);
-        } else {
-            for h in &run.harnesses {
-                println!("{}", h["executable"].as_str().unwrap_or_default());
-            }
-        }
+    if !opts.no_run {
+        let passed = run.run(&planned)?;
         return Ok(Outcome {
-            passed: run.failed == 0,
+            passed,
             watched: run.watched,
         });
     }
-    let verdict = if run.failed == 0 {
-        paint(Stream::Stdout, Style::Good, "ok")
+    for p in &planned {
+        run.build_only(p);
+    }
+    if opts.json {
+        print_json(&run.harnesses, run.diagnostics);
     } else {
-        failed()
-    };
-    println!(
-        "\ntest result: {verdict}. {} passed; {} failed",
-        run.passed, run.failed
-    );
+        for h in &run.harnesses {
+            println!("{}", h["executable"].as_str().unwrap_or_default());
+        }
+    }
     Ok(Outcome {
         passed: run.failed == 0,
         watched: run.watched,
@@ -268,52 +255,65 @@ impl Run<'_> {
         }))
     }
 
-    /// Build the harnesses for `planned`, run them and print what each file did, in order.
-    fn run(&mut self, planned: &[Planned]) {
+    /// Build the harnesses for `planned` and run them: `velt:test` in the first one that built
+    /// (or in one without test files) runs every file, as the plan it is handed says, prints
+    /// the report and exits with the run's verdict. Returns whether every test passed.
+    fn run(&mut self, planned: &[Planned]) -> Result<bool, String> {
         // For each file: the harness it is in, and its index there.
         let mut built: Vec<Option<(PathBuf, usize)>> = vec![None; planned.len()];
         for group in groups(planned) {
             self.build_group(planned, &group, &mut built);
         }
-        let jobs: Vec<exec::Job> = planned
+        let runner = match built.iter().flatten().next() {
+            Some((exe, _)) => exe.clone(),
+            None => match self.build_harness(&[]) {
+                Some(exe) => exe,
+                None => return Ok(false),
+            },
+        };
+        let files: Vec<Value> = planned
             .iter()
-            .zip(built)
-            .map(|(p, b)| match b {
-                Some((exe, index)) => exec::Job::Run {
-                    file: p.file.clone(),
-                    exe,
-                    index,
-                    tests: p.found.tests.clone(),
-                },
-                None => exec::Job::Done(exec::Report {
-                    lines: p
-                        .found
-                        .tests
-                        .iter()
-                        .map(|t| format!("{} {t} (build failed)", failed()))
-                        .collect(),
-                    passed: 0,
-                    failed: p.found.tests.len(),
-                }),
+            .zip(&built)
+            .map(|(p, b)| {
+                let skipped: Vec<Value> = p
+                    .found
+                    .skipped
+                    .iter()
+                    .map(|(name, reason)| json!({"name": name, "reason": reason}))
+                    .collect();
+                json!({
+                    "path": p.file.display().to_string(),
+                    "script": vpm::relpath::absolute(&p.file).to_string_lossy(),
+                    "exe": b.as_ref().map(|(exe, _)| exe.to_string_lossy().into_owned()),
+                    "index": b.as_ref().map_or(0, |(_, i)| *i),
+                    "tests": p.found.tests,
+                    "skipped": skipped,
+                })
             })
             .collect();
-        let workers = self.opts.jobs.unwrap_or_else(exec::default_workers);
-        exec::run(&jobs, workers, |i, report| {
-            let p = &planned[i];
-            println!("running {}", p.file.display());
-            for (test, reason) in &p.found.skipped {
-                eprintln!(
-                    "{} skipping `{test}` in {}: {reason}",
-                    paint(Stream::Stderr, Style::Warning, "warning:"),
-                    p.file.display()
-                );
-            }
-            for line in &report.lines {
-                println!("{line}");
-            }
-            self.passed += report.passed;
-            self.failed += report.failed;
+        let workers = self.opts.jobs.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         });
+        let plan = json!({
+            "workers": workers,
+            "colorOut": crate::style::enabled(Stream::Stdout),
+            "colorErr": crate::style::enabled(Stream::Stderr),
+            "failed": self.failed,
+            "files": files,
+        });
+        let plan_file = self.out_dir.join("plan.json");
+        std::fs::create_dir_all(&self.out_dir)
+            .and_then(|()| std::fs::write(&plan_file, plan.to_string()))
+            .map_err(|e| format!("cannot write `{}`: {e}", plan_file.display()))?;
+        let mut command = std::process::Command::new(&runner);
+        command.env(harness::PLAN_VAR, &plan_file);
+        for var in harness::CHILD_VARS {
+            command.env_remove(var);
+        }
+        let status = command
+            .status()
+            .map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
+        Ok(status.success())
     }
 
     /// Build one harness for the files `group` of `planned` and record it in `built`. When a
@@ -325,7 +325,31 @@ impl Run<'_> {
         built: &mut [Option<(PathBuf, usize)>],
     ) {
         let files: Vec<&Planned> = group.iter().map(|&i| &planned[i]).collect();
-        let opts = self.harness_options(&files);
+        let quiet = group.len() > 1;
+        match self.build_files(&files, quiet) {
+            Some(exe) => {
+                for (index, &i) in group.iter().enumerate() {
+                    built[i] = Some((exe.clone(), index));
+                }
+            }
+            None if quiet => {
+                for &i in group {
+                    self.build_group(planned, &[i], built);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// A harness without test files, to run the plan when no other one built.
+    fn build_harness(&mut self, files: &[&Planned]) -> Option<PathBuf> {
+        self.build_files(files, false)
+    }
+
+    /// Build the harness of `files`; reports the build's diagnostics unless it fails and is
+    /// `quiet` (a shared harness, whose files are then built alone).
+    fn build_files(&mut self, files: &[&Planned], quiet: bool) -> Option<PathBuf> {
+        let opts = self.harness_options(files);
         let mut sess = Session::new();
         let result = driver::build(&mut sess, &opts);
         // The harness itself is generated (never on disk); everything else it read is watched.
@@ -338,19 +362,13 @@ impl Run<'_> {
         match result {
             Ok(artifact) => {
                 report(&sess, false);
-                let exe = artifact_path(artifact);
-                for (index, &i) in group.iter().enumerate() {
-                    built[i] = Some((exe.clone(), index));
-                }
+                Some(artifact_path(artifact))
             }
-            Err(_) if group.len() > 1 => {
-                for &i in group {
-                    self.build_group(planned, &[i], built);
-                }
-            }
+            Err(_) if quiet => None,
             Err(e) => {
                 report(&sess, false);
                 let _ = failure_code(&e);
+                None
             }
         }
     }

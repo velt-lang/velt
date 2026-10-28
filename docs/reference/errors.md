@@ -191,8 +191,9 @@ nothing; `null` means success).
   is where it was last thrown. They differ for a rethrow (`catch (e) { throw e; }`) and for an
   error made earlier than it is thrown (#356).
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
-  `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
-  101. They cannot be caught.
+  `panic(msg)`. They print `panic: … at file:line:col` and exit with code 101. They cannot be
+  caught. A failed `assert`, `assertEq` or `assertThrows` throws an `AssertionError` (an
+  `Error`, as Node's `assert` throws), which can.
 - There is no `Result` type, no `Ok`/`Err` and no postfix `?`: errors propagate by themselves,
   and values use unions.
 

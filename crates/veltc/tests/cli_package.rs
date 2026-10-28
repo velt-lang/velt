@@ -443,10 +443,15 @@ fn test_filter_and_no_run() {
         h["file"].as_str().unwrap().ends_with("math.test.vlt"),
         "{out}"
     );
-    // Built, not run: running it fails the assertion.
+    // Built, not run: run by hand, it runs its tests itself and the assertion fails.
     let exe = Path::new(h["executable"].as_str().unwrap());
     let run = std::process::Command::new(exe).output().unwrap();
-    assert_eq!(run.status.code(), Some(101));
+    assert_eq!(run.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        out.contains("FAILED test_bad\n    AssertionError: assertEq failed at "),
+        "{out}"
+    );
     // In a directory of its own, so debugging it doesn't block the next run's link.
     assert_eq!(
         exe.parent().and_then(|d| d.file_name()),

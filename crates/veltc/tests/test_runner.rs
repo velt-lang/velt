@@ -1,6 +1,7 @@
 //! `velt test` through the `velt` binary: the test files that only declare share one harness,
-//! each file runs in a process of its own, files run in parallel with their output in file order,
-//! and a test that ends its process doesn't stop the tests after it.
+//! each file runs in a process of its own, files run in parallel with their output in file order
+//! (`velt:test`), a failed assertion or a thrown error fails its test and the next one runs in
+//! the same process, and a test that ends its process doesn't stop the tests after it.
 
 use std::path::Path;
 use std::process::Output;
@@ -52,6 +53,15 @@ export function test_after_panic() {
 export function test_throws() {
   throw new Error(\"boom\");
 }
+
+export function test_out_of_bounds() {
+  const xs = [1];
+  console.log(xs[3]);
+}
+
+export function test_last() {
+  console.log(\"a last\");
+}
 ";
 
 const B: &str = "\
@@ -87,6 +97,12 @@ export function test_exit() {
 export function test_e_after() {
   console.log(\"e after\");
 }
+
+class ParseError extends Error {}
+
+export function test_custom_error() {
+  throw new ParseError(\"bad port\");
+}
 ";
 
 #[test]
@@ -103,22 +119,30 @@ fn shared_harness_parallel_files_and_failures() {
     let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "a.test.vlt")[1..],
+        block(&stdout, "a.test.vlt")[1..12],
         [
             "a same",
             "ok test_same",
-            "FAILED test_panics (exit code 101)",
-            "    assertion `left == right` failed",
+            "FAILED test_panics",
+            "    AssertionError: assertEq failed at t/a.test.vlt:6:3",
             "      left: 1",
             "     right: 2",
-            "    panic: assertEq failed at t/a.test.vlt:6:3",
             "a after",
             "ok test_after_panic",
-            "FAILED test_throws (exit code 1)",
-            "    Uncaught Error: boom at t/a.test.vlt:14:3",
+            "FAILED test_throws",
+            "    Error: boom at t/a.test.vlt:14:3",
+            "FAILED test_out_of_bounds (exit code 101)",
         ],
         "{stdout}"
     );
+    // A panic ends the process: the runner starts the file again after the test.
+    let a = block(&stdout, "a.test.vlt");
+    assert!(a[1..].len() >= 12, "{stdout}");
+    assert!(
+        a[12].starts_with("    panic: ") && a[12].contains("t/a.test.vlt:19:"),
+        "{stdout}"
+    );
+    assert_eq!(a[a.len() - 2..], ["a last", "ok test_last"], "{stdout}");
     let b = block(&stdout, "b.test.vlt");
     for want in [
         "b same",
@@ -132,11 +156,11 @@ fn shared_harness_parallel_files_and_failures() {
             "missing `{want}` in:\n{stdout}"
         );
     }
-    assert_eq!(
-        block(&stdout, "c.test.vlt")[1..],
-        ["c top", "c ran", "ok test_c"],
-        "{stdout}"
-    );
+    // Its top-level line is in its own block alone (where in it: #1399, an `async main` prints
+    // an imported module's top-level output last).
+    let mut c = block(&stdout, "c.test.vlt")[1..].to_vec();
+    c.sort_unstable();
+    assert_eq!(c, ["c ran", "c top", "ok test_c"], "{stdout}");
     assert_eq!(stdout.matches("c top").count(), 1, "{stdout}");
     let e = block(&stdout, "e.test.vlt");
     assert_eq!(
@@ -144,11 +168,13 @@ fn shared_harness_parallel_files_and_failures() {
         [
             "FAILED test_exit (exit code 0)",
             "e after",
-            "ok test_e_after"
+            "ok test_e_after",
+            "FAILED test_custom_error",
+            "    ParseError: bad port at t/e.test.vlt:12:3",
         ],
         "{stdout}"
     );
-    assert!(stdout.contains("6 passed; 4 failed"), "{stdout}");
+    assert!(stdout.contains("7 passed; 6 failed"), "{stdout}");
 
     // a, b and e share one harness, built once whatever failed; c has one of its own.
     let built: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
@@ -177,7 +203,7 @@ fn shared_harness_parallel_files_and_failures() {
         ["FAILED test_d (build failed)"],
         "{stdout}"
     );
-    assert!(stdout.contains("6 passed; 5 failed"), "{stdout}");
+    assert!(stdout.contains("7 passed; 7 failed"), "{stdout}");
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert_eq!(stderr.matches("d.test.vlt:1:").count(), 1, "{stderr}");
 }

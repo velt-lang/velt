@@ -1,0 +1,320 @@
+// std/test: the test runner (docs/book/testing.md). `velt test` finds the test files, compiles
+// them with a generated `main` that registers their tests here (`__file`, `__test`,
+// `__testAsync`) and calls `__run`, and starts the program. Everything after that is this module:
+//
+// - Started by `velt test` (`$VELT_TEST_PLAN` names the plan, a JSON `Plan`), the program is the
+//   runner: it starts a process per test file, from the program the plan names for the file,
+//   several at once, and prints their reports in file order, then the summary; its exit code is
+//   the run's.
+// - Started for one file (`$VELT_TEST_FILE`, from the test `$VELT_TEST_FROM` on), it runs that
+//   file's tests one after another and reports each in marker lines for the runner. A failed
+//   test is an error it throws (a failed `assert` throws an `AssertionError`): it is caught and
+//   reported, and the next test runs. When a test ends the process (a panic, `process.exit`),
+//   the runner starts the file again from the test after it.
+// - Started without either (a test program run by hand or under a debugger), it runs every file's
+//   tests in this process and prints the report itself.
+
+import { exec, ExecResult } from "velt:child_process";
+import { readFileSync } from "velt:fs";
+
+/** One registered test. */
+class Test {
+  readonly name: string;
+  readonly run: () => Promise<void, unknown>;
+
+  constructor(name: string, run: () => Promise<void, unknown>) {
+    this.name = name;
+    this.run = run;
+  }
+}
+
+/** The tests of one test file, in the order they run. */
+class TestFile {
+  readonly tests: Test[] = [];
+}
+
+/** The test files of this program, in the order `__file` registered them. */
+let files: TestFile[] = [];
+
+/** `__file()`: the tests registered from now on are those of the next test file. */
+export function __file() {
+  files.push(new TestFile());
+}
+
+/** Registers a test of the current file. */
+export function __test(name: string, run: () => void throws unknown) {
+  current().tests.push(
+    new Test(name, async (): Promise<void, unknown> => {
+      run();
+    }),
+  );
+}
+
+/** Registers an `async` test of the current file. */
+export function __testAsync(name: string, run: () => Promise<void, unknown>) {
+  current().tests.push(new Test(name, run));
+}
+
+function current(): TestFile {
+  if (files.length == 0) {
+    files.push(new TestFile());
+  }
+  return files[files.length - 1];
+}
+
+/** What `velt test` hands the runner (`$VELT_TEST_PLAN`). */
+struct Plan {
+  /** How many files run at once. */
+  workers: number;
+  /** Whether stdout and stderr are terminals that take colors. */
+  colorOut: bool;
+  colorErr: bool;
+  /** Tests that failed before anything ran (files that do not parse). */
+  failed: number;
+  files: PlanFile[];
+}
+
+/** A test file of the run. */
+struct PlanFile {
+  /** As `running <path>` shows it. */
+  path: string;
+  /** Its absolute path, the test program's `process.argv[1]`. */
+  script: string;
+  /** The test program that holds its tests, `null` when it did not build. */
+  exe: string | null;
+  /** Its index among that program's files. */
+  index: number;
+  tests: string[];
+  /** `test_*` functions that cannot run, with the reason. */
+  skipped: Skipped[];
+}
+
+struct Skipped {
+  name: string;
+  reason: string;
+}
+
+/** Prefix of the lines a test process writes for the runner. */
+const MARK = "::velt-test:: ";
+
+/** What a test file printed, read back, and how its tests went. */
+class Report {
+  lines: string[] = [];
+  passed: usize = 0;
+  failed: usize = 0;
+}
+
+/** The entry of a test program: run as the runner, as one file's tests, or every file here. */
+export async function __run() {
+  const plan = process.env.VELT_TEST_PLAN;
+  const file = process.env.VELT_TEST_FILE;
+  if (file != null) {
+    const from = Number(process.env.VELT_TEST_FROM ?? "0");
+    await runTests(files[Number(file) as usize], from as usize, true);
+  } else if (plan != null) {
+    const ok = await runPlan(JSON.parse<Plan>(readFileSync(plan)));
+    process.exit(ok ? 0 : 1);
+  } else {
+    let failed: usize = 0;
+    for (const f of files) {
+      failed += await runTests(f, 0, false);
+    }
+    if (failed > 0) {
+      process.exit(1);
+    }
+  }
+}
+
+/**
+ * Run the tests of `file` from `from` on, reporting each: in marker lines for the runner
+ * (`marked`), else as the runner shows them. Returns how many failed.
+ */
+async function runTests(file: TestFile, from: usize, marked: bool): Promise<usize> {
+  let failed: usize = 0;
+  for (let i = from; i < file.tests.length; i++) {
+    const t = file.tests[i];
+    let error: string | null = null;
+    try {
+      await t.run();
+    } catch (e) {
+      // Where it was thrown, before anything else throws.
+      const at = __intrinsic_throw_loc();
+      error = located(__intrinsic_error_text(e), at);
+    }
+    if (error == null) {
+      console.log(marked ? `${MARK}ok ${t.name}` : `ok ${t.name}`);
+      continue;
+    }
+    failed++;
+    if (marked) {
+      console.log(`${MARK}fail ${t.name}`);
+      for (const line of error.split("\n")) {
+        console.log(`${MARK}| ${line}`);
+      }
+    } else {
+      console.log(`FAILED ${t.name}`);
+      for (const line of error.split("\n")) {
+        console.log(`    ${line}`);
+      }
+    }
+  }
+  return failed;
+}
+
+/** `text` with the location `at` (` at <path>:<line>:<col>`) after its first line. */
+function located(text: string, at: string): string {
+  const nl = text.indexOf("\n");
+  return nl < 0 ? `${text}${at}` : `${text.slice(0, nl)}${at}${text.slice(nl)}`;
+}
+
+/** Run every file of `plan`, `plan.workers` at once, printing each report in file order. */
+async function runPlan(plan: Plan): Promise<bool> {
+  const paint = new Paint(plan.colorOut, plan.colorErr);
+  const reports: (Report | null)[] = plan.files.map((_) => null);
+  let started: usize = 0;
+  let printed: usize = 0;
+  let passed: usize = 0;
+  let failed = plan.failed as usize;
+  const worker = async () => {
+    while (started < plan.files.length) {
+      const i = started;
+      started++;
+      reports[i] = await runFile(plan.files[i], paint);
+      while (printed < reports.length && reports[printed] != null) {
+        const f = plan.files[printed];
+        const r = reports[printed]!;
+        console.log(`running ${f.path}`);
+        for (const s of f.skipped) {
+          console.error(
+            `${paint.warning("warning:")} skipping \`${s.name}\` in ${f.path}: ${s.reason}`,
+          );
+        }
+        for (const line of r.lines) {
+          console.log(line);
+        }
+        passed += r.passed;
+        failed += r.failed;
+        printed++;
+      }
+    }
+  };
+  const workers: Promise<void>[] = [];
+  const n = Math.max(1, Math.min(plan.workers, plan.files.length as number));
+  for (let w = 0; w < n; w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  const verdict = failed == 0 ? paint.good("ok") : paint.failed();
+  console.log(`\ntest result: ${verdict}. ${passed} passed; ${failed} failed`);
+  return failed == 0;
+}
+
+/** Run the tests of `f`, starting its program again after each test that ends the process. */
+async function runFile(f: PlanFile, paint: Paint): Promise<Report> {
+  const report = new Report();
+  const exe = f.exe;
+  if (exe == null) {
+    for (const t of f.tests) {
+      report.lines.push(`${paint.failed()} ${t} (build failed)`);
+    }
+    report.failed = f.tests.length;
+    return report;
+  }
+  let from: usize = 0;
+  while (from < f.tests.length) {
+    from = await runFrom(f, exe, from, report, paint);
+  }
+  return report;
+}
+
+/** One process running the tests of `f` from `from` on; returns where the next one starts. */
+async function runFrom(
+  f: PlanFile,
+  exe: string,
+  from: usize,
+  report: Report,
+  paint: Paint,
+): Promise<usize> {
+  const env = new Map<string, string>([
+    ["VELT_SCRIPT", f.script],
+    ["VELT_TEST_FILE", String(f.index)],
+    ["VELT_TEST_FROM", String(from)],
+  ]);
+  let r: ExecResult;
+  try {
+    r = await exec(exe, [], { env: env });
+  } catch (e) {
+    const text = __intrinsic_error_text(e);
+    report.lines.push(`${paint.error("error:")} cannot run \`${exe}\`: ${text}`);
+    report.failed += f.tests.length - from;
+    return f.tests.length;
+  }
+  let next = from;
+  const lines = r.stdout.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] == "") {
+    lines.pop();
+  }
+  for (const line of lines) {
+    if (!line.startsWith(MARK)) {
+      report.lines.push(line);
+      continue;
+    }
+    const rest = line.slice(MARK.length as i64);
+    if (rest.startsWith("ok ")) {
+      report.lines.push(`${paint.good("ok")} ${rest.slice(3)}`);
+      report.passed++;
+      next++;
+    } else if (rest.startsWith("fail ")) {
+      report.lines.push(`${paint.failed()} ${rest.slice(5)}`);
+      report.failed++;
+      next++;
+    } else if (rest.startsWith("| ")) {
+      report.lines.push(`    ${rest.slice(2)}`);
+    }
+  }
+  if (next >= f.tests.length) {
+    if (r.code != 0) {
+      report.lines.push(
+        `${paint.failed()} (test harness exited with code ${r.code} after all tests ran)`,
+      );
+      report.failed++;
+    }
+    return f.tests.length;
+  }
+  // The process ended inside test `next`.
+  report.lines.push(`${paint.failed()} ${f.tests[next]} (exit code ${r.code})`);
+  for (const line of r.stderr.split("\n")) {
+    if (line != "") {
+      report.lines.push(`    ${line}`);
+    }
+  }
+  report.failed++;
+  return next + 1;
+}
+
+/** `velt`'s ANSI colors (`veltc` `style`), when `velt test` found the stream takes them. */
+class Paint {
+  readonly out: bool;
+  readonly err: bool;
+
+  constructor(out: bool, err: bool) {
+    this.out = out;
+    this.err = err;
+  }
+
+  good(s: string): string {
+    return this.out ? `\x1b[1;32m${s}\x1b[0m` : s;
+  }
+
+  failed(): string {
+    return this.out ? "\x1b[1;31mFAILED\x1b[0m" : "FAILED";
+  }
+
+  error(s: string): string {
+    return this.out ? `\x1b[1;31m${s}\x1b[0m` : s;
+  }
+
+  warning(s: string): string {
+    return this.err ? `\x1b[1;33m${s}\x1b[0m` : s;
+  }
+}
