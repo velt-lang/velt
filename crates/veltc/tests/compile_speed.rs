@@ -187,11 +187,9 @@ fn code_compiled_once_comes_from_the_build_cache() {
     std::fs::write(dir.join("lib.vlt"), lib).unwrap();
     // `(found, of)` from the codegen line of `-v`.
     let build = || {
-        let o = velt(
-            dir,
-            &["build", "hello.vlt", "-v"],
-            &[("VELT_BUILD_CACHE", cache)],
-        );
+        // Without the build stamp, which would skip compiling an unchanged program.
+        let env = [("VELT_BUILD_CACHE", cache), ("VELT_BUILD_STAMP", "off")];
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &env);
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         let line = err
@@ -228,6 +226,44 @@ fn code_compiled_once_comes_from_the_build_cache() {
         .join("target/velt")
         .join(if cfg!(windows) { "hello.exe" } else { "hello" });
     assert_eq!(text(&run_copy(&exe, "cached").stdout), "ho\n!\n");
+}
+
+#[test]
+fn unchanged_builds_compile_nothing() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
+    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    let unchanged = || {
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &[]);
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        (err.contains("nothing to compile"), err)
+    };
+    assert!(!unchanged().0, "first build");
+    let (skipped, err) = unchanged();
+    assert!(skipped, "an unchanged build compiles nothing:\n{err}");
+    // Saving a file without changing it changes nothing; changing an import does.
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    assert!(unchanged().0);
+    std::fs::write(dir.join("lib.vlt"), lib.replace("hi", "ho")).unwrap();
+    assert!(!unchanged().0);
+    assert!(unchanged().0);
+    // A new file where imports look is a change too.
+    std::fs::write(dir.join("notes.txt"), "").unwrap();
+    assert!(!unchanged().0);
+    let off = velt(
+        dir,
+        &["build", "hello.vlt", "-v"],
+        &[("VELT_BUILD_STAMP", "off")],
+    );
+    assert!(!text(&off.stderr).contains("nothing to compile"));
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert_eq!(text(&run_copy(&exe, "stamped").stdout), "ho\n");
 }
 
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The

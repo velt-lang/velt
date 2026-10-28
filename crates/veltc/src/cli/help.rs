@@ -612,6 +612,10 @@ const ENVIRONMENT: &[(&str, &str)] = &[
         "how large the build cache may grow (default 2G)",
     ),
     (
+        "VELT_BUILD_STAMP",
+        "`off`: compile even when nothing changed since the last build of the same output",
+    ),
+    (
         "VELT_LLVM_BIN",
         "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
     ),

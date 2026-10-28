@@ -18,6 +18,7 @@ mod cpu_check;
 mod output;
 mod pipeline;
 mod recover;
+mod stamp;
 
 pub use output::OutputPaths;
 use pipeline::on_pipeline_thread;
@@ -190,6 +191,9 @@ impl Session {
                     s.push_str(&format!(
                         "  ({found} of {of} {what} from the build cache)\n"
                     ));
+                }
+                _ if name == "stamp" && !self.timings.iter().any(|(n, _)| *n == "parse") => {
+                    s.push_str("  (unchanged: nothing to compile)\n");
                 }
                 _ => s.push('\n'),
             }
@@ -438,6 +442,29 @@ fn build_on_current_thread(
     opts: &BuildOptions,
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
+    // An executable whose inputs are those of its last build is up to date (`stamp`).
+    let stamped = (opts.emit == Emit::Exe && !opts.report_numbers && stamp::enabled()).then(|| {
+        let t = Instant::now();
+        let backend = Backend::resolve(opts.backend, opts.release).0;
+        let key = stamp::options_key(opts, backend);
+        let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
+        let stamp_path = stamp::path(&paths.executable);
+        let objects = std::fs::read_to_string(&stamp_path)
+            .ok()
+            .and_then(|text| stamp::check(&text, &key))
+            .map(|n| (0..n).map(|i| paths.unit_object(i)).collect::<Vec<_>>())
+            .filter(|objects| objects.iter().all(|o| o.is_file()));
+        if objects.is_none() {
+            // A build that fails half-way must not leave a stamp of the old one.
+            let _ = std::fs::remove_file(&stamp_path);
+        }
+        sess.record("stamp", t);
+        (key, paths, stamp_path, objects)
+    });
+    if let Some((_, paths, _, Some(objects))) = &stamped {
+        link_stage(sess, opts, &target, objects, paths)?;
+        return Ok(Artifact::Executable(paths.executable.clone()));
+    }
     let mut program = compile_to_vir(sess, opts)?;
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
@@ -500,10 +527,30 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
+    link_stage(sess, opts, &target, &object_paths, &paths)?;
+    crate::build_cache::collect_garbage_if_due();
+    // Warnings are shown by every build, so a build with diagnostics gets no stamp.
+    if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
+        let generated = opts.root_source.as_ref().map(|_| opts.input.as_path());
+        let text = stamp::render(&key, &sess.sm, generated, object_paths.len());
+        // Best effort: without a stamp the next build compiles again.
+        let _ = std::fs::write(stamp_path, text);
+    }
+    Ok(Artifact::Executable(paths.executable))
+}
+
+/// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).
+fn link_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    target: &str,
+    objects: &[PathBuf],
+    paths: &OutputPaths,
+) -> Result<(), BuildError> {
     let t = Instant::now();
     let linked = crate::link::link_executable(
-        &target,
-        &object_paths,
+        target,
+        objects,
         &paths.executable,
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
@@ -515,8 +562,7 @@ fn build_on_current_thread(
     if linked == crate::link::Linked::UpToDate {
         sess.record_details("link", &[("up to date", t.elapsed())]);
     }
-    crate::build_cache::collect_garbage_if_due();
-    Ok(Artifact::Executable(paths.executable))
+    Ok(())
 }
 
 /// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
