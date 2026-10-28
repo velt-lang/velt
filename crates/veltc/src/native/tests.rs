@@ -299,7 +299,15 @@ fn struct_layouts_and_windows_declarations_check() {
                function main() {\n  const n: u16[] = [120, 0];\n  const h = CreateFileW(n, 0x80000000, 1, 3, 0x80);\n  \
                const ov: Overlapped = { Offset: 0, OffsetHigh: 0, InternalHigh: 0 };\n  const b: u8[] = [0, 0];\n  \
                console.log(ReadFile(h, b, ov), ov.InternalHigh, lastOsError());\n}\n";
-    assert_eq!(lower_for(win, "x86_64-pc-windows-msvc"), "");
+    // `ReadFile` waits for an `OVERLAPPED`: checked, but a call of it is an error for now.
+    let d = lower_for(win, "x86_64-pc-windows-msvc");
+    assert!(
+        d.contains("system function `ReadFile` is not available on x86_64-pc-windows-msvc")
+            && d.contains("no target can call it yet"),
+        "{d}"
+    );
+    let open = win.replace("ReadFile(h, b, ov)", "h != 0");
+    assert_eq!(lower_for(&open, "x86_64-pc-windows-msvc"), "");
     let bad = "declare system function ReadFile(file: u64, buf: u8[], n: u32): i32;\nfunction main() {}\n";
     let d = lower_for(bad, "x86_64-pc-windows-msvc");
     assert!(

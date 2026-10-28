@@ -1,7 +1,8 @@
 //! The system functions of Windows (kernel32), x86-64 and arm64. A `HANDLE` is a `usize`.
 //!
-//! Not tested on Windows yet (no Windows machine in the change that added them): the table and
-//! the declaration checks are, lowering follows the same rules as on the other systems.
+//! The functions that wait for an `OVERLAPPED` (`ReadFile`, `WriteFile`, `LockFileEx`,
+//! `UnlockFileEx`) are checked but not callable yet ([`super::callable`]); the others are, and
+//! the `lang/system_function_windows` golden runs them.
 
 use super::{After, Field, Func, Guard, Int, Param, Ret, Struct};
 
@@ -23,14 +24,12 @@ const BOOL: Ret = Ret::Int {
 /// `OVERLAPPED`: `ULONG_PTR Internal, InternalHigh; DWORD Offset, OffsetHigh; HANDLE hEvent`.
 /// `hEvent` is not a field Velt can set: it stays 0.
 ///
-/// SAFETY, before this is enabled on Windows: a handle associated with an I/O completion port
-/// queues a completion packet for every overlapped operation unless `hEvent`'s low bit is set
-/// (`GetQueuedCompletionStatus` remarks). The synchronous fd API waits inline
-/// (`After::WaitOverlapped`) and never drains a port, so a handle on one would leak packets.
-/// When the Windows fd API is turned on, lowering must
-/// set `hEvent = 1` on the `OVERLAPPED` it builds, or the API must reject handles bound to a
-/// port. Until then the Windows table only type-checks declarations; calling its functions
-/// needs a Windows target, which the fd API does not yet support.
+/// SAFETY, before the functions taking one become callable ([`super::callable`]): a handle
+/// associated with an I/O completion port queues a completion packet for every overlapped
+/// operation unless `hEvent`'s low bit is set (`GetQueuedCompletionStatus` remarks), and the
+/// packet's `lpOverlapped` would point at the temporary lowering built, gone by the time the
+/// port is drained. Lowering must set `hEvent` to an event handle with its low bit set (or the
+/// call must reject a handle bound to a port) before they are enabled.
 static OVERLAPPED: Struct = Struct {
     c: "OVERLAPPED",
     size: 32,

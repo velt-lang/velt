@@ -56,6 +56,7 @@ const UNSUPPORTED: &[&str] = &[
     "system_function_interior_nul",
     "system_function_range",
     "system_function_unterminated",
+    "system_function_windows",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];

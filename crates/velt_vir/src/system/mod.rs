@@ -288,9 +288,18 @@ pub fn overloads<'a>(triple: &str, declared: &'a str) -> impl Iterator<Item = &'
     table(triple).iter().filter(move |f| f.name == base)
 }
 
-/// Is a function named `declared` in the table of `triple`?
+/// Can a program call `f`? Not yet the Windows functions that wait for an `OVERLAPPED`
+/// (`After::WaitOverlapped`): the `OVERLAPPED` lowering builds has `hEvent = 0`, so on a handle
+/// bound to an I/O completion port (as the runtime binds pipes) the kernel would queue a packet
+/// pointing at a temporary that is gone by the time the port is drained (windows.rs). Their
+/// declarations are checked; a call of one is an error, as for a function the target lacks.
+pub fn callable(f: &Func) -> bool {
+    !matches!(f.after, After::WaitOverlapped { .. })
+}
+
+/// Can a program call a function named `declared` on `triple`?
 pub fn available(triple: &str, declared: &str) -> bool {
-    overloads(triple, declared).next().is_some()
+    overloads(triple, declared).any(callable)
 }
 
 /// The names of every target's functions (for "did you mean").

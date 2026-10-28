@@ -36,8 +36,8 @@ impl FnLower<'_, '_> {
         };
         let ret = self.cx.ty(x.ret);
         let func = match system::match_decl(self.cx.hir, x, &self.cx.target) {
-            Ok(Some(f)) => f,
-            // The target lacks it (veltc reported every other mismatch): an error, reported
+            Ok(Some(f)) if system::callable(f) => f,
+            // The target lacks it (or cannot call it yet, `system::callable`) (veltc reported every other mismatch): an error, reported
             // once lowering is done (`unavailable_diagnostics`).
             _ => {
                 self.cx.unavailable.push((def, self.cx.cur_def));
@@ -573,7 +573,13 @@ impl super::Cx<'_> {
                         .filter(|t| system::available(t, &x.symbol))
                         .collect();
                     on.dedup();
-                    format!("it is available on {}", on.join(", "))
+                    match on.is_empty() {
+                        true => "no target can call it yet: a Windows function that waits for \
+                                 an `OVERLAPPED` is checked but not callable \
+                                 (docs/reference/system-functions.md)"
+                            .to_string(),
+                        false => format!("it is available on {}", on.join(", ")),
+                    }
                 }
             };
             out.push(diag.with_note(note));

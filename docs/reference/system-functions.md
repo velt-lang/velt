@@ -102,9 +102,13 @@ program (a panic) when they are wrong: a path without its 0 byte or with a 0 bef
 would reach C as `a.txt`), a range outside the array,
 an `fcntl` command of the other form (a lock command with an `int` argument would make the kernel
 read a `struct flock` at that address), and `FILE_FLAG_OVERLAPPED` for `CreateFileW` (Windows
-would finish reads and writes after the call returned). On Windows, a `ReadFile`, `WriteFile`,
-`LockFileEx` or `UnlockFileEx` that is still pending when it returns (a handle opened for
-overlapped I/O elsewhere) is waited for before the call returns.
+would finish reads and writes after the call returned).
+
+On Windows, `ReadFile`, `WriteFile`, `LockFileEx` and `UnlockFileEx` are checked but cannot be
+called yet: a call of one is a compile error, as for a function the target lacks. They take an
+`OVERLAPPED`, and on a handle bound to an I/O completion port (the runtime binds pipes to one)
+the kernel would queue a completion that points at it after the call returned; they become
+callable once each call passes an event handle that keeps the completion off the port.
 
 ## What stays out
 
@@ -127,7 +131,8 @@ error, but it breaks what the runtime does with it, as it would in C.
 | `fcntl(fd: i32, cmd: i32, arg: i32): i32` | `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL`; macOS also `F_NOCACHE`, `F_FULLFSYNC`, `F_BARRIERFSYNC` | |
 | `fcntl(fd: i32, cmd: i32, lock: Flock): i32` | `F_GETLK`, `F_SETLK`, `F_SETLKW`; Linux also the `F_OFD_*` locks | |
 | `fstat(fd: i32, st: Stat): i32` | `st_dev`, `st_ino`, `st_mode`, `st_nlink`, `st_uid`, `st_gid`, `st_rdev`, `st_size`, `st_blksize`, `st_blocks`, `st_atime`, `st_mtime`, `st_ctime` and their `_nsec` | |
-| `CreateFileW`, `ReadFile`, `WriteFile` (with an `OVERLAPPED` for the offset), `FlushFileBuffers`, `SetEndOfFile`, `SetFilePointerEx`, `GetFileSizeEx`, `LockFileEx`, `UnlockFileEx`, `CloseHandle` | | ✓ (not yet tested on Windows) |
+| `CreateFileW`, `FlushFileBuffers`, `SetEndOfFile`, `SetFilePointerEx`, `GetFileSizeEx`, `CloseHandle` | | ✓ |
+| `ReadFile`, `WriteFile` (with an `OVERLAPPED` for the offset), `LockFileEx`, `UnlockFileEx` | | checked, not callable yet |
 | `lastOsError(): i32` | `errno` | `GetLastError()` |
 
 WebAssembly targets have no system functions yet.

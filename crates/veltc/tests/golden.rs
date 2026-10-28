@@ -18,7 +18,8 @@
 //!   environment variables are set (for tests needing a database or other external service).
 //! - A golden whose first lines contain `// requires: symlinks` is skipped where this process
 //!   cannot create symbolic links (Windows without Developer Mode or administrator rights);
-//!   `// requires: unix` is skipped on Windows (POSIX system functions, `velt:fs`'s fd API).
+//!   `// requires: unix` is skipped on Windows (POSIX system functions, `velt:fs`'s fd API), and
+//!   `// requires: windows` everywhere else (Windows system functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
@@ -522,7 +523,8 @@ fn missing_required_env(file: &Path) -> Option<String> {
 }
 
 /// A golden that needs something of the machine declares it on one of its first lines:
-/// `// requires: symlinks` or `// requires: unix`. Returns what is missing, if anything.
+/// `// requires: symlinks`, `// requires: unix` or `// requires: windows`. Returns what is
+/// missing, if anything.
 fn missing_capability(file: &Path, work: &Path) -> Option<&'static str> {
     let src = std::fs::read_to_string(file).ok()?;
     let wants = |what: &str| {
@@ -536,6 +538,9 @@ fn missing_capability(file: &Path, work: &Path) -> Option<&'static str> {
     }
     if wants("unix") && cfg!(windows) {
         return Some("unix: POSIX system functions");
+    }
+    if wants("windows") && !cfg!(windows) {
+        return Some("windows: Windows system functions");
     }
     None
 }
