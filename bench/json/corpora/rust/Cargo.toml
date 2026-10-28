@@ -9,8 +9,8 @@ publish = false
 
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
-sonic-rs = "0.3"
-simd-json = "0.14"
+sonic-rs = "0.5"
+simd-json = "0.19"
 
 [profile.release]
 codegen-units = 1

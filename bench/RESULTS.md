@@ -1057,26 +1057,37 @@ release), serde_json, sonic-rs, simd-json and Node.
 - Not covered yet (#1657): typed parse (`JSON.parse<T>` against serde derive structs) and a Bun
   column.
 
-Apple M4, macOS 27.0.1 (arm64), rustc 1.99.0, Node 24.11.1, Velt at 0d0efe524 (main). Billions of
+Apple M4, macOS 27.0.1 (arm64), rustc 1.99.0, serde_json 1.0.154, sonic-rs 0.5.10, simd-json
+0.19.0, Node 24.11.1, Velt at 0d0efe524 (main). Billions of
 instructions (per input byte); fewer is better:
 
 | corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
 |---|---|---:|---:|---:|---:|---:|
-| canada | value | 7.40 G (66/B) | 5.39 G (48/B) | 2.70 G (24/B) | 4.48 G (40/B) | 5.98 G (53/B) |
-| canada | write | 5.55 G (49/B) | 1.67 G (15/B) | 2.62 G (23/B) | 2.47 G (22/B) | 6.69 G (59/B) |
-| citm_catalog | value | 2.57 G (30/B) | 2.70 G (31/B) | 0.54 G (6/B) | 1.91 G (22/B) | 2.32 G (27/B) |
-| citm_catalog | write | 0.61 G (7/B) | 0.46 G (5/B) | 0.46 G (5/B) | 0.49 G (6/B) | 1.36 G (16/B) |
-| twitter | value | 1.39 G (44/B) | 1.06 G (34/B) | 0.19 G (6/B) | 0.78 G (25/B) | 1.03 G (33/B) |
-| twitter | write | 0.36 G (11/B) | 0.29 G (9/B) | 0.22 G (7/B) | 0.27 G (9/B) | 0.88 G (28/B) |
+| canada | value | 7.40 G (66/B) | 5.39 G (48/B) | 1.85 G (16/B) | 4.50 G (40/B) | 5.98 G (53/B) |
+| canada | write | 5.54 G (49/B) | 1.67 G (15/B) | 1.98 G (18/B) | 2.48 G (22/B) | 6.69 G (59/B) |
+| citm_catalog | value | 2.57 G (30/B) | 2.68 G (31/B) | 0.61 G (7/B) | 1.90 G (22/B) | 2.32 G (27/B) |
+| citm_catalog | write | 0.61 G (7/B) | 0.46 G (5/B) | 0.57 G (7/B) | 0.49 G (6/B) | 1.36 G (16/B) |
+| twitter | value | 1.39 G (44/B) | 1.06 G (34/B) | 0.26 G (8/B) | 0.78 G (25/B) | 1.03 G (33/B) |
+| twitter | write | 0.36 G (11/B) | 0.29 G (9/B) | 0.26 G (8/B) | 0.27 G (9/B) | 0.88 G (28/B) |
 
 Velt's dynamic parse retires 1.2–1.4x Node's instructions on canada and twitter and about the
-same as serde_json on citm_catalog; sonic-rs does 2.7–7x less work than Velt. Velt writes
+same as serde_json on citm_catalog; sonic-rs does 4–5.3x less work than Velt. Velt writes
 citm_catalog and twitter within 1.35x of serde_json and simd-json and with 2.2–2.4x fewer
 instructions than Node, but canada
-(floats) takes 3.3x serde_json's instructions: number formatting is the gap there. The same
-run's best wall-clock times (`bench/json/corpora/run.sh 3 50`, ms, noisy) were canada value
-4817 / 2450 / 1085 / 2172 / 4144 and write 2125 / 1135 / 1135 / 897 / 4677 (Velt, serde_json,
-sonic-rs, simd-json, Node).
+(floats) takes 3.3x serde_json's instructions: number formatting is the gap there. On x86-64 Linux (i9-8950HK, load average 26–43, Node 26.12; `nice bench/json/corpora/run.sh 2 50`,
+best wall time in ms and MB/s, measured in review with sonic-rs 0.3 and simd-json 0.14; with
+0.5 and 0.19, sonic-rs canada `write` went from about 1120 to 753 ms and `value` from 755 to
+664 ms, simd-json canada `value` from 2245 to 2050 ms, the rest within the noise) the shape is
+the same, except that Velt's canada `write` also trails Node's:
+
+| corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
+|---|---|---:|---:|---:|---:|---:|
+| canada | value | 3149 (36 MB/s) | 2722 (41 MB/s) | 795 (142 MB/s) | 2228 (51 MB/s) | 2469 (46 MB/s) |
+| canada | write | 2133 (53 MB/s) | 731 (154 MB/s) | 1035 (109 MB/s) | 878 (128 MB/s) | 1155 (97 MB/s) |
+| citm_catalog | value | 1034 (84 MB/s) | 1026 (84 MB/s) | 374 (231 MB/s) | 1014 (85 MB/s) | 881 (98 MB/s) |
+| citm_catalog | write | 261 (331 MB/s) | 210 (411 MB/s) | 201 (430 MB/s) | 210 (411 MB/s) | 543 (159 MB/s) |
+| twitter | value | 627 (50 MB/s) | 492 (64 MB/s) | 152 (207 MB/s) | 450 (70 MB/s) | 487 (65 MB/s) |
+| twitter | write | 137 (230 MB/s) | 120 (264 MB/s) | 93 (340 MB/s) | 148 (213 MB/s) | 327 (97 MB/s) |
 
 ## Generators (`bench/iter`, #62 phase 2, 2026-10-03)
 
