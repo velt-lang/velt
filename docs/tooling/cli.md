@@ -120,11 +120,13 @@ A build never compiles the same thing twice:
 
 - **Nothing changed.** `velt build`, `velt run` and `velt test` record what a build read in a
   stamp beside the program (`<program>.build-stamp`): every source file (std, packages, `.d.ts`
-  files) by content, the directories imports were looked up in, `package.vlt`, `package.json`,
-  `tsconfig.json` and `velt.lock.json`, the build's options and the compiler. When none of that
-  changed, the next build parses and compiles nothing; running the program again costs only
-  its start. Saving a file without changing it changes nothing either. A new file that an import
-  would now find (a `.ts` beside a `.vlt`, a package in `node_modules`) counts as a change. A
+  files) by content, every path imports were looked up at and every directory listed for them,
+  `package.vlt`, `package.json`, `tsconfig.json` and `velt.lock.json`, the build's options and
+  the compiler. When none of that changed, the next build parses and compiles nothing; running
+  the program again costs only its start. Saving a file without changing it changes nothing
+  either; a file changed while a build read it counts as changed. A new file that an import
+  would now find (a `.ts` beside a `.vlt`, a package in a `node_modules` nearer the importer)
+  counts as a change. A
   build that printed warnings gets no stamp, so the warnings show every time.
   `VELT_BUILD_STAMP=off` compiles every time.
 - **Something changed.** The code each function compiles to is kept in a cache that every build

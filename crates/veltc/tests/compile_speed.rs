@@ -266,6 +266,39 @@ fn unchanged_builds_compile_nothing() {
     assert_eq!(text(&run_copy(&exe, "stamped").stdout), "ho\n");
 }
 
+#[test]
+fn a_package_nearer_the_importer_is_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let ws = tmp.path();
+    let write = |rel: &str, text: &str| {
+        let path = ws.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let package = |dir: &str, name: &str, says: &str| {
+        write(
+            &format!("{dir}/package.json"),
+            &format!("{{ \"name\": \"{name}\" }}"),
+        );
+        let src = format!("export function say(): string {{\n  return \"{says}\";\n}}\n");
+        write(&format!("{dir}/index.ts"), &src);
+    };
+    package("node_modules/b", "b", "outer b");
+    write("p/package.json", "{ \"name\": \"p\" }");
+    package("p/node_modules/a", "a", "a");
+    let main = "import { say as a } from \"a\";\nimport { say as b } from \"b\";\n\nconsole.log(a());\nconsole.log(b());\n";
+    write("p/main.ts", main);
+    let run = || {
+        let o = velt(&ws.join("p"), &["run", "main.ts"], &[]);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+        text(&o.stdout)
+    };
+    assert_eq!(run(), "a\nouter b\n");
+    // Module resolution looked for `b` in `p/node_modules` before `node_modules`.
+    package("p/node_modules/b", "b", "INNER b");
+    assert_eq!(run(), "a\nINNER b\n");
+}
+
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
 /// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
 /// locked for a moment (an antivirus scan), so the relink must never target a file that ran.

@@ -246,12 +246,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
   matches: the compiler (version, executable size and time), the options, a generated root's
   source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
-  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file in the session's source
-  map by content hash (size and time first), and the listing of each read file's directory and
-  those above it up to its package root (with the contents of `package.vlt`, `package.json`,
-  `tsconfig.json`, `jsconfig.json` and `velt.lock.json` there). The objects it names must exist;
-  the link step then runs (and checks its own stamp). Only builds without diagnostics write a
-  stamp; a build that does not match removes it first. `VELT_BUILD_STAMP=off|0` disables it.
+  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
+  session's source map and the configuration files module resolution read) by content hash (the
+  size and time it had when it was read first, not trusted when not older than the stamp), what
+  module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
+  missing as it was, every directory listed has the same entries), the manifests and lockfile
+  of the package graph, and extra link inputs by size and time. The objects it names must
+  exist; the link step then runs (and checks its own stamp). The stamp ends with `end <entries>`
+  and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
+  does not match removes it first. `VELT_BUILD_STAMP=off|0` disables it.
   Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
   `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
   profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from

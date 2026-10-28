@@ -34,6 +34,9 @@
 //!
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
+//!
+//! The loader looks at the file system only through [`vpm::probe`] (as the npm resolver does),
+//! so a build can record what decided how its imports resolved (the build stamp).
 
 mod ambient;
 mod case;
@@ -208,11 +211,11 @@ impl Loader<'_, '_> {
     fn read(&self, path: &Path) -> std::io::Result<String> {
         // `file_key` costs a filesystem round trip (a few hundred µs on Windows).
         if self.overlay.is_empty() {
-            return std::fs::read_to_string(path);
+            return vpm::probe::read_to_string(path);
         }
         match self.overlay.get(&file_key(path)) {
             Some(src) => Ok(src.clone()),
-            None => std::fs::read_to_string(path),
+            None => vpm::probe::read_to_string(path),
         }
     }
 

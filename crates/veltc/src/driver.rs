@@ -449,14 +449,16 @@ fn build_on_current_thread(
         let key = stamp::options_key(opts, backend);
         let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
         let stamp_path = stamp::path(&paths.executable);
-        let objects = std::fs::read_to_string(&stamp_path)
-            .ok()
-            .and_then(|text| stamp::check(&text, &key))
+        let objects = stamp::read(&stamp_path, &key)
             .map(|n| (0..n).map(|i| paths.unit_object(i)).collect::<Vec<_>>())
             .filter(|objects| objects.iter().all(|o| o.is_file()));
         if objects.is_none() {
             // A build that fails half-way must not leave a stamp of the old one.
             let _ = std::fs::remove_file(&stamp_path);
+            // Made before the build looks at directories, so their listings include it.
+            if let Some(dir) = paths.executable.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
         }
         sess.record("stamp", t);
         (key, paths, stamp_path, objects)
@@ -465,7 +467,15 @@ fn build_on_current_thread(
         link_stage(sess, opts, &target, objects, paths)?;
         return Ok(Artifact::Executable(paths.executable.clone()));
     }
-    let mut program = compile_to_vir(sess, opts)?;
+    // What module resolution looked at, for the stamp.
+    let (program, seen) = match &stamped {
+        Some(_) => vpm::probe::record(|| {
+            stamp::note_project(opts);
+            compile_to_vir(sess, opts)
+        }),
+        None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
+    };
+    let mut program = program?;
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }
@@ -532,9 +542,14 @@ fn build_on_current_thread(
     // Warnings are shown by every build, so a build with diagnostics gets no stamp.
     if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
         let generated = opts.root_source.as_ref().map(|_| opts.input.as_path());
-        let text = stamp::render(&key, &sess.sm, generated, object_paths.len());
+        let built = stamp::Built {
+            seen: &seen,
+            virtual_root: generated,
+            objects: object_paths.len(),
+            link_inputs: &[],
+        };
         // Best effort: without a stamp the next build compiles again.
-        let _ = std::fs::write(stamp_path, text);
+        let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));
     }
     Ok(Artifact::Executable(paths.executable))
 }

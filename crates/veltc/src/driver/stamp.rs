@@ -6,39 +6,34 @@
 //! - a key over the compiler (its executable's size and time), the build options, a generated
 //!   root's source, the `VELT_*` environment and, for LLVM builds, clang;
 //! - every file the build read (all of the session's source map: std, packages, declaration
-//!   files), by size, modification time and content hash: a file whose size or time changed is
-//!   hashed again, so touching a file without changing it rebuilds nothing;
-//! - the listing of every directory module resolution looked in (each read file's directory, and
-//!   the directories above it up to its package's root), with the package and TypeScript
-//!   configuration files and the lockfile in them: a new file that an import would now resolve
-//!   to (a `.ts` beside a `.vlt`, an `index.ts`, a `node_modules` package) changes a listing;
-//! - how many objects the build made.
+//!   files; and the configuration files module resolution read), by content hash and the size
+//!   and modification time the file had when it was read: a file whose size or time differs is
+//!   hashed again, so touching a file without changing it rebuilds nothing. As git does with
+//!   "racily clean" files, a file whose time is not older than the stamp's own is hashed too: it
+//!   may have changed within the time's granularity after it was read;
+//! - what module resolution looked at ([`vpm::probe`]): every path it probed (still a file, a
+//!   directory or missing as it was) and every directory it listed (the same entries), so a file
+//!   an import would now resolve to (a `.ts` beside a `.vlt`, a `node_modules` package nearer
+//!   the importer) is a change, and where each symbolic link to an npm package led; and the
+//!   manifests and lockfile the package graph came from;
+//! - extra inputs of the link, by size and time;
+//! - how many objects the build made, and at the end how many entries it has, so a stamp cut
+//!   short is no stamp. It is written to a temporary file and renamed into place.
 //!
 //! Only builds without diagnostics get a stamp, so a build that warned warns every time.
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use velt_build_cache::{Key, KeyHasher};
 use velt_common::SourceMap;
+use vpm::probe::{self, Kind, Seen};
 
 use super::BuildOptions;
 use crate::backend::Backend;
 
 /// The stamp's first line; a new format changes it, so old stamps just miss.
-const HEADER: &str = "velt-build-stamp 1";
-
-/// Files in a recorded directory whose contents change how imports resolve or what a program
-/// is built with.
-const CONFIG_FILES: &[&str] = &[
-    "package.vlt",
-    "package.json",
-    "tsconfig.json",
-    "jsconfig.json",
-    "velt.lock.json",
-];
+const HEADER: &str = "velt-build-stamp 2";
 
 /// `<exe>.build-stamp`.
 pub(super) fn path(exe: &Path) -> PathBuf {
@@ -58,7 +53,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     h.part(HEADER.as_bytes());
     h.part(crate::commands::version::version_line().as_bytes());
     let exe = std::env::current_exe().ok();
-    h.part(format!("{exe:?} {:?}", exe.as_deref().and_then(file_time)).as_bytes());
+    h.part(format!("{exe:?} {:?}", exe.as_deref().and_then(probe::stat)).as_bytes());
     let BuildOptions {
         input,
         root_source,
@@ -89,7 +84,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     h.part(format!("{env:?}").as_bytes());
     if backend == Backend::Llvm {
         let clang = velt_codegen_llvm::find_clang();
-        let time = clang.as_deref().and_then(file_time);
+        let time = clang.as_deref().and_then(probe::stat);
         h.part(format!("{clang:?} {time:?}").as_bytes());
     }
     h.finish()
@@ -104,188 +99,171 @@ const IGNORED_ENV: &[&str] = &[
     "VELT_TEST_PLAN",
 ];
 
-/// The stamp of a build configured by `key` that read the files in `sm` (except `virtual_root`,
-/// a generated root whose source is in the key) and made `objects` objects.
-pub(super) fn render(
-    key: &Key,
-    sm: &SourceMap,
-    virtual_root: Option<&Path>,
-    objects: usize,
-) -> String {
-    let mut s = format!("{HEADER}\nkey {}\nobjects {objects}\n", key.hex());
-    let mut dirs = BTreeSet::new();
-    let mut tops = std::collections::HashMap::new();
+/// Note (in [`vpm::probe`]) what the package graph of `opts` was made from: the directories
+/// above the input looked in for a manifest, and every package's manifest and lockfile.
+pub(super) fn note_project(opts: &BuildOptions) {
+    use vpm::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
+    let input = vpm::relpath::absolute(&opts.input);
+    for dir in input.ancestors().skip(1) {
+        if probe::is_file(&dir.join(MANIFEST_FILE))
+            || probe::is_file(&dir.join(LEGACY_MANIFEST_FILE))
+        {
+            break;
+        }
+    }
+    let roots = opts
+        .packages
+        .iter()
+        .flat_map(|g| g.packages())
+        .map(|p| &p.root);
+    for root in roots {
+        let files = [
+            MANIFEST_FILE,
+            vpm::lockfile::LOCK_FILE,
+            vpm::lockfile::LEGACY_LOCK_FILE,
+        ];
+        for file in files {
+            let _ = probe::read_to_string(&root.join(file));
+        }
+    }
+}
+
+/// What a finished build read and made, besides its source map.
+pub(super) struct Built<'a> {
+    /// What module resolution looked at.
+    pub seen: &'a Seen,
+    /// A generated root (`velt test`'s harness), whose source is in the key.
+    pub virtual_root: Option<&'a Path>,
+    /// How many objects the build made.
+    pub objects: usize,
+    /// Further files the link reads, whose size and time must stay as they are.
+    pub link_inputs: &'a [PathBuf],
+}
+
+/// The stamp of a build configured by `key` that read the files in `sm` and `built`.
+pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
+    let mut s = format!("{HEADER}\nkey {}\nobjects {}\n", key.hex(), built.objects);
+    let seen = built.seen;
+    let mut files = seen.read.clone();
     for (_, file) in sm.files() {
-        if Some(file.path.as_path()) == virtual_root {
+        if Some(file.path.as_path()) == built.virtual_root {
             continue;
         }
-        let path = vpm::relpath::absolute(&file.path);
-        // What the build read; if the disk has something else now, a hash that never matches.
-        let hash = Key::of(&[file.src.as_bytes()]).hex();
-        let time = file_time(&path).map_or_else(String::new, |(size, t)| format!("{size} {t}"));
-        let _ = writeln!(s, "file {hash} {time}\t{}", path.display());
-        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let top = tops
-            .entry(dir.clone())
-            .or_insert_with(|| package_root(&dir))
-            .clone();
-        for d in dir.ancestors() {
-            dirs.insert(d.to_path_buf());
-            if Some(d) == top.as_deref() || top.is_none() {
-                break;
-            }
-        }
+        // Read other than through `probe` (none is): no time, so it is always hashed.
+        let read = probe::Read {
+            stat: None,
+            hash: probe::content_hash(file.src.as_bytes()),
+        };
+        files
+            .entry(vpm::relpath::absolute(&file.path))
+            .or_insert(read);
     }
-    for dir in dirs {
-        let _ = writeln!(s, "dir {}\t{}", listing(&dir).hex(), dir.display());
+    let mut entries = 0;
+    for (path, read) in &files {
+        let time = read
+            .stat
+            .map_or_else(String::new, |(size, t)| format!(" {size} {t}"));
+        let _ = writeln!(s, "file {}{time}\t{}", read.hash, path.display());
+        entries += 1;
     }
+    for (dir, hash) in &seen.listed {
+        let _ = writeln!(s, "dir {hash}\t{}", dir.display());
+        entries += 1;
+    }
+    for (path, kind) in &seen.probed {
+        let _ = writeln!(s, "probe {}\t{}", kind.letter(), path.display());
+        entries += 1;
+    }
+    for (path, hash) in &seen.resolved {
+        let _ = writeln!(s, "real {hash}\t{}", path.display());
+        entries += 1;
+    }
+    for path in built.link_inputs {
+        let path = vpm::relpath::absolute(path);
+        let time = probe::stat(&path).map_or_else(|| "-".into(), |(n, t)| format!("{n} {t}"));
+        let _ = writeln!(s, "link {time}\t{}", path.display());
+        entries += 1;
+    }
+    let _ = writeln!(s, "end {entries}");
     s
 }
 
-/// Whether the stamp `text` still describes the build configured by `key`: `Some(objects)` when
-/// every file and directory it records is unchanged.
-pub(super) fn check(text: &str, key: &Key) -> Option<usize> {
+/// Write stamp `text` to `path` whole: into a temporary file renamed into place, so a build
+/// stopped half-way leaves the old stamp or none, never part of one.
+pub(super) fn write(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// [`check`] of the stamp at `path`, against the time it was written.
+pub(super) fn read(path: &Path, key: &Key) -> Option<usize> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let written = probe::stat(path).map(|(_, t)| t);
+    check(&text, key, written)
+}
+
+/// Whether the stamp `text`, written at `written` (nanoseconds since 1970), still describes the
+/// build configured by `key`: `Some(objects)` when everything it records is unchanged.
+pub(super) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usize> {
     let mut lines = text.lines();
     (lines.next()? == HEADER).then_some(())?;
     (lines.next()?.strip_prefix("key ")? == key.hex()).then_some(())?;
     let objects = lines.next()?.strip_prefix("objects ")?.parse().ok()?;
-    for line in lines {
+    for (entries, line) in lines.by_ref().enumerate() {
+        if let Some(n) = line.strip_prefix("end ") {
+            // Whole: as many entries as it says, and nothing after.
+            (n.parse() == Ok(entries)).then_some(())?;
+            return lines.next().is_none().then_some(objects);
+        }
         let (head, path) = line.split_once('\t')?;
         let path = Path::new(path);
         let mut fields = head.split(' ');
-        match fields.next()? {
+        let unchanged = match fields.next()? {
             "file" => {
                 let hash = fields.next()?;
-                let recorded = (fields.next(), fields.next());
-                let now = file_time(path)?;
-                let same_time = recorded
-                    == (
-                        Some(now.0.to_string().as_str()),
-                        Some(now.1.to_string().as_str()),
-                    );
-                if !same_time {
-                    let bytes = std::fs::read(path).ok()?;
-                    (Key::of(&[&bytes]).hex() == hash).then_some(())?;
-                }
+                let recorded = fields.next().zip(fields.next());
+                file_unchanged(path, hash, recorded, written)
             }
-            "dir" => (listing(path).hex() == fields.next()?).then_some(())?,
-            _ => return None,
-        }
+            "dir" => probe::listing_hash(path).as_deref() == Some(fields.next()?),
+            "probe" => {
+                let mut letter = fields.next()?.chars();
+                Some(Kind::of(path)) == letter.next().and_then(Kind::from_letter)
+            }
+            "real" => probe::resolved_hash(path) == fields.next()?,
+            "link" => {
+                let rest: Vec<&str> = fields.collect();
+                let now = probe::stat(path).map(|(n, t)| format!("{n} {t}"));
+                now.as_deref().unwrap_or("-") == rest.join(" ")
+            }
+            _ => false,
+        };
+        unchanged.then_some(())?;
     }
-    Some(objects)
+    None
 }
 
-/// The nearest directory at or above `dir` with a package manifest (`package.vlt` or
-/// `package.json`): where module resolution stops looking for packages of the files below.
-fn package_root(dir: &Path) -> Option<PathBuf> {
-    dir.ancestors()
-        .find(|d| {
-            d.join(vpm::manifest::MANIFEST_FILE).is_file() || d.join("package.json").is_file()
-        })
-        .map(Path::to_path_buf)
-}
-
-/// The hash of `dir`'s entries (names and kinds) and of the configuration files among them.
-fn listing(dir: &Path) -> Key {
-    let mut h = KeyHasher::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        h.part(b"missing");
-        return h.finish();
+/// Whether file `path` still has contents of hash `hash`: without hashing it when it has the
+/// size and time `recorded` when it was read, and that time is older than the stamp's.
+fn file_unchanged(
+    path: &Path,
+    hash: &str,
+    recorded: Option<(&str, &str)>,
+    written: Option<u128>,
+) -> bool {
+    let Some(now) = probe::stat(path) else {
+        return false;
     };
-    let mut names: Vec<(String, bool)> = entries
-        .flatten()
-        .map(|e| {
-            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
-            (e.file_name().to_string_lossy().into_owned(), is_dir)
-        })
-        .collect();
-    names.sort();
-    for (name, is_dir) in &names {
-        h.part(name.as_bytes()).part(&[u8::from(*is_dir)]);
-        if CONFIG_FILES.contains(&name.as_str()) {
-            h.part(&std::fs::read(dir.join(name)).unwrap_or_default());
-        }
-    }
-    h.finish()
-}
-
-/// Size and modification time (nanoseconds since 1970) of `path`.
-fn file_time(path: &Path) -> Option<(u64, u128)> {
-    let meta = std::fs::metadata(path).ok()?;
-    let time = meta.modified().ok()?;
-    let nanos = time.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos();
-    Some((meta.len(), nanos))
+    let same = recorded.is_some_and(|(size, time)| {
+        (size.parse(), time.parse()) == (Ok(now.0), Ok(now.1)) && written.is_some_and(|w| now.1 < w)
+    });
+    same || std::fs::read(path).is_ok_and(|bytes| probe::content_hash(&bytes) == hash)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn build(dir: &Path, sm: &mut SourceMap, files: &[(&str, &str)]) {
-        for (name, src) in files {
-            let path = dir.join(name);
-            std::fs::write(&path, src).unwrap();
-            sm.add(path, *src);
-        }
-    }
-
-    #[test]
-    fn unchanged_inputs_match() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("package.vlt"), "{}").unwrap();
-        let src = tmp.path().join("src");
-        std::fs::create_dir(&src).unwrap();
-        let mut sm = SourceMap::new();
-        build(&src, &mut sm, &[("main.vlt", "a"), ("lib.vlt", "b")]);
-        let key = Key::of(&[b"opts"]);
-        let stamp = render(&key, &sm, None, 2);
-        assert_eq!(check(&stamp, &key), Some(2));
-        assert_eq!(check(&stamp, &Key::of(&[b"other"])), None, "other options");
-
-        // Same contents, new time: still unchanged.
-        std::fs::write(src.join("lib.vlt"), "b").unwrap();
-        assert_eq!(check(&stamp, &key), Some(2));
-        // Another content: changed.
-        std::fs::write(src.join("lib.vlt"), "c").unwrap();
-        assert_eq!(check(&stamp, &key), None);
-        std::fs::write(src.join("lib.vlt"), "b").unwrap();
-        assert_eq!(check(&stamp, &key), Some(2));
-
-        // A new file where imports look (beside a module, or a package above it): changed.
-        std::fs::write(src.join("lib.ts"), "").unwrap();
-        assert_eq!(check(&stamp, &key), None);
-        std::fs::remove_file(src.join("lib.ts")).unwrap();
-        assert_eq!(check(&stamp, &key), Some(2));
-        std::fs::create_dir(tmp.path().join("node_modules")).unwrap();
-        assert_eq!(check(&stamp, &key), None);
-        std::fs::remove_dir(tmp.path().join("node_modules")).unwrap();
-        // The manifest's contents count.
-        std::fs::write(tmp.path().join("package.vlt"), "{ }").unwrap();
-        assert_eq!(check(&stamp, &key), None);
-    }
-
-    #[test]
-    fn a_deleted_file_or_a_broken_stamp_misses() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut sm = SourceMap::new();
-        build(tmp.path(), &mut sm, &[("main.vlt", "a")]);
-        let key = Key::of(&[b"opts"]);
-        let stamp = render(&key, &sm, None, 1);
-        assert_eq!(check(&stamp[..stamp.len() / 2], &key), None);
-        assert_eq!(check("", &key), None);
-        std::fs::remove_file(tmp.path().join("main.vlt")).unwrap();
-        assert_eq!(check(&stamp, &key), None);
-    }
-
-    #[test]
-    fn a_generated_root_is_left_to_the_key() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut sm = SourceMap::new();
-        let root = tmp.path().join("harness.vlt");
-        sm.add(&root, "generated");
-        let key = Key::of(&[b"opts"]);
-        let stamp = render(&key, &sm, Some(&root), 1);
-        assert!(!stamp.contains("harness.vlt"));
-        assert_eq!(check(&stamp, &key), Some(1));
-    }
-}
+#[path = "stamp_tests.rs"]
+mod tests;

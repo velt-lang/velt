@@ -23,6 +23,7 @@ pub mod manifest;
 pub mod native;
 pub mod npm;
 pub mod paths;
+pub mod probe;
 pub mod registry;
 pub mod relpath;
 pub mod remote;

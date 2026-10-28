@@ -49,13 +49,13 @@ pub fn in_std(file: &Path, std_root: &Path) -> bool {
 
 /// `std/prelude/*.vlt`, sorted by file name (empty if the directory is missing).
 pub fn prelude_files(std_root: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(std_root.join("prelude")) else {
+    let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude")) else {
         return vec![];
     };
     let mut files: Vec<PathBuf> = entries
-        .flatten()
+        .into_iter()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "vlt"))
         .collect();
     files.sort();
     files
