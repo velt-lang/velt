@@ -4,6 +4,10 @@
 4 failed: LoadError cannot load bad-aside
 a done
 bad-b failed: cannot load bad-b
-home <home>
-broken failed: true cannot load bad-page
-late failed: true cannot load bad-late
+alias home <home>
+alias broken failed: LiteralError literal alias
+inline broken failed: LiteralError literal inline
+generic broken failed: LiteralError literal generic
+returned broken failed: LiteralError literal returned
+nested broken failed: LiteralError literal nested
+index late failed: IndexError index set

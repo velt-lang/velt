@@ -40,9 +40,12 @@ impl Ctx<'_> {
                 best = Some(s);
             }
         }
-        // A type alias written there: the sites are in its body.
+        // A type alias written there: the sites are in its body, where a generic alias's are
+        // written in terms of its parameters (`type Table<T> = Record<string, Promise<T>>`).
         match (best, self.fn_sites.alias_written.get(&range)) {
-            (None, Some(&body)) if body != range => self.site_in(body, t),
+            (None, Some(&body)) if body != range => {
+                (self.site_in(body, t)).or_else(|| self.promise_site_in(body, t))
+            }
             _ => best,
         }
     }
