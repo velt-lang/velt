@@ -49,6 +49,9 @@ pub(super) struct Plan {
     pub range: Vec<Fact>,
     /// Facts about the operands of each narrowed definition, by (block, statement).
     pub operands: FxHashMap<(usize, usize), Vec<Fact>>,
+    /// Facts about the `f64` operand of each conversion to an integer type, by (block,
+    /// statement): where they are, after the branches before it (`i as usize` after `i >= 0`).
+    pub casts: FxHashMap<(usize, usize), Fact>,
     /// Per candidate that stays: why.
     pub reasons: Vec<Option<Reason>>,
 }
@@ -84,6 +87,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         to: vec![None; n],
         range: vec![Fact::empty(); n],
         operands: FxHashMap::default(),
+        casts: FxHashMap::default(),
         reasons: vec![None; n],
     };
     let mut may_neg_zero = vec![false; n];
@@ -103,6 +107,13 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         for (si, s) in block.stmts.iter().enumerate() {
             if let Stmt::Assign(d, rv) = s {
                 reads.assignment(flow, func, &st, rv, d, (bi, si));
+                if let Rvalue::Cast(a, to) = rv {
+                    if to.is_int() && super::flow::operand_ty(func, a) == Ty::F64 {
+                        if let Some(f) = flow.operand(&st, func, a) {
+                            p.casts.insert((bi, si), f);
+                        }
+                    }
+                }
                 if d.proj.is_empty() && cand[d.local.0 as usize] {
                     let l = d.local;
                     arith[l.0 as usize] |= matches!(rv, Rvalue::Binary(..) | Rvalue::Unary(..));

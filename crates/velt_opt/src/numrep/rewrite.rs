@@ -140,7 +140,9 @@ impl Rewriter<'_> {
                 let y = self.int_operand(&b, top, t, out);
                 out.push(Stmt::Assign(d, Rvalue::Binary(op, x, y)));
             }
-            Stmt::Assign(d, Rvalue::Cast(a, to)) if to.is_int() && self.twin_fits(&a, to) => {
+            Stmt::Assign(d, Rvalue::Cast(a, to))
+                if to.is_int() && (self.twin_fits(&a, to) || self.fits_here(&a, to, at)) =>
+            {
                 let (tw, tt) = self.twin(&a).expect("ICE: numrep twin_fits without a twin");
                 let v = self.conv_to(Operand::Copy(Place::local(tw)), tt, to, out);
                 out.push(Stmt::Assign(d, Rvalue::Use(v)));
@@ -182,6 +184,12 @@ impl Rewriter<'_> {
             }
             _ => false,
         }
+    }
+
+    /// `a` is a narrowed local whose values at statement `at` (after the branches before it)
+    /// fit the integer type `to`: `i as usize` after `i >= 0` converts the integer.
+    fn fits_here(&self, a: &Operand, to: Ty, at: (usize, usize)) -> bool {
+        self.twin(a).is_some() && self.plan.casts.get(&at).is_some_and(|f| f.fits(to))
     }
 
     /// A definition of the narrowed local `l` as an integer computation.

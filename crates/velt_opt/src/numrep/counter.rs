@@ -15,7 +15,9 @@
 //! - **Steps** add a whole constant, or a local whose facts bound it (`codes +=
 //!   s.charCodeAt(i)`, in [-1, 65535]); the counter may be read through a copy made earlier,
 //!   in a block that dominates the step's.
-//! - **The cap** of a counter is its constants widened by the sum over its steps of
+//! - **Starts** are whole constants, or a local plus a constant whose facts bound it (`q = at +
+//!   4` before a loop reading bytes from `q` on), whole and within ±2^53.
+//! - **The cap** of a counter is its starts widened by the sum over its steps of
 //!   `|step| × runs`. Only counters whose cap stays within ±2^53 (with room for one more step)
 //!   get one: the flow analysis then meets the counter's facts with it, so it never widens
 //!   past it. A counter that may pass 2^53 stays a double.
@@ -60,8 +62,8 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
     out
 }
 
-/// The tracked numeric locals (not parameters) set only to whole constants and to steps of
-/// themselves, with at least one step; with their definitions.
+/// The tracked numeric locals (not parameters) set only to starts and to steps of themselves,
+/// with at least one step; with their definitions.
 fn counters(cx: &Cx, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
     let func = cx.func;
     (func.params.len()..func.locals.len())
@@ -78,7 +80,7 @@ pub(super) fn maybe(cx: &Cx, l: Local, constant: bool) -> bool {
     let ty = func.locals[l.0 as usize].ty;
     let step = |d: &Def| match d {
         Def::Step(_, _, by) => !constant || matches!(by, By::Const(_)),
-        Def::Init(_) => false,
+        Def::Init(_) | Def::Start(..) => false,
     };
     l.0 as usize >= func.params.len()
         && (ty == Ty::F64 || ty.is_int())
@@ -90,6 +92,9 @@ pub(super) fn maybe(cx: &Cx, l: Local, constant: bool) -> bool {
 enum Def {
     /// `n = c`.
     Init(f64),
+    /// `n = x + c` (`c` may be 0) at statement `.1` of block `.0`, `x` another local whose
+    /// facts there bound it.
+    Start(usize, usize, Local, f64),
     /// `n = n + c` in this block (directly or through a temporary), reading `n` at this
     /// statement.
     Step(usize, usize, By),
@@ -127,14 +132,40 @@ fn counter_defs(cx: &Cx, l: Local) -> Option<Vec<Def>> {
                     let neg_zero = x == 0.0 && x.is_sign_negative();
                     (x.fract() == 0.0 && x.abs() < TWO_53 && !neg_zero).then_some(Def::Init(x))?
                 }
-                _ => {
-                    let (at, by) = step(cx, bi, si, l)?;
-                    Def::Step(bi, at, by)
-                }
+                _ => match step(cx, bi, si, l) {
+                    Some((at, by)) => Def::Step(bi, at, by),
+                    None => {
+                        let (x, c) = start(rv, l)?;
+                        Def::Start(bi, si, x, c)
+                    }
+                },
             });
         }
     }
     Some(defs)
+}
+
+/// `rv` = `x`, `x + c`, `c + x` or `x - c` for a local `x` other than `l` and a whole constant
+/// `c` within [`MAX_STEP`]: the start of a counter.
+fn start(rv: &Rvalue, l: Local) -> Option<(Local, f64)> {
+    let local = |op: &Operand| match op {
+        Operand::Copy(p) if p.proj.is_empty() && p.local != l => Some(p.local),
+        _ => None,
+    };
+    let whole = |op: &Operand| match op {
+        Operand::Const(c, _) => constant(c).filter(|c| c.fract() == 0.0 && c.abs() <= MAX_STEP),
+        _ => None,
+    };
+    match rv {
+        Rvalue::Use(x) => Some((local(x)?, 0.0)),
+        Rvalue::Binary(BinOp::Add, a, b) => match (local(a), local(b)) {
+            (Some(x), None) => Some((x, whole(b)?)),
+            (None, Some(x)) => Some((x, whole(a)?)),
+            _ => None,
+        },
+        Rvalue::Binary(BinOp::Sub, a, b) => Some((local(a)?, -whole(b)?)),
+        _ => None,
+    }
 }
 
 /// The value of a numeric constant.
@@ -340,6 +371,16 @@ fn cap(
     for d in defs {
         match *d {
             Def::Init(x) => (lo, hi) = (lo.min(x), hi.max(x)),
+            Def::Start(b, at, x, c) => {
+                let f = flow.fact_before(func, b, at, x)?;
+                // `-0 + 0` is `-0`, which no integer is.
+                let zero = f.neg_zero && c == 0.0;
+                let whole = f.integral && !f.nan && !zero && f.lo <= f.hi && f.magnitude() < TWO_53;
+                if !whole {
+                    return None;
+                }
+                (lo, hi) = (lo.min(f.lo + c), hi.max(f.hi + c));
+            }
             Def::Step(b, at, by) => {
                 let runs = nest.runs(trips, b)?;
                 let (least, most) = amounts(func, flow, b, at, by)?;
