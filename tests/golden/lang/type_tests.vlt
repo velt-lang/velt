@@ -40,6 +40,18 @@ function adder<T>(t: T, xs: u64[]): u64 {
   return 0;
 }
 
+// So does a generator function expression, iterated after the function returned it.
+function counter<T>(t: T): () => Generator<u64> {
+  if (typeIs<T, u64>()) {
+    return function* () {
+      yield asType<u64>(t) + 100;
+    };
+  }
+  return function* () {
+    yield 0;
+  };
+}
+
 function main() {
   const n = new Slot<u64>();
   n.put(42);
@@ -48,4 +60,7 @@ function main() {
   console.log(n.get(0), n.boxed.length, s.get(""), s.word);
   console.log(describe<string>(), describe<u64>(), describe<bool>());
   console.log(adder<u64>(10, [1, 2]), adder<string>("x", [1, 2]));
+  for (const v of counter<u64>(5)()) {
+    console.log(v, [...counter<string>("x")()][0]);
+  }
 }
