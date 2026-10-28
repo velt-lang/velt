@@ -1,0 +1,276 @@
+abort +++++++++++++++
+action +++++++++++++++
+add ---------------
+after +++++++++++++++
+all ---------------
+alter ---------------
+always +++++++++++++++
+analyze +++++++++++++++
+and ---------------
+as ---------------
+asc +++++++++++++++
+attach +++++++++++++++
+autoincrement ---------------
+before +++++++++++++++
+begin +++++++++++++++
+between ---------------
+by +++++++++++++++
+cascade +++++++++++++++
+case ---------------
+cast +++++++++++++++
+check ---------------
+collate ---------------
+column +++++++++++++++
+commit ---------------
+conflict +++++++++++++++
+constraint ---------------
+create ---------------
+cross ++----+++++++++
+current +++++++++++++++
+current_date +++++++++++++++
+current_time +++++++++++++++
+current_timestamp +++++++++++++++
+database +++++++++++++++
+default ------------+--
+deferrable --++-----------
+deferred +++++++++++++++
+delete ------------+--
+desc +++++++++++++++
+detach +++++++++++++++
+distinct ---------------
+do +++++++++++++++
+drop ---------------
+each +++++++++++++++
+else ---------------
+end +++++++++++++++
+escape ---------------
+except ---------------
+exclude +++++++++++++++
+exclusive +++++++++++++++
+exists ---------------
+explain +++++++++++++++
+fail +++++++++++++++
+filter +++++++++++++++
+first +++++++++++++++
+following +++++++++++++++
+for +++++++++++++++
+foreign ---------------
+from ---------------
+full ++----+++++++++
+generated +++++++++++++++
+glob +++++++++++++++
+group ---------------
+groups +++++++++++++++
+having ---------------
+if +-++++++++-+++-
+ignore +++++++++++++++
+immediate +++++++++++++++
+in ---------------
+index ---------------
+indexed ++--+-+++++++++
+initially +++++++++++++++
+inner ++----+++++++++
+insert ---------------
+instead +++++++++++++++
+intersect ---------------
+into ---------------
+is ---------------
+isnull ---------------
+join ---------------
+key +++++++++++++++
+last +++++++++++++++
+left ++----+++++++++
+like +++++++++++++++
+limit ---------------
+match +++++++++++++++
+materialized +++++++++++++++
+natural ++----+++++++++
+no +++++++++++++++
+not ---------------
+nothing ---------------
+notnull ---------------
+null --+++----------
+nulls +++++++++++++++
+of +++++++++++++++
+offset +++++++++++++++
+on ------------+--
+or ---------------
+order ---------------
+others +++++++++++++++
+outer ++----+++++++++
+over +++++++++++++++
+partition +++++++++++++++
+plan +++++++++++++++
+pragma +++++++++++++++
+preceding +++++++++++++++
+primary ---------------
+query +++++++++++++++
+raise +++++++++++++++
+range +++++++++++++++
+recursive +++++++++++++++
+references ---------------
+regexp +++++++++++++++
+reindex +++++++++++++++
+release +++++++++++++++
+rename +++++++++++++++
+replace +++++++++++++++
+restrict +++++++++++++++
+returning ---------------
+right ++----+++++++++
+rollback +++++++++++++++
+row +++++++++++++++
+rows +++++++++++++++
+savepoint +++++++++++++++
+select ---------------
+set ---------------
+table ---------------
+temp +++++++++++++++
+temporary +++++++++++++++
+then ---------------
+ties +++++++++++++++
+to ---------------
+transaction ---------------
+trigger +++++++++++++++
+unbounded +++++++++++++++
+union ---------------
+unique --++-----------
+update ---------------
+using ---------------
+vacuum +++++++++++++++
+values ---------------
+view +++++++++++++++
+virtual +++++++++++++++
+when ---------------
+where ---------------
+window +++++++++++++++
+with +++++++++++++++
+without +++++++++++++++
+rowid +++++++++++++++
+strict +++++++++++++++
+true +++++++++++++++
+false +++++++++++++++
+parseOne: no statement
+parseOne: no statement
+parseOne: more than one statement
+parseOne: k0
+k4 t cols[id:INTEGER pk auto, name:TEXT nn uq NOCASE, score:REAL dflt2, data:BLOB, n:INT dflt9 check, g: stored] uniques 1 without-rowid strict | CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, score REAL DEFAULT -1.5, data BLOB, n INT CHECK (n > 0) DEFAULT (abs(-3)), g AS (n * 2) STORED, FOREIGN KEY (n) REFERENCES u(id) ON DELETE CASCADE, UNIQUE (name, n) ON CONFLICT REPLACE) WITHOUT ROWID, STRICT
+k4 main.my table cols[a b:VARCHAR(10), c:DOUBLE PRECISION, d:] pk(a desc,c) if-not-exists | CREATE TABLE IF NOT EXISTS main."my table" ([a b] VARCHAR(10), `c` DOUBLE PRECISION, d, PRIMARY KEY (a DESC, c))
+k5 ix on t (9 NOCASE desc,6) unique partial if-not-exists | CREATE UNIQUE INDEX IF NOT EXISTS ix ON t (lower(name) COLLATE NOCASE DESC, n) WHERE n > 0
+k14 v columns(a,b) select temp | CREATE TEMP VIEW v (a, b) AS SELECT 1, 2
+k4 copy select | CREATE TABLE copy AS SELECT * FROM t
+k1 t columns(a,b) rows 2 upserts set b,c+d; nothing returning 2 | INSERT INTO t (a, b) VALUES (1, 'x'), (?, :y) ON CONFLICT (a) DO UPDATE SET b = excluded.b, (c, d) = (1, 2) WHERE a > 0 ON CONFLICT DO NOTHING RETURNING *, a AS z
+k1 t select or IGNORE | INSERT OR IGNORE INTO t SELECT * FROM u
+k1 t default-values or REPLACE | REPLACE INTO t DEFAULT VALUES
+k1 t select | INSERT INTO t VALUES (1) UNION SELECT 2
+k2 t or REPLACE set a from 1 where returning 1 alias x | UPDATE OR REPLACE t AS x SET a = a + 1 FROM u WHERE x.id = u.id RETURNING a
+k3 t where returning 1 | DELETE FROM t WHERE id IN (SELECT id FROM u) RETURNING id
+k7  IMMEDIATE | BEGIN IMMEDIATE TRANSACTION
+  k11 s1 | SAVEPOINT s1
+  k12 s1 | RELEASE SAVEPOINT s1
+  k9 s1 | ROLLBACK TO s1
+  k8  | COMMIT
+  k8  | END
+k10 journal_mode = 6:WAL0 | PRAGMA journal_mode = WAL
+  k10 main.page_size = 1:4096 | PRAGMA main.page_size(4096)
+  k10 table_info = 3:0t | PRAGMA table_info('t')
+  k10 cache_size = 1:-2000 | PRAGMA cache_size = -2000
+k6 t TABLE if-exists | DROP TABLE IF EXISTS t
+  k6 ix INDEX | DROP INDEX ix
+  k13 t RENAME u | ALTER TABLE t RENAME TO u
+  k13 u ADD COLUMN  | ALTER TABLE u ADD COLUMN z INTEGER DEFAULT 0 NOT NULL
+  k13 u columns(z) RENAME COLUMN w | ALTER TABLE u RENAME COLUMN z TO w
+  k13 u columns(w) DROP COLUMN  | ALTER TABLE u DROP COLUMN w
+k15  explain plan k0 | EXPLAIN QUERY PLAN SELECT 1
+k0  select | WITH x AS (SELECT 1) SELECT * FROM x
+k0  select | SELECT 1
+error at 17: incomplete input
+error at 5: near "SCHEMA": syntax error
+error at 9: near "SELECT": syntax error
+k10 foreign_keys = 6:ON0 | PRAGMA foreign_keys = ON
+  k10 journal_mode = 6:DELETE0 | PRAGMA journal_mode = DELETE
+  k10 synchronous = 6:FULL0 | PRAGMA synchronous = FULL
+  k10 x = 6:DEFAULT0 | PRAGMA x = DEFAULT
+  k10 x = 6:TRUE0 | PRAGMA x = TRUE
+  k10 x = 1:-5 | PRAGMA x = -5
+error at 11: near "NULL": syntax error
+error at 11: near "SELECT": syntax error
+error at 10: near "BOGUS": syntax error
+error at 12: near "SET": syntax error
+k2 t set a alias x | UPDATE t AS x SET a = 1
+error at 4: incomplete input
+error at 10: incomplete input
+k0  select | WITH x AS (SELECT ')') SELECT * FROM x
+k1 t select | INSERT INTO t VALUES ('(') UNION SELECT 2
+error at 37: near "BOGUS": syntax error
+error at 8: near "EXPLAIN": syntax error
+error at 19: near "EXPLAIN": syntax error
+error at 8: near "EXPLAIN": syntax error
+k4 r cols[start:, end:, offset:INT, left:text, right:big, b:] pk(start) uniques 1 checks 1 | CREATE TABLE r(start, end, offset INT, left 'text', "right" 'big' int, b REFERENCES p(a) MATCH FULL ON INSERT CASCADE NOT DEFERRABLE INITIALLY DEFERRED, CHECK (a > 0) ON CONFLICT ABORT PRIMARY KEY (start) UNIQUE (end) CONSTRAINT x FOREIGN KEY (b) REFERENCES p CONSTRAINT y)
+k4 g cols[a:big   int ( 1 , -2 ), b:INT stored, c: virtual, d:INT nn virtual, e:, f:] | CREATE TABLE g(a  big   int ( 1 , -2 ), b INT GENERATED ALWAYS AS (a + 1) STORED, c GENERATED ALWAYS AS (1), d INT NOT NULL GENERATED ALWAYS AS (2) VIRTUAL, e DEFERRABLE, f CONSTRAINT z)
+k4 d cols[a: dflt1, b: dflt2, c: dflt3'x, d: dflt4'00, e: dflt0, f: dflt9, g: dflt8, h: dflt7, i: dflt3'end, j: dflt23'true, k: dflt3'indexed, l: dflt3'q] | CREATE TABLE d(a DEFAULT -1, b DEFAULT +1.5, c DEFAULT 'x', d DEFAULT x'00', e DEFAULT NULL, f DEFAULT CURRENT_TIME, g DEFAULT (1 + 1), h DEFAULT -'x', i DEFAULT end, j DEFAULT true, k DEFAULT indexed, l DEFAULT "q")
+k4 p cols[a: auto] pk(a) without-rowid strict | CREATE TABLE p(a, PRIMARY KEY(a AUTOINCREMENT)) STRICT, WITHOUT ROWID
+k4 q cols[a:big, b:x'y, c:q, d:x] , e:text, f:int, g:a"b, h:ab] | CREATE TABLE q(a 'big' int, b 'x''y', c "q" z, d [x] y, e 'text', f [int], g "a""b", h 'ab' 'cd')
+error at 34: near "b": syntax error
+error at 15: near "PRIMARY": syntax error
+error at 33: near "BOGUS": syntax error
+error at 40: near "BOGUS": syntax error
+error at 44: near "BOGUS": syntax error
+error at 38: near "bogus": syntax error
+error at 25: near "~": syntax error
+error at 26: near "(": syntax error
+error at 26: near ".": syntax error
+error at 27: near "-": syntax error
+error at 26: near "x": syntax error
+error at 25: near "?": syntax error
+error at 25: near "left": syntax error
+error at 27: near "+": syntax error
+error at 25: near "left": syntax error
+error at 25: near "WITHOUT": syntax error
+error at 25: incomplete input
+error at 32: near "WITHOUT": syntax error
+error at 18: unknown table option: BOGUS
+error at 26: unknown table option: left
+error at 18: unknown table option: "strict"
+error at 24: error in generated column "a"
+error at 27: near ")": syntax error
+error at 31: syntax error after column name "a"
+error at 14: syntax error after column name "a"
+error at 22: unsupported use of NULLS FIRST
+error at 12: near "INDEX": syntax error
+error at 12: near "UNIQUE": syntax error
+error at 29: all VALUES must have the same number of terms
+error at 25: near "ORDER": syntax error
+error at 25: near "LIMIT": syntax error
+error at 29: near "ON": syntax error
+k1 t default-values returning 1 | INSERT INTO t DEFAULT VALUES RETURNING *
+error at 48: near "ON": syntax error
+error at 57: near "ON": syntax error
+k1 t rows 1 upserts nothing; nothing | INSERT INTO t VALUES (1) ON CONFLICT (a) DO NOTHING ON CONFLICT DO NOTHING
+error at 42: near "DO": syntax error
+k1 t select upserts nothing | INSERT INTO t SELECT * FROM u WHERE true ON CONFLICT DO NOTHING
+k1 t select upserts nothing | INSERT INTO t SELECT 1 ON CONFLICT DO NOTHING
+error at 9: near "x": syntax error
+k2 t set a indexed-by i alias x | UPDATE t AS x INDEXED BY i SET a = 1
+  k2 t set a not-indexed | UPDATE t NOT INDEXED SET a = 1
+  k3 t indexed-by i | DELETE FROM t INDEXED BY i
+  k3 t where not-indexed alias x | DELETE FROM t AS x NOT INDEXED WHERE 1
+error at 14: near "x": syntax error
+k2 t set a+b,c from 1 where returning 2 | UPDATE t SET (a, b) = (1, 2), c = 3 FROM u WHERE 1 RETURNING a 'x', *
+error at 24: RETURNING may not use "TABLE.*" wildcards
+k7  transaction a | BEGIN TRANSACTION a
+  k8  transaction b | COMMIT TRANSACTION b
+  k7  DEFERRED transaction c | BEGIN DEFERRED TRANSACTION c
+  k8  transaction d | END TRANSACTION d
+  k9 s transaction e | ROLLBACK TRANSACTION e TO SAVEPOINT s
+k10 a = 1:-2000 | PRAGMA a = -2000
+  k10 b = 1:2000 | PRAGMA b = +2000
+  k10 c = 2:0 | PRAGMA c = -2.5
+  k10 d = 3:0x | PRAGMA d = 'x'
+  k10 e = 6:LEFT0 | PRAGMA e = left
+  k10 f = 6:G0 | PRAGMA f("g")
+error at 20: near "~": syntax error
+error at 20: near "(": syntax error
+error at 20: near "x'00'": syntax error
+error at 20: near "?": syntax error
+error at 13: near "'a'": syntax error
+error at 11: near "1_0": syntax error
