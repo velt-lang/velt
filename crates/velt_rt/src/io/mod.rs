@@ -49,8 +49,9 @@ pub fn publish_thread_output() {
 }
 
 /// Called before this task hands work to another one, ahead of the change the other task sees:
-/// spawning a task, a channel send or close, a receive that frees room in a bounded channel,
-/// settling a `new Promise`, aborting a signal, a child leaving a task group, releasing a
+/// spawning a task (also the root task `velt_rt_block_on` starts, after the module initializers
+/// printed on the main thread), a channel send or close, a receive that frees room in a bounded
+/// channel, settling a `new Promise`, aborting a signal, a child leaving a task group, releasing a
 /// keep-alive reference (the last one lets the program exit), and sending on a socket (a TCP
 /// connect, write, shutdown or close, a UDP datagram, a `fetch` request, a server's response or
 /// body chunk), whose peer is often a task of the same program. What this thread printed so far
