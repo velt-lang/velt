@@ -56,7 +56,7 @@ pub(super) enum Slot {
 /// One interface method, with the interface's type arguments substituted.
 pub(super) struct MethodSig {
     pub(super) name: String,
-    params: Vec<ParamSig>,
+    pub(super) params: Vec<ParamSig>,
     pub(super) ret: TyId,
     throws: Option<TyId>,
     default: Option<DefId>,
@@ -302,7 +302,7 @@ impl FnCx<'_, '_> {
                         Some(v) => self.slot_fn(v, exp, (iface, slot), dyn_ty),
                         None => (self.prop_value(&key, v, Some(exp)), false),
                     };
-                    let h = self.overload_impl_results(&methods, &m.name, h, key.span);
+                    let h = self.overload_impl_results(&methods, &m.name, (h, v), key.span);
                     let h = self.fit_fn(h, m, this.then_some(dyn_ty));
                     values.push((key.name.clone(), h));
                     slots[slot] = Some(Slot::Call(index));
