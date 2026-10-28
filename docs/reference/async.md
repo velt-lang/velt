@@ -734,6 +734,18 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   - The callback cannot use module state (module-level `let`s and kept constants), directly
     or through a function it calls, a field initializer, or a `toString()`, `toJSON()` or
     `[Symbol.dispose]()` method that std or a drop calls ([Module state](variables.md#module-state)).
+    The properties of a declared function held as `any` are module state too
+    ([Functions](functions.md)), but the compiler cannot see where a callback reaches them, so
+    a callback may use them. In a program that gives functions properties through `any`, a
+    callback that may reach them takes the module lock before the lock itself and keeps it while
+    it runs: one that uses a member of an `any` or `unknown` value (also of a typed value a
+    `Proxy` may be behind, in a program that uses `Proxy`), passes one to the standard library
+    (`Object.keys`, `JSON.stringify`, `console.log`), calls a function value whose body the
+    compiler does not see, or runs a `with` whose callback is held in a variable, directly or
+    through what it calls or a `with` inside it.
+    Those callbacks run one at a time across the program, also for different locks, and not
+    while a task that uses module state runs; the others (typed values only) run as before, and
+    `read` callbacks next to each other.
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

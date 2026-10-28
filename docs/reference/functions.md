@@ -1345,10 +1345,12 @@ console.log(C({}).type === C, Object.keys(C)); // true [ '__setup', '__name' ]
 ```
 
 A declared function is one function, as in JavaScript: every `any` holding it sees the same
-properties and compares `===`, also in other tasks, as a module-level `let` is one variable (a
-task that reaches one takes the module lock, [Async](async.md)). A function sent to another task (`spawn`, a channel, `shared`)
-while it is still used here gets a copy of its properties there, as an object gets a copy of its
-members ([Async](async.md)), so a write in one task is not seen in the other. Converted back to a
+properties and compares `===` (also as a `Map` key), in other tasks too, as a module-level `let`
+is one variable (a task that reads or writes its properties takes the module lock, and so does
+a `with`, `read` or `write` whose callback may: [Async](async.md)). Any other function (a function
+expression, an arrow, a closure) sent to another task (`spawn`, a channel, `shared`) while it is
+still used here gets a copy of its properties there, as an object gets a copy of its members
+([Async](async.md)), so a write in one task is not seen in the other. Converted back to a
 callable interface (`f as Factory` with `interface Factory { (p: number): number; __name?:
 string }`), the function's properties fill the interface's members.
 

@@ -217,6 +217,11 @@ pub struct Program {
     pub extension_impls: HashMap<u32, Vec<ImplBound>>,
     /// Per interface, the `extend` bounds its values meet themselves (hir_encodings.md). Additive.
     pub dyn_bounds: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// The `with` / `read` / `write` callbacks (closures and named functions, by `DefId`) that
+    /// never reach a function's properties held as `any` (hir_encodings.md "Module state"):
+    /// lowering takes the module lock before the lock of every other such call in a program
+    /// whose functions may have properties. Additive.
+    pub lock_free_callbacks: HashSet<DefId>,
 }
 
 impl Program {

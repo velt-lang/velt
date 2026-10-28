@@ -105,6 +105,10 @@ pub(crate) struct Implicit {
     /// [`Reach`] of each type seen without type arguments known (types mentioning type
     /// parameters keep them as [`Reach::param`]).
     memo: RefCell<FxHashMap<TyId, std::rc::Rc<Reach>>>,
+    /// The lowest position on the walk's stack a walk below the current object type found its
+    /// way back to (`usize::MAX`: none): a type whose walk returned to no type above it is
+    /// complete, and its [`Reach`] goes into `memo` (#859: types sharing parts are walked once).
+    cut: std::cell::Cell<usize>,
 }
 
 impl Implicit {
@@ -189,6 +193,7 @@ impl Implicit {
             weak_entries,
             captures_reach: false,
             memo: RefCell::new(FxHashMap::default()),
+            cut: std::cell::Cell::new(usize::MAX),
         };
         im.captures_reach = im.captures.iter().any(|&t| {
             let r = im.reach(cx, t);
@@ -267,44 +272,30 @@ impl Implicit {
             }
             TyKind::Adt(d, args) => {
                 let (d, args) = (*d, args.clone());
-                if stack.contains(&d) {
+                if let Some(at) = stack.iter().position(|x| *x == d) {
+                    self.cut.set(self.cut.get().min(at));
                     return;
                 }
-                let argr: Vec<Reach> = args
-                    .iter()
-                    .map(|&a| {
-                        let mut r = Reach::default();
-                        self.reach_in(cx, a, env, stack, &mut r);
-                        r
-                    })
-                    .collect();
-                stack.push(d);
-                // A weak map drops its values (8).
-                if Some(d) == self.weak_map {
-                    if let Some(v) = argr.get(1) {
-                        out.add(v);
-                    }
-                } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
-                    // A subclass of one: its base class, in terms of its own type parameters.
-                    if let Some(b) = cx.adt(d).and_then(|a| a.base) {
-                        self.reach_in(cx, b, Some(&argr), stack, out);
+                // A type without type parameters reaches the same whatever `env` is.
+                let concrete = !super::has_params(cx, t);
+                if concrete {
+                    if let Some(r) = self.memo.borrow().get(&t) {
+                        out.add(r);
+                        return;
                     }
                 }
-                self.weak_values(cx, t, Some(d), stack, out);
-                let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
-                for m in family {
-                    if let Some(h) = self.hooks.get(&m) {
-                        if !h.0.is_empty() || !h.1.is_empty() {
-                            out.adts.insert(m);
-                        }
-                    }
-                    // A relative's fields: its own type parameters are not this type's.
-                    let e = if m == d { Some(&argr[..]) } else { None };
-                    for f in field_tys(cx, m) {
-                        self.reach_in(cx, f, e, stack, out);
-                    }
+                let depth = stack.len();
+                let outer = self.cut.replace(usize::MAX);
+                let mut mine = Reach::default();
+                self.adt_reach(cx, (t, d, &args), env, stack, &mut mine);
+                let cut = self.cut.get();
+                self.cut.set(outer.min(cut));
+                if concrete && cut >= depth {
+                    self.memo
+                        .borrow_mut()
+                        .insert(t, std::rc::Rc::new(mine.clone()));
                 }
-                stack.pop();
+                out.add(&mine);
             }
             TyKind::Dyn(i, _) => {
                 let i = *i;
@@ -313,6 +304,52 @@ impl Implicit {
                 }
             }
         }
+    }
+
+    /// [`Self::reach_in`] of the object type `t` (`d` with `args`), not on the stack.
+    fn adt_reach(
+        &self,
+        cx: &Ctx,
+        (t, d, args): (TyId, DefId, &[TyId]),
+        env: Option<&[Reach]>,
+        stack: &mut Vec<DefId>,
+        out: &mut Reach,
+    ) {
+        let argr: Vec<Reach> = args
+            .iter()
+            .map(|&a| {
+                let mut r = Reach::default();
+                self.reach_in(cx, a, env, stack, &mut r);
+                r
+            })
+            .collect();
+        stack.push(d);
+        // A weak map drops its values (8).
+        if Some(d) == self.weak_map {
+            if let Some(v) = argr.get(1) {
+                out.add(v);
+            }
+        } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
+            // A subclass of one: its base class, in terms of its own type parameters.
+            if let Some(b) = cx.adt(d).and_then(|a| a.base) {
+                self.reach_in(cx, b, Some(&argr), stack, out);
+            }
+        }
+        self.weak_values(cx, t, Some(d), stack, out);
+        let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
+        for m in family {
+            if let Some(h) = self.hooks.get(&m) {
+                if !h.0.is_empty() || !h.1.is_empty() {
+                    out.adts.insert(m);
+                }
+            }
+            // A relative's fields: its own type parameters are not this type's.
+            let e = if m == d { Some(&argr[..]) } else { None };
+            for f in field_tys(cx, m) {
+                self.reach_in(cx, f, e, stack, out);
+            }
+        }
+        stack.pop();
     }
 
     /// What releasing a value of type `t` (an object type `d`, or an array) as a weak map's key

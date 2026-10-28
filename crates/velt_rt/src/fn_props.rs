@@ -133,6 +133,7 @@ unsafe fn find(entries: &[(VeltStr, Box<AnyValue>)], key: *const VeltStr) -> Opt
 /// `env` is a live environment and `key` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_get(env: *const u8, key: *const VeltStr) -> *const u8 {
+    reach(env);
     with(|t| match t.get(&(env as usize)) {
         Some(p) => match find(&p.entries, key) {
             Some(i) => &*p.entries[i].1 as *const AnyValue as *const u8,
@@ -149,10 +150,20 @@ pub unsafe extern "C" fn velt_rt_fnprop_get(env: *const u8, key: *const VeltStr)
 /// `env` is a live counted environment, `key` a valid string, `v` an owned `any`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_set(env: *mut u8, key: *const VeltStr, v: *const u8) {
+    reach(env);
     let value = *(v as *const AnyValue);
+    let identity = is_identity(env);
     let old = with(|t| {
-        // The environment now drops and transfers its properties too.
-        let props = t.entry(env as usize).or_insert_with(|| adopt(env, vec![]));
+        // The environment now drops and transfers its properties too; an identity's entries
+        // stay (its properties live as long as it does).
+        let props = t.entry(env as usize).or_insert_with(|| match identity {
+            true => Props {
+                drop: 0,
+                transfer: 0,
+                entries: vec![],
+            },
+            false => adopt(env, vec![]),
+        });
         match find(&props.entries, key) {
             Some(i) => Some(std::mem::replace(&mut *props.entries[i].1, value)),
             None => {
@@ -174,6 +185,7 @@ pub unsafe extern "C" fn velt_rt_fnprop_set(env: *mut u8, key: *const VeltStr, v
 /// `env` is a live environment and `key` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_delete(env: *const u8, key: *const VeltStr) -> u8 {
+    reach(env);
     let gone = with(|t| {
         let p = t.get_mut(&(env as usize))?;
         let i = find(&p.entries, key)?;
@@ -195,6 +207,7 @@ pub unsafe extern "C" fn velt_rt_fnprop_delete(env: *const u8, key: *const VeltS
 /// `env` is a live environment.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_len(env: *const u8) -> u64 {
+    reach(env);
     with(|t| t.get(&(env as usize)).map_or(0, |p| p.entries.len() as u64))
 }
 
@@ -205,6 +218,7 @@ pub unsafe extern "C" fn velt_rt_fnprop_len(env: *const u8) -> u64 {
 /// `env` is a live environment with more than `i` properties; `out` is writable.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_key(env: *const u8, i: u64, out: *mut VeltStr) {
+    reach(env);
     let name = with(|t| {
         t.get(&(env as usize))
             .and_then(|p| p.entries.get(i as usize))
@@ -213,99 +227,119 @@ pub unsafe extern "C" fn velt_rt_fnprop_key(env: *const u8, i: u64, out: *mut Ve
     out.write(name.unwrap_or_else(VeltStr::empty));
 }
 
-/// The size of an identity environment's block: the count (a `u64` on every target), then the
+/// The size of an environment holding nothing: the count (a `u64` on every target), then the
 /// drop, clone and transfer entries of every environment's header (pointer-sized).
-const IDENTITY_BLOCK: u64 = 32;
+const EMPTY_BLOCK: u64 = 32;
 
 /// The identity environment of each function value that has none of its own, by its code
 /// address: a declared function is one object in JavaScript, whichever reference reaches it,
-/// in every task. Its count and its properties are not atomic, so they are module state (rt_abi
-/// "Module state"): a task that reaches one takes the module lock, as an access of a
-/// module-level `let` does, and keeps it in its polls from then on. The table holds one
-/// reference to each, as long as the process runs.
+/// in every task. Its entries change no count (it lives as long as the process), so any thread
+/// may hold it, and a value holding it takes it along to another task: the function there is
+/// the same, for `===` and `Map` keys too. Its properties are not atomic, so they are module
+/// state (rt_abi "Module state"): reaching them takes the module lock, as an access of a
+/// module-level `let` does, and the task keeps it in its polls from then on.
 type Identities = HashMap<usize, usize>;
 
 static IDENTITIES: Mutex<Option<Identities>> = Mutex::new(None);
 
 /// The identity environment of the function value with code `code` and no environment, made
-/// on first use (an environment holding nothing), with one more reference for the caller: the
-/// function value a property is written to keeps it as its environment.
+/// on first use (an environment holding nothing, whose entries change no count): the function
+/// value converted to `any` keeps it as its environment.
 #[no_mangle]
 pub extern "C" fn velt_rt_fnprop_identity(code: *const u8) -> *mut u8 {
     // A generic closure's value has no code of its own to name it by.
     if code.is_null() {
         return std::ptr::null_mut();
     }
-    crate::task::local::module_touch();
     let key = code as usize;
     let mut t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-    let env = *t
-        .get_or_insert_with(HashMap::new)
+    *t.get_or_insert_with(HashMap::new)
         .entry(key)
-        .or_insert_with(|| {
-            let env = empty_env();
-            // SAFETY: a fresh environment; sent to another task, it is found there again.
-            unsafe { *header(env, 2) = word_of(identity_transfer as *const ()) };
-            env as usize
-        }) as *mut u8;
-    // SAFETY: the table's reference keeps the environment alive.
-    unsafe { *(env.sub(8) as *mut u64) += 1 };
-    env
+        .or_insert_with(|| identity_env() as usize) as *mut u8
 }
 
-/// A new environment holding nothing, counted once.
-fn empty_env() -> *mut u8 {
-    let p = crate::mem::velt_rt_alloc(IDENTITY_BLOCK, 8);
+/// A new identity environment.
+fn identity_env() -> *mut u8 {
+    let p = crate::mem::velt_rt_alloc(EMPTY_BLOCK, 8);
     // SAFETY: a fresh block of the count and three pointer-sized words.
     unsafe {
         (p as *mut u64).write(1);
         let env = p.add(8);
         *header(env, 0) = word_of(identity_drop as *const ());
         *header(env, 1) = word_of(identity_clone as *const ());
+        *header(env, 2) = word_of(identity_transfer as *const ());
+        env
+    }
+}
+
+/// Is `env` a declared function's identity? Its clone entry says so, and never changes.
+unsafe fn is_identity(env: *const u8) -> bool {
+    *header(env as *mut u8, 1) == word_of(identity_clone as *const ())
+}
+
+/// A new environment holding nothing, counted once.
+fn empty_env() -> *mut u8 {
+    let p = crate::mem::velt_rt_alloc(EMPTY_BLOCK, 8);
+    // SAFETY: a fresh block of the count and three pointer-sized words.
+    unsafe {
+        (p as *mut u64).write(1);
+        let env = p.add(8);
+        *header(env, 0) = word_of(empty_drop as *const ());
+        *header(env, 1) = word_of(empty_clone as *const ());
         *header(env, 2) = 0;
         env
     }
 }
 
 /// The identity environment of the function value with code `code` and no environment, if a
-/// property was ever written to it (not counted: the table's reference keeps it), or null.
+/// value of it was ever converted to `any`, or null.
 #[no_mangle]
 pub extern "C" fn velt_rt_fnprop_identity_of(code: *const u8) -> *mut u8 {
-    crate::task::local::module_touch();
     let key = code as usize;
     let t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
     let env = t.as_ref().and_then(|t| t.get(&key).copied());
     env.unwrap_or(0) as *mut u8
 }
 
-/// The drop entry of an identity environment: one reference less, the block freed with the last.
-unsafe extern "C" fn identity_drop(env: *mut u8) {
+/// The drop entry of an environment holding nothing: one reference less, the block freed with
+/// the last.
+unsafe extern "C" fn empty_drop(env: *mut u8) {
     let count = env.sub(8) as *mut u64;
     if *count & COUNT_MASK == 1 {
-        crate::mem::velt_rt_free(env.sub(8), IDENTITY_BLOCK, 8);
+        crate::mem::velt_rt_free(env.sub(8), EMPTY_BLOCK, 8);
     } else {
         *count -= 1;
     }
 }
 
-/// The transfer entry of a declared function's identity: the function goes to the other task
-/// without one (its own reference released here, under the module lock this task holds), and
-/// finds it there again through the table, taking the module lock first. A tagged pointer (the
-/// many-threads check) has nothing to check.
-unsafe extern "C" fn identity_transfer(env: *mut u8) -> *mut u8 {
-    if env as usize & 1 != 0 {
-        return (env as usize & !1) as *mut u8;
-    }
-    // The table holds a reference too, so this is never the last.
-    *(env.sub(8) as *mut u64) -= 1;
-    std::ptr::null_mut()
-}
-
-/// The clone entry of an identity environment: it holds nothing to copy, so a copy of the
-/// function is the same function, as in JavaScript.
-unsafe extern "C" fn identity_clone(env: *mut u8) -> *mut u8 {
+/// The clone entry of an environment holding nothing: one more reference.
+unsafe extern "C" fn empty_clone(env: *mut u8) -> *mut u8 {
     *(env.sub(8) as *mut u64) += 1;
     env
+}
+
+/// The drop entry of an identity: nothing (the table keeps it to the end).
+unsafe extern "C" fn identity_drop(_env: *mut u8) {}
+
+/// The clone entry of an identity: the same function, as in JavaScript.
+unsafe extern "C" fn identity_clone(env: *mut u8) -> *mut u8 {
+    env
+}
+
+/// The transfer entry of an identity: the function goes to the other thread as it is (a tagged
+/// pointer, the many-threads check, has nothing to check either).
+unsafe extern "C" fn identity_transfer(env: *mut u8) -> *mut u8 {
+    (env as usize & !1) as *mut u8
+}
+
+/// Before the properties of the function whose environment is `env` are reached: a declared
+/// function's are module state, so the module lock comes first (the table's lock is taken
+/// after it, never the other way round).
+#[inline]
+unsafe fn reach(env: *const u8) {
+    if is_identity(env) {
+        crate::task::local::module_touch();
+    }
 }
 
 /// The drop entry of an environment with properties: with its last reference the entry goes
@@ -352,7 +386,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_env_drop(env: *mut u8) {
 pub unsafe extern "C" fn velt_rt_fnprop_env_transfer(env: *mut u8) -> *mut u8 {
     let plain = (env as usize & !1) as *mut u8;
     let orig = with(|t| t.get(&(plain as usize)).map_or(0, |p| p.transfer));
-    let declared = orig == word_of(identity_transfer as *const ());
     let orig = fn_word::<TransferFn>(orig);
     if env as usize & 1 != 0 {
         return match orig {
@@ -395,13 +428,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_env_transfer(env: *mut u8) -> *mut u8 {
         })
     });
     let new = match orig {
-        // A declared function's identity: the other task finds it, with its properties.
-        Some(f) if declared => {
-            for (mut n, _) in copies {
-                n.release();
-            }
-            return f(plain);
-        }
         Some(f) => f(plain),
         None => {
             *(plain.sub(8) as *mut u64) -= 1;
@@ -434,11 +460,15 @@ pub(crate) fn drop_at_exit() {
         t.take().map_or(vec![], |t| t.into_values().collect())
     };
     for env in envs {
-        // SAFETY: the table held one reference to each; its first word is its drop entry.
-        unsafe {
-            if let Some(drop) = fn_word::<DropFn>(*header(env as *mut u8, 0)) {
-                drop(env as *mut u8);
+        let props = with(|t| t.remove(&env));
+        for (mut name, v) in props.into_iter().flat_map(|p| p.entries) {
+            // SAFETY: the table owned the names and the values.
+            unsafe {
+                name.release();
+                drop_any(*v);
             }
         }
+        // SAFETY: an identity's block, which nothing uses any more.
+        unsafe { crate::mem::velt_rt_free((env as *mut u8).sub(8), EMPTY_BLOCK, 8) };
     }
 }

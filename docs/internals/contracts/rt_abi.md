@@ -507,9 +507,20 @@ The call takes the process-wide *module lock* unless the thread holds it: inside
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
 calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
-keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
-stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
-thread) there is no lock.
+keeps the module lock while it blocks; waiting for the module lock while the thread holds a
+`Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
+WebAssembly (one thread) there is no lock.
+
+`uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)` [additive,
+#924]: the first takes the module lock unless the thread holds it and answers whether it took it
+(1); the second, called after the `Mutex` or `RwLock` unlock with that answer, gives it back
+(unless the callback reached module state: the poll, or the code outside a task, keeps it
+then). A program that gives functions properties through `any` calls them around each `with`,
+`read` and `write` whose callback may reach a declared function's properties (below), which are
+module state: every callback sema does not list in `Program::lock_free_callbacks`
+(hir_encodings.md "Module state"). Such a callback holds the module lock already, so no thread
+waits for it while holding a `Mutex`; the other callbacks never reach module state, so a thread
+holding the module lock that waits for their `Mutex` only waits for them to finish.
 
 Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
 `main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
@@ -631,15 +642,18 @@ names (`key` writes an owned string).
 A function value without an environment (a declared function's) is one function in
 JavaScript, whichever reference reaches it: `identity(code)` answers the environment the runtime
 keeps for the function with that code address (an environment holding nothing, made on first
-use, one more reference for the caller, which stores it into the value as its environment), and
-`identity_of(code)` the same without making one or counting it (null when there is none). A
-value converted to `any` gets it there, so `===`, `Map` keys and properties see one function.
-These identities are module state (above): their counts and properties are not atomic, so both
-functions take the module lock as an access of a module-level `let` does, and the task keeps
-it in its polls from then on. A value holding one that goes to another task leaves it behind
-(its transfer entry releases the reference and answers null), and finds it there again through
-`identity_of`. The table holds its reference to the end; with the leak counters on
-(`VELT_RC_STATS=1`), it is released at exit, as module state is.
+use, which the caller stores into the value as its environment), and `identity_of(code)` the
+same without making one (null when there is none). A value converted to `any` gets it there, so
+`===`, `Map` keys and properties see one function. An identity's entries change no count (its
+drop does nothing, its clone and transfer answer the same environment), so every thread may hold
+it, and a value holding one takes it along to another task: the function there is the same one.
+Its properties are module state (above), since their values are not atomic: `get`, `set`,
+`delete`, `len` and `key` on an identity take the module lock first, as an access of a
+module-level `let` does, and the task keeps it in its polls from then on; a program that may
+give functions properties calls `velt_rt_module_with` before each `Mutex` and `RwLock` lock
+whose callback may reach them, so such a callback holds it already. The `set` on an identity
+keeps its entries. The table keeps identities to the end; with the leak counters on
+(`VELT_RC_STATS=1`), they are freed at exit with their properties, as module state is.
 
 The first `set` on an environment replaces its drop entry (its first word) and its transfer
 entry (its third) with the runtime's. The drop calls the original and, with the last reference

@@ -106,3 +106,51 @@ async function workers(): Promise<void> {
 }
 
 await workers();
+
+// A declared function sent to another task is the function there: `===` and `Map` keys.
+async function same(f: any): Promise<void> {
+  const again: any = decl;
+  console.log("in task", f === again, f.v, again.v, f === decl, again === decl);
+  const m = new Map<any, number>();
+  m.set(f, 1);
+  console.log("map", m.get(again), new Set<any>([f, again, decl]).size, Object.is(f, again));
+}
+
+async function sameIn(): Promise<void> {
+  const f: any = decl;
+  f.v = 1;
+  await spawn(same(f));
+}
+
+await sameIn();
+
+// Back from tasks, and through a task inside a task: still the one function.
+async function back(): Promise<any> {
+  await Promise.resolve();
+  return decl;
+}
+
+async function nested(f: any): Promise<boolean> {
+  const again: any = decl;
+  return f === again && f.v === again.v;
+}
+
+async function outer(f: any): Promise<boolean> {
+  return await spawn(nested(f));
+}
+
+async function backs(): Promise<void> {
+  const ps: Promise<any>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ps.push(spawn(back()));
+  }
+  const fs = new Set<any>();
+  for (const p of ps) {
+    fs.add(await p);
+  }
+  const d: any = decl;
+  fs.add(d);
+  console.log(fs.size, [...fs][0] === decl, [...fs][0].v, await spawn(outer(d)));
+}
+
+await backs();

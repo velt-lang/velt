@@ -50,6 +50,11 @@ pub(super) struct Boxing {
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
+    /// The program writes through `any` and holds functions there: a function may have
+    /// properties (any_fn_props.rs), a declared function's are module state the runtime keeps,
+    /// and every `with`, `read` and `write` takes the module lock first (velt_rt
+    /// `velt_rt_module_with`), since a callback may reach them.
+    pub(super) fn_props: bool,
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
@@ -465,6 +470,7 @@ impl Cx<'_> {
             && (self.facts.dyn_types.iter())
                 .any(|t| matches!(self.kind(*t), TyKind::FnPtr { .. } | TyKind::Closure(_)));
         next.fn_identity |= self.facts.fn_compared || fn_props;
+        next.fn_props |= fn_props;
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;

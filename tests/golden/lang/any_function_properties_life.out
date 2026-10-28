@@ -5,3 +5,6 @@ true [ 'a', 'd' ] false
 [ 'a', 'd', 'b' ] 3
 20000
 8000
+in task true 1 1 true true
+map 1 1 true
+1 true 1 true
