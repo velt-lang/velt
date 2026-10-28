@@ -1,0 +1,464 @@
+// velt:sqlite/sql/parser — SELECT (with WITH, compound cores, joins, ORDER BY, LIMIT) of
+// SQLite's grammar (parse.y), on the expression grammar of velt:sqlite/sql/expr.
+
+import { ExprParser } from "velt:sqlite/sql/expr";
+import { K_JOIN, SqlError, T_EOF, T_IDENT, T_OP, T_SEMI, Token } from "velt:sqlite/sql/lexer";
+import {
+  C_EXCEPT,
+  C_INTERSECT,
+  C_NONE,
+  C_UNION,
+  C_UNION_ALL,
+  Cte,
+  E_STAR,
+  Expr,
+  FromItem,
+  J_CROSS,
+  J_FULL,
+  J_INNER,
+  J_LEFT,
+  J_RIGHT,
+  OrderTerm,
+  ResultColumn,
+  Select,
+  SelectCore,
+} from "velt:sqlite/sql/ast";
+
+/** SQLite's limits: terms of a compound SELECT, FROM items, and tables in one join. */
+const MAX_COMPOUND: usize = 500;
+const MAX_FROM: usize = 200;
+const MAX_JOIN: usize = 64;
+
+/** sqlite3JoinType's flags. */
+const JT_NATURAL: u8 = 1;
+const JT_LEFT: u8 = 2;
+const JT_OUTER: u8 = 4;
+const JT_RIGHT: u8 = 8;
+const JT_INNER: u8 = 16;
+const JT_CROSS: u8 = 32;
+const JT_ERROR: u8 = 64;
+
+/** The flags of one word before JOIN (upper case, as written), or JT_ERROR. */
+function joinWord(w: string): u8 {
+  switch (w) {
+    case "NATURAL":
+      return JT_NATURAL;
+    case "LEFT":
+      return JT_LEFT | JT_OUTER;
+    case "OUTER":
+      return JT_OUTER;
+    case "RIGHT":
+      return JT_RIGHT | JT_OUTER;
+    case "FULL":
+      return JT_LEFT | JT_RIGHT | JT_OUTER;
+    case "INNER":
+      return JT_INNER;
+    case "CROSS":
+      return JT_INNER | JT_CROSS;
+    default:
+      return JT_ERROR;
+  }
+}
+
+/** The height of a SELECT's highest expression, as SQLite's heightOfSelect (all its cores). */
+function selectHeight(s: Select): i64 {
+  let h: i64 = 0;
+  for (const c of s.cores) {
+    for (const r of c.columns) {
+      h = higher(h, r.expr);
+    }
+    h = higher(h, c.where);
+    h = higher(h, c.having);
+    for (const e of c.groupBy) {
+      h = higher(h, e);
+    }
+    for (const row of c.values) {
+      for (const e of row) {
+        h = higher(h, e);
+      }
+    }
+  }
+  for (const o of s.orderBy) {
+    h = higher(h, o.expr);
+  }
+  h = higher(h, s.limit);
+  return higher(h, s.offset);
+}
+
+function higher(h: i64, e: Expr | null): i64 {
+  return e != null && e!.height > h ? e!.height : h;
+}
+
+/** The SQL parser: `new Parser(sql)`, then `select()` or (velt:sqlite/sql/statement) a statement. */
+export class Parser extends ExprParser {
+  constructor(sql: string) {
+    super(sql);
+  }
+
+  // SELECT.
+
+  select(): Select {
+    // A subquery nests deeper than an expression does: it counts as a level of its own.
+    this.enter();
+    const s = this.selectBody();
+    this.leave();
+    s.height = selectHeight(s);
+    return s;
+  }
+
+  /** A SELECT's WITH, cores, ORDER BY and LIMIT, at the current nesting level. */
+  selectBody(): Select {
+    const s = new Select();
+    if (this.eatKw("WITH")) {
+      s.recursive = this.eatKw("RECURSIVE");
+      this.ctes(s);
+    }
+    s.cores.push(this.core(C_NONE));
+    while (true) {
+      let op = C_NONE;
+      if (this.isKw("UNION")) {
+        this.pos++;
+        op = this.eatKw("ALL") ? C_UNION_ALL : C_UNION;
+      } else if (this.eatKw("INTERSECT")) {
+        op = C_INTERSECT;
+      } else if (this.eatKw("EXCEPT")) {
+        op = C_EXCEPT;
+      } else {
+        break;
+      }
+      if (s.cores.length >= MAX_COMPOUND) {
+        throw new SqlError("too many terms in compound SELECT", this.peek().start);
+      }
+      s.cores.push(this.core(op));
+    }
+    if (
+      s.cores[s.cores.length - 1].values.length > 0 && (this.isKw("ORDER") || this.isKw("LIMIT"))
+    ) {
+      // ORDER BY and LIMIT belong to a SELECT core in SQLite's grammar, not to VALUES.
+      this.fail();
+    }
+    if (this.isKw("ORDER")) {
+      this.pos++;
+      this.expectKw("BY");
+      s.orderBy = this.orderTerms();
+    }
+    if (this.eatKw("LIMIT")) {
+      s.limit = this.expr();
+      if (this.eatKw("OFFSET")) {
+        s.offset = this.expr();
+      } else if (this.eatOp(",")) {
+        // LIMIT offset, count
+        s.offset = s.limit;
+        s.limit = this.expr();
+      }
+    }
+    return s;
+  }
+
+  ctes(s: Select) {
+    while (true) {
+      const name = this.name();
+      const columns: string[] = [];
+      if (this.eatOp("(")) {
+        columns.push(this.name());
+        while (this.eatOp(",")) {
+          columns.push(this.name());
+        }
+        this.expectOp(")");
+      }
+      this.expectKw("AS");
+      let materialized: u8 = 0;
+      if (this.eatKw("MATERIALIZED")) {
+        materialized = 1;
+      } else if (this.isKw("NOT") && this.isKwAt(1, "MATERIALIZED")) {
+        this.pos += 2;
+        materialized = 2;
+      }
+      this.expectOp("(");
+      // A CTE's frames are a subquery's and more: it counts two levels.
+      this.enter();
+      const c = new Cte(name, this.select());
+      this.leave();
+      this.expectOp(")");
+      c.columns = columns;
+      c.materialized = materialized;
+      s.with.push(c);
+      if (!this.eatOp(",")) {
+        return;
+      }
+    }
+  }
+
+  orderTerms(): OrderTerm[] {
+    const out: OrderTerm[] = [];
+    while (true) {
+      const e = this.expr();
+      let desc = false;
+      if (this.eatKw("DESC")) {
+        desc = true;
+      } else {
+        this.eatKw("ASC");
+      }
+      let nulls: u8 = 0;
+      if (this.eatKw("NULLS")) {
+        if (this.eatKw("FIRST")) {
+          nulls = 1;
+        } else {
+          this.expectKw("LAST");
+          nulls = 2;
+        }
+      }
+      out.push(OrderTerm { expr: e, desc: desc, nulls: nulls });
+      if (!this.eatOp(",")) {
+        return out;
+      }
+    }
+  }
+
+  core(op: u8): SelectCore {
+    const c = new SelectCore();
+    c.op = op;
+    if (this.eatKw("VALUES")) {
+      while (true) {
+        const at = this.peek().start;
+        this.expectOp("(");
+        const row: Expr[] = [this.expr()];
+        while (this.eatOp(",")) {
+          row.push(this.expr());
+        }
+        this.expectOp(")");
+        if (c.values.length > 0 && row.length != c.values[0].length) {
+          throw new SqlError("all VALUES must have the same number of terms", at);
+        }
+        c.values.push(row);
+        if (!this.eatOp(",")) {
+          return c;
+        }
+      }
+    }
+    this.expectKw("SELECT");
+    if (this.eatKw("DISTINCT")) {
+      c.distinct = true;
+    } else {
+      this.eatKw("ALL");
+    }
+    c.columns = this.resultColumns();
+    if (this.eatKw("FROM")) {
+      c.from = this.fromItems();
+    }
+    if (this.eatKw("WHERE")) {
+      c.where = this.expr();
+    }
+    if (this.isKw("GROUP")) {
+      this.pos++;
+      this.expectKw("BY");
+      c.groupBy.push(this.expr());
+      while (this.eatOp(",")) {
+        c.groupBy.push(this.expr());
+      }
+    }
+    if (this.eatKw("HAVING")) {
+      c.having = this.expr();
+    }
+    if (this.isKeyword("WINDOW")) {
+      throw new SqlError("window functions are not supported yet", this.peek().start);
+    }
+    return c;
+  }
+
+  /**
+   * Result columns (`selcollist`, of SELECT and RETURNING): `*`, `t.*`, or an expression with an
+   * optional alias (AS and a name, or a bare name or string).
+   */
+  resultColumns(): ResultColumn[] {
+    const out: ResultColumn[] = [];
+    while (true) {
+      if (this.isOp("*")) {
+        out.push(ResultColumn { expr: new Expr(E_STAR, this.advance().start), alias: "" });
+      } else if (this.isName() && this.isOpAt(1, ".") && this.isOpAt(2, "*")) {
+        const star = new Expr(E_STAR, this.peek().start);
+        star.table = this.advance().text;
+        this.pos += 2;
+        out.push(ResultColumn { expr: star, alias: "" });
+      } else {
+        const e = this.expr();
+        let alias = "";
+        if (this.eatKw("AS")) {
+          alias = this.name();
+        } else if (this.isAlias()) {
+          alias = this.advance().text;
+        }
+        out.push(ResultColumn { expr: e, alias: alias });
+      }
+      if (!this.eatOp(",")) {
+        return out;
+      }
+    }
+  }
+
+  /** FROM's items, each with how it joins the ones before it. */
+  fromItems(): FromItem[] {
+    const out: FromItem[] = [this.fromItem(J_INNER, false, true)];
+    const at = this.peek().start;
+    while (true) {
+      if (out.length > MAX_FROM) {
+        throw new SqlError(`too many FROM clause terms, max: ${MAX_FROM}`, this.peek().start);
+      }
+      let join = J_INNER;
+      let natural = false;
+      if (this.eatOp(",") || this.eatKw("JOIN")) {
+        // A comma or a plain JOIN: an inner join.
+      } else if (this.peek().kind == T_IDENT && this.classAt(this.pos) == K_JOIN) {
+        // A join word, then up to two more names, then JOIN (`joinop`), in any order
+        // (sqlite3JoinType).
+        const words: Token[] = [this.advance()];
+        while (!this.isKw("JOIN") && words.length < 3) {
+          if (!this.isName()) {
+            this.fail();
+          }
+          words.push(this.advance());
+        }
+        this.expectKw("JOIN");
+        const flags = this.joinType(words);
+        natural = (flags & JT_NATURAL) != 0;
+        if ((flags & JT_CROSS) != 0) {
+          join = J_CROSS;
+        } else if ((flags & (JT_LEFT | JT_RIGHT)) == (JT_LEFT | JT_RIGHT)) {
+          join = J_FULL;
+        } else if ((flags & JT_LEFT) != 0) {
+          join = J_LEFT;
+        } else if ((flags & JT_RIGHT) != 0) {
+          join = J_RIGHT;
+        }
+      } else {
+        if (out.length > MAX_JOIN) {
+          throw new SqlError(`at most ${MAX_JOIN} tables in a join`, at);
+        }
+        return out;
+      }
+      out.push(this.fromItem(join, natural, false));
+    }
+  }
+
+  /** The join flags of the words before JOIN, or SQLite's error for a combination it rejects. */
+  joinType(words: Token[]): u8 {
+    let flags: u8 = 0;
+    for (const w of words) {
+      const f = joinWord(this.raw(w).toUpperCase());
+      flags |= f;
+      if (f == JT_ERROR) {
+        break;
+      }
+    }
+    if (
+      (flags & (JT_INNER | JT_OUTER)) == (JT_INNER | JT_OUTER) ||
+      (flags & JT_ERROR) != 0 ||
+      (flags & (JT_OUTER | JT_LEFT | JT_RIGHT)) == JT_OUTER
+    ) {
+      const text = words.map((w) => this.raw(w)).join(" ");
+      throw new SqlError(`unknown join type: ${text}`, words[0].start);
+    }
+    return flags;
+  }
+
+  /** Whether the next token can follow a FROM item: the end, a join, or the next clause. */
+  endsFromItem(): bool {
+    const t = this.peek();
+    if (t.kind == T_EOF || t.kind == T_SEMI) {
+      return true;
+    }
+    if (t.kind == T_OP) {
+      return t.text == ")" || t.text == ",";
+    }
+    if (t.kind != T_IDENT) {
+      return false;
+    }
+    switch (t.upper) {
+      case "JOIN":
+      case "WHERE":
+      case "GROUP":
+      case "HAVING":
+      case "ORDER":
+      case "LIMIT":
+      case "UNION":
+      case "EXCEPT":
+      case "INTERSECT":
+      case "RETURNING":
+        return true;
+      default:
+        return this.classAt(this.pos) == K_JOIN || this.isKeyword("WINDOW");
+    }
+  }
+
+  /** One FROM item and its ON or USING (`first`: the leftmost item, which joins nothing). */
+  fromItem(join: u8, natural: bool, first: bool): FromItem {
+    const item = new FromItem();
+    item.join = join;
+    item.natural = natural;
+    // INDEXED BY and NOT INDEXED follow a table's name only.
+    let plain = false;
+    if (this.eatOp("(")) {
+      if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+        // A FROM subquery nests through the SELECT core and FROM items: two levels.
+        this.enter();
+        item.subquery = this.select();
+        this.leave();
+        this.expectOp(")");
+      } else {
+        throw new SqlError("parenthesized joins are not supported yet", this.peek().start);
+      }
+    } else {
+      item.name = this.name();
+      if (this.eatOp(".")) {
+        item.schema = item.name;
+        item.name = this.name();
+      }
+      if (this.eatOp("(")) {
+        if (!this.isOp(")")) {
+          item.args.push(this.expr());
+          while (this.eatOp(",")) {
+            item.args.push(this.expr());
+          }
+        }
+        this.expectOp(")");
+      } else {
+        plain = true;
+      }
+    }
+    if (this.eatKw("AS")) {
+      item.alias = this.name();
+    } else if (this.isAlias()) {
+      item.alias = this.advance().text;
+    }
+    if (plain && this.eatKw("INDEXED")) {
+      this.expectKw("BY");
+      item.indexedBy = this.name();
+    } else if (plain && this.eatKw("NOT")) {
+      this.expectKw("INDEXED");
+      item.notIndexed = true;
+    }
+    const at = this.peek().start;
+    if (this.eatKw("ON")) {
+      item.on = this.expr();
+    } else if (this.eatKw("USING")) {
+      this.expectOp("(");
+      item.using.push(this.name());
+      while (this.eatOp(",")) {
+        item.using.push(this.name());
+      }
+      this.expectOp(")");
+    } else {
+      return item;
+    }
+    if (first) {
+      // SQLite reports this when the item ends, so a token that cannot follow it is the error
+      // (`INSERT … SELECT * FROM t ON CONFLICT DO …` fails near DO).
+      if (!this.endsFromItem()) {
+        this.fail();
+      }
+      const what = item.on != null ? "ON" : "USING";
+      throw new SqlError(`a JOIN clause is required before ${what}`, at);
+    }
+    return item;
+  }
+}

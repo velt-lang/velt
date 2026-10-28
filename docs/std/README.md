@@ -50,7 +50,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Data formats | [json](json.md) · [csv](csv.md) · [db](db.md) (typed rows from any source) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/btree_map](collections/btree_map.md) · [collections/concurrent_map](collections/concurrent_map.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/set](collections/set.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
-| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`) |
+| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`; `velt:sync/epoch`) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
 | Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |

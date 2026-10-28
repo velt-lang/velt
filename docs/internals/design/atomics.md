@@ -508,6 +508,42 @@ on the pointer's bits, so backends see nothing new.
   (`velt:sync/epoch`, step 2c/2d) retires into per-thread lists freed after a grace period, a
   retired reference is kept forever: memory-safe, but it stays allocated.
 
+## Reclamation (#1696 step 2d)
+
+`velt:sync/epoch` (std/sync/epoch.vlt) is epoch-based reclamation in Velt.
+- **State:** a global epoch, a static `Atomic<u64>` moving in steps of 2. Per thread, a slot:
+  an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
+  `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes
+  at its first `retire` (a thread that only reads makes none). Slots live in chunks of 64,
+  linked from a static `Atomic<shared<Chunk> | null>` and never freed; their states are 16
+  words apart, a 128-byte line each. A thread finds its slot through `ThreadLocal<u64>`, its
+  number + 1.
+- **`pin` / `unpin`:** store the global epoch with the bit into this thread's state, then a
+  `seqcst` fence; `unpin` stores 0 (release). Nesting is counted in a `ThreadLocal`.
+- **`retire<T>(v)`:** a `seqcst` fence, then the current epoch (crossbeam's `push_bag`): paired
+  with `pin`'s fence, the epoch it reads is at least the one current when `v` was unlinked, so
+  `v` cannot expire while a reader that could reach it is still in its section. It pushes `v` as
+  an interface value (`Held<T>` owning the `shared<T>`) with that epoch onto this thread's list.
+  Every 64 retirements it calls `collect`.
+- **A stray `unpin()`** (at depth 0) panics: wrapping the depth would make every later `pin()`
+  on that thread announce nothing.
+- **`collect`:** loads the epoch, a `seqcst` fence (pairs with `pin`'s), and moves it on by a
+  compare-and-swap if no state is active at an older epoch. Then it drops, on every thread's
+  list, what was retired at least two steps before. Draining every list stands in for a
+  thread-exit hook, which Velt does not have.
+- **Reads:** the registry words are only ever set once (null to a chunk), so the module reads
+  them as uncounted borrows without sections of its own.
+- **Tests:** `std/epoch` (one thread, nesting), `std/epoch_threads` (a task on another thread
+  in a nested section blocks every drop; 8 threads retiring at once drop each value once) and
+  `std/epoch_unpin` (the stray `unpin()` error). `std/epoch_threads` catches a section that
+  closes early (20 of 20 runs, debug and release) and an advance that ignores active threads.
+  A missing fence (in `pin` or `retire`) shows only when a reader on a weakly ordered CPU
+  dereferences a value dropped too soon, which no run can be counted on to hit: 2e's threaded
+  goldens, freeing for real under the debug runtime's use-after-free checks, did not catch
+  either mutant in 25 runs on an M4. So veltc `epoch_fences` checks the optimized LLVM IR: one
+  `seqcst` fence in a program that only pins, two in one that only retires. Each mutant fails
+  it.
+
 ## Not in this design
 
 - `Atomics.wait` / `notify` (futex): blocking a worker thread stalls its tasks; an async-aware

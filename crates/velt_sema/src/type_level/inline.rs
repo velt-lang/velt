@@ -103,6 +103,21 @@ impl Ctx<'_> {
         self.inline_op(t, env, None)
     }
 
+    /// Parameter type `t` of a callable alias's call signature, resolved in the alias's `env`
+    /// (`Ctx::alias_body`): when it needs an argument that is still a type parameter, the form
+    /// deferred on its own (`TyOp::Inline` over the alias's parameters).
+    pub(crate) fn resolve_param_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
+        let r = self.resolve_type(t, env);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        if !stuck {
+            return r;
+        }
+        self.diags.truncate(reported);
+        self.inline_op(t, env, None)
+    }
+
     /// The requirement that the read (or `write`) `x[k]` of the form `t` (`T[K]`) names one
     /// key at every instantiation (`Form::read`), written at `span`.
     pub(crate) fn key_read_requirement(
