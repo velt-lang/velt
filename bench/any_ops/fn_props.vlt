@@ -1,0 +1,119 @@
+// Functions held as `any` with properties (#924): a declared function converted to `any`, its
+// property written and read and compared with `===` (one loop in a sync function, one in an
+// async one); closures of one code compared and used as `Map` keys; and `with` and `read`
+// callbacks in a program that gives functions properties, in tasks that hold the module lock for
+// nothing else: one reading a property (it takes the module lock first) and typed ones (they
+// don't).
+
+function decl(): number {
+  return 1;
+}
+
+class Box {
+  n: number = 0;
+}
+
+function sync(n: number): number {
+  let s = 0;
+  const first: any = decl;
+  for (let i = 0; i < n; i++) {
+    const d: any = decl;
+    d.k = i & 7;
+    s += d.k;
+    if (d === first) {
+      s += 1;
+    }
+  }
+  return s;
+}
+
+async function later(n: number): Promise<number> {
+  let s = 0;
+  const first: any = decl;
+  for (let i = 0; i < n; i++) {
+    const d: any = decl;
+    d.k = i & 3;
+    s += d.k;
+    if (d === first) {
+      s += 1;
+    }
+    if (i % 1024 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+function closures(n: number): number {
+  const fs: any[] = [];
+  for (let i = 0; i < 64; i++) {
+    const f: any = () => i;
+    f.i = i;
+    fs.push(f);
+  }
+  const m = new Map<any, number>();
+  for (const f of fs) {
+    m.set(f, f.i);
+  }
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const a = fs[i & 63];
+    const b = fs[(i * 7) & 63];
+    if (a === b) {
+      s += 1;
+    }
+    s += m.get(a) ?? 0;
+  }
+  return s;
+}
+
+async function locked(n: number): Promise<number> {
+  const m = shared(new Mutex<Box>(new Box()));
+  for (let i = 0; i < n; i++) {
+    m.with((b) => {
+      b.n += i & 1;
+    });
+  }
+  return m.with((b) => b.n);
+}
+
+// The same with a callback that reads a property: this one takes the module lock.
+async function lockedProps(n: number): Promise<number> {
+  const m = shared(new Mutex<Box>(new Box()));
+  const d: any = decl;
+  d.k = 1;
+  for (let i = 0; i < n; i++) {
+    m.with((b) => {
+      b.n += d.k;
+    });
+  }
+  return m.with((b) => b.n);
+}
+
+// `RwLock.read` callbacks that reach no property: readers as without function properties.
+async function reads(n: number): Promise<number> {
+  const rw = shared(new RwLock<Box>(new Box()));
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += rw.read((b) => b.n + (i & 1));
+  }
+  return s;
+}
+
+// Promises in such a program: their settlement runs std `with` callbacks over `T`, typed.
+async function promises(n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += await new Promise<number>((r) => r(i & 7));
+  }
+  return s;
+}
+
+console.log(sync(1500000));
+console.log(await later(1500000));
+console.log(closures(1000000));
+// In a task that never reaches a property: a typed callback takes no module lock.
+console.log(await spawn(locked(1000000)));
+console.log(await spawn(lockedProps(1000000)));
+console.log(await spawn(reads(1000000)));
+console.log(await spawn(promises(300000)));
