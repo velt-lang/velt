@@ -216,6 +216,8 @@ impl Ctx<'_> {
     pub(crate) fn is_function_ty(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+            // A function with properties (#921).
+            TyKind::Adt(..) => self.is_callable_object(t),
             TyKind::Dyn(..) => matches!(
                 self.dynamic(t),
                 Some(Dynamic::Function) | Some(Dynamic::Any)

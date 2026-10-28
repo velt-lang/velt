@@ -1,0 +1,2 @@
+overloads_interface_union_result.vlt:13:3: error: method `directive` does not fit every signature of the interface's `directive`: its result `App | Def | undefined` does not convert to `App`
+overloads_interface_union_result.vlt:25:3: error: method `m` does not fit every signature of the interface's `m`: its result `boolean | string | f64` does not convert to `f64`

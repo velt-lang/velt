@@ -63,6 +63,11 @@ pub(crate) struct State {
     pub(crate) deferring: u32,
     /// The alias being expanded needs an argument that is still a type parameter.
     pub(crate) stuck: bool,
+    /// While a callable alias is expanded again (`Ctx::alias_body`): a parameter type of a
+    /// function type in it that needs a type parameter is deferred on its own, as a form over
+    /// the alias's parameters (`TyOp::Inline`), instead of the whole alias: the spans of those
+    /// function types.
+    pub(crate) callable_params: Vec<Span>,
     /// Where each deferred type was first written (reductions report there).
     pub(crate) op_sites: rustc_hash::FxHashMap<TyId, Span>,
     /// The sites of the deferred intersections (`op_sites`) one reduction of which was
