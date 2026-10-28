@@ -10,7 +10,6 @@
 
 import {
   T_BLOB,
-  T_EOF,
   T_IDENT,
   T_INTEGER,
   T_OP,
@@ -20,6 +19,7 @@ import {
   T_STRING,
   SqlError,
   Token,
+  dequote,
 } from "velt:sqlite/sql/lexer";
 import {
   E_BETWEEN,
@@ -53,7 +53,7 @@ import {
   Select,
   SelectCore,
 } from "velt:sqlite/sql/ast";
-import { TokenCursor, isReserved } from "velt:sqlite/sql/cursor";
+import { K_RESERVED, TokenCursor } from "velt:sqlite/sql/cursor";
 
 /** The expression grammar, on a token cursor. */
 export abstract class ExprParser extends TokenCursor {
@@ -116,15 +116,10 @@ export abstract class ExprParser extends TokenCursor {
     if (w == "BETWEEN") {
       return L_EQ;
     }
-    // NOT before IN, LIKE, GLOB, MATCH, REGEXP, BETWEEN, NULL.
+    // NOT after an operand starts NOT IN, NOT LIKE (GLOB, MATCH, REGEXP), NOT BETWEEN or NOT
+    // NULL; anything else after it is the error (`equality`).
     if (w == "NOT") {
-      const n = this.peekAt(1);
-      if (
-        n.kind == T_IDENT &&
-        (n.upper == "IN" || n.upper == "BETWEEN" || n.upper == "NULL" || isMatchWord(n.upper))
-      ) {
-        return L_EQ;
-      }
+      return L_EQ;
     }
     return L_NONE;
   }
@@ -178,6 +173,16 @@ export abstract class ExprParser extends TokenCursor {
     if (t.upper == "NOT") {
       not = true;
       k = 1;
+      const n = this.peekAt(1);
+      if (
+        !(
+          n.kind == T_IDENT &&
+          (n.upper == "IN" || n.upper == "BETWEEN" || n.upper == "NULL" || isMatchWord(n.upper))
+        )
+      ) {
+        this.pos++;
+        this.fail();
+      }
     }
     const word = this.peekAt(k).upper;
     if (word == "IS") {
@@ -224,11 +229,27 @@ export abstract class ExprParser extends TokenCursor {
 
   inExpr(left: Expr, not: bool, at: usize): Expr {
     if (!this.isOp("(")) {
-      // IN table-name: a subquery over the whole table.
+      // IN [schema.]table, or IN a table-valued function (`IN json_each(x)`): a subquery
+      // over all of it.
       const s = new Select();
       const core = new SelectCore();
       const item = new FromItem();
       item.name = this.name();
+      if (this.eatOp(".")) {
+        item.schema = item.name;
+        item.name = this.name();
+      }
+      if (this.eatOp("(")) {
+        this.enter();
+        if (!this.isOp(")")) {
+          item.args.push(this.expr());
+          while (this.eatOp(",")) {
+            item.args.push(this.expr());
+          }
+        }
+        this.leave();
+        this.expectOp(")");
+      }
       core.from.push(item);
       core.columns.push(ResultColumn { expr: new Expr(E_STAR, at), alias: "" });
       s.cores.push(core);
@@ -264,7 +285,11 @@ export abstract class ExprParser extends TokenCursor {
     let e = this.unary();
     while (this.isKw("COLLATE")) {
       const at = this.advance().start;
-      const name = this.name().toUpperCase();
+      // The collation is `ID` or a string (not a join word or INDEXED).
+      if (!this.isAlias()) {
+        this.fail();
+      }
+      const name = this.advance().text.toUpperCase();
       if (e.kind == E_COLLATE) {
         // A run of COLLATE is one node: the outermost collation wins, as in SQLite
         // (`'a' = 'A' COLLATE nocase COLLATE binary` is 0), and the tree stays as high as it is.
@@ -313,7 +338,7 @@ export abstract class ExprParser extends TokenCursor {
       e.rval = parseFloat(t.text);
       return e;
     }
-    if (t.kind == T_STRING) {
+    if (t.kind == T_STRING && !this.isOpAt(1, ".")) {
       this.pos++;
       const e = new Expr(E_STRING, at);
       e.text = t.text;
@@ -357,11 +382,6 @@ export abstract class ExprParser extends TokenCursor {
         // NOT in an operand's place (`1 = NOT 0`); NOT EXISTS is NOT of EXISTS, as in SQLite.
         return this.notOperand();
       }
-      if ((w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP") && this.isOpAt(1, "(")) {
-        // The functions behind the operators, called by name.
-        this.pos++;
-        return this.call(t);
-      }
       if (w == "NULL") {
         this.pos++;
         return new Expr(E_NULL, at);
@@ -389,7 +409,7 @@ export abstract class ExprParser extends TokenCursor {
         const e = new Expr(E_CAST, at);
         e.a = this.expr();
         this.expectKw("AS");
-        e.name = this.typeName();
+        e.name = dequote(this.typeName());
         this.expectOp(")");
         return sized(e);
       }
@@ -402,24 +422,22 @@ export abstract class ExprParser extends TokenCursor {
         return sized(e);
       }
       if (w == "RAISE") {
-        this.fail();
+        return this.raise();
       }
     }
-    if (t.kind == T_IDENT || t.kind == T_QUOTED) {
-      if (t.kind == T_IDENT && isReserved(t.upper)) {
-        this.fail();
-      }
+    // A name: ID, INDEXED or a join word, a call of one (quoted names included, as SQLite's
+    // tokenizer makes them ID too), or `nm.nm` / `nm.nm.nm`, whose first name may be a string.
+    if (
+      t.kind == T_QUOTED ||
+      (t.kind == T_IDENT && this.classAt(this.pos) != K_RESERVED) ||
+      (t.kind == T_STRING && this.isOpAt(1, "."))
+    ) {
       this.pos++;
-      if (this.isOp("(") && t.kind == T_IDENT) {
+      if (t.kind != T_STRING && this.isOp("(")) {
         return this.call(t);
       }
-      // name, table.name, schema.table.name
       if (this.eatOp(".")) {
-        if (this.eatOp("*")) {
-          const s = new Expr(E_STAR, at);
-          s.table = t.text;
-          return s;
-        }
+        // `t.*` is a result column of its own, not an operand (velt:sqlite/sql/parser).
         const second = this.name();
         const c = new Expr(E_COLUMN, at);
         if (this.eatOp(".")) {
@@ -439,6 +457,24 @@ export abstract class ExprParser extends TokenCursor {
       return c;
     }
     this.fail();
+  }
+
+  /**
+   * RAISE(IGNORE) or RAISE(ROLLBACK | ABORT | FAIL, message): parsed as SQLite does, then
+   * rejected with its error, as only a trigger may raise (and triggers are not supported).
+   */
+  raise(): never {
+    const at = this.advance().start;
+    this.expectOp("(");
+    if (!this.eatKw("IGNORE")) {
+      if (!this.eatKw("ROLLBACK") && !this.eatKw("ABORT") && !this.eatKw("FAIL")) {
+        this.fail();
+      }
+      this.expectOp(",");
+      this.expr();
+    }
+    this.expectOp(")");
+    throw new SqlError("RAISE() may only be used within a trigger-program", at);
   }
 
   param(t: Token): Expr {
@@ -502,13 +538,14 @@ export abstract class ExprParser extends TokenCursor {
       }
     }
     this.expectOp(")");
-    if (this.eatKw("FILTER")) {
+    if (this.isKeyword("FILTER")) {
+      this.pos++;
       this.expectOp("(");
       this.expectKw("WHERE");
       e.filter = this.expr();
       this.expectOp(")");
     }
-    if (this.isKw("OVER")) {
+    if (this.isKeyword("OVER")) {
       throw new SqlError("window functions are not supported yet", this.peek().start);
     }
     return sized(e);
@@ -534,36 +571,42 @@ export abstract class ExprParser extends TokenCursor {
     return sized(e);
   }
 
-  /** A type name: words, then an optional (n) or (n, m). */
+  /**
+   * A type name (`typetoken`): words (names or strings), then an optional `(n)` or `(n, m)` of
+   * signed numbers, as written in the source (a column keeps it so; SQLite dequotes it). Keywords that fall back to names are words of it, GENERATED ALWAYS included (a
+   * column definition strips those, velt:sqlite/sql/statement).
+   */
   typeName(): string {
-    let s = "";
-    while (this.peek().kind == T_IDENT || this.peek().kind == T_QUOTED) {
-      const w = this.peek().upper;
-      if (this.peek().kind == T_IDENT && (isReserved(w) || startsConstraint(w))) {
-        break;
-      }
-      s += (s.length > 0 ? " " : "") + this.advance().text;
+    const first = this.peek();
+    if (!this.isAlias()) {
+      return "";
+    }
+    let last = this.advance();
+    while (this.isAlias()) {
+      last = this.advance();
     }
     if (this.isOp("(")) {
-      const from = this.peek().start;
-      let depth = 0;
-      while (true) {
-        const t = this.advance();
-        if (t.kind == T_EOF) {
-          this.fail();
-        }
-        if (t.kind == T_OP && t.text == "(") {
-          depth++;
-        } else if (t.kind == T_OP && t.text == ")") {
-          depth--;
-          if (depth == 0) {
-            s += this.text(from, t.end);
-            break;
-          }
-        }
+      this.pos++;
+      this.signedNumber();
+      if (this.eatOp(",")) {
+        this.signedNumber();
       }
+      last = this.peek();
+      this.expectOp(")");
     }
-    return s;
+    return this.text(first.start, last.end);
+  }
+
+  /** `signed`: an optional + or -, then an integer or a real, written without separators. */
+  signedNumber() {
+    if (!this.eatOp("+")) {
+      this.eatOp("-");
+    }
+    const t = this.peek();
+    if ((t.kind != T_INTEGER && t.kind != T_REAL) || this.raw(t).includes("_")) {
+      this.fail();
+    }
+    this.pos++;
   }
 }
 
@@ -616,16 +659,6 @@ function opLevel(op: string): i64 {
 /** Whether `w` (upper case) is one of the pattern operators LIKE, GLOB, MATCH, REGEXP. */
 function isMatchWord(w: string): bool {
   return w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP";
-}
-
-/** Words that start a column constraint, so they end a column's type name. */
-function startsConstraint(w: string): bool {
-  return w == "CONSTRAINT" ||
-    w == "PRIMARY" ||
-    w == "UNIQUE" ||
-    w == "CHECK" ||
-    w == "REFERENCES" ||
-    w == "GENERATED";
 }
 
 function binary(op: string, a: Expr, b: Expr, at: usize): Expr {

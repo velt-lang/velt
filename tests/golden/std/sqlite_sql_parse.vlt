@@ -127,7 +127,7 @@ function order(o: OrderTerm): string {
 
 function fromItem(f: FromItem): string {
   let out = "j" + String(f.join) + (f.natural ? "n" : "") + ":";
-  out += f.subquery != null ? sel(f.subquery!) : f.name;
+  out += f.subquery != null ? sel(f.subquery!) : (f.schema != "" ? f.schema + "." : "") + f.name;
   if (f.args.length > 0) {
     out += "(" + list(f.args) + ")";
   }
@@ -142,6 +142,9 @@ function fromItem(f: FromItem): string {
   }
   if (f.indexedBy != "") {
     out += " INDEXED " + f.indexedBy;
+  }
+  if (f.notIndexed) {
+    out += " NOT INDEXED";
   }
   return out;
 }
@@ -226,7 +229,105 @@ const CASES: string[] = [
   // `/*` at the very end is `/` then `*` (tokenize.c); any longer unclosed comment runs to the end.
   "SELECT 1/*",
   "SELECT 1/**",
+  // IN [schema.]table and IN a table-valued function.
+  "SELECT 1 IN main.t, 2 NOT IN json_each('[1]'), 3 IN main.json_each('[1]', 2), 4 IN t(), 5 IN 't', 6 IN left",
+  // Type names: words or strings, then (n) or (n, m) of signed numbers only.
+  "SELECT CAST(x AS 'int'), CAST(x AS INT 'x' y), CAST(x AS INT(+1)), CAST(x AS NUMERIC(-1, 2.5)), CAST(x AS generated), CAST(x AS \"int\")",
+  "SELECT CAST(x AS INT(foo))",
+  "SELECT CAST(x AS INT(1_0))",
+  "SELECT CAST(x AS INT(1, 2, 3))",
+  "SELECT CAST(x AS INT((1)))",
+  "SELECT CAST(x AS left)",
+  // `t.*` is a result column on its own: no alias, no operand, no argument.
+  "SELECT t.*, 't'.*, left.*, 't'.a FROM t AS left",
+  "SELECT t.* AS x FROM t",
+  "SELECT t.* + 1 FROM t",
+  "SELECT count(t.*) FROM t",
+  // A string alias; ON and USING after a comma join; join words in any order (sqlite3JoinType).
+  "SELECT * FROM t 'x', u, v ON 1, w USING (a) LEFT NATURAL JOIN y OUTER LEFT JOIN z INNER CROSS JOIN q LEFT RIGHT JOIN r NATURAL FULL OUTER JOIN s",
+  "SELECT * FROM t LEFT INNER JOIN u",
+  "SELECT * FROM t OUTER JOIN u",
+  "SELECT * FROM t LEFT foo JOIN u",
+  "SELECT * FROM t left \"outer\" JOIN u",
+  "SELECT * FROM t LEFT OUTER NATURAL INNER JOIN u",
+  "SELECT * FROM t ON 1",
+  "SELECT * FROM t USING (a)",
+  "SELECT * FROM t ON 1 WHERE 1",
+  "SELECT * FROM t ON a DO",
+  // A collation is a name or a string, not a join word.
+  "SELECT 1 COLLATE 'x', 1 COLLATE end",
+  "SELECT 1 COLLATE left",
+  "SELECT * FROM t NOT INDEXED, json_each('[1]') NOT INDEXED",
+  // VALUES rows have one length; ORDER BY and LIMIT follow a SELECT core, not VALUES.
+  "VALUES (1, 2), (3)",
+  "SELECT 1 UNION VALUES (1), (2, 3)",
+  "VALUES (1) ORDER BY 1",
+  "SELECT 1 UNION VALUES (1) LIMIT 1",
+  "VALUES (1) UNION SELECT 1 ORDER BY 1",
+  // ESCAPE's operand binds like `<` (parse.y's %right ESCAPE above the comparisons): the
+  // escape is `c < d`, and `=` ends it.
+  "SELECT a LIKE b ESCAPE c < d, a LIKE b ESCAPE c = d, a NOT GLOB b ESCAPE c & d",
+  // NOT after an operand must start NOT IN / LIKE / BETWEEN / NULL; RAISE only in a trigger.
+  "SELECT 1 NOT x",
+  "SELECT 1 NOT",
+  "SELECT raise(ABORT, 'x')",
+  "SELECT raise(1)",
+  // Keywords that are names here (SQLite's %fallback ID, join words, FILTER/OVER/WINDOW by
+  // context): columns, tables, aliases, calls.
+  "SELECT end, offset, left, by, with, glob(1, 2), like, indexed, x FROM cast, raise, left AS right, t end",
+  "SELECT count(*) filter, count(*) over, 1 window, count(*) FILTER (WHERE 1) FROM t",
+  "SELECT 1 LIMIT offset OFFSET 1",
+  "SELECT \"count\"(*), [abs](1)",
 ];
+
+/** Every SQLite keyword (and some words that are not keywords), lower case. */
+const KEYWORDS: string[] = (
+  "abort action add after all alter always analyze and as asc attach autoincrement before " +
+  "begin between by cascade case cast check collate column commit conflict constraint create " +
+  "cross current current_date current_time current_timestamp database default deferrable " +
+  "deferred delete desc detach distinct do drop each else end escape except exclude exclusive " +
+  "exists explain fail filter first following for foreign from full generated glob group " +
+  "groups having if ignore immediate in index indexed initially inner insert instead " +
+  "intersect into is isnull join key last left like limit match materialized natural no not " +
+  "nothing notnull null nulls of offset on or order others outer over partition plan pragma " +
+  "preceding primary query raise range recursive references regexp reindex release rename " +
+  "replace restrict returning right rollback row rows savepoint select set table temp " +
+  "temporary then ties to transaction trigger unbounded union unique update using vacuum " +
+  "values view virtual when where window with without rowid strict true false"
+).split(" ");
+
+/**
+ * Where each keyword is tried: a column, a qualified column, a table, a table alias with AS and
+ * bare, a column alias with AS and bare, an operand, a call, a CTE, an ORDER BY term, a type.
+ */
+const FORMS: string[] = [
+  "SELECT % FROM t",
+  "SELECT t.% FROM t",
+  "SELECT * FROM %",
+  "SELECT * FROM t AS %",
+  "SELECT * FROM t %",
+  "SELECT 1 AS %",
+  "SELECT 1 %",
+  "SELECT 1 + %",
+  "SELECT %(1)",
+  "WITH % AS (SELECT 1) SELECT 1",
+  "SELECT 1 FROM t ORDER BY %",
+  "SELECT CAST(1 AS %)",
+];
+
+/** Whether `sql` parses as one SELECT. */
+function accepts(sql: string): bool {
+  try {
+    const p = new Parser(sql);
+    p.select();
+    return p.peek().kind == 0;
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return false;
+    }
+    throw e;
+  }
+}
 
 function main() {
   // Expression trees up to SQLite's height limit (1000), and past it: chains of binary
@@ -291,6 +392,11 @@ function main() {
         throw e;
       }
     }
+  }
+  // The keyword sweep: + where the keyword is accepted, - where it is a syntax error, in the
+  // order of FORMS; the expected marks are /usr/bin/sqlite3 3.54's.
+  for (const kw of KEYWORDS) {
+    console.log(`${kw} ${FORMS.map((f) => (accepts(f.replaceAll("%", kw)) ? "+" : "-")).join("")}`);
   }
   for (const sql of CASES) {
     try {

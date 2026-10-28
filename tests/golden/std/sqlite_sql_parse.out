@@ -33,6 +33,157 @@ SELECT ?32766, ? (16 bytes): error at 15: too many SQL variables
 SELECT ?, ?, ?, ?, ?, ?,… (98306 bytes): error at 98305: too many SQL variables
 SELECT :p0, :p1, :p2, :p… (283798 bytes): height 1, 1 cores
 SELECT :p0, :p1, :p2, :p… (283798 bytes): error at 283791: too many SQL variables
+abort ++++++++++++
+action ++++++++++++
+add ------------
+after ++++++++++++
+all --------+---
+alter ------------
+always ++++++++++++
+analyze ++++++++++++
+and ------------
+as ------------
+asc ++++++++++++
+attach ++++++++++++
+autoincrement ------------
+before ++++++++++++
+begin ++++++++++++
+between ------------
+by ++++++++++++
+cascade ++++++++++++
+case ------------
+cast -++++++--+-+
+check ------------
+collate ------------
+column ++++++++++++
+commit ------------
+conflict ++++++++++++
+constraint ------------
+create ------------
+cross ++++-+-++++-
+current ++++++++++++
+current_date ++++++++-+++
+current_time ++++++++-+++
+current_timestamp ++++++++-+++
+database ++++++++++++
+default ------------
+deferrable ------------
+deferred ++++++++++++
+delete ------------
+desc ++++++++++++
+detach ++++++++++++
+distinct --------+---
+do ++++++++++++
+drop ------------
+each ++++++++++++
+else ------------
+end ++++++++++++
+escape ------------
+except ------------
+exclude ++++++++++++
+exclusive ++++++++++++
+exists ------------
+explain ++++++++++++
+fail ++++++++++++
+filter ++++++++++++
+first ++++++++++++
+following ++++++++++++
+for ++++++++++++
+foreign ------------
+from ------------
+full ++++-+-++++-
+generated ++++++++++++
+glob ++++++-+++++
+group ------------
+groups ++++++++++++
+having ------------
+if ++++++++++++
+ignore ++++++++++++
+immediate ++++++++++++
+in ------------
+index ------------
+indexed ++++-+-++++-
+initially ++++++++++++
+inner ++++-+-++++-
+insert ------------
+instead ++++++++++++
+intersect ------------
+into ------------
+is ------------
+isnull ------+-----
+join ------------
+key ++++++++++++
+last ++++++++++++
+left ++++-+-++++-
+like ++++++-+++++
+limit ------------
+match ++++++-+++++
+materialized ++++++++++++
+natural ++++-+-++++-
+no ++++++++++++
+not --------+---
+nothing ------------
+notnull ------+-----
+null +------+--+-
+nulls ++++++++++++
+of ++++++++++++
+offset ++++++++++++
+on ------------
+or ------------
+order ------------
+others ++++++++++++
+outer ++++-+-++++-
+over ++++++++++++
+partition ++++++++++++
+plan ++++++++++++
+pragma ++++++++++++
+preceding ++++++++++++
+primary ------------
+query ++++++++++++
+raise -++++++--+-+
+range ++++++++++++
+recursive +++++++++-++
+references ------------
+regexp ++++++-+++++
+reindex ++++++++++++
+release ++++++++++++
+rename ++++++++++++
+replace ++++++++++++
+restrict ++++++++++++
+returning ------------
+right ++++-+-++++-
+rollback ++++++++++++
+row ++++++++++++
+rows ++++++++++++
+savepoint ++++++++++++
+select ------------
+set ------------
+table ------------
+temp ++++++++++++
+temporary ++++++++++++
+then ------------
+ties ++++++++++++
+to ------------
+transaction ------------
+trigger ++++++++++++
+unbounded ++++++++++++
+union ------------
+unique ------------
+update ------------
+using ------------
+vacuum ++++++++++++
+values ------------
+view ++++++++++++
+virtual ++++++++++++
+when ------------
+where ------------
+window ++++++++++++
+with ++++++++++++
+without ++++++++++++
+rowid ++++++++++++
+strict ++++++++++++
+true ++++++++++++
+false ++++++++++++
 {SELECT (- (+ 1 (* 2 3)) (% (/ 4 5) 6))}
 {SELECT (|| (|| a b) c), (- x), 1, (~ 5), (+ y), -9223372036854775808, int!9223372036854775808, 9223372036854775807, -1, 1000r, 0.5r, 0.0015r, 100000000000000000000r}
 {SELECT * FROM j0:t WHERE (OR (AND (= a 1) (!= b 2)) (AND (NOT (!= c 3)) (= d 4)))}
@@ -72,3 +223,41 @@ error at 7: unrecognized token: "1._5"
 {SELECT (= (COLLATE a Y) (COLLATE b Z))}
 error at 9: near "*": syntax error
 {SELECT 1}
+{SELECT (IN 1 {SELECT * FROM j0:main.t}), (NOT IN 2 {SELECT * FROM j0:json_each('[1]')}), (IN 3 {SELECT * FROM j0:main.json_each('[1]' 2)}), (IN 4 {SELECT * FROM j0:t}), (IN 5 {SELECT * FROM j0:t}), (IN 6 {SELECT * FROM j0:left})}
+{SELECT (CAST x AS int), (CAST x AS INT 'x' y), (CAST x AS INT(+1)), (CAST x AS NUMERIC(-1, 2.5)), (CAST x AS generated), (CAST x AS int)}
+error at 21: near "foo": syntax error
+error at 21: near "1_0": syntax error
+error at 25: near ",": syntax error
+error at 21: near "(": syntax error
+error at 17: near "left": syntax error
+{SELECT t.*, t.*, left.*, t.a FROM j0:t left}
+error at 11: near "AS": syntax error
+error at 11: near "+": syntax error
+error at 15: near "*": syntax error
+{SELECT * FROM j0:t x, j0:u, j0:v ON 1, j0:w USING a, j1n:y, j1:z, j4:q, j3:r, j3n:s}
+error at 16: unknown join type: LEFT INNER
+error at 16: unknown join type: OUTER
+error at 16: unknown join type: LEFT foo
+error at 16: unknown join type: left "outer"
+error at 35: near "INNER": syntax error
+error at 16: a JOIN clause is required before ON
+error at 16: a JOIN clause is required before USING
+error at 16: a JOIN clause is required before ON
+error at 21: near "DO": syntax error
+{SELECT (COLLATE 1 X), (COLLATE 1 END)}
+error at 17: near "left": syntax error
+error at 46: near "NOT": syntax error
+error at 15: all VALUES must have the same number of terms
+error at 27: all VALUES must have the same number of terms
+error at 11: near "ORDER": syntax error
+error at 26: near "LIMIT": syntax error
+{VALUES [1] op1 SELECT 1 ORDER 1}
+{SELECT (LIKE a b (< c d)), (= (LIKE a b c) d), (NOT GLOB a b (& c d))}
+error at 13: near "x": syntax error
+error at 12: incomplete input
+error at 7: RAISE() may only be used within a trigger-program
+error at 13: near "1": syntax error
+{SELECT end, offset, left, by, with, GLOB(1 2), like, indexed, x FROM j0:cast, j0:raise, j0:left right, j0:t end}
+{SELECT COUNT(*) AS filter, COUNT(*) AS over, 1 AS window, COUNT(*) FILTER 1 FROM j0:t}
+{SELECT 1 LIMIT offset OFFSET 1}
+{SELECT COUNT(*), ABS(1)}

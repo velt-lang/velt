@@ -2,10 +2,10 @@
 // keyword and operator matching, names, and SQLite's syntax error messages.
 
 import {
-  T_BLOB,
   T_EOF,
   T_IDENT,
   T_OP,
+  T_PARAM,
   T_QUOTED,
   T_STRING,
   SqlError,
@@ -23,75 +23,185 @@ import {
  */
 const MAX_DEPTH: usize = 600;
 
+// Keyword classes: how SQLite's grammar (parse.y, its `%fallback ID` list and the `nm`, `ids`
+// and `idj` token classes) and tokenizer (tokenize.c) treat its 147 keywords where a name
+// could stand. The keyword sweep of the sqlite_sql_parse golden checks them against sqlite3.
+
+/** Not a keyword: a name anywhere. */
+export const K_ID: u8 = 0;
 /**
- * Words that end an expression or a clause where a bare alias could otherwise stand
- * (`SELECT a FROM t WHERE …`: WHERE is not an alias of t).
+ * A keyword with `%fallback ID`: a name wherever the keyword itself has no meaning (`end`,
+ * `offset`, `like`, `with` name columns and tables; CAST, RAISE and CURRENT_TIME do not start
+ * an operand that is a name, as they start their own expressions there).
  */
-export function isReserved(word: string): bool {
-  switch (word) {
+export const K_FALLBACK: u8 = 1;
+/** A join word (JOIN_KW: LEFT RIGHT FULL INNER OUTER CROSS NATURAL): a name (`nm`) and an
+ *  operand, but not a bare alias or a type name. */
+export const K_JOIN: u8 = 2;
+/** INDEXED: like a join word. */
+export const K_INDEXED: u8 = 3;
+/** A reserved word: never a bare name. */
+export const K_RESERVED: u8 = 4;
+/** FILTER, OVER and WINDOW: keywords only where tokenize.c's look-around makes them so. */
+const K_CONTEXT: u8 = 5;
+
+/** The class of upper-case word `w`, before FILTER, OVER and WINDOW are decided by context. */
+function keywordClass(w: string): u8 {
+  switch (w) {
+    case "ABORT":
+    case "ACTION":
+    case "AFTER":
+    case "ALWAYS":
+    case "ANALYZE":
+    case "ASC":
+    case "ATTACH":
+    case "BEFORE":
+    case "BEGIN":
+    case "BY":
+    case "CASCADE":
+    case "CAST":
+    case "COLUMN":
+    case "CONFLICT":
+    case "CURRENT":
+    case "CURRENT_DATE":
+    case "CURRENT_TIME":
+    case "CURRENT_TIMESTAMP":
+    case "DATABASE":
+    case "DEFERRED":
+    case "DESC":
+    case "DETACH":
+    case "DO":
+    case "EACH":
+    case "END":
+    case "EXCLUDE":
+    case "EXCLUSIVE":
+    case "EXPLAIN":
+    case "FAIL":
+    case "FIRST":
+    case "FOLLOWING":
+    case "FOR":
+    case "GENERATED":
+    case "GLOB":
+    case "GROUPS":
+    case "IF":
+    case "IGNORE":
+    case "IMMEDIATE":
+    case "INITIALLY":
+    case "INSTEAD":
+    case "KEY":
+    case "LAST":
+    case "LIKE":
+    case "MATCH":
+    case "MATERIALIZED":
+    case "NO":
+    case "NULLS":
+    case "OF":
+    case "OFFSET":
+    case "OTHERS":
+    case "PARTITION":
+    case "PLAN":
+    case "PRAGMA":
+    case "PRECEDING":
+    case "QUERY":
+    case "RAISE":
+    case "RANGE":
+    case "RECURSIVE":
+    case "REGEXP":
+    case "REINDEX":
+    case "RELEASE":
+    case "RENAME":
+    case "REPLACE":
+    case "RESTRICT":
+    case "ROLLBACK":
+    case "ROW":
+    case "ROWS":
+    case "SAVEPOINT":
+    case "TEMP":
+    case "TEMPORARY":
+    case "TIES":
+    case "TRIGGER":
+    case "UNBOUNDED":
+    case "VACUUM":
+    case "VIEW":
+    case "VIRTUAL":
+    case "WITH":
+    case "WITHOUT":
+      return K_FALLBACK;
+    case "ADD":
     case "ALL":
+    case "ALTER":
     case "AND":
     case "AS":
+    case "AUTOINCREMENT":
     case "BETWEEN":
-    case "BY":
     case "CASE":
-    case "CAST":
+    case "CHECK":
     case "COLLATE":
-    case "CROSS":
+    case "COMMIT":
+    case "CONSTRAINT":
+    case "CREATE":
     case "DEFAULT":
+    case "DEFERRABLE":
     case "DELETE":
     case "DISTINCT":
+    case "DROP":
     case "ELSE":
-    case "END":
     case "ESCAPE":
     case "EXCEPT":
     case "EXISTS":
-    case "FILTER":
+    case "FOREIGN":
     case "FROM":
-    case "FULL":
-    case "GLOB":
     case "GROUP":
     case "HAVING":
     case "IN":
-    case "INDEXED":
-    case "INNER":
+    case "INDEX":
     case "INSERT":
     case "INTERSECT":
     case "INTO":
     case "IS":
     case "ISNULL":
     case "JOIN":
-    case "LEFT":
-    case "LIKE":
     case "LIMIT":
-    case "MATCH":
-    case "NATURAL":
     case "NOT":
+    case "NOTHING":
     case "NOTNULL":
     case "NULL":
-    case "OFFSET":
     case "ON":
     case "OR":
     case "ORDER":
-    case "OUTER":
-    case "OVER":
-    case "REGEXP":
+    case "PRIMARY":
+    case "REFERENCES":
     case "RETURNING":
-    case "RIGHT":
     case "SELECT":
     case "SET":
+    case "TABLE":
     case "THEN":
+    case "TO":
+    case "TRANSACTION":
     case "UNION":
+    case "UNIQUE":
     case "UPDATE":
     case "USING":
     case "VALUES":
     case "WHEN":
     case "WHERE":
+      return K_RESERVED;
+    case "CROSS":
+    case "FULL":
+    case "INNER":
+    case "LEFT":
+    case "NATURAL":
+    case "OUTER":
+    case "RIGHT":
+      return K_JOIN;
+    case "INDEXED":
+      return K_INDEXED;
+    case "FILTER":
+    case "OVER":
     case "WINDOW":
-    case "WITH":
-      return true;
+      return K_CONTEXT;
     default:
-      return false;
+      return K_ID;
   }
 }
 
@@ -200,26 +310,97 @@ export abstract class TokenCursor {
   }
 
   source(t: Token): string {
-    return t.kind == T_STRING || t.kind == T_QUOTED || t.kind == T_BLOB ? this.raw(t) : t.text;
+    return t.kind == T_IDENT || t.kind == T_OP || t.kind == T_PARAM ? t.text : this.raw(t);
   }
 
   raw(t: Token): string {
     return this.text(t.start, t.end);
   }
 
-  /** A name: a bare word that is not reserved here, or a quoted identifier. */
-  isName(): bool {
-    const t = this.peek();
-    return t.kind == T_QUOTED || (t.kind == T_IDENT && !isReserved(t.upper));
+  /** Token `i`, or the final T_EOF past the end. */
+  tokenAt(i: usize): Token {
+    return i < this.toks.length ? this.toks[i] : this.toks[this.toks.length - 1];
   }
 
-  name(): string {
+  /**
+   * The keyword class of token `i` (K_ID for anything but a bare word). FILTER, OVER and WINDOW
+   * are decided by their neighbours, as tokenize.c does: WINDOW is a keyword before a name and
+   * AS, OVER after `)` and before `(` or a name, FILTER after `)` and before `(`.
+   */
+  classAt(i: usize): u8 {
+    const t = this.tokenAt(i);
+    if (t.kind != T_IDENT) {
+      return K_ID;
+    }
+    const c = keywordClass(t.upper);
+    if (c != K_CONTEXT) {
+      return c;
+    }
+    const next = this.tokenAt(i + 1);
+    if (t.upper == "WINDOW") {
+      const after = this.tokenAt(i + 2);
+      return this.idLike(i + 1) && after.kind == T_IDENT && after.upper == "AS" ? K_RESERVED : K_ID;
+    }
+    if (i == 0 || !(this.toks[i - 1].kind == T_OP && this.toks[i - 1].text == ")")) {
+      return K_ID;
+    }
+    const paren = next.kind == T_OP && next.text == "(";
+    if (t.upper == "OVER") {
+      return paren || this.idLike(i + 1) ? K_RESERVED : K_ID;
+    }
+    return paren ? K_RESERVED : K_ID;
+  }
+
+  /**
+   * Whether token `i` is an identifier to tokenize.c's look-ahead (`getToken`): a name, a
+   * string, a join word, a fallback keyword, WINDOW or OVER.
+   */
+  idLike(i: usize): bool {
+    const t = this.tokenAt(i);
+    if (t.kind == T_QUOTED || t.kind == T_STRING) {
+      return true;
+    }
+    if (t.kind != T_IDENT) {
+      return false;
+    }
+    const c = keywordClass(t.upper);
+    return c == K_ID || c == K_FALLBACK || c == K_JOIN || t.upper == "WINDOW" || t.upper == "OVER";
+  }
+
+  /** Whether the next token is the keyword `kw` as a keyword, not a name (FILTER, OVER, WINDOW). */
+  isKeyword(kw: string): bool {
+    return this.isKw(kw) && this.classAt(this.pos) == K_RESERVED;
+  }
+
+  /**
+   * Whether the next token is a name where the grammar takes any (`nm`): a quoted name, a
+   * string, or a bare word that is not reserved (join words and INDEXED included).
+   */
+  isName(): bool {
     const t = this.peek();
-    if (t.kind == T_QUOTED || t.kind == T_STRING || (t.kind == T_IDENT && !isReserved(t.upper))) {
-      this.pos++;
-      return t.text;
+    return t.kind == T_QUOTED ||
+      t.kind == T_STRING ||
+      (t.kind == T_IDENT && this.classAt(this.pos) != K_RESERVED);
+  }
+
+  /** The name at the cursor (`nm`), consumed. */
+  name(): string {
+    if (this.isName()) {
+      return this.advance().text;
     }
     this.fail();
+  }
+
+  /** Whether the next token is `ID`: a quoted name, or a bare word that is not a keyword or
+   *  falls back to a name. */
+  isId(): bool {
+    const t = this.peek();
+    return t.kind == T_QUOTED || (t.kind == T_IDENT && this.classAt(this.pos) <= K_FALLBACK);
+  }
+
+  /** Whether the next token can be a bare alias or a type name's word (`ids`: ID or a string). */
+  isAlias(): bool {
+    return this.isId() || this.peek().kind == T_STRING;
   }
 
   isOpAt(k: usize, op: string): bool {
