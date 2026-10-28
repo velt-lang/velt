@@ -1,0 +1,65 @@
+// requires: unix
+// `xs.subarray(begin, end)` of a `u8[]` passed as a system function's buffer takes the array's
+// data pointer and length at the call, after its positions and every later argument (as a
+// whole `u8[]` does): one that replaces the variable owning the array, or grows the array
+// (which moves its bytes), cannot leave the call reading or writing freed memory. The bytes
+// are those of the array the variable holds at the call, clamped to its length then.
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function write(fd: i32, buf: readonly u8[]): isize;
+
+let g: u8[] = Buffer.alloc(1);
+
+function filled(n: usize, v: u8): u8[] {
+  const xs: u8[] = Buffer.alloc(n);
+  for (let i = 0; i < n; i++) xs[i] = v;
+  return xs;
+}
+
+function replace(n: i64): i64 {
+  g = filled(1, 66);
+  return n;
+}
+
+function grow(): i64 {
+  for (let i = 0; i < 100000; i++) g.push(7);
+  return 0;
+}
+
+async function later(): Promise<i64> {
+  g = filled(1, 66);
+  return 0;
+}
+
+async function main() {
+  // The read side: the bytes written are those of the array `g` holds at the call (raw writes
+  // come first, as `console.log` may buffer its output).
+  g = filled(8, 65);
+  const nl: u8[] = [10];
+  const w = write(1, g.subarray(0, replace(8)));
+  write(1, nl);
+
+  const name: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // /dev/zero
+  const fd = open(name, 0, 0);
+  console.log("write", w, g.length);
+  // A later argument replaces the module variable.
+  g = filled(4096, 1);
+  console.log("replace", pread(fd, g.subarray(0, 4096), replace(0)), g.length);
+  g = filled(4096, 1);
+  console.log("await", pread(fd, g.subarray(0, 4096), await later()), g.length);
+  // A later argument grows the array: the call writes the grown array's bytes.
+  g = filled(16, 9);
+  console.log("grow", pread(fd, g.subarray(0, 16), grow()), g[0], g[15], g[16], g.length);
+  // A position replaces or grows it.
+  g = filled(4096, 1);
+  console.log("position replace", pread(fd, g.subarray(replace(0), 4096), 0), g.length);
+  g = filled(16, 9);
+  console.log("position grow", pread(fd, g.subarray(grow(), 16), 0), g[0], g[16], g.length);
+  // A closure reassigning a local.
+  let xs: u8[] = filled(64, 1);
+  const swapLocal = (): i64 => {
+    xs = filled(1, 66);
+    return 0;
+  };
+  console.log("closure", pread(fd, xs.subarray(0, 64), swapLocal()), xs.length);
+}

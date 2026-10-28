@@ -11,6 +11,7 @@
 use velt_sema::hir::{self, Callee as HCallee, Intrinsic, TyId};
 
 use super::operand::proj;
+use super::system::Arg;
 use super::{cint, ice, FnLower};
 use crate::system::Func;
 use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -19,15 +20,20 @@ use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 const VIEW_BYTES: &str = "std/typed_array/core::__viewBytes";
 
 impl FnLower<'_, '_> {
-    /// The address and length (`u64`) of the bytes of `a`, when it is a view: `None` for a
-    /// `u8[]` (the caller takes its header).
+    /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).
+    ///
+    /// `xs.subarray(begin, end)` evaluates `xs`, `begin` and `end` in that order and keeps the
+    /// array and the two positions ([`Arg::Sub`]): its header is read and the positions are
+    /// clamped only when the C arguments are assembled ([`Self::subarray_bytes`]), after every
+    /// argument, so a later one (or a position) that grows the array or replaces the variable
+    /// owning it cannot leave the pointer at freed bytes.
     pub(super) fn system_view(
         &mut self,
         func: &Func,
         name: &str,
         a: &hir::Expr,
         later: super::sequence::Later,
-    ) -> Option<(Operand, Operand)> {
+    ) -> Option<Arg> {
         if let hir::ExprKind::Call {
             callee: HCallee::Intrinsic(Intrinsic::Subarray),
             args,
@@ -36,33 +42,24 @@ impl FnLower<'_, '_> {
             let [xs, begin, end] = args.as_slice() else {
                 ice("`Subarray` takes three arguments")
             };
-            // Retain the array before the later arguments: one that reassigns a module `let`
-            // (or otherwise drops the owner) must not free the bytes the pointer points at.
+            // Retain the array across the positions and the later arguments: one that
+            // reassigns a module `let` (or otherwise drops the owner) must not free it.
+            let after = later.or(self.later_of(begin)).or(self.later_of(end));
             let v = self.expr(xs);
-            let v = self.hold_buffer(v, xs.ty, later);
+            let v = self.hold_buffer(v, xs.ty, after);
             let t = self.sub(xs.ty);
             let vt = self.cx.ty(t);
             let place = self.operand_place(v, vt);
-            let (data, len) = self.header_parts(&place, t);
-            let from = self.position(begin, len.clone());
-            let to = self.position(end, len);
-            // `to - from`, or 0 when `to` is before `from`.
-            let after = self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::Gt, to.clone(), from.clone()),
-            );
-            let n = Place::local(self.temp(Ty::U64));
-            let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
-            self.branch(after, yes, no);
-            self.switch_to(yes);
-            self.assign(n.clone(), Rvalue::Binary(BinOp::Sub, to, from.clone()));
-            self.goto(join);
-            self.switch_to(no);
-            self.assign(n.clone(), Rvalue::Use(cint(0, Ty::U64)));
-            self.goto(join);
-            self.switch_to(join);
-            let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, from));
-            return Some((ptr, Operand::Copy(n)));
+            let b = self.expr(begin);
+            let b = self.freeze(b, begin.ty);
+            let e = self.expr(end);
+            let e = self.freeze(e, end.ty);
+            return Some(Arg::Sub {
+                place,
+                t,
+                begin: (b, begin.ty),
+                end: (e, end.ty),
+            });
         }
         let t = self.sub(a.ty);
         if !self.cx.is_class(t) {
@@ -112,7 +109,39 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Unreachable);
         self.switch_to(ok);
         let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, off));
-        Some((ptr, n))
+        Some(Arg::Bytes(ptr, n))
+    }
+
+    /// The address and length (`u64`) of `xs.subarray(begin, end)`, from the array of type `t`
+    /// at `place` as it is now (its header read here, at the call) and the positions evaluated
+    /// before: JS's `subarray` positions, clamped to the current length.
+    pub(super) fn subarray_bytes(
+        &mut self,
+        place: &Place,
+        t: TyId,
+        begin: (Operand, TyId),
+        end: (Operand, TyId),
+    ) -> (Operand, Operand) {
+        let (data, len) = self.header_parts(place, t);
+        let from = self.position(begin.0, begin.1, len.clone());
+        let to = self.position(end.0, end.1, len);
+        // `to - from`, or 0 when `to` is before `from`.
+        let after = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, to.clone(), from.clone()),
+        );
+        let n = Place::local(self.temp(Ty::U64));
+        let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(after, yes, no);
+        self.switch_to(yes);
+        self.assign(n.clone(), Rvalue::Binary(BinOp::Sub, to, from.clone()));
+        self.goto(join);
+        self.switch_to(no);
+        self.assign(n.clone(), Rvalue::Use(cint(0, Ty::U64)));
+        self.goto(join);
+        self.switch_to(join);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, from));
+        (ptr, Operand::Copy(n))
     }
 
     /// The data pointer and the length (`u64`) in the header of the array of type `t` at
@@ -145,12 +174,12 @@ impl FnLower<'_, '_> {
         (self.field_place(obj, t, i as u32), ft)
     }
 
-    /// JS's relative position `at` (an `i64`, or a `usize` that is never negative) in `len`
-    /// (`u64`) elements: negative counts from the end, then clamped to `0..=len`; as a `u64`.
-    fn position(&mut self, at: &hir::Expr, len: Operand) -> Operand {
-        let i = self.expr(at);
+    /// JS's relative position `i` (of type `ty`: an `i64`, or a `usize` that is never negative)
+    /// in `len` (`u64`) elements: negative counts from the end, then clamped to `0..=len`; as a
+    /// `u64`.
+    fn position(&mut self, i: Operand, ty: TyId, len: Operand) -> Operand {
         let out = Place::local(self.temp(Ty::U64));
-        let t = self.sub(at.ty);
+        let t = self.sub(ty);
         if matches!(self.cx.kind(t), hir::TyKind::Int(k) if !k.is_signed()) {
             // `min(at, len)`.
             let over =

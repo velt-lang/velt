@@ -23,12 +23,20 @@ const APPLE_VARIADIC_REGS: usize = 8;
 const ERROR_IO_PENDING: i128 = 997;
 
 /// A declaration's argument, lowered.
-enum Arg {
+pub(super) enum Arg {
     Scalar(Operand),
     /// The place of the array's or struct's inline value, and its type.
     Value(Place, TyId),
     /// A view's bytes: their address and length (`u64`).
     Bytes(Operand, Operand),
+    /// `xs.subarray(begin, end)` of a `u8[]`: the place of the array's value and its type, and
+    /// the two positions evaluated (with their types); the header is read at the call.
+    Sub {
+        place: Place,
+        t: TyId,
+        begin: (Operand, TyId),
+        end: (Operand, TyId),
+    },
 }
 
 impl FnLower<'_, '_> {
@@ -72,8 +80,8 @@ impl FnLower<'_, '_> {
         let laters = self.later_each(args);
         for ((a, p), later) in args.iter().zip(declared).zip(laters) {
             let name = system::param_name(p);
-            if let Some((ptr, n)) = self.system_view(func, name, a, later) {
-                vals.push(Arg::Bytes(ptr, n));
+            if let Some(v) = self.system_view(func, name, a, later) {
+                vals.push(v);
                 continue;
             }
             let v = self.expr(a);
@@ -306,6 +314,12 @@ impl FnLower<'_, '_> {
         match arg {
             Some(Arg::Value(place, t)) => self.header_parts(&place, t),
             Some(Arg::Bytes(ptr, n)) => (ptr, n),
+            Some(Arg::Sub {
+                place,
+                t,
+                begin,
+                end,
+            }) => self.subarray_bytes(&place, t, begin, end),
             _ => ice("system call: a buffer argument"),
         }
     }

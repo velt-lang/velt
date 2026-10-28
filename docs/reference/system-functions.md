@@ -67,6 +67,11 @@ array, and the call gets the address and length of the bytes the view sees, with
   `subarray` of a `u8[]` is a view only as such an argument: elsewhere a `u8[]` has no
   `subarray` yet (`slice` copies).
 
+The array's data and length are taken at the call, after every argument (the positions of a
+`subarray` too) is evaluated, as for a whole array: an argument that grows the array or gives
+its variable another array cannot leave the call at bytes that were freed, and the bytes are
+those of the array the variable holds then.
+
 ```ts
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
 declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
@@ -81,8 +86,8 @@ function writeHeader(fd: i32, header: DataView): isize {
 }
 ```
 
-A view of a buffer whose `u8[]` has become shorter than the view's range (a buffer cannot shrink
-in JS, but its owner can in Velt) stops the program rather than reach past the array.
+A view of a buffer whose `u8[]` has become shorter than the view's range (Velt's `ArrayBuffer`
+cannot shrink, but its owner can) stops the program rather than reach past the array.
 
 `lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. The compiler
 captures `errno` into a slot of the thread right after every system call, and `lastOsError()`

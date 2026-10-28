@@ -1,0 +1,8 @@
+B
+write 1 1
+replace 1 1
+await 1 1
+grow 16 0 0 7 100016
+position replace 1 1
+position grow 16 0 7 100016
+closure 1 1
