@@ -8,3 +8,13 @@ allSettled fulfilled,fulfilled 2
 caught boom 3
 allSettled fulfilled,fulfilled,rejected 3
 kept 1 2
+all after push [ 1, 2 ] 3
+all after truncate [ 1, 2 ] 0
+race after push 2 3
+race after truncate 2 0
+any after push 2 3
+any after truncate 2 0
+allSettled after push 2 1,2 3
+allSettled after truncate 2 0
+any of none AggregateError All promises were rejected
+any rejected AggregateError 2

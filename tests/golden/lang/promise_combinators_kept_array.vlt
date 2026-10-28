@@ -67,5 +67,61 @@ async function main(): Promise<void> {
   const again = await Promise.allSettled(ps);
   console.log("allSettled", again.map((s) => s.status).join(","), ps.length);
   console.log("kept", await ps[0], await ps[1]);
+
+  // Each combinator reads the array once, when called: changes after the call (a push, an
+  // element replaced, the array truncated) don't reach the result.
+  const a: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pa = Promise.all(a);
+  a.push(wait(1, 3));
+  a[0] = wait(1, 9);
+  console.log("all after push", await pa, a.length);
+  const a2: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pa2 = Promise.all(a2);
+  a2.length = 0;
+  console.log("all after truncate", await pa2, a2.length);
+
+  const r: Promise<number>[] = [wait(5, 1), wait(3, 2)];
+  const pr = Promise.race(r);
+  r.push(wait(1, 3));
+  r[1] = wait(1, 9);
+  console.log("race after push", await pr, r.length);
+  const r2: Promise<number>[] = [wait(5, 1), wait(3, 2)];
+  const pr2 = Promise.race(r2);
+  r2.length = 0;
+  console.log("race after truncate", await pr2, r2.length);
+
+  const y: Promise<number>[] = [fail(1, "no"), wait(3, 2)];
+  const py = Promise.any(y);
+  y.push(wait(1, 3));
+  y[1] = wait(1, 9);
+  console.log("any after push", await py, y.length);
+  const y2: Promise<number>[] = [fail(1, "no"), wait(3, 2)];
+  const py2 = Promise.any(y2);
+  y2.length = 0;
+  console.log("any after truncate", await py2, y2.length);
+
+  const b: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pb = Promise.allSettled(b);
+  b.push(wait(1, 3));
+  b[0] = wait(1, 9);
+  const sb = await pb;
+  console.log("allSettled after push", sb.length, sb.map((s) => (s.status == "fulfilled" ? s.value : -1)).join(","), b.length);
+  const c: Promise<number>[] = [wait(5, 1), wait(2, 2)];
+  const pc = Promise.allSettled(c);
+  c.length = 0;
+  console.log("allSettled after truncate", (await pc).length, c.length);
+
+  const none: Promise<number>[] = [];
+  try {
+    await Promise.any(none);
+  } catch (e) {
+    console.log("any of none", (e as Error).name, (e as Error).message);
+  }
+  const rejected: Promise<number>[] = [fail(1, "x"), fail(2, "y")];
+  try {
+    await Promise.any(rejected);
+  } catch (e) {
+    console.log("any rejected", (e as Error).name, rejected.length);
+  }
 }
 main();

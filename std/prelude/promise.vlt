@@ -11,6 +11,7 @@ export class AggregateError extends Error {
   /** An error with the given `message`. */
   constructor(message: string) {
     super(message);
+    this.name = "AggregateError";
   }
 }
 
@@ -26,10 +27,12 @@ export async function promiseAllSettled<T, E>(
   if (ps.length == 0) {
     return out;
   }
-  // Read in place, not popped: the caller may still hold the array (JS leaves it as it is).
-  for (let i = 0; i < ps.length; i++) {
+  // The promises as they are at the call, as JS reads them: the caller may still hold the
+  // array and change it while this waits (and JS leaves the array as it is).
+  const snap = ps.slice();
+  for (let i = 0; i < snap.length; i++) {
     try {
-      out.push({ status: "fulfilled", value: await ps[i] });
+      out.push({ status: "fulfilled", value: await snap[i] });
     } catch (e) {
       out.push({ status: "rejected", reason: e });
     }
