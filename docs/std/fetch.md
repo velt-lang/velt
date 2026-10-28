@@ -54,7 +54,7 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 |---|---|---|
 | `method` | `string` | default `"GET"`; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased |
 | `headers` | `Headers \| Record<string, string>` | an object literal works: `{ "content-type": "text/csv" }` |
-| `body` | `string \| Uint8Array \| ArrayBuffer \| DataView \| u8[] \| URLSearchParams` (any typed array) | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
+| `body` | `string \| Uint8Array \| ArrayBuffer \| DataView \| u8[] \| URLSearchParams \| ReadableStream<Uint8Array>` (any typed array) | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
 | `redirect` | `"follow" \| "error" \| "manual"` | default `"follow"` (at most 20); `"manual"` returns the 3xx response |
 | `signal` | `AbortSignal` | cancels the request |
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
@@ -90,8 +90,10 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   be held in memory: each chunk is at most 64 KiB, however much a compressed body expands. It is
   `null` for a status without a body (101, 103, 204, 205, 304), for a `HEAD` request's response
   and for a response made without one. Reading it uses the body up, as `text()` does; getting
-  it does not. A `ReadableStream` is not a body yet (`new Response(stream)`, #1129): stream a
-  body with [`BodyStream`](#bodystream).
+  it does not. A [`ReadableStream`](streams.md) of `Uint8Array` chunks is a body too, as in
+  Node: `new Response(ReadableStream.from(gen()))` (a chunk of another type fails the read
+  with `IoError` "EINVAL", `Received non-Uint8Array chunk`), and so is a
+  [`BodyStream`](#bodystream).
 - A body the server compressed (`content-encoding: gzip`, `deflate` or `br`, or several of
   them, such as `deflate, gzip`: up to five) is decoded as it arrives, whichever way you read
   it; the headers stay as received. A list naming another coding leaves the body as sent, and
@@ -128,8 +130,8 @@ is absolute, its headers are immutable, and its body is received while it is rea
 
 ## `BodyStream`
 
-Velt's body stream of `u8[]` chunks (in JS a body can also be a
-[`ReadableStream`](streams.md) of `Uint8Array`s; Velt doesn't take one yet, #1129): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
+Velt's body stream of `u8[]` chunks (a [`ReadableStream`](streams.md) of `Uint8Array`s is a
+body too, as in JS): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
 from an async iterable, such as an async generator, for `new Response(stream)`: a server sends
 each chunk as it is made, and `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws reaches the reader as
 an `IoError` (`"EIO"`) carrying its text.

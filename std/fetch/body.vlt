@@ -6,13 +6,21 @@ import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
 import { ArrayBuffer, BufferView } from "velt:typed_array/core";
+import { ByteSource } from "velt:streams/byte_source";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
- * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`; a
- * `ReadableStream` body waits for #1129).
+ * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`, or a
+ * `ReadableStream` of `Uint8Array` chunks).
  */
-export type BodyInit = string | u8[] | BufferView | ArrayBuffer | URLSearchParams | BodyStream;
+export type BodyInit =
+  | string
+  | u8[]
+  | BufferView
+  | ArrayBuffer
+  | URLSearchParams
+  | BodyStream
+  | ByteSource;
 
 /**
  * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; the `fetch` client sends
@@ -60,6 +68,11 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   }
   if (body instanceof BodyStream) {
     return { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
+  }
+  if (body instanceof ByteSource) {
+    // A `ReadableStream`: its `Uint8Array` chunks, read as the body is.
+    const stream = BodyStream.adopt(body.__byteChunks());
+    return { kind: 3, text: "", bytes: [], stream: stream, implied: 0 };
   }
   // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
   if (body instanceof BufferView) {

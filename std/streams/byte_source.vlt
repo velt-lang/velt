@@ -1,0 +1,21 @@
+// velt:streams/byte_source (std-internal): `ByteSource`, the base class of `ReadableStream<R>`
+// that a fetch body (`BodyInit`, std/fetch/body.vlt) names, so `new Response(stream)` takes a
+// `ReadableStream<Uint8Array>` without every program that uses `Response` loading velt:streams
+// and the typed arrays (#1129). Its chunks are made bytes by testing each one at run time, in
+// `ReadableStream` (std/streams.vlt).
+
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+
+/** A stream whose chunks can be a body's bytes: what `ReadableStream` is to a body. */
+export class ByteSource {
+  /**
+   * The chunks as bytes (std only), read through a reader of the stream: each must be a
+   * `Uint8Array`, as Node requires (an `IoError` "EINVAL" otherwise).
+   */
+  __byteChunks(): AsyncIterator<u8[], IoError | AbortError> {
+    return none();
+  }
+}
+
+async function* none(): AsyncGenerator<u8[], IoError | AbortError> {}
