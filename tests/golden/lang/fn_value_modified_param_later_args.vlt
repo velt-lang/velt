@@ -1,0 +1,79 @@
+// A function used as a value that modifies an object parameter (#1383): its argument is the
+// caller's object, also when an argument after it does work first (an `any` or `unknown`
+// argument converted there, an array literal, a call). The change shows in the caller's object,
+// as in JavaScript, for direct calls and calls through the value.
+
+type VNode = { tag: string; cleanup: (() => void) | null; marks: string[] };
+
+function mountAny(vnode: VNode, container: any): void {
+  vnode.cleanup = () => console.log("cleanup " + vnode.tag + " in " + String(container));
+  vnode.marks.push("any");
+}
+
+function mountUnknown(vnode: VNode, container: unknown): void {
+  vnode.tag = vnode.tag + "!";
+  vnode.marks.push(String(container));
+}
+
+function mountList(vnode: VNode, names: string[]): void {
+  vnode.marks.push(names.join("+"));
+}
+
+function bump(xs: number[], extra: number[]): void {
+  xs.push(extra.length);
+}
+
+interface Renderer<HostElement> {
+  mount: (vnode: VNode, container: HostElement) => void;
+}
+
+function createRenderer<HostElement = any>(): Renderer<HostElement> {
+  function mount(vnode: VNode, container: HostElement): void {
+    vnode.cleanup = () => console.log("renderer cleanup " + vnode.tag);
+    vnode.marks.push("mounted");
+  }
+  return { mount };
+}
+
+function vnode(tag: string): VNode {
+  return { tag, cleanup: null, marks: [] };
+}
+
+function main() {
+  // Used as values, so their modified parameters may alias each other.
+  const fs: ((v: VNode, c: any) => void)[] = [mountAny];
+  const us: ((v: VNode, c: unknown) => void)[] = [mountUnknown];
+  const ls: ((v: VNode, n: string[]) => void)[] = [mountList];
+  const bs: ((xs: number[], e: number[]) => void)[] = [bump];
+
+  const a = vnode("a");
+  mountAny(a, "root");
+  fs[0](a, 5);
+  if (a.cleanup) a.cleanup();
+  console.log(a.marks.join(","));
+
+  const b = vnode("b");
+  mountUnknown(b, { id: 1 });
+  us[0](b, 7);
+  console.log(b.tag, b.marks.join(","));
+
+  const c = vnode("c");
+  mountList(c, ["x", "y"]);
+  ls[0](c, ["z", "w"]);
+  console.log(c.marks.join(","));
+
+  const xs = [1];
+  bump(xs, [1, 2, 3]);
+  bs[0](xs, [9]);
+  console.log(xs.join(","));
+
+  const r = createRenderer();
+  const d = vnode("d");
+  r.mount(d, { id: "app" });
+  if (d.cleanup) d.cleanup();
+  const r2 = createRenderer<string>();
+  const e = vnode("e");
+  r2.mount(e, "root");
+  console.log(d.marks.join(","), e.marks.join(","), e.cleanup === null);
+}
+main();

@@ -357,6 +357,27 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Is a value of type `ty` an object a callee can change in place where it is stored inline
+    /// (an uncounted object type, array or tuple, or one of them or `null`)? Holding it against
+    /// later operands copies it, and a change would then go to the copy. The exclusivity rule
+    /// (velt_sema `ownership/exclusive`) keeps later operands from changing what such a
+    /// borrowed argument holds, so it is passed where it is.
+    pub(super) fn inline_object(&mut self, ty: TyId) -> bool {
+        let t = self.sub(ty);
+        if self.cx.counted(t) || self.vty(t).is_scalar() {
+            return false;
+        }
+        match self.cx.kind(t) {
+            hir::TyKind::Option(x, _) => self.inline_object(x),
+            hir::TyKind::Tuple(_) | hir::TyKind::Array(_) => true,
+            hir::TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if a.kind != hir::AdtKind::Class && !a.is_copy
+            ),
+            _ => false,
+        }
+    }
+
     /// Can what `p` holds be changed by operands that do `later`? A temporary of the lowering
     /// holds a value nobody else reaches; a variable is changed only by a local write. Anything
     /// reached through a projection (an element, a field, a variable in a cell) may change.
