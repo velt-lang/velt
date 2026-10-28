@@ -163,7 +163,9 @@ impl FnLower<'_, '_> {
             }
             _ => {
                 let v = self.expr(a);
-                self.place_of(v, a.ty)
+                // Substituted: in generic code (`T extends AtomicValue`) it names a type param.
+                let ty = self.sub(a.ty);
+                self.place_of(v, ty)
             }
         }
     }

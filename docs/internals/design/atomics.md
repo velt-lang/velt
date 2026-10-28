@@ -608,6 +608,23 @@ and a `VersionLatch` for writers.
   Each `read` opens a section; a raw `Atomic<shared<T>>` read in a loop inside one function
   pays it once (6–13 ms).
 
+## Generic `Atomic<T>` (#1696 step 4.1)
+
+`Atomic<T>` with `T` a type parameter is allowed when `T` is bounded by the prelude's marker
+interface `AtomicValue` (std/prelude/sync.vlt). The compiler knows its implementations (no
+`extend` declares them): `Ctx::satisfies` takes the integer types, `f32`, `f64`, `bool`,
+`string`, `shared<U>` and `shared<U> | null`. The bound is checked where the generic is
+instantiated, as any interface bound is; lowering instantiates per type already, so `atomic_word` and
+`atomic_ref_value` see the substituted `T` and pick the instruction as for written types.
+- **Operations:** sema allows on such a `T` only those every `AtomicValue` has alike:
+  `load`, `store`, `exchange` and `compareExchangeWeak`. `compareExchange` returns the value
+  before for a number but whether it swapped for a reference, and `add` and the bitwise methods
+  exist for numbers only.
+- **Borrowing:** sema cannot tell a reference `load` from a number's in generic code, so
+  `const c = a.load()` there binds by value; lowering counts a reference then (no borrow).
+- **Lowering fix:** `atomic_place`'s fallback now substitutes the receiver's type.
+- **Why:** `ConcurrentMap<K, V>` (step 4) declares `Atomic<V>` arrays.
+
 ## Not in this design
 
 - `Atomics.wait` / `notify` (futex): blocking a worker thread stalls its tasks; an async-aware

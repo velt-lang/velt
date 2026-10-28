@@ -786,8 +786,9 @@ whose receiver is always `Global(d)` of a module `const` initialized by such an 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
 `new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,
-`f64`, `bool`, `shared<U>`, `shared<U> | null` or `string` (sema rejects any other `T`, a type
-parameter too; lowering lays an `Atomic<string>`'s field out as `shared<string>`, atomics.md
+`f64`, `bool`, `shared<U>`, `shared<U> | null`, `string`, or a type parameter bounded by the
+prelude's `AtomicValue` (sema rejects any other `T`; on a type parameter only `AtomicLoad`,
+`AtomicStore`, the `AtomicRmw` exchange and `AtomicCasWeak` occur; lowering lays an `Atomic<string>`'s field out as `shared<string>`, atomics.md
 "Strings"). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
 (whether it swapped; atomics.md "References"); its value arguments are moved in, and its
 `expected` argument may be a `Share` that lowering reads through. A call of one of its methods

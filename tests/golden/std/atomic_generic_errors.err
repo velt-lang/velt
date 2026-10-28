@@ -1,0 +1,20 @@
+atomic_generic_errors.vlt:26:22: error: the type `Obj` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of the constructor of `Holder`
+
+atomic_generic_errors.vlt:49:24: error: the type `Foo` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of the constructor of `Holder`
+
+atomic_generic_errors.vlt:50:22: error: the type `P` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of the constructor of `Holder`
+
+atomic_generic_errors.vlt:5:10: error: `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `T`
+  = note: bound the type parameter: `T extends AtomicValue` (checked where the generic is used)
+
+atomic_generic_errors.vlt:9:3: error: `add` is not available on `Atomic<T>`, whose `T` is a type parameter
+  = note: generic code has `load`, `store`, `exchange` and `compareExchangeWeak` (in a loop); the others depend on what `T` is
+
+atomic_generic_errors.vlt:10:3: error: `compareExchange` is not available on `Atomic<T>`, whose `T` is a type parameter
+  = note: generic code has `load`, `store`, `exchange` and `compareExchangeWeak` (in a loop); the others depend on what `T` is
+
+atomic_generic_errors.vlt:53:17: error: the type `Shaped` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of function `viaObj`

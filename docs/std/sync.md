@@ -199,6 +199,36 @@ function main() {
 }
 ```
 
+### `Atomic` in generic code
+
+A type parameter bounded by `AtomicValue` can be an `Atomic`'s `T`: `class Cell<T extends
+AtomicValue> { word: Atomic<T>; … }`. The prelude's `AtomicValue` is implemented by the integer
+types, `f32`, `f64`, `bool`, `string` and `shared<U>`, which the compiler knows (a type of your
+own cannot implement it, declared or not), and the bound is checked where the generic is used
+(`new Cell<Obj>(…)` with a plain object is an error). Each use gets its type's
+instructions. Generic code has the operations every `AtomicValue` has alike: `load()`,
+`store(v)`, `exchange(v)` and `compareExchangeWeak(expected, v)` (in a loop: it returns whether
+it swapped for every `T`, where `compareExchange` returns the value before for a number).
+
+```ts
+class Cell<T extends AtomicValue> {
+  word: Atomic<T>;
+
+  constructor(v: T) {
+    this.word = new Atomic<T>(v);
+  }
+
+  replace(v: T): T {
+    return this.word.exchange(v);
+  }
+}
+
+function main() {
+  const c = new Cell<string>("a");
+  console.log(c.replace("b"), c.word.load()); // a b
+}
+```
+
 ## `Atom<T>`
 
 A `shared` value that threads read at once without a lock and replace whole, like Rust's
