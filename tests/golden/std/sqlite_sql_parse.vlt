@@ -261,6 +261,19 @@ function main() {
     "SELECT 1 FROM t" + " JOIN t".repeat(64),
     "SELECT 1 FROM t" + ", t".repeat(200),
   ];
+  // A chain of BETWEEN low bounds nests (`a BETWEEN b BETWEEN c AND d AND e` is valid): it is
+  // bounded like any nesting, never a stack overflow.
+  deep.push("SELECT 1" + " BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  deep.push("SELECT 1" + " NOT BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  // SQLite's 32766 parameters: `?`, `?NNN` and names alike.
+  deep.push("SELECT ?32766, ?");
+  deep.push("SELECT " + "?, ".repeat(32766) + "?");
+  const names: string[] = [];
+  for (let i = 0; i < 32767; i++) {
+    names.push(`:p${i}`);
+  }
+  deep.push("SELECT " + names.slice(0, 32766).join(", ") + ", :p0, ?1");
+  deep.push("SELECT " + names.join(", "));
   // A run of COLLATE is one node, however long: the tree can be walked.
   console.log(sel(new Parser("SELECT 1" + " COLLATE x".repeat(5000) + " COLLATE y").select()));
   for (const sql of deep) {

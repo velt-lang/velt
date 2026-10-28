@@ -22,12 +22,6 @@ import {
   Token,
 } from "velt:sqlite/sql/lexer";
 import {
-  C_EXCEPT,
-  C_INTERSECT,
-  C_NONE,
-  C_UNION,
-  C_UNION_ALL,
-  Cte,
   E_BETWEEN,
   E_BINARY,
   E_BLOB,
@@ -55,12 +49,6 @@ import {
   E_UNARY,
   Expr,
   FromItem,
-  J_CROSS,
-  J_FULL,
-  J_INNER,
-  J_LEFT,
-  J_RIGHT,
-  OrderTerm,
   ResultColumn,
   Select,
   SelectCore,
@@ -71,9 +59,8 @@ import { TokenCursor, isReserved } from "velt:sqlite/sql/cursor";
 export abstract class ExprParser extends TokenCursor {
   /** `?` parameters are numbered in order; `?NNN` sets the counter. */
   params: i64 = 0;
-  /** Named parameters in order of first use, and the index each was given. */
-  names: string[] = [];
-  nameIndex: i64[] = [];
+  /** The index each named parameter was given at its first use. */
+  names: Map<string, i64> = new Map<string, i64>();
 
   constructor(sql: string) {
     super(sql);
@@ -214,8 +201,11 @@ export abstract class ExprParser extends TokenCursor {
     if (word == "BETWEEN") {
       const b = new Expr(E_BETWEEN, t.start);
       b.a = e;
-      // The low bound binds like `=` (`x BETWEEN 1 = 1 AND 3`), the high one tighter.
+      // The low bound binds like `=` (`x BETWEEN 1 = 1 AND 3`), the high one tighter. The low
+      // bound can hold another BETWEEN (`a BETWEEN b BETWEEN c AND d AND e`): it nests.
+      this.enter();
       b.b = this.binaryFrom(L_EQ);
+      this.leave();
       this.expectKw("AND");
       b.c = this.binaryFrom(L_CMP);
       b.not = not;
@@ -459,7 +449,7 @@ export abstract class ExprParser extends TokenCursor {
       e.ival = this.params;
     } else if (__intrinsic_str_byte_at(t.text, 0) == 63) {
       const n = parseInt(t.text.slice(1), 10) as i64;
-      if (n < 1 || n > 32766) {
+      if (n < 1 || n > MAX_VARIABLE) {
         throw new SqlError(`variable number must be between ?1 and ?32766`, t.start);
       }
       e.ival = n;
@@ -468,14 +458,19 @@ export abstract class ExprParser extends TokenCursor {
       }
     } else {
       // A name keeps the index of its first use.
-      const i = this.names.indexOf(t.text);
-      if (i >= 0) {
-        e.ival = this.nameIndex[i];
-      } else {
-        this.params++;
-        this.names.push(t.text);
-        this.nameIndex.push(this.params);
-        e.ival = this.params;
+      const i = this.names.get(t.text);
+      if (i != null) {
+        e.ival = i!;
+        return e;
+      }
+      this.params++;
+      this.names.set(t.text, this.params);
+      e.ival = this.params;
+    }
+    if (t.text == "?" || __intrinsic_str_byte_at(t.text, 0) != 63) {
+      // A new `?` or name past SQLite's SQLITE_MAX_VARIABLE_NUMBER.
+      if (e.ival > MAX_VARIABLE) {
+        throw new SqlError("too many SQL variables", t.start);
       }
     }
     return e;
@@ -671,6 +666,9 @@ function prefix(t: Token, operand: Expr): Expr {
   u.a = operand;
   return sized(u);
 }
+
+/** SQLite's SQLITE_MAX_VARIABLE_NUMBER: the highest parameter index. */
+const MAX_VARIABLE: i64 = 32766;
 
 /** SQLite's SQLITE_MAX_EXPR_DEPTH: the highest expression tree it accepts. */
 const MAX_HEIGHT: i64 = 1000;

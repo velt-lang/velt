@@ -27,6 +27,12 @@ SELECT 1 UNION SELECT 1 … (7508 bytes): error at 7500: too many terms in compo
 SELECT 1 FROM t JOIN t J… (456 bytes): height 1, 1 cores
 SELECT 1 FROM t JOIN t J… (463 bytes): error at 16: at most 64 tables in a join
 SELECT 1 FROM t, t, t, t… (615 bytes): error at 615: too many FROM clause terms, max: 200
+SELECT 1 BETWEEN 1 BETWE… (160008 bytes): error at 5997: Recursion limit
+SELECT 1 NOT BETWEEN 1 N… (200008 bytes): error at 8393: Recursion limit
+SELECT ?32766, ? (16 bytes): error at 15: too many SQL variables
+SELECT ?, ?, ?, ?, ?, ?,… (98306 bytes): error at 98305: too many SQL variables
+SELECT :p0, :p1, :p2, :p… (283798 bytes): height 1, 1 cores
+SELECT :p0, :p1, :p2, :p… (283798 bytes): error at 283791: too many SQL variables
 {SELECT (- (+ 1 (* 2 3)) (% (/ 4 5) 6))}
 {SELECT (|| (|| a b) c), (- x), 1, (~ 5), (+ y), -9223372036854775808, int!9223372036854775808, 9223372036854775807, -1, 1000r, 0.5r, 0.0015r, 100000000000000000000r}
 {SELECT * FROM j0:t WHERE (OR (AND (= a 1) (!= b 2)) (AND (NOT (!= c 3)) (= d 4)))}
