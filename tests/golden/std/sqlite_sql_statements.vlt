@@ -1,7 +1,7 @@
 // The statement parser of the Velt SQLite engine (velt:sqlite/sql/statement, #1720): CREATE TABLE
 // with every column and table constraint, CREATE INDEX/VIEW, INSERT with UPSERT and RETURNING,
 // UPDATE … FROM, DELETE, transactions, PRAGMA, DROP, ALTER TABLE, EXPLAIN.
-import { parseAll } from "velt:sqlite/sql/statement";
+import { parseAll, parseOne } from "velt:sqlite/sql/statement";
 import { SqlError } from "velt:sqlite/sql/lexer";
 
 const CASES: string[] = [
@@ -36,9 +36,25 @@ const CASES: string[] = [
   "WITH x AS (SELECT ')') SELECT * FROM x",
   "INSERT INTO t VALUES ('(') UNION SELECT 2",
   "CREATE TABLE t (a UNIQUE ON CONFLICT BOGUS)",
+  // EXPLAIN once: SQLite rejects EXPLAIN EXPLAIN (and a long run of them is no recursion).
+  "EXPLAIN EXPLAIN SELECT 1",
+  "EXPLAIN QUERY PLAN EXPLAIN SELECT 1",
+  "EXPLAIN " + "EXPLAIN ".repeat(10000) + "SELECT 1",
 ];
 
 function main() {
+  // parseOne takes exactly one statement.
+  for (const sql of ["", " ; ;", "SELECT 1; SELECT 2", "SELECT 1;"]) {
+    try {
+      console.log(`parseOne: k${parseOne(sql).kind}`);
+    } catch (e) {
+      if (e instanceof SqlError) {
+        console.log(`parseOne: ${e.message}`);
+      } else {
+        throw e;
+      }
+    }
+  }
   for (const sql of CASES) {
     try {
       const all = parseAll(sql);

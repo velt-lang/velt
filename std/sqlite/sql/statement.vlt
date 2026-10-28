@@ -55,29 +55,32 @@ export function parseAll(sql: string): Statement[] {
 export function parseOne(sql: string): Statement {
   const all = parseAll(sql);
   if (all.length != 1) {
-    throw new SqlError(all.length == 0 ? "not an error" : "more than one statement", 0);
+    throw new SqlError(all.length == 0 ? "no statement" : "more than one statement", 0);
   }
   return all[0];
 }
 
-/** One statement at the parser's position. */
+/** One statement at the parser's position: EXPLAIN [QUERY PLAN], once, then the statement. */
 export function statement(p: Parser): Statement {
   const from = p.peek().start;
-  const s = verb(p);
-  s.sql = p.text(from, p.peek().start).trimEnd();
-  return s;
-}
-
-function verb(p: Parser): Statement {
+  let s: Statement;
   if (p.eatKw("EXPLAIN")) {
-    const s = new Statement(S_EXPLAIN);
+    s = new Statement(S_EXPLAIN);
     if (p.eatKw("QUERY")) {
       p.expectKw("PLAN");
       s.queryPlan = true;
     }
-    s.inner = verb(p);
-    return s;
+    // Only once: `EXPLAIN EXPLAIN …` is a syntax error in SQLite (no recursion here).
+    s.inner = command(p);
+  } else {
+    s = command(p);
   }
+  s.sql = p.text(from, p.peek().start).trimEnd();
+  return s;
+}
+
+/** A statement without EXPLAIN. */
+function command(p: Parser): Statement {
   if (p.isKw("SELECT") || p.isKw("VALUES") || (p.isKw("WITH") && withSelect(p))) {
     const s = new Statement(S_SELECT);
     s.select = p.select();

@@ -1,3 +1,7 @@
+parseOne: no statement
+parseOne: no statement
+parseOne: more than one statement
+parseOne: k0
 k4 t cols[id:INTEGER pk auto, name:TEXT nn uq NOCASE, score:REAL dflt, data:BLOB, n:INT dflt check, g: stored] uniques 1 without-rowid strict | CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, score REAL DEFAULT -1.5, data BLOB, n INT CHECK (n > 0) DEFAULT (abs(-3)), g AS (n * 2) STORED, FOREIGN KEY (n) REFERENCES u(id) ON DELETE CASCADE, UNIQUE (name, n) ON CONFLICT REPLACE) WITHOUT ROWID, STRICT
 k4 main.my table cols[a b:VARCHAR(10), c:DOUBLE PRECISION, d:] pk(a desc,c) if-not-exists | CREATE TABLE IF NOT EXISTS main."my table" ([a b] VARCHAR(10), `c` DOUBLE PRECISION, d, PRIMARY KEY (a DESC, c))
 k5 ix on t (9 NOCASE desc,6) unique partial if-not-exists | CREATE UNIQUE INDEX IF NOT EXISTS ix ON t (lower(name) COLLATE NOCASE DESC, n) WHERE n > 0
@@ -47,3 +51,6 @@ error at 10: incomplete input
 k0  select | WITH x AS (SELECT ')') SELECT * FROM x
 k1 t select | INSERT INTO t VALUES ('(') UNION SELECT 2
 error at 37: near "BOGUS": syntax error
+error at 8: near "EXPLAIN": syntax error
+error at 19: near "EXPLAIN": syntax error
+error at 8: near "EXPLAIN": syntax error
