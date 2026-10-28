@@ -1,0 +1,229 @@
+// velt:sqlite/sql/cursor — the parser's position in the tokens of one SQL text: lookahead,
+// keyword and operator matching, names, and SQLite's syntax error messages.
+
+import {
+  T_BLOB,
+  T_EOF,
+  T_IDENT,
+  T_OP,
+  T_QUOTED,
+  T_STRING,
+  SqlError,
+  Token,
+  Utf16Index,
+  tokenize,
+} from "velt:sqlite/sql/lexer";
+
+/**
+ * How deep the parser may recurse: each parenthesis, right operand, NOT or unary operand counts
+ * one, a call or subquery two. A level costs up to about five stack frames, so 600 levels stay
+ * well inside an 8 MiB main-thread stack, release builds included. Expression trees are bounded
+ * separately at SQLite's 1000 (velt:sqlite/sql/expr); past this bound the error is SQLite's
+ * for its parser stack.
+ */
+const MAX_DEPTH: usize = 600;
+
+/**
+ * Words that end an expression or a clause where a bare alias could otherwise stand
+ * (`SELECT a FROM t WHERE …`: WHERE is not an alias of t).
+ */
+export function isReserved(word: string): bool {
+  switch (word) {
+    case "ALL":
+    case "AND":
+    case "AS":
+    case "BETWEEN":
+    case "BY":
+    case "CASE":
+    case "CAST":
+    case "COLLATE":
+    case "CROSS":
+    case "DEFAULT":
+    case "DELETE":
+    case "DISTINCT":
+    case "ELSE":
+    case "END":
+    case "ESCAPE":
+    case "EXCEPT":
+    case "EXISTS":
+    case "FILTER":
+    case "FROM":
+    case "FULL":
+    case "GLOB":
+    case "GROUP":
+    case "HAVING":
+    case "IN":
+    case "INDEXED":
+    case "INNER":
+    case "INSERT":
+    case "INTERSECT":
+    case "INTO":
+    case "IS":
+    case "ISNULL":
+    case "JOIN":
+    case "LEFT":
+    case "LIKE":
+    case "LIMIT":
+    case "MATCH":
+    case "NATURAL":
+    case "NOT":
+    case "NOTNULL":
+    case "NULL":
+    case "OFFSET":
+    case "ON":
+    case "OR":
+    case "ORDER":
+    case "OUTER":
+    case "OVER":
+    case "REGEXP":
+    case "RETURNING":
+    case "RIGHT":
+    case "SELECT":
+    case "SET":
+    case "THEN":
+    case "UNION":
+    case "UPDATE":
+    case "USING":
+    case "VALUES":
+    case "WHEN":
+    case "WHERE":
+    case "WINDOW":
+    case "WITH":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** A cursor over the tokens of one SQL text. */
+export abstract class TokenCursor {
+  sql: string;
+  toks: Token[];
+  pos: usize = 0;
+  /** Byte offsets to string indexes, for cutting source text out (statements, type names). */
+  index: Utf16Index;
+  /** The nesting of expressions being parsed, bounded so deep input cannot exhaust the stack. */
+  depth: usize = 0;
+
+  constructor(sql: string) {
+    this.sql = sql;
+    this.toks = tokenize(sql);
+    this.index = new Utf16Index(sql);
+  }
+
+  /** The source text of bytes [from, to). */
+  text(from: usize, to: usize): string {
+    return this.index.slice(from, to);
+  }
+
+  /** Enters one more level of recursion; too many is SQLite's parser stack error. */
+  enter() {
+    this.depth++;
+    if (this.depth > MAX_DEPTH) {
+      throw new SqlError("Recursion limit", this.peek().start);
+    }
+  }
+
+  /** Leaves a level entered with `enter`. */
+  leave() {
+    this.depth--;
+  }
+
+  peek(): Token {
+    return this.toks[this.pos];
+  }
+
+  peekAt(k: usize): Token {
+    const i = this.pos + k;
+    return i < this.toks.length ? this.toks[i] : this.toks[this.toks.length - 1];
+  }
+
+  advance(): Token {
+    const t = this.toks[this.pos];
+    if (t.kind != T_EOF) {
+      this.pos++;
+    }
+    return t;
+  }
+
+  /** Whether the next token is the keyword `kw` (upper case). */
+  isKw(kw: string): bool {
+    const t = this.peek();
+    return t.kind == T_IDENT && t.upper == kw;
+  }
+
+  isKwAt(k: usize, kw: string): bool {
+    const t = this.peekAt(k);
+    return t.kind == T_IDENT && t.upper == kw;
+  }
+
+  eatKw(kw: string): bool {
+    if (this.isKw(kw)) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+
+  expectKw(kw: string) {
+    if (!this.eatKw(kw)) {
+      this.fail();
+    }
+  }
+
+  isOp(op: string): bool {
+    const t = this.peek();
+    return t.kind == T_OP && t.text == op;
+  }
+
+  eatOp(op: string): bool {
+    if (this.isOp(op)) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+
+  expectOp(op: string) {
+    if (!this.eatOp(op)) {
+      this.fail();
+    }
+  }
+
+  /** Throws SQLite's error for the next token: `near "x": syntax error`. */
+  fail(): never {
+    const t = this.peek();
+    if (t.kind == T_EOF) {
+      throw new SqlError("incomplete input", t.start);
+    }
+    throw new SqlError(`near "${this.source(t)}": syntax error`, t.start);
+  }
+
+  source(t: Token): string {
+    return t.kind == T_STRING || t.kind == T_QUOTED || t.kind == T_BLOB ? this.raw(t) : t.text;
+  }
+
+  raw(t: Token): string {
+    return this.text(t.start, t.end);
+  }
+
+  /** A name: a bare word that is not reserved here, or a quoted identifier. */
+  isName(): bool {
+    const t = this.peek();
+    return t.kind == T_QUOTED || (t.kind == T_IDENT && !isReserved(t.upper));
+  }
+
+  name(): string {
+    const t = this.peek();
+    if (t.kind == T_QUOTED || t.kind == T_STRING || (t.kind == T_IDENT && !isReserved(t.upper))) {
+      this.pos++;
+      return t.text;
+    }
+    this.fail();
+  }
+
+  isOpAt(k: usize, op: string): bool {
+    const t = this.peekAt(k);
+    return t.kind == T_OP && t.text == op;
+  }
+}

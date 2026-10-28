@@ -1,0 +1,66 @@
+{SELECT (COLLATE 1 Y)}
+SELECT 1+1+1+1+1+1+1+1+1… (2006 bytes): height 1000, 1 cores
+SELECT 1+1+1+1+1+1+1+1+1… (2008 bytes): error at 2006: Expression tree is too large (maximum depth 1000)
+SELECT 1+1+1+1+1+1+1+1+1… (10008 bytes): error at 2006: Expression tree is too large (maximum depth 1000)
+SELECT 1 AND 1 AND 1 AND… (6002 bytes): height 1000, 1 cores
+SELECT 1 OR 1 OR 1 OR 1 … (5008 bytes): error at 5004: Expression tree is too large (maximum depth 1000)
+SELECT 'a' || 'a' || 'a'… (7010 bytes): error at 7004: Expression tree is too large (maximum depth 1000)
+SELECT 1 BETWEEN 1 AND 1… (16008 bytes): error at 15993: Expression tree is too large (maximum depth 1000)
+SELECT a ISNULL ISNULL I… (7008 bytes): height 1000, 1 cores
+SELECT a ISNULL ISNULL I… (7015 bytes): error at 7002: Expression tree is too large (maximum depth 1000)
+SELECT 1 COLLATE x COLLA… (50008 bytes): height 1, 1 cores
+SELECT NOT NOT NOT NOT N… (4004 bytes): height 1000, 1 cores
+SELECT NOT NOT NOT NOT N… (4008 bytes): error at 7: Expression tree is too large (maximum depth 1000)
+SELECT - - - - - - - - -… (2006 bytes): height 1000, 1 cores
+SELECT - - - - - - - - -… (2008 bytes): error at 2007: Expression tree is too large (maximum depth 1000)
+SELECT CAST(CAST(CAST(CA… (12995 bytes): error at 3002: Recursion limit
+SELECT 1+(1+(1+(1+(1+(1+… (4004 bytes): error at 906: Recursion limit
+SELECT (((((((((((((((((… (2008 bytes): error at 606: Recursion limit
+SELECT (((((((((((((((((… (10008 bytes): error at 606: Recursion limit
+SELECT f(f(f(f(f(f(f(f(f… (1508 bytes): error at 606: Recursion limit
+SELECT f(f(f(f(f(f(f(f(f… (9008 bytes): error at 606: Recursion limit
+SELECT (SELECT (SELECT (… (4508 bytes): error at 2400: Recursion limit
+SELECT (SELECT (SELECT (… (27008 bytes): error at 2400: Recursion limit
+SELECT (((((((((((((((((… (5007 bytes): error at 606: Recursion limit
+SELECT 1 UNION SELECT 1 … (7493 bytes): height 1, 500 cores
+SELECT 1 UNION SELECT 1 … (7508 bytes): error at 7500: too many terms in compound SELECT
+SELECT 1 FROM t JOIN t J… (456 bytes): height 1, 1 cores
+SELECT 1 FROM t JOIN t J… (463 bytes): error at 16: at most 64 tables in a join
+SELECT 1 FROM t, t, t, t… (615 bytes): error at 615: too many FROM clause terms, max: 200
+{SELECT (- (+ 1 (* 2 3)) (% (/ 4 5) 6))}
+{SELECT (|| (|| a b) c), (- x), 1, (~ 5), (+ y), -9223372036854775808, int!9223372036854775808, 9223372036854775807, -1, 1000r, 0.5r, 0.0015r, 100000000000000000000r}
+{SELECT * FROM j0:t WHERE (OR (AND (= a 1) (!= b 2)) (AND (NOT (!= c 3)) (= d 4)))}
+{SELECT a FROM j0:t WHERE (AND (AND (AND (AND (AND (IS x NULL) (IS NOT y NULL)) (ISNULL z)) (NOTNULL w)) (NOTNULL v)) (IS u 1))}
+{SELECT (AND (BETWEEN a 1 2) (NOT BETWEEN b c d)), (IN e [1 2 3]), (NOT IN f {SELECT g FROM j0:h}), (IN i {SELECT * FROM j0:t2}), (IN j [])}
+{SELECT (LIKE name 'a%' '\'), (NOT GLOB name '*x*' _), (CASE _ [a 1 b 2] ELSE 3), (CASE x [1 'one'] ELSE _)}
+{SELECT (CAST x AS INTEGER), (CAST y AS VARCHAR(10)), (CAST z AS DOUBLE PRECISION), COUNT(*), COUNT(DISTINCT a), SUM(b) FILTER (> b 0), MAX(a b c)}
+{SELECT p.id, p.body, u.username AS author, {SELECT COUNT(*) FROM j0:likes l WHERE (= l.post_id p.id)} AS like_count FROM j0:posts p, j0:users u ON (= u.id p.user_id) ORDER p.created_at DESC, p.id DESC LIMIT 20}
+{SELECT a, b AS c, d AS e, f g, h i, j FROM j0:t1 x, j1:t2 y USING k,l, j0n:t3, j4:t4, j0:t5 INDEXED i5 WHERE (AND (EXISTS {SELECT 1}) (NOT (EXISTS {SELECT 2})))}
+{WITH RECURSIVE n(i) AS {SELECT 1 op2 SELECT (+ i 1) FROM j0:n WHERE (< i 10)} SELECT i FROM j0:n}
+{SELECT a FROM j0:t op1 SELECT b FROM j0:u op3 SELECT c FROM j0:v op4 SELECT d FROM j0:w ORDER 1 N2 LIMIT 10 OFFSET 5}
+{VALUES [1 'a'] [2 'b']}
+{SELECT ?#1, ?#2, ?5#5, ?#6, :name#7, @name#8, $x#9, :name#7, ?2#2}
+{SELECT (= (COLLATE a NOCASE) b), (= (ROW 1 2) (ROW 3 4)), (-> x '$.a'), (->> x '$.b'), (>> (<< (| (& a b) c) 2) 1), (= (< a b) (> c d))}
+{SELECT DISTINCT a FROM j0:t GROUP a b HAVING (> COUNT(*) 1) LIMIT 10 OFFSET 5}
+{SELECT * FROM j0:{SELECT 1 AS x} s, j0:json_each('[1]') j, j0:generate_series(1 9)}
+{SELECT 'it's', say "hi", x'00FF', TRUE, FALSE, TRUE(), CURRENT_TIMESTAMP()}
+error at 10: incomplete input
+error at 14: near "WHERE": syntax error
+error at 7: unrecognized token: "'abc"
+error at 7: unrecognized token: "12abc"
+error at 7: unrecognized token: "x'0'"
+error at 24: incomplete input
+error at 7: variable number must be between ?1 and ?32766
+error at 12: window functions are not supported yet
+{SELECT (= 1 (NOT 0)), (AND (= 1 (NOT 0)) 0), (= 0 (NOT (= 0 0))), (+ 1 (NOT 0)), (NOT (EXISTS {SELECT 1}))}
+{SELECT LIKE(1 2), GLOB('a' 'a'), MATCH(1 2), REGEXP(1 2), (LIKE a b _)}
+{SELECT 1, 255, 0}
+{SELECT (- -9223372036854775808), (- -9223372036854775808), 5}
+{SELECT 123456789012345678, 999999999999999999, -123456789012345678}
+error at 0: near "ſelect": syntax error
+{SELECT (BETWEEN 2 (= 1 1) 3), (= (BETWEEN 5 1 3) 0)}
+{SELECT 1000, 1000.5r, 16, 10000000000r, 1.5r, 255}
+error at 7: unrecognized token: "1__0"
+error at 7: unrecognized token: "1_"
+error at 7: unrecognized token: "1._5"
+{SELECT (= (COLLATE a Y) (COLLATE b Z))}

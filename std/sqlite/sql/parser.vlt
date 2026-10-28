@@ -1,0 +1,334 @@
+// velt:sqlite/sql/parser — SELECT (with WITH, compound cores, joins, ORDER BY, LIMIT) of
+// SQLite's grammar (parse.y), on the expression grammar of velt:sqlite/sql/expr.
+
+import { ExprParser } from "velt:sqlite/sql/expr";
+import { SqlError, T_STRING } from "velt:sqlite/sql/lexer";
+import {
+  C_EXCEPT,
+  C_INTERSECT,
+  C_NONE,
+  C_UNION,
+  C_UNION_ALL,
+  Cte,
+  E_STAR,
+  Expr,
+  FromItem,
+  J_CROSS,
+  J_FULL,
+  J_INNER,
+  J_LEFT,
+  J_RIGHT,
+  OrderTerm,
+  ResultColumn,
+  Select,
+  SelectCore,
+} from "velt:sqlite/sql/ast";
+
+/** SQLite's limits: terms of a compound SELECT, FROM items, and tables in one join. */
+const MAX_COMPOUND: usize = 500;
+const MAX_FROM: usize = 200;
+const MAX_JOIN: usize = 64;
+
+/** The height of a SELECT's highest expression, as SQLite's heightOfSelect (all its cores). */
+function selectHeight(s: Select): i64 {
+  let h: i64 = 0;
+  for (const c of s.cores) {
+    for (const r of c.columns) {
+      h = higher(h, r.expr);
+    }
+    h = higher(h, c.where);
+    h = higher(h, c.having);
+    for (const e of c.groupBy) {
+      h = higher(h, e);
+    }
+    for (const row of c.values) {
+      for (const e of row) {
+        h = higher(h, e);
+      }
+    }
+  }
+  for (const o of s.orderBy) {
+    h = higher(h, o.expr);
+  }
+  h = higher(h, s.limit);
+  return higher(h, s.offset);
+}
+
+function higher(h: i64, e: Expr | null): i64 {
+  return e != null && e!.height > h ? e!.height : h;
+}
+
+/** The SQL parser: `new Parser(sql)`, then `select()` or (velt:sqlite/sql/statement) a statement. */
+export class Parser extends ExprParser {
+  constructor(sql: string) {
+    super(sql);
+  }
+
+  // SELECT.
+
+  select(): Select {
+    // A subquery nests deeper than an expression does: it counts as a level of its own.
+    this.enter();
+    const s = this.selectBody();
+    this.leave();
+    s.height = selectHeight(s);
+    return s;
+  }
+
+  /** A SELECT's WITH, cores, ORDER BY and LIMIT, at the current nesting level. */
+  selectBody(): Select {
+    const s = new Select();
+    if (this.eatKw("WITH")) {
+      s.recursive = this.eatKw("RECURSIVE");
+      this.ctes(s);
+    }
+    s.cores.push(this.core(C_NONE));
+    while (true) {
+      let op = C_NONE;
+      if (this.isKw("UNION")) {
+        this.pos++;
+        op = this.eatKw("ALL") ? C_UNION_ALL : C_UNION;
+      } else if (this.eatKw("INTERSECT")) {
+        op = C_INTERSECT;
+      } else if (this.eatKw("EXCEPT")) {
+        op = C_EXCEPT;
+      } else {
+        break;
+      }
+      if (s.cores.length >= MAX_COMPOUND) {
+        throw new SqlError("too many terms in compound SELECT", this.peek().start);
+      }
+      s.cores.push(this.core(op));
+    }
+    if (this.isKw("ORDER")) {
+      this.pos++;
+      this.expectKw("BY");
+      s.orderBy = this.orderTerms();
+    }
+    if (this.eatKw("LIMIT")) {
+      s.limit = this.expr();
+      if (this.eatKw("OFFSET")) {
+        s.offset = this.expr();
+      } else if (this.eatOp(",")) {
+        // LIMIT offset, count
+        s.offset = s.limit;
+        s.limit = this.expr();
+      }
+    }
+    return s;
+  }
+
+  ctes(s: Select) {
+    while (true) {
+      const name = this.name();
+      const columns: string[] = [];
+      if (this.eatOp("(")) {
+        columns.push(this.name());
+        while (this.eatOp(",")) {
+          columns.push(this.name());
+        }
+        this.expectOp(")");
+      }
+      this.expectKw("AS");
+      let materialized: u8 = 0;
+      if (this.eatKw("MATERIALIZED")) {
+        materialized = 1;
+      } else if (this.isKw("NOT") && this.isKwAt(1, "MATERIALIZED")) {
+        this.pos += 2;
+        materialized = 2;
+      }
+      this.expectOp("(");
+      const c = new Cte(name, this.select());
+      this.expectOp(")");
+      c.columns = columns;
+      c.materialized = materialized;
+      s.with.push(c);
+      if (!this.eatOp(",")) {
+        return;
+      }
+    }
+  }
+
+  orderTerms(): OrderTerm[] {
+    const out: OrderTerm[] = [];
+    while (true) {
+      const e = this.expr();
+      let desc = false;
+      if (this.eatKw("DESC")) {
+        desc = true;
+      } else {
+        this.eatKw("ASC");
+      }
+      let nulls: u8 = 0;
+      if (this.eatKw("NULLS")) {
+        if (this.eatKw("FIRST")) {
+          nulls = 1;
+        } else {
+          this.expectKw("LAST");
+          nulls = 2;
+        }
+      }
+      out.push(OrderTerm { expr: e, desc: desc, nulls: nulls });
+      if (!this.eatOp(",")) {
+        return out;
+      }
+    }
+  }
+
+  core(op: u8): SelectCore {
+    const c = new SelectCore();
+    c.op = op;
+    if (this.eatKw("VALUES")) {
+      while (true) {
+        this.expectOp("(");
+        const row: Expr[] = [this.expr()];
+        while (this.eatOp(",")) {
+          row.push(this.expr());
+        }
+        this.expectOp(")");
+        c.values.push(row);
+        if (!this.eatOp(",")) {
+          return c;
+        }
+      }
+    }
+    this.expectKw("SELECT");
+    if (this.eatKw("DISTINCT")) {
+      c.distinct = true;
+    } else {
+      this.eatKw("ALL");
+    }
+    while (true) {
+      if (this.isOp("*")) {
+        c.columns.push(ResultColumn { expr: new Expr(E_STAR, this.advance().start), alias: "" });
+      } else {
+        const e = this.expr();
+        let alias = "";
+        if (this.eatKw("AS")) {
+          alias = this.name();
+        } else if (this.isName() || this.peek().kind == T_STRING) {
+          alias = this.name();
+        }
+        c.columns.push(ResultColumn { expr: e, alias: alias });
+      }
+      if (!this.eatOp(",")) {
+        break;
+      }
+    }
+    if (this.eatKw("FROM")) {
+      c.from = this.fromItems();
+    }
+    if (this.eatKw("WHERE")) {
+      c.where = this.expr();
+    }
+    if (this.isKw("GROUP")) {
+      this.pos++;
+      this.expectKw("BY");
+      c.groupBy.push(this.expr());
+      while (this.eatOp(",")) {
+        c.groupBy.push(this.expr());
+      }
+    }
+    if (this.eatKw("HAVING")) {
+      c.having = this.expr();
+    }
+    if (this.isKw("WINDOW")) {
+      throw new SqlError("window functions are not supported yet", this.peek().start);
+    }
+    return c;
+  }
+
+  /** FROM's items, each with how it joins the ones before it. */
+  fromItems(): FromItem[] {
+    const out: FromItem[] = [this.fromItem(J_INNER, false)];
+    const at = this.peek().start;
+    while (true) {
+      if (out.length > MAX_FROM) {
+        throw new SqlError(`too many FROM clause terms, max: ${MAX_FROM}`, this.peek().start);
+      }
+      if (this.eatOp(",")) {
+        out.push(this.fromItem(J_INNER, false));
+        continue;
+      }
+      const natural = this.eatKw("NATURAL");
+      let join = J_INNER;
+      if (this.eatKw("LEFT")) {
+        join = J_LEFT;
+        this.eatKw("OUTER");
+      } else if (this.eatKw("RIGHT")) {
+        join = J_RIGHT;
+        this.eatKw("OUTER");
+      } else if (this.eatKw("FULL")) {
+        join = J_FULL;
+        this.eatKw("OUTER");
+      } else if (this.eatKw("CROSS")) {
+        join = J_CROSS;
+      } else {
+        this.eatKw("INNER");
+      }
+      if (!this.eatKw("JOIN")) {
+        if (natural || join != J_INNER) {
+          this.fail();
+        }
+        if (out.length > MAX_JOIN) {
+          throw new SqlError(`at most ${MAX_JOIN} tables in a join`, at);
+        }
+        return out;
+      }
+      const item = this.fromItem(join, natural);
+      if (this.eatKw("ON")) {
+        item.on = this.expr();
+      } else if (this.eatKw("USING")) {
+        this.expectOp("(");
+        item.using.push(this.name());
+        while (this.eatOp(",")) {
+          item.using.push(this.name());
+        }
+        this.expectOp(")");
+      }
+      out.push(item);
+    }
+  }
+
+  fromItem(join: u8, natural: bool): FromItem {
+    const item = new FromItem();
+    item.join = join;
+    item.natural = natural;
+    if (this.eatOp("(")) {
+      if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+        item.subquery = this.select();
+        this.expectOp(")");
+      } else {
+        throw new SqlError("parenthesized joins are not supported yet", this.peek().start);
+      }
+    } else {
+      item.name = this.name();
+      if (this.eatOp(".")) {
+        item.schema = item.name;
+        item.name = this.name();
+      }
+      if (this.eatOp("(")) {
+        if (!this.isOp(")")) {
+          item.args.push(this.expr());
+          while (this.eatOp(",")) {
+            item.args.push(this.expr());
+          }
+        }
+        this.expectOp(")");
+      }
+    }
+    if (this.eatKw("AS")) {
+      item.alias = this.name();
+    } else if (this.isName()) {
+      item.alias = this.name();
+    }
+    if (this.eatKw("INDEXED")) {
+      this.expectKw("BY");
+      item.indexedBy = this.name();
+    } else if (this.isKw("NOT") && this.isKwAt(1, "INDEXED")) {
+      this.pos += 2;
+      item.notIndexed = true;
+    }
+    return item;
+  }
+}

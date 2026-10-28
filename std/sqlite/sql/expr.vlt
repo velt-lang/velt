@@ -1,0 +1,785 @@
+// velt:sqlite/sql/expr — the expressions of SQLite's grammar (parse.y),
+// by recursive descent. SELECT and the statements are in velt:sqlite/sql/parser, a subclass
+// (expressions hold subqueries, so they call its `select()`).
+//
+// Precedence, lowest first (https://sqlite.org/lang_expr.html#operators):
+// OR; AND; NOT; = == != <> IS IN LIKE GLOB MATCH REGEXP BETWEEN ISNULL NOTNULL;
+// < <= > >=; & | << >>; + -; * / %; || -> ->>; COLLATE; unary - + ~.
+// The binary levels are parsed by precedence climbing (`binaryFrom`), and nesting is bounded
+// (velt:sqlite/sql/cursor's `enter`), so deeply nested input fails with SQLite's error.
+
+import {
+  T_BLOB,
+  T_EOF,
+  T_IDENT,
+  T_INTEGER,
+  T_OP,
+  T_PARAM,
+  T_QUOTED,
+  T_REAL,
+  T_STRING,
+  SqlError,
+  Token,
+} from "velt:sqlite/sql/lexer";
+import {
+  C_EXCEPT,
+  C_INTERSECT,
+  C_NONE,
+  C_UNION,
+  C_UNION_ALL,
+  Cte,
+  E_BETWEEN,
+  E_BINARY,
+  E_BLOB,
+  E_CALL,
+  E_CASE,
+  E_CAST,
+  E_COLLATE,
+  E_COLUMN,
+  E_EXISTS,
+  E_FALSE,
+  E_INT,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_IS,
+  E_ISNULL,
+  E_LIKE,
+  E_NULL,
+  E_PARAM,
+  E_REAL,
+  E_ROW,
+  E_STAR,
+  E_STRING,
+  E_SUBQUERY,
+  E_TRUE,
+  E_UNARY,
+  Expr,
+  FromItem,
+  J_CROSS,
+  J_FULL,
+  J_INNER,
+  J_LEFT,
+  J_RIGHT,
+  OrderTerm,
+  ResultColumn,
+  Select,
+  SelectCore,
+} from "velt:sqlite/sql/ast";
+import { TokenCursor, isReserved } from "velt:sqlite/sql/cursor";
+
+/** The expression grammar, on a token cursor. */
+export abstract class ExprParser extends TokenCursor {
+  /** `?` parameters are numbered in order; `?NNN` sets the counter. */
+  params: i64 = 0;
+  /** Named parameters in order of first use, and the index each was given. */
+  names: string[] = [];
+  nameIndex: i64[] = [];
+
+  constructor(sql: string) {
+    super(sql);
+  }
+
+  /** A whole SELECT (velt:sqlite/sql/parser). */
+  abstract select(): Select;
+
+  // Expressions, lowest precedence first.
+
+  expr(): Expr {
+    this.enter();
+    const e = this.binaryFrom(L_OR);
+    this.leave();
+    return e;
+  }
+
+  /**
+   * An operand followed by the binary operators that bind at least as tightly as level `min`,
+   * left to right (precedence climbing: one frame per level actually used, so nesting stays
+   * cheap on the stack).
+   */
+  binaryFrom(min: i64): Expr {
+    let e = this.collate();
+    while (true) {
+      const level = this.levelHere();
+      if (level < min) {
+        return e;
+      }
+      e = this.infix(e, level);
+    }
+  }
+
+  /** The level of the binary operator at the cursor, or L_NONE. */
+  levelHere(): i64 {
+    const t = this.peek();
+    if (t.kind == T_OP) {
+      return opLevel(t.text);
+    }
+    if (t.kind != T_IDENT) {
+      return L_NONE;
+    }
+    const w = t.upper;
+    if (w == "OR") {
+      return L_OR;
+    }
+    if (w == "AND") {
+      return L_AND;
+    }
+    if (w == "IS" || w == "ISNULL" || w == "NOTNULL" || isMatchWord(w) || w == "IN") {
+      return L_EQ;
+    }
+    if (w == "BETWEEN") {
+      return L_EQ;
+    }
+    // NOT before IN, LIKE, GLOB, MATCH, REGEXP, BETWEEN, NULL.
+    if (w == "NOT") {
+      const n = this.peekAt(1);
+      if (
+        n.kind == T_IDENT &&
+        (n.upper == "IN" || n.upper == "BETWEEN" || n.upper == "NULL" || isMatchWord(n.upper))
+      ) {
+        return L_EQ;
+      }
+    }
+    return L_NONE;
+  }
+
+  /** The operator at the cursor (of level `level`) applied to `e` and its right side. */
+  infix(e: Expr, level: i64): Expr {
+    if (level == L_EQ) {
+      return this.equality(e);
+    }
+    const t = this.advance();
+    if (level == L_CONCAT) {
+      return binary(t.text, e, this.collate(), t.start);
+    }
+    const op = t.kind == T_IDENT ? t.upper : t.text == "==" ? "=" : t.text == "<>" ? "!=" : t.text;
+    // A right operand nests (`1+(1+(…`): it counts toward the recursion bound.
+    this.enter();
+    const right = this.binaryFrom(level + 1);
+    this.leave();
+    return binary(op, e, right, t.start);
+  }
+
+  /** NOT and its operand: everything up to the next AND or OR (`1 = NOT 0 AND x`). */
+  notOperand(): Expr {
+    // A run of NOTs shares one operand: counted, not recursed into.
+    const ats: usize[] = [];
+    while (this.isKw("NOT")) {
+      ats.push(this.advance().start);
+    }
+    this.enter();
+    let e = this.binaryFrom(L_NOT);
+    this.leave();
+    for (let k = ats.length; k > 0; k--) {
+      const u = new Expr(E_UNARY, ats[k - 1]);
+      u.op = "NOT";
+      u.a = e;
+      e = sized(u);
+    }
+    return e;
+  }
+
+  /** One operator of `=`'s level: = == != <> IS, IN, LIKE and kin, BETWEEN, ISNULL, NOT NULL. */
+  equality(e: Expr): Expr {
+    const t = this.peek();
+    if (t.kind == T_OP) {
+      this.pos++;
+      const op = t.text == "==" ? "=" : t.text == "<>" ? "!=" : t.text;
+      return binary(op, e, this.binaryFrom(L_CMP), t.start);
+    }
+    let not = false;
+    let k: usize = 0;
+    if (t.upper == "NOT") {
+      not = true;
+      k = 1;
+    }
+    const word = this.peekAt(k).upper;
+    if (word == "IS") {
+      this.pos++;
+      const n = this.eatKw("NOT");
+      if (this.eatKw("DISTINCT")) {
+        // IS [NOT] DISTINCT FROM: IS NOT / IS.
+        this.expectKw("FROM");
+        return isExpr(e, this.binaryFrom(L_CMP), !n, t.start);
+      }
+      return isExpr(e, this.binaryFrom(L_CMP), n, t.start);
+    }
+    if (word == "ISNULL" || word == "NOTNULL" || word == "NULL") {
+      this.pos += k + 1;
+      return isNull(e, word != "ISNULL", t.start);
+    }
+    this.pos += k + 1;
+    if (word == "IN") {
+      return this.inExpr(e, not, t.start);
+    }
+    if (word == "BETWEEN") {
+      const b = new Expr(E_BETWEEN, t.start);
+      b.a = e;
+      // The low bound binds like `=` (`x BETWEEN 1 = 1 AND 3`), the high one tighter.
+      b.b = this.binaryFrom(L_EQ);
+      this.expectKw("AND");
+      b.c = this.binaryFrom(L_CMP);
+      b.not = not;
+      return sized(b);
+    }
+    const l = new Expr(E_LIKE, t.start);
+    l.op = word;
+    l.a = e;
+    l.b = this.binaryFrom(L_CMP);
+    if (this.eatKw("ESCAPE")) {
+      l.c = this.binaryFrom(L_CMP);
+    }
+    l.not = not;
+    return sized(l);
+  }
+
+  inExpr(left: Expr, not: bool, at: usize): Expr {
+    if (!this.isOp("(")) {
+      // IN table-name: a subquery over the whole table.
+      const s = new Select();
+      const core = new SelectCore();
+      const item = new FromItem();
+      item.name = this.name();
+      core.from.push(item);
+      core.columns.push(ResultColumn { expr: new Expr(E_STAR, at), alias: "" });
+      s.cores.push(core);
+      const e = new Expr(E_IN_SELECT, at);
+      e.a = left;
+      e.select = s;
+      e.not = not;
+      return sized(e);
+    }
+    this.pos++;
+    if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+      const e = new Expr(E_IN_SELECT, at);
+      e.a = left;
+      e.select = this.select();
+      e.not = not;
+      this.expectOp(")");
+      return sized(e);
+    }
+    const e = new Expr(E_IN_LIST, at);
+    e.a = left;
+    e.not = not;
+    if (!this.isOp(")")) {
+      e.args.push(this.expr());
+      while (this.eatOp(",")) {
+        e.args.push(this.expr());
+      }
+    }
+    this.expectOp(")");
+    return sized(e);
+  }
+
+  collate(): Expr {
+    let e = this.unary();
+    while (this.isKw("COLLATE")) {
+      const at = this.advance().start;
+      const name = this.name().toUpperCase();
+      if (e.kind == E_COLLATE) {
+        // A run of COLLATE is one node: the outermost collation wins, as in SQLite
+        // (`'a' = 'A' COLLATE nocase COLLATE binary` is 0), and the tree stays as high as it is.
+        e.name = name;
+        continue;
+      }
+      const c = new Expr(E_COLLATE, at);
+      c.a = e;
+      c.name = name;
+      // COLLATE adds no level (SQLite's TK_COLLATE node carries no height).
+      c.height = e.height;
+      e = c;
+    }
+    return e;
+  }
+
+  unary(): Expr {
+    // Prefix operators are read as a run and applied innermost first: no recursion per operator.
+    const ops: Token[] = [];
+    while (true) {
+      const t = this.peek();
+      if (t.kind == T_OP && (t.text == "-" || t.text == "+" || t.text == "~")) {
+        ops.push(t);
+        this.pos++;
+      } else {
+        break;
+      }
+    }
+    let e = this.primary();
+    for (let k = ops.length; k > 0; k--) {
+      e = prefix(ops[k - 1], e);
+    }
+    return e;
+  }
+
+  primary(): Expr {
+    const t = this.peek();
+    const at = t.start;
+    if (t.kind == T_INTEGER) {
+      this.pos++;
+      return integerLiteral(t.text, at);
+    }
+    if (t.kind == T_REAL) {
+      this.pos++;
+      const e = new Expr(E_REAL, at);
+      e.rval = parseFloat(t.text);
+      return e;
+    }
+    if (t.kind == T_STRING) {
+      this.pos++;
+      const e = new Expr(E_STRING, at);
+      e.text = t.text;
+      return e;
+    }
+    if (t.kind == T_BLOB) {
+      this.pos++;
+      const e = new Expr(E_BLOB, at);
+      e.text = t.text;
+      return e;
+    }
+    if (t.kind == T_PARAM) {
+      this.pos++;
+      return this.param(t);
+    }
+    if (t.kind == T_OP && t.text == "(") {
+      this.pos++;
+      if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+        const e = new Expr(E_SUBQUERY, at);
+        e.select = this.select();
+        this.expectOp(")");
+        return sized(e);
+      }
+      // Parentheses add no level: SQLite makes no node for them.
+      const first = this.expr();
+      if (this.isOp(",")) {
+        const row = new Expr(E_ROW, at);
+        row.args.push(first);
+        while (this.eatOp(",")) {
+          row.args.push(this.expr());
+        }
+        this.expectOp(")");
+        return sized(row);
+      }
+      this.expectOp(")");
+      return first;
+    }
+    if (t.kind == T_IDENT) {
+      const w = t.upper;
+      if (w == "NOT") {
+        // NOT in an operand's place (`1 = NOT 0`); NOT EXISTS is NOT of EXISTS, as in SQLite.
+        return this.notOperand();
+      }
+      if ((w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP") && this.isOpAt(1, "(")) {
+        // The functions behind the operators, called by name.
+        this.pos++;
+        return this.call(t);
+      }
+      if (w == "NULL") {
+        this.pos++;
+        return new Expr(E_NULL, at);
+      }
+      if (w == "TRUE" && !this.isOpAt(1, "(")) {
+        this.pos++;
+        return new Expr(E_TRUE, at);
+      }
+      if (w == "FALSE" && !this.isOpAt(1, "(")) {
+        this.pos++;
+        return new Expr(E_FALSE, at);
+      }
+      if (w == "CURRENT_TIME" || w == "CURRENT_DATE" || w == "CURRENT_TIMESTAMP") {
+        this.pos++;
+        const e = new Expr(E_CALL, at);
+        e.name = w;
+        return e;
+      }
+      if (w == "CASE") {
+        return this.caseExpr();
+      }
+      if (w == "CAST") {
+        this.pos++;
+        this.expectOp("(");
+        const e = new Expr(E_CAST, at);
+        e.a = this.expr();
+        this.expectKw("AS");
+        e.name = this.typeName();
+        this.expectOp(")");
+        return sized(e);
+      }
+      if (w == "EXISTS") {
+        this.pos++;
+        this.expectOp("(");
+        const e = new Expr(E_EXISTS, at);
+        e.select = this.select();
+        this.expectOp(")");
+        return sized(e);
+      }
+      if (w == "RAISE") {
+        this.fail();
+      }
+    }
+    if (t.kind == T_IDENT || t.kind == T_QUOTED) {
+      if (t.kind == T_IDENT && isReserved(t.upper)) {
+        this.fail();
+      }
+      this.pos++;
+      if (this.isOp("(") && t.kind == T_IDENT) {
+        return this.call(t);
+      }
+      // name, table.name, schema.table.name
+      if (this.eatOp(".")) {
+        if (this.eatOp("*")) {
+          const s = new Expr(E_STAR, at);
+          s.table = t.text;
+          return s;
+        }
+        const second = this.name();
+        const c = new Expr(E_COLUMN, at);
+        if (this.eatOp(".")) {
+          c.table = second;
+          c.name = this.name();
+        } else {
+          c.table = t.text;
+          c.name = second;
+        }
+        return c;
+      }
+      const c = new Expr(E_COLUMN, at);
+      c.name = t.text;
+      // A double-quoted word that names no column is a string (SQLite's fallback); the
+      // planner decides, so remember the quoting.
+      c.op = t.kind == T_QUOTED ? "quoted" : "";
+      return c;
+    }
+    this.fail();
+  }
+
+  param(t: Token): Expr {
+    const e = new Expr(E_PARAM, t.start);
+    e.text = t.text;
+    if (t.text == "?") {
+      this.params++;
+      e.ival = this.params;
+    } else if (__intrinsic_str_byte_at(t.text, 0) == 63) {
+      const n = parseInt(t.text.slice(1), 10) as i64;
+      if (n < 1 || n > 32766) {
+        throw new SqlError(`variable number must be between ?1 and ?32766`, t.start);
+      }
+      e.ival = n;
+      if (n > this.params) {
+        this.params = n;
+      }
+    } else {
+      // A name keeps the index of its first use.
+      const i = this.names.indexOf(t.text);
+      if (i >= 0) {
+        e.ival = this.nameIndex[i];
+      } else {
+        this.params++;
+        this.names.push(t.text);
+        this.nameIndex.push(this.params);
+        e.ival = this.params;
+      }
+    }
+    return e;
+  }
+
+  call(fn: Token): Expr {
+    // A call's arguments nest a level deeper (its frames are more than a parenthesis's).
+    this.enter();
+    const e = this.callBody(fn);
+    this.leave();
+    return e;
+  }
+
+  /** The call of `fn` (its name already consumed): arguments, FILTER. */
+  callBody(fn: Token): Expr {
+    const e = new Expr(E_CALL, fn.start);
+    e.name = fn.upper;
+    this.expectOp("(");
+    if (this.eatOp("*")) {
+      e.star = true;
+    } else if (!this.isOp(")")) {
+      e.distinct = this.eatKw("DISTINCT");
+      if (!e.distinct) {
+        this.eatKw("ALL");
+      }
+      e.args.push(this.expr());
+      while (this.eatOp(",")) {
+        e.args.push(this.expr());
+      }
+    }
+    this.expectOp(")");
+    if (this.eatKw("FILTER")) {
+      this.expectOp("(");
+      this.expectKw("WHERE");
+      e.filter = this.expr();
+      this.expectOp(")");
+    }
+    if (this.isKw("OVER")) {
+      throw new SqlError("window functions are not supported yet", this.peek().start);
+    }
+    return sized(e);
+  }
+
+  caseExpr(): Expr {
+    const e = new Expr(E_CASE, this.advance().start);
+    if (!this.isKw("WHEN")) {
+      e.a = this.expr();
+    }
+    if (!this.isKw("WHEN")) {
+      this.fail();
+    }
+    while (this.eatKw("WHEN")) {
+      e.args.push(this.expr());
+      this.expectKw("THEN");
+      e.args.push(this.expr());
+    }
+    if (this.eatKw("ELSE")) {
+      e.b = this.expr();
+    }
+    this.expectKw("END");
+    return sized(e);
+  }
+
+  /** A type name: words, then an optional (n) or (n, m). */
+  typeName(): string {
+    let s = "";
+    while (this.peek().kind == T_IDENT || this.peek().kind == T_QUOTED) {
+      const w = this.peek().upper;
+      if (this.peek().kind == T_IDENT && (isReserved(w) || startsConstraint(w))) {
+        break;
+      }
+      s += (s.length > 0 ? " " : "") + this.advance().text;
+    }
+    if (this.isOp("(")) {
+      const from = this.peek().start;
+      let depth = 0;
+      while (true) {
+        const t = this.advance();
+        if (t.kind == T_EOF) {
+          this.fail();
+        }
+        if (t.kind == T_OP && t.text == "(") {
+          depth++;
+        } else if (t.kind == T_OP && t.text == ")") {
+          depth--;
+          if (depth == 0) {
+            s += this.text(from, t.end);
+            break;
+          }
+        }
+      }
+    }
+    return s;
+  }
+}
+
+/** Binary operator levels, loosest first (L_NOT is NOT's operand: past AND and OR). */
+const L_NONE: i64 = 0;
+const L_OR: i64 = 1;
+const L_AND: i64 = 2;
+const L_NOT: i64 = 3;
+const L_EQ: i64 = 4;
+const L_CMP: i64 = 5;
+const L_BIT: i64 = 6;
+const L_ADD: i64 = 7;
+const L_MUL: i64 = 8;
+const L_CONCAT: i64 = 9;
+
+/** The level of a binary operator token (`=`, `<`, `+`, `||`, …), or L_NONE. */
+function opLevel(op: string): i64 {
+  switch (op) {
+    case "=":
+    case "==":
+    case "!=":
+    case "<>":
+      return L_EQ;
+    case "<":
+    case "<=":
+    case ">":
+    case ">=":
+      return L_CMP;
+    case "&":
+    case "|":
+    case "<<":
+    case ">>":
+      return L_BIT;
+    case "+":
+    case "-":
+      return L_ADD;
+    case "*":
+    case "/":
+    case "%":
+      return L_MUL;
+    case "||":
+    case "->":
+    case "->>":
+      return L_CONCAT;
+    default:
+      return L_NONE;
+  }
+}
+
+/** Whether `w` (upper case) is one of the pattern operators LIKE, GLOB, MATCH, REGEXP. */
+function isMatchWord(w: string): bool {
+  return w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP";
+}
+
+/** Words that start a column constraint, so they end a column's type name. */
+function startsConstraint(w: string): bool {
+  return w == "CONSTRAINT" ||
+    w == "PRIMARY" ||
+    w == "UNIQUE" ||
+    w == "CHECK" ||
+    w == "REFERENCES" ||
+    w == "GENERATED";
+}
+
+function binary(op: string, a: Expr, b: Expr, at: usize): Expr {
+  const e = new Expr(E_BINARY, at);
+  e.op = op;
+  e.a = a;
+  e.b = b;
+  return sized(e);
+}
+
+/**
+ * Prefix operator `t` applied to `operand`. A negative literal folds, so -9223372036854775808
+ * is an integer; negating that one overflows, so it stays an operation (SQLite gives the REAL
+ * 9.2233720368547758e+18). A folded minus still counts as the level SQLite's unfolded
+ * TK_UMINUS would add.
+ */
+function prefix(t: Token, operand: Expr): Expr {
+  if (t.text == "-" && operand.kind == E_REAL) {
+    operand.rval = -operand.rval;
+    return raised(operand);
+  }
+  if (
+    t.text == "-" &&
+    operand.kind == E_INT &&
+    operand.text == "" &&
+    operand.ival != -9223372036854775807 - 1
+  ) {
+    operand.ival = -operand.ival;
+    return raised(operand);
+  }
+  if (t.text == "-" && operand.kind == E_INT && operand.text == "9223372036854775808") {
+    operand.ival = -9223372036854775807 - 1;
+    operand.text = "";
+    return raised(operand);
+  }
+  const u = new Expr(E_UNARY, t.start);
+  u.op = t.text;
+  u.a = operand;
+  return sized(u);
+}
+
+/** SQLite's SQLITE_MAX_EXPR_DEPTH: the highest expression tree it accepts. */
+const MAX_HEIGHT: i64 = 1000;
+
+/** Sets `e.height` to one more than its highest operand, as SQLite's exprSetHeight. */
+function sized(e: Expr): Expr {
+  let h: i64 = 0;
+  if (e.a != null) {
+    h = e.a!.height;
+  }
+  if (e.b != null && e.b!.height > h) {
+    h = e.b!.height;
+  }
+  if (e.c != null && e.c!.height > h) {
+    h = e.c!.height;
+  }
+  for (const x of e.args) {
+    if (x.height > h) {
+      h = x.height;
+    }
+  }
+  if (e.filter != null && e.filter!.height > h) {
+    h = e.filter!.height;
+  }
+  if (e.select != null && e.select!.height > h) {
+    h = e.select!.height;
+  }
+  e.height = h + 1;
+  return checked(e);
+}
+
+/** `e` one level higher (a folded operator). */
+function raised(e: Expr): Expr {
+  e.height++;
+  return checked(e);
+}
+
+/** Throws SQLite's error for a tree higher than it accepts (sqlite3ExprCheckHeight). */
+function checked(e: Expr): Expr {
+  if (e.height > MAX_HEIGHT) {
+    throw new SqlError(`Expression tree is too large (maximum depth ${MAX_HEIGHT})`, e.at);
+  }
+  return e;
+}
+
+function isExpr(a: Expr, b: Expr, not: bool, at: usize): Expr {
+  const e = new Expr(E_IS, at);
+  e.a = a;
+  e.b = b;
+  e.not = not;
+  return sized(e);
+}
+
+function isNull(a: Expr, not: bool, at: usize): Expr {
+  const e = new Expr(E_ISNULL, at);
+  e.a = a;
+  e.not = not;
+  return sized(e);
+}
+
+/**
+ * An integer literal: decimal or 0x hex; a decimal one too large for i64 is a REAL, except
+ * 9223372036854775808, which a unary minus may still turn into the smallest i64 (kept in
+ * `text` until then).
+ */
+function integerLiteral(text: string, at: usize): Expr {
+  if (text.length > 2 && (text.startsWith("0x") || text.startsWith("0X"))) {
+    // Hex literals are 64-bit two's complement; more than 16 digits (leading zeros aside) is
+    // an error in SQLite.
+    let z: i64 = 2;
+    while (z < (text.length as i64) - 1 && text.charCodeAt(z) == 48) {
+      z++;
+    }
+    const digits = text.slice(z);
+    if (digits.length > 16) {
+      throw new SqlError(`hex literal too big: ${text}`, at);
+    }
+    let v: u64 = 0;
+    for (let i: usize = 0; i < digits.length; i++) {
+      const c = digits.charCodeAt(i as i64);
+      const d = c <= 57 ? c - 48 : (c | 32) - 87;
+      v = (v << 4) | (d as u64);
+    }
+    const e = new Expr(E_INT, at);
+    e.ival = v as i64;
+    return e;
+  }
+  // Exact: decimal digits accumulate in a u64 (a float would round past 2^53).
+  const e = new Expr(E_INT, at);
+  let v: u64 = 0;
+  let over = false;
+  for (let i: usize = 0; i < text.length; i++) {
+    const d = (text.charCodeAt(i as i64) - 48) as u64;
+    if (v > (18446744073709551615 - d) / 10) {
+      over = true;
+      break;
+    }
+    v = v * 10 + d;
+  }
+  if (!over && v <= 9223372036854775807) {
+    e.ival = v as i64;
+    return e;
+  }
+  if (!over && v == 9223372036854775808) {
+    e.text = text;
+    e.ival = 0;
+    return e;
+  }
+  const r = new Expr(E_REAL, at);
+  r.rval = parseFloat(text);
+  return r;
+}
