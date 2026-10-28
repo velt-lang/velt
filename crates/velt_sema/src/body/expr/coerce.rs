@@ -605,6 +605,10 @@ impl FnCx<'_, '_> {
         }
         if self.cx.is_generic_fn(expected) {
             d = d.with_note(super::generic_conversions::fixed_note(&e, &f));
+        } else if let Some(name) = self.bound_only_iface(expected) {
+            d = d.with_note(format!(
+                "`{name}` is only a bound for type parameters (`T extends {name}`): no value has it as its type"
+            ));
         } else if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (
                 self.adapt_refusal(expected, found.ty),

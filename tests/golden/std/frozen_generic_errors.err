@@ -22,3 +22,11 @@ frozen_generic_errors.vlt:35:20: error: the type `T` does not implement `Frozen`
 
 frozen_generic_errors.vlt:39:20: error: the type `T` does not implement `Frozen`
   = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:44:22: error: mismatched types
+  = note: expected Frozen, found f64
+  = note: `Frozen` is only a bound for type parameters (`T extends Frozen`): no value has it as its type
+
+frozen_generic_errors.vlt:45:27: error: mismatched types
+  = note: expected AtomicValue, found f64
+  = note: `AtomicValue` is only a bound for type parameters (`T extends AtomicValue`): no value has it as its type

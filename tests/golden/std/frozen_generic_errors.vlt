@@ -39,4 +39,10 @@ function viaTag<T extends Tag>(v: T): Store<T> {
   return new Store<T>(v);
 }
 
+// Both are only bounds: no value has them as its type.
+function boundsOnly() {
+  const fv: Frozen = 1;
+  const av: AtomicValue = 5;
+}
+
 function main() {}
