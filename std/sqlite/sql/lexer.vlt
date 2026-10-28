@@ -160,7 +160,8 @@ export function tokenize(sql: string): Token[] {
       }
       continue;
     }
-    if (b == 47 && i + 1 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == 42) {
+    // `/*` at the very end is `/` and then `*`, as in tokenize.c.
+    if (b == 47 && i + 2 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == 42) {
       i += 2;
       while (
         i + 1 < n &&

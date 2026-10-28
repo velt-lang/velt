@@ -223,6 +223,9 @@ const CASES: string[] = [
   "SELECT 1_",
   "SELECT 1._5",
   "SELECT a COLLATE x COLLATE y = b COLLATE z",
+  // `/*` at the very end is `/` then `*` (tokenize.c); any longer unclosed comment runs to the end.
+  "SELECT 1/*",
+  "SELECT 1/**",
 ];
 
 function main() {

@@ -70,3 +70,5 @@ error at 7: unrecognized token: "1__0"
 error at 7: unrecognized token: "1_"
 error at 7: unrecognized token: "1._5"
 {SELECT (= (COLLATE a Y) (COLLATE b Z))}
+error at 9: near "*": syntax error
+{SELECT 1}
