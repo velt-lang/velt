@@ -34,7 +34,9 @@ and `fstatSync` are Velt code over these declarations.
 The length always comes from the array or the view, so no call reads or writes past its end. A buffer the
 function writes is `u8[]` and one it only reads is `readonly u8[]` (TypeScript's `readonly`
 array type): the declaration must say which, so a reader sees it and the compiler knows the
-caller's array changes. A struct's fields may come in any order and may be a subset of the C
+caller's array changes. A read-only array (a variable, parameter, module constant or class field
+declared `readonly u8[]`, or a function's `readonly u8[]` result), whole or through `subarray`,
+cannot be passed for a buffer the function writes: it is a compile error. A struct's fields may come in any order and may be a subset of the C
 struct's (the others are 0 going in and ignored coming out); a C field narrower than the Velt
 type is converted (`st_mode` is a `u16` on macOS and a `u32` in Velt).
 

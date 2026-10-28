@@ -77,6 +77,7 @@ impl FnCx<'_, '_> {
                         return Some(call);
                     }
                     if want == Want::BorrowMut {
+                        self.written_readonly_arg(&recv);
                         self.use_mutably(&mut recv, "modify");
                     }
                     return Some(self.subarray_of(recv, args, e.span));
@@ -88,7 +89,87 @@ impl FnCx<'_, '_> {
             return None;
         }
         let h = self.expr(e, None, want);
+        if want == Want::BorrowMut {
+            self.written_readonly_arg(&h);
+        }
         Some(h)
+    }
+
+    /// An error when `h`, the argument (or the `subarray` receiver) of a buffer the system
+    /// function writes, is a read-only array: a variable or parameter declared `readonly u8[]`,
+    /// a module constant or a class field of that type, or a call of a function returning one
+    /// (TypeScript's TS4104 for the `u8[]` parameter).
+    fn written_readonly_arg(&mut self, h: &hir::Expr) {
+        if self.is_readonly_source(h, 0) {
+            self.cx.error(
+                Diagnostic::error(
+                    "a read-only array cannot be passed for a buffer the system function writes",
+                    h.span,
+                )
+                .with_note(
+                    "pass a `u8[]`, or declare the parameter `readonly u8[]` if the function only \
+                     reads it",
+                ),
+            );
+        }
+    }
+
+    /// Is `h` declared a read-only array ([`Self::written_readonly_arg`])?
+    fn is_readonly_source(&self, h: &hir::Expr, depth: usize) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        if self.readonly_local(h).is_some() {
+            return true;
+        }
+        match &h.kind {
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) | H::Downcast(x) => {
+                self.is_readonly_source(x, depth + 1)
+            }
+            H::Match { scrutinee, .. } => self.is_readonly_source(scrutinee, depth + 1),
+            H::Global(d) => (self.cx.global(*d))
+                .and_then(|g| g.src.ann)
+                .is_some_and(|t| self.is_readonly_written(t, 0)),
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } => match self.cx.try_fn(*d).and_then(|f| f.source) {
+                Some(crate::defs::FnSource::Decl(f)) => {
+                    (f.sig.ret.as_ref()).is_some_and(|t| self.is_readonly_written(t, 0))
+                }
+                _ => false,
+            },
+            H::Field { base, index, .. } => self.readonly_field(base.ty, *index),
+            _ => false,
+        }
+    }
+
+    /// Is field `index` of the class type `t` declared with a read-only array type?
+    fn readonly_field(&self, t: TyId, index: u32) -> bool {
+        let Some((d, _)) = self.cx.class_of(t) else {
+            return false;
+        };
+        let Some(name) = (self.cx.adt(d))
+            .and_then(|a| a.fields.get(index as usize))
+            .map(|f| f.name.as_str())
+        else {
+            return false;
+        };
+        // The class declaring it: this one or a base class.
+        let mut cur = Some(d);
+        for _ in 0..64 {
+            let Some(a) = cur.and_then(|d| self.cx.adt(d)) else {
+                return false;
+            };
+            if let Some(f) = a
+                .decl
+                .and_then(|x| x.fields.iter().find(|f| f.name.name == name))
+            {
+                return self.is_readonly_written(&f.ty, 0);
+            }
+            cur = a.base.and_then(|b| self.cx.class_of(b)).map(|(d, _)| d);
+        }
+        false
     }
 
     /// `xs.subarray(begin, end)` of the `u8[]` `xs` (checked): JS numbers or integers, as
