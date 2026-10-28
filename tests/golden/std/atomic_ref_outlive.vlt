@@ -1,0 +1,45 @@
+// `const c = a.load()` refers into the `Atomic` it loaded from: when the rest of the block
+// replaces or drops that `Atomic` (reassigning it or what holds it, popping its array), `c` takes
+// a reference of its own and keeps reading its value. A `store` through the same `Atomic`
+// retires the old value, so `c` stays borrowed there.
+interface C {
+  n: u64;
+  s: string;
+}
+
+class H {
+  cell: Atomic<shared<C>> = new Atomic<shared<C>>(shared({ n: 1, s: "one" }));
+}
+
+function mk(n: u64): shared<C> {
+  return shared({ n, s: "s" + n });
+}
+
+function k(xs: Atomic<shared<C>>[]): string {
+  const c = xs[0].load();
+  xs.pop();
+  xs.push(new Atomic<shared<C>>(mk(5)));
+  return c.s;
+}
+
+function stays(a: Atomic<shared<C>>): string {
+  const c = a.load();
+  a.store(mk(9));
+  return c.s + " " + a.load().s;
+}
+
+function main() {
+  let a = new Atomic<shared<C>>(mk(1));
+  const c = a.load();
+  a = new Atomic<shared<C>>(mk(2));
+  console.log(c.s, c.n);
+  let h = new H();
+  const d = h.cell.load();
+  h.cell = new Atomic<shared<C>>(mk(3));
+  console.log(d.s);
+  const e = h.cell.load();
+  h = new H();
+  console.log(e.s);
+  console.log(k([new Atomic<shared<C>>(mk(4))]));
+  console.log(stays(new Atomic<shared<C>>(mk(8))));
+}

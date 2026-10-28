@@ -107,7 +107,11 @@ fn check_let(
     let PatKind::Binding(l, UseMode::Borrow) = pat.kind else {
         return None;
     };
-    let (place, _) = col.place_of(init)?;
+    // `const c = a.load()` (`borrowed_load`) refers into the `Atomic`: its place is the
+    // receiver's, which dropping or replacing would release.
+    let (place, _) = col
+        .place_of(init)
+        .or_else(|| col.place_of(load_receiver(init)?))?;
     let at = init.span;
     let text = col.text(init);
     let mut uses = vec![];
@@ -125,6 +129,18 @@ fn check_let(
     Some(changed_while_borrowed(
         &hit.text, hit.access, hit.span, name, &text, at,
     ))
+}
+
+/// The receiver of `init` when it is an `Atomic`'s `load` (bound by reference only for an
+/// `Atomic` of a reference).
+fn load_receiver(init: &Expr) -> Option<&Expr> {
+    match &init.kind {
+        E::Call {
+            callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::AtomicLoad),
+            args,
+        } => args.first(),
+        _ => None,
+    }
 }
 
 /// `this` when `init` is the method's own `this` (`const me = this`, `crate::body::const_borrow`;

@@ -1,7 +1,10 @@
 //! `Atomic<shared<T>>` and `Atomic<shared<T> | null>` (docs/internals/design/atomics.md
 //! "References"): the word is the pointer of one counted reference the `Atomic` owns (its field,
 //! which its drop glue releases), and the operations move references in and out of it.
-//! - `load` gives a counted copy of the reference.
+//! - `load` gives the reference borrowed, uncounted: read in place (`a.load().name`, a borrowing
+//!   argument, `const c = a.load()`, which sema binds by reference) it costs the load alone, and
+//!   what keeps it (a store, a return, an owning argument) counts it, as for any borrowed place.
+//!   A retired reference is never released, so a borrow stays valid however long it lives.
 //! - `store` and `exchange` move `v` in; `exchange` gives a counted copy of the old reference.
 //! - `compareExchange(expected, v)` compares identity, and gives whether it swapped; `v` is
 //!   released when it did not. `expected` is only read (its owner keeps it alive, so its
@@ -33,6 +36,19 @@ impl FnLower<'_, '_> {
         matches!(self.cx.kind(inner), TyKind::Shared(_)).then_some(t)
     }
 
+    /// Is `e` the `load` of a reference word (a borrowed, uncounted reference)?
+    pub(super) fn is_ref_load(&mut self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::AtomicLoad),
+                args,
+            } => args
+                .first()
+                .is_some_and(|a| self.atomic_ref_value(a).is_some()),
+            _ => false,
+        }
+    }
+
     /// An `Atomic*` intrinsic on a reference word of type `t` (`atomic_ref_value`).
     pub(super) fn atomic_ref_intrinsic(
         &mut self,
@@ -46,9 +62,8 @@ impl FnLower<'_, '_> {
                 let (p, _, bits) = self.atomic_word(a);
                 let order = super::atomic::order(o);
                 let w = self.atomic_call(AtomicCall::Load { bits, order }, vec![p]);
-                let r = self.cast_to(w, Ty::U64, Ty::Ptr);
-                let counted = self.clone_value(r, t);
-                self.owned_ref(counted, t)
+                // Borrowed: a consumer that keeps it counts it (`consume`).
+                self.cast_to(w, Ty::U64, Ty::Ptr)
             }
             (I::AtomicStore, [a, v, o]) => {
                 let order = super::atomic::order(o);
