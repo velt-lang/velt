@@ -1,0 +1,6 @@
+1 <HEADER>
+2 failed: LoadError cannot load bad-footer
+3 <main>
+4 failed: LoadError cannot load bad-aside
+a done
+bad-b failed: cannot load bad-b

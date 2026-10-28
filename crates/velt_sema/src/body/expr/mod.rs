@@ -146,6 +146,7 @@ mod promise_new;
 mod promise_same;
 mod promise_then;
 mod promise_union;
+mod prop_values;
 mod proxy;
 mod push_items;
 mod record;

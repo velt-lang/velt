@@ -1,0 +1,77 @@
+// A rejecting promise written into a field of an object literal whose type is `Promise<T>`
+// written without an error type takes its rejections there, as TypeScript lets it (sigx:
+// server-renderer render-core.ts `ctx._pendingAsync.push({ id, promise })`): an interface's
+// field, an object type's, a literal pushed to an array of them, and a field given through
+// `return`.
+
+class LoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LoadError";
+  }
+}
+
+async function load(name: string): Promise<string> {
+  if (name.startsWith("bad")) {
+    throw new LoadError(`cannot load ${name}`);
+  }
+  return `<${name}>`;
+}
+
+interface Pending {
+  id: number;
+  promise: Promise<string>;
+}
+
+type Job = { name: string; done: Promise<void> };
+
+interface RenderCtx {
+  pending: Pending[];
+}
+
+function queue(ctx: RenderCtx, id: number, name: string): void {
+  const rendered = (async () => {
+    const html = await load(name);
+    return html.toUpperCase();
+  })();
+  ctx.pending.push({ id, promise: rendered });
+}
+
+function direct(id: number, name: string): Pending {
+  return { id, promise: load(name) };
+}
+
+function job(name: string): Job {
+  const j: Job = {
+    name,
+    done: (async () => {
+      await load(name);
+    })(),
+  };
+  return j;
+}
+
+async function main() {
+  const ctx: RenderCtx = { pending: [] };
+  queue(ctx, 1, "header");
+  queue(ctx, 2, "bad-footer");
+  ctx.pending.push(direct(3, "main"));
+  ctx.pending.push(direct(4, "bad-aside"));
+  for (const p of ctx.pending) {
+    try {
+      console.log(p.id, await p.promise);
+    } catch (e) {
+      console.log(p.id, "failed:", (e as Error).name, (e as Error).message);
+    }
+  }
+  for (const j of [job("a"), job("bad-b")]) {
+    try {
+      await j.done;
+      console.log(j.name, "done");
+    } catch (e) {
+      console.log(j.name, "failed:", (e as Error).message);
+    }
+  }
+}
+
+main();
