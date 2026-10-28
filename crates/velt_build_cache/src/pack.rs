@@ -15,12 +15,12 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
-use crate::{Key, TOUCH_EVERY};
+use crate::{checksum, Key, LARGE, TOUCH_EVERY};
 
 /// Shards per kind.
 pub(crate) const SHARDS: usize = 64;
@@ -61,6 +61,8 @@ impl Packs {
     }
 
     /// The value under `key`, if this process can see it; marks it used when its time is old.
+    /// One that fails its check is forgotten, so that `put` stores it again (the last record of
+    /// a key wins).
     pub(crate) fn get(&self, key: &Key) -> Option<Vec<u8>> {
         let n = shard_of(key);
         let mut shard = self.shards[n]
@@ -73,11 +75,20 @@ impl Packs {
         if shard.pack.is_none() {
             shard.pack = File::open(self.pack(n)).ok();
         }
-        let mut value = vec![0; entry.len as usize];
-        read_at(shard.pack.as_ref()?, &mut value, entry.offset).ok()?;
-        if checksum(&value) != entry.check {
+        // Packed values are under `LARGE` bytes: a damaged record asks for no more.
+        let value = (entry.len as usize) < LARGE;
+        let value = value
+            .then(|| vec![0; entry.len as usize])
+            .and_then(|mut value| {
+                read_at(shard.pack.as_ref()?, &mut value, entry.offset).ok()?;
+                (checksum(&value) == entry.check).then_some(value)
+            });
+        let Some(value) = value else {
+            if let Some(entries) = &mut shard.entries {
+                entries.remove(&key.0);
+            }
             return None;
-        }
+        };
         let now = now_minutes();
         if now.saturating_sub(entry.time) * 60 > TOUCH_EVERY.as_secs() as u32 {
             let touched = Entry { time: now, ..entry };
@@ -150,15 +161,19 @@ impl Packs {
             };
             encode(&mut out, key, &last);
         }
+        // Opened for writing, not appending: on Windows, an append-only handle cannot truncate.
         let mut idx = OpenOptions::new()
             .create(true)
-            .append(true)
+            .truncate(false)
+            .write(true)
             .open(self.idx(n))?;
         // A record cut short by a crash would misalign every later one.
-        let len = idx.metadata()?.len();
+        let mut len = idx.metadata()?.len();
         if len % RECORD as u64 != 0 {
-            idx.set_len(len - len % RECORD as u64)?;
+            len -= len % RECORD as u64;
+            idx.set_len(len)?;
         }
+        idx.seek(SeekFrom::Start(len))?;
         idx.write_all(&out)?;
         Ok(last)
     }
@@ -292,12 +307,6 @@ fn encode(out: &mut Vec<u8>, key: &[u8; 32], e: &Entry) {
     out.extend_from_slice(&e.len.to_le_bytes());
     out.extend_from_slice(&e.check.to_le_bytes());
     out.extend_from_slice(&e.time.to_le_bytes());
-}
-
-/// The first 8 bytes of the value's SHA-256.
-fn checksum(value: &[u8]) -> u64 {
-    let key = Key::of(&[value]);
-    u64::from_le_bytes(key.0[..8].try_into().unwrap_or_default())
 }
 
 fn now_minutes() -> u32 {

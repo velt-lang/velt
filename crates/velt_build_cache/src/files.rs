@@ -1,7 +1,9 @@
 //! Large entries (at least [`crate::LARGE`] bytes, such as LLVM objects), one file each:
 //! `<kind>/large/<first 2 hex digits>/<rest of the hex key>`. A file's modification time is when
-//! it was last used. Writes go to a temporary file renamed into place, so readers see a whole
-//! entry or none.
+//! it was last used. Writes go to a temporary file, synced, then renamed into place, so readers
+//! see a whole entry or none. A file starts with a [`HEADER`]: the value's length and checksum,
+//! checked on every read, so a file a crash left empty or a disk error damaged is a miss (and is
+//! removed, so the next build stores the entry again), never wrong code.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -9,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-use crate::{Key, TOUCH_EVERY};
+use crate::{checksum, Key, TOUCH_EVERY};
+
+/// Bytes before the value: its length (8, little-endian), then its checksum (8).
+pub(crate) const HEADER: usize = 16;
 
 /// The file of `key` under `dir`.
 pub(crate) fn path(dir: &Path, key: &Key) -> PathBuf {
@@ -17,21 +22,49 @@ pub(crate) fn path(dir: &Path, key: &Key) -> PathBuf {
     dir.join(&hex[..2]).join(&hex[2..])
 }
 
-/// The entry under `key`, marking it used.
+/// The entry under `key`, marking it used. A file that fails its check is removed.
 pub(crate) fn get(dir: &Path, key: &Key) -> Option<Vec<u8>> {
     let path = path(dir, key);
     let mut file = fs::File::open(&path).ok()?;
     let meta = file.metadata().ok()?;
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.read_to_end(&mut bytes).ok()?;
+    let Some(value) = checked(bytes) else {
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return None;
+    };
     touch_if_old(&path, &meta);
-    Some(bytes)
+    Some(value)
 }
 
-/// Store `value` under `key`.
+/// Store `value` under `key`, replacing a file that fails its check.
 pub(crate) fn put(dir: &Path, key: &Key, value: &[u8]) -> bool {
     let path = path(dir, key);
-    path.exists() || write_atomically(&path, value).is_ok()
+    let whole = fs::read(&path).ok().and_then(checked).is_some();
+    whole || write_atomically(&path, &with_header(value)).is_ok()
+}
+
+/// `value` behind its header.
+fn with_header(value: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEADER + value.len());
+    bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&checksum(value).to_le_bytes());
+    bytes.extend_from_slice(value);
+    bytes
+}
+
+/// The value of a file's `bytes`, if its header matches it.
+fn checked(mut bytes: Vec<u8>) -> Option<Vec<u8>> {
+    let header = bytes.get(..HEADER)?;
+    let len = u64::from_le_bytes(header[..8].try_into().ok()?);
+    let check = u64::from_le_bytes(header[8..].try_into().ok()?);
+    let value = &bytes[HEADER..];
+    if value.len() as u64 != len || checksum(value) != check {
+        return None;
+    }
+    bytes.drain(..HEADER);
+    Some(bytes)
 }
 
 /// Mark an entry used now when its time of use is older than [`TOUCH_EVERY`].
@@ -56,7 +89,11 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
-    let written = fs::File::create(&tmp).and_then(|mut f| f.write_all(bytes));
+    // Synced before the rename: otherwise a power loss can leave the renamed file empty.
+    let written = fs::File::create(&tmp).and_then(|mut f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    });
     let renamed = written.and_then(|()| fs::rename(&tmp, path));
     if renamed.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -81,6 +118,17 @@ pub(crate) fn files_under(dir: &Path) -> Vec<PathBuf> {
         }
     }
     files
+}
+
+/// The files directly in `dir`.
+pub(crate) fn files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return vec![];
+    };
+    (entries.flatten())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .collect()
 }
 
 pub(crate) fn is_temp(path: &Path) -> bool {

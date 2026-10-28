@@ -37,8 +37,8 @@ fn small_entries_share_a_few_files() {
         cache.put_key("cl", &Key::of(&[&i.to_le_bytes()]), &small(i % 200));
     }
     let files = files::files_under(tmp.path()).len();
-    // 64 shards × (pack, index, lock) at most.
-    assert!(files <= 3 * pack::SHARDS, "{files} files");
+    // 64 shards × (pack, index, lock) at most, and the marker.
+    assert!(files <= 3 * pack::SHARDS + 1, "{files} files");
     let usage = cache.usage();
     assert_eq!(usage.entries, 2000);
     let data: u64 = (0..2000).map(|i| small(i % 200).len() as u64).sum();
@@ -100,6 +100,76 @@ fn a_damaged_pack_is_a_miss_not_wrong_code() {
             .as_deref(),
         Some(&b"next"[..])
     );
+}
+
+/// A packed entry that fails its checksum is stored again by the next `put` (the reviewer's
+/// repro: every 97th byte of the packs flipped left builds missing those entries forever).
+#[test]
+fn a_damaged_packed_entry_is_stored_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let key = Key([5; 32]);
+    Cache::new(tmp.path(), DEFAULT_LIMIT).put_key("cl", &key, b"original value");
+    let pack = tmp.path().join(LAYOUT).join("cl/05.pack");
+    let mut bytes = std::fs::read(&pack).unwrap();
+    bytes[3] ^= 0xff;
+    std::fs::write(&pack, bytes).unwrap();
+    let cache = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(cache.get_key("cl", &key), None);
+    assert!(cache.put_key("cl", &key, b"original value"));
+    assert_eq!(
+        cache.get_key("cl", &key).as_deref(),
+        Some(&b"original value"[..])
+    );
+    let fresh = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    assert_eq!(
+        fresh.get_key("cl", &key).as_deref(),
+        Some(&b"original value"[..])
+    );
+}
+
+/// A record claiming more than a packed value can hold (up to 4 GiB) is a miss, not an
+/// allocation that aborts the build.
+#[test]
+fn a_damaged_record_length_is_a_miss() {
+    let tmp = tempfile::tempdir().unwrap();
+    let key = Key([6; 32]);
+    Cache::new(tmp.path(), DEFAULT_LIMIT).put_key("cl", &key, b"value");
+    let idx = tmp.path().join(LAYOUT).join("cl/06.idx");
+    let mut bytes = std::fs::read(&idx).unwrap();
+    bytes[40..44].copy_from_slice(&u32::MAX.to_le_bytes());
+    std::fs::write(&idx, bytes).unwrap();
+    assert_eq!(
+        Cache::new(tmp.path(), DEFAULT_LIMIT).get_key("cl", &key),
+        None
+    );
+}
+
+/// A large entry left empty (a power loss after the rename) or with a flipped byte is a miss,
+/// is removed, and is stored again.
+#[test]
+fn a_damaged_large_entry_is_a_miss_and_stored_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), DEFAULT_LIMIT);
+    let value = vec![9; LARGE + 10];
+    let (truncated, flipped) = (Key([1; 32]), Key([2; 32]));
+    for key in [truncated, flipped] {
+        assert!(cache.put_key("llvm", &key, &value));
+    }
+    let path = |key: &Key| files::path(&cache.large_dir("llvm"), key);
+    std::fs::write(path(&truncated), b"").unwrap();
+    let mut bytes = std::fs::read(path(&flipped)).unwrap();
+    bytes[files::HEADER + 100] ^= 1;
+    std::fs::write(path(&flipped), bytes).unwrap();
+    for key in [truncated, flipped] {
+        let cache = Cache::new(tmp.path(), DEFAULT_LIMIT);
+        assert_eq!(cache.get_key("llvm", &key), None);
+        assert!(cache.put_key("llvm", &key, &value));
+        assert_eq!(cache.get_key("llvm", &key), Some(value.clone()));
+    }
+    // `put` replaces a damaged file it finds without a `get` before it, too.
+    std::fs::write(path(&truncated), b"x").unwrap();
+    assert!(cache.put_key("llvm", &truncated, &value));
+    assert_eq!(cache.get_key("llvm", &truncated), Some(value));
 }
 
 /// Set the time of use of every entry: packed ones through a record, large ones by their file.
@@ -174,6 +244,38 @@ fn collection_removes_old_layouts() {
     cache.collect_garbage(DEFAULT_LIMIT);
     assert!(!tmp.path().join("v1").exists());
     assert_eq!(cache.get("k", b"a").as_deref(), Some(&b"1"[..]));
+}
+
+/// `clear` and garbage collection touch only what the cache made: a directory without the
+/// marker is refused whole, and other files beside the cache's are kept.
+#[test]
+fn clear_and_collection_remove_only_the_caches_own_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("cache");
+    std::fs::create_dir_all(root.join("v1")).unwrap();
+    std::fs::write(root.join("notes.txt"), b"mine").unwrap();
+    std::fs::write(root.join("v1/x"), b"mine too").unwrap();
+    let cache = Cache::new(&root, DEFAULT_LIMIT);
+    assert!(cache.clear().is_err(), "no marker: not a cache");
+    cache.collect_garbage(0);
+    assert!(root.join("notes.txt").exists() && root.join("v1/x").exists());
+
+    cache.put("k", b"a", b"1");
+    assert!(root.join(MARKER).exists());
+    cache.clear().unwrap();
+    assert_eq!(cache.get("k", b"a"), None);
+    assert!(
+        root.join("notes.txt").exists(),
+        "a file the cache did not make"
+    );
+    assert!(!root.join(MARKER).exists() && !root.join(LAYOUT).exists());
+    // An empty root goes too.
+    let alone = tmp.path().join("alone");
+    let cache = Cache::new(&alone, DEFAULT_LIMIT);
+    cache.put("k", b"a", b"1");
+    cache.clear().unwrap();
+    assert!(!alone.exists());
+    cache.clear().unwrap();
 }
 
 #[test]

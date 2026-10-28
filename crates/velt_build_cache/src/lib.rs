@@ -5,7 +5,7 @@
 //!   code, the target and settings, the version of whatever compiled it), so an entry is never
 //!   stale, and two compiler versions (projects can pin different ones) keep their entries side
 //!   by side instead of overwriting each other's.
-//! - Layout: `<root>/v2/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
+//! - Layout: `<root>/v3/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
 //!   packed into a few files per kind (`pack`); larger ones (objects) are a file each (`files`).
 //!   Writers in several processes at once are safe, and readers never see half an entry.
 //! - Size: the cache stays under a limit (default [`DEFAULT_LIMIT`], `$VELT_BUILD_CACHE_SIZE`),
@@ -13,6 +13,12 @@
 //!   most once per [`TOUCH_EVERY`]), and [`Cache::collect_garbage_if_due`] removes the entries
 //!   used least recently once the cache outgrows the limit, down to three quarters of it, and
 //!   the directories of other layout versions.
+//! - Ownership: the root holds a [`MARKER`] (`CACHEDIR.TAG`, which backup tools skip) from the
+//!   first write on. [`Cache::clear`] and garbage collection act only on a root that has it, and
+//!   remove only what the cache made, so a `$VELT_BUILD_CACHE` naming a directory with other
+//!   files in it (or the home directory) loses none of them.
+//! - Trust: entries are used as they are (as sccache does), so the directory must be writable
+//!   only by users whose code may run in the builds.
 //!
 //! Nothing here can fail a build: an entry that cannot be read is a miss, and one that cannot be
 //! written is just not cached.
@@ -33,7 +39,13 @@ use pack::Packs;
 
 /// The layout version: a change of the layout or of how keys are made starts a new directory
 /// (garbage collection removes the others).
-const LAYOUT: &str = "v2";
+const LAYOUT: &str = "v3";
+/// The file that marks a directory as a build cache (<https://bford.info/cachedir/>).
+pub const MARKER: &str = "CACHEDIR.TAG";
+const MARKER_TEXT: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
+# This directory is Velt's build cache (velt clean --cache empties it).\n";
+/// What the cache makes in its root besides layout directories (`v<n>`), which `clear` removes.
+const OWNED: [&str; 2] = ["warm", MARKER];
 /// Entries of at least this many bytes are a file each; smaller ones are packed.
 pub const LARGE: usize = 16 << 10;
 /// Default size limit: 2 GiB.
@@ -99,7 +111,7 @@ pub struct Usage {
 pub struct Cache {
     /// `<root>`.
     root: PathBuf,
-    /// `<root>/v2`.
+    /// `<root>/v3`.
     dir: PathBuf,
     /// The size limit in bytes.
     limit: u64,
@@ -107,6 +119,8 @@ pub struct Cache {
     written: AtomicU64,
     /// The packed entries of each kind used so far.
     packs: Mutex<HashMap<String, Arc<Packs>>>,
+    /// This process made sure the root has its marker.
+    marked: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for Cache {
@@ -127,6 +141,7 @@ impl Cache {
             limit,
             written: AtomicU64::new(0),
             packs: Mutex::default(),
+            marked: Default::default(),
         }
     }
 
@@ -154,6 +169,7 @@ impl Cache {
 
     /// Store `value` as `key`'s entry of `kind`; `false` if it could not be stored.
     pub fn put_key(&self, kind: &str, key: &Key, value: &[u8]) -> bool {
+        self.mark();
         let stored = if value.len() < LARGE {
             self.packs(kind).put(key, value)
         } else {
@@ -164,6 +180,23 @@ impl Cache {
                 .fetch_add(value.len() as u64, Ordering::Relaxed);
         }
         stored
+    }
+
+    /// Write the root's marker, once per process, before the first entry.
+    fn mark(&self) {
+        if self.marked.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let marker = self.root.join(MARKER);
+        if !marker.exists() {
+            let _ = fs::create_dir_all(&self.root);
+            let _ = fs::write(marker, MARKER_TEXT);
+        }
+    }
+
+    /// Whether the root is a build cache (has its marker).
+    pub fn is_cache(&self) -> bool {
+        self.root.join(MARKER).is_file()
     }
 
     /// Bytes this process stored.
@@ -218,12 +251,24 @@ impl Cache {
     /// of it. Packs that hold much unreferenced data are rewritten. Returns the usage before and
     /// after.
     pub fn collect_garbage(&self, limit: u64) -> (Usage, Usage) {
+        if !self.is_cache() {
+            return (Usage::default(), Usage::default());
+        }
         self.remove_other_layouts();
         let before = self.usage();
         // (time of last use in minutes, bytes) of every entry.
         let mut items: Vec<(u32, u64)> = Vec::new();
         let now = SystemTime::now();
         for kind in self.kinds() {
+            // A shard rewrite that stopped (or whose rename failed) leaves its temporary files.
+            for path in files::files_in(&self.dir.join(&kind)) {
+                let old = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|t| now.duration_since(t).unwrap_or_default() > STALE_TEMP);
+                if files::is_temp(&path) && old {
+                    let _ = fs::remove_file(&path);
+                }
+            }
             for (_, entries) in self.packs(&kind).scan() {
                 let record = pack::RECORD as u64;
                 let sizes = entries
@@ -283,8 +328,7 @@ impl Cache {
         };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            let is_layout = name.starts_with('v') && name[1..].bytes().all(|b| b.is_ascii_digit());
-            if is_layout && name != LAYOUT && e.file_type().is_ok_and(|t| t.is_dir()) {
+            if is_layout(&name) && name != LAYOUT && e.file_type().is_ok_and(|t| t.is_dir()) {
                 let _ = fs::remove_dir_all(e.path());
             }
         }
@@ -302,6 +346,9 @@ impl Cache {
                 .map(|(_, e)| e.len() as u64)
                 .sum::<u64>();
             for path in files::files_under(&self.large_dir(&kind)) {
+                if files::is_temp(&path) {
+                    continue;
+                }
                 if let Ok(meta) = fs::metadata(&path) {
                     usage.entries += 1;
                     usage.bytes += files::disk_size(&meta);
@@ -311,19 +358,48 @@ impl Cache {
         usage
     }
 
-    /// Remove every entry (the whole root, all layout versions).
+    /// Remove every entry (all layout versions) and what else the cache made in its root, then
+    /// the root if nothing else is left in it. Refuses a root without the cache's marker: it may
+    /// be any directory (`$VELT_BUILD_CACHE`), and its files are not the cache's to delete.
     pub fn clear(&self) -> std::io::Result<()> {
-        match fs::remove_dir_all(&self.root) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => {
-                self.packs
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clear();
-                Ok(())
+        if !self.root.exists() {
+            return Ok(());
+        }
+        if !self.is_cache() {
+            return Err(std::io::Error::other(format!(
+                "{} is not a build cache (it has no {MARKER}); not removing anything",
+                self.root.display()
+            )));
+        }
+        for e in fs::read_dir(&self.root)?.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !(is_layout(&name) || OWNED.contains(&name.as_str())) {
+                continue;
+            }
+            match e.file_type()?.is_dir() {
+                true => fs::remove_dir_all(e.path())?,
+                false => fs::remove_file(e.path())?,
             }
         }
+        let _ = fs::remove_dir(&self.root);
+        self.packs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        self.marked.store(false, Ordering::Relaxed);
+        Ok(())
     }
+}
+
+/// Whether `name` is a layout directory's (`v1`, `v2`, ...).
+fn is_layout(name: &str) -> bool {
+    name.len() > 1 && name.starts_with('v') && name[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The first 8 bytes of the value's SHA-256.
+fn checksum(value: &[u8]) -> u64 {
+    let key = Key::of(&[value]);
+    u64::from_le_bytes(key.0[..8].try_into().unwrap_or_default())
 }
 
 /// `key` as a [`Key`]: itself when it is 32 bytes (already a hash), else its hash.

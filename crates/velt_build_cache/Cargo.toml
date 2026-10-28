@@ -8,4 +8,4 @@ description = "Velt's build cache: compiled code shared by every build on a mach
 sha2 = "0.10"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"
