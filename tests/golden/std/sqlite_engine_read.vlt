@@ -1,0 +1,316 @@
+// The Velt SQLite reader (velt:sqlite/format, velt:sqlite/btree, #1715) on files that C SQLite
+// writes (through velt:sqlite): every serial type, payloads around the overflow limits of table
+// and index cells, trees several levels deep, page sizes from 512 to 65536. Each check compares
+// the reader with C SQLite's answer for the same file; the files are deleted afterwards.
+import { open } from "velt:sqlite";
+import { DbFile } from "velt:sqlite/format";
+import { Cursor, NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { readFileBytesSync, removeSync } from "velt:fs";
+import { openWrite } from "velt:fs_stream";
+import { hexDecode, hexEncode, utf8Decode } from "velt:encoding";
+import { RecordBuilder, NOCASE, RTRIM } from "velt:sqlite/record";
+
+struct Root {
+  type: string;
+  name: string;
+  rootpage: i64;
+}
+
+// One value as C SQLite describes it: its type, and its text (a REAL's 17 digits, the hex of
+// a TEXT's or BLOB's bytes).
+struct Value {
+  id: i64;
+  ty: string;
+  v: string;
+}
+
+const DESCRIBE =
+  "typeof(v) AS ty, CASE typeof(v) WHEN 'integer' THEN CAST(v AS TEXT) WHEN 'real' THEN printf('%!.17g', v) WHEN 'null' THEN '' ELSE hex(v) END AS v";
+
+// "same", or how many checks differ.
+function verdict(ok: bool, bad: i64): string {
+  return ok ? "same" : String(bad) + " differ";
+}
+
+function typeName(t: u8): string {
+  if (t == NULL) {
+    return "null";
+  }
+  if (t == INTEGER) {
+    return "integer";
+  }
+  if (t == REAL) {
+    return "real";
+  }
+  return t == TEXT ? "text" : "blob";
+}
+
+// Whether column `i` of the cursor's record is the value C SQLite described.
+function same(c: Cursor, i: usize, want: Value): bool {
+  const t = c.columnType(i);
+  if (typeName(t) != want.ty) {
+    return false;
+  }
+  if (t == NULL) {
+    return true;
+  }
+  if (t == INTEGER) {
+    return String(c.int(i)) == want.v;
+  }
+  if (t == REAL) {
+    return c.real(i) == parseFloat(want.v);
+  }
+  return hexEncode(c.blob(i)).toUpperCase() == want.v;
+}
+
+// The index key (v, id) of a value C SQLite described.
+function keyOf(w: Value): u8[] {
+  const k = new RecordBuilder();
+  if (w.ty == "null") {
+    k.addNull();
+  } else if (w.ty == "integer") {
+    k.addInt(parseInt(w.v, 10) as i64);
+  } else if (w.ty == "real") {
+    k.addReal(parseFloat(w.v));
+  } else if (w.ty == "text") {
+    k.addText(utf8Decode(hexDecode(w.v)));
+  } else {
+    k.addBlob(hexDecode(w.v));
+  }
+  k.addInt(w.id);
+  return k.finish();
+}
+
+function roots(path: string): Root[] {
+  const db = open(path, { readonly: true });
+  const rows: Root[] = db
+    .prepare("SELECT type, name, rootpage FROM sqlite_schema ORDER BY name")
+    .all();
+  db.close();
+  return rows;
+}
+
+function rootOf(rs: Root[], name: string): u32 {
+  for (const r of rs) {
+    if (r.name == name) {
+      return r.rootpage as u32;
+    }
+  }
+  return 0;
+}
+
+// Checks the table `t (id INTEGER PRIMARY KEY, v)` and its index `t_v` against C SQLite.
+function check(label: string, path: string) {
+  const sql = open(path, { readonly: true });
+  const rows: Value[] = sql.prepare(`SELECT id, ${DESCRIBE} FROM t ORDER BY id`).all();
+  const ordered: Value[] = sql
+    .prepare(`SELECT id, ${DESCRIBE} FROM t INDEXED BY t_v ORDER BY t.v, t.id`)
+    .all();
+  sql.close();
+  const rs = roots(path);
+  const file = new DbFile(readFileBytesSync(path));
+
+  // The table in rowid order.
+  const c = new Cursor(file, rootOf(rs, "t"));
+  let n: usize = 0;
+  let bad = 0;
+  let more = c.first();
+  while (more) {
+    if (n >= rows.length || c.rowid != rows[n].id || !same(c, 1, rows[n])) {
+      bad++;
+    }
+    n++;
+    more = c.next();
+  }
+  // The index in key order: (v, rowid).
+  const ix = new Cursor(file, rootOf(rs, "t_v"));
+  let m: usize = 0;
+  let badIndex = 0;
+  more = ix.first();
+  while (more) {
+    if (m >= ordered.length || ix.int(1) != ordered[m].id || !same(ix, 0, ordered[m])) {
+      badIndex++;
+    }
+    m++;
+    more = ix.next();
+  }
+  // Every rowid, and the ones between and around them.
+  const seek = new Cursor(file, rootOf(rs, "t"));
+  let found = 0;
+  let badSeek = 0;
+  for (const r of rows) {
+    if (seek.seekRowid(r.id) && seek.rowid == r.id && same(seek, 1, r)) {
+      found++;
+    } else {
+      badSeek++;
+    }
+    if (seek.seekRowid(r.id + 1000000007)) {
+      badSeek++;
+    }
+  }
+  // Every index entry by its whole key, and a key above them all.
+  const at = new Cursor(file, rootOf(rs, "t_v"));
+  let keyed = 0;
+  let badKey = 0;
+  for (const w of ordered) {
+    if (at.seekKey(keyOf(w), 2, [], []) && at.int(1) == w.id && same(at, 0, w)) {
+      keyed++;
+    } else {
+      badKey++;
+    }
+  }
+  const top = new RecordBuilder();
+  top.addBlob([255, 255, 255, 255]);
+  if (at.seekKey(top.finish(), 1, [], [])) {
+    badKey++;
+  }
+  console.log(
+    label,
+    `pages ${file.pageCount} of ${file.pageSize}:`,
+    `${n} rows (${verdict(n == rows.length && bad == 0, bad)}),`,
+    `index ${m} (${verdict(m == ordered.length && badIndex == 0, badIndex)}),`,
+    `seeks ${found} (${verdict(badSeek == 0, badSeek)}),`,
+    `keys ${keyed} (${verdict(badKey == 0, badKey)})`,
+  );
+}
+
+function fill(path: string, pageSize: i64, rows: i64) {
+  const db = open(path);
+  db.exec(`PRAGMA page_size = ${pageSize}; PRAGMA journal_mode = DELETE;`);
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v); CREATE INDEX t_v ON t (v);");
+  // Every serial type: NULL, integers of 1, 2, 3, 4, 6 and 8 bytes at their limits, 0 and 1,
+  // reals, text (empty, ASCII, multi-byte UTF-8) and blobs (empty and not).
+  db.exec(`
+    INSERT INTO t (id, v) VALUES
+      (-9223372036854775808, NULL), (-5, 0), (-4, 1), (-3, 127), (-2, -128), (-1, 32767),
+      (0, -32768), (1, 8388607), (2, -8388608), (3, 2147483647), (4, -2147483648),
+      (5, 140737488355327), (6, -140737488355328), (7, 9223372036854775807),
+      (8, -9223372036854775808), (9, 0.5), (10, -1e308), (11, 5e-324), (12, ''),
+      (13, 'héllo wörld ✓ 𝄞'), (14, x''), (15, x'00ff10'), (9223372036854775807, 'last');
+  `);
+  // Payloads from 1 byte to past four pages: around every overflow limit of table and index
+  // cells for this page size.
+  db.exec(`
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${rows})
+    INSERT INTO t (id, v) SELECT 100 + i,
+      CASE i % 3
+        WHEN 0 THEN substr(replace(hex(zeroblob(${pageSize} * 3)), '00', 'ab' || i), 1, i * 7 % (${pageSize} * 4 + 50))
+        WHEN 1 THEN CAST(substr(replace(hex(zeroblob(${pageSize} + 300)), '00', 'b' || i), 1, i * 13 % (${pageSize} + 300)) AS BLOB)
+        ELSE i * 1.25
+      END FROM n;
+  `);
+  db.close();
+}
+
+struct Named {
+  id: i64;
+  s: string;
+  n: i64;
+}
+
+// An index with collations and a descending column: (s COLLATE NOCASE DESC, r COLLATE RTRIM, n).
+function collations() {
+  const path = `${tmpdir()}/velt-sqlite-engine-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec(`
+    CREATE TABLE u (id INTEGER PRIMARY KEY, s TEXT, r TEXT, n INTEGER);
+    CREATE INDEX u_s ON u (s COLLATE NOCASE DESC, r COLLATE RTRIM, n);
+    WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < 400)
+    INSERT INTO u (s, r, n) SELECT
+      CASE i % 4 WHEN 0 THEN 'abc' WHEN 1 THEN 'ABC' WHEN 2 THEN 'Abd' ELSE 'a' || (i % 9) END,
+      CASE i % 3 WHEN 0 THEN 'x' WHEN 1 THEN 'x  ' ELSE 'w' END,
+      i % 17 FROM k;
+  `);
+  const want: Named[] = db
+    .prepare("SELECT id, s, n FROM u ORDER BY s COLLATE NOCASE DESC, r COLLATE RTRIM, n, id")
+    .all();
+  const roots: Root[] = db.prepare("SELECT type, name, rootpage FROM sqlite_schema").all();
+  db.close();
+  const file = new DbFile(readFileBytesSync(path));
+  const ix = new Cursor(file, rootOf(roots, "u_s"));
+  let i: usize = 0;
+  let bad = 0;
+  let more = ix.first();
+  while (more) {
+    if (
+      i >= want.length ||
+      ix.int(3) != want[i].id ||
+      ix.text(0) != want[i].s ||
+      ix.int(2) != want[i].n
+    ) {
+      bad++;
+    }
+    i++;
+    more = ix.next();
+  }
+  // Seeking ("ABD") under NOCASE DESC lands on the first 'Abd' entry.
+  const k = new RecordBuilder();
+  k.addText("ABD");
+  let first = -1 as i64;
+  for (const w of want) {
+    if (w.s == "Abd") {
+      first = w.id;
+      break;
+    }
+  }
+  const found = ix.seekKey(k.finish(), 1, [NOCASE, RTRIM], [true]) && ix.int(3) == first;
+  console.log(
+    `collations: ${i} entries (${verdict(i == want.length && bad == 0, bad)}), seek ${found}`,
+  );
+  removeSync(path);
+}
+
+struct Integrity {
+  integrity_check: string;
+}
+
+// Reserved bytes at the end of each page (macOS's sqlite3 reserves 12): an empty database whose
+// header asks for 32, which C SQLite keeps as it fills the file. The usable size shrinks the
+// overflow limits, so cells split differently than in a file without them.
+async function reserved() {
+  const path = `${tmpdir()}/velt-sqlite-engine-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec(`
+    PRAGMA page_size = 1024; PRAGMA journal_mode = DELETE;
+    CREATE TABLE x (a); DROP TABLE x; VACUUM;
+  `);
+  db.close();
+  const bytes = readFileBytesSync(path);
+  bytes[20] = 32;
+  // Page 1's (empty) cell content area now starts at the usable end: 1024 - 32.
+  bytes[105] = 3;
+  bytes[106] = 224;
+  const w = await openWrite(path);
+  await w.writeBytes(bytes);
+  await w.close();
+  fill(path, 1024, 1500);
+  const c = open(path, { readonly: true });
+  const ok: Integrity[] = c.prepare("PRAGMA integrity_check").all();
+  c.close();
+  const file = new DbFile(readFileBytesSync(path));
+  console.log(
+    `reserved ${file.pageSize - file.usable} bytes a page: integrity ${ok[0].integrity_check}`,
+  );
+  check("reserved 32", path);
+  removeSync(path);
+}
+
+async function main() {
+  collations();
+  await reserved();
+  for (const size of [512, 1024, 4096, 65536]) {
+    const path = `${tmpdir()}/velt-sqlite-engine-${uuidv4()}.db`;
+    fill(path, size as i64, size == 512 ? 3000 : 1500);
+    check(`page size ${size}`, path);
+    removeSync(path);
+  }
+  // An empty table: one empty leaf.
+  const path = `${tmpdir()}/velt-sqlite-engine-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v); CREATE INDEX t_v ON t (v);");
+  db.close();
+  check("empty", path);
+  removeSync(path);
+}
