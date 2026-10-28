@@ -25,11 +25,11 @@ use crate::srclocs::push_stmt;
 /// Apply the simplifications to `func`; returns whether anything changed.
 pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
     let mut changed = false;
+    let mut st: State = flow.scratch();
     for bi in 0..func.blocks.len() {
-        let Some(entry) = flow.entry(bi) else {
+        if !flow.load(bi, &mut st) {
             continue;
-        };
-        let mut st: State = entry.clone();
+        }
         let mut remainders = vec![];
         for si in 0..func.blocks[bi].stmts.len() {
             if integer_remainder(flow, func, &st, &func.blocks[bi].stmts[si]) {
