@@ -203,10 +203,10 @@ function main() {
 
 A type parameter bounded by `AtomicValue` can be an `Atomic`'s `T`: `class Cell<T extends
 AtomicValue> { word: Atomic<T>; … }`. The prelude's `AtomicValue` is implemented by the integer
-types, `f32`, `f64`, `bool`, `string` and `shared<U>`, which the compiler knows (a type of your
-own cannot implement it, declared or not), and the bound is checked where the generic is used
-(`new Cell<Obj>(…)` with a plain object is an error). Each use gets its type's
-instructions. Generic code has the operations every `AtomicValue` has alike: `load()`,
+types, `f32`, `f64`, `bool`, `string` and `shared<U>`, which the compiler knows (declaring it
+with `implements` or `extends` is an error, and a type parameter needs the bound itself), and
+the bound is checked where the generic is used (`new Cell<Obj>(…)` with a plain object is an
+error). Each use gets its type's instructions. Generic code has the operations every `AtomicValue` has alike: `load()`,
 `store(v)`, `exchange(v)` and `compareExchangeWeak(expected, v)` (in a loop: it returns whether
 it swapped for every `T`, where `compareExchange` returns the value before for a number).
 
