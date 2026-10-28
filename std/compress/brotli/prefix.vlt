@@ -36,14 +36,14 @@ function unfilled(n: usize): u16[] {
 
 /** Reads prefix codes and builds their tables, with scratch space reused from code to code. */
 export class PrefixReader {
-  // Code lengths by symbol (the largest alphabet is 704 symbols).
+  /** Code lengths by symbol (the largest alphabet is 704 symbols). */
   lengths: u8[] = Buffer.alloc(704);
-  // Symbols per code length, then (`place`) where each length's symbols go in `sorted`.
+  /** Symbols per code length, then (`place`) where each length's symbols go in `sorted`. */
   count: u32[] = new Array<u32>(MAX_LENGTH + 2).fill(0);
   place: u32[] = new Array<u32>(MAX_LENGTH + 2).fill(0);
-  // Symbols ordered by code length, then by value: the canonical order of their codes.
+  /** Symbols ordered by code length, then by value: the canonical order of their codes. */
   sorted: u16[] = unfilled(704);
-  // The table of the code length code (5-bit root, no second level).
+  /** The table of the code length code (5-bit root, no second level). */
   lengthTable: u32[] = new Array<u32>(32).fill(0);
 
   /**
@@ -59,7 +59,7 @@ export class PrefixReader {
     return build(table, at, used, ROOT_BITS, this.lengths, this.count, this.place, this.sorted);
   }
 
-  // A simple prefix code (section 3.4): one to four symbols listed, lengths implied.
+  /** A simple prefix code (section 3.4): one to four symbols listed, lengths implied. */
   readSimple(br: Bits, size: usize, table: u32[], at: usize): usize throws CompressError {
     const n = (br.read(2) + 1) as usize;
     let width: u64 = 0;
@@ -119,7 +119,7 @@ export class PrefixReader {
     return build(table, at, used, ROOT_BITS, lengths, count, this.place, this.sorted);
   }
 
-  // The code length code of a complex prefix code (section 3.5), into `lengthTable`.
+  /** The code length code of a complex prefix code (section 3.5), into `lengthTable`. */
   readLengthCode(br: Bits, skip: usize) throws CompressError {
     const lengths = this.lengths;
     const count = this.count;
@@ -159,8 +159,10 @@ export class PrefixReader {
     build(this.lengthTable, 0, 18, 5, lengths, count, this.place, this.sorted);
   }
 
-  // The code lengths of a complex prefix code into `lengths`, and how many there are of each
-  // into `count` (section 3.5). Returns the number of symbols up to the last with a code.
+  /**
+   * The code lengths of a complex prefix code into `lengths`, and how many there are of each
+   * into `count` (section 3.5). Returns the number of symbols up to the last with a code.
+   */
   readLengths(br: Bits, size: usize, skip: usize): usize throws CompressError {
     this.readLengthCode(br, skip);
     const lengths = this.lengths;

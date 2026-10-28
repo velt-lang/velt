@@ -41,7 +41,7 @@ const SLACK: usize = 64;
 /** A Brotli decoder's driver over its `State`. */
 export class Decoder {
   s: State = new State();
-  // The state before a step that may run out of input.
+  /** The state before a step that may run out of input. */
   saved: Cursor = new Cursor();
   savedBits: u64 = 0;
   savedCount: u64 = 0;
@@ -89,7 +89,7 @@ export class Decoder {
     }
   }
 
-  // The stream is complete: input past its end is an error.
+  /** The stream is complete: input past its end is an error. */
   finish(): i64 throws CompressError {
     const s = this.s;
     s.cur.stage = STAGE_DONE;
@@ -107,8 +107,10 @@ export class Decoder {
     this.savedPos = br.pos;
   }
 
-  // After a step that read past the input: puts the state saved before it back, to run the
-  // step again when more input came, or throws when no more will.
+  /**
+   * After a step that read past the input: puts the state saved before it back, to run the
+   * step again when more input came, or throws when no more will.
+   */
   restore() throws CompressError {
     const br = this.s.br;
     if (br.finished) {
@@ -120,7 +122,7 @@ export class Decoder {
     br.pos = this.savedPos;
   }
 
-  // A header, as one step; false when the input ran out first.
+  /** A header, as one step; false when the input ran out first. */
   header(): bool throws CompressError {
     const s = this.s;
     this.save();
@@ -141,7 +143,7 @@ export class Decoder {
     return true;
   }
 
-  // Commands until the meta-block ends (DONE: go on), or FULL or HUNGRY.
+  /** Commands until the meta-block ends (DONE: go on), or FULL or HUNGRY. */
   commands(limit: usize): i64 throws CompressError {
     const s = this.s;
     const br = s.br;
@@ -171,7 +173,7 @@ export class Decoder {
     }
   }
 
-  // The bytes of an uncompressed meta-block (copied) or a metadata block (skipped).
+  /** The bytes of an uncompressed meta-block (copied) or a metadata block (skipped). */
   raw(limit: usize): i64 throws CompressError {
     const s = this.s;
     const br = s.br;
@@ -209,8 +211,10 @@ export class Decoder {
     return DONE;
   }
 
-  // Makes room in `s.out` for output up to `limit` (or the meta-block's end, if that is
-  // sooner) and returns that end. Drops read output that is out of the window's reach first.
+  /**
+   * Makes room in `s.out` for output up to `limit` (or the meta-block's end, if that is
+   * sooner) and returns that end. Drops read output that is out of the window's reach first.
+   */
   room(limit: usize): usize {
     const s = this.s;
     const c = s.cur;
