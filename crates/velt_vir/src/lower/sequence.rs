@@ -199,6 +199,7 @@ fn writes_local(e: &hir::Expr) -> bool {
                 || args.iter().any(writes_local)
         }
         K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
+        K::ArrayLit(es) => es.iter().any(writes_local),
         _ => true,
     }
 }
@@ -363,10 +364,12 @@ impl FnLower<'_, '_> {
     /// the exclusivity rule (velt_sema `ownership/exclusive`) does not see it change what
     /// another argument reaches. An object stored inline (an uncounted object type, array or
     /// tuple, or one of them or `null`) is passed where it is, as holding it would copy it and
-    /// the change would go to the copy, unless a later operand may change memory (a call
-    /// through a function value that replaces the field passed first:
-    /// `pushes[0](p.log, swaps[0](p))`). Its type is then counted, so the hold is a share of
-    /// the one object, as in JavaScript.
+    /// the change would go to the copy, unless a later operand may replace it (a call through a
+    /// function value that replaces the field passed first: `pushes[0](p.log, swaps[0](p))`).
+    /// Its type is then counted, so the hold is a share of the one object, as in JavaScript.
+    /// Counting changes the type for the whole program, so only an operand that can reach the
+    /// object counts ([`reaches_objects`](Self::reaches_objects)), and never for a variable of
+    /// this function that nothing after it assigns: no operand reaches its slot.
     pub(super) fn changed_hold(
         &mut self,
         args: &[hir::Expr],
@@ -376,11 +379,96 @@ impl FnLower<'_, '_> {
         let Some(obj) = self.inline_object(args[i].ty) else {
             return Some(later);
         };
-        if later.memory {
-            self.cx.note_identity_borrow(obj);
-            return Some(later);
+        if !later.memory || (!later.locals && self.own_variable(&args[i])) {
+            return None;
         }
-        None
+        if !args[i + 1..].iter().any(|e| self.reaches_objects(e)) {
+            return None;
+        }
+        self.cx.note_identity_borrow(obj);
+        Some(later)
+    }
+
+    /// Is `e` a variable whose value this function holds itself (not a param or binding that
+    /// points elsewhere, nor one in a shared cell a closure may assign)?
+    fn own_variable(&self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        let mut e = e;
+        while let K::Cast(x) | K::Upcast(x) | K::Downcast(x) = &e.kind {
+            e = x;
+        }
+        let K::Local(l, _) = e.kind else {
+            return false;
+        };
+        let info = &self.info[l.0 as usize];
+        !info.indirect && !info.cell && !info.in_cell
+    }
+
+    /// Can evaluating `e` change an object stored inline that an earlier operand passes? As
+    /// [`may_change_memory`](Self::may_change_memory), except that a call of a
+    /// standard-library function whose arguments are all numbers, booleans or strings
+    /// (`Math.sqrt(4)`, `x.toFixed(2)`, `String(n)`) reaches no such object: it is handed no
+    /// reference to one, and the library sees none of the program's variables.
+    fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        if !self.may_change_memory(e) {
+            return false;
+        }
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Def(h, _),
+                args,
+            } if self.std_fn(*h) && args.iter().all(|a| self.plain_arg(a)) => {
+                args.iter().any(|a| self.reaches_objects(a))
+            }
+            K::Unary { expr: x, .. } | K::Cast(x) | K::Upcast(x) | K::WrapSome(x) => {
+                self.reaches_objects(x)
+            }
+            K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
+                self.reaches_objects(lhs) || self.reaches_objects(rhs)
+            }
+            K::If { cond, then, els } => {
+                self.reaches_objects(cond)
+                    || self.reaches_objects(then)
+                    || self.reaches_objects(els)
+            }
+            // An intrinsic that runs no user code: its arguments (`String(n)`, `xs.length`).
+            K::Call {
+                callee: hir::Callee::Intrinsic(i),
+                args,
+            } if !velt_sema::effects::runs_user_code(*i) => args
+                .iter()
+                .any(|a| velt_sema::effects::writes_place(a) || self.reaches_objects(a)),
+            // A new array (`Math.max(1, 2)`'s rest param, `[1, 2].length`): its elements.
+            K::ArrayLit(es) => es.iter().any(|x| self.reaches_objects(x)),
+            K::Field { base, .. } => self.reads_proxy(e) || self.reaches_objects(base),
+            _ => true,
+        }
+    }
+
+    /// Is `h` a function of the standard library?
+    fn std_fn(&self, h: hir::DefId) -> bool {
+        match (self.cx.hir.def(h), self.cx.locs.as_ref()) {
+            (hir::Def::Fn(f), Some(m)) => m.is_std(f.span),
+            _ => false,
+        }
+    }
+
+    /// Is argument `a` a number, a boolean or a string, or a new array of them (a rest
+    /// param: `Math.max(1, 2)`)? It holds no reference to the program's objects.
+    fn plain_arg(&mut self, a: &hir::Expr) -> bool {
+        match &a.kind {
+            hir::ExprKind::ArrayLit(es) => es.iter().all(|x| self.plain_arg(x)),
+            _ => self.plain_value(a.ty),
+        }
+    }
+
+    /// Is a value of type `ty` a number, a boolean or a string (it holds no reference)?
+    fn plain_value(&mut self, ty: TyId) -> bool {
+        matches!(
+            self.kind(ty),
+            hir::TyKind::Int(_) | hir::TyKind::Float(_) | hir::TyKind::Bool | hir::TyKind::Str
+        )
     }
 
     /// The object type a value of type `ty` stores inline (`changed_hold`).
