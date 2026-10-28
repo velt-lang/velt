@@ -366,3 +366,32 @@ fn a_large_recursive_function_stays_a_call() {
     inline(&mut p);
     assert_eq!(calls_to(&p.funcs[main.0 as usize], a), 2);
 }
+
+#[test]
+fn a_leaf_counts_as_small_up_to_the_leaf_limit() {
+    // Called twice outside any loop: a leaf (no calls but of what never returns) up to
+    // `LEAF_COST` is inlined, a callee of the same size that calls a runtime function is not.
+    let mut pb = ProgramBuilder::new();
+    let ext = pb.ext("velt_rt_str_append", &[Ty::I64], Ty::Unit, false);
+    let leaf = pb.add(adder("leaf", LEAF_COST as usize - 2, Linkage::Internal));
+    let mut calling = adder("calling", LEAF_COST as usize - 4, Linkage::Internal);
+    let last = calling.blocks.len() - 1;
+    let ret = std::mem::replace(&mut calling.blocks[last].term, Terminator::Unreachable);
+    calling.blocks.push(velt_vir::vir::BasicBlock {
+        stmts: vec![],
+        term: ret,
+    });
+    calling.blocks[last].term = Terminator::Call {
+        callee: Callee::Extern(ext),
+        args: vec![copy_local(velt_vir::vir::Local(0))],
+        dest: None,
+        next: velt_vir::vir::BlockId(last as u32 + 1),
+    };
+    calling.locs = vec![];
+    let calling = pb.add(calling);
+    let main = pb.add(caller(&[leaf, calling], 2));
+    let mut p = pb.finish();
+    inline(&mut p);
+    let m = &p.funcs[main.0 as usize];
+    assert_eq!((calls_to(m, leaf), calls_to(m, calling)), (0, 2));
+}

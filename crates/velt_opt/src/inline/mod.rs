@@ -4,7 +4,9 @@
 //! - trivial (cost ≤ `TRIVIAL_COST`) — always, it rarely grows code;
 //! - internal, called from exactly one site and not address-taken (it is deleted afterwards,
 //!   so there is no growth) — up to `ONCE_COST`;
-//! - small (cost ≤ `SMALL_COST`) — while the program-wide growth `Budget` lasts;
+//! - small (cost ≤ `SMALL_COST`, or ≤ `LEAF_COST` for a leaf, which calls nothing but
+//!   functions that never return: `readVarint`, a byte reader with bounds checks) — while the
+//!   program-wide growth `Budget` lasts;
 //! - called from a loop of the caller (cost ≤ `LOOP_COST`) — while the budget lasts: the hot
 //!   paths of a program are its loops, and a call per iteration costs the call and whatever the
 //!   callee keeps in memory across it. (The standard library's caller-tracking functions get an
@@ -44,6 +46,10 @@ use crate::visit::successors;
 const TRIVIAL_COST: u64 = 8;
 /// Callees at most this big are inlined while the growth budget lasts.
 const SMALL_COST: u64 = 40;
+/// Leaf callees (no calls but of functions that never return) at most this big count as small:
+/// the call is all they add, and inlined, what they compute (a decoded value and its length
+/// returned through memory) becomes locals of the caller.
+const LEAF_COST: u64 = 120;
 /// Single-call-site internal callees at most this big are inlined.
 const ONCE_COST: u64 = 2_000;
 /// Callees called from a loop at most this big are inlined while the growth budget lasts.
@@ -237,13 +243,35 @@ fn decide(
     if once && size <= ONCE_COST {
         return Some(Decision::Free);
     }
-    let mut limit = if site.in_loop { LOOP_COST } else { SMALL_COST };
     if recursive {
         // A copy of a recursive function adds to its body, which stays: only a small entry
         // called from a loop is worth one (module docs).
-        limit = if site.in_loop { RECURSIVE_COST } else { 0 };
+        let ok = site.in_loop && size <= RECURSIVE_COST && size <= budget.remaining;
+        return ok.then_some(Decision::Charged(size));
     }
+    let limit = if site.in_loop {
+        LOOP_COST
+    } else if size > SMALL_COST && is_leaf(program, target) {
+        LEAF_COST
+    } else {
+        SMALL_COST
+    };
     (size <= limit && size <= budget.remaining).then_some(Decision::Charged(size))
+}
+
+/// Whether `func` calls nothing but functions that never return (its checks' reports).
+fn is_leaf(program: &Program, func: &Function) -> bool {
+    func.blocks.iter().all(|b| match &b.term {
+        Terminator::Call { callee, .. } => match callee {
+            Callee::Func(f) => program.funcs.get(f.0 as usize).is_some_and(never_returns),
+            Callee::Extern(e) => program
+                .externs
+                .get(e.0 as usize)
+                .is_some_and(|e| e.noreturn),
+            Callee::Ptr { .. } => false,
+        },
+        _ => true,
+    })
 }
 
 /// Whether no call of `func` returns normally: no path through it returns (a panic helper such
