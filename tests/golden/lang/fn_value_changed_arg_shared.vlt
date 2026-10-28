@@ -1,8 +1,8 @@
 // A param a function value or a closure modifies is `Borrow` (calls through a value may pass
 // one object twice), so the exclusivity rule does not see what such a call changes. When the
 // argument for it may change under the callee, it is the object it was when it was evaluated,
-// as in JavaScript: a later argument that calls a function value replacing the field passed
-// first, or a part of an object passed with that object to a callee that replaces the part.
+// as in JavaScript: here a later argument that calls a function value replacing the field
+// passed first.
 
 type N = { name: string; log: number[] };
 
@@ -20,14 +20,8 @@ function growF(b: N): number {
   return 5000;
 }
 
-function workF(xs: number[], b: N): void {
-  b.log = [9];
-  for (let i = 0; i < 40; i++) xs.push(i);
-}
-
 const pushes: ((xs: number[], n: number) => void)[] = [pushF];
 const swaps: ((b: N) => number)[] = [swapF, growF];
-const works: ((xs: number[], b: N) => void)[] = [workF];
 
 function show(label: string, p: N): void {
   console.log(label, p.log.length, p.log[0], p.log[p.log.length - 1]);
@@ -41,27 +35,13 @@ function factory() {
     b.log = [7];
     return 1000;
   };
-  const work = (xs: number[], b: N): void => {
-    b.log = [9];
-    for (let i = 0; i < 40; i++) xs.push(i);
-  };
-  const read = (xs: number[], b: N): number => {
-    b.log = [5];
-    let s = 0;
-    for (let i = 0; i < xs.length; i++) s += xs[i];
-    return s;
-  };
   const one = (a: N): void => {
     push(a.log, swap(a));
   };
   const pass = (a: N, b: N): void => {
     push(a.log, swap(b));
   };
-  const part = (a: N, b: N): void => {
-    work(a.log, b);
-  };
-  const partRead = (a: N, b: N): number => read(a.log, b);
-  return { one, pass, part, partRead };
+  return { one, pass };
 }
 
 function main() {
@@ -87,20 +67,6 @@ function main() {
   k.pass(t, other);
   show("pass other", t);
   show("other", other);
-
-  // A part and the whole: the callee replaces the part while it fills the array it was given.
-  const u: N = { name: "u", log: [1, 2, 3] };
-  works[0](u.log, u);
-  show("part value", u);
-  const v: N = { name: "v", log: [1, 2, 3] };
-  k.part(v, v);
-  show("part closure", v);
-  const w: N = { name: "w", log: [1, 2, 3] };
-  console.log("part read", k.partRead(w, w), w.log.join(","));
-  const kept = w.log;
-  k.part(w, w);
-  show("part again", w);
-  console.log("kept", kept.length, kept[0]);
 }
 
 main();

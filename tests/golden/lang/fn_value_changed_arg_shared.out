@@ -4,8 +4,3 @@ one 1 7 7
 pass same 1 7 7
 pass other 43 1 1039
 other 1 7 7
-part value 1 9 9
-part closure 1 9 9
-part read 6 5
-part again 1 9 9
-kept 41 5

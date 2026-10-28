@@ -185,11 +185,10 @@ whole to another closure, which is checked the same way (`mount(vnode, container
 `mountComponent(vnode, container)` in a renderer whose nested functions use its variables). Passing
 them to a named function that modifies one of them is still an error, and so is a part of one with
 another (`mountComponent(vnode.kids[0], container)`). A function that modifies a parameter and is
-also used as a value gets the caller's object for it. When something else may change that object
-while the call runs (a later argument that calls a function value replacing the field passed first,
-as in `pushes[0](p.log, swaps[0](p))`, or the callee itself when the argument is a part of an object
-it also gets, as in `works[0](p.log, p)`), the parameter is the object the argument was when it was
-evaluated, as in JS: the object's type is then reference-counted.
+also used as a value gets the caller's object for it. When a later argument may change that object
+first (it calls a function value that replaces the field passed first, as in `pushes[0](p.log,
+swaps[0](p))`), the parameter is the object the argument was when it was evaluated, as in JS: the
+object's type is then reference-counted.
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A

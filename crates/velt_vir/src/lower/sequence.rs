@@ -363,48 +363,24 @@ impl FnLower<'_, '_> {
     /// the exclusivity rule (velt_sema `ownership/exclusive`) does not see it change what
     /// another argument reaches. An object stored inline (an uncounted object type, array or
     /// tuple, or one of them or `null`) is passed where it is, as holding it would copy it and
-    /// the change would go to the copy, unless something else may change what it is: a later
-    /// operand that may change memory (a call through a function value that replaces the field
-    /// passed first: `pushes[0](p.log, swaps[0](p))`), or the callee itself when the argument
-    /// is a part of an object another argument may hold (`work(p.log, p)`, where `work`
-    /// replaces `p.log` while it fills the array it was given). Its type is then counted, so the
-    /// hold is a share of the one object, as in JavaScript; the part of another argument is
-    /// held even when nothing after it runs.
+    /// the change would go to the copy, unless a later operand may change memory (a call
+    /// through a function value that replaces the field passed first:
+    /// `pushes[0](p.log, swaps[0](p))`). Its type is then counted, so the hold is a share of
+    /// the one object, as in JavaScript.
     pub(super) fn changed_hold(
         &mut self,
         args: &[hir::Expr],
         i: usize,
         later: Later,
     ) -> Option<Later> {
-        let held = Later {
-            memory: later.memory || self.part_of_other(args, i),
-            ..later
-        };
         let Some(obj) = self.inline_object(args[i].ty) else {
-            return Some(held);
+            return Some(later);
         };
-        if held.memory {
+        if later.memory {
             self.cx.note_identity_borrow(obj);
-            return Some(held);
+            return Some(later);
         }
         None
-    }
-
-    /// Is `args[i]` reached through a projection (a field, an element) while another argument
-    /// is a value that may hold it (anything but a scalar or a string)? A variable itself is
-    /// in no other argument.
-    fn part_of_other(&mut self, args: &[hir::Expr], i: usize) -> bool {
-        use hir::ExprKind as K;
-        let mut e = &args[i];
-        while let K::Cast(x) | K::Upcast(x) | K::Downcast(x) = &e.kind {
-            e = x;
-        }
-        if matches!(e.kind, K::Local(..)) || root_local(e).is_none() {
-            return false;
-        }
-        (args.iter().enumerate()).any(|(j, o)| {
-            j != i && !self.vty(o.ty).is_scalar() && !matches!(self.kind(o.ty), hir::TyKind::Str)
-        })
     }
 
     /// The object type a value of type `ty` stores inline (`changed_hold`).
