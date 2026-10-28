@@ -27,10 +27,16 @@ async function ticks(n: number, v: number): Promise<number> {
   return v;
 }
 async function main(): Promise<void> {
-  const a = wait(5, 1);
+  // `a` settles only when the program says so: two timers' order is not reliable under load.
+  let settleA: (v: number) => void = () => {};
+  const a = new Promise<number>((resolve) => {
+    settleA = resolve;
+  });
   const b = wait(1, 2);
   console.log("race pending", await Promise.race([a, b]));
+  settleA(1);
   await a;
+  await b;
   console.log("race settled", await Promise.race([a, b]));
   console.log("race settled, other order", await Promise.race([b, a]));
   console.log("any settled", await Promise.any([a, b]));
@@ -51,7 +57,7 @@ async function main(): Promise<void> {
   // Settled once, not shared.
   const f = after(6, 8);
   const g = after(1, 9);
-  await sleep(20);
+  await sleep(100);
   console.log("race unshared settled", await Promise.race([f, g]));
 
   // Promise.any skips rejections in array order and takes the first fulfilled one.
@@ -60,6 +66,7 @@ async function main(): Promise<void> {
   const h = after(4, 11);
   const k = after(1, 12);
   await h;
+  await r.catch(() => {});
   console.log("any after rejection", await Promise.any([r, h, k]));
   try {
     await Promise.race([r, h]);
@@ -70,8 +77,7 @@ async function main(): Promise<void> {
   // A child ready when the race first looks (`Promise.resolve(v)`, an async call that returned)
   // takes its turn in array order too.
   const r2 = fail(0, 13);
-  r2.catch(() => {});
-  await sleep(2);
+  await r2.catch(() => {});
   console.log("any resolve after rejection", await Promise.any([r2, Promise.resolve(30), h]));
   console.log("any returned after rejection", await Promise.any([r2, returns(31), h]));
   try {
