@@ -12,3 +12,5 @@ content-length: 4 body=abcd
 /both EPROTO fetch failed: invalid HTTP response: both transfer-encoding and content-length
 /many ok 200 ok
 /trailer EPROTO fetch failed: invalid HTTP response: trailer too large
+/end: 50 POSTs, failed: 0
+/end-later: 50 POSTs, failed: 0

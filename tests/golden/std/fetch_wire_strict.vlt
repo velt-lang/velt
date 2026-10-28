@@ -7,7 +7,11 @@
 // - a status below 100, a header name that is not a token, a control character in a header
 //   value or the reason phrase, and both `transfer-encoding` and `content-length` are refused;
 //   150 headers are fine;
-// - a chunked trailer that never ends fails once it is larger than a head may be.
+// - a chunked trailer that never ends fails once it is larger than a head may be;
+// - 50 POSTs in turn to a server that ends each connection right after its response (without
+//   `connection: close`), and 50 to one that ends it a millisecond later, all succeed, as with
+//   Node: a POST, which is never sent twice, does not take a pooled connection whose end may
+//   still be on its way.
 import { listen, TcpStream } from "velt:net";
 import { IoError } from "velt:io";
 
@@ -65,6 +69,19 @@ async function serveOne(conn: TcpStream) {
       const text = `${lengths.join(",")} body=${body}`;
       await conn.write(`HTTP/1.1 200 OK\r\ncontent-length: ${text.length}\r\n\r\n${text}`);
       continue;
+    }
+    if (path == "/end" || path == "/end-later") {
+      // As Node's `socket.end()` right after the write, or in a timer a moment later: no more
+      // output, but a request that still arrives is read, and the connection then closed without
+      // an answer. The last wait only bounds how long a connection the client keeps pooled stays
+      // open.
+      await conn.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+      if (path == "/end-later") {
+        await sleep(1);
+      }
+      conn.shutdown();
+      await conn.readableWithin(500);
+      break;
     }
     if (path == "/trailer") {
       await conn.write("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n");
@@ -128,6 +145,17 @@ async function main() {
   }
   for (const path of ["/status", "/name", "/nul", "/reason", "/both", "/many", "/trailer"]) {
     console.log(path, await failure(`${base}${path}`));
+  }
+  for (const path of ["/end", "/end-later"]) {
+    let failed = 0;
+    for (let i = 0; i < 50; i++) {
+      try {
+        await (await fetch(`${base}${path}`, { method: "POST", body: "x" })).text();
+      } catch (e) {
+        failed += 1;
+      }
+    }
+    console.log(`${path}: 50 POSTs, failed: ${failed}`);
   }
   listener.close();
 }

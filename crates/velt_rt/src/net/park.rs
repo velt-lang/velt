@@ -14,9 +14,12 @@
 //! that closes a connection right after its response sends the end a moment after the response,
 //! which a check right away cannot see yet: a request that may not be sent twice (a POST) is
 //! handed only a stream idle for at least [`SETTLED`], by when that end has arrived; the newer
-//! streams stay parked (it gets a new connection if there is none). Against a server farther away
-//! than that, every parked stream is older, so this costs nothing; against a fast local one, a
-//! loop of POSTs keeps a few more connections. Streams idle longer than [`MAX_IDLE`] are closed
+//! streams stay parked (it gets a new connection if there is none). The rule is time, not turns of
+//! the event loop as in undici: a Velt request takes tens of microseconds, so a turn (a yield) is
+//! far too short for a close a server sends on its own next turn or a timer later, which Node's
+//! slower requests happen to outwait. Against a server farther away than [`SETTLED`], every
+//! parked stream is older, so this costs nothing; against a fast local one, a tight loop of POSTs
+//! keeps more connections (about one per [`SETTLED`] of requests). Streams idle longer than [`MAX_IDLE`] are closed
 //! when their key is next asked for, and a key keeps at most [`MAX_PER_KEY`] streams.
 
 use super::tcp::{velt_rt_tcp_close, StreamHandle, STREAMS};
@@ -30,8 +33,10 @@ use std::time::{Duration, Instant};
 const MAX_PER_KEY: usize = 512;
 /// A stream idle this long is closed rather than reused.
 const MAX_IDLE: Duration = Duration::from_secs(60);
-/// A stream idle this long has received a close its server sent right after the response.
-const SETTLED: Duration = Duration::from_millis(1);
+/// A stream idle this long has received a close its server sent shortly after the response: at
+/// once, on its next event-loop turn or a timer of a few milliseconds (Windows' timers among
+/// them), which 1 ms did not cover.
+const SETTLED: Duration = Duration::from_millis(5);
 
 /// FNV-1a over the key's bytes: keys are a handful of origins the program chose, so a seeded
 /// hash's cost (SipHash, several hundred instructions per request) buys nothing.
