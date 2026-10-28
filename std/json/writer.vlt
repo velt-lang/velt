@@ -14,6 +14,14 @@ declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
 declare function velt_rt_strbuf_push_u64(out: string, v: u64);
 declare function velt_rt_strbuf_push_f64(out: string, v: f64);
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_strbuf_push_str_range(
+  out: string,
+  s: string,
+  start: u64,
+  end: u64,
+  units: u64,
+);
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
 const QUOTE: u8 = 34;
 const BACKSLASH: u8 = 92;
@@ -175,6 +183,31 @@ function writeAscii(out: string, s: string) {
   for (let i: usize = 0; i < n; i++) {
     velt_rt_strbuf_push_byte(out, __intrinsic_str_byte_at(s, i as u64));
   }
+}
+
+/**
+ * Appends bytes `start` to `end` of `src` quoted, as `writeString` writes that text: the text
+ * of a JSON string that had no escapes (no quote, backslash or control character; whole
+ * characters), `units` UTF-16 units. It is copied as it is, in one push, unless a byte needs an
+ * escape (a lone surrogate), which only non-ASCII text can have.
+ */
+export function writeSourceString(
+  out: string,
+  src: string,
+  start: usize,
+  end: usize,
+  units: u64,
+): void {
+  if (units != ((end - start) as u64) && nextEscape(src, start, end) < end) {
+    const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
+    writeString(out, s);
+    return;
+  }
+  const a = start as u64;
+  const b = end as u64;
+  velt_rt_strbuf_push_byte(out, QUOTE);
+  velt_rt_strbuf_push_str_range(out, src, a, b, units);
+  velt_rt_strbuf_push_byte(out, QUOTE);
 }
 
 /** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */

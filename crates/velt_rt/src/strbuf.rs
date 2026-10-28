@@ -129,6 +129,46 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u8s(
     }
 }
 
+/// Append bytes `start..end` of `s`, `units` UTF-16 units with no lone surrogate (std code that
+/// copies a range of a string it has scanned: velt:json/tape writes a parsed string's source
+/// text). The range is whole characters; it is clamped to the string, so a wrong range copies
+/// less instead of reading past it.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_str_range(
+    buf: *mut VeltStrBuf,
+    s: *const VeltStr,
+    start: u64,
+    end: u64,
+    units: u64,
+) {
+    let bytes = (*s).as_bytes();
+    let end = (end as usize).min(bytes.len());
+    let start = (start as usize).min(end);
+    if start == end {
+        return;
+    }
+    if std::ptr::eq(buf.cast_const().cast::<VeltStr>(), s) {
+        // Copy out first: growing the builder may move the bytes being read.
+        let text = bytes[start..end].to_vec();
+        push_known(buf, &text, units);
+        return;
+    }
+    push_known(buf, &bytes[start..end], units);
+}
+
+/// Append `text` whose UTF-16 count is `units` (no lone surrogate).
+unsafe fn push_known(buf: *mut VeltStrBuf, text: &[u8], units: u64) {
+    if units == text.len() as u64 {
+        push_ascii(buf, text);
+    } else {
+        let sum = crate::str::Summary {
+            units: units as _,
+            lone: 0,
+        };
+        (*buf).push_wtf8(text, Some(sum));
+    }
+}
+
 /// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
 #[inline(never)]
 unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {

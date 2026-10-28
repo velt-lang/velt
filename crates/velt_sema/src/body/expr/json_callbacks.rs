@@ -8,15 +8,19 @@ use velt_common::Diagnostic;
 use velt_syntax::ast;
 
 use crate::body::FnCx;
-use crate::hir;
-
-/// Is `t` the type `JsonValue` as written?
-fn is_json_value(t: &ast::TypeExpr) -> bool {
-    matches!(&t.kind, ast::TypeExprKind::Named { path, args }
-        if args.is_empty() && path.last().is_some_and(|i| i.name == "JsonValue"))
-}
+use crate::hir::{self, TyKind};
 
 impl FnCx<'_, '_> {
+    /// Does the annotation `t` name the prelude's `JsonValue`, however it is written (`JsonValue`,
+    /// velt:json's `Value`, a local alias)? Its own errors are left to the parameter's check.
+    fn names_json_value(&mut self, t: &ast::TypeExpr) -> bool {
+        let errors = self.cx.diags.len();
+        let env = self.env.clone();
+        let ty = self.cx.resolve_type(t, &env);
+        self.cx.diags.truncate(errors);
+        matches!(self.cx.ty.kind(ty), TyKind::Adt(d, _) if self.cx.is_json_value(*d))
+    }
+
     /// `a` as the callback of `what` (`` `JSON.stringify` `` or `` `JsonValue.revive` ``): `None`
     /// when `a` is no arrow or function expression; `Some(true)` when its value parameter is
     /// written `JsonValue` (or it takes none), and `Some(false)` when it is not, reported.
@@ -35,7 +39,7 @@ impl FnCx<'_, '_> {
         let Some((name, ty)) = value else {
             return Some(true);
         };
-        if ty.as_ref().is_some_and(is_json_value) {
+        if ty.as_ref().is_some_and(|t| self.names_json_value(t)) {
             return Some(true);
         }
         let v = &name.name;

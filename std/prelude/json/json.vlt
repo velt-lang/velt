@@ -288,7 +288,7 @@ export class JsonValue {
    * value parameter must be written `v: JsonValue` until #924.
    */
   revive(reviver: JsonReplacer): JsonValue {
-    const out = jsonRevived("", this, reviver);
+    const out = jsonRevived("", this, reviver, 0);
     if (out == undefined) {
       throw new TypeError(
         "JsonValue.revive: the reviver returned undefined for the value itself (JSON.parse would return undefined; a JsonValue can't be undefined)",
@@ -627,7 +627,7 @@ function jsonReplaceWith(text: string, replacer: JsonReplacer): string {
     // `text` is `JSON.stringify`'s own output.
     panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
   }
-  const out = jsonReplaced("", root, replacer);
+  const out = jsonReplaced("", root, replacer, 0);
   if (out == undefined) {
     throw new TypeError(
       "JSON.stringify: the replacer returned undefined for the value itself (JavaScript would return undefined; Velt's JSON.stringify returns a string)",
@@ -636,11 +636,26 @@ function jsonReplaceWith(text: string, replacer: JsonReplacer): string {
   return out.stringify();
 }
 
+// How deep a replacer or reviver walks before a `RangeError`, as Node runs out of stack: each
+// level is a native call of these functions, so a deeper value (the parser allows any depth
+// with `maxDepth`) would overflow the native stack instead.
+const JSON_CALLBACK_DEPTH: i64 = 4096;
+
+function jsonCallbackTooDeep(): RangeError {
+  return new RangeError(
+    `Maximum call stack size exceeded (a JSON replacer or reviver over values nested deeper than ${JSON_CALLBACK_DEPTH})`,
+  );
+}
+
 function jsonReplaced(
   key: string,
   value: JsonValue,
   replacer: JsonReplacer,
+  depth: i64,
 ): JsonValue | undefined {
+  if (depth > JSON_CALLBACK_DEPTH) {
+    throw jsonCallbackTooDeep();
+  }
   const r = replacer(key, value);
   if (r == undefined) {
     return undefined;
@@ -649,7 +664,7 @@ function jsonReplaced(
     const out = JsonValue.array();
     const n = r.len();
     for (let i: i64 = 0; i < n; i++) {
-      const e = jsonReplaced(String(i), r.at(i)!, replacer);
+      const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
       out.push(e ?? JsonValue.of(null));
     }
     return out;
@@ -657,7 +672,7 @@ function jsonReplaced(
   if (r.isObject()) {
     const out = JsonValue.object();
     for (const k of r.keys()) {
-      const e = jsonReplaced(k, r.get(k)!, replacer);
+      const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
       if (e != undefined) {
         out.set(k, e);
       }
@@ -668,12 +683,20 @@ function jsonReplaced(
 }
 
 // `value.revive(reviver)`: its members revived first (in place of the value's own), then it.
-function jsonRevived(key: string, value: JsonValue, reviver: JsonReplacer): JsonValue | undefined {
+function jsonRevived(
+  key: string,
+  value: JsonValue,
+  reviver: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined {
+  if (depth > JSON_CALLBACK_DEPTH) {
+    throw jsonCallbackTooDeep();
+  }
   if (value.isArray()) {
     const out = JsonValue.array();
     const n = value.len();
     for (let i: i64 = 0; i < n; i++) {
-      const e = jsonRevived(String(i), value.at(i)!, reviver);
+      const e = jsonRevived(String(i), value.at(i)!, reviver, depth + 1);
       out.push(e ?? JsonValue.of(null));
     }
     return reviver(key, out);
@@ -681,7 +704,7 @@ function jsonRevived(key: string, value: JsonValue, reviver: JsonReplacer): Json
   if (value.isObject()) {
     const out = JsonValue.object();
     for (const k of value.keys()) {
-      const e = jsonRevived(k, value.get(k)!, reviver);
+      const e = jsonRevived(k, value.get(k)!, reviver, depth + 1);
       if (e != undefined) {
         out.set(k, e);
       }

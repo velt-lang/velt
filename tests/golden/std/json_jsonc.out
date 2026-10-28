@@ -9,3 +9,5 @@ double comma: invalid JSON at $[1]: unexpected character ',' (byte 3)
 after comment: invalid JSON at $[1]: unexpected character 'x' (byte 12)
 no colon: invalid JSON at $.b: expected ':' (byte 21)
 3
+q"//x /* a */ */ 1
+{"s":"q\"//x","t":"/* a */","u":"*/","n":[1]}

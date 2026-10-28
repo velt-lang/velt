@@ -22,7 +22,7 @@ import {
   detailText,
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
-import { writeF64, writeString } from "velt:json/writer";
+import { writeF64, writeSourceString, writeString } from "velt:json/writer";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
@@ -283,9 +283,65 @@ export class Tape {
    * Appends value `v` as compact JSON text (`JSON.stringify`) to the builder `out`. Every call
    * that takes `out` gets no argument that is itself a call (it would make a copy of `out`
    * first, and the text would go to the copy): such arguments are made into locals before.
+   * Iterative, with the open containers on a stack of its own, so a value nested as deeply as
+   * the parser allowed writes without running out of native stack.
    */
   write(out: string, v: u32): void {
-    const k = this.kind(v);
+    // The open containers, innermost last, and the member each writes next.
+    const open: u32[] = [];
+    const next: i64[] = [];
+    let at = v;
+    while (true) {
+      const k = this.kind(at);
+      if (k == T_ARRAY || k == T_OBJECT) {
+        const object = k == T_OBJECT;
+        velt_rt_strbuf_push_byte(out, object ? 123 : 91);
+        if (this.count(at) > 0) {
+          open.push(at);
+          next.push(0);
+        } else {
+          velt_rt_strbuf_push_byte(out, object ? 125 : 93);
+        }
+      } else {
+        this.writeScalar(out, at, k);
+      }
+      // The next value to write: the next member of the innermost open container, closing the
+      // containers that have none left.
+      let found = false;
+      while (open.length > 0) {
+        const top = open.length - 1;
+        const c = open[top];
+        const i = next[top];
+        const object = this.kind(c) == T_OBJECT;
+        if (i >= this.count(c)) {
+          open.pop();
+          next.pop();
+          velt_rt_strbuf_push_byte(out, object ? 125 : 93);
+          continue;
+        }
+        if (i > 0) {
+          velt_rt_strbuf_push_byte(out, 44);
+        }
+        next[top] = i + 1;
+        const m = this.member(c, i) as u32;
+        if (object) {
+          this.writeText(out, m);
+          velt_rt_strbuf_push_byte(out, 58);
+          at = m + 1;
+        } else {
+          at = m;
+        }
+        found = true;
+        break;
+      }
+      if (!found) {
+        return;
+      }
+    }
+  }
+
+  // A value that is no container, of kind `k`.
+  private writeScalar(out: string, v: u32, k: u64): void {
     if (k == T_NULL) {
       pushAscii(out, "null");
     } else if (k == T_TRUE) {
@@ -295,35 +351,24 @@ export class Tape {
     } else if (k == T_NUMBER) {
       const x = this.number(v);
       writeF64(out, x);
-    } else if (k == T_STRING) {
-      const s = this.text(v);
-      writeString(out, s);
-    } else if (k == T_ARRAY) {
-      velt_rt_strbuf_push_byte(out, 91);
-      const n = this.count(v);
-      for (let i: i64 = 0; i < n; i++) {
-        if (i > 0) {
-          velt_rt_strbuf_push_byte(out, 44);
-        }
-        const e = this.member(v, i) as u32;
-        this.write(out, e);
-      }
-      velt_rt_strbuf_push_byte(out, 93);
     } else {
-      velt_rt_strbuf_push_byte(out, 123);
-      const n = this.count(v);
-      for (let i: i64 = 0; i < n; i++) {
-        if (i > 0) {
-          velt_rt_strbuf_push_byte(out, 44);
-        }
-        const key = this.member(v, i) as u32;
-        const s = this.text(key);
-        writeString(out, s);
-        velt_rt_strbuf_push_byte(out, 58);
-        this.write(out, key + 1);
-      }
-      velt_rt_strbuf_push_byte(out, 125);
+      this.writeText(out, v);
     }
+  }
+
+  // String or key `v`, quoted: its source text in one push when it had no escapes.
+  private writeText(out: string, v: u32): void {
+    const w = this.words[2 * (v as usize)];
+    const p = this.words[2 * (v as usize) + 1];
+    if ((w & ESCAPED) != 0) {
+      const s = this.decoded[p as usize];
+      writeString(out, s);
+      return;
+    }
+    const start = (p & 0xffffffff) as usize;
+    const end = (p >> 32) as usize;
+    const units = w >> 32;
+    writeSourceString(out, this.src, start, end, units);
   }
 
   /** Value `v` as compact JSON text. */
