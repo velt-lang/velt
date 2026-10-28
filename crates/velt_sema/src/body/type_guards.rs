@@ -77,7 +77,9 @@ impl FnCx<'_, '_> {
         let ([target], [arg]) = (type_args, args) else {
             self.cx.error(
                 Diagnostic::error("`asType` takes one type argument and one argument", span)
-                    .with_note("write the type to convert to, `asType<B>(x)`: the type of `x` is the other"),
+                    .with_note(
+                    "write the type to convert to, `asType<B>(x)`: the type of `x` is the other",
+                ),
             );
             for a in args {
                 self.expr(a, None, Want::Borrow);
