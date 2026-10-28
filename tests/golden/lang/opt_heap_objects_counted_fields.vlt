@@ -1,0 +1,117 @@
+// check: no leaks
+// Objects with reference-counted fields that never leave their function live in locals in
+// release builds (heap scalar replacement, #533): the constructor's store, the share of a
+// field into a new object and the object's drop read the field's pointer without taking the
+// object's address. Every counted value is still released exactly once: `Res` counts its
+// disposals, and a missed or extra release changes the counts (or frees twice).
+let made = 0;
+let disposed = 0;
+
+class Res {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+    made++;
+  }
+  [Symbol.dispose]() {
+    disposed++;
+  }
+}
+
+class Holder {
+  res: Res | null;
+  owned: Res;
+  k: number;
+  constructor(res: Res | null, owned: Res, k: number) {
+    this.res = res;
+    this.owned = owned;
+    this.k = k;
+  }
+  // A new holder sharing this one's fields.
+  child(d: number): Holder {
+    return new Holder(this.res, this.owned, this.k + d);
+  }
+  id(): number {
+    const r = this.res;
+    return r == null ? -1 : r.id;
+  }
+}
+
+// Short-lived holders: each `child` is built, read and dropped in the loop.
+function children(n: number): number {
+  const root = new Holder(new Res(1), new Res(2), 0);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const c = root.child(i);
+    sum += c.k + c.id() + c.owned.id;
+  }
+  return sum;
+}
+
+// Field reassignment on a local holder: the old value is released at each store.
+function reassign(n: number): number {
+  const h = new Holder(null, new Res(10), 0);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    h.res = i % 3 == 0 ? null : new Res(100 + i);
+    h.owned = new Res(200 + i);
+    sum += h.id() + h.owned.id;
+  }
+  return sum;
+}
+
+// A boxed field (a map) beside a counted one.
+class Bag {
+  tags: Map<string, number>;
+  res: Res | null;
+  constructor(res: Res | null) {
+    this.tags = new Map<string, number>();
+    this.res = res;
+  }
+}
+
+function bags(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const b = new Bag(new Res(500 + i));
+    b.tags.set("i", i);
+    b.res = i % 2 == 0 ? null : new Res(600 + i);
+    sum += (b.tags.get("i") ?? 0) + (b.res?.id ?? 0);
+  }
+  return sum;
+}
+
+// A holder that may escape on some paths only.
+function mixed(n: number): number {
+  const kept: Holder[] = [];
+  const shared = new Res(7);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const h = new Holder(shared, new Res(300 + i), i);
+    sum += h.id() + h.owned.id;
+    if (i % 2 == 0) {
+      kept.push(h);
+    }
+  }
+  return sum + kept.length + kept[1].owned.id;
+}
+
+// A holder whose field is moved into another one.
+function handOver(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const a = new Holder(new Res(i), new Res(400 + i), i);
+    const b = new Holder(a.res, a.owned, a.k + 1);
+    a.res = null;
+    sum += b.id() + a.id() + b.k;
+  }
+  return sum;
+}
+
+function main() {
+  console.log(children(5), made, disposed);
+  console.log(reassign(6), made, disposed);
+  console.log(mixed(4), made, disposed);
+  console.log(handOver(3), made, disposed);
+  console.log(bags(4), made, disposed);
+}

@@ -331,6 +331,64 @@ fn the_address_of_a_field_keeps_the_heap() {
     });
 }
 
+/// Between: `old = t.0; if (old != 0) keep(&old, old)` — how lowering drops a pointer field
+/// (drop glue takes the address of a copy, not of the field), here of the zero-filled field a
+/// constructor assigns. Returns the continuation.
+fn drop_field_copy(env: &Env, fb: &mut FuncBuilder, b: BlockId, t: Local) -> BlockId {
+    let (old, a, c) = (fb.local(I64), fb.local(Ptr), fb.local(Bool));
+    fb.assign(b, old, Rvalue::Use(copy_place(env.field(t, 0))));
+    fb.assign(b, c, bin(BinOp::Ne, copy_local(old), int(0, I64)));
+    let (drop, next) = (fb.block(), fb.block());
+    fb.branch(b, c, drop, next);
+    fb.assign(drop, a, Rvalue::AddrOf(Place::local(old)));
+    let args = vec![copy_local(a), copy_local(old)];
+    let after = fb.call(drop, Callee::Extern(env.keep), args, None);
+    fb.goto(after, next);
+    next
+}
+
+#[test]
+fn a_field_dropped_through_a_copy_is_replaced() {
+    // The copy's address escapes, the object's does not: it stays in locals, and the drop is
+    // made (`keep`) exactly when the field is non-zero, as through the heap.
+    check(
+        loop_program(|env, fb, b, _, t| drop_field_copy(env, fb, b, t)),
+        &[0, 1, 4],
+        true,
+    );
+}
+
+#[test]
+fn a_zero_filled_field_dropped_before_its_store_is_replaced() {
+    // `t = new; memset; old = t.0; drop old if set; t.0 = 5`: the constructor's `this.f = v`.
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let t = fb.local(Ptr);
+    let b = fb.block();
+    let args = vec![int(16, U64), int(8, U64)];
+    let b = fb.call(b, Callee::Extern(env.alloc), args, Some(t));
+    fb.push(
+        b,
+        Stmt::MemSet {
+            dst: copy_local(t),
+            byte: int(0, U8),
+            len: int(16, U64),
+        },
+    );
+    let b = drop_field_copy(&env, &mut fb, b, t);
+    fb.push(b, Stmt::Assign(env.field(t, 0), Rvalue::Use(int(5, I64))));
+    fb.push(
+        b,
+        Stmt::Assign(env.field(t, 1), Rvalue::Use(copy_local(fb.param(0)))),
+    );
+    let b = drop_field_copy(&env, &mut fb, b, t);
+    let r = env.sum(&mut fb, b, t);
+    let b = env.drop_obj(&mut fb, b, t);
+    fb.ret(b, copy_local(r));
+    env.pb.add(fb.finish());
+    check(env.pb.finish(), &[0, 3], true);
+}
+
 #[test]
 fn an_offset_pointer_keeps_the_heap() {
     // A reference-counted object's header sits in front of it.
