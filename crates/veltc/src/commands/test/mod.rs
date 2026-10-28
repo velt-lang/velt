@@ -73,6 +73,8 @@ struct Run<'o> {
     /// diagnostics of their builds.
     harnesses: Vec<Value>,
     diagnostics: Vec<Value>,
+    /// The modules the test files import, as read so far.
+    scanned: discover::Scanned,
 }
 
 /// What one `velt test` run found.
@@ -176,6 +178,7 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         selected: 0,
         harnesses: vec![],
         diagnostics: vec![],
+        scanned: discover::Scanned::default(),
     };
     let mut planned = vec![];
     for file in &files {
@@ -184,6 +187,14 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
     if let (Some(filter), 0) = (&opts.filter, run.selected) {
         if !opts.json {
             eprintln!("no tests match `{filter}`");
+        }
+        // Nothing to build or run, and no summary of nothing; a file that doesn't parse has
+        // been reported and fails the run.
+        if !opts.no_run {
+            return Ok(Outcome {
+                passed: run.failed == 0,
+                watched: run.watched,
+            });
         }
     }
     if !opts.no_run {
@@ -317,7 +328,9 @@ impl Run<'_> {
     }
 
     /// Build one harness for the files `group` of `planned` and record it in `built`. When a
-    /// shared harness fails, each of its files is built alone, which reports its own errors.
+    /// shared harness fails, the files its errors are in are built alone, which reports them, and
+    /// the others share a harness again. Errors in none of them (in a module they import) leave
+    /// each file to be built alone, to find out whose they are.
     fn build_group(
         &mut self,
         planned: &[Planned],
@@ -327,28 +340,37 @@ impl Run<'_> {
         let files: Vec<&Planned> = group.iter().map(|&i| &planned[i]).collect();
         let quiet = group.len() > 1;
         match self.build_files(&files, quiet) {
-            Some(exe) => {
+            Ok(exe) => {
                 for (index, &i) in group.iter().enumerate() {
                     built[i] = Some((exe.clone(), index));
                 }
             }
-            None if quiet => {
-                for &i in group {
+            Err(broken) if quiet => {
+                let (bad, rest): (Vec<_>, Vec<_>) = group
+                    .iter()
+                    .enumerate()
+                    .partition(|(at, _)| broken.is_empty() || broken.contains(at));
+                for (_, &i) in bad {
                     self.build_group(planned, &[i], built);
                 }
+                let rest: Vec<usize> = rest.into_iter().map(|(_, &i)| i).collect();
+                if !rest.is_empty() {
+                    self.build_group(planned, &rest, built);
+                }
             }
-            None => {}
+            Err(_) => {}
         }
     }
 
     /// The harness of `files` alone; without files, the runner.
     fn build_harness(&mut self, files: &[&Planned]) -> Option<PathBuf> {
-        self.build_files(files, false)
+        self.build_files(files, false).ok()
     }
 
     /// Build the harness of `files`; reports the build's diagnostics unless it fails and is
-    /// `quiet` (a shared harness, whose files are then built alone).
-    fn build_files(&mut self, files: &[&Planned], quiet: bool) -> Option<PathBuf> {
+    /// `quiet` (a shared harness, whose files are then built again). A failed build gives the
+    /// indexes in `files` of the files its errors are in.
+    fn build_files(&mut self, files: &[&Planned], quiet: bool) -> Result<PathBuf, Vec<usize>> {
         let opts = self.harness_options(files);
         let mut sess = Session::new();
         let result = driver::build(&mut sess, &opts);
@@ -362,13 +384,13 @@ impl Run<'_> {
         match result {
             Ok(artifact) => {
                 report(&sess, false);
-                Some(artifact_path(artifact))
+                Ok(artifact_path(artifact))
             }
-            Err(_) if quiet => None,
+            Err(_) if quiet => Err(files_with_errors(&sess, files)),
             Err(e) => {
                 report(&sess, false);
                 let _ = failure_code(&e);
-                None
+                Err(vec![])
             }
         }
     }
@@ -408,7 +430,8 @@ impl Run<'_> {
             return Ok(None);
         }
         let mut found = discover::test_functions(&module);
-        found.runs_code = found.runs_code || discover::imports_run_code(file, &module);
+        found.runs_code =
+            found.runs_code || discover::imports_run_code(file, &module, &mut self.scanned);
         Ok(Some(found))
     }
 
@@ -511,6 +534,23 @@ fn groups(planned: &[Planned]) -> Vec<Vec<usize>> {
     }
     groups.extend(alone);
     groups
+}
+
+/// The indexes in `files` of the test files `sess` reported an error in.
+fn files_with_errors(sess: &Session, files: &[&Planned]) -> Vec<usize> {
+    let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let wanted: Vec<PathBuf> = files.iter().map(|p| same(&p.file)).collect();
+    let mut broken: Vec<usize> = sess
+        .diagnostics
+        .iter()
+        .filter(|d| d.is_error())
+        .filter_map(|d| d.labels.first())
+        .filter_map(|l| sess.sm.files().find(|(id, _)| *id == l.span.file))
+        .filter_map(|(_, f)| wanted.iter().position(|w| *w == same(&f.path)))
+        .collect();
+    broken.sort_unstable();
+    broken.dedup();
+    broken
 }
 
 /// The deepest directory holding every one of `files`.

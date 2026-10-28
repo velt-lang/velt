@@ -27,6 +27,18 @@ fn write(dir: &Path, rel: &str, text: &str) {
 }
 
 /// The lines of `stdout` from `running <file>` up to the next `running` line.
+/// The test programs built in `dir`, without their extension, sorted.
+fn built(dir: &Path) -> Vec<String> {
+    let mut stems: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.contains('.') || n.ends_with(".exe"))
+        .map(|n| n.trim_end_matches(".exe").to_string())
+        .collect();
+    stems.sort();
+    stems
+}
+
 fn block<'s>(stdout: &'s str, file: &str) -> Vec<&'s str> {
     let mut lines = stdout.lines().skip_while(|l| !l.ends_with(file));
     let head = lines
@@ -179,14 +191,7 @@ fn shared_harness_parallel_files_and_failures() {
 
     // a, b and e share one harness, built once whatever failed; c has one of its own, and the
     // runner one without test files.
-    let built: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.contains('.') || n.ends_with(".exe"))
-        .collect();
-    let mut stems: Vec<&str> = built.iter().map(|n| n.trim_end_matches(".exe")).collect();
-    stems.sort();
-    assert_eq!(stems, ["c_test_2", "harness_1", "runner_0"], "{built:?}");
+    assert_eq!(built(dir), ["c_test_2", "harness_1", "runner_0"]);
 
     // The same output one file at a time.
     let one = velt_test(dir, &["t", "-j", "1"]);
@@ -198,7 +203,11 @@ fn shared_harness_parallel_files_and_failures() {
         "t/d.test.vlt",
         "export function test_d() { const n: number = \"no\"; }\n",
     );
+    std::fs::remove_dir_all(dir.join("target/velt/test")).unwrap();
     let o = velt_test(dir, &["t"]);
+    // The shared harness (1) fails in d, which is built alone (2, reporting its errors); a, b
+    // and e share one again (3).
+    assert_eq!(built(dir), ["c_test_4", "harness_3", "runner_0"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(
         block(&stdout, "d.test.vlt")[1..],

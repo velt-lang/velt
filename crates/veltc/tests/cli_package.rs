@@ -480,6 +480,15 @@ fn test_filter_and_no_run() {
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
 
+    // No match: said, and nothing built or run.
+    let _ = std::fs::remove_dir_all(s.dir.join("app/target/velt/test"));
+    let o = s.velt("app", &["test", "--filter", "nope"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("no tests match `nope`"), "{stderr}");
+    assert!(!s.dir.join("app/target/velt/test").exists());
+
     // A test file that does not parse: its errors, with their location, are in the JSON.
     s.write("app/src/garbled.test.vlt", "export function test_y( {\n");
     let o = s.velt("app", &["test", "--filter", "test_y", "--no-run", "--json"]);

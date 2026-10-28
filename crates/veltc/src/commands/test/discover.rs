@@ -117,7 +117,7 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
 /// sharing a harness, and a failure there would end them all. Package and `velt:` imports are
 /// not followed; a module that cannot be read or parsed counts as running code (its file then
 /// gets a harness of its own, which reports the error).
-pub fn imports_run_code(file: &Path, module: &ast::Module) -> bool {
+pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned) -> bool {
     let mut seen = std::collections::HashSet::new();
     let mut stack = vec![(file.to_path_buf(), relative_imports(module))];
     while let Some((from, specs)) = stack.pop() {
@@ -130,17 +130,36 @@ pub fn imports_run_code(file: &Path, module: &ast::Module) -> bool {
             if !seen.insert(path.clone()) {
                 continue;
             }
-            let Ok(src) = std::fs::read_to_string(&path) else {
+            let Some(imports) = scanned
+                .modules
+                .entry(path.clone())
+                .or_insert_with(|| scan(&path))
+                .clone()
+            else {
                 return true;
             };
-            let (m, diags) = velt_syntax::parse_file(velt_common::FileId(0), &src);
-            if diags.iter().any(|d| d.is_error()) || runs_code(&m) {
-                return true;
-            }
-            stack.push((path, relative_imports(&m)));
+            stack.push((path, imports));
         }
     }
     false
+}
+
+/// The modules [`imports_run_code`] has read, for every test file of a run: a module many of
+/// them import is read and parsed once.
+#[derive(Default)]
+pub struct Scanned {
+    /// Each module's relative imports; `None` if it runs code or cannot be read or parsed.
+    modules: std::collections::HashMap<PathBuf, Option<Vec<String>>>,
+}
+
+/// The relative imports of the module `path`, if it only declares.
+fn scan(path: &Path) -> Option<Vec<String>> {
+    let src = std::fs::read_to_string(path).ok()?;
+    let (m, diags) = velt_syntax::parse_file(velt_common::FileId(0), &src);
+    if diags.iter().any(|d| d.is_error()) || runs_code(&m) {
+        return None;
+    }
+    Some(relative_imports(&m))
 }
 
 fn relative_imports(module: &ast::Module) -> Vec<String> {
@@ -410,7 +429,7 @@ mod tests {
             write("t/a.test.vlt", src);
             let (module, diags) = velt_syntax::parse_file(FileId(0), src);
             assert!(diags.is_empty(), "{diags:?}");
-            imports_run_code(&file, &module)
+            imports_run_code(&file, &module, &mut Scanned::default())
         };
         // Through `index`, a re-export and a package that is not followed: only declarations.
         assert!(!imports(
@@ -428,5 +447,49 @@ mod tests {
             "import { a } from \"./c1\";\nexport const b = 2;\n",
         );
         assert!(!imports("import { a } from \"../lib/c1\";\n"));
+
+        // One scan for a run's test files: a module they share is read once (here, before it
+        // changes on disk), and what it imports is still followed.
+        let mut scanned = Scanned::default();
+        let src = "import { a } from \"../lib/c1\";\n";
+        let (module, _) = velt_syntax::parse_file(FileId(0), src);
+        assert!(!imports_run_code(
+            &d.join("t/a.test.vlt"),
+            &module,
+            &mut scanned
+        ));
+        write(
+            "lib/c1.vlt",
+            "export const a = load();\nfunction load(): i64 { return 1; }\n",
+        );
+        assert!(!imports_run_code(
+            &d.join("t/b.test.vlt"),
+            &module,
+            &mut scanned
+        ));
+        assert!(imports_run_code(
+            &d.join("t/b.test.vlt"),
+            &module,
+            &mut Scanned::default()
+        ));
+        write(
+            "lib/c2.vlt",
+            "export const b = load();\nfunction load(): i64 { return 1; }\n",
+        );
+        write(
+            "lib/c1.vlt",
+            "import { b } from \"./c2\";\nexport const a = 1;\n",
+        );
+        let mut scanned = Scanned::default();
+        assert!(imports_run_code(
+            &d.join("t/a.test.vlt"),
+            &module,
+            &mut scanned
+        ));
+        assert!(imports_run_code(
+            &d.join("t/b.test.vlt"),
+            &module,
+            &mut scanned
+        ));
     }
 }
