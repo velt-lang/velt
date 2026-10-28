@@ -1,0 +1,56 @@
+// Overloaded interface methods (TypeScript's form, sigx's `App.directive`): one method of the
+// object literal takes every form, and a call has the type of the signature it matches.
+interface Def {
+  name: string;
+}
+
+interface App {
+  directive(name: string, definition: Def): App;
+  directive(name: string): Def | undefined;
+  label(): string;
+}
+
+function makeApp(): App {
+  const dirs = new Map<string, Def>();
+  const app: App = {
+    directive(name: string, definition?: Def): App | Def | undefined {
+      if (definition === undefined) return dirs.get(name);
+      dirs.set(name, definition);
+      return app;
+    },
+    label() {
+      return "app";
+    },
+  };
+  return app;
+}
+
+const app = makeApp();
+const registered: App = app.directive("tooltip", { name: "tip" });
+console.log(registered.label(), registered === app);
+const found: Def | undefined = app.directive("tooltip");
+console.log(found?.name, app.directive("missing"));
+
+class Registry implements App {
+  defs: Def[] = [];
+  directive(name: string, definition?: Def): App | Def | undefined {
+    if (definition === undefined) return this.defs.find((d) => d.name === name);
+    this.defs.push(definition);
+    return this;
+  }
+  label(): string {
+    return "registry";
+  }
+}
+
+const reg: App = new Registry();
+console.log(reg.directive("a", { name: "a" }).label(), reg.directive("a")?.name);
+
+// A signature whose result holds `undefined` out of the implementation's wider result.
+function lookup(name: string): Def | undefined;
+function lookup(name: string, fallback: Def): Def | App;
+function lookup(name: string, fallback?: Def): Def | App | undefined {
+  if (name === "app") return app;
+  return fallback;
+}
+console.log(lookup("x"), (lookup("x", { name: "fb" }) as Def).name);
