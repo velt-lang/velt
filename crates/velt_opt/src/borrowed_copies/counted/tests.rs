@@ -38,6 +38,8 @@ enum Between {
     NoReturnWithData,
     /// A call through a function pointer (a closure), before the read.
     ClosureCall,
+    /// A string runtime function (an error message built): frees no counted object.
+    StringExtern,
 }
 
 struct Kit {
@@ -48,6 +50,7 @@ struct Kit {
     other: ExternId,
     alloc: ExternId,
     panic: ExternId,
+    concat: ExternId,
     quiet: FuncId,
     freeing: FuncId,
     stuck: FuncId,
@@ -66,6 +69,12 @@ fn kit() -> Kit {
     let other = pb.ext("velt_rt_str_append", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let alloc = pb.ext("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr, false);
     let panic = pb.ext("velt_rt_panic", &[Ty::Ptr], Ty::Unit, true);
+    let concat = pb.ext(
+        "velt_rt_str_concat",
+        &[Ty::Ptr, Ty::Ptr, Ty::Ptr],
+        Ty::Unit,
+        false,
+    );
     // quiet(a) = a.len
     let mut fb = FuncBuilder::internal("quiet", &[Ty::Ptr], Ty::U64);
     let (a, b) = (fb.param(0), fb.block());
@@ -96,6 +105,7 @@ fn kit() -> Kit {
         other,
         alloc,
         panic,
+        concat,
         quiet,
         freeing,
         stuck,
@@ -166,6 +176,10 @@ fn program(between: Between) -> (Program, FuncId) {
         }
         Between::FreeingCall => {
             b = call(&mut fb, b, Callee::Func(k.freeing), vec![copy_local(this)])
+        }
+        Between::StringExtern => {
+            let args = vec![copy_local(this), copy_local(this), copy_local(this)];
+            b = call(&mut fb, b, Callee::Extern(k.concat), args)
         }
         Between::QuietCallWithData => {
             b = fb.call(b, Callee::Func(k.quiet), vec![copy_local(v)], Some(tmp))
@@ -310,6 +324,7 @@ fn a_copy_only_read_borrows() {
         Between::Alloc,
         Between::NoReturn,
         Between::NoReturnFreeing,
+        Between::StringExtern,
     ] {
         assert!(borrowed(b), "{b:?}");
     }
@@ -328,5 +343,82 @@ fn a_copy_something_may_free_or_take_keeps_its_count() {
         Between::ClosureCall,
     ] {
         assert!(!borrowed(b), "{b:?}");
+    }
+}
+
+/// `_Gdrop_Db(slot)`: the release of the pointer in `*slot` (glue.rs).
+fn release_glue(k: &mut Kit) -> FuncId {
+    let mut fb = FuncBuilder::internal("_Gdrop_Db", &[Ty::Ptr], Ty::Unit);
+    let slot = fb.param(0);
+    let [x, c, q, n, t, m] =
+        [Ty::Ptr, Ty::Bool, Ty::Ptr, Ty::U64, Ty::Bool, Ty::U64].map(|t| fb.local(t));
+    let [b0, a, last, dec, r] = [fb.block(), fb.block(), fb.block(), fb.block(), fb.block()];
+    fb.assign(b0, x, Rvalue::Use(copy_place(deref(slot, Ty::Ptr))));
+    fb.assign(b0, c, bin(BinOp::Ne, copy_local(x), int(0, Ty::Ptr)));
+    fb.branch(b0, c, a, r);
+    fb.assign(a, q, bin(BinOp::PtrAdd, copy_local(x), int(-8, Ty::I64)));
+    fb.assign(a, n, Rvalue::Use(copy_place(count(q))));
+    fb.assign(a, t, bin(BinOp::Eq, copy_local(n), int(1, Ty::U64)));
+    fb.branch(a, t, last, dec);
+    let args = vec![copy_local(q), int(32, Ty::U64), int(8, Ty::U64)];
+    let freed = fb.call(last, Callee::Extern(k.free), args, None);
+    fb.goto(freed, r);
+    fb.assign(dec, m, bin(BinOp::Sub, copy_local(n), int(1, Ty::U64)));
+    fb.push(dec, Stmt::Assign(count(q), Rvalue::Use(copy_local(m))));
+    fb.goto(dec, r);
+    fb.ret(r, Operand::Const(Const::Unit, Ty::Unit));
+    k.pb.add(fb.finish())
+}
+
+#[test]
+fn a_release_through_drop_glue_borrows_too() {
+    // `v = this.data; v.count++; x = v.len; _Gdrop_Db(&v); return x`
+    for escapes in [false, true] {
+        let mut k = kit();
+        let glue = release_glue(&mut k);
+        let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
+        let this = fb.param(0);
+        let [v, r, q, n, x, a] =
+            [Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::U64, Ty::U64, Ty::Ptr].map(|t| fb.local(t));
+        let entry = fb.block();
+        fb.assign(entry, v, Rvalue::Use(int(0, Ty::Ptr)));
+        fb.assign(entry, r, Rvalue::Use(copy_place(field_of(this, k.obj, 0))));
+        fb.assign(
+            entry,
+            q,
+            bin(BinOp::PtrAdd, copy_local(r), int(-8, Ty::I64)),
+        );
+        fb.assign(
+            entry,
+            n,
+            bin(BinOp::Add, copy_place(count(q)), int(1, Ty::U64)),
+        );
+        fb.push(entry, Stmt::Assign(count(q), Rvalue::Use(copy_local(n))));
+        fb.assign(entry, v, Rvalue::Use(copy_local(r)));
+        fb.assign(entry, x, Rvalue::Use(copy_place(field_of(v, k.arr, 1))));
+        fb.assign(entry, a, Rvalue::AddrOf(Place::local(v)));
+        let mut b = fb.call(entry, Callee::Func(glue), vec![copy_local(a)], None);
+        if escapes {
+            // The address also goes to a function that may keep it.
+            b = fb.call(
+                b,
+                Callee::Extern(k.other),
+                vec![copy_local(a), copy_local(a)],
+                None,
+            );
+        }
+        fb.ret(b, copy_local(x));
+        let f = k.pb.add(fb.finish());
+        let mut p = k.pb.finish();
+        let changed = run(&mut p)[f.0 as usize];
+        assert_valid(&p);
+        let calls_glue = p.funcs[f.0 as usize].blocks.iter().any(
+            |b| matches!(&b.term, Terminator::Call { callee: Callee::Func(g), .. } if *g == glue),
+        );
+        assert_eq!(
+            (changed, calls_glue),
+            (!escapes, escapes),
+            "escapes: {escapes}"
+        );
     }
 }

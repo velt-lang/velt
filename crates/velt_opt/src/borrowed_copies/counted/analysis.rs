@@ -34,8 +34,11 @@ impl Cx<'_> {
             }
         }
         let params = self.func.params.len();
+        let glue_addrs = self.glue_addrs(&members)?;
         for &m in &members {
-            let ok = (m.0 as usize) >= params && self.usage.is_register(m);
+            let scalar = self.func.locals[m.0 as usize].ty == velt_vir::vir::Ty::Ptr;
+            let ok = (m.0 as usize) >= params
+                && (self.usage.is_register(m) || (scalar && self.usage.get(m).address_taken));
             if !ok {
                 return None;
             }
@@ -47,6 +50,7 @@ impl Cx<'_> {
         let mut fam = Family {
             root: r,
             members,
+            glue_addrs,
             counts,
             inc,
             releases: vec![],
@@ -64,9 +68,67 @@ impl Cx<'_> {
         Some(fam)
     }
 
+    /// The registers taking a member's address, when every such address goes only to release
+    /// glue as its one argument (`None` when some address goes elsewhere).
+    fn glue_addrs(&self, members: &FxHashSet<Local>) -> Option<FxHashSet<Local>> {
+        let mut addrs = FxHashSet::default();
+        for s in self.func.blocks.iter().flat_map(|b| &b.stmts) {
+            let Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
+                continue;
+            };
+            if !members.contains(&p.local) {
+                continue;
+            }
+            let reg = self.usage.is_register(d.local) && self.usage.get(d.local).defs == 1;
+            if !p.proj.is_empty() || !d.proj.is_empty() || !reg {
+                return None;
+            }
+            addrs.insert(d.local);
+        }
+        let mut glue_reads: FxHashMap<Local, u32> = FxHashMap::default();
+        for b in &self.func.blocks {
+            if let Some(a) = self.glue_arg(&b.term).filter(|a| addrs.contains(a)) {
+                *glue_reads.entry(a).or_default() += 1;
+            }
+        }
+        let only_glue = addrs
+            .iter()
+            .all(|a| glue_reads.get(a).copied().unwrap_or(0) == self.usage.get(*a).reads);
+        only_glue.then_some(addrs)
+    }
+
+    /// `call g(a)` of release glue `g` with no result: `a`.
+    fn glue_arg(&self, t: &Terminator) -> Option<Local> {
+        let Terminator::Call {
+            callee: velt_vir::vir::Callee::Func(g),
+            args,
+            dest: None,
+            ..
+        } = t
+        else {
+            return None;
+        };
+        let glue = self.frees.glue.get(g.0 as usize).copied().unwrap_or(false);
+        match args.as_slice() {
+            [a] if glue => local_of(a),
+            _ => None,
+        }
+    }
+
     /// Block `b` as a release of `fam`: it branches on `count == 1`, its other side stores
-    /// `count - 1`. Records the statements computing them.
+    /// `count - 1`, or it calls release glue with a member's address. Records the statements
+    /// computing them.
     fn release(&self, fam: &mut Family, b: usize) -> Option<Release> {
+        if let Some(a) = self.glue_arg(&self.func.blocks[b].term) {
+            let Terminator::Call { next, .. } = self.func.blocks[b].term else {
+                return None;
+            };
+            return fam.glue_addrs.contains(&a).then_some(Release {
+                test: b,
+                dec: next,
+                store: None,
+            });
+        }
         let Terminator::Branch { cond, els, .. } = &self.func.blocks[b].term else {
             return None;
         };
@@ -113,7 +175,7 @@ impl Cx<'_> {
         Some(Release {
             test: b,
             dec: *els,
-            store: (els.0 as usize, store),
+            store: Some((els.0 as usize, store)),
         })
     }
 
@@ -160,7 +222,9 @@ impl Cx<'_> {
     }
 
     fn explained(&self, fam: &Family, at: Point) -> bool {
-        at == fam.inc || fam.count_stmts.contains(&at) || fam.releases.iter().any(|r| r.store == at)
+        at == fam.inc
+            || fam.count_stmts.contains(&at)
+            || fam.releases.iter().any(|r| r.store == Some(at))
     }
 
     fn stmt(&self, fam: &Family, w: &mut Walk, at: Point, s: &Stmt) {
@@ -207,7 +271,9 @@ impl Cx<'_> {
             }
         }
         if let Rvalue::AddrOf(p) = rv {
-            w.bail |= fam.members.contains(&p.local) || fam.counts.contains(&p.local);
+            // Only the address release glue is given.
+            let glue = fam.glue_addrs.contains(&d) && fam.members.contains(&p.local);
+            w.bail |= !glue && (fam.members.contains(&p.local) || fam.counts.contains(&p.local));
             return;
         }
         // A member's value may only be copied into a member, offset to its count word, or

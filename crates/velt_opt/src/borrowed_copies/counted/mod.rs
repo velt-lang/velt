@@ -12,7 +12,9 @@
 //! address less 8 (the count word). A family is borrowed when, in the blocks that stay
 //! reachable once its releases skip their freeing path:
 //! - its increment is the only one, and its releases are the only other code that touches the
-//!   count words: a branch on `count == 1` whose other side stores `count - 1`;
+//!   count words: a branch on `count == 1` whose other side stores `count - 1`, or a call of drop
+//!   glue that is that release out of line (`glue.rs`: `_Gdrop_Source(&src)` for a class
+//!   object), given the address of a member, which is taken for nothing else;
 //! - its values never leave it: a member is copied only into members, compared, read and
 //!   written through, and passed to calls (which borrow it); it is never stored, returned, cast
 //!   or put into an aggregate, and its address is never taken. Members other than `r` are only
@@ -23,16 +25,17 @@
 //! - no call that may free a counted object runs while a member is still used after it. Only
 //!   calls free: a release that drops the last reference frees the object (a runtime call), and
 //!   so does drop glue. Calls that cannot: runtime functions that only read, allocation and
-//!   buffer reallocation (a buffer is never a counted object), calls that never return and are
-//!   not handed a member (the family is not used after them; one that is handed a member runs
-//!   with it, so it counts as freeing when its body may free at all), and Velt functions that
-//!   make only such calls (`Frees`, computed callees first, after their own families are
-//!   borrowed).
+//!   buffer reallocation (a buffer is never a counted object), the string functions (they free
+//!   only string buffers), calls that never return and are not handed a member (the family is
+//!   not used after them; one that is handed a member runs with it, so it counts as freeing
+//!   when its body may free at all), and Velt functions that make only such calls (`Frees`,
+//!   computed callees first, after their own families are borrowed).
 //!
 //! Then the increment and each release's decrement become `Nop`s and each release's count test
-//! goes straight to the decrement's block: the freeing path is no longer reached and
-//! `simplify_cfg` removes it.
+//! goes straight to the decrement's block (a glue call to its next block): the freeing path is
+//! no longer reached and `simplify_cfg` removes it.
 
+mod glue;
 #[cfg(test)]
 mod tests;
 
@@ -46,8 +49,28 @@ use velt_vir::vir::{
 use crate::callgraph::CallGraph;
 use crate::locals::Usage;
 
-/// Runtime functions that free no counted object, besides `super::READ_ONLY`.
-const NO_FREE: [&str; 2] = ["velt_rt_alloc", "velt_rt_realloc"];
+/// Runtime functions that free no counted object, besides `super::READ_ONLY`: allocation, and
+/// the string functions, which free only string buffers (never a counted object) and run no
+/// code of the program (an error's message built for a throw: `corrupt(\`page ${n}\`)`).
+const NO_FREE: [&str; 17] = [
+    "velt_rt_alloc",
+    "velt_rt_realloc",
+    "velt_rt_str_clone",
+    "velt_rt_str_drop",
+    "velt_rt_str_concat",
+    "velt_rt_str_slice",
+    "velt_rt_set_throw_loc",
+    "velt_rt_throw_loc",
+    "velt_rt_strbuf_new",
+    "velt_rt_strbuf_push_str",
+    "velt_rt_strbuf_push_bytes",
+    "velt_rt_strbuf_push_byte",
+    "velt_rt_strbuf_push_i64",
+    "velt_rt_strbuf_push_u64",
+    "velt_rt_strbuf_push_f64",
+    "velt_rt_strbuf_finish",
+    "velt_rt_strbuf_drop",
+];
 
 /// Whether a call of each callee may free a counted object.
 pub(crate) struct Frees {
@@ -58,6 +81,8 @@ pub(crate) struct Frees {
     /// with no body here, may).
     returns: Vec<bool>,
     externs: Vec<bool>,
+    /// Per function: drop glue that releases one counted pointer (glue.rs).
+    glue: Vec<bool>,
 }
 
 impl Frees {
@@ -118,6 +143,7 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
         funcs: vec![true; n],
         returns,
         externs,
+        glue: program.funcs.iter().map(glue::release_glue).collect(),
     };
     let mut changed = vec![false; n];
     for scc in CallGraph::of(program).sccs_bottom_up() {
@@ -211,18 +237,21 @@ enum Edit {
 type Point = (usize, usize);
 
 /// One release of a family: the block branching on `count == 1`, the block that decrements,
-/// and the decrementing store in it.
+/// and the decrementing store in it; or a block calling release glue with a member's address
+/// (`glue.rs`), and the call's next block.
 #[derive(Clone, Copy)]
 struct Release {
     test: usize,
     dec: BlockId,
-    store: Point,
+    store: Option<Point>,
 }
 
 struct Family {
     /// The register the increment goes through (written once, by a load).
     root: Local,
     members: FxHashSet<Local>,
+    /// Registers holding a member's address, only ever handed to release glue.
+    glue_addrs: FxHashSet<Local>,
     /// Count pointers: registers holding a member less 8.
     counts: FxHashSet<Local>,
     /// The increment's store.
@@ -237,7 +266,9 @@ impl Family {
     fn edits(&self) -> Vec<Edit> {
         let mut e = vec![Edit::Nop(self.inc.0, self.inc.1)];
         for r in &self.releases {
-            e.push(Edit::Nop(r.store.0, r.store.1));
+            if let Some((b, s)) = r.store {
+                e.push(Edit::Nop(b, s));
+            }
             e.push(Edit::Goto(r.test, r.dec));
         }
         e

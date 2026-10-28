@@ -1,0 +1,67 @@
+// A local holding an element of an array of (nullable) class objects, `const src =
+// this.plain[k]`, borrows it in a release build when nothing that runs while it is used could
+// free it, also when its release is a call of the class's drop glue; one that a callback may
+// free keeps its count (velt_opt `borrowed_copies/counted`).
+
+class Source {
+  rows: number[];
+  constructor(rows: number[]) {
+    this.rows = rows;
+  }
+
+  at(i: number): number {
+    if (i >= this.rows.length) {
+      throw new Error(`row ${i} past ${this.rows.length}`);
+    }
+    return this.rows[i];
+  }
+}
+
+class Pull {
+  plain: (Source | null)[] = [];
+  hook: () => void = () => {};
+
+  sum(k: number): number {
+    const src = this.plain[k];
+    if (src == null) {
+      return -1;
+    }
+    let s = 0;
+    for (let i = 0; i < src!.rows.length; i++) {
+      s += src!.at(i);
+    }
+    return s;
+  }
+
+  sumWhile(k: number): number {
+    const src = this.plain[k];
+    if (src == null) {
+      return -1;
+    }
+    let s = 0;
+    for (let i = 0; i < src!.rows.length; i++) {
+      this.hook();
+      s += src!.at(i);
+    }
+    return s;
+  }
+}
+
+function main() {
+  const p = new Pull();
+  const shared = new Source([1, 2, 3]);
+  p.plain.push(shared);
+  p.plain.push(null);
+  p.plain.push(new Source([10, 20]));
+  console.log(p.sum(0), p.sum(1), p.sum(2));
+  const plain = p.plain;
+  p.hook = () => {
+    plain[2] = null;
+  };
+  console.log(p.sumWhile(2), p.plain[2] == null);
+  try {
+    console.log(shared.at(5));
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
