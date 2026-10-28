@@ -43,8 +43,11 @@ impl Ctx<'_> {
             return false;
         };
         self.error(
-            velt_common::Diagnostic::error(format!("`{}` cannot be extended or implemented", note.0), span)
-                .with_note(note.1),
+            velt_common::Diagnostic::error(
+                format!("`{}` cannot be extended or implemented", note.0),
+                span,
+            )
+            .with_note(note.1),
         );
         true
     }

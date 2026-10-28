@@ -605,7 +605,10 @@ impl Ctx<'_> {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
             // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
             // compiler's.
-            let known = [self.prelude_iface("AtomicValue"), self.prelude_iface("Frozen")];
+            let known = [
+                self.prelude_iface("AtomicValue"),
+                self.prelude_iface("Frozen"),
+            ];
             if known.contains(&Some(b.iface)) {
                 return declared.contains(b);
             }
