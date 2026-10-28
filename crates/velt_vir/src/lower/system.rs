@@ -9,6 +9,7 @@ use velt_sema::hir::{self, DefId, TyId};
 use super::operand::proj;
 use super::{cint, ice, FnLower};
 use crate::system::{self, After, Func, Guard, Int, Param, Ret, Struct};
+use crate::tls::TlsCall;
 use crate::vir::{self, AggLayout, BinOp, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
 
 /// Apple's arm64 ABI passes variadic arguments on the stack, in 8-byte slots, where other
@@ -46,17 +47,16 @@ impl FnLower<'_, '_> {
                 return cint(0, ret);
             }
         };
-        // `lastOsError()` reads the errno captured right after the last system call (set below),
-        // when there was one: no `errno` read here, so a temporary freed between the failing
-        // call and this one cannot change the value (docs/reference/system-functions.md). With
-        // no earlier call in this function, it falls through to reading `errno` itself.
-        if matches!(func.ret, Ret::Errno) {
-            if let Some(slot) = self.errno_slot {
-                for a in args {
-                    self.expr(a);
-                }
-                return Operand::Copy(Place::local(slot));
+        // `lastOsError()` reads the errno captured right after the last system call this thread
+        // made (set below), not errno itself, so a temporary freed between the failing call and
+        // this one cannot change the value, and a callee's failing call is seen by its caller
+        // (docs/reference/system-functions.md).
+        if let (Ret::Errno, Some((get, _))) = (func.ret, self.errno_tls()) {
+            for a in args {
+                self.expr(a);
             }
+            let v = self.errno_tls_call(get, vec![]);
+            return self.rvalue_temp(ret, Rvalue::Cast(v, ret));
         }
         let mut vals = vec![];
         for a in args {
@@ -184,27 +184,29 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The thread-local errno slot (crate::tls): its read and its write, on a target whose
+    /// `lastOsError` is an `errno` pointer (Windows reads `GetLastError()` at the call).
+    fn errno_tls(&self) -> Option<(TlsCall, TlsCall)> {
+        system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))?;
+        let id = crate::tls::stable_id("velt:os::lastOsError:I32");
+        let (bits, init) = (32, 0);
+        Some((
+            TlsCall::Get { id, bits, init },
+            TlsCall::Set { id, bits, init },
+        ))
+    }
+
     /// Read `errno` of the calling thread now (`*__error()` / `*__errno_location()`) into the
-    /// function's hidden errno slot, for a following `lastOsError()`. Does nothing on a target
-    /// whose `lastOsError` is not an `errno` pointer (Windows reads `GetLastError()` at the
-    /// call). The slot is one local per function, zero-initialized in the entry block, so every
-    /// `lastOsError()` read is dominated by a definite assignment even across branches.
+    /// thread's errno slot, for a later `lastOsError()`, in this function or a caller. Does
+    /// nothing on a target whose `lastOsError` is not an `errno` pointer.
     fn capture_errno(&mut self) {
         let Some(errno) =
             system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))
         else {
             return;
         };
-        let slot = match self.errno_slot {
-            Some(s) => s,
-            None => {
-                let s = self.temp(Ty::I32);
-                let zero = Stmt::Assign(Place::local(s), Rvalue::Use(cint(0, Ty::I32)));
-                self.blocks[0].0.insert(0, zero);
-                self.block_locs[0].0.insert(0, self.loc);
-                self.errno_slot = Some(s);
-                s
-            }
+        let Some((_, set)) = self.errno_tls() else {
+            return;
         };
         let id = self.cx.extern_sym(errno.symbol, vec![], Ty::Ptr, false);
         let ptr = self.temp(Ty::Ptr);
@@ -218,7 +220,22 @@ impl FnLower<'_, '_> {
             local: ptr,
             proj: vec![Proj::Deref(Ty::I32)],
         };
-        self.assign(Place::local(slot), Rvalue::Use(Operand::Copy(at)));
+        let v = self.rvalue_temp(Ty::I32, Rvalue::Use(Operand::Copy(at)));
+        let v = self.rvalue_temp(Ty::U32, Rvalue::Cast(v, Ty::U32));
+        self.errno_tls_call(set, vec![v]);
+    }
+
+    /// The call of the thread-local extern `call`, inline in every backend.
+    fn errno_tls_call(&mut self, call: TlsCall, args: Vec<Operand>) -> Operand {
+        let (params, ret) = call.signature();
+        let id = self.cx.extern_sym(&call.symbol(), params, ret, false);
+        if ret == Ty::Unit {
+            self.call(vir::Callee::Extern(id), args, None, false);
+            return super::unit();
+        }
+        let out = self.temp(ret);
+        self.call(vir::Callee::Extern(id), args, Some(Place::local(out)), false);
+        Operand::Copy(Place::local(out))
     }
 
     /// Zeros before the variadic arguments on Apple arm64 (`APPLE_VARIADIC_REGS`).

@@ -54,11 +54,11 @@ module that needs two forms of a variadic function (`fcntl` with an `int` and wi
 `struct flock *`) declares them under two names; the parameter types choose the form.
 
 `lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. The compiler
-captures `errno` into a hidden slot right after every system call, and `lastOsError()` reads
-that slot, so a system call followed by `lastOsError()` reports that call's error even when
+captures `errno` into a slot of the thread right after every system call, and `lastOsError()`
+reads that slot, so a system call followed by `lastOsError()` reports that call's error even when
 anything the statement does after the call (freeing a temporary argument, `console.log`) runs in
-between; call `lastOsError()` after the failing call and before the next system call, which
-overwrites the slot. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
+between, and even when the call was made in a function this one called; call `lastOsError()`
+after the failing call and before the next system call, which overwrites the slot. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
 
 ```ts
 import { lastOsError } from "velt:os";

@@ -27,6 +27,8 @@ true
 2 2
 4 6
 6 ABcdé
+Error EBADF: bad file descriptor, fsync
+Error EBADF: bad file descriptor, fdatasync
 RangeError The value of "fd" is out of range. It must be an integer. Received 1.5
 RangeError The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1
 Error ENOENT: no such file or directory, unlink 'velt_fs_fd_sync_tmp.bin'

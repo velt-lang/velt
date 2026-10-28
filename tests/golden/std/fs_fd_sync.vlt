@@ -74,6 +74,15 @@ function main() {
   const back = fs.openSync(path, "r");
   console.log(fs.readSync(back, all), all.utf8Slice(0, 6));
   fs.closeSync(back);
+  // The errno of a call made inside std reaches the error (fsync on macOS is a callee's fcntl).
+  attempt(() => {
+    fs.fsyncSync(back);
+    return "";
+  });
+  attempt(() => {
+    fs.fdatasyncSync(back);
+    return "";
+  });
 
   attempt(() => `${fs.writeSync(1.5, b)}`);
   attempt(() => {

@@ -14,6 +14,16 @@ function cString(s: string): u8[] {
   return b;
 }
 
+// A failing call in a callee is seen by the caller, on either branch: the slot is the thread's,
+// not the function's.
+function fail(): i32 {
+  return close(-1);
+}
+function pick(h: bool): i32 {
+  const r = h ? fail() : close(-1);
+  return r == -1 ? lastOsError() : 0;
+}
+
 function main() {
   // A temporary path (freed at the end of this statement, before `lastOsError`).
   console.log(open(cString("velt_errno_missing_dir/nope"), 0, 0));
@@ -22,4 +32,5 @@ function main() {
   console.log(lastOsError());
   // A second failing call overwrites the slot; `lastOsError` then reads the newer errno.
   console.log(close(-1), lastOsError() == 9);
+  console.log(pick(false), pick(true));
 }
