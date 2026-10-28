@@ -192,7 +192,11 @@ pointer"), and the runtime compares some statics' addresses (type descriptors;
 `velt_codegen_llvm/src/units/mod.rs`, which already gives them one copy across codegen units).
 So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
 of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
-second block. Std has no module-level `let` today, so this is for later. A function that refers
+second block. Std has no module-level `let` today, so this is for later. Static atomics
+(`StaticData::mutable`, such as the four words of `std/sync/epoch.vlt`) are written by address,
+and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
+catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
+the functions that reach a static atomic. A function that refers
 to any of these statics does not go into the object in the first version: two copies, the
 program's and the object's, would compare unequal. The object build marks these functions. A later version can give such statics one symbol, defined once, as codegen units do.
 

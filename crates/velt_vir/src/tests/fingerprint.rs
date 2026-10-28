@@ -23,6 +23,10 @@ struct Variant {
     noalias: bool,
     /// The bytes of a static at the far end of a cycle of statics `f` uses.
     far: &'static [u8],
+    /// Whether `velt_rt_panic`, which `f` calls and names in a static, is declared `noreturn`.
+    noreturn: bool,
+    /// `f`'s gated target.
+    target: Option<crate::simd::Ext>,
 }
 
 const BASE: Variant = Variant {
@@ -34,11 +38,14 @@ const BASE: Variant = Variant {
     throw_loc: b" at std/a.vlt:1:1",
     noalias: false,
     far: b"far",
+    noreturn: true,
+    target: None,
 };
 
 /// `f(p: Ptr)`: a local of its state aggregate (holding a `Point`), a read of `Point`'s second
-/// field through `p`, `velt_rt_set_throw_loc(loc)`, `g(constant)`, and the address of a static
-/// in a cycle (`a` → `b` → `a`); plus `g` and `h`. Returns `f`'s fingerprint.
+/// field through `p`, `velt_rt_set_throw_loc(loc)`, `g(constant)`, the address of a static in a
+/// cycle (`a` → `b` → `a`, `b` also pointing at `velt_rt_panic`) and a call to `velt_rt_panic`;
+/// plus `g` and `h`. Returns `f`'s fingerprint.
 fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
     let mut aggs = vec![
         AggLayout {
@@ -85,18 +92,29 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
         {
             let mut far = vec![0; 8];
             far.extend_from_slice(v.far);
-            stat(&far, vec![(0, Const::Static(a))])
+            stat(
+                &far,
+                vec![(0, Const::Static(a)), (8, Const::Extern(ExternId(1)))],
+            )
         },
     ];
     if v.reordered {
         statics.reverse();
     }
-    let externs = vec![ExternFn {
-        symbol: "velt_rt_set_throw_loc".into(),
-        params: vec![Ty::Ptr],
-        ret: Ty::Unit,
-        noreturn: false,
-    }];
+    let externs = vec![
+        ExternFn {
+            symbol: "velt_rt_set_throw_loc".into(),
+            params: vec![Ty::Ptr],
+            ret: Ty::Unit,
+            noreturn: false,
+        },
+        ExternFn {
+            symbol: "velt_rt_panic".into(),
+            params: vec![],
+            ret: Ty::Unit,
+            noreturn: v.noreturn,
+        },
+    ];
     let leaf = |symbol: &str| {
         let mut g = Function::new(symbol.into(), vec![Ty::I64], Ty::I64, Linkage::Internal);
         g.blocks.push(BasicBlock {
@@ -112,6 +130,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
     f.locals.push(LocalDecl::new(Ty::Agg(state), None));
     f.locals.push(LocalDecl::new(Ty::I64, None));
     f.locals.push(LocalDecl::new(Ty::Ptr, None));
+    f.target = v.target;
     if v.noalias {
         f.param_attrs = vec![ParamAttrs {
             noalias: true,
@@ -145,6 +164,15 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 args: vec![Operand::Const(Const::Int(v.constant), Ty::I64)],
                 dest: Some(Place::local(Local(2))),
                 next: BlockId(2),
+            },
+        },
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Call {
+                callee: Callee::Extern(ExternId(1)),
+                args: vec![],
+                dest: None,
+                next: BlockId(3),
             },
         },
         BasicBlock {
@@ -216,6 +244,14 @@ fn link_mode_counts_what_hot_reload_leaves_out() {
             throw_loc: b" at std/a.vlt:2:1",
             ..BASE
         },
+        Variant {
+            noreturn: false,
+            ..BASE
+        },
+        Variant {
+            target: Some(crate::simd::Ext::ShaX86),
+            ..BASE
+        },
     ];
     for (i, v) in changes.iter().enumerate() {
         assert!(same(v, Mode::HotReload), "change {i}, hot reload");
@@ -260,4 +296,42 @@ fn param_attributes_must_cover_what_the_code_assumed() {
     );
     let none = Function::new("f".into(), vec![Ty::Ptr], Ty::Unit, Linkage::Internal);
     assert!(attrs_hold(&none, &weak) && !attrs_hold(&weak, &none));
+}
+
+/// Epoch's shape: a static atomic (`mutable`) whose address one function takes, a table another
+/// reaches through two relocations, and a function that reaches only read-only statics.
+#[test]
+fn reaches_mutable_static_through_operands_and_relocations() {
+    let stat = |relocs, mutable| StaticData {
+        bytes: vec![0; 8],
+        align: 8,
+        relocs,
+        mutable,
+    };
+    let statics = vec![
+        stat(vec![], Some(0xe90c)),
+        stat(vec![(0, Const::Static(StaticId(0)))], None),
+        stat(vec![(0, Const::Static(StaticId(1)))], None),
+        stat(vec![(0, Const::Static(StaticId(3)))], None),
+    ];
+    let uses = |symbol: &str, s: u32| {
+        let mut f = Function::new(symbol.into(), vec![], Ty::Ptr, Linkage::Internal);
+        f.blocks.push(BasicBlock {
+            stmts: vec![],
+            term: Terminator::Return(Operand::Const(Const::Static(StaticId(s)), Ty::Ptr)),
+        });
+        f
+    };
+    let program = Program {
+        funcs: vec![uses("direct", 0), uses("chain", 2), uses("other", 3)],
+        statics,
+        ..Program::default()
+    };
+    let canon = Canon::new(&program, Mode::Link);
+    let reaches: Vec<bool> = program
+        .funcs
+        .iter()
+        .map(|f| canon.reaches_mutable_static(f))
+        .collect();
+    assert_eq!(reaches, [true, true, false]);
 }

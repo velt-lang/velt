@@ -3,7 +3,8 @@
 //!
 //! VIR refers to functions, aggregates and statics by index, and indices shift with any edit.
 //! A fingerprint therefore names functions and externs by symbol, statics by their contents
-//! and aggregates by their structure (name, size, alignment, fields). Source locations and debug
+//! and aggregates by their structure (name, size, alignment, fields); link mode also spells an
+//! extern's declaration. Source locations and debug
 //! variables are left out: they do not change what the code does (panic locations are strings,
 //! which are part of the statics). Two [`Mode`]s:
 //!
@@ -20,10 +21,23 @@
 //!   function's code compiled elsewhere is right for this program. Nothing recompiles a function
 //!   the other way, so every omission above is unsound there: state aggregates and every nesting
 //!   level count by structure, statics by their whole relocation graph, and the throw location
-//!   is part of the code, and so is whether the function is a poll function. The parameter
+//!   is part of the code, and so are whether the function is a poll function, its gated target
+//!   and every extern's declaration (signature and `noreturn`, which LLVM declares on it and
+//!   lowering keeps from the first declaration of the symbol). The parameter
 //!   attributes callers uphold (vir.rs invariant 9) are compared apart ([`attrs_hold`]): they
 //!   depend on the whole program (a type module state can reach loses `frozen`), and code that
 //!   assumed fewer of them is right for a program whose callers guarantee more.
+//!
+//!   Equal link fingerprints do not prove two things. Callees: functions are named by symbol,
+//!   so a callee whose body changed leaves its caller's fingerprint unchanged. A function may
+//!   link only when every function it reaches matches too: direct calls, `Const::Func` in its
+//!   operands (closures, glue pointers) and in relocations of the statics it reaches, internal
+//!   functions included (closures, glue, generic instances, and small functions the object
+//!   build inlined into its copy). And statics compared or written by address: statics are
+//!   equal by contents, but the object's copy of a static is another address than the
+//!   program's, so a static atomic (`StaticData::mutable`, such as the words of
+//!   std/sync/epoch.vlt) or a table compared by address would be two words or two tables
+//!   ([`Canon::reaches_mutable_static`]; std-object.md "Identity of statics").
 //!
 //! Fingerprints are std's SipHash with fixed keys: the same for one compiler binary, which is all
 //! either use needs (a session; a std object is keyed by the compiler that built it).
@@ -95,7 +109,7 @@ impl<'p> Canon<'p> {
         let _ = write!(out, ")");
         self.ty(&mut out, func.ret);
         if self.mode == Mode::Link {
-            let _ = write!(out, " poll={}", func.is_poll);
+            let _ = write!(out, " poll={} target={:?}", func.is_poll, func.target);
         }
         for local in &func.locals {
             self.ty(&mut out, local.ty);
@@ -200,8 +214,52 @@ impl<'p> Canon<'p> {
                 self.statics.get(s.0 as usize).copied().unwrap_or(0)
             ),
             Const::Func(f) => write!(out, " F{}", self.func_name(f.0)),
-            Const::Extern(e) => write!(out, " E{}", self.extern_name(e.0)),
+            Const::Extern(e) => {
+                self.extern_ref(out, e.0);
+                Ok(())
+            }
         };
+    }
+
+    /// An extern by symbol; link mode adds its declaration.
+    fn extern_ref(&self, out: &mut String, id: u32) {
+        let _ = write!(out, " E{}", self.extern_name(id));
+        if let Some(e) = self.program.externs.get(id as usize) {
+            if self.mode == Mode::Link {
+                let _ = write!(out, "({:?}){:?}{}", e.params, e.ret, e.noreturn);
+            }
+        }
+    }
+
+    /// Whether `func` reaches a static the program writes (`StaticData::mutable`): through its
+    /// operands, and through the relocations of the statics it reaches. Its copy in another
+    /// object would write another word (module docs).
+    pub fn reaches_mutable_static(&self, func: &Function) -> bool {
+        let mut seen = vec![false; self.program.statics.len()];
+        let mut work: Vec<StaticId> = vec![];
+        let mut push = |c: &Const, work: &mut Vec<StaticId>| {
+            if let Const::Static(s) = c {
+                if let Some(slot) = seen.get_mut(s.0 as usize).filter(|done| !**done) {
+                    *slot = true;
+                    work.push(*s);
+                }
+            }
+        };
+        for op in operands(func) {
+            if let Operand::Const(c, _) = op {
+                push(c, &mut work);
+            }
+        }
+        while let Some(id) = work.pop() {
+            let Some(data) = self.program.statics.get(id.0 as usize) else {
+                continue;
+            };
+            if data.mutable.is_some() {
+                return true;
+            }
+            data.relocs.iter().for_each(|(_, c)| push(c, &mut work));
+        }
+        false
     }
 
     fn func_name(&self, id: u32) -> &str {
@@ -352,9 +410,9 @@ impl<'p> Canon<'p> {
                 let _ = write!(out, " F{}", self.func_name(f.0));
             }
             Callee::Extern(e) => {
-                let name = self.extern_name(e.0);
-                let _ = write!(out, " E{name}");
-                if name == "velt_rt_set_throw_loc" && self.mode == Mode::HotReload {
+                self.extern_ref(out, e.0);
+                if self.extern_name(e.0) == "velt_rt_set_throw_loc" && self.mode == Mode::HotReload
+                {
                     return;
                 }
             }
@@ -388,6 +446,40 @@ pub fn attrs_hold(compiled: &Function, here: &Function) -> bool {
                 && (!a.nonnull || b.nonnull)
                 && a.dereferenceable <= b.dereferenceable
         })
+}
+
+/// Every operand of `func`'s code.
+fn operands(func: &Function) -> Vec<&Operand> {
+    let mut out = vec![];
+    for block in &func.blocks {
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Assign(_, rv) => match rv {
+                    Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => out.push(a),
+                    Rvalue::Binary(_, a, b) => out.extend([a, b]),
+                    Rvalue::Aggregate(_, ops) => out.extend(ops),
+                    Rvalue::AddrOf(_) => {}
+                },
+                Stmt::MemCopy { dst, src, .. } => out.extend([dst, src]),
+                Stmt::MemCopyDyn { dst, src, len, .. } => out.extend([dst, src, len]),
+                Stmt::MemSet { dst, byte, len } => out.extend([dst, byte, len]),
+                Stmt::Nop => {}
+            }
+        }
+        match &block.term {
+            Terminator::Branch { cond: a, .. }
+            | Terminator::Switch { value: a, .. }
+            | Terminator::Return(a) => out.push(a),
+            Terminator::Call { callee, args, .. } => {
+                if let Callee::Ptr { target, .. } = callee {
+                    out.push(target);
+                }
+                out.extend(args);
+            }
+            Terminator::Goto(_) | Terminator::Unreachable => {}
+        }
+    }
+    out
 }
 
 /// The static a relocation target names, if it is one (else an id no static has).
