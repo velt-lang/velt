@@ -1,0 +1,40 @@
+// velt:encoding's utf8Substring: the text between two byte positions, at every kind of
+// character boundary. The two RangeError paths are utf8_substring_bounds and
+// utf8_substring_split.
+import { utf8ByteAt, utf8Length, utf8Substring } from "velt:encoding";
+
+function show(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + " ";
+  }
+  return `${s.length}: ${out}`;
+}
+
+function main() {
+  // ASCII, two-, three- and four-byte characters: "a" é € 😀 "z".
+  const s = "aé€😀z";
+  console.log(utf8Length(s));
+  console.log(show(utf8Substring(s, 0, 1)));
+  console.log(show(utf8Substring(s, 1, 3)));
+  console.log(show(utf8Substring(s, 3, 6)));
+  // The four-byte character is one surrogate pair, two UTF-16 units.
+  console.log(show(utf8Substring(s, 6, 10)));
+  console.log(show(utf8Substring(s, 10, 11)));
+  // Up to the end, from the end and empty ranges.
+  console.log(show(utf8Substring(s, 3, utf8Length(s))));
+  console.log(show(utf8Substring(s, utf8Length(s), utf8Length(s))));
+  console.log(show(utf8Substring(s, 6, 6)));
+  console.log(utf8Substring(s, 0, utf8Length(s)) == s);
+  // A lone surrogate keeps its three-byte form and stays one UTF-16 unit.
+  const lone = "x" + String.fromCharCode(0xd83d) + "y";
+  console.log(utf8Length(lone), utf8ByteAt(lone, 1).toString(16));
+  console.log(show(utf8Substring(lone, 1, 4)));
+  console.log(show(utf8Substring(lone, 0, 4)));
+  console.log(show(utf8Substring(lone, 4, 5)));
+  // A string that is all four-byte characters, cut at each of them.
+  const faces = "😀😁😂";
+  for (let i: usize = 0; i <= 12; i += 4) {
+    console.log(show(utf8Substring(faces, i, 12)));
+  }
+}

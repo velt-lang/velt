@@ -176,7 +176,7 @@ impl FnLower<'_, '_> {
         }
         let ro = Operand::Copy(Place::local(r));
         let tok = self.temp(Ty::U32);
-        self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(tok)));
+        self.reader_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(tok)));
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(tok)),
             cases,
@@ -213,26 +213,19 @@ impl FnLower<'_, '_> {
 
     /// Strings: compare the decoded text with each string alternative.
     fn match_str_choices(&mut self, cx: &ChoiceCx<'_>, strs: &[(u32, LitValue)]) {
-        let s = self.temp(STR);
-        let sa = self.addr(Place::local(s));
         let ro = Operand::Copy(Place::local(cx.r));
-        self.json_expect(
-            Rt::JsonReadString,
-            vec![ro, sa.clone()],
-            cx.ctx,
-            cx.expected,
-            cx.fail,
-        );
+        // The string is compared where the reader read it (`textIs`), never made.
+        let ok = self.reader_call("readString", vec![ro]);
+        self.json_ok_or_fail(ok, cx.ctx, cx.expected, cx.fail);
         for (i, l) in strs {
             let LitValue::Str(text) = l else {
                 unreachable!("ICE: non-string literal among the string alternatives")
             };
             let lit = self.str_lit(text);
             let la = self.operand_addr(lit, STR);
-            let eq = self.rt_u8(Rt::StrEq, vec![sa.clone(), la]);
-            self.choice_hit(cx, eq, *i, Some(&sa));
+            let eq = self.reader_call("textIs", vec![Operand::Copy(Place::local(cx.r)), la]);
+            self.choice_hit(cx, eq, *i, None);
         }
-        self.call_rt(Rt::StrDrop, vec![sa], None);
         self.json_fail(cx.ctx, cx.expected, cx.fail);
     }
 

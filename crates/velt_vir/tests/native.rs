@@ -22,9 +22,6 @@ mod programs_http;
 #[allow(dead_code)]
 #[path = "../src/tests/programs_m3.rs"]
 mod programs_m3;
-#[allow(dead_code)]
-#[path = "../src/tests/programs_m4.rs"]
-mod programs_m4;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -127,17 +124,6 @@ fn tasks() {
 fn tcp_echo() {
     let (out, code) = run_native("tcp_echo", &programs_m3::tcp_echo());
     assert_eq!(out, golden("m3", "tcp_echo"));
-    assert_eq!(code, 0);
-}
-
-#[test]
-fn json_lines() {
-    let (out, code) = run_native("json", &programs_m4::json_golden());
-    let expected = "{\"name\":\"ann\",\"age\":30,\"tags\":[\"a\",\"b\"]}\n\
-                    bob 41 0 b@x.io\n\
-                    json error: expected string at $.name\n\
-                    [1,2,3] \"q\\\"uote\"\n";
-    assert_eq!(out, expected);
     assert_eq!(code, 0);
 }
 

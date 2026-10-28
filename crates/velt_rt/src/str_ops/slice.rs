@@ -35,6 +35,19 @@ pub unsafe extern "C" fn velt_rt_str_slice(
     });
 }
 
+/// `utf8Substring(s, start, end)` (velt:encoding): the text of bytes `start..end` of `s`'s
+/// WTF-8, shared with `s` or copied as `slice` decides. The caller (std) has checked
+/// `start <= end <= byte length` and that both are code point boundaries.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_byte_slice(
+    s: *const VeltStr,
+    start: u64,
+    end: u64,
+    out: *mut VeltStr,
+) {
+    out.write(sub_string(s, start as usize, end as usize));
+}
+
 /// `s.charCodeAt(i)`: the UTF-16 code unit at `i` (the high or the low surrogate of a pair), or
 /// -1 when out of range (JS: NaN). Compiled code reads ASCII strings inline and calls this for
 /// the others.
