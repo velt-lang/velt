@@ -1,3 +1,18 @@
+atomic_generic_errors.vlt:41:11: error: `AtomicValue` cannot be extended or implemented
+  = note: the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values
+
+atomic_generic_errors.vlt:63:11: error: `AtomicValue` cannot be extended or implemented
+  = note: the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values
+
+atomic_generic_errors.vlt:30:7: error: `AtomicValue` cannot be extended or implemented
+  = note: the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values
+
+atomic_generic_errors.vlt:39:21: error: `AtomicValue` cannot be extended or implemented
+  = note: the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values
+
+atomic_generic_errors.vlt:79:36: error: `AtomicValue` cannot be extended or implemented
+  = note: the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values
+
 atomic_generic_errors.vlt:26:22: error: the type `Obj` does not implement `AtomicValue`
   = note: required by `T extends AtomicValue` of the constructor of `Holder`
 
@@ -18,3 +33,9 @@ atomic_generic_errors.vlt:10:3: error: `compareExchange` is not available on `At
 
 atomic_generic_errors.vlt:53:17: error: the type `Shaped` does not implement `AtomicValue`
   = note: required by `T extends AtomicValue` of function `viaObj`
+
+atomic_generic_errors.vlt:74:19: error: the type `T` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of function `viaParam`
+
+atomic_generic_errors.vlt:82:19: error: the type `T` does not implement `AtomicValue`
+  = note: required by `T extends AtomicValue` of function `viaParam`

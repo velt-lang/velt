@@ -60,7 +60,9 @@ struct Q {
   s: string;
 }
 
-extend Q implements Shaped {}
+interface Marked extends AtomicValue {}
+
+extend Q implements Marked {}
 
 function viaParam<T extends AtomicValue>(v: T, w: T): T {
   const a = new Atomic<T>(v);
@@ -68,7 +70,7 @@ function viaParam<T extends AtomicValue>(v: T, w: T): T {
   return a.exchange(v);
 }
 
-function outer<T extends Shaped>(v: T, w: T): T {
+function outer<T extends Marked>(v: T, w: T): T {
   return viaParam<T>(v, w);
 }
 
