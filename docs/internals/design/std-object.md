@@ -84,16 +84,18 @@ measures; where it shows, the fix is a marked fast path, not a higher threshold 
 ## Is the object's code right for this program?
 
 Std is not compiled the same way in every program. Lowering and sema decide some things for the
-whole program, and they decide them differently when the program adds classes or callbacks:
+whole program, and they decide them differently depending on which std modules a program loads
+(the prelude always, other modules only when imported) and on what the program adds (classes,
+callbacks):
 
 | Whole-program fact | Where | Effect on a std function |
 |---|---|---|
-| Class ids for `instanceof`: a pre-order walk of all classes, in definition order | `velt_vir/src/lower/class_test.rs`, `number_classes` | The constants in a range check |
+| Class ids for `instanceof`: a pre-order walk of every class in `hir.defs`, in definition order | `velt_vir/src/lower/class_test.rs`, `number_classes` | The constants in a range check, and the id word of every class vtable (`SLOT_CLASS_ID`), a static that every function building an instance refers to |
 | Whether a class hierarchy has a vtable pointer (a subclass or a virtual method anywhere) | `lower/layout.rs`, `has_header` | Field offsets of a std class a user extends |
 | `any` tables: slots present "when the program has them", one table per type, compared by address | `lower/any.rs` | Table contents and identity |
 | Error sets of function types written without `throws` grow with the program's callbacks | `velt_sema` (the repeated check, internals README step 3) | The `Result` layout of a std function that takes a callback |
 | Module state: one block, slot offsets for the whole program | `lower/module_state.rs`, rt_abi.md "Module state" | The slot offsets of a std module-level `let` |
-| Proxies present in the program | `cx.has_proxies()` in `class_test.rs` | Extra paths for `instanceof` |
+| Proxies present in the program | `has_proxies()` (`lower/proxy_typed.rs`), used by `class_test.rs` | Extra paths for `instanceof` |
 
 Listing such facts and checking each would be fragile: the next one added to lowering would
 break the object silently. So the check compares results instead of facts:
@@ -101,7 +103,8 @@ break the object silently. So the check compares results instead of facts:
 1. The object build records, per function, a **fingerprint**: a hash of its lowered VIR, before
    optimization, in a canonical form. Callees, statics and aggregates appear by content and
    symbol, not by their `FuncId`/`StaticId`/`AggId` numbers. Source locations and debug
-   variables are left out, since they do not change what the code does.
+   variables are left out, since they do not change what the code does. Panic texts, with their
+   locations, are statics and so are included.
 2. A program lowers the std functions it reaches, as today, and computes the same fingerprint
    for each.
 3. A function **links** to the object when its fingerprint equals the object's and every function
@@ -113,9 +116,72 @@ break the object silently. So the check compares results instead of facts:
    closures, glue, internal helpers) are dropped by `dead_funcs`, as they live in the object.
 
 A mismatch costs speed, never correctness: the function is compiled in the program, exactly
-as today. A program that extends `Error` keeps the `Error` functions that touch its fields in
-the program; one that does not, links them. `VELT_STD_OBJECT=verbose` lists the functions that
-did not link and why (fingerprint, or which callee).
+as today. `VELT_STD_OBJECT=verbose` lists the functions that did not link and why (fingerprint,
+or which callee).
+
+### Facts the object fixes for every program
+
+Correct is not enough: an object built in a world unlike the programs that use it links nothing.
+The object build loads all of std (below), so its facts are the maximal ones: every std class
+numbered, every `any` slot present, every std caller's callbacks in the error sets. A program
+loads a few modules, so its class ids differ even when it adds no class, and every function that
+builds a std class instance (its vtable holds the id) or tests `instanceof` would fail the
+fingerprint. The JSON reader and writer use both. Two changes make the common facts the same in
+the object and in programs:
+
+- **Std class ids are fixed.** When a program uses the object, std's classes take the ids the
+  manifest records: std classes are numbered first, in one order over all of std (file path, then
+  definition order), whether their modules load or not, so ids of unloaded modules are gaps. The
+  program's own classes are numbered after the last std id. `numbered_last` (`class_test.rs`),
+  which already keeps `Proxy` and `Reflect` from shifting other ids, moves into the same table.
+  A user class that extends a std class `C` cannot get an id inside `C`'s range, so `C`'s range
+  and its bases' ranges change in that program: the functions that test `instanceof` on them, or
+  build their instances, do not link. That is the price of extending a std class, paid only by
+  the classes concerned. A program that extends `Error` keeps the functions that build or test
+  `Error` and its bases in the program; the rest of std links.
+- **Std class headers are fixed.** A std class hierarchy has a vtable pointer in a program that
+  uses the object when the manifest says it has one, or when the program needs it (a user
+  subclass, `has_header` in `lower/layout.rs`). Adding a header is always valid; it costs 8 bytes
+  per object. A hierarchy that gains one only because of the user's subclass changes its field
+  offsets in that program, and its functions fall back as above.
+
+What stays maximal in the object: `any` tables (their functions stay out of the object anyway,
+below), the error sets of callbacks (a std function that takes a callback written without
+`throws` links only where the program's sets match std's), and `has_proxies()`. Whether that
+leaves enough linked is measured, not assumed: step 3 of the order of work reports, for the
+goldens and `bench/` programs, the share of reached std functions (by count and by optimized
+cost) that link, and why the others did not. If the cost-weighted share is below 80%, more facts
+get fixed tables before step 4 turns the object on, or the object build moves to one world per
+module (open question 4).
+
+### Async functions
+
+An async function `f` is three functions (`velt_vir/src/lib.rs`, "Async functions"): the
+constructor `f(args…) -> ptr`, `f$poll` and `f$drop`, over a state struct computed after
+lowering (`async_fn/spill/`). `await` of a direct call embeds the child's state in the parent's
+state, with no allocation. So a program that awaits a std async function depends on the object's
+state layout, even in its own code.
+
+- `f`'s fingerprint includes its state aggregate **by structure** (size, alignment, every field
+  and offset, recursively), and the state aggregates it embeds the same way.
+- `f`, `f$poll` and `f$drop` link together or not at all: they are one unit in the fixpoint. A
+  parent in the program that embeds `f`'s state compiles against the same layout, since its
+  lowering reads the layout from the same lowered `f`, which matched.
+- Std's async I/O (`velt:fs`, `velt:http`) is then linked like the rest. `frame_slots`
+  (`velt_opt`) promotes frame fields into locals but does not change the layout, so the object's
+  optimizer cannot move it away from what programs embed.
+
+**The fingerprint exists already.** `velt dev` compares versions of a program per function with
+`Canon` (`velt_codegen_cl/src/dev/fingerprint.rs`, hot-reload.md "Classification"): functions and
+externs by symbol, statics by contents, aggregates by structure. It moves to `velt_vir` (the VIR
+crate, where both `velt_codegen_cl` and the object build can use it) with one mode per use. Three
+of its omissions are right for hot reload and unsound for linking, so link mode drops them:
+
+| Omission in `Canon` today | Why hot reload can | Link mode |
+|---|---|---|
+| Async state aggregates (`… state`, `… promise`) by name only | `classify` recompiles every function that embeds a state through its reference to the poll function | By structure (above): nothing recompiles the object |
+| Aggregates deeper than 16 levels by name only | A cut-off for speed | Whole structure, memoized per aggregate |
+| The argument of `velt_rt_set_throw_loc` | An edit that only moves lines must not force a restart | Included: an object built from other std text would report other locations in `Uncaught …` |
 
 The check needs lowering, but not optimization or codegen, of std functions. Lowering was not
 in the issue's measurements; the first pull request measures it (`--timings`, stage `lower`).
@@ -124,9 +190,11 @@ If it turns out to matter, a cheaper fingerprint over HIR can replace it later (
 **Identity of statics.** `any` tables are compared by address ("a checked conversion compares one
 pointer"), and the runtime compares some statics' addresses (type descriptors;
 `velt_codegen_llvm/src/units/mod.rs`, which already gives them one copy across codegen units).
-A function that refers to such a static does not go into the object in the first version: two
-copies, the program's and the object's, would compare unequal. The object build marks these
-functions. A later version can give such statics one symbol, defined once, as codegen units do.
+So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
+of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
+second block. Std has no module-level `let` today, so this is for later. A function that refers
+to any of these statics does not go into the object in the first version: two copies, the
+program's and the object's, would compare unequal. The object build marks these functions. A later version can give such statics one symbol, defined once, as codegen units do.
 
 ## Symbols and linkage
 
@@ -155,12 +223,31 @@ functions. A later version can give such statics one symbol, defined once, as co
   (`numrep/params.rs` already applies them to internal functions only), and no ONCE inlining
   into its single caller. The param attributes it relies on come from its signature (pass modes,
   `ParamAttrs` from lowering), which is part of the fingerprint.
+- **The rule for VIR passes.** A pass may change a function's signature, param attributes or what
+  it assumes about its callers only for an `Internal` function. `Import` is treated like `Export`
+  there, as `numrep/params.rs` and the ONCE rule (`inline/mod.rs`, `decide`) already treat
+  `Export`. Passes that clone a callee as `Internal` (`const_fields` specialization,
+  `gated_clones`) may clone an `Import` only when its body is kept, and the clone is the
+  program's own.
+- **Symbol clashes.** `keys::disambiguate` (`lower/keys.rs`) renames a repeated symbol to
+  `…$dup2`. An `Import` symbol is never renamed: on a clash the program's own function gets the
+  suffix, and a std function whose symbol needed `$dup` in the object build never goes into the
+  object.
+- **Declarations carry what the object knows.** A declaration has only its param attributes, so
+  LLVM loses what it would infer inside one module (memory effects such as `memory(read)`,
+  `willreturn`; `nounwind` holds already, `FN_ATTRS` in `module.rs`), and `velt_opt` cannot
+  specialize an object function for a constant closure argument (`const_fields`). The manifest
+  records the attributes the object build inferred for each function (from its optimized VIR,
+  and LLVM's function attributes when it built with LLVM), and declarations carry them. Closure
+  specialization across the boundary is lost; a std function that depends on it is a fast path
+  to mark.
 
 ## Building the object
 
 `velt` builds the object itself, the first time a build needs it and finds none:
 
 1. Load the prelude and every std module, as `bench/compile/all_std.vlt` does, and check them.
+   Number std's classes and decide their headers for the fixed tables (above).
 2. Lower with a root set instead of `main`: every non-generic, non-caller-tracking, unmarked
    std function, plus what they reach. This is a new mode of lowering (today "only functions
    reachable from `main` are lowered"; `velt_vir/src/lib.rs`). Record each root's fingerprint.
@@ -172,7 +259,8 @@ functions. A later version can give such statics one symbol, defined once, as co
    prelude counts as one), using the codegen-unit machinery: parallel clang processes, functions
    called across members `hidden`.
 5. Write the objects and a `manifest.json`: per exported function its symbol, fingerprint,
-   optimized cost and member, plus the key below and the std content hash.
+   optimized cost, member and inferred attributes; the std class id and header table; a hash per
+   std file; and the key below.
 
 The build uses all cores. A program links only the members whose functions it calls, plus the
 members those call (from the manifest). No archive tool is needed, which matters on Windows,
@@ -190,17 +278,29 @@ The object depends on everything that changes its code without changing a finger
 | Part | Value | Why |
 |---|---|---|
 | Compiler | Release: the version and commit. Source checkout: the `velt` executable's size and modification time, as the link stamp does for the runtime (`crates/veltc/src/link.rs`, `link_key`) | Lowering, the optimizer and the backends change between compilers |
-| Runtime | The runtime library's path, size and modification time | The object calls `velt_rt_*`, and inlines layouts the runtime defines (rt_abi.md) |
-| Std | A hash of every file under the std root | Not needed for correctness (fingerprints are), but an edited std should rebuild the object, not leave it unused |
+| Runtime | Release: nothing beyond the compiler's version (the toolchain ships its runtimes). Source checkout: the **static** runtime's size and modification time (`find_runtime_lib`), whichever runtime the program links: the shared runtime of debug builds (`link.rs`, `find_shared_runtime_lib`) comes from the same `cargo build` and the same ABI | The object calls `velt_rt_*`, and inlines layouts the runtime defines (rt_abi.md) |
 | Target | The normalized triple | |
 | CPU | The resolved `--cpu` / `$VELT_CPU` / `build.cpu`, and its x86 feature mask (`Backend::required_features`) | `--cpu baseline` must not run code built for the default CPU; the start-up CPU check (`driver/cpu_check.rs`) covers the program's code and the object's |
 | Code generator | `llvm` with `$VELT_LLVM_OPT`'s level, or `cranelift` | |
-| Lowering options that change VIR | `cell_checks` (on in programs a debug compiler builds) | |
+| Lowering options that change VIR | `cell_checks` | `!opts.release && cfg!(debug_assertions)` (`driver.rs`, `compile_to_vir`): only a debug *compiler* sets it, and only for debug programs. Such a compiler (the one `cargo test` builds, so the goldens) fills two objects, one with and one without cell checks; a release compiler fills one |
 
-Not in the key: the program's profile, its backend and `-g`. One object serves debug and release
+Not in the key: the program's profile (beyond `cell_checks` above), its backend, the runtime it
+links (static or shared) and `-g`. With a release compiler, one object serves debug and release
 builds, Cranelift and LLVM programs.
 
-The key's hash names a directory: `<cache>/std/<key>/` with the members and `manifest.json`.
+The key's hash names a directory, `<cache>/std/<key>/`. It holds one or more generations
+(`g1/`, `g2/`, …), each with the members and `manifest.json`, and a file `current` naming the
+generation in use. A release install only ever has `g1`.
+
+**Std's text is not in the key.** Hashing all of `std/` (184 files, about 2 MB) on every build would
+cost more than the 3% compile-time rule allows for small programs, on Windows most. It is not
+needed: fingerprints decide correctness, so the key only has to notice a std edit to refill. The
+manifest records a hash per std file. A program compares the hashes of the std files it loaded,
+whose text the loader has already read into the source map, so the comparison costs hashing
+bytes in memory and no file access. A release install skips even that (its std is the toolchain's,
+and an edited `<prefix>/std` is caught by the fingerprints). In a source checkout, a loaded file
+whose hash differs marks the object stale: the build uses what still matches and then refills
+the object under the lock (below), so the next build has it.
 
 ## Where the cache lives
 
@@ -213,9 +313,10 @@ suggests `~/.cache/velt`; that is open question 2.
 A read-only or missing cache directory is no error. The build compiles std in the program, as
 today, with a one-line note under `-v`.
 
-**Invalidation** is by key: a new compiler, runtime, std or CPU makes a new directory, and the old one
-is never used again. **Eviction:** each fill touches `<key>/used`, and after a fill the cache
-keeps the eight most recently used keys per target and deletes the rest. In a source checkout every
+**Invalidation** is by key: a new compiler, runtime or CPU makes a new directory, and the old one
+is never used again. A std edit in a source checkout makes a new generation in the same key's
+directory; the one before it is deleted by the next fill. **Eviction:** each fill touches `<key>/used`, and after a fill the cache
+keeps the eight most recently used keys per target (each with its `current` generation only) and deletes the rest. In a source checkout every
 rebuild of `velt` is a new key, so this bound matters there most. `velt clean --cache` empties it.
 
 ## Two builds filling the cache at once
@@ -223,17 +324,22 @@ rebuild of `velt` is a new key, so this bound matters there most. `velt clean --
 The golden tests start hundreds of builds at once on a cold cache. Without care, each would
 build the object.
 
-1. A build that finds no `<key>/manifest.json` takes an exclusive lock on `<cache>/std/<key>.lock`
-   (`std::fs::File::lock`: `flock` on Unix, `LockFileEx` on Windows).
-2. Holding it, it checks again, since another build may have finished meanwhile. Then it builds into
-   `<key>.tmp-<pid>-<random>/`, writes `manifest.json` last, and renames the directory to `<key>/`.
-   A rename within one directory is atomic on every platform; when `<key>/` already exists
-   (a build that did not see the lock, such as one on a network file system without locks), the
+1. A build that finds no usable generation (no `<key>/current`, or a stale one) takes an
+   exclusive lock on `<key>/lock` (`std::fs::File::lock`: `flock` on Unix, `LockFileEx` on
+   Windows).
+2. Holding it, it checks again, since another build may have finished meanwhile. Then it builds
+   into `<key>/tmp-<pid>-<random>/`, writes `manifest.json` last, renames the directory to the
+   next `g<n>/`, and then replaces `current` by writing `current.tmp` and renaming it over
+   `current`. Both renames are atomic within one directory on every platform (on Windows,
+   `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` for the file). When `g<n>/` already exists (a
+   build that did not see the lock, such as one on a network file system without locks), the
    rename fails, and the build deletes its copy and uses the other one.
-3. Other builds wait on the lock, then read the finished directory. A build that cannot take the
-   lock within 60 seconds compiles std in the program, as today.
-4. Readers trust only a directory with a `manifest.json`, which is written last. A crashed fill
-   leaves a `.tmp-` directory that the next fill deletes once it is older than an hour.
+3. Other builds wait on the lock, then read the generation `current` names. A build that cannot
+   take the lock within 60 seconds compiles std in the program, as today. A build that only
+   found its generation stale does not wait: it links what still matches, and the lock holder's
+   refill serves the next build.
+4. Readers trust only a generation with a `manifest.json`, which is written last. A crashed fill
+   leaves a `tmp-` directory that the next fill deletes once it is older than an hour.
 
 ## Profiles, backends and commands
 
@@ -260,7 +366,10 @@ variables, as Rust's std behaves. `VELT_STD_OBJECT=0` gives the old debuggable c
 - **wasm32** (`wasm32-wasip1` and the browser flavor) needs the LLVM backend already (`driver.rs`
   rejects Cranelift for it), so its object is built with `opt` and `llc` (`velt_codegen_llvm/src/llc.rs`),
   like its programs, on first use. `wasm-ld` links object files as other linkers do. Without
-  LLVM tools there is no wasm build at all, so no new requirement.
+  LLVM tools there is no wasm build at all, so no new requirement. Its object holds the prelude
+  and the std modules that compile for WebAssembly; modules that do not (sockets, `velt:http`;
+  `wasm_goldens.rs`, `UNSUPPORTED`) are left out of its fill, and a program that imports one
+  fails to build as today.
 - **Cross targets.** A non-host target's runtime and link kit come with its target pack
   (`velt target add`, `lib/targets/<triple>/`, `velt_link/src/lib.rs`, `find_runtime_lib`). Its
   object is built on first use, with clang for that triple, or with Cranelift for a debug build
@@ -281,8 +390,8 @@ order is:
 3. the cache, filled when empty.
 
 The toolchain's key uses the release version, not the executable's time, so a prebuilt object
-matches the `velt` it shipped with. An edited `<prefix>/std` changes the std hash, so the
-prebuilt object is not used and the cache gets one. Users with no clang still get LLVM-optimized
+matches the `velt` it shipped with. Functions of an edited `<prefix>/std` fail their fingerprints
+and are compiled in the program, so an edit never runs stale code. Users with no clang still get LLVM-optimized
 std code from the prebuilt object. The size it adds to a release is measured in the
 pull request that ships it.
 
@@ -306,7 +415,7 @@ object relinks.
 | Concurrent fills | Sixteen `velt build` processes on an empty cache: all succeed, one directory results, no `.tmp-` left |
 | Commands that must not build | `velt check`, `velt fmt`, `velt lsp` (one request), `velt doc` leave an empty `$VELT_CACHE_DIR` empty |
 | Install layout | `install_layout.rs` runs from a prefix with a prebuilt object and checks it is used (no cache directory created) |
-| Fuzzes | `bench/json/fuzz/run.sh` (numbers, strings, values) in both modes |
+| Fuzzes | The Node-differential fuzzes (numbers, strings, values) in both modes, once `bench/json/fuzz/run.sh` exists: json-engine.md plans it with the engine's step 0, and it is not in `main` yet |
 
 Tests that look at std's code in VIR (the `opt_*_vir.rs` tests, `forward_consts_vir.rs`) set
 `VELT_STD_OBJECT=0`, or keep the functions they look at in the program.
@@ -326,9 +435,20 @@ head, with interleaved runs:
 
 ## Contracts
 
-- `vir.rs`: `Linkage::Import`, a function defined in the std object (maintainer review).
-- `velt_vir`'s lowering entry: a root set instead of `main` for the object build, and the
-  fingerprint function.
+- `vir.rs`: `Linkage::Import`, a function defined in the std object (maintainer review). An
+  `Import` without a body has no blocks, so invariant 4 ("block 0 is the entry block") becomes
+  "block 0 is the entry block of a function with blocks; only an `Import` has none". Every
+  consumer of VIR handles a function without blocks: `verify`; the optimizer passes that walk
+  every function (`inline::cost` and `Budget`, `dead_funcs`, the per-function passes, which skip
+  it), the interpreter (`velt_opt/src/interp`: a call to one is not evaluated), the VIR printer
+  (`Display` for `Program` in `vir.rs`, which prints a `declare` line), both backends, and the dev
+  fingerprint and `classify` (`velt_codegen_cl/src/dev/`), which never see one since the JIT does
+  not use the object, but must not panic on one. An `Import` with a body kept for inlining is
+  verified and optimized like any function, and never emitted.
+- The rule for passes and `keys::disambiguate` above, written into `vir.rs`'s module comment.
+- `velt_vir`'s lowering entry: a root set instead of `main` for the object build, the class id
+  and header tables from the manifest, and the fingerprint (`Canon`, moved from
+  `velt_codegen_cl/src/dev/fingerprint.rs`, with a link mode).
 - HIR: the `__intrinsic_inline` intrinsic (hir_encodings.md).
 - cli.md: `VELT_STD_OBJECT`, `VELT_STD_OBJECT_DIR`, `VELT_CACHE_DIR`, `velt clean --cache`;
   `--emit vir|llvm` show declarations for linked std functions.
@@ -358,10 +478,16 @@ head, with interleaved runs:
 
 ## Order of work
 
-1. Std paths relative to the std root in panic messages and debug info.
+1. Std paths relative to the std root in panic messages and debug info. No golden's expected
+   output names a std file today (the run-time messages report the user's call site; the
+   `.err` files that mention `std/` are compile errors, which keep their paths), so the goldens
+   do not change; `panic_locations.rs` gets a case for a panic inside std. The hot-reload
+   fingerprint sees the new panic texts once, as one edit of std would.
 2. VIR fingerprints and `Linkage::Import` in both backends (tests with hand-built VIR).
-3. The object build and the cache (lock, rename, eviction), off by default
-   (`VELT_STD_OBJECT=1` to try). Goldens in both modes.
+3. The object build and the cache (lock, rename, eviction), with the fixed class id and header
+   tables, off by default (`VELT_STD_OBJECT=1` to try). Goldens in both modes. Report the share
+   of reached std functions that link (above); decide there whether step 4 goes ahead or more
+   facts get fixed first.
 4. `__intrinsic_inline`, the number formatter split into its fast path and the rest.
    Measurements of the acceptance check; then on by default.
 5. Prebuilt objects in `scripts/package.sh` and target packs.
@@ -386,9 +512,12 @@ head, with interleaved runs:
    mark fast paths where `bench/` shows a loss over 3%, and revisit if the marks multiply.
 4. **One object build or one per module, lazily?** Building all of std at once is simplest, but
    the first build on a new compiler (every rebuild in a source checkout) pays for all of std,
-   and an edit to one std file rebuilds everything. **Recommendation:** one member per module,
-   all built in one fill as proposed, measured; if a fill takes over ten seconds on an M4, split
-   fills per module (each keyed by its own and its imports' content).
+   and an edit to one std file rebuilds everything; and its facts are all of std's, which the
+   fixed tables only partly align with programs. A fill per module builds each module in the
+   world of a program that imports only it (prelude, the module, its imports): smaller facts,
+   closer to real programs. **Recommendation:** one member per module, all built in one fill as
+   proposed, measured; split fills per module if a fill takes over ten seconds on an M4, or if
+   step 3's share of linked functions stays below 80% with the fixed tables.
 5. **Fingerprint over VIR or over HIR?** VIR needs std lowered in each program; a HIR fingerprint
    (the signature with pass modes and error sets, plus the layout facts of the types touched)
    would skip that, but it must list every whole-program fact, which is what makes it fragile.
