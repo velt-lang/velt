@@ -845,11 +845,13 @@ held as `any` (velt_sema `locked_props.rs`). No body they may run, along the mod
 edges, uses a member of a value that is or holds `any` / `unknown` (an intrinsic, a dynamic or
 virtual call, or a call into a runtime extern with such an argument; a type parameter is not
 one), handles a type a `Proxy` may be behind (in a program that loads `Proxy`: what an `any` is
-converted to, and what that is upcast to), calls a function value whose body is not known, or
-runs a `with` whose callback is not a closure or a named function written there (lowering takes
-the module lock for it); and no `with` inside them has a callback that does. In a program whose
-functions may have properties, lowering calls `velt_rt_module_with` before the lock of every
-other call (rt_abi.md "Module state"). Empty in a program without `any`.
+converted to, the object types in the fields, elements and map values of what is converted to
+`any`, since a write through it converts what it stores, and what those are upcast to), calls a
+function value whose body is not known, or runs a `with` whose callback is not a closure or a
+named function written there (lowering takes the module lock for it); and no `with` inside them
+has a callback that does. In a program whose functions may have properties, lowering calls
+`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+program without `any`.
 
 ## Symbols
 

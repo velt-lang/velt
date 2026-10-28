@@ -202,12 +202,17 @@ pub(crate) fn has_body(cx: &Ctx, f: DefId) -> bool {
 
 /// What makes a typed value a proxy (velt_vir `proxy_typed.rs`): in a program that loads
 /// `Proxy`, an `any` converted to an object type (`AnyTo`, in the program's own code) may hold
-/// one, and reading or writing a field of it runs a trap, which sema sees as a field access.
-/// So a body handling such a type, or one a value of it is upcast to, may reach a function's
-/// properties.
+/// one, and so may an object type a value converted to `any` holds (a write through the `any`
+/// converts what it stores to the slot's type); reading or writing a field of it runs a trap,
+/// which sema sees as a field access. So a body handling such a type, or one a value of it is
+/// upcast to, may reach a function's properties.
 #[derive(Default)]
 pub(crate) struct Proxies {
     targets: Vec<TyId>,
+    /// The types of the values the program converts to `any`: a write through the `any` (a
+    /// field or index set, `push`, `Reflect.set`) converts what it stores to the type of the
+    /// slot, so the object types they hold are targets too.
+    dynamic: Vec<TyId>,
     casts: Vec<(TyId, TyId)>,
 }
 
@@ -220,12 +225,14 @@ impl Proxies {
                 ..
             } => self.targets.push(e.ty),
             E::Upcast(x) if x.ty != e.ty => self.casts.push((x.ty, e.ty)),
+            E::ToDyn { expr, .. } => self.dynamic.push(expr.ty),
             _ => {}
         }
     }
 
     pub(crate) fn add(&mut self, o: Proxies) {
         self.targets.extend(o.targets);
+        self.dynamic.extend(o.dynamic);
         self.casts.extend(o.casts);
     }
 
@@ -243,6 +250,10 @@ impl Proxies {
         let mut p = Proxiable::default();
         for &t in &self.targets {
             p.add(cx, t);
+        }
+        let mut seen = FxHashSet::default();
+        for &t in &self.dynamic {
+            slots(cx, t, &mut p, &mut seen);
         }
         loop {
             let before = (p.roots.len(), p.types.len(), p.all);
@@ -319,4 +330,49 @@ fn root(cx: &Ctx, mut d: DefId) -> DefId {
         }
     }
     d
+}
+
+/// The object types a value of type `t` holds in a slot a write through an `any` may store a
+/// converted proxy into (its fields, elements and map values, transitively), made targets.
+fn slots(cx: &Ctx, t: TyId, p: &mut Proxiable, seen: &mut FxHashSet<TyId>) {
+    if !seen.insert(t) {
+        return;
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => {
+            p.add(cx, x);
+            slots(cx, x, p, seen);
+        }
+        TyKind::Map(k, v) => {
+            for x in [k, v] {
+                p.add(cx, x);
+                slots(cx, x, p, seen);
+            }
+        }
+        TyKind::Tuple(xs) => {
+            for x in xs {
+                p.add(cx, x);
+                slots(cx, x, p, seen);
+            }
+        }
+        TyKind::Adt(d, args) => {
+            let fields: Vec<TyId> = cx
+                .adt(d)
+                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
+            for x in fields.into_iter().chain(args) {
+                p.add(cx, x);
+                slots(cx, x, p, seen);
+            }
+        }
+        TyKind::Dyn(i, _) if cx.dynamic(t).is_none() => {
+            let imps: Vec<TyId> = (cx.impls.iter())
+                .filter(|x| x.iface == i)
+                .map(|x| x.ty)
+                .collect();
+            for x in imps {
+                slots(cx, x, p, seen);
+            }
+        }
+        _ => {}
+    }
 }

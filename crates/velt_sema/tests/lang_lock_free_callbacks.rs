@@ -145,3 +145,33 @@ fn generic_std_callbacks_are_lock_free() {
         Some(true)
     );
 }
+
+#[test]
+fn a_proxy_stored_through_any_into_a_typed_slot_is_not_lock_free() {
+    // No conversion from `any` to `{ k: number }` in the program's own code: the push through
+    // the `any` converts the proxy to the array's element type.
+    let p = program(
+        "function f(m: shared<Mutex<Plain>>, arr: { k: number }[]) { m.with((x) => { x.n += arr[0].k; }); }
+         function main() {
+           const arr: { k: number }[] = [];
+           const aa: any = arr;
+           aa.push(new Proxy({ k: 1 }, {}));
+           f(shared(new Mutex(new Plain())), arr);
+         }",
+    );
+    assert_eq!(lock_free(&p, "f"), Some(false));
+}
+
+#[test]
+fn a_generic_class_nested_in_itself_reaches_its_inner_hooks() {
+    // Dropping a `Box<number>` drops its `Box<Hooked>`, whose `Hooked` has a dispose hook that
+    // writes a property: the walk by definition must not stop at the inner `Box`.
+    let p = program(
+        "class Hooked { [Symbol.dispose](): void { const e: any = decl; e.k2 = 1; } }
+         class GBox<T> { v: T; other: GBox<Hooked> | null = null; constructor(v: T) { this.v = v; } }
+         class GHolder { b: GBox<number> | null = null; }
+         function f(m: shared<Mutex<Plain>>, h: GHolder) { m.with((x) => { h.b = null; }); }
+         function main() { f(shared(new Mutex(new Plain())), new GHolder()); }",
+    );
+    assert_eq!(lock_free(&p, "f"), Some(false));
+}

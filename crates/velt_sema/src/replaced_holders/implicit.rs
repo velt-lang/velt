@@ -274,6 +274,12 @@ impl Implicit {
                 let (d, args) = (*d, args.clone());
                 if let Some(at) = stack.iter().position(|x| *x == d) {
                     self.cut.set(self.cut.get().min(at));
+                    // The same definition with other type arguments (`Box<Hooked>` inside
+                    // `Box<number>`): the walk on the stack covers its fields, not what its
+                    // arguments reach.
+                    for &a in &args {
+                        self.reach_in(cx, a, env, stack, out);
+                    }
                     return;
                 }
                 // A type without type parameters reaches the same whatever `env` is.
