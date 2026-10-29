@@ -176,5 +176,5 @@ function main() {
       console.log(`${sql} = ${mine}`);
     }
   }
-  console.log(`${CALLS.length} calls, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  console.log(`${CALLS.length} calls, ${bad == 0 ? "all the same" : bad + " differ"}`);
 }
