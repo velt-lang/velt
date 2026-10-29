@@ -248,7 +248,9 @@ impl Cache {
 
     /// The path of `key`'s file entry of `kind`, once it passes its check (one that fails is
     /// removed), marking it used. The file stays until garbage collection finds it unused for
-    /// longest; a link that uses it for long should [`Self::touch`] it.
+    /// longest; a link that uses it for long should [`Self::touch`] it. Its size and time do
+    /// not change while it is cached (the time of use is kept beside it), so a stamp that names
+    /// it as an input stays valid.
     pub fn path_of(&self, kind: &str, key: &Key) -> Option<PathBuf> {
         files::path_of(&self.files_dir(kind), key)
     }
@@ -329,7 +331,7 @@ impl Cache {
                 let Ok(meta) = fs::metadata(&path) else {
                     continue;
                 };
-                let used = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                let used = files::used(&path, &meta);
                 if files::is_temp(&path) {
                     if now.duration_since(used).unwrap_or_default() > STALE_TEMP {
                         let _ = fs::remove_file(&path);
@@ -364,7 +366,7 @@ impl Cache {
                 let _ = packs.compact(n, cutoff);
             }
             for path in self.entry_files(&kind) {
-                let used = fs::metadata(&path).and_then(|m| m.modified());
+                let used = fs::metadata(&path).map(|m| files::used(&path, &m));
                 if !files::is_sidecar(&path) && used.is_ok_and(|t| minutes(t) < cutoff) {
                     let _ = fs::remove_file(&path);
                     let _ = fs::remove_file(files::sidecar(&path));

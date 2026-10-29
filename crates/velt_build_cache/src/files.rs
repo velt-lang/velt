@@ -46,53 +46,96 @@ pub(crate) fn put(dir: &Path, key: &Key, value: &[u8]) -> bool {
 }
 
 /// File entries (`Cache::put_file`): a plain file, which a linker can read as it is, and beside
-/// it a sidecar (`<name>.check`) holding the header. The file is written before the sidecar, so
-/// a reader that finds them out of step has a miss (and removes both), never wrong code.
+/// it a sidecar (`<name>.check`) holding the header. The time of use is the sidecar's: the file
+/// itself keeps its size and time for as long as it is cached, so a build that names it as an
+/// input (a stamp, a link stamp) sees the same file. Stores, and the removal of an entry that
+/// fails its check, happen under the kind's lock (`<kind>/files.lock`), so a reader never
+/// removes an entry a writer is half-way through.
 pub(crate) fn put_file(dir: &Path, key: &Key, src: &Path) -> bool {
     let path = path(dir, key);
-    if checked_file(&path) {
+    if check_file(&path) {
         return true;
     }
     let Ok(value) = fs::read(src) else {
         return false;
     };
+    let Ok(_lock) = lock(dir) else {
+        return false;
+    };
+    if check_file(&path) {
+        return true;
+    }
     let mut header = Vec::with_capacity(HEADER);
     header.extend_from_slice(&(value.len() as u64).to_le_bytes());
     header.extend_from_slice(&checksum(&value).to_le_bytes());
-    write_atomically(&path, &value).is_ok() && write_atomically(&sidecar(&path), &header).is_ok()
+    // Stale halves first: a sidecar of another value must not meet the new file.
+    let _ = fs::remove_file(sidecar(&path));
+    let stored = write_atomically(&path, &value).is_ok()
+        && write_atomically(&sidecar(&path), &header).is_ok();
+    stored && check_file(&path)
 }
 
-/// The path of `key`'s file entry when it passes its check (marking it used), else `None`.
+/// The path of `key`'s file entry when it passes its check (marking it used), else `None`. One
+/// that fails is removed, under the lock and after a second look, so a store in progress is
+/// waited for rather than undone.
 pub(crate) fn path_of(dir: &Path, key: &Key) -> Option<PathBuf> {
     let path = path(dir, key);
-    if !checked_file(&path) {
-        return None;
+    if !check_file(&path) {
+        let _lock = lock(dir).ok()?;
+        if !check_file(&path) {
+            if path.exists() || sidecar(&path).exists() {
+                let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(sidecar(&path));
+            }
+            return None;
+        }
     }
-    touch_if_old(&path, &fs::metadata(&path).ok()?);
+    let side = sidecar(&path);
+    touch_if_old(&side, &fs::metadata(&side).ok()?);
     Some(path)
 }
 
-/// Mark `key`'s file entry used now (an object a link used, say).
+/// Mark `key`'s file entry used now (an object a link used, say): its sidecar's time.
 pub(crate) fn touch(dir: &Path, key: &Key) {
-    if let Ok(f) = fs::OpenOptions::new().write(true).open(path(dir, key)) {
+    if let Ok(f) = fs::OpenOptions::new()
+        .write(true)
+        .open(sidecar(&path(dir, key)))
+    {
         let _ = f.set_modified(SystemTime::now());
     }
 }
 
-/// Whether the file entry at `path` matches its sidecar; one that does not is removed.
-fn checked_file(path: &Path) -> bool {
-    let whole = (|| {
-        let header = fs::read(sidecar(path)).ok()?;
-        let value = fs::read(path).ok()?;
-        let mut bytes = header;
-        bytes.extend_from_slice(&value);
-        checked(bytes)
-    })();
-    if whole.is_none() && (path.exists() || sidecar(path).exists()) {
-        let _ = fs::remove_file(path);
-        let _ = fs::remove_file(sidecar(path));
+/// When the entry whose file is `path` was last used: its sidecar's time for a file entry, the
+/// file's own for a large entry.
+pub(crate) fn used(path: &Path, meta: &fs::Metadata) -> SystemTime {
+    let side = fs::metadata(sidecar(path)).and_then(|m| m.modified());
+    side.or_else(|_| meta.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// Whether the file entry at `path` matches its sidecar.
+fn check_file(path: &Path) -> bool {
+    let header = fs::read(sidecar(path)).ok();
+    let value = header.and_then(|mut bytes| {
+        bytes.extend_from_slice(&fs::read(path).ok()?);
+        Some(bytes)
+    });
+    value.and_then(checked).is_some()
+}
+
+/// The lock of the file entries in `dir`, held while the returned file is.
+fn lock(dir: &Path) -> std::io::Result<fs::File> {
+    let path = dir.with_extension("lock");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
-    whole.is_some()
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    file.lock()?;
+    Ok(file)
 }
 
 /// The sidecar of a file entry.

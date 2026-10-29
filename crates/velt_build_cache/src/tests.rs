@@ -321,7 +321,7 @@ fn file_entries_are_handed_out_by_path() {
     assert!(cache.put_file("std", &old, &src));
     let long_ago = SystemTime::now() - Duration::from_secs(3600 * 30);
     for k in [key, old] {
-        let p = files::path(&cache.files_dir("std"), &k);
+        let p = files::sidecar(&files::path(&cache.files_dir("std"), &k));
         let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
         f.set_modified(long_ago).unwrap();
     }
@@ -332,6 +332,70 @@ fn file_entries_are_handed_out_by_path() {
     assert!(cache.path_of("std", &key).is_some(), "touched");
     assert_eq!(cache.path_of("std", &old), None, "used longest ago");
     assert!(!files::sidecar(&files::path(&cache.files_dir("std"), &old)).exists());
+}
+
+/// A file entry's own size and time stay as they were stored while it is used: a stamp that
+/// names it as an input stays valid. The time of use is its sidecar's.
+#[test]
+fn using_a_file_entry_leaves_the_file_as_it_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(&tmp.path().join("cache"), DEFAULT_LIMIT);
+    let src = tmp.path().join("member.o");
+    std::fs::write(&src, vec![1; LARGE]).unwrap();
+    let key = Key([6; 32]);
+    assert!(cache.put_file("std", &key, &src));
+    let path = cache.path_of("std", &key).unwrap();
+    let long_ago = SystemTime::now() - Duration::from_secs(3600 * 30);
+    for p in [path.clone(), files::sidecar(&path)] {
+        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+        f.set_modified(long_ago).unwrap();
+    }
+    assert!(cache.path_of("std", &key).is_some());
+    cache.touch("std", &key);
+    let time = |p: &std::path::Path| std::fs::metadata(p).unwrap().modified().unwrap();
+    assert_eq!(time(&path), long_ago, "the file keeps its time");
+    assert!(
+        time(&files::sidecar(&path)) > long_ago,
+        "its use is on the sidecar"
+    );
+}
+
+/// A reader looking up entries while a writer stores them never removes one half-way through:
+/// every entry stored is there afterwards.
+#[test]
+fn a_reader_during_a_store_does_not_undo_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("cache");
+    let src = tmp.path().join("member.o");
+    std::fs::write(&src, vec![7; 4 * LARGE]).unwrap();
+    let keys: Vec<Key> = (0..200u32).map(|i| Key::of(&[&i.to_le_bytes()])).collect();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // One `Cache` per thread: as separate processes, they share only the files.
+            let cache = Cache::new(&root, DEFAULT_LIMIT);
+            for key in &keys {
+                assert!(cache.put_file("std", key, &src));
+            }
+            done.store(true, Ordering::Relaxed);
+        });
+        scope.spawn(|| {
+            let cache = Cache::new(&root, DEFAULT_LIMIT);
+            while !done.load(Ordering::Relaxed) {
+                for key in &keys {
+                    if let Some(p) = cache.path_of("std", key) {
+                        assert_eq!(std::fs::read(p).unwrap().len(), 4 * LARGE);
+                    }
+                }
+            }
+        });
+    });
+    let cache = Cache::new(&root, DEFAULT_LIMIT);
+    let missing = keys
+        .iter()
+        .filter(|k| cache.path_of("std", k).is_none())
+        .count();
+    assert_eq!(missing, 0, "entries undone by the reader");
 }
 
 #[test]
