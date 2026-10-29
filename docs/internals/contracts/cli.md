@@ -275,8 +275,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
   missing as it was, every directory listed has the same entries), the manifests and lockfile
   of the package graph, and by size and time the unit objects and the executable it wrote (so
-  an output another build or tool rewrote is a change) and extra link inputs. The objects it names must
-  exist; the link step then runs (and checks its own stamp). The stamp ends with `end <entries>`
+  an output another build or tool rewrote is a change), extra link inputs, and the std cache's
+  objects the link read (`std` lines; stamp format `velt-build-stamp 3`). The objects it names
+  must exist; the link step then runs on the unit objects and the `std` objects (and checks its
+  own stamp). The stamp ends with `end <entries>`
   and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
   does not match removes it first, as does a build of the executable that writes none
   (`VELT_BUILD_STAMP=off`, `--report`). `VELT_BUILD_STAMP=off|0` disables it.
@@ -288,7 +290,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
   `warm/` and the marker (the root too when it is then empty); layout `v3/<kind>/`
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
-  Cranelift version) and `llvm`
+  Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
+  entries) and `llvm`
   (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
@@ -309,6 +312,35 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   when that is over an hour old. `-v` appends
   `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
   stage, with `(unchanged: nothing to compile)` when it matched.
+- Std cache (additive, #1728 step 3; off by default). Release executables (`--emit exe`) built by
+  LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
+  take std functions out of the program: each std function that is not small (40 statements),
+  not a `$dup` rename, reaches no static with relocations or written (named by it or by a small
+  function it may inline) and makes no indirect call is keyed by SHA-256 over `velt std function
+  1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
+  size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
+  optimization level; then, for it and each small internal function it reaches through small
+  ones (in that order), its symbol, `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its
+  parameter attributes; then, for each function that code calls without compiling it (what its
+  object declares), its symbol, params, return type and parameter attributes. A found entry is
+  looked up again when linking; gone by then, the build falls back as below. Before optimization,
+  each found key (kind `stdfn`, `Cache::path_of`), and each missing one when the missing
+  functions come to at least 1,000 statements (else they stay in the program), makes the function
+  an `Import` declaration; functions their objects may reference are made `Export`. After
+  optimization the objects of the functions still declared, closed over what those objects call,
+  are linked; a missing one is compiled then, alone (itself, the small functions it may inline
+  with their bodies, declarations of what they call, the statics they name; optimized at
+  `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
+  If one fails, the build optimizes the program as lowered, without the cache. Each object is
+  placed as soon as it is looked up again or stored, before codegen, in `<object stem>.std/<n>.<o|obj>`
+  beside the program's objects (hard links to the cache's files, copies where the file system has
+  none, replaced by each build; MSVC's linker reads an input without an extension as
+  `<name>.obj`); one gone from the cache by then makes the build fall back as above. The link
+  reads those, and the stamp's `std` lines name them.
+  The miss threshold is 1,000 statements unless `VELT_STD_OBJECT_MIN_MISSES` says otherwise. `VELT_STD_OBJECT_STATS=1` prints, on stderr, the std
+  statements by reason (`served`, `small`, `$dup`, `statics with identity`, `callbacks`), each
+  linked symbol (`velt: std cache: links <symbol> (<n> statements)`) and `velt: std cache: <n>
+  found, <m> compiled, <k> no longer called`.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);

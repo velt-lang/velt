@@ -283,3 +283,25 @@ fn only_imported_functions_have_no_blocks() {
     p.funcs.last_mut().unwrap().linkage = Linkage::Internal;
     expect_err(&p, "has no blocks");
 }
+
+/// Code compiled on its own to link into a program (the std cache) declares the entry rather
+/// than defining it (invariant 5); any other linkage, or none, is still an error.
+#[test]
+fn the_entry_may_be_declared() {
+    let mut p = base_program();
+    let main = p
+        .funcs
+        .iter()
+        .position(|f| f.symbol == "velt_main")
+        .unwrap();
+    p.funcs[main] = Function::new("velt_main".into(), vec![], Ty::I32, Linkage::Import);
+    crate::verify(&p).unwrap();
+    p.funcs[main].linkage = Linkage::Internal;
+    p.funcs[main].blocks.push(BasicBlock {
+        stmts: vec![],
+        term: Terminator::Return(Operand::Const(Const::Int(0), Ty::I32)),
+    });
+    expect_err(&p, "velt_main must be");
+    p.funcs.remove(main);
+    expect_err(&p, "missing exported entry");
+}

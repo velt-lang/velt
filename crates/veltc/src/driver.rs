@@ -19,6 +19,7 @@ mod output;
 mod pipeline;
 mod recover;
 mod stamp;
+mod std_cache;
 
 pub use output::OutputPaths;
 use pipeline::on_pipeline_thread;
@@ -149,6 +150,8 @@ pub struct Session {
     /// What codegen took from the build cache: `(found, of, what)` ("functions", "codegen
     /// units"); `None` without a cache.
     pub cached: Option<(usize, usize, &'static str)>,
+    /// Objects of std functions the program links instead of compiling (`std_cache`).
+    pub std_objects: Vec<PathBuf>,
 }
 
 impl Session {
@@ -365,25 +368,45 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         )));
     }
 
-    let t = Instant::now();
-    let level = if opts.release {
-        velt_opt::OptLevel::Speed
-    } else {
-        velt_opt::OptLevel::None
+    // The std cache (#1728): std functions out of the program before it is optimized, their
+    // objects linked after. The program as lowered is kept to fall back on.
+    let cg = velt_codegen_cl::CodegenOptions {
+        target: opts.target(),
+        optimize: opts.release,
+        cpu: opts.cpu.clone(),
     };
-    let mut passes = velt_opt::PassTimings::new();
-    velt_opt::optimize_timed(&mut program, level, &mut passes);
-    let verify_start = Instant::now();
-    let verified = velt_vir::verify(&program);
-    let mut steps = passes.entries().to_vec();
-    steps.push(("verify", verify_start.elapsed()));
-    sess.record("optimize", t);
-    sess.record_details("optimize", &steps);
-    if let Err(errs) = verified {
-        return Err(BuildError::Ice(format!(
-            "VIR verification failed after optimization:\n  {}",
-            errs.join("\n  ")
-        )));
+    let std_plan = std_cache::wanted(opts).then(|| {
+        let t = Instant::now();
+        let unsplit = program.clone();
+        let plan = std_cache::split(&mut program, opts, &cg);
+        sess.record("std cache", t);
+        (unsplit, plan)
+    });
+    optimize_stage(sess, opts, &mut program)?;
+    if let Some((unsplit, plan)) = std_plan {
+        let t = Instant::now();
+        let place =
+            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+        match std_cache::link(plan, &program, &cg, &place) {
+            Ok(linked) => {
+                if std_cache::stats() {
+                    eprintln!(
+                        "velt: std cache: {} found, {} compiled, {} no longer called",
+                        linked.hits, linked.misses, linked.dropped
+                    );
+                }
+                sess.std_objects = linked.objects;
+            }
+            Err(why) => {
+                place.clear();
+                if std_cache::stats() {
+                    eprintln!("velt: std cache: not used for this build: {why}");
+                }
+                program = unsplit;
+                optimize_stage(sess, opts, &mut program)?;
+            }
+        }
+        sess.record("std cache link", t);
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));
@@ -393,6 +416,34 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         }
     }
     Ok(program)
+}
+
+/// `velt_opt` over `program` (release builds: `Speed`), then verification.
+fn optimize_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    program: &mut vir::Program,
+) -> Result<(), BuildError> {
+    let t = Instant::now();
+    let level = if opts.release {
+        velt_opt::OptLevel::Speed
+    } else {
+        velt_opt::OptLevel::None
+    };
+    let mut passes = velt_opt::PassTimings::new();
+    velt_opt::optimize_timed(program, level, &mut passes);
+    let verify_start = Instant::now();
+    let verified = velt_vir::verify(program);
+    let mut steps = passes.entries().to_vec();
+    steps.push(("verify", verify_start.elapsed()));
+    sess.record("optimize", t);
+    sess.record_details("optimize", &steps);
+    verified.map_err(|errs| {
+        BuildError::Ice(format!(
+            "VIR verification failed after optimization:\n  {}",
+            errs.join("\n  ")
+        ))
+    })
 }
 
 /// Full build per `opts.emit`, run on a large-stack thread.
@@ -450,7 +501,12 @@ fn build_on_current_thread(
         let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
         let stamp_path = stamp::path(&paths.executable);
         let objects = stamp::read(&stamp_path, &key)
-            .map(|n| (0..n).map(|i| paths.unit_object(i)).collect::<Vec<_>>())
+            .map(|(n, std)| {
+                (0..n)
+                    .map(|i| paths.unit_object(i))
+                    .chain(std)
+                    .collect::<Vec<_>>()
+            })
             .filter(|objects| objects.iter().all(|o| o.is_file()));
         if objects.is_none() {
             // A build that fails half-way must not leave a stamp of the old one.
@@ -543,7 +599,14 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
-    link_stage(sess, opts, &target, &object_paths, &paths)?;
+    // The std cache's objects are in place (`std_cache::link`); a build without them leaves
+    // none of an earlier one's.
+    if sess.std_objects.is_empty() {
+        paths.std_objects().clear();
+    }
+    let mut linked = object_paths.clone();
+    linked.extend(sess.std_objects.iter().cloned());
+    link_stage(sess, opts, &target, &linked, &paths)?;
     crate::build_cache::collect_garbage_if_due();
     // Warnings are shown by every build, so a build with diagnostics gets no stamp.
     if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
@@ -557,6 +620,7 @@ fn build_on_current_thread(
             virtual_root: generated,
             objects: object_paths.len(),
             link_inputs: &outputs,
+            std_objects: &sess.std_objects,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));

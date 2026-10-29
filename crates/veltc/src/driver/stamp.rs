@@ -34,7 +34,7 @@ use super::BuildOptions;
 use crate::backend::Backend;
 
 /// The stamp's first line; a new format changes it, so old stamps just miss.
-const HEADER: &str = "velt-build-stamp 2";
+const HEADER: &str = "velt-build-stamp 3";
 
 /// `<exe>.build-stamp`.
 pub(super) fn path(exe: &Path) -> PathBuf {
@@ -52,9 +52,9 @@ pub(super) fn enabled() -> bool {
 pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     let mut h = KeyHasher::new();
     h.part(HEADER.as_bytes());
-    h.part(crate::commands::version::version_line().as_bytes());
-    let exe = std::env::current_exe().ok();
-    h.part(format!("{exe:?} {:?}", exe.as_deref().and_then(probe::stat)).as_bytes());
+    h.part(&crate::build_cache::compiler_identity().0);
+    // Its path too: two copies of one velt read std and the runtime beside each.
+    h.part(format!("{:?}", std::env::current_exe().ok()).as_bytes());
     let BuildOptions {
         input,
         root_source,
@@ -149,6 +149,10 @@ pub(super) struct Built<'a> {
     /// executable it writes (outputs some other build may have rewritten), and later further
     /// link inputs.
     pub link_inputs: &'a [PathBuf],
+    /// Objects of std functions from the std cache the link read (`std_cache`): the fast path
+    /// links them again, so they too must keep their size and time (a cached file does while
+    /// it is cached; rewritten or removed, the stamp no longer matches).
+    pub std_objects: &'a [PathBuf],
 }
 
 /// The stamp of a build configured by `key` that read the files in `sm` and `built`.
@@ -189,11 +193,13 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
         let _ = writeln!(s, "real {hash}\t{}", path.display());
         entries += 1;
     }
-    for path in built.link_inputs {
-        let path = vpm::relpath::absolute(path);
-        let time = probe::stat(&path).map_or_else(|| "-".into(), |(n, t)| format!("{n} {t}"));
-        let _ = writeln!(s, "link {time}\t{}", path.display());
-        entries += 1;
+    for (kind, paths) in [("link", built.link_inputs), ("std", built.std_objects)] {
+        for path in paths {
+            let path = vpm::relpath::absolute(path);
+            let time = probe::stat(&path).map_or_else(|| "-".into(), |(n, t)| format!("{n} {t}"));
+            let _ = writeln!(s, "{kind} {time}\t{}", path.display());
+            entries += 1;
+        }
     }
     let _ = writeln!(s, "end {entries}");
     s
@@ -211,11 +217,17 @@ pub(super) fn write(path: &Path, text: &str) -> std::io::Result<()> {
     })
 }
 
-/// [`check`] of the stamp at `path`, against the time it was written.
-pub(super) fn read(path: &Path, key: &Key) -> Option<usize> {
+/// [`check`] of the stamp at `path`, against the time it was written: the number of unit
+/// objects, and the std cache's objects the link also needs.
+pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>)> {
     let text = std::fs::read_to_string(path).ok()?;
     let written = probe::stat(path).map(|(_, t)| t);
-    check(&text, key, written)
+    let objects = check(&text, key, written)?;
+    let std = (text.lines())
+        .filter_map(|l| l.strip_prefix("std ")?.split_once('\t'))
+        .map(|(_, path)| PathBuf::from(path))
+        .collect();
+    Some((objects, std))
 }
 
 /// Whether the stamp `text`, written at `written` (nanoseconds since 1970), still describes the
@@ -246,7 +258,7 @@ pub(super) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usiz
                 Some(Kind::of(path)) == letter.next().and_then(Kind::from_letter)
             }
             "real" => probe::resolved_hash(path) == fields.next()?,
-            "link" => {
+            "link" | "std" => {
                 let rest: Vec<&str> = fields.collect();
                 let now = probe::stat(path).map(|(n, t)| format!("{n} {t}"));
                 now.as_deref().unwrap_or("-") == rest.join(" ")

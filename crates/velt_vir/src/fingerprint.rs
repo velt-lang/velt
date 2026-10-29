@@ -103,6 +103,12 @@ impl<'p> Canon<'p> {
 
     /// The fingerprint of `func`: signature, locals and code.
     pub fn function(&self, func: &Function) -> Fingerprint {
+        fingerprint(&self.text(func))
+    }
+
+    /// The canonical text [`Self::function`] fingerprints, for a key of its own (the std cache
+    /// hashes it with SHA-256 next to the compiler and target).
+    pub fn text(&self, func: &Function) -> String {
         let mut out = String::new();
         let _ = write!(out, "fn(");
         func.params.iter().for_each(|t| self.ty(&mut out, *t));
@@ -121,7 +127,7 @@ impl<'p> Canon<'p> {
             }
             self.term(&mut out, &block.term);
         }
-        fingerprint(&out)
+        out
     }
 
     /// The spelling of aggregate `id`. Hot reload: computed per path (state machines and levels

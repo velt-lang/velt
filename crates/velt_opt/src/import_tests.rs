@@ -179,3 +179,53 @@ fn per_function_passes_skip_declarations() {
         assert!(ext.blocks.is_empty(), "{level:?}\n{p}");
     }
 }
+
+/// A declaration may call back what it is given: `g`, whose address `velt_main` hands to `ext`,
+/// keeps its own code (no parameter fact from its one direct call, `g(5)`), and is kept.
+#[test]
+fn a_declaration_may_call_back() {
+    let mut pb = ProgramBuilder::new();
+    let ext = pb.add(Function::new(
+        "_V3stdN3ext".into(),
+        vec![Ty::Ptr],
+        Ty::Unit,
+        Linkage::Import,
+    ));
+    let mut fb = FuncBuilder::new("_V1g", &[Ty::I64], Ty::I64, Linkage::Internal);
+    let x = fb.param(0);
+    let b = fb.block();
+    fb.assign(b, x, bin(BinOp::Mul, copy_local(x), int(3, Ty::I64)));
+    fb.ret(b, copy_local(x));
+    let g = pb.add(fb.finish());
+    let mut fb = FuncBuilder::export("velt_main", &[], Ty::I32);
+    let r = fb.local(Ty::I64);
+    let out = fb.local(Ty::I32);
+    let mut b = fb.block();
+    b = fb.call(
+        b,
+        Callee::Func(ext),
+        vec![Operand::Const(Const::Func(g), Ty::Ptr)],
+        None,
+    );
+    b = fb.call(b, Callee::Func(g), vec![int(5, Ty::I64)], Some(r));
+    fb.assign(b, out, Rvalue::Cast(copy_local(r), Ty::I32));
+    fb.ret(b, copy_local(out));
+    pb.add(fb.finish());
+    let program = pb.finish();
+    for level in [OptLevel::None, OptLevel::Speed] {
+        let mut p = program.clone();
+        optimize(&mut p, level);
+        velt_vir::verify(&p).unwrap_or_else(|e| panic!("{level:?}: {e:?}\n{p}"));
+        let g = (p.funcs.iter().find(|f| f.symbol == "_V1g"))
+            .unwrap_or_else(|| panic!("{level:?}: the called-back function was removed\n{p}"));
+        assert_eq!(g.params, [Ty::I64], "{level:?}");
+        // Still multiplies its argument: not folded to `g(5)`'s 15.
+        assert!(
+            !g.blocks.iter().any(|b| matches!(
+                &b.term,
+                Terminator::Return(Operand::Const(Const::Int(15), _))
+            )),
+            "{level:?}: specialized for its direct caller\n{p}"
+        );
+    }
+}
