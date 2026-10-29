@@ -324,7 +324,16 @@ impl FnCx<'_, '_> {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
             // `==` compares the value as it is.
-            None if !matches!(op, B::Eq | B::NotEq) => self.checked_operands(op, lhs, rhs, hint),
+            None if !matches!(op, B::Eq | B::NotEq) => {
+                let mark = self.cast_member_numbers.len();
+                if !matches!(op, B::Add) {
+                    self.cast_member_numbers
+                        .extend(super::cast_member::number_operands(lhs, rhs));
+                }
+                let lr = self.checked_operands(op, lhs, rhs, hint);
+                self.cast_member_numbers.truncate(mark);
+                lr
+            }
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,

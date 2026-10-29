@@ -153,6 +153,42 @@ and memory where you want a fixed width; code shared with TypeScript never names
   as it would be alone; the result is a new tuple of those elements, so a write into one of the
   two tuples does not show in the other, and `t2 === t` is `false` (an element that is an object
   is the same object in both).
+  A field read of such an assertion, `(u as A).f` with `u` a variable or a field path (outside
+  generic code) whose union has as a member the object type `A`, which has the field `f`,
+  reads as JavaScript does instead of checking the assertion. An `A` gives its field, and a
+  value of another member gives its own property `f`: another object type's field `f`, the
+  `length` of an array or a string, and `undefined` for an array, a string, a number, a boolean
+  or an object type that has no such property. `null` or `undefined` stops with Node's
+  `TypeError: Cannot read properties of null (reading 'f')` (`(u as A)?.f` is `undefined`
+  there). A member whose property needs a lookup at run time (a class instance, which may be
+  of a subclass, or a member of a prototype such as an array's `map`) checks the assertion as
+  before. The read has the field's type. Where it is only tested, the value read is tested as
+  it is: in a condition (of `if`, a loop or `?:`, and the operands of `!`, `&&` and `||` there)
+  its truthiness, and in `=== undefined`, `== null`, `??`, `?.` and `typeof` its value,
+  `undefined` included. So the common test of one member's field works as in Node:
+
+  ```ts
+  type VNode = { type: string; props: number };
+  type Child = VNode | string | number | Child[];
+  function describe(c: Child): string {
+    if ((c as VNode).type) return "node " + (c as VNode).type;
+    if (Array.isArray(c)) return c.length + " children";
+    return "text";
+  }
+  console.log(describe([1, "a"]), describe({ type: "div", props: 1 }), describe("s"));
+  // 2 children node div text
+  ```
+
+  Used as a value, the property read converts to the field's type, checked: an array's
+  `undefined` read as a `string` field stops with `TypeError: the value is not a string (it is
+  undefined)`, where Node goes on with `undefined`. An operand of `<`, `>`, `<=`, `>=`, `-`,
+  `*`, `/`, `%` and `**` is the exception: there a number field's `undefined` is `NaN`, which
+  gives Node's answer (`(c as A).count > 0` is `false`, `(c as A).count - 1` is `NaN`). A
+  method call `(u as A).m()` and a write `(u as A).f = v` check the assertion as before (a
+  call of what another member holds would be a `TypeError` in Node too, unless it has a
+  method of that name), and so does a member whose property needs a lookup at run time, also
+  under `typeof`: `typeof (c as A).at` of a string stops with `type assertion failed` (Node
+  answers `"function"`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -3237,7 +3273,9 @@ function main(): void {
 }
 ```
 
-A member the value's fixed shape does not have reads as `undefined`, as in Node. A class's
+A member the value's fixed shape does not have reads as `undefined`, as in Node, and so does
+a property an array, a string, a number or a boolean does not have (`xs.type`, `"s".kind`:
+not `length`, an element or a member of its prototype). A class's
 `private` members are members through `any` too (TypeScript checks `private`, Node doesn't),
 except a standard-library class's, which implement it and which Node's built-ins don't have
 (`re.matchAt(…)` on a `RegExp` is `TypeError: re.matchAt is not a function`). A `null` or

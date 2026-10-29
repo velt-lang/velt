@@ -1,6 +1,6 @@
-//! The prototype tables `key in x` through `any` answers from (velt_vir's any_has_builtin.rs)
-//! agree with the built-ins of the Node on PATH (`scripts/any-has-tables.mjs`). Skipped without
-//! `node`.
+//! The prototype tables that `key in x` and reads through `any` (velt_vir's any_has_builtin.rs)
+//! and `(u as M).f` (velt_sema's js_protos.rs) answer from agree with the built-ins of the Node
+//! on PATH (`scripts/any-has-tables.mjs`). Skipped without `node`.
 
 use std::path::Path;
 use std::process::Command;

@@ -1,5 +1,6 @@
 // Compares the prototype tables `key in x` through `any` answers from
-// (crates/velt_vir/src/lower/any_has_builtin.rs, and OBJECT_PROTO in any_glue.rs) with what the
+// (crates/velt_vir/src/lower/any_has_builtin.rs and crates/velt_sema/src/js_protos.rs, whose
+// tables also say which reads give `undefined`) with what the
 // running Node's built-ins have: `Reflect.ownKeys` of each prototype (symbols as the key names
 // sema gives them, `[Symbol.iterator]`), with `Object.prototype`'s names left out.
 //
@@ -13,11 +14,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REFERENCE_MAJOR = 26;
-const lower = join(dirname(fileURLToPath(import.meta.url)), "../crates/velt_vir/src/lower");
+const crates = join(dirname(fileURLToPath(import.meta.url)), "../crates");
 
 /** The `const NAME: &[&str] = &[...]` (or `[&str; N] = [...]`) tables of a Rust file. */
 function tables(file) {
-  const src = readFileSync(join(lower, file), "utf8");
+  const src = readFileSync(join(crates, file), "utf8");
   const out = new Map();
   const re = /const (\w+): (?:&\[&str\]|\[&str; \d+\]) = &?\[([^\]]*(?:\][^;\]]*)*?)\];/g;
   for (const m of src.matchAll(re)) {
@@ -49,9 +50,15 @@ const expected = {
   ARRAY_BUFFER_PROTO: own(ArrayBuffer.prototype),
   DATA_VIEW_PROTO: own(DataView.prototype),
   FN_PROTO_NAMES: own(Function.prototype),
+  STRING_PROTO: minus(own(String.prototype), ["length"]),
+  NUMBER_PROTO: own(Number.prototype),
 };
 
-const have = new Map([...tables("any_has_builtin.rs"), ...tables("any_glue.rs")]);
+const have = new Map(
+  ["velt_vir/src/lower/any_has_builtin.rs", "velt_sema/src/js_protos.rs"].flatMap((f) => [
+    ...tables(f),
+  ]),
+);
 const reference = Number(process.versions.node.split(".")[0]) >= REFERENCE_MAJOR;
 let bad = 0;
 for (const [name, want] of Object.entries(expected)) {

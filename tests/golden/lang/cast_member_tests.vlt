@@ -1,0 +1,31 @@
+// Field reads of an assertion in nullish and typeof tests (`=== undefined`, `== null`, `??`,
+// `?.`, `typeof`) read the value as it is, `undefined` included, as in Node; an array's and a
+// string's `length` is their own.
+type V = { type: string; props: number; text?: string };
+type C = V | string | number | boolean | C[];
+function mk(i: number): C {
+  if (i == 0) return { type: "sp", props: 1 };
+  if (i == 1) return [1];
+  if (i == 2) return "str";
+  return 5;
+}
+const out: string[] = [];
+for (let i = 0; i < 4; i++) {
+  const c = mk(i);
+  out.push((c as V).type === undefined ? "un" : (c as V).type);
+  out.push((c as V).type == null ? "null" : "set");
+  out.push(typeof (c as V).type);
+  out.push((c as V).type ?? "dflt");
+  out.push(String((c as V).text?.length));
+}
+console.log(out.join(" "));
+type N = V | string[] | null;
+function opt(n: N): string {
+  const t = (n as V)?.type;
+  return t === undefined ? "none" : t;
+}
+console.log(opt(null), opt(["a"]), opt({ type: "x", props: 0 }));
+function len(c: { length: number; k: number } | string | number[]): number {
+  return (c as { length: number; k: number }).length;
+}
+console.log(len("abc"), len([1, 2]), len({ length: 7, k: 1 }));
