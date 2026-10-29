@@ -171,6 +171,17 @@ impl FnCx<'_, '_> {
         let cast = std::mem::replace(&mut self.cast_member_test, test);
         let h = self.expr(e, None, Want::Borrow);
         (self.field_test, self.cast_member_test) = (outer, cast);
+        if test.is_some() && super::places::is_place(&h) {
+            // A field read of a checked assertion (`(u as M).f` that reads no member's own
+            // property): not a place whose type answers the test, so the check runs.
+            let (ty, span) = (h.ty, h.span);
+            let block = crate::hir::Block {
+                stmts: vec![],
+                value: Some(Box::new(h)),
+                span,
+            };
+            return self.mk(crate::hir::ExprKind::Block(block), ty, span);
+        }
         h
     }
 
