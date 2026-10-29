@@ -19,7 +19,7 @@ impl FnCx<'_, '_> {
         match self.cx.json_error_ty() {
             Some(t) => self.throw_src(ThrowSrc::Direct(t, span)),
             None => self.cx.err(
-                "`JsonError` is missing from the prelude (std/prelude/json.vlt)",
+                "`JsonError` is missing from the prelude (std/prelude/json/json.vlt)",
                 span,
             ),
         }
