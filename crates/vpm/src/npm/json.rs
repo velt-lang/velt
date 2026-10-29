@@ -18,8 +18,10 @@ pub enum Json {
 }
 
 impl Json {
-    /// Parse `text` (strict JSON).
+    /// Parse `text` (strict JSON), after a UTF-8 byte order mark if it starts with one: editors on
+    /// Windows write it, and npm reads such a `package.json`.
     pub fn parse(text: &str) -> Result<Json, String> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         serde_json::from_str(text).map_err(|e| e.to_string())
     }
 
@@ -174,6 +176,12 @@ fn drop_trailing_commas(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_byte_order_mark_is_skipped() {
+        let j = Json::parse("\u{feff}{\"name\": \"bom\"}").unwrap();
+        assert_eq!(j.get("name").and_then(Json::as_str), Some("bom"));
+    }
 
     #[test]
     fn keeps_key_order() {

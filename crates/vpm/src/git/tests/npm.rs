@@ -206,6 +206,9 @@ fn a_member_without_a_name_is_named_after_its_directory() {
         ),
         ("packages/plain/package.json", "{ \"version\": \"1.0.0\" }"),
         ("packages/@x/scoped/package.json", "{}"),
+        ("packages/empty/package.json", "{ \"name\": \"\" }"),
+        // A byte order mark, as editors on Windows write it.
+        ("packages/bom/package.json", "\u{feff}{ \"name\": \"bom\" }"),
     ] {
         let path = tmp.path().join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -213,7 +216,7 @@ fn a_member_without_a_name_is_named_after_its_directory() {
     }
     let provided = crate::npm::provided::packages_at(tmp.path()).unwrap();
     let names: Vec<&String> = provided.by_name.keys().collect();
-    assert_eq!(names, ["@x/scoped", "plain"]);
+    assert_eq!(names, ["@x/scoped", "bom", "empty", "plain"]);
 }
 
 #[test]

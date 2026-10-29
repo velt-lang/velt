@@ -117,7 +117,12 @@ fn read(root: &Path, pkg: &Path) -> Result<Option<NameAndVersion>, String> {
             shown(root, pkg)
         )
     })?;
-    let name = json.get("name").and_then(Json::as_str).map(str::to_string);
+    // An empty `name` is none, as npm's `pkg.name || getName(pathname)` takes it.
+    let name = json
+        .get("name")
+        .and_then(Json::as_str)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string);
     let version = json
         .get("version")
         .and_then(Json::as_str)
