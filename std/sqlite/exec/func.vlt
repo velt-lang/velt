@@ -20,8 +20,10 @@ import {
   patternMatch,
 } from "velt:sqlite/exec/text";
 import {
+  MAX_LENGTH,
   Val,
   blobVal,
+  checkLength,
   compareVals,
   intVal,
   nullVal,
@@ -30,6 +32,7 @@ import {
   textVal,
   toBlob,
   toText,
+  tooBig,
 } from "velt:sqlite/exec/value";
 import { utf8Encode } from "velt:encoding";
 
@@ -88,6 +91,8 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
         return v;
       }
       const s = text(v);
+      // contextMalloc(n + 1): the text and its NUL.
+      checkLength((__intrinsic_str_byte_len(s) + 1) as u64);
       return textVal(up ? asciiUpper(s) : asciiLower(s));
     };
   }
@@ -198,7 +203,12 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
   if (name == "HEX") {
     arity(shown, n, 1, 1);
     const x = a[0];
-    return () => textVal(hexUpper(toBlob(x())));
+    return () => {
+      const b = toBlob(x());
+      // contextMalloc(2n + 1): two digits a byte and the NUL.
+      checkLength((b.length * 2 + 1) as u64);
+      return textVal(hexUpper(b));
+    };
   }
   if (name == "QUOTE") {
     arity(shown, n, 1, 1);
@@ -240,6 +250,7 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
         }
         s += String.fromCodePoint(c as f64);
       }
+      checkLength(__intrinsic_str_byte_len(s) as u64);
       return textVal(s);
     };
   }
@@ -261,7 +272,10 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
     const x = a[0];
     return () => {
       const k = toI64(x());
-      const b: u8[] = [];
+      if (k > (MAX_LENGTH as i64)) {
+        tooBig();
+      }
+      const b: u8[] = __intrinsic_array_with_capacity(k < 0 ? 0 : k as usize);
       for (let i: i64 = 0; i < k; i++) {
         b.push(0);
       }
@@ -277,30 +291,31 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
     const ws = name == "CONCAT_WS";
     arity(shown, n, ws ? 2 : 1, 1000);
     return () => {
-      let sep = "";
-      let from: usize = 0;
-      if (ws) {
-        const s = a[0]();
-        if (s.t == NULL) {
-          return nullVal();
-        }
-        sep = text(s);
-        from = 1;
+      // Every argument is evaluated, as SQLite does before it calls the function.
+      const vals: Val[] = [];
+      for (const f of a) {
+        vals.push(f());
       }
-      let out = "";
-      let first = true;
-      for (let i = from; i < n; i++) {
-        const v = a[i]();
-        if (v.t == NULL) {
-          continue;
-        }
-        if (!first) {
-          out += sep;
-        }
-        out += text(v);
-        first = false;
+      if (ws && vals[0].t == NULL) {
+        return nullVal();
       }
-      return textVal(out);
+      const sep = ws ? text(vals[0]) : "";
+      const texts: string[] = [];
+      for (let i: usize = ws ? 1 : 0; i < n; i++) {
+        if (vals[i].t != NULL) {
+          texts.push(text(vals[i]));
+        }
+      }
+      // The result's size before it is built (sqlite3_result_text64 checks it).
+      let size: u64 = 0;
+      for (const t of texts) {
+        size += __intrinsic_str_byte_len(t) as u64;
+      }
+      if (texts.length > 1) {
+        size += ((texts.length - 1) as u64) * (__intrinsic_str_byte_len(sep) as u64);
+      }
+      checkLength(size);
+      return textVal(texts.join(sep));
     };
   }
   return null;
@@ -451,7 +466,17 @@ function replace(x: Val, y: Val, z: Val): Val {
   if (s == "") {
     return textVal(s);
   }
-  return textVal(s.split(pat).join(text(z)));
+  const nStr = __intrinsic_str_byte_len(s) as u64;
+  // contextMalloc(nStr + 1), then the result's size before it is built.
+  checkLength(nStr + 1);
+  const parts = s.split(pat);
+  const rep = text(z);
+  const nPat = __intrinsic_str_byte_len(pat) as u64;
+  const nRep = __intrinsic_str_byte_len(rep) as u64;
+  if (nRep > nPat) {
+    checkLength(nStr + ((parts.length - 1) as u64) * (nRep - nPat));
+  }
+  return textVal(parts.join(rep));
 }
 
 function trim(x: Val, set: Val, flags: i64): Val {
@@ -526,6 +551,8 @@ export function quote(v: Val): string {
     return formatReal(v.r, 2, 17, true, true, false);
   }
   if (v.t == BLOB) {
+    // sqlite3StrAccumEnlarge(2n + 4) and its NUL.
+    checkLength((v.b.length * 2 + 5) as u64);
     return "X'" + hexUpper(v.b) + "'";
   }
   // %Q reads a C string: text stops at a NUL.
@@ -534,7 +561,10 @@ export function quote(v: Val): string {
   if (nul >= 0) {
     t = t.slice(0, nul);
   }
-  return "'" + t.split("'").join("''") + "'";
+  const parts = t.split("'");
+  // The text, a quote more for each quote, the two around it and the NUL.
+  checkLength((__intrinsic_str_byte_len(t) + parts.length + 2) as u64);
+  return "'" + parts.join("''") + "'";
 }
 
 function sign(v: Val): Val {

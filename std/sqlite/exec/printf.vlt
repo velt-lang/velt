@@ -1,12 +1,13 @@
 // velt:sqlite/exec/printf — SQLite's printf() and format() SQL functions (printf.c's
 // sqlite3_str_vappendf with SQL arguments): `%[flags][width][.precision]conversion` with the
-// flags `-+ 0#,!`, `*` widths, and the conversions d i u x X o c s z q Q w f e E g G %.
+// flags `-+ 0#,!`, `*` widths, and the conversions d i u x X o c s z q Q w f e E g G %. A result
+// over SQLite's length limit is `string or blob too big`, found before the padding is built.
 
 import { NULL } from "velt:sqlite/btree";
 import { FMT_EXP, FMT_FLOAT, FMT_GENERIC, formatReal } from "velt:sqlite/exec/fp";
 import { toF64, toI64 } from "velt:sqlite/exec/ops";
 import { cBytes, charAt } from "velt:sqlite/exec/text";
-import { Val, nullVal, textVal, toText } from "velt:sqlite/exec/value";
+import { MAX_LENGTH, Val, nullVal, textVal, toText, tooBig } from "velt:sqlite/exec/value";
 
 class Args {
   vals: Val[];
@@ -25,12 +26,19 @@ class Args {
   }
 }
 
+// The most digits a float conversion writes after the point (SQLITE_FP_PRECISION_LIMIT).
+const FP_PRECISION_LIMIT: i64 = 100000000;
+
+// `n` copies of `c`.
 function repeat(c: string, n: i64): string {
-  let s = "";
-  for (let i: i64 = 0; i < n; i++) {
-    s += c;
+  return n <= 0 ? "" : c.repeat(n);
+}
+
+// Throws SQLite's `string or blob too big` unless `n` more bytes fit in the `room` left.
+function fits(n: i64, room: i64) {
+  if (n > room) {
+    tooBig();
   }
-  return s;
 }
 
 // The number of characters of UTF-8 text.
@@ -59,12 +67,16 @@ function prefixOf(b: u8[], n: i64, chars: bool): u8[] {
   return b.slice(0, i as i64);
 }
 
-// Pads to `width` (in characters with `!`, else bytes): spaces before, or after with `-`.
-function padded(s: string, width: i64, left: bool, chars: bool): string {
-  const len = chars ? charCount(s) : __intrinsic_str_byte_len(s) as i64;
+// Pads to `width` (in characters with `!`, else bytes): spaces before, or after with `-`; an
+// error if the result does not fit in `room` bytes.
+function padded(s: string, width: i64, left: bool, chars: bool, room: i64): string {
+  const bytes = __intrinsic_str_byte_len(s) as i64;
+  const len = chars ? charCount(s) : bytes;
   if (len >= width) {
+    fits(bytes, room);
     return s;
   }
+  fits(bytes + width - len, room);
   return left ? s + repeat(" ", width - len) : repeat(" ", width - len) + s;
 }
 
@@ -78,11 +90,14 @@ export function printf(vals: Val[]): Val {
   let out = "";
   let i: usize = 0;
   while (i < f.length) {
+    // The bytes the result can still take.
+    const room = (MAX_LENGTH as i64) - (__intrinsic_str_byte_len(out) as i64);
     if (f[i] != 37) {
       let j = i;
       while (j < f.length && f[j] != 37) {
         j++;
       }
+      fits((j - i) as i64, room);
       out += f.utf8Slice(i as i64, j as i64);
       i = j;
       continue;
@@ -170,15 +185,16 @@ export function printf(vals: Val[]): Val {
     i++;
     const prefix = plus ? "+" : space ? " " : "";
     if (c == 100 || c == 105 || c == 117 || c == 120 || c == 88 || c == 111 || c == 112) {
-      out += integer(c, toI64(args.next()), prefix, width, precision, left, zero, alt, thousands);
+      const v = toI64(args.next());
+      out += integer(c, v, prefix, width, precision, left, zero, alt, thousands, room);
     } else if (c == 102 || c == 101 || c == 69 || c == 103 || c == 71) {
-      out += real(c, toF64(args.next()), prefix, width, precision, left, zero, alt, alt2);
+      out += real(c, toF64(args.next()), prefix, width, precision, left, zero, alt, alt2, room);
     } else if (c == 115 || c == 122) {
       const v = args.next();
       const b = prefixOf(v.t == NULL ? [] : cBytes(toText(v)), precision, alt2);
-      out += padded(b.utf8Slice(0, b.length as i64), width, left, alt2);
+      out += padded(b.utf8Slice(0, b.length as i64), width, left, alt2, room);
     } else if (c == 113 || c == 81 || c == 119) {
-      out += escaped(c, args.next(), precision, width, left, alt2);
+      out += escaped(c, args.next(), precision, width, left, alt2, room);
     } else if (c == 99) {
       const v = args.next();
       const b = v.t == NULL ? [] : cBytes(toText(v));
@@ -189,9 +205,10 @@ export function printf(vals: Val[]): Val {
         ch = b.utf8Slice(0, one.len as i64);
       }
       const times = precision > 1 ? precision : 1;
-      out += padded(repeat(ch, times), width, left, alt2);
+      fits(times * (__intrinsic_str_byte_len(ch) as i64), room);
+      out += padded(repeat(ch, times), width, left, alt2, room);
     } else if (c == 37) {
-      out += padded("%", width, left, false);
+      out += padded("%", width, left, false, room);
     } else if (c == 110) {
       // %n: nothing.
     } else {
@@ -213,6 +230,7 @@ function integer(
   zero: bool,
   alt0: bool,
   thousands0: bool,
+  room: i64,
 ): string {
   const signed = c == 100 || c == 105;
   let neg = false;
@@ -234,6 +252,11 @@ function integer(
   if (zero && precision < width - (prefix != "" ? 1 : 0)) {
     precision = width - (prefix != "" ? 1 : 0);
   }
+  // SQLite's buffer for the digits: the precision, 10 more and room for the commas.
+  if (precision >= 37 && precision + 10 + (thousands ? precision / 3 : 0) > (MAX_LENGTH as i64)) {
+    tooBig();
+  }
+  fits(precision, room);
   const digitsAll = c == 88 ? "0123456789ABCDEF" : "0123456789abcdef";
   let d = "";
   let x = u;
@@ -249,16 +272,17 @@ function integer(
     d = repeat("0", precision - (d.length as i64)) + d;
   }
   if (thousands) {
-    let t = "";
-    let n: i64 = 0;
-    for (let i = (d.length as i64) - 1; i >= 0; i--) {
-      t = d.charAt(i) + t;
-      n++;
-      if (n % 3 == 0 && i > 0) {
-        t = "," + t;
-      }
+    // Groups of three from the right: the first group takes what is left over.
+    const len = d.length as i64;
+    let first = len % 3;
+    if (first == 0) {
+      first = 3;
     }
-    d = t;
+    const groups: string[] = [d.slice(0, first)];
+    for (let k = first; k < len; k += 3) {
+      groups.push(d.slice(k, k + 3));
+    }
+    d = groups.join(",");
   }
   if (alt) {
     if (c == 111) {
@@ -269,7 +293,7 @@ function integer(
       d = "0X" + d;
     }
   }
-  return padded(prefix + d, width, left, false);
+  return padded(prefix + d, width, left, false, room);
 }
 
 function real(
@@ -277,14 +301,33 @@ function real(
   r: f64,
   prefix: string,
   width: i64,
-  precision: i64,
+  precision0: i64,
   left: bool,
   zero: bool,
   alt: bool,
   alt2: bool,
+  room: i64,
 ): string {
   const conv = c == 102 ? FMT_FLOAT : (c == 101 || c == 69) ? FMT_EXP : FMT_GENERIC;
+  const precision = precision0 > FP_PRECISION_LIMIT ? FP_PRECISION_LIMIT : precision0;
+  // SQLite's buffer for a finite number: its integer digits (%f), the digits after the point,
+  // the width, 10 more and the NUL; first without the integer digits, so a width that cannot
+  // fit fails before the number is written.
+  const special = r != r || ((r == Infinity || r == -Infinity) && !zero);
+  let p = precision < 0 ? 6 : precision;
+  if (conv == FMT_GENERIC) {
+    p = p == 0 ? 0 : p - 1;
+  }
+  const need = p + width + 11;
+  if (!special) {
+    fits(need, room);
+  }
   let s = formatReal(r, conv, precision, alt2, zero, alt);
+  if (!special && conv == FMT_FLOAT) {
+    const dot = s.indexOf(".");
+    const digits = (dot < 0 ? s.length as i64 : dot) - (s.startsWith("-") ? 1 : 0);
+    fits(need + (digits > 1 ? digits - 1 : 0), room);
+  }
   if (c == 69 || c == 71) {
     s = s.replace("e", "E");
   }
@@ -293,8 +336,10 @@ function real(
   }
   const len = s.length as i64;
   if (len >= width) {
+    fits(len, room);
     return s;
   }
+  fits(width, room);
   if (left) {
     return s + repeat(" ", width - len);
   }
@@ -306,16 +351,37 @@ function real(
 }
 
 // %q (quotes doubled), %Q (also quoted, NULL as NULL), %w (double quotes doubled).
-function escaped(c: u8, v: Val, precision: i64, width: i64, left: bool, alt2: bool): string {
+function escaped(
+  c: u8,
+  v: Val,
+  precision: i64,
+  width: i64,
+  left: bool,
+  alt2: bool,
+  room: i64,
+): string {
   if (v.t == NULL) {
-    return padded(c == 81 ? "NULL" : "(NULL)", width, left, alt2);
+    return padded(c == 81 ? "NULL" : "(NULL)", width, left, alt2, room);
   }
   const b = prefixOf(v.t == NULL ? [] : cBytes(toText(v)), precision, alt2);
   const q = c == 119 ? "\"" : "'";
+  // SQLite's buffer: the text, a byte more per quote, the two quotes and the NUL.
+  const qb: u8 = c == 119 ? 34 : 39;
+  let quotes: i64 = 0;
+  for (const x of b) {
+    if (x == qb) {
+      quotes++;
+    }
+  }
+  const need = (b.length as i64) + quotes + 3;
+  if (need > (MAX_LENGTH as i64)) {
+    tooBig();
+  }
+  fits(need - (c == 81 ? 1 : 3), room);
   const body = b
     .utf8Slice(0, b.length as i64)
     .split(q)
     .join(q + q);
   const s = c == 81 ? "'" + body + "'" : body;
-  return padded(s, width, left, alt2);
+  return padded(s, width, left, alt2, room);
 }

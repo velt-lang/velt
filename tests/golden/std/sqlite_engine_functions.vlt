@@ -3,7 +3,7 @@
 // what C SQLite computes for the same SQL; the calls that differ are printed. The arguments are
 // literals, read back from C SQLite as typed values.
 import { open, Database } from "velt:sqlite";
-import { INTEGER, NULL, REAL, TEXT } from "velt:sqlite/btree";
+import { BLOB, INTEGER, NULL, REAL, TEXT } from "velt:sqlite/btree";
 import { BINARY } from "velt:sqlite/record";
 import { Val, blobVal, intVal, nullVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
 import { scalarFunction } from "velt:sqlite/exec/func";
@@ -160,7 +160,28 @@ const CALLS: Call[] = [
   call("printf", ["'%,d'", "1234567"]),
   call("printf", ["'%5.1s|'", "'abc'"]),
   call("format", ["'%lld%%'", "9223372036854775807"]),
+  // SQLite's length limit (1,000,000,000 bytes), found before anything that big is built.
+  call("replace", ["hex(zeroblob(100000))", "'0'", "hex(zeroblob(10000))"]),
+  call("zeroblob", ["1000000001"]),
+  call("printf", ["'%2147483647d'", "1"]),
+  call("printf", ["'%.*c'", "1500000000", "'x'"]),
+  call("printf", ["'%.999999995d'", "1"]),
+  call("printf", ["'%,.900000000d'", "1"]),
+  call("printf", ["'%2147483647.1f'", "1.0"]),
 ];
+
+// Calls whose results are compared by type and size only: they are too long to print.
+const SIZED: Call[] = [
+  // A float's precision stops at 100,000,000 digits (SQLITE_FP_PRECISION_LIMIT).
+  call("printf", ["'%.2147483647f'", "1.0"]),
+];
+
+function sizeOf(v: Val): string {
+  if (v.t == NULL) {
+    return "null";
+  }
+  return v.t == BLOB ? `blob:${v.b.length}` : `text:${toText(v).length}`;
+}
 
 function main() {
   const db = open(":memory:");
@@ -176,5 +197,23 @@ function main() {
       console.log(`${sql} = ${mine}`);
     }
   }
-  console.log(`${CALLS.length} calls, ${bad == 0 ? "all the same" : bad + " differ"}`);
+  for (const c of SIZED) {
+    const sql = `${c.name}(${c.args.join(", ")})`;
+    const rows: Described[] = db
+      .prepare(`SELECT typeof(e) || ':' || length(e) AS d FROM (SELECT ${sql} AS e)`)
+      .all();
+    const evs: (() => Val throws Error)[] = [];
+    for (const a of c.args) {
+      const v = literal(db, a);
+      evs.push(() => v);
+    }
+    const mine = sizeOf(scalarFunction(c.name.toUpperCase(), c.name, evs, BINARY)!());
+    if (mine != rows[0].d) {
+      bad++;
+    }
+    console.log(`${sql}: velt ${mine}, C ${rows[0].d}`);
+  }
+  console.log(
+    `${CALLS.length + SIZED.length} calls, ${bad == 0 ? "all the same" : bad + " differ"}`,
+  );
 }

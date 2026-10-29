@@ -55,4 +55,12 @@ printf('%c%c', 'xyz', 65) = text:x6
 printf('%,d', 1234567) = text:1,234,567
 printf('%5.1s|', 'abc') = text:    a|
 format('%lld%%', 9223372036854775807) = text:9223372036854775807%
-57 calls, all the same
+replace(hex(zeroblob(100000)), '0', hex(zeroblob(10000))) = error: string or blob too big
+zeroblob(1000000001) = error: string or blob too big
+printf('%2147483647d', 1) = error: string or blob too big
+printf('%.*c', 1500000000, 'x') = error: string or blob too big
+printf('%.999999995d', 1) = error: string or blob too big
+printf('%,.900000000d', 1) = error: string or blob too big
+printf('%2147483647.1f', 1.0) = error: string or blob too big
+printf('%.2147483647f', 1.0): velt text:100000002, C text:100000002
+65 calls, all the same
