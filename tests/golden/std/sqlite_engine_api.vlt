@@ -1,0 +1,129 @@
+// The statement API of the SQLite engine written in Velt (velt:sqlite/engine, #1720): typed rows
+// by column name, parameters by position and by name, column names, the plan cache, errors.
+import { open } from "velt:sqlite";
+import { openDatabase, SqliteError } from "velt:sqlite/engine";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { removeSync } from "velt:fs";
+
+struct User {
+  id: i64;
+  name: string;
+  score: f64;
+  note: string | null;
+}
+
+struct Named {
+  id: i64;
+  label: string;
+}
+
+struct Count {
+  n: i64;
+}
+
+struct Bytes {
+  b: u8[];
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-engine-api-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, note TEXT, data BLOB);
+    INSERT INTO users VALUES (1, 'ann', 2, NULL, x'0102'), (2, 'bo', 3.5, 'hi', NULL),
+      (3, 'cy', -1, 'x', x'');
+  `);
+  c.close();
+  const db = openDatabase(path);
+
+  // Rows into structs, a REAL column's integral value into an f64 field, NULL into `| null`.
+  const all: User[] = db.prepare("SELECT id, name, score, note FROM users ORDER BY id").all();
+  for (const u of all) {
+    console.log(u.id, u.name, u.score, u.note ?? "(null)");
+  }
+  const one: User | null = db.prepare("SELECT * FROM users WHERE id = 2").get();
+  console.log(one!.name, one!.score);
+  const none: User | null = db.prepare("SELECT * FROM users WHERE id = 9").get();
+  console.log(none == null);
+
+  // Parameters: `?` in order, `?NNN`, and names with any sigil.
+  const byPos: User | null = db.prepare("SELECT * FROM users WHERE id = ?").getWith([3]);
+  console.log(byPos!.name);
+  const range: Named[] = db
+    .prepare("SELECT id, name AS label FROM users WHERE id >= ?2 AND id <= ?1 ORDER BY id")
+    .allWith([3, 2]);
+  console.log(range.map((r) => `${r.id}:${r.label}`).join(" "));
+  const byName: Named[] = db
+    .prepare(
+      "SELECT id, name || :suffix AS label FROM users WHERE id < $max AND name != @skip ORDER BY id",
+    )
+    .allWith({ suffix: "!", max: 3, skip: "bo" });
+  console.log(byName.map((r) => r.label).join(" "));
+  const single: Count | null = db
+    .prepare("SELECT count(*) AS n FROM users WHERE score > ?")
+    .getWith(0);
+  console.log(single!.n);
+  const text: Count | null = db
+    .prepare("SELECT count(*) AS n FROM users WHERE name = ?")
+    .getWith("cy");
+  console.log(text!.n);
+  const blob: Bytes | null = db.prepare("SELECT data AS b FROM users WHERE id = 1").get();
+  console.log(blob!.b.length, blob!.b[1]);
+
+  // Column names: aliases, column names, the expression's text.
+  const st = db.prepare("SELECT id, name AS who, score * 2, upper(name) FROM users");
+  console.log(st.columns().join(" | "));
+  // plan(): EXPLAIN QUERY PLAN's words.
+  for (const sql of [
+    "SELECT name FROM users WHERE id = 2",
+    "SELECT name FROM users WHERE id IN (1, 3)",
+    "SELECT name FROM users WHERE id > 1 AND id <= 3",
+    "SELECT name FROM users",
+  ]) {
+    console.log(db.prepare(sql).plan().join(" ; "));
+  }
+  // The rowid's spellings are named after its alias column (else "rowid"), as in SQLite.
+  console.log(
+    db.prepare("SELECT _rowid_, oid, rowid, users.ROWID FROM users").columns().join(" | "),
+  );
+  // Prepared once: the same text gives the same statement.
+  console.log(db.prepare("SELECT id, name AS who, score * 2, upper(name) FROM users") == st);
+  // The plan cache keeps the 200 plans used last: an older text compiles again.
+  const first = db.prepare("SELECT 0 AS n");
+  for (let i = 1; i <= 200; i++) {
+    db.prepare(`SELECT ${i} AS n`);
+  }
+  console.log(
+    db.prepare("SELECT 200 AS n") == db.prepare("SELECT 200 AS n"),
+    db.prepare("SELECT 0 AS n") == first,
+  );
+
+  // Errors: SQLite's codes and messages.
+  for (const sql of [
+    "SELECT nosuch FROM users",
+    "SELECT * FROM nosuch",
+    "SELECT * FROM users WHERE",
+    "DELETE FROM users",
+    "SELECT sum(9223372036854775807) FROM users",
+    "SELECT abs(-9223372036854775807 - 1)",
+  ]) {
+    try {
+      const rows: Count[] = db.prepare(sql).all();
+      console.log("ok", rows.length);
+    } catch (e) {
+      if (e instanceof SqliteError) {
+        console.log(e.code, e.message);
+      }
+    }
+  }
+  try {
+    const bad: User[] = db.prepare("SELECT name AS id FROM users").all();
+    console.log(bad.length);
+  } catch (e) {
+    if (e instanceof SqliteError) {
+      console.log(e.code);
+    }
+  }
+  removeSync(path);
+}

@@ -33,6 +33,8 @@ import {
   termNumber,
 } from "velt:sqlite/exec/result";
 export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
+import { Pull } from "velt:sqlite/exec/pull";
+import { walkOf } from "velt:sqlite/exec/walk";
 import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
 import {
   accessInOrder,
@@ -58,7 +60,7 @@ import {
   chooseAccess,
   levelOf,
 } from "velt:sqlite/exec/plan";
-import { levelLoop } from "velt:sqlite/exec/loop";
+import { allOf, levelLoop } from "velt:sqlite/exec/loop";
 import { AFF_NONE } from "velt:sqlite/exec/ops";
 import { Val, compareVals, intVal, nullVal } from "velt:sqlite/exec/value";
 
@@ -389,6 +391,31 @@ function compileCoreOnce(
       q.correlated = true;
     }
   }
+  // Rows that go out in the loops' order can also be read one at a time (velt:db's decoders).
+  if (!isAgg && !em.distinct && !em.sorting) {
+    const pl = pullOf(c, sc, access, terms, left, pre, em, q, limitEv, offsetEv);
+    q.pull = pl;
+    // Read as a FROM item, its rows are made as the reader wants them (a co-routine).
+    const lazyOut = q.out;
+    q.lazyStart = () => pl.begin(-1);
+    q.lazyMore = () => {
+      const ok = pl.next();
+      if (pl.err != null) {
+        throw pl.err!;
+      }
+      if (!ok) {
+        return false;
+      }
+      for (let i: usize = 0; i < lazyOut.width; i++) {
+        lazyOut.vals.push(pl.rowVal(i));
+      }
+      if (pl.err != null) {
+        throw pl.err!;
+      }
+      lazyOut.rows++;
+      return true;
+    };
+  }
   const need = q;
   const out = q.out;
   if (countOnly) {
@@ -473,6 +500,53 @@ function countOnlyCore(core: SelectCore, isAgg: bool, agg: AggCtx): bool {
   return (
     f.kind == AG_COUNT_STAR && f.filter == null && e.kind == E_CALL && e.star && e.filter == null
   );
+}
+
+// The query as a `Pull`: a walk per level, the terms its loop checks, the result columns.
+function pullOf(
+  c: ExprCompiler,
+  sc: Scope,
+  access: Access[],
+  terms: Term[],
+  left: bool[],
+  pre: Pred[],
+  em: Emitter,
+  q: Query,
+  limitEv: Ev | null,
+  offsetEv: Ev | null,
+): Pull {
+  const p = new Pull(q.names);
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    const src = sc.sources[lv];
+    p.walks.push(walkOf(c, src, access[lv]));
+    p.srcs.push(src);
+    p.left.push(left[lv]);
+    const wh: Pred[] = [];
+    const on: Pred[] = [];
+    for (const t of terms) {
+      if (t.level != (lv as i64) || t.used || t.virtual) {
+        continue;
+      }
+      if (left[lv] && t.on == (lv as i64)) {
+        on.push(t.pred);
+      } else {
+        wh.push(t.pred);
+      }
+    }
+    p.wheres.push(allOf(wh));
+    p.ons.push(allOf(on));
+  }
+  p.pre = pre;
+  p.evs = em.results;
+  for (let i: usize = 0; i < q.refSrc.length; i++) {
+    p.plain.push(q.refSrc[i]);
+    p.cols.push(q.refCol[i]);
+  }
+  p.readers();
+  p.limitEv = limitEv;
+  p.offsetEv = offsetEv;
+  p.single = sc.sources.length == 1 && !left[0];
+  return p;
 }
 
 /** USING and NATURAL: the right side's shared columns are hidden, and joined by equality. */
