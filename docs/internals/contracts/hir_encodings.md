@@ -677,7 +677,12 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
   arrays, structs, object literals, interface and function values — by identity; `T | null`,
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
-  (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Map` and `Set` keys compare with
+  (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
+  only: `velt:test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
+  same object compares by its fields, floats with SameValue (`NaN` equal to itself, `0` unequal
+  to `-0`), and a pair of instances met again while its fields are being compared (a cycle)
+  counts as equal. The prelude `Map`'s content comparison, `Map.__deepEquals(other, deep)`, takes
+  `deep = true` under it, so a `Map`'s (and a `Set`'s, a `Record`'s) values compare the same way. `Map` and `Set` keys compare with
   `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
   identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by

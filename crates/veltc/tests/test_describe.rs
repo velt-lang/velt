@@ -349,6 +349,7 @@ describe("fail", () => {
   it("not.toThrow", () => expect(() => boom()).not.toThrow());
   it("not.toThrow string", () => expect(() => boom()).not.toThrow("boom"));
   it("not.toContain", () => expect([1]).not.toContain(1));
+  it("not.toContain string", () => expect("abc").not.toContain("b"));
   it("not.toMatch", () => expect("a").not.toMatch(/a/));
   it("not.toBeLessThan", () => expect(1).not.toBeLessThan(2));
   it("resolves rejected", async () => {
@@ -425,6 +426,7 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
             r#"AssertionError: expected [Function] to not throw an error but 'Error: boom here' was thrown"#,
             r#"AssertionError: expected [Function] to throw error not including 'boom'"#,
             r#"AssertionError: expected [ 1 ] to not include 1"#,
+            r#"AssertionError: expected 'abc' not to contain 'b'"#,
             r#"AssertionError: expected 'a' not to match /a/"#,
             r#"AssertionError: expected 1 to be not less than 2"#,
             r#"AssertionError: promise rejected "Error: went wrong" instead of resolving"#,
@@ -451,7 +453,7 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
         block.contains(&"    AssertionError: expected 1 to be null at t/matchers.test.vlt:56:24"),
         "{stdout}"
     );
-    assert!(stdout.contains("2 passed; 40 failed"), "{stdout}");
+    assert!(stdout.contains("2 passed; 41 failed"), "{stdout}");
 }
 
 /// Vitest's semantics where they are easy to get wrong:
@@ -592,7 +594,8 @@ fn hooks_and_groups_as_in_vitest() {
 
 /// `toEqual` as Vitest's: class instances by their fields (also inside a `Map` and through a
 /// nullable field), a `Date` by its time, a `Set` by its members in any order, `0` unequal to
-/// `-0` and `NaN` equal to itself; `toBe` still compares identity.
+/// `-0` and `NaN` equal to itself, a cycle (a pair met again while compared) equal; `toBe` still
+/// compares identity.
 const TO_EQUAL: &str = r#"import { expect, it } from "velt:test";
 
 class P {
@@ -637,6 +640,38 @@ it("maps of classes", () => {
   expect(m1).toEqual(m2);
 });
 it("toBe still by identity", () => expect(new P(1)).not.toBe(new P(1)));
+
+class Ring {
+  v: number;
+  next: Ring | null = null;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+it("cycles equal", () => {
+  const a = new Ring(1);
+  a.next = a;
+  const b = new Ring(1);
+  b.next = b;
+  expect(a).toEqual(b);
+});
+it("rings equal", () => {
+  const a = new Ring(1);
+  a.next = new Ring(2);
+  a.next.next = a;
+  const b = new Ring(1);
+  b.next = new Ring(2);
+  b.next.next = b;
+  expect(a).toEqual(b);
+});
+it("cycles differ", () => {
+  const a = new Ring(1);
+  a.next = a;
+  const b = new Ring(1);
+  b.next = new Ring(2);
+  b.next.next = b;
+  expect(a).toEqual(b);
+});
 "#;
 
 #[test]
@@ -671,6 +706,10 @@ fn to_equal_compares_as_vitest_does() {
             r#"ok nested nullable"#,
             r#"ok maps of classes"#,
             r#"ok toBe still by identity"#,
+            r#"ok cycles equal"#,
+            r#"ok rings equal"#,
+            r#"FAILED cycles differ"#,
+            r#"    AssertionError: expected <ref *1> Ring { v: 1, next: [Circular *1] } to deeply equal <ref *1> Ring { v: 1, next: Ring { v: 2, next: [Circular *1] } }"#,
         ],
         "{stdout}"
     );

@@ -149,7 +149,7 @@ extend Expect<string> {
     this.check(
       this.actual.includes(part),
       `expected ${show(this.actual)} to contain ${show(part)}`,
-      `expected ${show(this.actual)} to not contain ${show(part)}`,
+      `expected ${show(this.actual)} not to contain ${show(part)}`,
     );
   }
 

@@ -44,8 +44,9 @@ imports this module. How they run:
   group, and the group's tests don't run. An `afterAll` that throws is printed where it ran and
   fails the run. A test's name is escaped on its report line (`\n` for a line break).
 - `toEqual` compares with `__intrinsic_deep_eq`: `deepEqual`'s comparison, but a class instance
-  that isn't the same object compares by its fields and numbers with `Object.is`. An object that
-  reaches itself through its fields, in two separate copies, recurses without end.
+  that isn't the same object compares by its fields and numbers with `Object.is`. A pair of
+  objects met again while it is being compared (a cycle: a parent pointer) counts as equal, as in
+  Vitest.
 
 `expect(actual)` returns an `Expect<T>`: `actual`, whether `.not` was used (`negated`) and the
 matchers, which are methods (the generic ones) and `extend` blocks (those for arrays, strings,
