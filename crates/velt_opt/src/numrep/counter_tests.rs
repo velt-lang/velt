@@ -354,3 +354,36 @@ fn a_counter_may_start_from_a_bounded_local() {
     assert!(!assigned(&q.funcs[0], c), "the counter is narrowed");
     agree(&p, &q);
 }
+
+#[test]
+fn an_integer_counter_read_as_a_double_is_capped_by_an_integer_loop() {
+    // `q: i64 = 0; for (j: i32 = 0; j < 8; j++) { x = q as f64; q = q + 1 }; return q as f64`:
+    // `page[q++]` once an earlier round made `q` an `i64`. The loop's test compares an `i32`,
+    // which only the cap of `q` needs tracked (#1718).
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::F64], Ty::F64);
+    let (q, j, cond) = (fb.local(Ty::I64), fb.local(Ty::I32), fb.local(Ty::Bool));
+    let (x, t, u, r) = (
+        fb.local(Ty::F64),
+        fb.local(Ty::I64),
+        fb.local(Ty::I32),
+        fb.local(Ty::F64),
+    );
+    let (entry, head, body, exit) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(entry, q, Rvalue::Use(int(0, Ty::I64)));
+    fb.assign(entry, j, Rvalue::Use(int(0, Ty::I32)));
+    fb.goto(entry, head);
+    fb.assign(head, cond, bin(BinOp::Lt, copy_local(j), int(8, Ty::I32)));
+    fb.branch(head, cond, body, exit);
+    fb.assign(body, x, Rvalue::Cast(copy_local(q), Ty::F64));
+    fb.assign(body, t, bin(BinOp::Add, copy_local(q), int(1, Ty::I64)));
+    fb.assign(body, q, Rvalue::Use(copy_local(t)));
+    fb.assign(body, u, bin(BinOp::Add, copy_local(j), int(1, Ty::I32)));
+    fb.assign(body, j, Rvalue::Use(copy_local(u)));
+    fb.goto(body, head);
+    fb.assign(exit, r, Rvalue::Cast(copy_local(q), Ty::F64));
+    fb.ret(exit, copy_local(r));
+    pb.add(fb.finish());
+    let p = pb.finish();
+    assert_eq!(cap_of(&p, q), Some(Fact::int(0, 9)));
+}
