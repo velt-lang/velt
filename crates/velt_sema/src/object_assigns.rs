@@ -107,6 +107,10 @@ impl Ctx<'_> {
         let span = f.span;
         let old_locals = f.body.locals.clone();
         let mut stmts = std::mem::take(&mut f.body.block.stmts);
+        // The copies this conversion makes are the interface's reads of the object, which the
+        // getter makes at each read: a write into a part of one through the interface is
+        // reported as such (`iface_writes.rs` `converted_part`), not as a copy's write.
+        let copies = self.object_copies.mark();
         let env = TyEnv::new(module, &[]);
         let mut g = FnCx::new(self, module, env, Frame::new(FnKind::Method, Some(want)));
         g.body_def = Some(def);
@@ -159,6 +163,7 @@ impl Ctx<'_> {
         g.cx.checking.pop();
         let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
         drop(g);
+        self.object_copies.rollback(copies);
         if let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] {
             f.body.locals = frame.locals;
             f.body.block.stmts = stmts;
