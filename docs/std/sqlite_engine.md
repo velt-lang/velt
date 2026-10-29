@@ -112,6 +112,7 @@ covering index, or a full scan. An ORDER BY that an index (or the rowid) already
 no sort, and LIMIT then stops the loops early; an index giving its first terms is scanned too,
 the sort then ordering only rows equal in those. A query with window functions collects its
 rows, sorts them by each window (as SQLite does, the loops give the first window's order when
-they can), computes the functions and passes the rows on to DISTINCT, ORDER BY and LIMIT. Columns are decoded from the record only when
-read, and the table row behind an index entry is found only when a column the index lacks is
-read. A correlated subquery runs again for each outer row; an uncorrelated one once per run.
+they can), computes the functions and passes the rows on to DISTINCT, ORDER BY and LIMIT.
+Columns are decoded from the record only when read, and the table row behind an index entry is
+found only when a column the index lacks is read. A correlated subquery runs again for each
+outer row; an uncorrelated one once per run.
