@@ -93,8 +93,8 @@ pub(crate) fn check(cx: &mut Ctx) {
     });
 }
 
-/// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) written with type
-/// parameters, as each site instantiating their definitions makes them (substituted, through the
+/// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) to interfaces written
+/// with type parameters that an object converted to `any` may fill, as each site instantiating their definitions makes them (substituted, through the
 /// generic definitions in between): the interfaces such a conversion reaches at run time
 /// (`object_ifaces::make_dynamic_object_impls`, #1909).
 pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
@@ -105,7 +105,7 @@ pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
             let held = u.held.iter().map(move |t| (*d, *t, 0, Span::DUMMY));
             (u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span))).chain(held)
         })
-        .filter(|(_, t, ..)| cx.has_type_params(*t))
+        .filter(|(_, t, ..)| cx.may_fill_generic(*t))
         .collect();
     let mut out = vec![];
     carry(cx, &callers, convs, &mut |_, t, _, _| out.push(t));

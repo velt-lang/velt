@@ -138,21 +138,40 @@ impl Ctx<'_> {
         if let TyKind::Array(e) = *self.ty.kind(t) {
             t = self.ty.opt_payload(e).unwrap_or(e);
         }
-        // A type parameter (`o as T` in `conv<T>`) or an interface given one (`o as Box<T>`).
-        if self.has_type_params(t) {
-            self.object_impls.generic_targets = true;
-            return;
-        }
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
             return;
         };
         if self.dynamic(t).is_some() {
             return;
         }
+        if args.iter().any(|a| self.has_type_params(*a)) {
+            self.object_impls.generic_targets = true;
+            return;
+        }
         let known = &self.object_impls.targets;
         if !known.iter().any(|(i, a)| *i == iface && *a == args) {
             self.object_impls.targets.push((iface, args));
         }
+    }
+
+    /// Is `t` an interface written with type parameters (or an option or array of one) that a
+    /// value converted to `any` may be filled as ([`Self::may_fill`])? Only those are carried to
+    /// their instantiations ([`make_dynamic_object_impls`]).
+    pub(crate) fn may_fill_generic(&self, t: TyId) -> bool {
+        let mut t = self.ty.opt_payload(t).unwrap_or(t);
+        if let TyKind::Array(e) = *self.ty.kind(t) {
+            t = self.ty.opt_payload(e).unwrap_or(e);
+        }
+        let TyKind::Dyn(iface, args) = self.ty.kind(t) else {
+            return false;
+        };
+        if self.dynamic(t).is_some() || !args.iter().any(|a| self.has_type_params(*a)) {
+            return false;
+        }
+        (self.object_impls.sources.iter()).any(|s| match self.ty.kind(*s) {
+            TyKind::Adt(d, _) => self.may_fill(*d, *iface),
+            _ => true,
+        })
     }
 
     /// The implementation of `iface<args>` for the object type `self_ty`, made on first use;
