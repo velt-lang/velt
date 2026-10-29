@@ -13,9 +13,11 @@
 //!   way, e.g. `p` or `p.inner`) marks the root as possibly written, so the root is never
 //!   assumed read-only (`LocalDef::mutable`), but it does not make the root a modified param for
 //!   callers: the call site that supplies the function value accounts for what it modifies
-//!   (`super::patch`, callback rule). A function value whose closure the body knows (a local
-//!   only ever holding it, or a module-level `const`) is that supplier: what the closure
-//!   changes counts as a direct call's would. Array elements live in the array's heap buffer, not in the
+//!   (`super::patch`, callback rule). That holds for a function value in a param of the body.
+//!   One whose closure the body knows (a local only ever holding it, or a module-level `const`)
+//!   is checked by that closure: what it changes counts as a direct call's would. Any other (a
+//!   module `let`, a reassigned local, a field, a call's result) may change anything it is given,
+//!   as strong evidence, in a program that reads a `shared`. Array elements live in the array's heap buffer, not in the
 //!   root. A closure capturing a variable weakly passes that on to the enclosing function.
 //!
 //! Evidence is flow-insensitive: a mutation on any path (one branch, a loop body, a closure)
@@ -67,7 +69,8 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
         value: None,
         span: b.span,
     };
-    Some(collect(cx, &mut prefix).mutated.contains(&l))
+    // Only `mutated` is read, which no function value changes: every callee counts as a param.
+    Some(collect(cx, &mut prefix, usize::MAX).mutated.contains(&l))
 }
 
 /// The evidence of `f`'s body, where a program reads a `shared` also through what `for…of`
@@ -76,7 +79,8 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
 /// alias or an element of an element) counts as a change of the source's local, for
 /// `FnInfo::modified_params`.
 pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> Evidence {
-    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block);
+    let params = f.params.len();
+    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block, params);
     if !cx.frozen_reads {
         return ev;
     }
@@ -118,11 +122,11 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
 }
 
 /// Collect the evidence of body `b`.
-pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
-    collect_aliased(cx, b).0
+pub(super) fn collect(cx: &mut Ctx, b: &mut Block, params: usize) -> Evidence {
+    collect_aliased(cx, b, params).0
 }
 
-fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
+fn collect_aliased(cx: &mut Ctx, b: &mut Block, params: usize) -> (Evidence, Aliases) {
     let closures = closure_locals(cx, b);
     let mut v = Collector {
         cx,
@@ -130,6 +134,7 @@ fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
         aliases: FxHashMap::default(),
         skip: FxHashSet::default(),
         closures,
+        params,
     };
     visit::block(b, &mut v);
     let Collector {
@@ -179,6 +184,8 @@ struct Collector<'a, 'm> {
     skip: FxHashSet<*const Expr>,
     /// Locals holding a closure literal (`closure_locals`).
     closures: Closures,
+    /// The body's params, its first locals: a function value in one is the caller's to check.
+    params: usize,
 }
 
 impl Collector<'_, '_> {
@@ -205,12 +212,17 @@ impl Collector<'_, '_> {
             _ => None,
         };
         let bits = known.map(|c| closure_changes(self.cx, c));
+        // A function value in a param is the caller's to check (the callback rule, so std's
+        // `forEach` keeps reading what it walks); any other this body can't resolve to one
+        // closure may change whatever it is given (#1836).
+        let param = matches!(&callee.kind, E::Local(l, _) if (l.0 as usize) < self.params);
+        let strong = bits.is_some() || (!param && self.cx.frozen_reads);
         for (i, a) in args.iter().enumerate() {
             let known_unchanged = bits.is_some_and(|b| i >= 64 || b & (1 << i) == 0);
             if known_unchanged || self.cx.is_copy(a.ty) {
                 continue;
             }
-            if bits.is_some() {
+            if strong {
                 self.ev.deep.extend(place_root(a));
                 self.ev.modified.extend(place_root(a));
                 continue;

@@ -1,6 +1,8 @@
 // A getter or method that hands `this` to a function value whose body changes it (a module-level
 // closure) changes `this`, as a direct call would (#1836): calling it on a shared object is an
-// error, directly and through a bound's field, where it would change the shared value.
+// error, directly and through a bound's field, where it would change the shared value. So is one
+// handing it to a function value the compiler cannot resolve to one closure (a module `let`, a
+// reassigned local, a field, a call's result, a choice of two), which may change it.
 
 const poke = (o: B) => {
   o.k++;
@@ -26,7 +28,53 @@ function viaK<V extends Frozen & HasK>(s: shared<V>): u64 {
   return s.kk;
 }
 
+let hook = (o: U) => {
+  o.k++;
+};
+const pure = (o: U) => {};
+const bad = (o: U) => {
+  o.k++;
+};
+const hooks = { f: bad };
+
+function getHook(): (o: U) => void {
+  return bad;
+}
+
+let flag = true;
+
+class U {
+  k: u64 = 0;
+  viaLet(): u64 {
+    hook(this);
+    return this.k;
+  }
+  viaReassigned(): u64 {
+    let f = pure;
+    if (flag) {
+      f = bad;
+    }
+    f(this);
+    return this.k;
+  }
+  viaField(): u64 {
+    hooks.f(this);
+    return this.k;
+  }
+  viaCall(): u64 {
+    getHook()(this);
+    return this.k;
+  }
+  viaTernary(): u64 {
+    const f = flag ? bad : pure;
+    f(this);
+    return this.k;
+  }
+}
+
 function main() {
   const b = shared(new B());
   console.log(viaK<B>(b), b.kk, b.viaClosure());
+  const u = shared(new U());
+  console.log(u.viaLet(), u.viaReassigned(), u.viaField(), u.viaCall(), u.viaTernary());
 }
