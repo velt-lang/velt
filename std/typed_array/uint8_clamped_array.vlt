@@ -66,7 +66,8 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
   // Writes element `i` (in the view's range).
   private put(i: usize, v: number) {
     const o = this.off + i * 1;
-    this.buf.bytes[o] = toUint8Clamp(v);
+    const x = toUint8Clamp(v);
+    this.buf.bytes[o] = x;
   }
 
   // The bytes of the elements, copied.
@@ -146,7 +147,8 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 1;
-      this.buf.bytes[o] = toUint8Clamp(v);
+      const x = toUint8Clamp(v);
+      this.buf.bytes[o] = x;
     }
   }
 

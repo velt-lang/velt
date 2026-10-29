@@ -79,7 +79,8 @@ export class Float64Array extends TypedArray implements Iterable<number> {
     if (!(o + 8 <= (this.buf.bytes.length as usize))) {
       this.gone(o);
     }
-    setElementF64(this.buf.bytes, o, v);
+    const x = v;
+    setElementF64(this.buf.bytes, o, x);
   }
 
   // The bytes of the elements, copied.
@@ -161,7 +162,8 @@ export class Float64Array extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 8;
-      setElementF64(this.buf.bytes, o, v);
+      const x = v;
+      setElementF64(this.buf.bytes, o, x);
     }
   }
 

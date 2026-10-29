@@ -79,7 +79,8 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     if (!(o + 4 <= (this.buf.bytes.length as usize))) {
       this.gone(o);
     }
-    setElementF32(this.buf.bytes, o, v as f32);
+    const x = v as f32;
+    setElementF32(this.buf.bytes, o, x);
   }
 
   // The bytes of the elements, copied.
@@ -161,7 +162,8 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 4;
-      setElementF32(this.buf.bytes, o, v as f32);
+      const x = v as f32;
+      setElementF32(this.buf.bytes, o, x);
     }
   }
 

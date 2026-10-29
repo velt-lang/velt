@@ -888,7 +888,13 @@ def main():
         t = t.replace("@INSIDE@", inside)
         t = t.replace("@GONE@", "" if n == 1 else GONE)
         t = t.replace("@INDEX_BODY@", INDEX_BYTE if n == 1 else INDEX_WIDE)
-        for k, v in [("@K@", str(KINDS.index((c, n, read, write_, what)))), ("@C@", c), ("@N@", str(n)),
+        # The value converted first, then stored: an argument after the buffer that is a call
+        # would make the compiler hold a counted reference to the buffer across that call.
+        m = re.match(r"(setElement\w+)\(b, o, (.*)\)$", write_) or re.match(r"(b\[o\]) = (.*)$", write_)
+        store = m.group(1) + "(b, o, x)" if m.group(1).startswith("set") else "b[o] = x"
+        write_ = "const x = %s;\n    %s" % (m.group(2), store)
+        kind = [k for k, *_ in KINDS].index(c)
+        for k, v in [("@K@", str(kind)), ("@C@", c), ("@N@", str(n)),
                      ("@READ@", read), ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
             t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@") else v)
         doc = CLASS_DOC.replace("@SNAKE@", snake(c)).replace("@C@", c).replace("@WHAT@", what)

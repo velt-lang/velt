@@ -80,7 +80,8 @@ export class Int32Array extends TypedArray implements Iterable<number> {
     if (!(o + 4 <= (this.buf.bytes.length as usize))) {
       this.gone(o);
     }
-    setElement32(this.buf.bytes, o, toUint32(v));
+    const x = toUint32(v);
+    setElement32(this.buf.bytes, o, x);
   }
 
   // The bytes of the elements, copied.
@@ -162,7 +163,8 @@ export class Int32Array extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 4;
-      setElement32(this.buf.bytes, o, toUint32(v));
+      const x = toUint32(v);
+      setElement32(this.buf.bytes, o, x);
     }
   }
 

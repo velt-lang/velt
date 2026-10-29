@@ -80,7 +80,8 @@ export class Uint16Array extends TypedArray implements Iterable<number> {
     if (!(o + 2 <= (this.buf.bytes.length as usize))) {
       this.gone(o);
     }
-    setElement16(this.buf.bytes, o, toUint32(v) as u16);
+    const x = toUint32(v) as u16;
+    setElement16(this.buf.bytes, o, x);
   }
 
   // The bytes of the elements, copied.
@@ -162,7 +163,8 @@ export class Uint16Array extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 2;
-      setElement16(this.buf.bytes, o, toUint32(v) as u16);
+      const x = toUint32(v) as u16;
+      setElement16(this.buf.bytes, o, x);
     }
   }
 
