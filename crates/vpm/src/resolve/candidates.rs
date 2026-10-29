@@ -225,10 +225,7 @@ impl Provider<'_> {
             let Some(own) = provided.by_name.get(&req.name) else {
                 let names: Vec<&str> = provided.by_name.keys().map(String::as_str).collect();
                 let cut = provided.cut.as_ref().map_or(String::new(), |pattern| {
-                    format!(
-                        "; the walk of its workspace pattern `{pattern}` stopped at {} directories, so packages past it are missing",
-                        crate::npm::workspace::MAX_DIRS
-                    )
+                    crate::npm::provided::cut_note(pattern, crate::npm::workspace::MAX_DIRS)
                 });
                 return Err(named(format!(
                     "`{sub}` of {} provides no npm package named `{}` (it has {}){cut}",

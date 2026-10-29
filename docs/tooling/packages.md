@@ -53,10 +53,11 @@ dependencies: {
 - **npm packages too.** A target without a `package.vlt` but with a `package.json` is an npm
   package, compiled from its TypeScript sources ([npm packages](#npm-packages)), as
   `npm install git+…` takes it; a workspace's root (`pnpm-workspace.yaml`, or `workspaces` in its
-  `package.json`) provides every package of the workspace besides its own. As npm and pnpm do,
-  a workspace package without a `name`, a `package.json` that doesn't parse and two packages of
-  one name are errors that name the file, and so are two git dependencies that provide the same
-  package. The dependency's name is one of those packages, and its `version`, if
+  `package.json`) provides every package of the workspace besides its own. As in npm, a
+  workspace package without a `name` is named after its directory, and two packages of one name
+  are an error; so is a `package.json` that can't be read or doesn't parse, naming the file.
+  Several dependencies can come from one repository (`sigx` and `@sigx/runtime` from its root);
+  two that provide the same package from different repositories or commits are an error. The dependency's name is one of those packages, and its `version`, if
   written, is checked against that package's. So a framework can be tested straight from its
   repository, with no `paths` alias and nothing installed into `node_modules`:
 

@@ -544,18 +544,23 @@ fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), Strin
     Ok(())
 }
 
-/// Two git dependencies that provide the same npm package would leave it to chance which one an
-/// import gets: an error naming both.
+/// Two git dependencies that provide the same npm package from different directories (other
+/// repositories or commits) would leave it to chance which one an import gets: an error naming
+/// both. Two packages of one checkout (`a` and `b` both from a repository's root) provide the
+/// same directories and agree.
 fn check_npm_overlap<'r>(
     packages: impl Iterator<Item = &'r ResolvedPackage>,
 ) -> Result<(), String> {
-    let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, (&str, &PathBuf)> = BTreeMap::new();
     for pkg in packages {
         let Source::Git { npm, .. } = &pkg.source else {
             continue;
         };
-        for name in npm.keys() {
-            if let Some(other) = seen.insert(name, &pkg.name) {
+        for (name, dir) in npm {
+            let Some((other, other_dir)) = seen.insert(name, (&pkg.name, dir)) else {
+                continue;
+            };
+            if other_dir != dir {
                 return Err(format!(
                     "git dependencies `{other}` and `{}` both provide the npm package `{name}`; depend on one of them",
                     pkg.name

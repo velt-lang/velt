@@ -26,10 +26,16 @@ pub struct Packages {
     pub cut: Option<String>,
 }
 
-/// The packages `dir` provides. An error when it provides none, when a workspace member's
-/// `package.json` doesn't read or has no `name` (as npm refuses it), and when two packages share
-/// a name (as npm and pnpm refuse it). Paths in messages are relative to `dir`.
+/// The packages `dir` provides. A workspace member without a `name` is named after its directory,
+/// as npm names it (`@scope/name` when its parent directory is a scope). An error when it
+/// provides none, when a `package.json` can't be read or doesn't parse, and when two packages
+/// share a name (as npm and pnpm refuse it). Paths in messages are relative to `dir`.
 pub fn packages_at(dir: &Path) -> Result<Packages, String> {
+    packages_at_limited(dir, workspace::MAX_DIRS)
+}
+
+/// [`packages_at`], listing at most `max_dirs` directories of a workspace.
+pub fn packages_at_limited(dir: &Path, max_dirs: usize) -> Result<Packages, String> {
     let mut by_name: BTreeMap<String, Provided> = BTreeMap::new();
     let mut add = |pkg: &Path, name: String, version| {
         if let Some(first) = by_name.get(&name) {
@@ -49,24 +55,21 @@ pub fn packages_at(dir: &Path) -> Result<Packages, String> {
     }
     let mut cut = None;
     if let Some(patterns) = workspace::patterns(dir) {
-        let listing = workspace::package_dirs(dir, &patterns);
+        let listing = workspace::package_dirs_limited(dir, &patterns, max_dirs);
         cut = listing.cut;
         for pkg in listing.dirs.iter().filter(|p| p.as_path() != dir) {
-            match read(dir, pkg)? {
-                Some((Some(name), version)) => add(pkg, name, version)?,
-                _ => {
-                    return Err(format!(
-                        "has a workspace package without a `name`: `{}/package.json`",
-                        shown(dir, pkg)
-                    ))
-                }
+            if let Some((name, version)) = read(dir, pkg)? {
+                let name = name.unwrap_or_else(|| name_of_dir(pkg));
+                add(pkg, name, version)?;
             }
         }
     }
     if by_name.is_empty() {
-        return Err(
-            "has neither a package.vlt nor an npm package (a package.json with a `name`, or a workspace of them)".to_string(),
-        );
+        let mut message = "has neither a package.vlt nor an npm package (a package.json with a `name`, or a workspace of them)".to_string();
+        if let Some(pattern) = &cut {
+            message.push_str(&cut_note(pattern, max_dirs));
+        }
+        return Err(message);
     }
     Ok(Packages { by_name, cut })
 }
@@ -74,12 +77,40 @@ pub fn packages_at(dir: &Path) -> Result<Packages, String> {
 /// A `package.json`'s `name` and `version`, when it has them.
 type NameAndVersion = (Option<String>, Option<semver::Version>);
 
+/// What a cut workspace walk leaves out, for messages.
+pub fn cut_note(pattern: &str, max_dirs: usize) -> String {
+    format!(
+        "; the walk of its workspace pattern `{pattern}` stopped at {max_dirs} directories, so packages past it are missing"
+    )
+}
+
+/// The name npm gives a workspace package without one: its directory's, under its scope when the
+/// parent directory is one (`@scope/name`).
+fn name_of_dir(pkg: &Path) -> String {
+    let name = pkg.file_name().unwrap_or_default().to_string_lossy();
+    match pkg
+        .parent()
+        .and_then(Path::file_name)
+        .map(|p| p.to_string_lossy())
+    {
+        Some(scope) if scope.starts_with('@') => format!("{scope}/{name}"),
+        _ => name.into_owned(),
+    }
+}
+
 /// The `name` and `version` of the `package.json` in `pkg`: `None` without one, an error when it
-/// doesn't parse.
+/// can't be read or doesn't parse.
 fn read(root: &Path, pkg: &Path) -> Result<Option<NameAndVersion>, String> {
-    let Ok(text) = crate::probe::read_to_string(&pkg.join("package.json")) else {
+    let file = pkg.join("package.json");
+    if !crate::probe::is_file(&file) {
         return Ok(None);
-    };
+    }
+    let text = crate::probe::read_to_string(&file).map_err(|e| {
+        format!(
+            "has a `package.json` that can't be read: `{}/package.json`: {e}",
+            shown(root, pkg)
+        )
+    })?;
     let json = Json::parse(&text).map_err(|e| {
         format!(
             "has a `package.json` that doesn't parse: `{}/package.json`: {e}",
