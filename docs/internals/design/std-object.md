@@ -78,7 +78,10 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
   when they come to 1,000 statements or more; fewer stay in the program that time, and a larger
   build or the warm-up stores them. Cold builds then cost what builds without the cache do.
 - The build stamp records the objects it linked (`std` lines, by size and time) and the fast
-  path links them again; a cached file keeps its size and time while it is cached.
+  path links them again; a cached file keeps its size and time while it is cached. The link
+  reads them through hard links (or copies) named like object files, `<program>.std/<n>.o`, so
+  MSVC's linker, which reads a name without an extension as `<name>.obj`, takes them too, and a
+  build keeps linking what it was built with whatever the cache's garbage collection does.
 
 The cache serves release executables built by LLVM without debug info (`-g`): an object or
 IR from `--emit` would name std functions it does not define, and the cached objects carry no

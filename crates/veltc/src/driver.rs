@@ -596,6 +596,11 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
+    // The std cache's objects, under names the linker takes (`OutputPaths::link_std_objects`).
+    let std_objects = paths
+        .link_std_objects(&sess.std_objects)
+        .map_err(|e| BuildError::Failed(format!("cannot place the std cache's objects: {e}")))?;
+    sess.std_objects = std_objects;
     let mut linked = object_paths.clone();
     linked.extend(sess.std_objects.iter().cloned());
     link_stage(sess, opts, &target, &linked, &paths)?;

@@ -169,24 +169,32 @@ fn the_stamp_records_the_std_objects() {
     assert_eq!(run(dir, "a"), OUTPUT);
 }
 
-/// A build whose misses come to few statements leaves them in the program (a clang process
-/// each would cost more than they save); a larger build stores them, and then it links them.
+/// A build whose misses come to fewer statements than the threshold leaves them in the program
+/// (a clang process each would cost more than they save); a build over it stores them, and then
+/// the first links them. The threshold is set around this program's own size
+/// (`VELT_STD_OBJECT_MIN_MISSES`), so the test doesn't depend on how large std grows.
 #[test]
 fn a_build_with_few_misses_leaves_them_in_the_program() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    let small = "function main() {\n  const v = JSON.parse<{ x: i64; y: string }>(\"{\\\"x\\\": 1, \\\"y\\\": \\\"a\\\"}\");\n  console.log(v.x, v.y);\n}\n";
-    std::fs::write(dir.join("small.vlt"), small).unwrap();
-    std::fs::write(dir.join("big.vlt"), PROGRAM).unwrap();
-    let cold = build(dir, "small.vlt", "s1", &cache, &[]);
+    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    let high = [("VELT_STD_OBJECT_MIN_MISSES", "100000000")];
+    let cold = build(dir, "a.vlt", "a1", &cache, &high);
     assert_eq!(counts(&cold), (0, 0), "{}", text(&cold.stderr));
-    assert_eq!(run(dir, "s1"), "1 a\n");
-    build(dir, "big.vlt", "b", &cache, &[]);
-    let warm = build(dir, "small.vlt", "s2", &cache, &[]);
-    let (found, compiled) = counts(&warm);
-    assert!(found > 0 && compiled == 0, "{}", text(&warm.stderr));
-    assert_eq!(run(dir, "s2"), "1 a\n");
+    assert_eq!(run(dir, "a1"), OUTPUT);
+    let filled = build(
+        dir,
+        "a.vlt",
+        "a2",
+        &cache,
+        &[("VELT_STD_OBJECT_MIN_MISSES", "1")],
+    );
+    let compiled = counts(&filled).1;
+    assert!(compiled > 0, "{}", text(&filled.stderr));
+    let warm = build(dir, "a.vlt", "a3", &cache, &high);
+    assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
+    assert_eq!(run(dir, "a3"), OUTPUT);
 }
 
 /// Only release executables built by LLVM without debug info use the std cache: an object, VIR

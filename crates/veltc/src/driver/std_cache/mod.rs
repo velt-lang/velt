@@ -36,8 +36,15 @@ const KIND: &str = "stdfn";
 /// A build compiles the functions missing from the cache on their own only when they come to at
 /// least this many statements: each costs a clang process (about 30M instructions to start),
 /// which a few small functions do not pay back. Below it they stay in the program this time,
-/// compiled as usual; a larger build, or the warm-up, stores them.
+/// compiled as usual; a larger build, or the warm-up, stores them. `VELT_STD_OBJECT_MIN_MISSES`
+/// overrides it (tests).
 const MIN_MISSES: usize = 1000;
+
+fn min_misses() -> usize {
+    (std::env::var("VELT_STD_OBJECT_MIN_MISSES").ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MIN_MISSES)
+}
 
 /// Whether the std cache is on: `VELT_STD_OBJECT=1`, for release executables built by LLVM
 /// without debug info. An object, VIR or LLVM IR (`--emit`) would name std functions it does not
@@ -136,7 +143,7 @@ pub(super) fn split(
         .filter(|(_, _, found)| found.is_none())
         .map(|&(i, _, _)| select::size(&program.funcs[i]))
         .sum();
-    let compile_misses = missing >= MIN_MISSES;
+    let compile_misses = missing >= min_misses();
     let looked_up: Vec<_> = (looked_up.into_iter())
         .filter(|(_, _, found)| found.is_some() || compile_misses)
         .collect();
