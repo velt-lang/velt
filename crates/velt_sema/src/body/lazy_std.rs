@@ -51,14 +51,14 @@ const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
 /// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
 /// the reader's state). Deferred even when they are methods, and reached only with the module
 /// or by a reference in checked code, not by a use of their type: nothing else calls them.
-const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&["std/prelude/json::JsonValue.__fromReader"], &[]];
+const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&["std/prelude/json/json::JsonValue.__fromReader"], &[]];
 
 /// Prelude classes whose methods are checked once the type is used, as a class outside the
 /// prelude's are: lowering looks up none of their methods by name except where it also has a
 /// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one), and
 /// their code reaches large modules most programs never load (`JsonValue`'s the tape,
 /// velt:json/tape).
-const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json::JsonValue"];
+const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json/json::JsonValue"];
 
 /// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
 /// ([`JSON_GLUE_PRELUDE`]).
