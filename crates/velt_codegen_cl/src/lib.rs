@@ -27,6 +27,7 @@ macro_rules! bail {
 mod abi;
 #[cfg(unix)]
 mod c_symbols;
+mod cache;
 mod cpu;
 mod cpu_names;
 mod debug_info;
@@ -44,6 +45,7 @@ mod win_symbols;
 #[cfg(test)]
 mod tests;
 
+pub use cache::{CacheStats, CodeCache};
 pub use cpu::{
     check_cpu, is_for_another_arch, level_features, required_features, x86_features_from_macros,
     DEFAULT_X86_CPU, X86_FEATURES, X86_FEATURE_MACROS,
@@ -68,6 +70,16 @@ pub struct CodegenOptions {
 
 /// CONTRACT: emit a relocatable object file (COFF / Mach-O / ELF per target) for the program.
 pub fn emit_object(program: &vir::Program, opts: &CodegenOptions) -> Result<Vec<u8>, String> {
+    emit_object_cached(program, opts, None).map(|(obj, _)| obj)
+}
+
+/// [`emit_object`], compiling the functions on every core and taking those compiled before (by
+/// any build on this machine) from `cache`; also says how many came from it.
+pub fn emit_object_cached(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    cache: Option<&dyn CodeCache>,
+) -> Result<(Vec<u8>, CacheStats), String> {
     if let Err(errs) = velt_vir::verify(program) {
         return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
     }
@@ -79,13 +91,14 @@ pub fn emit_object(program: &vir::Program, opts: &CodegenOptions) -> Result<Vec<
     )
     .map_err(|e| format!("codegen: cannot create object builder: {e}"))?;
     let mut module = ObjectModule::new(builder);
-    let built = module::build_module(&mut module, program, &module::Naming::Program)?;
+    let built = module::build_module_cached(&mut module, program, &module::Naming::Program, cache)?;
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
     debug_info::object::add_debug_info(&mut product, program, &built.lines)?;
-    product
+    let obj = product
         .emit()
-        .map_err(|e| format!("codegen: cannot write object file: {e}"))
+        .map_err(|e| format!("codegen: cannot write object file: {e}"))?;
+    Ok((obj, built.cache))
 }
 
 /// The entry object of an executable linked against the shared runtime library (debug builds):

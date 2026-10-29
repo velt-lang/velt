@@ -56,6 +56,7 @@ pub use target::is_wasm;
 /// Options for [`emit_object`]: the same struct as the Cranelift backend's, so the driver can
 /// pass one value to either backend.
 pub use velt_codegen_cl::CodegenOptions;
+use velt_codegen_cl::{CacheStats, CodeCache};
 
 /// Internal result type: errors are human-readable messages.
 pub(crate) type CodegenResult<T> = Result<T, String>;
@@ -74,15 +75,31 @@ pub fn emit_object_timed(
     opts: &CodegenOptions,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<u8>, String> {
+    emit_object_cached(program, opts, timings, None).map(|(obj, _)| obj)
+}
+
+/// [`emit_object_timed`], taking the object from `cache` when clang compiled the same IR before.
+fn emit_object_cached(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    timings: &mut Vec<(&'static str, Duration)>,
+    cache: Option<&dyn CodeCache>,
+) -> Result<(Vec<u8>, bool), String> {
     let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let start = Instant::now();
     let ir = checked_ir(program, &triple, opts.optimize)?;
     timings.push(("ir", start.elapsed()));
     let start = Instant::now();
     let (step, obj) = if triple.is_wasm() {
-        ("llc", llc::compile(&ir, &triple, opts.optimize))
+        (
+            "llc",
+            llc::compile(&ir, &triple, opts.optimize).map(|obj| (obj, false)),
+        )
     } else {
-        ("clang", clang::compile(&ir, &triple, opts.optimize))
+        (
+            "clang",
+            clang::compile_cached(&ir, &triple, opts.optimize, cache),
+        )
     };
     timings.push((step, start.elapsed()));
     obj
@@ -98,6 +115,19 @@ pub fn emit_objects_timed(
     units: Option<usize>,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<Vec<u8>>, String> {
+    emit_objects_cached(program, opts, units, timings, None).map(|(objs, _)| objs)
+}
+
+/// [`emit_objects_timed`], taking each unit's object from `cache` when clang compiled the same IR
+/// with the same flags before (in any build on this machine), and storing it there otherwise; also
+/// says how many units came from it.
+pub fn emit_objects_cached(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    units: Option<usize>,
+    timings: &mut Vec<(&'static str, Duration)>,
+    cache: Option<&dyn CodeCache>,
+) -> Result<(Vec<Vec<u8>>, CacheStats), String> {
     let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let count = if triple.is_wasm() {
         1
@@ -105,7 +135,8 @@ pub fn emit_objects_timed(
         units::unit_count(program, units)
     };
     if count == 1 {
-        return emit_object_timed(program, opts, timings).map(|obj| vec![obj]);
+        let (obj, hit) = emit_object_cached(program, opts, timings, cache)?;
+        return Ok((vec![obj], CacheStats::of(&[hit])));
     }
     if let Err(errs) = velt_vir::verify(program) {
         return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
@@ -115,23 +146,25 @@ pub fn emit_objects_timed(
     let plan = units::plan(program, count);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();
-    let compile = |unit: &units::Unit| -> Result<(Vec<u8>, Duration), String> {
+    let compile = |unit: &units::Unit| -> Result<(Vec<u8>, bool, Duration), String> {
         let ir = module::emit_unit(program, &triple, opts.optimize, unit, &plan.shared)?;
         let start = Instant::now();
-        let obj = clang::compile(&ir, &triple, opts.optimize)?;
-        Ok((obj, start.elapsed()))
+        let (obj, hit) = clang::compile_cached(&ir, &triple, opts.optimize, cache)?;
+        Ok((obj, hit, start.elapsed()))
     };
     let results = parallel(&plan.units, compile);
     let mut objects = Vec::with_capacity(results.len());
+    let mut hits = Vec::with_capacity(results.len());
     let mut slowest = Duration::ZERO;
     for r in results {
-        let (obj, clang) = r?;
+        let (obj, hit, clang) = r?;
         slowest = slowest.max(clang);
         objects.push(obj);
+        hits.push(hit);
     }
     timings.push(("ir + clang (parallel)", start.elapsed()));
     timings.push(("slowest clang", slowest));
-    Ok(objects)
+    Ok((objects, CacheStats::of(&hits)))
 }
 
 /// `f` of every item, in order, on at most one thread per core (each takes the next item left).

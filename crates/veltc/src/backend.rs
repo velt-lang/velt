@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use velt_codegen_cl::{CacheStats, CodeCache};
 use velt_vir::vir;
 
 /// A code generation backend.
@@ -58,16 +59,30 @@ impl Backend {
     /// Generate the object files for `program`, appending the time of the backend's steps to
     /// `timings` where it reports them (LLVM: printing the IR, then clang). Cranelift makes one
     /// object; LLVM one per codegen unit (`units`, see `velt_codegen_llvm::emit_objects_timed`).
+    /// Both go through the machine's build cache (`build_cache`); the stats say how much came
+    /// from it (Cranelift: functions; LLVM: codegen units), `None` without a cache.
     pub fn emit_objects(
         self,
         program: &vir::Program,
         opts: &velt_codegen_cl::CodegenOptions,
         units: Option<usize>,
         timings: &mut Vec<(&'static str, Duration)>,
-    ) -> Result<Vec<Vec<u8>>, String> {
+    ) -> Result<(Vec<Vec<u8>>, Option<CacheStats>), String> {
+        let cache = crate::build_cache::cache();
         match self {
-            Backend::Cranelift => velt_codegen_cl::emit_object(program, opts).map(|o| vec![o]),
-            Backend::Llvm => velt_codegen_llvm::emit_objects_timed(program, opts, units, timings),
+            Backend::Cranelift => {
+                let cache = cache.map(crate::build_cache::Functions);
+                let cache = cache.as_ref().map(|c| c as &dyn CodeCache);
+                let (obj, stats) = velt_codegen_cl::emit_object_cached(program, opts, cache)?;
+                Ok((vec![obj], cache.map(|_| stats)))
+            }
+            Backend::Llvm => {
+                let cache = cache.map(crate::build_cache::Objects);
+                let cache = cache.as_ref().map(|c| c as &dyn CodeCache);
+                let (objs, stats) =
+                    velt_codegen_llvm::emit_objects_cached(program, opts, units, timings, cache)?;
+                Ok((objs, cache.map(|_| stats)))
+            }
         }
     }
 }

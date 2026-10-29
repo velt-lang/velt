@@ -15,9 +15,11 @@ use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
 mod cpu_check;
+mod output;
 mod pipeline;
 mod recover;
 
+pub use output::OutputPaths;
 use pipeline::on_pipeline_thread;
 
 /// What to build and how.
@@ -143,6 +145,9 @@ pub struct Session {
     pub show_details: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
     pub reports: Vec<String>,
+    /// What codegen took from the build cache: `(found, of, what)` ("functions", "codegen
+    /// units"); `None` without a cache.
+    pub cached: Option<(usize, usize, &'static str)>,
 }
 
 impl Session {
@@ -177,9 +182,17 @@ impl Session {
             .chain([("total", total)])
         {
             s.push_str(&format!(
-                "velt: {name:<8} {:>9.3} ms\n",
+                "velt: {name:<8} {:>9.3} ms",
                 d.as_secs_f64() * 1e3
             ));
+            match self.cached {
+                Some((found, of, what)) if name == "codegen" => {
+                    s.push_str(&format!(
+                        "  ({found} of {of} {what} from the build cache)\n"
+                    ));
+                }
+                _ => s.push('\n'),
+            }
             let steps = self.details.iter().filter(|(stage, ..)| *stage == name);
             for (_, step, d) in steps.filter(|_| self.show_details) {
                 s.push_str(&format!(
@@ -463,10 +476,14 @@ fn build_on_current_thread(
     } else {
         codegen_units()
     };
-    let objects = backend
+    let (objects, cached) = backend
         .emit_objects(&program, &cg, units, &mut steps)
         .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")))?;
     sess.record("codegen", t);
+    sess.cached = cached.map(|c| match backend {
+        Backend::Cranelift => (c.hits, c.hits + c.misses, "functions"),
+        Backend::Llvm => (c.hits, c.hits + c.misses, "codegen units"),
+    });
     sess.record_details("codegen", &steps);
 
     let t = Instant::now();
@@ -498,6 +515,7 @@ fn build_on_current_thread(
     if linked == crate::link::Linked::UpToDate {
         sess.record_details("link", &[("up to date", t.elapsed())]);
     }
+    crate::build_cache::collect_garbage_if_due();
     Ok(Artifact::Executable(paths.executable))
 }
 
@@ -522,225 +540,9 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
         .map_err(|e| BuildError::Failed(format!("cannot write `{}`: {e}", path.display())))
 }
 
-/// Where `build` puts its outputs (relative paths are relative to the current directory).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputPaths {
-    /// Linked executable (empty for `--emit obj`).
-    pub executable: PathBuf,
-    /// Object file.
-    pub object: PathBuf,
-}
-
-impl OutputPaths {
-    /// Object file of codegen unit `i`: [`Self::object`] for the first, `<stem>.cgu<i>.<ext>`
-    /// beside it for the others.
-    pub fn unit_object(&self, i: usize) -> PathBuf {
-        if i == 0 {
-            return self.object.clone();
-        }
-        let stem = self
-            .object
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
-        match self.object.extension() {
-            Some(ext) => self
-                .object
-                .with_file_name(format!("{stem}.cgu{i}.{}", ext.to_string_lossy())),
-            None => self.object.with_file_name(format!("{stem}.cgu{i}")),
-        }
-    }
-
-    /// Removes the objects of codegen units `count` and above, left by an earlier build with more
-    /// units (so a directory listing or a manual link doesn't pick up stale code).
-    pub fn remove_unit_objects_from(&self, count: usize) {
-        for i in count.max(1).. {
-            let path = self.unit_object(i);
-            if std::fs::remove_file(&path).is_err() {
-                break;
-            }
-        }
-    }
-
-    /// Output paths for `input` given `-o`, `--emit` and the target.
-    pub fn new(input: &Path, output: Option<&Path>, emit: Emit, target: &str) -> OutputPaths {
-        if velt_codegen_llvm::is_wasm(target) {
-            return Self::wasm(input, output, emit);
-        }
-        let windows = target.contains("windows");
-        let obj_ext = if windows { "obj" } else { "o" };
-        let stem = input
-            .file_stem()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-
-        if emit == Emit::Obj {
-            let object = match output {
-                Some(o) => o.to_path_buf(),
-                None => Path::new("target")
-                    .join("velt")
-                    .join(format!("{stem}.{obj_ext}")),
-            };
-            return OutputPaths {
-                executable: PathBuf::new(),
-                object,
-            };
-        }
-
-        let executable = match output {
-            // `link.exe /OUT:foo` would produce an unrunnable `foo`; Windows executables need `.exe`.
-            Some(o) if windows && o.extension().is_none() => o.with_extension("exe"),
-            Some(o) => o.to_path_buf(),
-            None => Path::new("target").join("velt").join(if windows {
-                format!("{stem}.exe")
-            } else {
-                stem
-            }),
-        };
-        // Object next to the executable: `<exe name without .exe>.<obj_ext>`.
-        let name = executable
-            .file_name()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-        let base = if windows {
-            name.strip_suffix(".exe").unwrap_or(&name)
-        } else {
-            &name
-        };
-        let object = executable.with_file_name(format!("{base}.{obj_ext}"));
-        OutputPaths { executable, object }
-    }
-
-    /// WebAssembly outputs: `<stem>.wasm` (a module, not an executable) and `<stem>.o`.
-    fn wasm(input: &Path, output: Option<&Path>, emit: Emit) -> OutputPaths {
-        let stem = input
-            .file_stem()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-        let default_dir = Path::new("target").join("velt");
-        if emit == Emit::Obj {
-            let object =
-                output.map_or_else(|| default_dir.join(format!("{stem}.o")), Path::to_path_buf);
-            return OutputPaths {
-                executable: PathBuf::new(),
-                object,
-            };
-        }
-        let executable = match output {
-            Some(o) if o.extension().is_none() => o.with_extension("wasm"),
-            Some(o) => o.to_path_buf(),
-            None => default_dir.join(format!("{stem}.wasm")),
-        };
-        let object = executable.with_extension("o");
-        OutputPaths { executable, object }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const WIN: &str = "x86_64-pc-windows-msvc";
-    const LINUX: &str = "x86_64-unknown-linux-gnu";
-
-    fn paths(input: &str, out: Option<&str>, emit: Emit, target: &str) -> (PathBuf, PathBuf) {
-        let p = OutputPaths::new(Path::new(input), out.map(Path::new), emit, target);
-        (p.executable, p.object)
-    }
-
-    #[test]
-    fn codegen_unit_objects_sit_beside_the_first() {
-        let p = OutputPaths::new(
-            Path::new("app.vlt"),
-            Some(Path::new("out/app")),
-            Emit::Exe,
-            LINUX,
-        );
-        assert_eq!(p.unit_object(0), PathBuf::from("out/app.o"));
-        assert_eq!(p.unit_object(2), PathBuf::from("out/app.cgu2.o"));
-        let p = OutputPaths::new(Path::new("app.vlt"), None, Emit::Exe, WIN);
-        let dir = Path::new("target").join("velt");
-        assert_eq!(p.unit_object(1), dir.join("app.cgu1.obj"));
-    }
-
-    #[test]
-    fn fewer_codegen_units_remove_stale_objects() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = OutputPaths::new(
-            Path::new("app.vlt"),
-            Some(&dir.path().join("app")),
-            Emit::Exe,
-            LINUX,
-        );
-        for i in 0..4 {
-            std::fs::write(p.unit_object(i), b"obj").unwrap();
-        }
-        p.remove_unit_objects_from(2);
-        let exists: Vec<bool> = (0..4).map(|i| p.unit_object(i).exists()).collect();
-        assert_eq!(exists, [true, true, false, false]);
-        p.remove_unit_objects_from(1);
-        assert!(p.unit_object(0).exists() && !p.unit_object(1).exists());
-    }
-
-    #[test]
-    fn default_output_paths() {
-        let dir = Path::new("target").join("velt");
-        assert_eq!(
-            paths("tests/hello.vlt", None, Emit::Exe, WIN),
-            (dir.join("hello.exe"), dir.join("hello.obj"))
-        );
-        assert_eq!(
-            paths("hello.vlt", None, Emit::Exe, LINUX),
-            (dir.join("hello"), dir.join("hello.o"))
-        );
-        assert_eq!(
-            paths("a.b.vlt", None, Emit::Exe, LINUX),
-            (dir.join("a.b"), dir.join("a.b.o"))
-        );
-        assert_eq!(
-            paths("hello.vlt", None, Emit::Obj, LINUX).1,
-            dir.join("hello.o")
-        );
-    }
-
-    #[test]
-    fn explicit_output_paths() {
-        assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, WIN),
-            (PathBuf::from("out/app.exe"), PathBuf::from("out/app.obj"))
-        );
-        assert_eq!(
-            paths("h.vlt", Some("out/app.exe"), Emit::Exe, WIN).1,
-            PathBuf::from("out/app.obj")
-        );
-        assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, LINUX),
-            (PathBuf::from("out/app"), PathBuf::from("out/app.o"))
-        );
-        assert_eq!(
-            paths("h.vlt", Some("x.o"), Emit::Obj, LINUX).1,
-            PathBuf::from("x.o")
-        );
-    }
-
-    #[test]
-    fn wasm_output_paths() {
-        let dir = Path::new("target").join("velt");
-        assert_eq!(
-            paths("hi.vlt", None, Emit::Exe, "wasm32-wasip1"),
-            (dir.join("hi.wasm"), dir.join("hi.o"))
-        );
-        assert_eq!(
-            paths(
-                "hi.vlt",
-                Some("out/app"),
-                Emit::Exe,
-                "wasm32-unknown-unknown"
-            ),
-            (PathBuf::from("out/app.wasm"), PathBuf::from("out/app.o"))
-        );
-        assert_eq!(
-            paths("hi.vlt", None, Emit::Obj, "wasm32-wasip1").1,
-            dir.join("hi.o")
-        );
-    }
 
     #[test]
     fn missing_input_is_an_error_not_a_panic() {

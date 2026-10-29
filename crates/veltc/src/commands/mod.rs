@@ -21,7 +21,7 @@ mod registry;
 mod target;
 pub mod test;
 mod ts_compat;
-mod version;
+pub(crate) mod version;
 mod wasm;
 
 use std::process::ExitCode;
@@ -49,7 +49,8 @@ pub fn execute(cmd: Command) -> ExitCode {
             print!("{}", cli::completions::script(shell));
             Ok(())
         }
-        Command::Clean => clean::clean_command(),
+        Command::Clean { cache: false } => clean::clean_command(),
+        Command::Clean { cache: true } => clean::clean_cache_command(),
         Command::Target(action) => target::target_command(&action),
         Command::Toolchain => toolchain_without_launcher(),
         Command::Build(args) => return build::build_command(&args),

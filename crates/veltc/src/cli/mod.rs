@@ -177,8 +177,8 @@ pub enum Command {
         editor: Editor,
         dir: Option<PathBuf>,
     },
-    /// `velt clean`: remove the package's `target/`.
-    Clean,
+    /// `velt clean`: remove the package's `target/`; `--cache`: the machine's build cache instead.
+    Clean { cache: bool },
     /// `velt completions <shell>`.
     Completions(Shell),
     /// `velt add <name>[@<req>] [--path <dir>]`.
@@ -289,7 +289,8 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "playground" => tools::parse_playground(rest),
         "doc" => tools::parse_doc(rest),
         "registry" => tools::parse_registry(rest),
-        "doctor" | "clean" => no_arguments(sub, rest),
+        "doctor" => no_arguments(sub, rest),
+        "clean" => parse_clean(rest),
         "completions" => parse_completions(rest),
         "help" => parse_help(rest),
         "--version" | "-V" | "version" => Ok(Command::Version),
@@ -340,15 +341,25 @@ pub(crate) fn unknown_option(cmd: &str, flag: &str) -> String {
     )
 }
 
-/// Commands without arguments (`doctor`, `clean`).
+/// Commands without arguments (`doctor`).
 fn no_arguments(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
     if let Some(other) = strings(rest)?.first() {
         return Err(format!("unexpected argument `{other}` for `velt {sub}`"));
     }
-    Ok(match sub {
-        "doctor" => Command::Doctor,
-        _ => Command::Clean,
-    })
+    Ok(Command::Doctor)
+}
+
+/// `velt clean [--cache]`.
+fn parse_clean(rest: Vec<OsString>) -> Result<Command, String> {
+    let mut cache = false;
+    for arg in strings(rest)? {
+        match arg.as_str() {
+            "--cache" => cache = true,
+            flag if flag.starts_with('-') => return Err(unknown_option("clean", flag)),
+            other => return Err(format!("unexpected argument `{other}` for `velt clean`")),
+        }
+    }
+    Ok(Command::Clean { cache })
 }
 
 /// `velt completions <shell>`.
@@ -438,7 +449,12 @@ mod tests {
         assert_eq!(p(&["doctor"]).unwrap(), Command::Doctor);
         assert_eq!(p(&["toolchain", "list"]).unwrap(), Command::Toolchain);
         assert!(p(&["+0.2", "build"]).unwrap_err().contains("velt launcher"));
-        assert_eq!(p(&["clean"]).unwrap(), Command::Clean);
+        assert_eq!(p(&["clean"]).unwrap(), Command::Clean { cache: false });
+        assert_eq!(
+            p(&["clean", "--cache"]).unwrap(),
+            Command::Clean { cache: true }
+        );
+        assert!(p(&["clean", "--cash"]).unwrap_err().contains("--cache"));
         assert!(p(&["doctor", "-x"])
             .unwrap_err()
             .contains("unexpected argument"));
