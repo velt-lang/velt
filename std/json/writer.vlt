@@ -172,7 +172,20 @@ export function shortNumber(x: f64): ShortNumber {
     if (t < 1e15 && t / POW10[top] == a) {
       let m = t as u64;
       let k = top;
-      while (k > 0 && m % 10 == 0) {
+      // Its trailing zeros off (fewer than `k`: `a` is no integer), eight, four, two, then one.
+      if (m % 100000000 == 0) {
+        m = m / 100000000;
+        k -= 8;
+      }
+      if (m % 10000 == 0) {
+        m = m / 10000;
+        k -= 4;
+      }
+      if (m % 100 == 0) {
+        m = m / 100;
+        k -= 2;
+      }
+      if (m % 10 == 0) {
         m = m / 10;
         k--;
       }
@@ -192,27 +205,56 @@ export function putDecimal(buf: u8[], o: usize, neg: bool, m: u64, k: usize): us
     buf[at] = 45;
     at++;
   }
+  if (k == 0) {
+    return putDigits(buf, at, m);
+  }
+  const p = POW10_U[k];
+  at = putDigits(buf, at, m / p);
+  buf[at] = 46;
+  putFixed(buf, at + 1, m % p, k);
+  return at + 1 + k;
+}
+
+// The digits of `v` (below 10^15) into `buf` at `o`; the position after them.
+function putDigits(buf: u8[], o: usize, v: u64): usize {
   let w: usize = 1;
-  while (w < 15 && m >= POW10_U[w]) {
+  while (w < 15 && v >= POW10_U[w]) {
     w++;
   }
-  if (w <= k) {
-    w = k + 1;
-  }
-  const end = at + w + (k > 0 ? 1 : 0);
-  let pos = end;
-  let rest = m;
-  for (let i: usize = 0; i < w; i++) {
-    if (k > 0 && i == k) {
-      pos--;
-      buf[pos] = 46;
-    }
-    pos--;
-    buf[pos] = 48 + ((rest % 10) as u8);
-    rest = rest / 10;
-  }
-  return end;
+  putFixed(buf, o, v, w);
+  return o + w;
 }
+
+// The last `w` digits of `v`, leading zeros included, into `buf` from `o`: two per step.
+function putFixed(buf: u8[], o: usize, v: u64, w: usize) {
+  let pos = o + w;
+  let r = v;
+  while (pos >= o + 2) {
+    const q = r / 100;
+    const d = ((r - q * 100) * 2) as usize;
+    pos -= 2;
+    buf[pos] = DIGIT_PAIRS[d];
+    buf[pos + 1] = DIGIT_PAIRS[d + 1];
+    r = q;
+  }
+  if (pos > o) {
+    buf[o] = 48 + ((r % 10) as u8);
+  }
+}
+
+// The digits of 0 to 99, two each (an array literal of numbers is static data).
+const DIGIT_PAIRS: u8[] = [
+  48, 48, 48, 49, 48, 50, 48, 51, 48, 52, 48, 53, 48, 54, 48, 55, 48, 56, 48, 57,
+  49, 48, 49, 49, 49, 50, 49, 51, 49, 52, 49, 53, 49, 54, 49, 55, 49, 56, 49, 57,
+  50, 48, 50, 49, 50, 50, 50, 51, 50, 52, 50, 53, 50, 54, 50, 55, 50, 56, 50, 57,
+  51, 48, 51, 49, 51, 50, 51, 51, 51, 52, 51, 53, 51, 54, 51, 55, 51, 56, 51, 57,
+  52, 48, 52, 49, 52, 50, 52, 51, 52, 52, 52, 53, 52, 54, 52, 55, 52, 56, 52, 57,
+  53, 48, 53, 49, 53, 50, 53, 51, 53, 52, 53, 53, 53, 54, 53, 55, 53, 56, 53, 57,
+  54, 48, 54, 49, 54, 50, 54, 51, 54, 52, 54, 53, 54, 54, 54, 55, 54, 56, 54, 57,
+  55, 48, 55, 49, 55, 50, 55, 51, 55, 52, 55, 53, 55, 54, 55, 55, 55, 56, 55, 57,
+  56, 48, 56, 49, 56, 50, 56, 51, 56, 52, 56, 53, 56, 54, 56, 55, 56, 56, 56, 57,
+  57, 48, 57, 49, 57, 50, 57, 51, 57, 52, 57, 53, 57, 54, 57, 55, 57, 56, 57, 57,
+];
 
 /** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */
 export function writeString(out: string, s: string): void {
