@@ -193,6 +193,7 @@ import * as std_sqlite_schema from "velt:sqlite/schema";
 import * as std_sqlite_sql_ast from "velt:sqlite/sql/ast";
 import * as std_sqlite_sql_cursor from "velt:sqlite/sql/cursor";
 import * as std_sqlite_sql_expr from "velt:sqlite/sql/expr";
+import * as std_sqlite_sql_expr_tree from "velt:sqlite/sql/expr_tree";
 import * as std_sqlite_sql_lexer from "velt:sqlite/sql/lexer";
 import * as std_sqlite_sql_parser from "velt:sqlite/sql/parser";
 import * as std_sqlite_sql_statement from "velt:sqlite/sql/statement";

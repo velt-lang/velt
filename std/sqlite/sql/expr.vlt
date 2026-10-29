@@ -24,7 +24,6 @@ import {
 } from "velt:sqlite/sql/lexer";
 import {
   E_BETWEEN,
-  E_BINARY,
   E_BLOB,
   E_CALL,
   E_CASE,
@@ -33,11 +32,8 @@ import {
   E_COLUMN,
   E_EXISTS,
   E_FALSE,
-  E_INT,
   E_IN_LIST,
   E_IN_SELECT,
-  E_IS,
-  E_ISNULL,
   E_LIKE,
   E_NULL,
   E_PARAM,
@@ -56,6 +52,24 @@ import {
   SelectCore,
 } from "velt:sqlite/sql/ast";
 import { TokenCursor } from "velt:sqlite/sql/cursor";
+import {
+  L_AND,
+  L_CMP,
+  L_CONCAT,
+  L_EQ,
+  L_NONE,
+  L_NOT,
+  L_OR,
+  MAX_VARIABLE,
+  binary,
+  integerLiteral,
+  isExpr,
+  isMatchWord,
+  isNull,
+  opLevel,
+  prefix,
+  sized,
+} from "velt:sqlite/sql/expr_tree";
 
 /** The expression grammar, on a token cursor. */
 export abstract class ExprParser extends TokenCursor {
@@ -650,209 +664,4 @@ export abstract class ExprParser extends TokenCursor {
     }
     this.pos++;
   }
-}
-
-/** Binary operator levels, loosest first (L_NOT is NOT's operand: past AND and OR). */
-const L_NONE: i64 = 0;
-const L_OR: i64 = 1;
-const L_AND: i64 = 2;
-const L_NOT: i64 = 3;
-const L_EQ: i64 = 4;
-const L_CMP: i64 = 5;
-const L_BIT: i64 = 6;
-const L_ADD: i64 = 7;
-const L_MUL: i64 = 8;
-const L_CONCAT: i64 = 9;
-
-/** The level of a binary operator token (`=`, `<`, `+`, `||`, …), or L_NONE. */
-function opLevel(op: string): i64 {
-  switch (op) {
-    case "=":
-    case "==":
-    case "!=":
-    case "<>":
-      return L_EQ;
-    case "<":
-    case "<=":
-    case ">":
-    case ">=":
-      return L_CMP;
-    case "&":
-    case "|":
-    case "<<":
-    case ">>":
-      return L_BIT;
-    case "+":
-    case "-":
-      return L_ADD;
-    case "*":
-    case "/":
-    case "%":
-      return L_MUL;
-    case "||":
-    case "->":
-    case "->>":
-      return L_CONCAT;
-    default:
-      return L_NONE;
-  }
-}
-
-/** Whether `w` (upper case) is one of the pattern operators LIKE, GLOB, MATCH, REGEXP. */
-function isMatchWord(w: string): bool {
-  return w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP";
-}
-
-function binary(op: string, a: Expr, b: Expr, at: usize): Expr {
-  const e = new Expr(E_BINARY, at);
-  e.op = op;
-  e.a = a;
-  e.b = b;
-  return sized(e);
-}
-
-/**
- * Prefix operator `t` applied to `operand`. A negative literal folds, so -9223372036854775808
- * is an integer; negating that one overflows, so it stays an operation (SQLite gives the REAL
- * 9.2233720368547758e+18). A folded minus still counts as the level SQLite's unfolded
- * TK_UMINUS would add.
- */
-function prefix(t: Token, operand: Expr): Expr {
-  if (t.text == "-" && operand.kind == E_REAL) {
-    operand.rval = -operand.rval;
-    return raised(operand);
-  }
-  if (
-    t.text == "-" &&
-    operand.kind == E_INT &&
-    operand.text == "" &&
-    operand.ival != -9223372036854775807 - 1
-  ) {
-    operand.ival = -operand.ival;
-    return raised(operand);
-  }
-  if (t.text == "-" && operand.kind == E_INT && operand.text == "9223372036854775808") {
-    operand.ival = -9223372036854775807 - 1;
-    operand.text = "";
-    return raised(operand);
-  }
-  const u = new Expr(E_UNARY, t.start);
-  u.op = t.text;
-  u.a = operand;
-  return sized(u);
-}
-
-/** SQLite's SQLITE_MAX_VARIABLE_NUMBER: the highest parameter index. */
-const MAX_VARIABLE: i64 = 32766;
-
-/** SQLite's SQLITE_MAX_EXPR_DEPTH: the highest expression tree it accepts. */
-const MAX_HEIGHT: i64 = 1000;
-
-/** Sets `e.height` to one more than its highest operand, as SQLite's exprSetHeight. */
-function sized(e: Expr): Expr {
-  let h: i64 = 0;
-  if (e.a != null) {
-    h = e.a!.height;
-  }
-  if (e.b != null && e.b!.height > h) {
-    h = e.b!.height;
-  }
-  if (e.c != null && e.c!.height > h) {
-    h = e.c!.height;
-  }
-  for (const x of e.args) {
-    if (x.height > h) {
-      h = x.height;
-    }
-  }
-  if (e.filter != null && e.filter!.height > h) {
-    h = e.filter!.height;
-  }
-  if (e.select != null && e.select!.height > h) {
-    h = e.select!.height;
-  }
-  e.height = h + 1;
-  return checked(e);
-}
-
-/** `e` one level higher (a folded operator). */
-function raised(e: Expr): Expr {
-  e.height++;
-  return checked(e);
-}
-
-/** Throws SQLite's error for a tree higher than it accepts (sqlite3ExprCheckHeight). */
-function checked(e: Expr): Expr {
-  if (e.height > MAX_HEIGHT) {
-    throw new SqlError(`Expression tree is too large (maximum depth ${MAX_HEIGHT})`, e.at);
-  }
-  return e;
-}
-
-function isExpr(a: Expr, b: Expr, not: bool, at: usize): Expr {
-  const e = new Expr(E_IS, at);
-  e.a = a;
-  e.b = b;
-  e.not = not;
-  return sized(e);
-}
-
-function isNull(a: Expr, not: bool, at: usize): Expr {
-  const e = new Expr(E_ISNULL, at);
-  e.a = a;
-  e.not = not;
-  return sized(e);
-}
-
-/**
- * An integer literal: decimal or 0x hex; a decimal one too large for i64 is a REAL, except
- * 9223372036854775808, which a unary minus may still turn into the smallest i64 (kept in
- * `text` until then).
- */
-function integerLiteral(text: string, at: usize): Expr {
-  if (text.length > 2 && (text.startsWith("0x") || text.startsWith("0X"))) {
-    // Hex literals are 64-bit two's complement; more than 16 digits (leading zeros aside) is
-    // an error in SQLite.
-    let z: i64 = 2;
-    while (z < (text.length as i64) - 1 && text.charCodeAt(z) == 48) {
-      z++;
-    }
-    const digits = text.slice(z);
-    if (digits.length > 16) {
-      throw new SqlError(`hex literal too big: ${text}`, at);
-    }
-    let v: u64 = 0;
-    for (let i: usize = 0; i < digits.length; i++) {
-      const c = digits.charCodeAt(i as i64);
-      const d = c <= 57 ? c - 48 : (c | 32) - 87;
-      v = (v << 4) | (d as u64);
-    }
-    const e = new Expr(E_INT, at);
-    e.ival = v as i64;
-    return e;
-  }
-  // Exact: decimal digits accumulate in a u64 (a float would round past 2^53).
-  const e = new Expr(E_INT, at);
-  let v: u64 = 0;
-  let over = false;
-  for (let i: usize = 0; i < text.length; i++) {
-    const d = (text.charCodeAt(i as i64) - 48) as u64;
-    if (v > (18446744073709551615 - d) / 10) {
-      over = true;
-      break;
-    }
-    v = v * 10 + d;
-  }
-  if (!over && v <= 9223372036854775807) {
-    e.ival = v as i64;
-    return e;
-  }
-  if (!over && v == 9223372036854775808) {
-    e.text = text;
-    e.ival = 0;
-    return e;
-  }
-  const r = new Expr(E_REAL, at);
-  r.rval = parseFloat(text);
-  return r;
 }
