@@ -3,7 +3,8 @@
 // 416, "Recursion limit"), views nest 999 deep
 // and not 1000 ("VIEWs and/or subqueries nested too deep"), a statement references a table at
 // most 65534 times (CTEs expanded; once in a query compiled again), an endless recursive CTE
-// ends at an outer LIMIT, and a result has at most 2,000 columns, ORDER BY and GROUP BY terms.
+// ends at an outer LIMIT, and a result has at most 2,000 columns (`*` counted as the columns it
+// stands for, a VALUES row too), ORDER BY terms (a compound's too) and GROUP BY terms.
 // The expected output is the sqlite3 shell's for the same statements.
 import { open } from "velt:sqlite";
 import { openDatabase, Database } from "velt:sqlite/engine";
@@ -51,6 +52,10 @@ function main() {
   for (let i = 1; i < 1000; i++) {
     ddl += `CREATE VIEW v${i} AS SELECT x FROM v${i - 1};`;
   }
+  // Tables of 1,000, 1,000 and 1,001 columns, for `*` at the result's 2,000 columns.
+  const cols = (n: i64) => Array.from({ length: n }, (_, i) => `c${i + 1}`).join(", ");
+  ddl += `CREATE TABLE w1 (${cols(1000)}); CREATE TABLE w2 (${cols(1000)});`;
+  ddl += `CREATE TABLE w3 (${cols(1001)});`;
   c.exec(ddl);
   c.close();
   const db = openDatabase(path);
@@ -85,5 +90,12 @@ function main() {
   show(db, "2001 ORDER BY terms", `SELECT id FROM t ORDER BY ${ids(2001)}`);
   show(db, "2000 GROUP BY terms", `SELECT id FROM t GROUP BY ${ids(2000)}`);
   show(db, "2001 GROUP BY terms", `SELECT id FROM t GROUP BY ${ids(2001)}`);
+  const compound = (n: i64) => `SELECT id FROM t UNION SELECT 3 ORDER BY ${ones(n)}`;
+  show(db, "2000 ORDER BY terms of a compound", compound(2000));
+  show(db, "2001 ORDER BY terms of a compound", compound(2001));
+  show(db, "a VALUES row of 2000", `SELECT count(*) FROM (VALUES (${ones(2000)}))`);
+  show(db, "a VALUES row of 2001", `SELECT count(*) FROM (VALUES (${ones(2001)}))`);
+  show(db, "* over 1000 + 1000 columns", "SELECT count(*) FROM (SELECT * FROM w1, w2)");
+  show(db, "* over 1000 + 1001 columns", "SELECT count(*) FROM (SELECT * FROM w1, w3)");
   removeSync(path);
 }

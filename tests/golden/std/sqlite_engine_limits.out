@@ -11,3 +11,9 @@ endless recursion under LIMIT: 1 2 3
 2001 ORDER BY terms: error: too many terms in ORDER BY clause
 2000 GROUP BY terms: 1 2
 2001 GROUP BY terms: error: too many terms in GROUP BY clause
+2000 ORDER BY terms of a compound: 1 2 3
+2001 ORDER BY terms of a compound: error: too many terms in ORDER BY clause
+a VALUES row of 2000: 1
+a VALUES row of 2001: error: too many columns in result set
+* over 1000 + 1000 columns: 0
+* over 1000 + 1001 columns: error: too many columns in result set
