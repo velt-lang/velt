@@ -8,3 +8,4 @@ Closes #
 - [ ] `scripts/check.sh` / `pwsh scripts/check.ps1` (the checks the changes need), or the whole gate
 - [ ] new or updated tests (every bug fix gets a regression test)
 - [ ] docs updated for user-visible changes
+- [ ] docs-sync issue filed on velt-lang/velt-lang.github.io for user-visible changes (link it here)

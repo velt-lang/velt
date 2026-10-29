@@ -323,7 +323,9 @@ go through this list:
    (`node --experimental-strip-types <file>.ts`, a copy of the `.vlt` file) and prints the same
    output; where Velt deliberately differs, the golden or the docs say why.
 2. **Docs**: user-visible changes are in the docs (the reference, `docs/`, the README), with
-   compiling `ts` examples; otherwise there is no user-visible change.
+   compiling `ts` examples, and have a docs-sync issue on the website repo, linked from the pull
+   request ([The website's docs](#the-websites-docs)); otherwise there is no user-visible
+   change.
 3. **Tests**: each bug fix has a regression test that fails without the fix.
 4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `velt.json`,
    command-line arguments, files, the network); `expect("ICE: …")` only for invariants.
@@ -338,6 +340,41 @@ and the gate you ran. Keep it out of the description: the description becomes th
 and says what the change does and how it was tested, not the review process. A missing self-check
 comment is a required change in review.
 
+## The website's docs
+
+The docs on [veltlang.com](https://veltlang.com) live in their own repository,
+[`velt-lang/velt-lang.github.io`](https://github.com/velt-lang/velt-lang.github.io), and describe
+the latest release. Its docs agent writes them from an issue queue there; this repository feeds
+the queue and does not open pull requests on the website. `docs/` here stays the compiler team's
+reference and the website's first draft, so a user-visible change still updates it in the same
+pull request.
+
+A change is user-visible when it adds or changes public API or behavior: syntax or semantics, a
+standard-library module or function, a diagnostic, a `velt` command or flag, `velt.json`, or what
+a program prints or how fast it runs where the docs make a claim. Feed the queue at two moments:
+
+- **Before merging such a pull request, file a docs-sync issue** on the website repository,
+  titled `velt: <what changed>`, and link it from the pull request. A user-visible pull request
+  isn't ready for the merge queue until its issue exists:
+
+  ```sh
+  gh issue create --repo velt-lang/velt-lang.github.io --label docs-sync \
+    --title "velt: <what changed>" \
+    --body "Source: velt-lang/velt#<pr>. <What users see, with a short example, and the pages it affects.> Not yet released."
+  ```
+
+  (The website's "Docs sync" issue form asks for the same: the source pull request, what users
+  see, the pages affected.)
+- **When you release**, comment the tag on every open docs-sync issue whose change the release
+  ships (step 3 of [Releases](#releases)):
+
+  ```sh
+  gh issue comment <n> --repo velt-lang/velt-lang.github.io --body "Released in velt vX.Y.Z."
+  ```
+
+  An issue without a release comment means merged but not released: the docs agent does not
+  document it yet. The comment is its signal that the change is live.
+
 ## Releases
 
 A release is a tag `v<version>` on `main`, where `<version>` is the workspace version in
@@ -346,6 +383,10 @@ A release is a tag `v<version>` on `main`, where `<version>` is the workspace ve
 1. Open a pull request that sets `version` under `[workspace.package]` in `Cargo.toml` (and
    updates `Cargo.lock` with `cargo build`), and merge it.
 2. Tag the merged commit and push the tag: `git tag v0.2.0 origin/main && git push origin v0.2.0`.
+3. Once the release is published, comment `Released in velt v0.2.0.` on every open docs-sync
+   issue on [`velt-lang/velt-lang.github.io`](#the-websites-docs) whose change it ships
+   (`gh issue list --repo velt-lang/velt-lang.github.io --label docs-sync --state open`, then
+   check each source pull request against the tag with `git merge-base --is-ancestor`).
 
 The tag starts the `release` workflow (`.github/workflows/release.yml`). It builds the toolchain
 for Linux x86_64 and arm64 (in Debian 11, so it runs on glibc 2.31 and newer), macOS arm64 and
