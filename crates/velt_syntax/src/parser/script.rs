@@ -210,8 +210,6 @@ impl Parser<'_> {
         }
     }
 
-    /// Does the source text in `span` contain `word` as a whole identifier, not after a `.`
-    /// (`x.word` is a member, not a reference)?
     /// Does one of `stmts` await at their own level (`await`, `for await`, `await using`), not
     /// only in a function they make (an arrow, a function expression, a method, a nested
     /// declaration), which may run later (#1859)?
@@ -241,6 +239,8 @@ impl Parser<'_> {
         })
     }
 
+    /// Does the source text in `span` contain `word` as a whole identifier, not after a `.`
+    /// (`x.word` is a member, not a reference)?
     fn mentions(&self, span: Span, word: &str) -> bool {
         self.mention_offsets(span, word).next().is_some()
     }
