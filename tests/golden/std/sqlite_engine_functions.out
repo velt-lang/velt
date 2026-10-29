@@ -62,5 +62,8 @@ printf('%.*c', 1500000000, 'x') = error: string or blob too big
 printf('%.999999995d', 1) = error: string or blob too big
 printf('%,.900000000d', 1) = error: string or blob too big
 printf('%2147483647.1f', 1.0) = error: string or blob too big
+min() = error: wrong number of arguments to function min()
+like(NULL, 1, 12) = error: ESCAPE expression must be a single character
+like(1, NULL, 12) = error: ESCAPE expression must be a single character
 printf('%.2147483647f', 1.0): velt text:100000002, C text:100000002
-65 calls, all the same
+68 calls, all the same

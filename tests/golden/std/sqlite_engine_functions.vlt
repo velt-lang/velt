@@ -168,6 +168,10 @@ const CALLS: Call[] = [
   call("printf", ["'%.999999995d'", "1"]),
   call("printf", ["'%,.900000000d'", "1"]),
   call("printf", ["'%2147483647.1f'", "1.0"]),
+  call("min", []),
+  // like() checks the ESCAPE before a NULL operand, as likeFunc does.
+  call("like", ["NULL", "1", "12"]),
+  call("like", ["1", "NULL", "12"]),
 ];
 
 // Calls whose results are compared by type and size only: they are too long to print.
