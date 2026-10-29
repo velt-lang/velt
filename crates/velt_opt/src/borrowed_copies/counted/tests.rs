@@ -215,7 +215,12 @@ fn program(between: Between) -> (Program, FuncId) {
                 Between::NoReturnWithData => v,
                 _ => this,
             };
-            let after = call(&mut fb, report, Callee::Func(k.stuck), vec![copy_local(arg)]);
+            let after = call(
+                &mut fb,
+                report,
+                Callee::Func(k.stuck),
+                vec![copy_local(arg)],
+            );
             fb.term(after, Terminator::Unreachable);
             b = ok;
         }
