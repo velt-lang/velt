@@ -237,8 +237,10 @@ needs the prelude's `Frozen` bound to read a `shared<V>` as a `V`: `class Store<
 Frozen>`. Like `AtomicValue`, the compiler knows which types are `Frozen` (declaring it is an
 error, and a type parameter needs the bound itself), and checks the bound where the generic is
 used: a type holding a `Mutex`, a function or interface value, a weak reference or a promise is
-not. A callback still gets the `shared<V>` itself (`read(f: (v: shared<V>) => R)`): a function value might change what it is
-given.
+not. A callback still gets the `shared<V>` itself (`read(f: (v: shared<V>) => R)`): a function
+value might change what it is given. What `V`'s methods and getters may do on the value inside
+is checked as for a written type ([shared values](../reference/async.md)): one that would change
+it, also by handing `this` to a function that changes it, is an error.
 
 ```ts
 class Store<V extends Frozen> {

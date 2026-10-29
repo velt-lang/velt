@@ -552,7 +552,12 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   change it, also one that keeps its argument (an `async` function, a generator, a parameter
   it stores) or changes what it returns (`st.m.get(k)!.v = 1`), or to a function value, and
   calling a method of it that changes it (also one returning the value it changes, such as
-  `fill` or a method ending in `return this`): share a `Mutex` instead.
+  `fill` or a method ending in `return this`): share a `Mutex` instead. A method or getter that
+  hands `this` (or a part of it) to a function value changes it if that function does: a
+  closure the compiler sees (a module-level `const`, or a local only ever holding one) is
+  checked by its body, as a direct call is, so one that only calls an `Atomic`'s methods reads
+  it; any other function value (a parameter, a field) may change it. No call works on a copy
+  of the shared value: what would change it is an error.
 
   ```ts
   async function count(xs: shared<u8[]>, b: u8): Promise<i64> {

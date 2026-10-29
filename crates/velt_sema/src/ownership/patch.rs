@@ -74,6 +74,14 @@ pub(super) fn patch_calls(
                     let info = cx.fn_info(*d);
                     modified = info.modified_params;
                 }
+                // Through a bound (a getter slot or a method): what any implementation changes.
+                if let (true, Callee::ParamMethod { iface, slot, .. }) = (frozen, &*callee) {
+                    let (iface, slot) = (*iface, *slot as usize);
+                    modified = (cx.impls.iter())
+                        .filter(|m| m.iface == iface)
+                        .filter_map(|m| m.methods.get(slot))
+                        .fold(0, |bits, &g| bits | cx.fn_info(g).modified_params);
+                }
                 (modes, args, unknown)
             }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {

@@ -451,16 +451,6 @@ impl FnLower<'_, '_> {
                     self.finish_borrows(Vec::new());
                 }
                 match mode {
-                    // A frozen value to a callee whose code is unknown (a function value): it
-                    // may change what it is given, so it gets a copy of its own (frozen.rs).
-                    None if !self.frozen_args
-                        && self.frozen_root(a)
-                        && !super::place::number(t) =>
-                    {
-                        let ty = self.sub(a.ty);
-                        let c = self.clone_value(v, ty);
-                        self.own_value(c, ty)
-                    }
                     // A value the callee modifies stays where it is; a frozen one changes for
                     // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,

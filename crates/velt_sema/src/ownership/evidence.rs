@@ -13,7 +13,9 @@
 //!   way, e.g. `p` or `p.inner`) marks the root as possibly written, so the root is never
 //!   assumed read-only (`LocalDef::mutable`), but it does not make the root a modified param for
 //!   callers: the call site that supplies the function value accounts for what it modifies
-//!   (`super::patch`, callback rule). Array elements live in the array's heap buffer, not in the
+//!   (`super::patch`, callback rule). A function value whose closure the body knows (a local
+//!   only ever holding it, or a module-level `const`) is that supplier: what the closure
+//!   changes counts as a direct call's would. Array elements live in the array's heap buffer, not in the
 //!   root. A closure capturing a variable weakly passes that on to the enclosing function.
 //!
 //! Evidence is flow-insensitive: a mutation on any path (one branch, a loop body, a closure)
@@ -192,22 +194,56 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// Arguments of a call through a function value `callee` (see the module docs): one held
-    /// in a closure local changes what that closure may change, any other anything it is given.
+    /// Arguments of a call through a function value `callee` (see the module docs): one whose
+    /// closure this body knows (a local only ever holding it, or a module-level `const`) changes
+    /// what that closure changes, as a direct call would (#1836: `poke(this)` changes `this`);
+    /// any other may change anything it is given (weakly).
     fn indirect_args(&mut self, callee: &Expr, args: &[Expr]) {
-        let bits = match &callee.kind {
-            E::Local(l, _) => (self.closures.get(l)).map(|&c| closure_changes(self.cx, c)),
+        let known = match &callee.kind {
+            E::Local(l, _) => self.closures.get(l).copied(),
+            E::Global(g) if self.cx.frozen_reads => global_closure(self.cx, *g),
             _ => None,
         };
+        let bits = known.map(|c| closure_changes(self.cx, c));
         for (i, a) in args.iter().enumerate() {
             let known_unchanged = bits.is_some_and(|b| i >= 64 || b & (1 << i) == 0);
-            if known_unchanged || self.cx.is_copy(a.ty) || !in_root_memory(a) {
+            if known_unchanged || self.cx.is_copy(a.ty) {
+                continue;
+            }
+            if bits.is_some() {
+                self.ev.deep.extend(place_root(a));
+                self.ev.modified.extend(place_root(a));
+                continue;
+            }
+            if !in_root_memory(a) {
                 continue;
             }
             if let Some(l) = place_root(a) {
                 self.ev.weak.insert(l);
             }
         }
+    }
+}
+
+/// The closure a module-level `const` is initialized with (`const poke = (o) => …`).
+fn global_closure(cx: &Ctx, g: crate::hir::DefId) -> Option<crate::hir::DefId> {
+    let crate::defs::DefInfo::Global(info) = &cx.info[g.0 as usize] else {
+        return None;
+    };
+    if info.mutable {
+        return None;
+    }
+    let init = match &cx.defs[g.0 as usize] {
+        Some(Def::Global(gd)) => &gd.init,
+        _ => info.init.as_ref()?,
+    };
+    let mut e = init;
+    while let E::Upcast(x) | E::Cast(x) = &e.kind {
+        e = x;
+    }
+    match e.kind {
+        E::Closure(c) => Some(c),
+        _ => None,
     }
 }
 

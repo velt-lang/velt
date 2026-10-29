@@ -1,0 +1,32 @@
+// A getter or method that hands `this` to a function value whose body changes it (a module-level
+// closure) changes `this`, as a direct call would (#1836): calling it on a shared object is an
+// error, directly and through a bound's field, where it would change the shared value.
+
+const poke = (o: B) => {
+  o.k++;
+};
+
+interface HasK {
+  readonly kk: u64;
+}
+
+class B implements HasK {
+  k: u64 = 0;
+  get kk(): u64 {
+    poke(this);
+    return this.k;
+  }
+  viaClosure(): u64 {
+    poke(this);
+    return this.k;
+  }
+}
+
+function viaK<V extends Frozen & HasK>(s: shared<V>): u64 {
+  return s.kk;
+}
+
+function main() {
+  const b = shared(new B());
+  console.log(viaK<B>(b), b.kk, b.viaClosure());
+}
