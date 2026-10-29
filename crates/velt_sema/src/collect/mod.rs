@@ -27,6 +27,7 @@ mod comparable;
 mod constants;
 mod declare;
 pub(crate) mod exports;
+pub(crate) mod ext_fn_errors;
 pub(crate) mod ext_impls;
 mod extend_shadow;
 pub(crate) mod extended_layouts;

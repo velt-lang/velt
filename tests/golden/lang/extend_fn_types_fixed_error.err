@@ -1,0 +1,1 @@
+a function type in an `extend` target can't throw a fixed type (`Error`)

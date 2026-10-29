@@ -761,6 +761,27 @@ builtins included, at zero cost (the calls are direct):
   `extend Shape { area(): f64 { switch (this.kind) … } }`).
 - **Generic and blanket** extensions: `extend<T> Array<T> { … }`,
   `extend<T extends Named> T { … }` (every implementor gets the method).
+- **Function types**: `extend<R> (() => R) { … }` applies to every function without
+  parameters (closures, named functions, values of a function type), `extend<A, R> ((a: A) =>
+  R)` to those with one, and `extend<A, R> ((...xs: A[]) => R)` to those with a rest parameter
+  only. A function type written without `throws` in a target fits a function that throws
+  anything: it has a type parameter of its own for that, so `this` in the block is the
+  receiver with its error type, and calling `this()` throws what the receiver throws. To name
+  it, write the parameter (`extend<R, E> (() => R throws E)`); a fixed error type (`() => R
+  throws Error`) is an error. A function type in a type alias the target names (`extend<R>
+  Thunk<R>`) or inside another type (`extend<R> Array<() => R>`) is matched the same way. A
+  generic function's value is not of a function type, and gets only blanket blocks.
+
+  ```ts
+  extend<R> (() => R) {
+    twice(): R[] {
+      return [this(), this()];
+    }
+  }
+  let n = 0;
+  const next = () => ++n;
+  console.log(next.twice()); // [ 1, 2 ]
+  ```
 - **Static methods**: `extend Point { static origin(): Point { … } }` is called as
   `Point.origin()`. A static method of a primitive type (`i8` … `u64`, `isize`, `usize`, `f32`,
   `f64`, `bool`, `string`) is called through the type's name, `f64.half(3)`, unless the program

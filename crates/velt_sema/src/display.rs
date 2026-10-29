@@ -13,7 +13,7 @@ impl Ctx<'_> {
 
     /// Is `t` an error-set variable, or a union of them (what two sites' variables join to)?
     /// Shown as written: nothing (`throws::vars`).
-    fn only_err_vars(&self, t: TyId) -> bool {
+    pub(crate) fn only_err_vars(&self, t: TyId) -> bool {
         if self.is_err_var(t) {
             return true;
         }
