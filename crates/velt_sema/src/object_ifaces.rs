@@ -28,7 +28,7 @@ use crate::any::Dynamic;
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::collect::getters::{
     absent_getter, field_getter, field_getter_some, field_setter_taking, fixed_shape_setter,
-    some_setter, unused_setter,
+    some_setter,
 };
 use crate::ctx::Ctx;
 use crate::defs::{IfaceMethod, ParamSig};
@@ -78,8 +78,6 @@ enum Store {
     /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted
     /// through `any`.
     Convert(usize, TyId, TyId),
-    /// Never written: the interface is not written through (field `.0`, of type `.1`).
-    Unwritten(String, TyId),
 }
 
 impl Ctx<'_> {
@@ -252,14 +250,8 @@ impl Ctx<'_> {
                     setters.push(Store::Absent(f.name.clone(), want));
                     Fill::Absent(f.name.clone(), want)
                 }
-                // Written back through `any` only from a type that goes in as it is; an optional
-                // one (`ViewFn | null`) is never written then.
                 Some(i) if dynamic && self.converts_via_any(fields[i].1, want) => {
-                    match self.converts_via_any(want, fields[i].1) {
-                        true => setters.push(Store::Convert(i, fields[i].1, want)),
-                        false if self.iface_written(iface) => return None,
-                        false => setters.push(Store::Unwritten(f.name.clone(), want)),
-                    }
+                    setters.push(Store::Convert(i, fields[i].1, want));
                     Fill::Convert(i, fields[i].1, want)
                 }
                 _ => return None,
@@ -355,11 +347,6 @@ impl Ctx<'_> {
                     def: self.convert_setter(d, self_ty, index, ty, want),
                     d,
                     name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
-                },
-                Store::Unwritten(name, ty) => SetterSrc::Method {
-                    def: unused_setter(self, d, self_ty, &name, ty),
-                    d,
-                    name,
                 },
                 Store::Some(index, want) => SetterSrc::Method {
                     def: some_setter(self, d, self_ty, index, want),

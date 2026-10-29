@@ -26,6 +26,11 @@ c.update();
 init.renderFn = () => "rendered";
 const r = c.renderFn;
 console.log(r === null ? "none" : r());
+c.renderFn = () => "set through the interface";
+const f = init.renderFn;
+console.log(f());
+c.renderFn = null;
+console.log(init.renderFn === null);
 
 const state = {
   count: 3 as any,

@@ -44,14 +44,14 @@ impl Ctx<'_> {
     }
 
     /// Does a field of type `from` convert to and from an interface field of type `to` through
-    /// `any` (module docs)?
+    /// `any` (module docs)? Each is a type that goes into an `any` as it is, or an option of one.
     pub(crate) fn converts_via_any(&self, from: TyId, to: TyId) -> bool {
         let plain = |t: TyId| self.dynamic(t).is_some() || self.boxes_as_is(t);
         let core = |t: TyId| match self.ty.kind(t) {
             TyKind::Option(p, _) => *p,
             _ => t,
         };
-        self.any.is_some() && plain(from) && plain(core(to))
+        self.any.is_some() && plain(core(from)) && plain(core(to))
     }
 
     /// The getter of an interface field of type `want` reading field `index` (of type `ty`)
@@ -73,20 +73,16 @@ impl Ctx<'_> {
                 ty: self_ty,
                 span,
             };
-            let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
-            let mut read = hir::Expr {
+            let read = hir::Expr {
                 kind: H::Field {
                     base: Box::new(this),
                     index: index as u32,
-                    mode,
+                    mode: UseMode::Borrow,
                 },
                 ty,
                 span,
             };
-            if !copy {
-                read = intrinsic(Intrinsic::Share, read, ty, span);
-            }
-            via_any(read, via, span)
+            via_any(read, copy, via, span)
         })
     }
 
@@ -101,18 +97,24 @@ impl Ctx<'_> {
         want: TyId,
     ) -> DefId {
         let via = self.via_any_parts(want, ty);
+        let copy = self.is_copy(want);
         value_setter(self, d, self_ty, index, want, |v, span| {
-            via_any(v, via, span)
+            via_any(set_borrow(v), copy, via, span)
         })
     }
 
     /// How a value of type `from` becomes a `to` through `any` ([`via_any`]).
     fn via_any_parts(&mut self, from: TyId, to: TyId) -> ViaAny {
         let defs = self.any.expect("ICE: any");
+        let option = match *self.ty.kind(from) {
+            TyKind::Option(p, n) => Some((p, self.is_copy(p), self.dynamic_nothing_ty(n))),
+            _ => None,
+        };
         ViaAny {
             any: self.ty.intern(TyKind::Dyn(defs.any, vec![])),
             imp: self.any_impl().expect("ICE: any"),
             boxed: self.dynamic(from).is_some(),
+            option,
             to,
         }
     }
@@ -233,28 +235,106 @@ impl Ctx<'_> {
 }
 
 /// The parts of a conversion through `any` (`Ctx::via_any_parts`): the type `any`, its
-/// implementation, whether the value is dynamic already, the target type.
+/// implementation, whether the value is dynamic already, for an option its payload type (and
+/// whether it is copied) and the type of the dynamic nothing, the target type.
 #[derive(Clone, Copy)]
 struct ViaAny {
     any: TyId,
     imp: u32,
     boxed: bool,
+    option: Option<(TyId, bool, TyId)>,
     to: TyId,
 }
 
-/// `e` (owned) converted to `via.to` through `any`: boxed (unless it is dynamic), then checked
-/// as a `to`.
-fn via_any(e: hir::Expr, via: ViaAny, span: velt_common::Span) -> hir::Expr {
-    let boxed = match via.boxed {
-        true => e,
-        false => hir::Expr {
-            kind: H::ToDyn {
-                expr: Box::new(e),
-                impl_index: via.imp,
-            },
-            ty: via.any,
-            span,
+/// The place `e` read as a borrow.
+fn set_borrow(mut e: hir::Expr) -> hir::Expr {
+    match &mut e.kind {
+        H::Local(_, m) | H::Field { mode: m, .. } => *m = UseMode::Borrow,
+        _ => {}
+    }
+    e
+}
+
+/// The value at the borrowed place `e` (of a type copied when `copy`) converted to `via.to`
+/// through `any`: boxed (unless it is dynamic; an option's payload, or the dynamic nothing),
+/// then checked as a `to`.
+fn via_any(e: hir::Expr, copy: bool, via: ViaAny, span: velt_common::Span) -> hir::Expr {
+    let to_dyn = |e: hir::Expr| hir::Expr {
+        kind: H::ToDyn {
+            expr: Box::new(e),
+            impl_index: via.imp,
         },
+        ty: via.any,
+        span,
+    };
+    let value = |e: hir::Expr, copy: bool| match copy {
+        true => match e.kind {
+            H::Local(l, _) => hir::Expr {
+                kind: H::Local(l, UseMode::Copy),
+                ..e
+            },
+            H::Field { base, index, .. } => hir::Expr {
+                kind: H::Field {
+                    base,
+                    index,
+                    mode: UseMode::Copy,
+                },
+                ..e
+            },
+            kind => hir::Expr { kind, ..e },
+        },
+        false => {
+            let ty = e.ty;
+            intrinsic(Intrinsic::Share, e, ty, span)
+        }
+    };
+    let boxed = match (via.boxed, via.option) {
+        (true, _) => value(e, copy),
+        (false, None) => to_dyn(value(e, copy)),
+        (false, Some((payload, copy, nothing))) => {
+            let some = hir::Expr {
+                kind: H::UnwrapSome(
+                    Box::new(e.clone()),
+                    if copy { UseMode::Copy } else { UseMode::Borrow },
+                ),
+                ty: payload,
+                span,
+            };
+            let some = match copy {
+                true => some,
+                false => intrinsic(Intrinsic::Share, some, payload, span),
+            };
+            let none = hir::Expr {
+                kind: H::Lit(hir::Lit::Null),
+                ty: nothing,
+                span,
+            };
+            let pat = |kind| hir::Pat {
+                kind,
+                ty: e.ty,
+                span,
+            };
+            let arms = vec![
+                hir::Arm {
+                    pat: pat(hir::PatKind::None),
+                    guard: None,
+                    body: to_dyn(none),
+                },
+                hir::Arm {
+                    pat: pat(hir::PatKind::Wildcard),
+                    guard: None,
+                    body: to_dyn(some),
+                },
+            ];
+            hir::Expr {
+                kind: H::Match {
+                    scrutinee: Box::new(e),
+                    arms,
+                },
+                ty: via.any,
+                span,
+            }
+        }
     };
     if boxed.ty == via.to {
         return boxed;
