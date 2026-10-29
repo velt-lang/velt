@@ -20,7 +20,8 @@ const init = {
 };
 const c = init as unknown as Ctx;
 console.log(c.props.a, c.renderFn === null);
-c.emit();
+const emit = c.emit;
+emit();
 c.update();
 init.renderFn = () => "rendered";
 const r = c.renderFn;
