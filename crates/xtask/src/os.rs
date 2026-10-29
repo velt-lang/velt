@@ -27,8 +27,15 @@ pub(crate) const PORTABLE_CRATES: &[&str] = &[
 ];
 
 /// Paths outside `crates/` whose behavior can differ by OS: the standard library's bindings,
-/// end-to-end programs and their expected output, native packages.
-const OS_SPECIFIC_PATHS: &[&str] = &["std/", "tests/golden/", "examples/", "packages/"];
+/// end-to-end programs and their expected output, the standard library's `velt test` suites,
+/// native packages.
+const OS_SPECIFIC_PATHS: &[&str] = &[
+    "std/",
+    "tests/golden/",
+    "tests/std/",
+    "examples/",
+    "packages/",
+];
 
 /// Why Windows and macOS must be checked too, or `None` when Linux is enough. `full` is
 /// whether the paths select everything (build, CI and script changes).
