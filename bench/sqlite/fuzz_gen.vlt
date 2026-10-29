@@ -1,0 +1,456 @@
+// Random schemas, data and SELECTs for bench/sqlite/fuzz.vlt. Queries are deterministic in both
+// engines: an ORDER BY lists every result column after its own terms, LIMIT comes only with such
+// an ORDER BY, and the aggregates whose result depends on the order rows are visited
+// (group_concat, sums of floats) are left out.
+
+/** A seeded pseudo-random generator (xorshift64*). */
+export class Gen {
+  s: u64;
+
+  constructor(seed: i64) {
+    this.s = (seed as u64) * 2685821657736338717 + 1442695040888963407;
+    if (this.s == 0) {
+      this.s = 1;
+    }
+  }
+
+  next(): u64 {
+    let x = this.s;
+    x = x ^ (x >> 12);
+    x = x ^ (x << 25);
+    x = x ^ (x >> 27);
+    this.s = x;
+    return x * 2685821657736338717;
+  }
+
+  /** An integer in [0, n). */
+  int(n: i64): i64 {
+    return ((this.next() >> 33) % (n as u64)) as i64;
+  }
+
+  pick(xs: string[]): string {
+    return xs[this.int(xs.length as i64) as usize];
+  }
+
+  chance(percent: i64): bool {
+    return this.int(100) < percent;
+  }
+}
+
+const LITERALS: string[] = [
+  "NULL",
+  "0",
+  "1",
+  "2",
+  "-1",
+  "3",
+  "7",
+  "10",
+  "-3",
+  "100",
+  "9223372036854775807",
+  "-9223372036854775808",
+  "4503599627370497",
+  "0.5",
+  "-2.25",
+  "1e10",
+  "3.0",
+  "0.1",
+  "2.5",
+  "'a'",
+  "'B'",
+  "'abc'",
+  "'ABC'",
+  "'12'",
+  "' 12'",
+  "'1e3'",
+  "'x%'",
+  "''",
+  "'3.0'",
+  "'b_c'",
+  "x'00'",
+  "x'4142'",
+  "x''",
+];
+
+/** The columns of each table, by name. */
+const TABLES: string[] = ["t1", "t2", "t3"];
+const COLUMNS: string[][] = [
+  ["id", "a", "b", "c", "d", "e", "f"],
+  ["id", "x", "y", "z", "w"],
+  ["k", "v"],
+];
+
+/** The statements that create and fill the tables. */
+export function generateSchema(g: Gen): string[] {
+  const out: string[] = [
+    "CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b TEXT, c REAL, d, e TEXT COLLATE NOCASE, f NUMERIC)",
+    "CREATE TABLE t2 (id INTEGER PRIMARY KEY, x INTEGER, y TEXT, z BLOB, w REAL)",
+    "CREATE TABLE t3 (k TEXT PRIMARY KEY, v INTEGER)",
+    "CREATE INDEX t1_a ON t1 (a)",
+    "CREATE INDEX t1_ba ON t1 (b, a)",
+    "CREATE INDEX t1_e ON t1 (e)",
+    "CREATE INDEX t1_c ON t1 (c DESC)",
+    "CREATE INDEX t2_x ON t2 (x)",
+    "CREATE INDEX t2_y ON t2 (y COLLATE NOCASE)",
+  ];
+  for (let i: i64 = 1; i <= 60; i++) {
+    out.push(
+      `INSERT INTO t1 VALUES (${i * 3}, ${value(g)}, ${value(g)}, ${value(g)}, ${value(g)}, ${value(g)}, ${value(g)})`,
+    );
+  }
+  for (let i: i64 = 1; i <= 40; i++) {
+    out.push(`INSERT INTO t2 VALUES (${i}, ${value(g)}, ${value(g)}, ${value(g)}, ${value(g)})`);
+  }
+  for (let i: i64 = 1; i <= 20; i++) {
+    out.push(`INSERT OR IGNORE INTO t3 VALUES (${value(g)}, ${value(g)})`);
+  }
+  return out;
+}
+
+/** A literal; small integers more often, so that joins and equalities find rows. */
+function value(g: Gen): string {
+  if (g.chance(35)) {
+    return String(g.int(8) - 1);
+  }
+  return g.pick(LITERALS);
+}
+
+/** Columns in scope: qualified names. */
+class Scope {
+  cols: string[] = [];
+}
+
+function scopeOf(tables: string[], aliases: string[]): Scope {
+  const s = new Scope();
+  for (let i: usize = 0; i < tables.length; i++) {
+    const t = TABLES.indexOf(tables[i]);
+    for (const c of COLUMNS[t]) {
+      s.cols.push(`${aliases[i]}.${c}`);
+    }
+  }
+  return s;
+}
+
+const BINOPS: string[] = [
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "||",
+  "=",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  "AND",
+  "OR",
+  "&",
+  "|",
+  "<<",
+  ">>",
+  "IS",
+  "IS NOT",
+];
+const FUNCS1: string[] = [
+  "abs",
+  "length",
+  "lower",
+  "upper",
+  "typeof",
+  "hex",
+  "quote",
+  "trim",
+  "ltrim",
+  "rtrim",
+  "unicode",
+  "sign",
+  "round",
+  "octet_length",
+];
+const FUNCS2: string[] = [
+  "coalesce",
+  "ifnull",
+  "nullif",
+  "instr",
+  "max",
+  "min",
+  "round",
+  "substr",
+  "trim",
+  "concat",
+];
+const TYPES: string[] = ["INTEGER", "TEXT", "REAL", "NUMERIC", "BLOB", "INT", "VARCHAR(5)"];
+
+/** A random expression over the scope's columns. */
+export function expr(g: Gen, s: Scope, depth: i64): string {
+  if (depth <= 0 || g.chance(30)) {
+    return g.chance(60) && s.cols.length > 0 ? g.pick(s.cols) : value(g);
+  }
+  const k = g.int(14);
+  const d = depth - 1;
+  if (k < 4) {
+    return `(${expr(g, s, d)} ${g.pick(BINOPS)} ${expr(g, s, d)})`;
+  }
+  if (k == 4) {
+    return `${g.pick(FUNCS1)}(${expr(g, s, d)})`;
+  }
+  if (k == 5) {
+    return `${g.pick(FUNCS2)}(${expr(g, s, d)}, ${expr(g, s, d)})`;
+  }
+  if (k == 6) {
+    return `CAST(${expr(g, s, d)} AS ${g.pick(TYPES)})`;
+  }
+  if (k == 7) {
+    return `CASE ${expr(g, s, d)} WHEN ${expr(g, s, d)} THEN ${expr(g, s, d)} ELSE ${expr(g, s, d)} END`;
+  }
+  if (k == 8) {
+    return `(${expr(g, s, d)} ${g.chance(50) ? "NOT " : ""}BETWEEN ${expr(g, s, d)} AND ${expr(g, s, d)})`;
+  }
+  if (k == 9) {
+    return `(${expr(g, s, d)} ${g.chance(30) ? "NOT " : ""}IN (${expr(g, s, d)}, ${value(g)}, ${value(g)}))`;
+  }
+  if (k == 10) {
+    const pats = ["'a%'", "'%b%'", "'_'", "'A_C'", "'%'", "'1%'", "'x\\%' ESCAPE '\\'"];
+    const op = g.chance(70) ? "LIKE" : "GLOB";
+    const pat =
+      op == "GLOB" ? g.pick(["'a*'", "'*[0-9]*'", "'?'", "'[a-c]*'", "'*'"]) : g.pick(pats);
+    return `(${expr(g, s, d)} ${g.chance(30) ? "NOT " : ""}${op} ${pat})`;
+  }
+  if (k == 11) {
+    return `(${expr(g, s, d)} IS ${g.chance(50) ? "NOT " : ""}NULL)`;
+  }
+  if (k == 12) {
+    return `(${g.pick(["-", "+", "NOT ", "~"])}${expr(g, s, d)})`;
+  }
+  return `(${expr(g, s, d)} COLLATE ${g.pick(["NOCASE", "BINARY", "RTRIM"])})`;
+}
+
+/** A condition: comparisons of columns with values most of the time. */
+function cond(g: Gen, s: Scope): string {
+  if (g.chance(50)) {
+    const ops = ["=", "<", ">", "<=", ">=", "!=", "IS"];
+    return `${g.pick(s.cols)} ${g.pick(ops)} ${g.chance(70) ? value(g) : g.pick(s.cols)}`;
+  }
+  return expr(g, s, 2);
+}
+
+/**
+ * ORDER BY its own terms, then every result column, then each column's bytes and type: a
+ * total order (values equal under NOCASE or as 1 and 1.0 are told apart).
+ */
+function orderBy(g: Gen, s: Scope, cols: string[]): string {
+  const terms: string[] = [];
+  if (g.chance(50)) {
+    terms.push(`${g.pick(s.cols)}${g.chance(50) ? " DESC" : ""}`);
+  }
+  for (let i: usize = 1; i <= cols.length; i++) {
+    terms.push(`${i}${g.chance(30) ? " DESC" : ""}`);
+  }
+  for (const c of cols) {
+    terms.push(`${c} COLLATE BINARY`);
+    terms.push(`typeof(${c})`);
+  }
+  return ` ORDER BY ${terms.join(", ")}`;
+}
+
+/** A random SELECT. */
+export function generateQuery(g: Gen): string {
+  const kind = g.int(10);
+  if (kind <= 2) {
+    return simple(g);
+  }
+  if (kind <= 4) {
+    return join(g);
+  }
+  if (kind <= 6) {
+    return grouped(g);
+  }
+  if (kind == 7) {
+    return subqueries(g);
+  }
+  if (kind == 8) {
+    return g.chance(50) ? compound(g) : ordered(g);
+  }
+  if (g.chance(50)) {
+    return windowed(g);
+  }
+  return `SELECT DISTINCT ${g.pick(COLUMNS[0])}, ${g.pick(COLUMNS[0])} FROM t1 WHERE ${cond(g, scopeOf(["t1"], ["t1"]))}`;
+}
+
+// Window functions over a window with a random partition, order and frame.
+function windowed(g: Gen): string {
+  const t = g.chance(60) ? "t1" : "t2";
+  const s = scopeOf([t], [t]);
+  const ints = t == "t1" ? ["a", "id"] : ["x", "id"];
+  let w = "";
+  if (g.chance(50)) {
+    w += `PARTITION BY ${g.pick(s.cols)}`;
+  }
+  if (g.chance(80)) {
+    w += ` ORDER BY ${g.pick(s.cols)}${g.chance(40) ? " DESC" : ""}${g.chance(70) ? ", id" : ""}`;
+  }
+  if (g.chance(40)) {
+    const bounds = ["UNBOUNDED PRECEDING", "1 PRECEDING", "CURRENT ROW", "2 FOLLOWING"];
+    const ends = ["CURRENT ROW", "1 FOLLOWING", "UNBOUNDED FOLLOWING", "3 FOLLOWING"];
+    w += ` ${g.pick(["ROWS", "GROUPS"])} BETWEEN ${g.pick(bounds)} AND ${g.pick(ends)}`;
+    if (g.chance(30)) {
+      w += ` EXCLUDE ${g.pick(["CURRENT ROW", "GROUP", "TIES", "NO OTHERS"])}`;
+    }
+  }
+  const fns = [
+    "row_number()",
+    "rank()",
+    "dense_rank()",
+    "percent_rank()",
+    "cume_dist()",
+    `ntile(${g.int(4) + 1})`,
+    `lag(${g.pick(s.cols)})`,
+    `lead(${g.pick(s.cols)}, ${g.int(3)}, ${value(g)})`,
+    `first_value(${g.pick(s.cols)})`,
+    `last_value(${g.pick(s.cols)})`,
+    `nth_value(${g.pick(s.cols)}, ${g.int(3) + 1})`,
+    "count(*)",
+    `sum(${g.pick(ints)})`,
+    `total(${g.pick(ints)})`,
+    `min(${g.pick(s.cols)})`,
+    `max(${g.pick(s.cols)})`,
+    `group_concat(${g.pick(ints)}, '.')`,
+  ];
+  const cols = [g.pick(s.cols), `${g.pick(fns)} OVER (${w})`, `${g.pick(fns)} OVER win`];
+  let q = `SELECT ${cols.join(", ")} FROM ${t}`;
+  if (g.chance(50)) {
+    q += ` WHERE ${cond(g, s)}`;
+  }
+  q += ` WINDOW win AS (${w})`;
+  if (g.chance(30)) {
+    q += ` ORDER BY 2, 1, 3`;
+  }
+  return q;
+}
+
+function simple(g: Gen): string {
+  const t = g.pick(TABLES);
+  const s = scopeOf([t], [t]);
+  const n = g.int(3) + 1;
+  const cols: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    cols.push(expr(g, s, 3));
+  }
+  let q = `SELECT ${cols.join(", ")} FROM ${t}`;
+  if (g.chance(70)) {
+    q += ` WHERE ${cond(g, s)}`;
+    if (g.chance(40)) {
+      q += ` AND ${cond(g, s)}`;
+    }
+  }
+  if (g.chance(50)) {
+    q += orderBy(g, s, cols);
+    if (g.chance(40)) {
+      q += ` LIMIT ${g.int(5)}${g.chance(30) ? ` OFFSET ${g.int(3)}` : ""}`;
+    }
+  }
+  return q;
+}
+
+function join(g: Gen): string {
+  const s = scopeOf(["t1", "t2"], ["p", "q"]);
+  const on = g.pick([
+    "p.a = q.x",
+    "p.id = q.id",
+    "p.b = q.y",
+    "p.e = q.y",
+    "p.a = q.id",
+    "q.x = p.id",
+  ]);
+  const how = g.chance(35) ? "LEFT JOIN" : "JOIN";
+  const cols = [g.pick(s.cols), expr(g, s, 2)];
+  let q = `SELECT ${cols.join(", ")} FROM t1 p ${how} t2 q ON ${on}`;
+  if (g.chance(50)) {
+    q += ` WHERE ${cond(g, s)}`;
+  }
+  if (g.chance(40)) {
+    q += orderBy(g, s, cols);
+  }
+  return q;
+}
+
+function grouped(g: Gen): string {
+  const t = g.chance(60) ? "t1" : "t2";
+  const s = scopeOf([t], [t]);
+  const key = g.pick(s.cols);
+  const ints = t == "t1" ? ["t1.a", "t1.id"] : ["t2.x", "t2.id"];
+  const aggs = [
+    "count(*)",
+    `count(${g.pick(s.cols)})`,
+    `sum(${g.pick(ints)})`,
+    `avg(${g.pick(ints)})`,
+    `total(${g.pick(ints)})`,
+    `min(${g.pick(s.cols)})`,
+    `max(${g.pick(s.cols)})`,
+    `count(DISTINCT ${g.pick(s.cols)})`,
+  ];
+  let q = `SELECT ${key}, ${g.pick(aggs)}, ${g.pick(aggs)} FROM ${t}`;
+  if (g.chance(40)) {
+    q += ` WHERE ${cond(g, s)}`;
+  }
+  if (g.chance(80)) {
+    q += ` GROUP BY ${key}`;
+    if (g.chance(30)) {
+      q += ` HAVING count(*) > ${g.int(3)}`;
+    }
+  } else {
+    // One group: no bare column.
+    q = q.replace(`SELECT ${key}, `, "SELECT ");
+  }
+  return q;
+}
+
+function subqueries(g: Gen): string {
+  const s = scopeOf(["t1"], ["p"]);
+  const k = g.int(4);
+  if (k == 0) {
+    return `SELECT p.id, p.a FROM t1 p WHERE p.a IN (SELECT x FROM t2 WHERE ${cond(g, scopeOf(["t2"], ["t2"]))})`;
+  }
+  if (k == 1) {
+    return `SELECT p.id FROM t1 p WHERE ${g.chance(50) ? "NOT " : ""}EXISTS (SELECT 1 FROM t2 q WHERE q.x = p.a)`;
+  }
+  if (k == 2) {
+    return `SELECT p.id, (SELECT count(*) FROM t2 q WHERE q.x = p.a), (SELECT max(q.y) FROM t2 q WHERE q.id < p.id) FROM t1 p`;
+  }
+  return `SELECT p.id, ${expr(g, s, 2)} FROM (SELECT * FROM t1 WHERE ${cond(g, scopeOf(["t1"], ["t1"]))}) p`;
+}
+
+// Index and rowid order, both directions, with LIMIT; nested and recursive queries.
+function ordered(g: Gen): string {
+  const k = g.int(6);
+  if (k == 0) {
+    return `SELECT id, a, b FROM t1 WHERE a = ${value(g)} ORDER BY b ${g.pick(["ASC", "DESC"])}, id ${g.pick(["ASC", "DESC"])} LIMIT ${g.int(6) + 1}`;
+  }
+  if (k == 1) {
+    return `SELECT id, c FROM t1 WHERE c ${g.pick([">", "<", ">=", "<="])} ${value(g)} ORDER BY c ${g.pick(["ASC", "DESC"])}, id LIMIT ${g.int(8) + 1}`;
+  }
+  if (k == 2) {
+    return `SELECT id FROM t1 WHERE id ${g.pick([">", "<", "BETWEEN 30 AND"])} ${g.int(200)} ORDER BY id ${g.pick(["ASC", "DESC"])} LIMIT ${g.int(8) + 1}`;
+  }
+  if (k == 3) {
+    return `SELECT p.id, (SELECT q.id FROM t2 q WHERE q.x = p.a ORDER BY q.id DESC LIMIT 1) FROM t1 p ORDER BY p.id`;
+  }
+  if (k == 4) {
+    return `WITH g AS (SELECT a, count(*) AS n, max(id) AS m FROM t1 GROUP BY a) SELECT a, n, m FROM g WHERE n > ${g.int(3)} ORDER BY n DESC, a`;
+  }
+  return `WITH RECURSIVE r(i, v) AS (SELECT 1, ${value(g)} UNION ALL SELECT i + 1, ${expr(g, scopeOf([], []), 2).replace("r.", "")} FROM r WHERE i < ${g.int(6) + 1}) SELECT i FROM r`;
+}
+
+function compound(g: Gen): string {
+  const op = g.pick(["UNION", "UNION ALL", "INTERSECT", "EXCEPT"]);
+  const a = g.pick(["a", "b", "c", "d", "e", "f"]);
+  const b = g.pick(["x", "y", "z", "w"]);
+  let q = `SELECT ${a} FROM t1 ${op} SELECT ${b} FROM t2`;
+  if (g.chance(50)) {
+    q += " ORDER BY 1";
+  }
+  return q;
+}
