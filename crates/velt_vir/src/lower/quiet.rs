@@ -54,7 +54,9 @@ impl Cx<'_> {
     }
 
     /// Memoized; a function reached again while it is being decided (recursion) counts as not
-    /// quiet.
+    /// quiet. So does every function decided while a cycle is open, even one that would be
+    /// quiet once the cycle resolves: its `false` is memoized too. That is conservative (a
+    /// call shares where it could have borrowed), never unsound.
     fn quiet_as(&mut self, def: DefId, level: Quiet) -> bool {
         if let Some(&q) = self.quiet.get(&(def, level)) {
             return q;
