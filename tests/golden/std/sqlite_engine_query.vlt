@@ -218,6 +218,14 @@ const QUERIES: string[] = [
   "SELECT count(*) FROM posts WHERE user_id = 3",
   "SELECT count(*) FROM posts LIMIT 1 OFFSET 1",
   "SELECT id, (SELECT count(*) FROM tags WHERE tags.post_id = posts.id) FROM posts ORDER BY id",
+  // Equal keys of different forms: a REAL equal to an INTEGER, and texts equal under NOCASE.
+  "SELECT a, count(*) FROM (SELECT 1 AS a UNION ALL SELECT 1.0) GROUP BY a",
+  "SELECT DISTINCT a FROM (SELECT 1 AS a UNION ALL SELECT 1.0)",
+  "SELECT count(DISTINCT a) FROM (SELECT 1 AS a UNION ALL SELECT 1.0)",
+  "SELECT 1 UNION SELECT 1.0",
+  "SELECT x COLLATE NOCASE, count(*) FROM (SELECT 'a' AS x UNION ALL SELECT 'A') GROUP BY 1",
+  "SELECT DISTINCT x COLLATE NOCASE FROM (SELECT 'a' AS x UNION ALL SELECT 'A')",
+  "SELECT count(DISTINCT x COLLATE NOCASE), count(DISTINCT x) FROM (SELECT 'a' AS x UNION ALL SELECT 'A')",
   // Errors.
   "SELECT nosuch FROM users",
   "SELECT * FROM nosuch",
