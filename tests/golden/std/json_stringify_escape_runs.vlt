@@ -1,0 +1,111 @@
+// `JSON.stringify` of strings with escapes at every offset and plain runs of every length
+// between them (velt:json/writer's escaper: a few bytes one at a time after each escape, then
+// sixteen-byte blocks, then the bytes before the end). Each result is checked against an
+// escaper that goes unit by unit; strings 0-64 long, one or two special characters in a filler
+// of ASCII, two-byte or Hangul text (0xED lead bytes that are no lone surrogate).
+
+function hex4(c: number): string {
+  const digits = "0123456789abcdef";
+  let out = "";
+  for (let shift = 12; shift >= 0; shift -= 4) {
+    out += digits[(c >> shift) & 15];
+  }
+  return out;
+}
+
+function reference(s: string): string {
+  let out = "\"";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c == 8) {
+      out += "\\b";
+    } else if (c == 9) {
+      out += "\\t";
+    } else if (c == 10) {
+      out += "\\n";
+    } else if (c == 12) {
+      out += "\\f";
+    } else if (c == 13) {
+      out += "\\r";
+    } else if (c < 32) {
+      out += "\\u" + hex4(c);
+    } else if (
+      c >= 0xd800 &&
+      c <= 0xdbff &&
+      i + 1 < s.length &&
+      s.charCodeAt(i + 1) >= 0xdc00 &&
+      s.charCodeAt(i + 1) <= 0xdfff
+    ) {
+      out += s.slice(i, i + 2);
+      i++;
+    } else if (c >= 0xd800 && c <= 0xdfff) {
+      out += "\\u" + hex4(c);
+    } else {
+      out += s[i];
+    }
+  }
+  return out + "\"";
+}
+
+function specials(): string[] {
+  return [
+    "\"",
+    "\\",
+    "\n",
+    "\u0001",
+    "\u001f",
+    String.fromCharCode(0xd800),
+    String.fromCharCode(0xdfff),
+    "퟿",
+    "한",
+    "😀",
+  ];
+}
+
+let checked = 0;
+let wrong = 0;
+
+function check(s: string) {
+  const got = JSON.stringify(s);
+  checked++;
+  if (got != reference(s)) {
+    wrong++;
+    if (wrong <= 5) {
+      console.log(`wrong: ${reference(s)} -> ${got}`);
+    }
+  }
+}
+
+function run() {
+  const sp = specials();
+  for (const fill of ["a", "é", "한"]) {
+    for (let len = 0; len <= 64; len++) {
+      for (const x of sp) {
+        for (let at = 0; at < len; at++) {
+          check(fill.repeat(at) + x + fill.repeat(len - at - 1));
+        }
+      }
+    }
+  }
+  for (let a = 0; a < sp.length; a++) {
+    const x = sp[a];
+    const y = sp[(a * 3 + 1) % sp.length];
+    for (let i = 0; i < 48; i++) {
+      for (let j = i + 1; j < 48; j++) {
+        check("a".repeat(i) + x + "b".repeat(j - i - 1) + y + "c".repeat(47 - j));
+      }
+    }
+  }
+  console.log(`${checked} strings, ${wrong} wrong`);
+  console.log(
+    JSON.stringify(
+      "x".repeat(20) + "\n" + "y".repeat(30) + String.fromCharCode(0xdc00) + "z".repeat(17) + "\"",
+    ),
+  );
+}
+
+run();

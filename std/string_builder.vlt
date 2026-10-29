@@ -1,0 +1,78 @@
+// velt:string_builder — `StringBuilder` (a global): builds a string in place, one buffer that
+// grows by doubling, so `n` appends cost O(total length) (#1677). Velt's own; JavaScript builds
+// with `+=` and `join`, which Velt compiles to the same builder.
+//
+// The builder is the private string `#buf`, which the runtime's builder functions append to in
+// place. `toString()` returns it shared, without a copy: the next append copies a shared buffer
+// before writing, as for any string, so the returned text never changes. `take()` hands the
+// buffer over and empties the builder, with no copy at all. Every call passes `#buf` first, with no argument after
+// it that is a call: such an argument would make the compiler read `#buf` into a copy first, to
+// keep its value, and the append would go to the copy.
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
+declare function velt_rt_strbuf_push_i64(buf: string, v: i64);
+declare function velt_rt_strbuf_push_f64(buf: string, v: f64);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/** A string built by appending: `toString()` and `take()` return it without a copy. */
+export class StringBuilder {
+  #buf: string = "";
+
+  /** An empty builder with room for `capacity` bytes before it grows (a hint). */
+  constructor(capacity: usize = 0) {
+    velt_rt_strbuf_new(capacity as u64, this.#buf);
+  }
+
+  /** Appends `s`. */
+  append(s: string): void {
+    velt_rt_strbuf_push_str(this.#buf, s);
+  }
+
+  /** Appends the character with code point (or UTF-16 code unit) `code`, as `String.fromCodePoint`. */
+  appendCodePoint(code: f64): void {
+    if (code >= 0 && code < 0x80 && Math.trunc(code) == code) {
+      velt_rt_strbuf_push_byte(this.#buf, code as u8);
+      return;
+    }
+    const s = String.fromCodePoint(code);
+    velt_rt_strbuf_push_str(this.#buf, s);
+  }
+
+  /** Appends the decimal digits of `n` (with `-` when negative). */
+  appendInt(n: i64): void {
+    velt_rt_strbuf_push_i64(this.#buf, n);
+  }
+
+  /** Appends `x` as `String(x)` writes it (`1e+21`, `NaN`, `-0` as `0`). */
+  appendNumber(x: f64): void {
+    velt_rt_strbuf_push_f64(this.#buf, x);
+  }
+
+  /** The length of the text so far, in UTF-16 code units (as `toString().length`). */
+  get length(): i64 {
+    return this.#buf.length as i64;
+  }
+
+  /**
+   * The text built so far; the builder keeps it. Shared, not copied: the next append copies the
+   * text once (it never changes the string returned).
+   */
+  toString(): string {
+    return this.#buf;
+  }
+
+  /** The text built so far, handed over without a copy; the builder is empty again. */
+  take(): string {
+    let out = "";
+    velt_rt_strbuf_finish(this.#buf, out);
+    return out;
+  }
+
+  /** Empties the builder. */
+  clear(): void {
+    let out = "";
+    velt_rt_strbuf_finish(this.#buf, out);
+  }
+}

@@ -1,0 +1,12 @@
+{"aaaaaaaaaaaaaaaaaaaaaaaaaa1":27,"bbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"}
+{"aaaaaaaaaaaaaaaaaaaaaaaaaaa1":28,"bbbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"}
+{"aaaaaaaaaaaaaaaaaaaaaaaaaaaa1":29,"bbbbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"}
+{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaa1":30,"bbbbbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"}
+{"a":1,"bb":22,"ccc":333,"dddd":4444,"eeeee":"55555","ffffff":true}
+{"a":"é","b":"ключ","c":"😀","d":"x€","e":false}
+[{"aaaaaaaaaaaaaaaaaaaaaaaaaa1":27,"bbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"},{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaa1":30,"bbbbbbbbbbbbbbbbbbbbbbbbbbbbb2":"x"}]
+[{"a":1,"bb":22,"ccc":333,"dddd":4444,"eeeee":"55555","ffffff":true},{"a":"é","b":"ключ","c":"😀","d":"x€","e":false},{"a":1,"bb":22,"ccc":333,"dddd":4444,"eeeee":"55555","ffffff":true}]
+2
+69
+137
+205

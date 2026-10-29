@@ -56,7 +56,7 @@ impl FnLower<'_, '_> {
         // A function with properties is a function to JSON: `null` as an array element, as
         // in JavaScript (object members holding one are left out, below).
         if self.json_callable(ty) {
-            self.push_text(buf, "null");
+            self.push_text_private(buf, "null");
             return;
         }
         if self.json_inline(ty) {
@@ -113,14 +113,14 @@ impl FnLower<'_, '_> {
             }
             TyKind::Float(_) => {
                 let v = self.cast_to(v, vt, Ty::F64);
-                self.call_rt(Rt::StrbufPushJsonF64, vec![b, v], None);
+                self.writer_call("writeF64", vec![b, v]);
             }
             TyKind::Bool => self.call_rt(Rt::StrbufPushBool, vec![b, v], None),
             TyKind::Str => {
                 let a = self.addr(place.clone());
-                self.call_rt(Rt::StrbufPushJsonStr, vec![b, a], None);
+                self.writer_call("writeString", vec![b, a]);
             }
-            TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
+            TyKind::Unit | TyKind::Never => self.push_text_private(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.json_write_any(buf, place),
             TyKind::Dyn(..) => {
@@ -141,15 +141,15 @@ impl FnLower<'_, '_> {
                 self.json_write_array(buf, &arr, e)
             }
             TyKind::Tuple(es) => {
-                self.push_text(buf, "[");
+                self.push_text_private(buf, "[");
                 for (i, e) in es.into_iter().enumerate() {
                     if i > 0 {
-                        self.push_text(buf, ",");
+                        self.push_text_private(buf, ",");
                     }
                     let fp = self.field_place(place, ty, i as u32);
                     self.json_write_at(buf, &fp, e, JsonKey::Text(&i.to_string()));
                 }
-                self.push_text(buf, "]");
+                self.push_text_private(buf, "]");
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
@@ -263,12 +263,12 @@ impl FnLower<'_, '_> {
             place,
             ty,
             |lw, p| lw.json_write_with(buf, &p, e, key),
-            |lw| lw.push_text(buf, "null"),
+            |lw| lw.push_text_private(buf, "null"),
         );
     }
 
     fn json_write_array(&mut self, buf: &Operand, arr: &Place, e: TyId) {
-        self.push_text(buf, "[");
+        self.push_text_private(buf, "[");
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         let len = Operand::Copy(proj(arr, Proj::Field(1)));
@@ -280,13 +280,13 @@ impl FnLower<'_, '_> {
             );
             lw.branch(first, join, comma);
             lw.switch_to(comma);
-            lw.push_text(buf, ",");
+            lw.push_text_private(buf, ",");
             lw.goto(join);
             lw.switch_to(join);
             let ep = lw.elem_place(arr, kv.clone(), e);
             lw.json_write_at(buf, &ep, e, JsonKey::Index(kv));
         });
-        self.push_text(buf, "]");
+        self.push_text_private(buf, "]");
     }
 
     /// `{"a":…,"b":…}` in field order; optional fields (`a?: T`) that are null are omitted, as
@@ -329,7 +329,7 @@ impl FnLower<'_, '_> {
             // setter is a function field, left out below).
             if self.holds_literal_getter(ty, &name) {
                 if !pending.is_empty() {
-                    self.push_text(buf, &pending);
+                    self.push_text_private(buf, &pending);
                     pending.clear();
                 }
                 // The call registers its result in a scope of its own (a typed value's
@@ -376,14 +376,14 @@ impl FnLower<'_, '_> {
             match (optional, self.cx.kind(fty)) {
                 _ if dynamic => {
                     if !pending.is_empty() {
-                        self.push_text(buf, &pending);
+                        self.push_text_private(buf, &pending);
                         pending.clear();
                     }
                     sep = self.json_write_present(buf, &fp, fty, &name, sep);
                 }
                 (opt, TyKind::Option(e, n)) if opt || n == Nothing::Undefined => {
                     if !pending.is_empty() {
-                        self.push_text(buf, &pending);
+                        self.push_text_private(buf, &pending);
                         pending.clear();
                     }
                     let flag = self.json_sep_flag(sep);
@@ -395,7 +395,7 @@ impl FnLower<'_, '_> {
                             self.switch_to(yes);
                             self.json_member_sep(buf, prev);
                             self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
-                            self.push_text(buf, &key);
+                            self.push_text_private(buf, &key);
                             self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                             self.goto(done);
                             self.switch_to(done);
@@ -406,7 +406,7 @@ impl FnLower<'_, '_> {
                             |lw, p| {
                                 lw.json_member_sep(buf, prev);
                                 lw.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
-                                lw.push_text(buf, &key);
+                                lw.push_text_private(buf, &key);
                                 lw.json_write_at(buf, &p, e, JsonKey::Text(&name));
                             },
                             |_| {},
@@ -421,7 +421,7 @@ impl FnLower<'_, '_> {
                         Sep::Maybe(_) => self.json_member_sep(buf, sep),
                     }
                     pending.push_str(&key);
-                    self.push_text(buf, &pending);
+                    self.push_text_private(buf, &pending);
                     pending.clear();
                     self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                     sep = Sep::Rest;
@@ -429,7 +429,7 @@ impl FnLower<'_, '_> {
             }
         }
         pending.push('}');
-        self.push_text(buf, &pending);
+        self.push_text_private(buf, &pending);
         if recursive {
             self.call_rt(Rt::JsonLeave, vec![], None);
         }
@@ -453,7 +453,7 @@ impl FnLower<'_, '_> {
         self.switch_to(yes);
         self.json_member_sep(buf, sep);
         self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
-        self.push_text(buf, &json_key(name));
+        self.push_text_private(buf, &json_key(name));
         self.json_write_at(buf, fp, fty, JsonKey::Text(name));
         self.goto(done);
         self.switch_to(done);
@@ -491,12 +491,12 @@ impl FnLower<'_, '_> {
     fn json_member_sep(&mut self, buf: &Operand, sep: Sep) {
         match sep {
             Sep::First => {}
-            Sep::Rest => self.push_text(buf, ","),
+            Sep::Rest => self.push_text_private(buf, ","),
             Sep::Maybe(flag) => {
                 let (comma, join) = (self.new_block(), self.new_block());
                 self.branch(Operand::Copy(Place::local(flag)), comma, join);
                 self.switch_to(comma);
-                self.push_text(buf, ",");
+                self.push_text_private(buf, ",");
                 self.goto(join);
                 self.switch_to(join);
             }
