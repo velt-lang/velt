@@ -157,6 +157,45 @@ pub const PACKAGE: &[Field] = &[
     },
 ];
 
+/// The workspace object of `velt.workspace.vlt`: `export const workspace: Workspace = { … }`
+/// ([`crate::workspace`]).
+pub const WORKSPACE: &[Field] = &[
+    Field {
+        key: "members",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: true,
+        doc: "The member packages: `/`-separated globs relative to the workspace root \
+              (`\"packages/*\"`, `\"apps/**\"`), each matching directories that hold a \
+              `package.vlt`; a `!` prefix excludes (`\"!packages/old\"`), and `\".\"` is \
+              the root's own package.",
+    },
+    Field {
+        key: "velt",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The velt versions that build every member, as a package's `velt` field. Members \
+              of a workspace leave it out.",
+    },
+    Field {
+        key: "registry",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The registry of every member, as a package's `registry` field. Members of a \
+              workspace leave it out.",
+    },
+    Field {
+        key: "dependencies",
+        kind: Kind::Map(Entry::Dependency),
+        ty: "Record<string, Dependency>",
+        required: false,
+        doc: "Requirements the members share: a member's `name: \"workspace\"` uses the one \
+              written here.",
+    },
+];
+
 /// The object form of a dependency.
 pub const DEPENDENCY: &[Field] = &[
     Field {

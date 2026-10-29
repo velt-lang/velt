@@ -103,8 +103,8 @@ copies.
 The lock lists members as `"source": "workspace+packages/core"` entries with their direct
 dependencies, and every other package as today. The format stays version 1: an older velt
 reading it is never chosen, since the lock's `velt` names the toolchain that wrote it. A member
-that still has a `velt.lock.json` of its own gets an error telling to delete it (its versions
-seed the first workspace resolution, so adopting a workspace changes no versions that still fit).
+that still has a `velt.lock.json` of its own gets an error telling to delete it, or to move it to
+the root when the workspace has no lockfile yet, which keeps its versions.
 
 A package outside every `members` glob, below a workspace file, stays on its own; `velt install`
 there notes that the workspace does not list it.
@@ -198,7 +198,8 @@ promise is speed of the tools, and these numbers come with the steps that make t
 velt.workspace.vlt:4:5: error: `apps/*` matches no package (no directory below `apps` has a package.vlt)
 packages/server/package.vlt:6:11: error: `core` is a member of this workspace; write `core: "workspace"`
 packages/server/package.vlt:3:3: error: `velt` is set by the workspace (velt.workspace.vlt:5); remove it here
-packages/server/package.vlt:7:11: error: no member and no workspace dependency is named `jsno` (did you mean `json`?)
+packages/server/package.vlt:7:11: error: `jsno: "workspace"`, but no member and no workspace dependency is named `jsno` (did you mean `json`?)
+packages/app/package.vlt:5:11: error: members depend on each other in a cycle: app → core → app
 error: `json` has no version that every member accepts:
   server 0.4.0 requires json 1.2
   cli 0.1.0 requires json 2.0

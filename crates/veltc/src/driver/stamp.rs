@@ -15,7 +15,8 @@
 //!   directory or missing as it was) and every directory it listed (the same entries), so a file
 //!   an import would now resolve to (a `.ts` beside a `.vlt`, a `node_modules` package nearer
 //!   the importer) is a change, and where each symbolic link to an npm package led; and the
-//!   manifests and lockfile the package graph came from;
+//!   manifests and lockfile the package graph came from, with the workspace's file, member
+//!   listings and lockfile when the package is in one;
 //! - extra inputs of the link, by size and time;
 //! - how many objects the build made, and at the end how many entries it has, so a stamp cut
 //!   short is no stamp. It is written to a temporary file and renamed into place.
@@ -100,7 +101,8 @@ const IGNORED_ENV: &[&str] = &[
 ];
 
 /// Note (in [`vpm::probe`]) what the package graph of `opts` was made from: the directories
-/// above the input looked in for a manifest, and every package's manifest and lockfile.
+/// above the input looked in for a manifest, every package's manifest and lockfile, and the
+/// workspace around the input.
 pub(super) fn note_project(opts: &BuildOptions) {
     use vpm::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
     let input = vpm::relpath::absolute(&opts.input);
@@ -125,6 +127,13 @@ pub(super) fn note_project(opts: &BuildOptions) {
         for file in files {
             let _ = probe::read_to_string(&root.join(file));
         }
+    }
+    // The workspace around the input: whether there is one (a workspace file appearing above a
+    // package changes its lock and its graph), its file, what its member globs list, its members'
+    // manifests and its lockfile.
+    if let Some(root) = vpm::workspace::find_root(&input) {
+        let _ = vpm::workspace::Workspace::load(&root);
+        let _ = probe::read_to_string(&root.join(vpm::lockfile::LOCK_FILE));
     }
 }
 

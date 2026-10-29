@@ -103,8 +103,42 @@ pub fn resolve(
 ) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
     let root_reqs = dependency_requirements(manifest, root_dir, &[root_label])?;
+    solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())
+}
+
+/// Resolve the members of a workspace rooted at `root_dir` together: every member (its directory
+/// → its manifest, as [`crate::workspace::Workspace::effective_manifests`] gives them) is a path
+/// package of the resolution, and [`Resolution::root_dependencies`] are their names. One version
+/// per package name holds across all of them.
+pub fn resolve_members(
+    root_dir: &Path,
+    members: &BTreeMap<PathBuf, Manifest>,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+) -> Result<Resolution, String> {
+    let root_reqs = members
+        .iter()
+        .map(|(dir, m)| Requirement {
+            name: m.package.name.clone(),
+            want: Want::Path {
+                dir: dir.clone(),
+                req: None,
+            },
+            chain: vec!["the workspace".to_string()],
+        })
+        .collect();
+    solve_root(root_dir, root_reqs, loc, prefer, members)
+}
+
+fn solve_root(
+    root_dir: &Path,
+    root_reqs: Vec<Requirement>,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+    manifests: &BTreeMap<PathBuf, Manifest>,
+) -> Result<Resolution, String> {
     let root_dependencies = root_reqs.iter().map(|r| r.name.clone()).collect();
-    let mut provider = Provider::new(loc, root_dir, prefer);
+    let mut provider = Provider::new(loc, root_dir, prefer, manifests);
     let state = State {
         selected: BTreeMap::new(),
         pending: root_reqs.into(),
@@ -208,6 +242,12 @@ fn dependency_requirements(
 ) -> Result<Vec<Requirement>, String> {
     let mut out = vec![];
     for (name, dep) in &manifest.dependencies {
+        if dep.is_workspace() {
+            return Err(format!(
+                "dependency `{name}` of `{0}` is `\"workspace\"`, but `{0}` is not a member of a workspace (no velt.workspace.vlt above it lists it)",
+                manifest.package.name
+            ));
+        }
         let req = dep.version().map(parse_req).transpose()?;
         let want = match (dep.path(), req) {
             (Some(path), req) => Want::Path {

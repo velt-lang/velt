@@ -30,7 +30,8 @@ export type Package = {
   /// The registry for dependencies and `velt publish`: an `http://` or `https://` URL (default:
   /// the local registry; `VELT_REGISTRY` takes precedence). Only the root package's is used.
   registry?: string;
-  /// Dependencies by package name: a semver requirement (`"^1.2"`) or a `DependencySource`.
+  /// Dependencies by package name: a semver requirement (`"^1.2"`), a `DependencySource`, or
+  /// `"workspace"` in a member of a workspace (another member, or the workspace's requirement).
   dependencies?: Record<string, Dependency>;
   /// Import aliases, like TypeScript's `compilerOptions.paths`: `{ "@app/*": "src/*" }`. A
   /// pattern and its target have at most one `*`, at the end; targets stay inside the package.
@@ -89,4 +90,21 @@ export type Native = {
   targets?: string[];
   /// WebAssembly libraries are not supported yet: must be `false` (the default).
   wasm?: boolean;
+};
+
+/// A workspace: the one `export const workspace: Workspace = { … }` of a `velt.workspace.vlt` at
+/// a repository's root (docs/tooling/packages.md "Workspaces"). Its members share one
+/// `velt.lock.json`, `velt` and `registry`.
+export type Workspace = {
+  /// The member packages: `/`-separated globs relative to the workspace root, such as
+  /// `["packages/*", "apps/*"]`. `*` matches one directory name, `**` any number of them, a `!`
+  /// in front excludes, and `"."` is the root's own package. Each glob must match a package.
+  members: string[];
+  /// The velt versions that build every member, as a package's `velt` field. Members leave it out.
+  velt?: string;
+  /// The registry of every member, as a package's `registry` field. Members leave it out.
+  registry?: string;
+  /// Requirements the members share: a member's `json: "workspace"` uses the `json` entry here.
+  /// A member depends on another member with `name: "workspace"`.
+  dependencies?: Record<string, Dependency>;
 };

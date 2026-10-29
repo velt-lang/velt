@@ -161,7 +161,7 @@ fn the_file_holds_one_typed_pkg_constant() {
         format!("export const pkg: Package = {body};\nfunction f(): void {{}}"),
     ] {
         let (message, _) = error(&src);
-        assert_eq!(message, SHAPE, "{src}");
+        assert_eq!(message, PACKAGE_SHAPE.message, "{src}");
     }
     for import in [
         "import { Package } from \"velt:package\";",
@@ -327,6 +327,12 @@ fn edit_distance_counts_edits() {
     assert_eq!(edit_distance("dependencies", "dependecies"), 1);
     assert_eq!(edit_distance("jsx", "jsx"), 0);
     assert_eq!(edit_distance("", "abc"), 3);
+    assert_eq!(edit_distance("abc", ""), 3);
+    // A swap of two neighbours is one edit, so `jsno` suggests `json`.
+    assert_eq!(edit_distance("jsno", "json"), 1);
+    assert_eq!(edit_distance("depnedencies", "dependencies"), 1);
+    // Optimal string alignment: a swapped pair is not edited again.
+    assert_eq!(edit_distance("ca", "abc"), 3);
 }
 
 #[test]
