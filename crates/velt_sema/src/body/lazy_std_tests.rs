@@ -63,9 +63,12 @@ fn every_name_lowering_looks_up_is_a_helper() {
         helper_literals(&crates.join(c).join("src"), &mut names);
     }
     assert!(names.iter().any(|n| n == "__anyLooseEq"), "{names:?}");
-    // C preprocessor macros (`__AVX2__`, `__GCC_…`) and DWARF names are no definitions.
+    // C preprocessor macros (`__AVX2__`, `__GCC_…`), DWARF names and the C library's own
+    // symbols (`errno`'s location, velt_vir `system/posix.rs`) are no definitions.
+    const C_SYMBOLS: &[&str] = &["__error", "__errno_location"];
     let missing: Vec<&String> = (names.iter())
         .filter(|n| !n.ends_with("__") && !n.starts_with("__DWARF") && !n.starts_with("__GCC"))
+        .filter(|n| !C_SYMBOLS.contains(&n.as_str()))
         .filter(|n| !is_helper(n) && !in_json_glue_prelude(n))
         .collect();
     assert!(
