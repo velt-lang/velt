@@ -57,6 +57,16 @@ pub(super) fn apply(
         }
     }
     changed |= captures(cx, d, f, ev);
+    if cx.frozen_reads {
+        let bits = (f.captures.iter().enumerate().take(64))
+            .filter(|(_, c)| ev.modified.contains(&c.inner) || ev.mutated.contains(&c.inner))
+            .fold(0u64, |b, (i, _)| b | 1 << i);
+        let info = cx.fn_info_mut(d);
+        if info.modified_captures | bits != info.modified_captures {
+            info.modified_captures |= bits;
+            changed = true;
+        }
+    }
     let info = cx.fn_info(d);
     // Async functions and generators keep their params (owned): nothing to infer.
     let (kind, fixed, is_async) = (

@@ -88,6 +88,7 @@ pub(crate) fn fn_placeholder<'m>(
         mutated_captures: vec![],
         soft_params: vec![],
         modified_params: 0,
+        modified_captures: 0,
     }
 }
 

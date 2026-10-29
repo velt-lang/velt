@@ -70,7 +70,7 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
         span: b.span,
     };
     // Only `mutated` is read, which no function value changes: every callee counts as a param.
-    Some(collect(cx, &mut prefix, usize::MAX).mutated.contains(&l))
+    Some(collect(cx, &mut prefix, 0..usize::MAX).mutated.contains(&l))
 }
 
 /// The evidence of `f`'s body, where a program reads a `shared` also through what `for…of`
@@ -79,7 +79,7 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
 /// alias or an element of an element) counts as a change of the source's local, for
 /// `FnInfo::modified_params`.
 pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> Evidence {
-    let params = f.params.len();
+    let params = f.captures.len()..f.params.len();
     let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block, params);
     if !cx.frozen_reads {
         return ev;
@@ -122,11 +122,15 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
 }
 
 /// Collect the evidence of body `b`.
-pub(super) fn collect(cx: &mut Ctx, b: &mut Block, params: usize) -> Evidence {
+pub(super) fn collect(cx: &mut Ctx, b: &mut Block, params: std::ops::Range<usize>) -> Evidence {
     collect_aliased(cx, b, params).0
 }
 
-fn collect_aliased(cx: &mut Ctx, b: &mut Block, params: usize) -> (Evidence, Aliases) {
+fn collect_aliased(
+    cx: &mut Ctx,
+    b: &mut Block,
+    params: std::ops::Range<usize>,
+) -> (Evidence, Aliases) {
     let closures = closure_locals(cx, b);
     let mut v = Collector {
         cx,
@@ -184,8 +188,9 @@ struct Collector<'a, 'm> {
     skip: FxHashSet<*const Expr>,
     /// Locals holding a closure literal (`closure_locals`).
     closures: Closures,
-    /// The body's params, its first locals: a function value in one is the caller's to check.
-    params: usize,
+    /// The body's declared params (after a closure's captures, which are its first params): a
+    /// function value in one is the caller's to check; a captured one is not.
+    params: std::ops::Range<usize>,
 }
 
 impl Collector<'_, '_> {
@@ -215,7 +220,7 @@ impl Collector<'_, '_> {
         // A function value in a param is the caller's to check (the callback rule, so std's
         // `forEach` keeps reading what it walks); any other this body can't resolve to one
         // closure may change whatever it is given (#1836).
-        let param = matches!(&callee.kind, E::Local(l, _) if (l.0 as usize) < self.params);
+        let param = matches!(&callee.kind, E::Local(l, _) if self.params.contains(&(l.0 as usize)));
         let strong = bits.is_some() || (!param && self.cx.frozen_reads);
         for (i, a) in args.iter().enumerate() {
             let known_unchanged = bits.is_some_and(|b| i >= 64 || b & (1 << i) == 0);
@@ -367,10 +372,18 @@ impl VisitMut for Collector<'_, '_> {
                     }
                 }
                 if let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] {
-                    for cap in &c.captures {
+                    let changes = self.cx.fn_info(*def).modified_captures;
+                    for (i, cap) in c.captures.iter().enumerate() {
                         let written = c.body.locals[cap.inner.0 as usize].mutable;
+                        // What the closure changes of a captured object, as a call would
+                        // (`() => { hook(this); }` changes `this`, #1836).
+                        let changed = i < 64 && changes & (1 << i) != 0 && self.cx.frozen_reads;
                         match cap.mode {
                             PassMode::BorrowMut => self.ev.mutated.insert(cap.outer),
+                            PassMode::Borrow if changed => {
+                                self.ev.deep.insert(cap.outer);
+                                self.ev.modified.insert(cap.outer)
+                            }
                             PassMode::Borrow if written => self.ev.weak.insert(cap.outer),
                             // A closure sharing an object it changes changes the outer
                             // variable's object too (`FnInfo::modified_params`).
