@@ -8,7 +8,8 @@
 //! The read has the field's type `T`. A value read through `any` converts to `T`, checked
 //! (a `TypeError` where an array gives `undefined` for a `string` field), except where the
 //! read is only tested (a condition, the operand of `!`, `&&` and `||` in a condition): there
-//! the value read is tested as it is, so `if ((c as VNode).type)` is false for an array.
+//! the value read is tested as it is, so `if ((c as VNode).type)` is false for an array; the
+//! test of an `M`'s field is the test of its type, as for any field read.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -91,12 +92,10 @@ impl FnCx<'_, '_> {
         let b = self.new_local("<asserted>", target, false, span, LocalKind::Bind);
         let value = self.mk(H::Local(b, m), target, span);
         let field = self.member_of(value, prop, Want::Borrow, span);
-        let ty = if test { any } else { field.ty };
+        // A test gives the `bool` of each arm: the field tested as its type, with no `any`.
+        let ty = if test { self.cx.ty.bool_ } else { field.ty };
         let field = match test {
-            true => {
-                let field = self.share_if_place(field);
-                self.coerce(field, any)
-            }
+            true => self.truthy(field),
             false => field,
         };
         // Any other member: the property read through `any`.
@@ -109,7 +108,7 @@ impl FnCx<'_, '_> {
             Ok(h) | Err(h) => h,
         };
         let read = match test {
-            true => read,
+            true => self.truthy(read),
             false => self.cast_dynamic(read, ty),
         };
         let pat = |kind| hir::Pat {
