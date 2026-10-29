@@ -115,7 +115,7 @@ export function minMaxIndex(
   return false;
 }
 
-// The min() or max() call of a result column (outside subqueries).
+/** The min() or max() call of a result column (outside subqueries). */
 export function minMaxCall(e: Expr | null): Expr | null {
   if (e == null) {
     return null;
@@ -344,8 +344,10 @@ export function describe(src: Source, a: Access): string {
   return `SCAN ${name}`;
 }
 
-// `x = a OR x = b OR …` on one column as `x IN (a, b, …)`, for an index lookup per value
-// (SQLite's exprAnalyzeOrTerm); null for any other term.
+/**
+ * `x = a OR x = b OR …` on one column as `x IN (a, b, …)`, for an index lookup per value
+ * (SQLite's exprAnalyzeOrTerm); null for any other term.
+ */
 export function orAsIn(e: Expr): Expr | null {
   if (e.kind != E_BINARY || e.op != "OR") {
     return null;
@@ -400,7 +402,7 @@ export function literal(e: Expr): bool {
   return e.kind == E_INT || e.kind == E_REAL || e.kind == E_STRING || e.kind == E_PARAM;
 }
 
-// Whether `ix` holds every column of `src` the query reads.
+/** Whether `ix` holds every column of `src` the query reads. */
 export function covers(src: Source, ix: Index): bool {
   for (let i: usize = 0; i < src.used.length; i++) {
     if (src.used[i] && (i as i64) != src.rowidCol && !ix.columns.includes(i as i64)) {
@@ -410,8 +412,10 @@ export function covers(src: Source, ix: Index): bool {
   return true;
 }
 
-// A covering index that reads as `a.index` does: its leading columns the same (all of them for
-// a scan in index order), with the same collations and directions.
+/**
+ * A covering index that reads as `a.index` does: its leading columns the same (all of them for
+ * a scan in index order), with the same collations and directions.
+ */
 export function coveringLike(src: Source, a: Access): Index | null {
   const ix = a.index!;
   let k = a.eq.length + (a.inList != null || a.lo != null || a.hi != null ? 1 : 0);
@@ -441,7 +445,7 @@ export function coveringLike(src: Source, a: Access): Index | null {
   return null;
 }
 
-// `c>?`, `c<?` or `c>? AND c<?` for a range access on `c`.
+/** `c>?`, `c<?` or `c>? AND c<?` for a range access on `c` (`desc`: a DESC index column). */
 export function rangeWords(col: string, a: Access, desc: bool): string {
   if (a.lo != null && a.hi != null) {
     return `${col}>? AND ${col}<?`;
@@ -450,7 +454,7 @@ export function rangeWords(col: string, a: Access, desc: bool): string {
   return (a.lo != null) != desc ? `${col}>?` : `${col}<?`;
 }
 
-// The name of key column `k` of `ix` (the rowid after the key columns, "<expr>" an expression).
+/** The name of key column `k` of `ix` (the rowid after the key columns, "<expr>" an expression). */
 export function indexColumnName(src: Source, ix: Index, k: usize): string {
   if (k >= ix.columns.length) {
     return "rowid";
