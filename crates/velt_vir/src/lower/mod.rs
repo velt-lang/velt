@@ -32,6 +32,7 @@ mod any_errors;
 mod any_exact;
 mod any_fn_props;
 mod any_generic_fn;
+mod any_get_builtin;
 mod any_glue;
 mod any_has;
 mod any_has_builtin;

@@ -1,5 +1,6 @@
 // Compares the prototype tables `key in x` through `any` answers from
-// (crates/velt_vir/src/lower/any_has_builtin.rs, and OBJECT_PROTO in any_glue.rs) with what the
+// (crates/velt_vir/src/lower/any_has_builtin.rs, OBJECT_PROTO in any_glue.rs, and the tables a
+// read through `any` answers `undefined` past, any_get_builtin.rs) with what the
 // running Node's built-ins have: `Reflect.ownKeys` of each prototype (symbols as the key names
 // sema gives them, `[Symbol.iterator]`), with `Object.prototype`'s names left out.
 //
@@ -49,9 +50,13 @@ const expected = {
   ARRAY_BUFFER_PROTO: own(ArrayBuffer.prototype),
   DATA_VIEW_PROTO: own(DataView.prototype),
   FN_PROTO_NAMES: own(Function.prototype),
+  STRING_PROTO: minus(own(String.prototype), ["length"]),
+  NUMBER_PROTO: own(Number.prototype),
 };
 
-const have = new Map([...tables("any_has_builtin.rs"), ...tables("any_glue.rs")]);
+const have = new Map(
+  ["any_has_builtin.rs", "any_glue.rs", "any_get_builtin.rs"].flatMap((f) => [...tables(f)]),
+);
 const reference = Number(process.versions.node.split(".")[0]) >= REFERENCE_MAJOR;
 let bad = 0;
 for (const [name, want] of Object.entries(expected)) {

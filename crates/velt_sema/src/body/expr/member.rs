@@ -217,6 +217,9 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
+        if let Some(h) = self.cast_member_read(object, prop, want, span) {
+            return h;
+        }
         if let Some(h) = self.narrowed_dynamic_member(object, prop, want, span) {
             return h;
         }

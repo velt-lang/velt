@@ -138,7 +138,10 @@ impl FnCx<'_, '_> {
         ) {
             self.raw_read = Some(inner.span);
         }
+        let test = exp == Some(self.cx.ty.bool_) && crate::body::expr::is_cast_member(inner);
+        let outer = std::mem::replace(&mut self.cast_member_test, test.then_some(inner.span));
         let h = self.expr(e, exp, want);
+        self.cast_member_test = outer;
         self.raw_read = None;
         h
     }

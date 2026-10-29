@@ -28,6 +28,7 @@ mod callables;
 mod callback;
 mod callback_sig;
 mod callback_wrap;
+mod cast_member;
 mod chain;
 mod closure;
 mod closure_sig;
@@ -212,6 +213,7 @@ pub(crate) use args::deferred;
 pub(crate) use atomic::static_atomic_init;
 pub(crate) use call_apply::{is_member_read, read_root};
 pub(crate) use callables::{property_writes, PendingWrites};
+pub(crate) use cast_member::is_cast_member;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.

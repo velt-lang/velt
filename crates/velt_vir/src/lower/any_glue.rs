@@ -505,9 +505,9 @@ impl FnLower<'_, '_> {
                 self.any_box_into(f, f64_, &outp);
                 self.ret_status(ST_OK);
                 self.switch_to(next);
-                self.program_symbol_undefined(key, &outp);
-                self.ret_status(ST_UNSUPPORTED);
+                self.builtin_get_rest(key, &outp, ty);
             }
+            _ if self.builtin_get_rest(key, &outp, ty) => {}
             _ => {
                 self.program_symbol_undefined(key, &outp);
                 self.ret_status(ST_UNSUPPORTED);

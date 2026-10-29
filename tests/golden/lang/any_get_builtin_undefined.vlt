@@ -1,0 +1,10 @@
+// A property read through `any` of an array, a string, a number or a boolean that has no such
+// property is `undefined`, as in Node; `length` is the value's own.
+const xs: any = [1, 2];
+const s: any = "str";
+const n: any = 5;
+const b: any = true;
+console.log(xs.type, s.kind, n.props, b.x, xs.length, s.length);
+console.log(xs.type === undefined, typeof s.kind, n.type ? "yes" : "no", !b.x);
+const kids: any[] = [[1], "a", 2, false, { type: "div" }];
+console.log(kids.map((k) => (k.type ? k.type : "-")).join(" "));
