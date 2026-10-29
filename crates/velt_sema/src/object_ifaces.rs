@@ -275,9 +275,12 @@ impl Ctx<'_> {
                 }
                 // One a plain assignment converts both ways by making another value (an object of
                 // another layout, `{ v, deep: { w } }` for `Inner` with `deep: Deep`): read and
-                // written as that assignment converts it, so a part write would change a copy.
+                // written as that assignment converts it, its copies under the copy-write check
+                // (`object_copies`). A dynamic one converts through `any` below.
                 Some(i)
-                    if self.assigns(fields[i].1, want, module).is_some()
+                    if self.dynamic(fields[i].1).is_none()
+                        && self.dynamic(want).is_none()
+                        && self.assigns(fields[i].1, want, module).is_some()
                         && self.assigns(want, fields[i].1, module).is_some() =>
                 {
                     setters.push(Store::Assign(i, fields[i].1, want));

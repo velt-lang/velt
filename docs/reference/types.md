@@ -3154,7 +3154,9 @@ name. An object a plain assignment keeps as the field's type (`inner: { v: 1 }` 
 object, so `c.inner.v = 2` changes the literal's. One that assignment converts by making a
 copy (`{ v: 1, deep: { w: 1 } }` for an `Inner` whose `deep` is an interface `Deep`, where
 Velt's plain assignment copies too) is read as such a copy and written whole; changing a part of
-it through the interface (`c.inner.v = 2`) is an error, since it would change the copy. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
+it through the interface (`c.inner.v = 2`), or a field of a copy read from it
+(`const i = c.inner; i.v = 2`), is an error, since it would change the copy, as such a write
+after a plain assignment is. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
 `renderFn: any` for `renderFn: ViewFn | null`), it is converted through `any` at each read,
 and checked then as `x as T` is (a `TypeError` if it holds no such value), and a write
 converts the value back to the object's field type; changing a part of such a field

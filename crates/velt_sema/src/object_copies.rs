@@ -449,11 +449,21 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
         )
     };
     // A copy an interface's getter makes of an object converted to it (`object_assigns.rs`)
-    // has no place in the source: the write is the place.
+    // has no place in the source: the write is the place, reported once (a part write goes
+    // through the getter's copy and the setter's).
+    const GETTER_COPY: &str = "an object converted to an interface holds";
+    let reported = |cx: &Ctx| {
+        cx.diags.iter().any(|d| {
+            d.message.starts_with(GETTER_COPY) && d.labels.first().is_some_and(|l| l.span == w.span)
+        })
+    };
+    if c.span == Span::DUMMY && reported(cx) {
+        return;
+    }
     let d = match c.span == Span::DUMMY {
         true => Diagnostic::error(
             format!(
-                "an object converted to an interface holds a `{from}` that the interface reads as a `{to}` by copying its fields, and this assigns {field} of that copy, which the object would not see"
+                "{GETTER_COPY} a `{from}` that the interface reads as a `{to}` by copying its fields, and this assigns {field} of that copy, which the object would not see"
             ),
             w.span,
         ),

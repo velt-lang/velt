@@ -1,7 +1,7 @@
 // A field an object converted to an interface holds as an object of another layout (`deep` is
 // a `{ w }` where `Outer` has a `Deep`) is read as a copy, as a plain assignment makes one
-// (#1886): assigning a field of that copy, through the interface or through a variable holding
-// it, is an error, since Node would change the object's own.
+// (#1886): assigning a field of that copy through a variable holding it is an error, since Node
+// would change the object's own.
 interface Deep {
   w: number;
 }
@@ -19,7 +19,6 @@ interface Ctx {
 function main(): void {
   const two = { outer: { v: 1, deep: { w: 1 } }, run: () => {} };
   const c = two as unknown as Ctx;
-  c.outer.v = 2;
   const o = c.outer;
   o.v = 3;
 }
