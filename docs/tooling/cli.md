@@ -51,7 +51,8 @@ In a [workspace](packages.md#workspaces), `velt check`, `test`, `build`, `fmt` a
 `--affected [<base>]` to run on several members, and
 run on every member at the workspace's root outside its packages; `--fail-fast` starts no more
 members after a failure. `velt run -p <member>` and `velt dev -p <member>` run one member's
-program. A file argument doesn't go with a selection.
+program, with the program's arguments after `--` (`velt run -p server -- --port 8080`). A file
+argument doesn't go with a selection.
 
 ## `velt build` and `velt run`
 

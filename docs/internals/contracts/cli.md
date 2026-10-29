@@ -55,16 +55,16 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   select every member (`run`/`dev` there: an error listing the runnable members). One selected
   member: the command runs in its directory in this process (for `run`/`dev`, always exactly
   one), a relative `-o` resolved against the starting directory. Several: `--watch`, `-o` and
-  `--json` are errors. Several: the workspace is installed once (`--locked`
-  passed on; not for `fmt`), then `velt <command> <the other arguments>` runs in each member's directory, at
-  most half the available cores at once, a member after the selected members it depends on,
-  output captured and printed per member under `Member <name> (<dir>)` / `Failed …`, then
-  `Finished `velt <cmd>` on <n> members: <p> passed[, <f> failed (<names>)][, <s> skipped after a
-  failure (<names>)]`; exit code: the first failed member's, else 0. `build` skips members with no
-  entry (libraries). `--affected` takes `git diff --name-only --relative <base>` plus untracked
-  files below the workspace root, each owned by its innermost member except under its `target/`
-  (the workspace file or lockfile: every member), plus the members that depend on them; without a base, `git merge-base
-  HEAD @{upstream}`, and an error when `CI` is set.
+  `--json` are errors, and the workspace is installed once (`--locked` passed on; not for `fmt`),
+  then `velt <command> <the other arguments>` runs in each member's directory, at most half the
+  available cores at once, a member after the selected members it depends on, output captured and
+  printed per member under `Member <name> (<dir>)` / `Failed …`, then `Finished `velt <cmd>` on
+  <n> members: <p> passed[, <f> failed (<names>)][, <s> skipped after a failure (<names>)]`; exit
+  code: the first failed member's, else 0. `build` skips members with no entry (libraries).
+  `--affected` takes `git diff --name-only --relative <base>` plus untracked files below the
+  workspace root, each owned by its innermost member except under its `target/` (the workspace
+  file or lockfile: every member), plus the members that depend on them; without a base, `git
+  merge-base HEAD @{upstream}`, and an error when `CI` is set.
 - `test --filter <text>` (additive): only the tests whose name contains `<text>` run (`--exact`:
   only the test named `<text>`; a file with none is skipped; no match at all prints `no tests
   match` and exits 0). `test --no-run` (additive): builds each test file's harness without running

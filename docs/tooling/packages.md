@@ -98,9 +98,10 @@ export const pkg: Package = {
   Members run in dependency order, several at once, each in its own `velt`; each member's output
   is printed in one piece when it finishes, and a summary names the members that failed. A failed
   member doesn't stop the others; `--fail-fast` starts no more. `--watch`, `-o` and `--json`
-  need one member; with one, a relative `-o` is a path from where you ran `velt`. `velt build` skips libraries
-  (the programs that use them build them), and `velt run -p <member>` and `velt dev -p <member>`
-  run one member's program from anywhere in the workspace.
+  need one member; with one, a relative `-o` is a path from where you ran `velt`. `velt build`
+  skips libraries (the programs that use them build them), and `velt run -p <member>` and
+  `velt dev -p <member>` run one member's program from anywhere in the workspace; its arguments
+  follow `--` (`velt run -p server -- --port 8080`).
 
   ```sh
   velt test                       # at the root: every member
