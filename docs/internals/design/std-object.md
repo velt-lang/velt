@@ -66,11 +66,17 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
   (`velt_vir::fingerprint`, `Mode::Link`) and parameter attributes, those of every small function
   it may inline, and who compiles it for what (`build_cache::compiler_identity`, clang, target,
   CPU, optimization level). Whole-program facts show in the code, so the key covers them.
-- A hit is linked. A miss is compiled now, on its own, with unknown callers: in a copy of the
-  program where every other function is a declaration (`Import`), small ones keeping their
-  bodies to be inlined, and stored under its key. Either way it becomes a declaration in the
-  program; the program's functions its object may call are exported. A function that cannot be
-  compiled on its own stays in the program.
+- Before the program is optimized, each such function becomes a declaration (`Import`), and
+  the program's functions its object may call are exported. After, the program links the
+  objects of those it still calls (the optimizer drops a declaration nothing calls, as it would
+  have dropped the function), and of what those objects call. A hit is linked; a miss is
+  compiled then, on its own, with unknown callers: in a program of its own (itself, the small
+  functions it may inline, declarations of what they call, the statics they name), and stored
+  under its key. If one cannot be compiled on its own, the build optimizes the program as it
+  was, without the cache.
+- A clang process costs about 30M instructions to start, so a build compiles its misses only
+  when they come to 1,000 statements or more; fewer stay in the program that time, and a larger
+  build or the warm-up stores them. Cold builds then cost what builds without the cache do.
 - The build stamp records the objects it linked (`std` lines, by size and time) and the fast
   path links them again; a cached file keeps its size and time while it is cached.
 

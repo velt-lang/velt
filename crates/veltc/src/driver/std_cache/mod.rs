@@ -33,6 +33,11 @@ use super::BuildOptions;
 
 /// The build cache's kind for std functions.
 const KIND: &str = "stdfn";
+/// A build compiles the functions missing from the cache on their own only when they come to at
+/// least this many statements: each costs a clang process (about 30M instructions to start),
+/// which a few small functions do not pay back. Below it they stay in the program this time,
+/// compiled as usual; a larger build, or the warm-up, stores them.
+const MIN_MISSES: usize = 1000;
 
 /// Whether the std cache is on: release builds with `VELT_STD_OBJECT=1`.
 pub(super) fn wanted(opts: &BuildOptions) -> bool {
@@ -101,13 +106,26 @@ pub(super) fn split(
     }
     let inputs = key::Inputs::of(opts, cg);
     let canon = Canon::new(program, Mode::Link);
-    let taken: HashSet<usize> = candidates.iter().copied().collect();
-    for &i in &candidates {
-        let code = select::inlinable(program, i)
-            .into_iter()
-            .map(|j| key::Code::of(&program.funcs[j], &canon));
-        let key = inputs.key(code);
-        let object = match cache.path_of(KIND, &key) {
+    let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
+        .map(|&i| {
+            let code = (select::inlinable(program, i).into_iter())
+                .map(|j| key::Code::of(&program.funcs[j], &canon));
+            let key = inputs.key(code);
+            (i, key, cache.path_of(KIND, &key))
+        })
+        .collect();
+    drop(canon);
+    let missing: usize = (looked_up.iter())
+        .filter(|(_, _, found)| found.is_none())
+        .map(|&(i, _, _)| select::size(&program.funcs[i]))
+        .sum();
+    let compile_misses = missing >= MIN_MISSES;
+    let looked_up: Vec<_> = (looked_up.into_iter())
+        .filter(|(_, _, found)| found.is_some() || compile_misses)
+        .collect();
+    let taken: HashSet<usize> = looked_up.iter().map(|&(i, _, _)| i).collect();
+    for (i, key, found) in looked_up {
+        let object = match found {
             Some(path) => Object::Found(path),
             None => Object::Compile(key, compile::program_of(program, i)),
         };
@@ -125,8 +143,9 @@ pub(super) fn split(
             calls,
         });
     }
-    drop(canon);
-    take_out(program, &candidates);
+    let mut taken: Vec<usize> = taken.into_iter().collect();
+    taken.sort_unstable();
+    take_out(program, &taken);
     plan
 }
 

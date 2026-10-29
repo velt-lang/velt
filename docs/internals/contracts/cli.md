@@ -319,15 +319,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
   size and time, the target, the CPU and the optimization level, then, for it and each small
   internal function it reaches through small ones (in that order), its symbol,
-  `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its parameter attributes. A key found in
-  the build cache (kind `stdfn`, `Cache::path_of`) is linked; a miss is compiled alone (every
-  other function a declaration, small ones keeping their bodies; optimized at `Speed`; LLVM, one
-  unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`), or stays in the
-  program if that fails. The taken functions become `Import` declarations; functions their objects
-  may reference are made `Export`. `VELT_STD_OBJECT_STATS=1` prints, on stderr, the std
+  `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its parameter attributes. Before optimization,
+  each found key (kind `stdfn`, `Cache::path_of`), and each missing one when the missing
+  functions come to at least 1,000 statements (else they stay in the program), makes the function
+  an `Import` declaration; functions their objects may reference are made `Export`. After
+  optimization the objects of the functions still declared, closed over what those objects call,
+  are linked; a missing one is compiled then, alone (itself, the small functions it may inline
+  with their bodies, declarations of what they call, the statics they name; optimized at
+  `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
+  If one fails, the build optimizes the program as lowered, without the cache. `VELT_STD_OBJECT_STATS=1` prints, on stderr, the std
   statements by reason (`served`, `small`, `$dup`, `statics with identity`, `callbacks`), each
-  linked symbol (`velt: std cache: links <symbol>`) and `velt: std cache: <n> found, <m>
-  compiled`.
+  linked symbol (`velt: std cache: links <symbol> (<n> statements)`) and `velt: std cache: <n>
+  found, <m> compiled, <k> no longer called`.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);

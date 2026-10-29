@@ -24,7 +24,8 @@ pub(super) fn small(f: &vir::Function) -> bool {
     size(f) < SMALL
 }
 
-fn size(f: &vir::Function) -> usize {
+/// `f`'s statements, terminators included.
+pub(super) fn size(f: &vir::Function) -> usize {
     f.blocks.iter().map(|b| b.stmts.len() + 1).sum()
 }
 

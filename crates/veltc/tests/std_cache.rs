@@ -168,3 +168,23 @@ fn the_stamp_records_the_std_objects() {
     assert!(!stamped(), "a rewritten std object is a change");
     assert_eq!(run(dir, "a"), OUTPUT);
 }
+
+/// A build whose misses come to few statements leaves them in the program (a clang process
+/// each would cost more than they save); a larger build stores them, and then it links them.
+#[test]
+fn a_build_with_few_misses_leaves_them_in_the_program() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let small = "function main() {\n  const v = JSON.parse<{ x: i64; y: string }>(\"{\\\"x\\\": 1, \\\"y\\\": \\\"a\\\"}\");\n  console.log(v.x, v.y);\n}\n";
+    std::fs::write(dir.join("small.vlt"), small).unwrap();
+    std::fs::write(dir.join("big.vlt"), PROGRAM).unwrap();
+    let cold = build(dir, "small.vlt", "s1", &cache, &[]);
+    assert_eq!(counts(&cold), (0, 0), "{}", text(&cold.stderr));
+    assert_eq!(run(dir, "s1"), "1 a\n");
+    build(dir, "big.vlt", "b", &cache, &[]);
+    let warm = build(dir, "small.vlt", "s2", &cache, &[]);
+    let (found, compiled) = counts(&warm);
+    assert!(found > 0 && compiled == 0, "{}", text(&warm.stderr));
+    assert_eq!(run(dir, "s2"), "1 a\n");
+}
