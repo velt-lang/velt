@@ -110,6 +110,13 @@ fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
 /// The error for a package command run outside any package: what is missing, and the two ways
 /// forward (a single file, if there are source files here, or making a package).
 fn no_package_message(cwd: &Path) -> String {
+    if let Some(ws) = vpm::workspace::find_root(cwd) {
+        return format!(
+            "no `package.vlt` in `{}`, which is in the workspace of `{}`\n  hint: run the command in a member's directory",
+            cwd.display(),
+            ws.join(vpm::workspace::WORKSPACE_FILE).display()
+        );
+    }
     let mut msg = format!(
         "no `package.vlt` in `{}` or any parent directory, so there is no package here",
         cwd.display()
@@ -301,5 +308,13 @@ mod tests {
             msg.contains("`velt run app.vlt`") && !msg.contains("files here"),
             "{msg}"
         );
+        // A workspace's root is no file to run.
+        std::fs::write(tmp.path().join("velt.workspace.vlt"), "").unwrap();
+        let msg = no_package_message(tmp.path());
+        assert!(
+            msg.contains("in the workspace of") && msg.contains("a member's directory"),
+            "{msg}"
+        );
+        assert!(!msg.contains("velt run"), "{msg}");
     }
 }

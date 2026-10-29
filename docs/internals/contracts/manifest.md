@@ -127,10 +127,15 @@ subset and bounds; one `export const workspace: Workspace = { … }` with `membe
 non-empty `/`-separated relative globs: `*`, `**` as a whole segment, `!` to exclude, `"."` for
 the root; no `..`, `./`, `\`, duplicates), `velt`, `registry`, `dependencies` (no `"workspace"`
 values; no key naming a member)). `Workspace::find` takes the nearest workspace file at or above a
-directory; `Workspace::load` lists members with `npm::workspace::dirs_with(.., "package.vlt", ..)`
-(each positive glob must list a package) and checks: distinct member names; no `velt` or
-`registry` in a member; a dependency named like a member is `"workspace"`; every `"workspace"`
-names a member or a workspace dependency. `Dependency::Version("workspace")`
+directory; `Workspace::load` lists members with `npm::workspace::dirs_with` (marker
+`package.vlt`, never entering `target`; literal segments match entry names exactly, as `*` ones do,
+on every OS; each positive glob must list a package) and checks: distinct member names; no `velt`
+or `registry` in a member; a dependency named like a member is `"workspace"`; every
+`"workspace"` names a member or a workspace dependency; no cycle of `"workspace"` dependencies
+between members. Each error is located (`file:line:col: error: …`, via `manifest::ide::locate`
+and the globs' spans, `WorkspaceFile::member_spans`). Membership of a package below a workspace
+file is decided by its globs alone (`velt_toolchain::members::lists`, also the launcher's): a
+package they don't list installs on its own (`Installed::notes` says so) and keeps its own `velt`. `Dependency::Version("workspace")`
 (`manifest::WORKSPACE_REQUIREMENT`, `Dependency::is_workspace`) is valid in any `package.vlt`;
 resolving it outside a workspace is an error. `Workspace::effective_manifest` replaces it with the
 member's directory (an absolute `path`) or the workspace's requirement (a `path` made absolute),

@@ -25,17 +25,23 @@ use crate::manifest::{Dependency, DetailedDependency, Manifest, MANIFEST_FILE};
 use crate::npm::workspace::{dirs_with, MAX_DIRS};
 use crate::relpath;
 
+mod check;
 #[cfg(test)]
 mod tests;
 
 /// File name of the workspace file at a workspace root.
 pub const WORKSPACE_FILE: &str = "velt.workspace.vlt";
 
+/// How member globs are walked: directories with a `package.vlt`, never entering build output.
+const MEMBER_WALK: (&str, &[&str]) = (MANIFEST_FILE, &["target"]);
+
 /// The decoded `velt.workspace.vlt` ([`crate::manifest::read::read_workspace`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceFile {
     /// `members`: globs relative to the workspace root, `!` in front to exclude.
     pub members: Vec<String>,
+    /// Where each of `members` is written in the file (byte ranges).
+    pub member_spans: Vec<std::ops::Range<u32>>,
     /// `velt`: the toolchain requirement of every member.
     pub toolchain: Option<String>,
     /// `registry`: the registry of every member.
@@ -51,6 +57,8 @@ pub struct Member {
     pub dir: PathBuf,
     /// Its `package.vlt`, as written.
     pub manifest: Manifest,
+    /// The text of its `package.vlt`, for messages that point into it.
+    pub src: String,
 }
 
 impl Member {
@@ -66,6 +74,8 @@ pub struct Workspace {
     /// The directory holding `velt.workspace.vlt` (absolute, normalized), and the lockfile.
     pub root: PathBuf,
     pub file: WorkspaceFile,
+    /// The text of `velt.workspace.vlt`, for messages that point into it.
+    pub src: String,
     /// The members, sorted by directory.
     pub members: Vec<Member>,
 }
@@ -82,6 +92,11 @@ impl WorkspaceFile {
     /// Read and validate the workspace file at `path`, never past
     /// [`crate::manifest::read::MAX_BYTES`].
     pub fn from_path(path: &Path) -> Result<WorkspaceFile, String> {
+        WorkspaceFile::read(path).map(|(file, _)| file)
+    }
+
+    /// [`WorkspaceFile::from_path`], with the file's text.
+    fn read(path: &Path) -> Result<(WorkspaceFile, String), String> {
         let src = crate::probe::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         if src.len() > crate::manifest::read::MAX_BYTES {
@@ -91,7 +106,9 @@ impl WorkspaceFile {
                 crate::manifest::read::MAX_BYTES / 1024
             ));
         }
-        crate::manifest::read::read_workspace(FileId(0), &src).map_err(|d| render(path, &src, &d))
+        let file = crate::manifest::read::read_workspace(FileId(0), &src)
+            .map_err(|d| render(path, &src, &d))?;
+        Ok((file, src))
     }
 }
 
@@ -111,118 +128,36 @@ impl Workspace {
     }
 
     /// Load the workspace rooted at `root`: its file, its members' manifests, and the checks that
-    /// need all of them (every glob matches, names are distinct, members leave `velt` and
-    /// `registry` to the workspace and depend on each other with `"workspace"`).
+    /// need all of them ([`check`]: every glob matches, names are distinct, members leave `velt`
+    /// and `registry` to the workspace, depend on each other with `"workspace"` and not in a
+    /// cycle). Each problem is reported where it is written.
     pub fn load(root: &Path) -> Result<Workspace, String> {
         let root = relpath::normalize(&relpath::absolute(root));
-        let file = WorkspaceFile::from_path(&root.join(WORKSPACE_FILE))?;
-        let mut errors = vec![];
-        for pattern in file.members.iter().filter(|p| !p.starts_with('!')) {
-            let listing = dirs_with(
-                &root,
-                std::slice::from_ref(pattern),
-                MANIFEST_FILE,
-                MAX_DIRS,
-            );
-            if let Some(cut) = listing.cut {
-                errors.push(format!(
-                    "{WORKSPACE_FILE}: `{cut}` lists more than {MAX_DIRS} directories; narrow it"
-                ));
-            } else if listing.dirs.is_empty() {
-                errors.push(format!(
-                    "{WORKSPACE_FILE}: `{pattern}` matches no package (no directory it names has a {MANIFEST_FILE})"
-                ));
-            }
-        }
+        let (file, src) = WorkspaceFile::read(&root.join(WORKSPACE_FILE))?;
+        let mut report = check::Report::default();
+        check::globs(&root, &file, &src, &mut report);
         let mut members = vec![];
-        for dir in dirs_with(&root, &file.members, MANIFEST_FILE, MAX_DIRS).dirs {
+        for dir in dirs_with(&root, &file.members, MEMBER_WALK, MAX_DIRS).dirs {
             let dir = relpath::normalize(&dir);
+            let text = crate::probe::read_to_string(&dir.join(MANIFEST_FILE)).unwrap_or_default();
             match Manifest::from_dir(&dir) {
-                Ok(manifest) => members.push(Member { dir, manifest }),
-                Err(e) => errors.push(e),
+                Ok(manifest) => members.push(Member {
+                    dir,
+                    manifest,
+                    src: text,
+                }),
+                Err(e) => report.push(e),
             }
         }
         members.sort_by(|a, b| a.dir.cmp(&b.dir));
         let ws = Workspace {
             root,
             file,
+            src,
             members,
         };
-        errors.extend(ws.check());
-        if errors.is_empty() {
-            Ok(ws)
-        } else {
-            Err(errors.join("\n"))
-        }
-    }
-
-    fn check(&self) -> Vec<String> {
-        let mut errors = vec![];
-        let mut names: BTreeMap<&str, &Member> = BTreeMap::new();
-        for m in &self.members {
-            if let Some(first) = names.insert(m.name(), m) {
-                errors.push(format!(
-                    "two members are named `{}`: {} and {}",
-                    m.name(),
-                    self.shown(&first.dir),
-                    self.shown(&m.dir)
-                ));
-            }
-        }
-        for name in self.file.dependencies.keys() {
-            if names.contains_key(name.as_str()) {
-                errors.push(format!(
-                    "{WORKSPACE_FILE}: `{name}` in `dependencies` is a member of this workspace; members depend on it with `{name}: \"workspace\"`"
-                ));
-            }
-        }
-        for m in &self.members {
-            let file = format!("{}/{MANIFEST_FILE}", self.shown(&m.dir));
-            let file = file.strip_prefix("./").unwrap_or(&file);
-            for (set, field) in [
-                (m.manifest.toolchain.is_some(), "velt"),
-                (m.manifest.registry.is_some(), "registry"),
-            ] {
-                if set {
-                    errors.push(format!(
-                        "{file}: `{field}` is set by the workspace ({WORKSPACE_FILE}); remove it here"
-                    ));
-                }
-            }
-            for (name, dep) in &m.manifest.dependencies {
-                if dep.is_workspace() {
-                    if !names.contains_key(name.as_str())
-                        && !self.file.dependencies.contains_key(name)
-                    {
-                        errors.push(self.unknown(file, name, &names));
-                    }
-                } else if names.contains_key(name.as_str()) {
-                    errors.push(format!(
-                        "{file}: `{name}` is a member of this workspace; write `{name}: \"workspace\"`"
-                    ));
-                }
-            }
-        }
-        errors
-    }
-
-    fn unknown(&self, file: &str, name: &str, members: &BTreeMap<&str, &Member>) -> String {
-        let known: Vec<&str> = members
-            .keys()
-            .copied()
-            .chain(self.file.dependencies.keys().map(String::as_str))
-            .collect();
-        let max = name.chars().count() / 3;
-        let close = known
-            .iter()
-            .find(|k| crate::manifest::read::edit_distance(k, name) <= max);
-        let mut message = format!(
-            "{file}: `{name}: \"workspace\"`, but no member and no workspace dependency is named `{name}`"
-        );
-        if let Some(close) = close {
-            message.push_str(&format!(" (did you mean `{close}`?)"));
-        }
-        message
+        check::members(&ws, &mut report);
+        report.finish().map(|()| ws)
     }
 
     /// `dir` relative to the workspace root, for messages.

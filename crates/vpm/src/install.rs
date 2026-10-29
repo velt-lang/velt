@@ -14,7 +14,7 @@ use crate::native::build::{build, cargo_available, BuildRequest};
 use crate::native::{missing_target_message, NativeLib, NativeOrigin, NATIVE_ABI};
 use crate::relpath;
 use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WorkspaceFile};
 
 pub mod workspace;
 
@@ -41,6 +41,8 @@ pub struct Installed {
     pub lock_changed: bool,
     /// Installed registry versions that are yanked (pinned by `velt.lock.json`); callers warn.
     pub yanked: Vec<(String, semver::Version)>,
+    /// Things `velt install` tells the user (a package below a workspace that doesn't list it).
+    pub notes: Vec<String>,
 }
 
 impl Installed {
@@ -119,10 +121,22 @@ fn check_locked_toolchain(
 /// workspace's, into its lock ([`workspace`]), and gets the graph of what it uses.
 pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Installed, String> {
     let root = relpath::absolute(root);
-    if let Some(ws) = Workspace::find(&root)? {
-        if ws.member_at(&root).is_some() {
-            return workspace::install(&ws, Some(&root), loc, opts);
+    let mut notes = vec![];
+    if let Some(ws_root) = crate::workspace::find_root(&root) {
+        // Membership by the globs alone: a package the workspace doesn't list never depends on
+        // the members being in order.
+        let file = ws_root.join(crate::workspace::WORKSPACE_FILE);
+        let globs = WorkspaceFile::from_path(&file)?.members;
+        if velt_toolchain::members::lists(&globs, &relpath::relative(&root, &ws_root)) {
+            let ws = Workspace::load(&ws_root)?;
+            if ws.member_at(&root).is_some() {
+                return workspace::install(&ws, Some(&root), loc, opts);
+            }
         }
+        notes.push(format!(
+            "{} does not list this package, so it is installed on its own, with its own {LOCK_FILE}",
+            file.display()
+        ));
     }
     let manifest = Manifest::from_dir(&root)?;
     let loc = &loc.clone().with_manifest(&manifest);
@@ -158,6 +172,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
+        notes,
     })
 }
 

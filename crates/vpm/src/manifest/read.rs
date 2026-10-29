@@ -617,20 +617,26 @@ fn not_data(kind: &ExprKind, regex: bool) -> &'static str {
     }
 }
 
-/// Levenshtein distance, for "did you mean".
+/// Edits between `a` and `b`: insertions, deletions, substitutions and swaps of two adjacent
+/// characters (`jsno` → `json` is one), as Damerau's optimal string alignment counts them.
 pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut prev = row[0];
-        row[0] = i + 1;
-        for (j, &cb) in b.iter().enumerate() {
-            let cur = row[j + 1];
-            row[j + 1] = (prev + usize::from(ca != cb)).min(row[j] + 1).min(cur + 1);
-            prev = cur;
+    // Rows `i - 2`, `i - 1` and `i` of the distance table.
+    let mut before: Vec<usize> = vec![0; b.len() + 1];
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut row = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            row[j] = (prev[j - 1] + cost).min(prev[j] + 1).min(row[j - 1] + 1);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                row[j] = row[j].min(before[j - 2] + 1);
+            }
         }
+        before = std::mem::replace(&mut prev, row);
     }
-    row[b.len()]
+    prev[b.len()]
 }
 
 mod native;

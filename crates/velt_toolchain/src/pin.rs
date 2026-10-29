@@ -48,8 +48,9 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
 }
 
 /// The pin of the package enclosing `dir` (an absolute path): its own `velt` field, or its
-/// workspace's (members leave it to `velt.workspace.vlt`), or the workspace's when `dir` is in a
-/// workspace but no package of it. `None` outside both, without a `velt` field, or when the file
+/// workspace's when the workspace's `members` list it (members leave it to `velt.workspace.vlt`),
+/// or the workspace's when `dir` is in a workspace but no package of it. A package below a
+/// workspace that the globs don't list keeps to itself. `None` outside both, without a `velt` field, or when the file
 /// does not parse (the toolchain then reports why); an error when the field is there but is not
 /// a requirement.
 pub fn find_pin(dir: &Path) -> Result<Option<Pin>, String> {
@@ -62,16 +63,68 @@ pub fn find_pin(dir: &Path) -> Result<Option<Pin>, String> {
         (Some(pkg), Some(ws)) => pkg.starts_with(ws),
         (pkg, _) => pkg.is_some(),
     };
-    if package_nearer {
-        let root = package.expect("ICE: a nearer package exists");
+    if let Some(root) = package.as_ref().filter(|_| package_nearer) {
         if let Some(pin) = pin_in(&root.join(MANIFEST_FILE), "pkg")? {
             return Ok(Some(pin));
         }
     }
-    match workspace {
-        Some(ws) => pin_in(&ws.join(WORKSPACE_FILE), "workspace"),
-        None => Ok(None),
+    let Some(ws) = workspace else {
+        return Ok(None);
+    };
+    let file = ws.join(WORKSPACE_FILE);
+    if let Some(pkg) = package.filter(|p| p.starts_with(&ws)) {
+        let src = std::fs::read_to_string(&file).unwrap_or_default();
+        let rel: Vec<String> = pkg
+            .strip_prefix(&ws)
+            .unwrap_or(Path::new(""))
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let rel = if rel.is_empty() {
+            ".".to_string()
+        } else {
+            rel.join("/")
+        };
+        // A file that does not parse is the toolchain's to report: its pin still counts.
+        if read_members(&src).is_some_and(|globs| !crate::members::lists(&globs, &rel)) {
+            return Ok(None);
+        }
     }
+    pin_in(&file, "workspace")
+}
+
+/// The `members` strings of the workspace file text `src`, when it parses and has them.
+fn read_members(src: &str) -> Option<Vec<String>> {
+    let (module, diags) = velt_syntax::parse_file(FileId(0), src);
+    if diags.iter().any(velt_common::Diagnostic::is_error) {
+        return None;
+    }
+    let props = module.items.iter().find_map(|item| match &item.kind {
+        ItemKind::Var(var)
+            if item.exported
+                && matches!(&var.pattern.kind, PatternKind::Ident(id) if id.name == "workspace") =>
+        {
+            match var.init.as_ref().map(|e| &e.kind) {
+                Some(ExprKind::Object(props)) => Some(props),
+                _ => None,
+            }
+        }
+        _ => None,
+    })?;
+    let members = props.iter().find_map(|p| match p {
+        ObjectProp::KeyValue(key, value) if key.name == "members" => Some(value),
+        _ => None,
+    })?;
+    let ExprKind::Array(elems) = &members.kind else {
+        return None;
+    };
+    elems
+        .iter()
+        .map(|e| match &e.kind {
+            ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The `velt` field of the `binding` object of the file `path`.
@@ -215,6 +268,15 @@ mod tests {
             assert_eq!(found.requirement.as_str(), "0.3", "{}", dir.display());
             assert_eq!(found.manifest, ws.join(WORKSPACE_FILE));
         }
+        // A package below the workspace that no glob lists keeps to itself.
+        let other = ws.join("tools/other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(
+            other.join(MANIFEST_FILE),
+            format!("{HEADER}export const pkg: Package = {{ name: \"other\" }};\n"),
+        )
+        .unwrap();
+        assert_eq!(find_pin(&other).unwrap(), None);
         // The launcher reads the lock beside the file holding the pin: the workspace's.
         std::fs::write(ws.join(LOCK_FILE), r#"{"version": 1, "velt": "0.3.1"}"#).unwrap();
         let found = find_pin(&member).unwrap().unwrap();

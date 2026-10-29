@@ -72,8 +72,11 @@ export const pkg: Package = {
   member's dependencies together, wherever in the workspace they run, into the `velt.lock.json`
   beside the workspace file (members are listed as `"source": "workspace+packages/core"`). A
   package name has one version in the whole workspace: two members whose requirements no version
-  meets is an error that names both. A member has no lockfile of its own. `velt install` at the
-  root installs every member.
+  meets is an error that names both. A member also stands in for a registry package of its name,
+  for the registry packages that depend on that name too, so a fork of `json` kept as a member
+  is the `json` every package in the workspace builds with. A member has no lockfile of its own.
+  `velt install` at the root installs every member. Members can't depend on each other in a
+  cycle: `members depend on each other in a cycle: a → core → b → a`.
 - **`velt` and `registry`** are the workspace's; a member that sets either is an error. The velt
   launcher runs the version the workspace's lock records, as it does for a package.
 - **Builds.** A member's build sees only the packages it depends on, directly or not (its imports
@@ -82,7 +85,8 @@ export const pkg: Package = {
   workspace file, what its globs list and the lockfile, and the machine's build cache shares
   the code of a library every member uses: a second member compiles little more than its own
   code.
-- A package below the workspace that no glob lists stays on its own, with its own lockfile.
+- A package below the workspace that no glob lists stays on its own, with its own lockfile and
+  its own `velt` (the launcher reads the globs too); `velt install` there says so.
 
 ## npm packages
 

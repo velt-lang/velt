@@ -6,7 +6,8 @@
 //! - [`requirement`]: the `velt` field of `package.vlt` (`"0.1"`, `"=0.1.3"`) and which version
 //!   it selects;
 //! - [`pin`]: reading that field without the rest of the manifest (the launcher reads it on
-//!   every command; vpm checks the whole manifest);
+//!   every command; vpm checks the whole manifest), and [`members`]: whether a workspace lists
+//!   the package;
 //! - [`layout`]: `<root>`, its installed versions, linked prefixes and the default;
 //! - [`release`]: the published versions and installing one from a release;
 //! - [`install`]: downloading, verifying and unpacking archives (also `velt target add`'s);
@@ -14,6 +15,7 @@
 
 pub mod install;
 pub mod layout;
+pub mod members;
 pub mod pin;
 pub mod release;
 pub mod requirement;

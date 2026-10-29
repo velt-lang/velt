@@ -22,8 +22,12 @@ pub fn install(
     for m in ws.members.iter().filter(|m| m.dir != ws.root) {
         if crate::probe::is_file(&m.dir.join(LOCK_FILE)) {
             let rel = relpath::relative(&m.dir, &ws.root);
+            let fix = match crate::probe::is_file(&ws.root.join(LOCK_FILE)) {
+                true => "delete this one",
+                false => "move it there to keep its versions, or delete it",
+            };
             return Err(format!(
-                "{rel}/{LOCK_FILE}: a member of a workspace has no lockfile of its own; the workspace's is the {LOCK_FILE} beside velt.workspace.vlt (delete this one, or move it there when the workspace has none yet to keep its versions)"
+                "{rel}/{LOCK_FILE}: a member of a workspace has no lockfile of its own; the workspace's is the {LOCK_FILE} beside velt.workspace.vlt ({fix})"
             ));
         }
     }
@@ -80,6 +84,7 @@ pub fn install(
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
+        notes: vec![],
     })
 }
 

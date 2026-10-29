@@ -198,7 +198,8 @@ promise is speed of the tools, and these numbers come with the steps that make t
 velt.workspace.vlt:4:5: error: `apps/*` matches no package (no directory below `apps` has a package.vlt)
 packages/server/package.vlt:6:11: error: `core` is a member of this workspace; write `core: "workspace"`
 packages/server/package.vlt:3:3: error: `velt` is set by the workspace (velt.workspace.vlt:5); remove it here
-packages/server/package.vlt:7:11: error: no member and no workspace dependency is named `jsno` (did you mean `json`?)
+packages/server/package.vlt:7:11: error: `jsno: "workspace"`, but no member and no workspace dependency is named `jsno` (did you mean `json`?)
+packages/app/package.vlt:5:11: error: members depend on each other in a cycle: app → core → app
 error: `json` has no version that every member accepts:
   server 0.4.0 requires json 1.2
   cli 0.1.0 requires json 2.0

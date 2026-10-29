@@ -118,6 +118,9 @@ pub fn install(opts: InstallOptions) -> Result<(), String> {
         None => vpm::install(&Project::current_root()?, &Locations::from_env()?, opts)?,
     };
     warn_yanked(&installed);
+    for note in &installed.notes {
+        eprintln!("note: {note}");
+    }
     let count = installed.lockfile.packages.len();
     let lock = if installed.lock_changed {
         "updated velt.lock.json"

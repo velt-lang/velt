@@ -158,6 +158,13 @@ fn a_member_with_its_own_lock_is_refused() {
         err.starts_with("a/velt.lock.json: a member of a workspace has no lockfile"),
         "{err}"
     );
+    assert!(
+        err.ends_with("(move it there to keep its versions, or delete it)"),
+        "{err}"
+    );
+    std::fs::write(e.root.join(LOCK_FILE), "{\"version\": 1}").unwrap();
+    let err = e.install(&a).unwrap_err();
+    assert!(err.ends_with("(delete this one)"), "{err}");
 }
 
 #[test]
@@ -186,7 +193,7 @@ fn workspace_outside_a_workspace_is_an_error() {
 
 #[test]
 fn load_checks_members_and_their_manifests() {
-    let e = env(r#"{ members: ["packages/*", "apps/*"], velt: "0.2" }"#);
+    let e = env("{\n  members: [\"packages/*\", \"apps/*\"],\n  velt: \"0.2\",\n}");
     e.member(
         "packages/a",
         "a",
@@ -203,13 +210,13 @@ fn load_checks_members_and_their_manifests() {
     assert_eq!(
         lines,
         [
-            "velt.workspace.vlt: `apps/*` matches no package (no directory it names has a package.vlt)",
-            "two members are named `b`: packages/b and packages/b2",
-            "packages/a/package.vlt: `b` is a member of this workspace; write `b: \"workspace\"`",
-            "packages/a/package.vlt: `jsno: \"workspace\"`, but no member and no workspace dependency is named `jsno`",
-            "packages/a/package.vlt: `json: \"workspace\"`, but no member and no workspace dependency is named `json`",
-            "packages/b/package.vlt: `velt` is set by the workspace (velt.workspace.vlt); remove it here",
-            "packages/b/package.vlt: `registry` is set by the workspace (velt.workspace.vlt); remove it here",
+            "velt.workspace.vlt:2:27: error: `apps/*` matches no package (no directory it names has a package.vlt)",
+            "packages/b2/package.vlt:1:38: error: two members are named `b`: packages/b and this one",
+            "packages/a/package.vlt:1:80: error: `b` is a member of this workspace; write `b: \"workspace\"`",
+            "packages/a/package.vlt:1:112: error: `jsno: \"workspace\"`, but no member and no workspace dependency is named `jsno`",
+            "packages/a/package.vlt:1:93: error: `json: \"workspace\"`, but no member and no workspace dependency is named `json`",
+            "packages/b/package.vlt:1:67: error: `velt` is set by the workspace (velt.workspace.vlt:3); remove it here",
+            "packages/b/package.vlt:1:84: error: `registry` of a member is the workspace's: move it to velt.workspace.vlt",
         ]
     );
 }
@@ -217,9 +224,47 @@ fn load_checks_members_and_their_manifests() {
 #[test]
 fn unknown_workspace_dependencies_get_a_suggestion() {
     let e = env(r#"{ members: ["*"], dependencies: { json: "1.2" } }"#);
-    e.member("a", "a", r#"jsonn: "workspace""#);
+    e.member("a", "a", r#"jsno: "workspace""#);
     let err = Workspace::load(&e.root).unwrap_err();
     assert!(err.ends_with("(did you mean `json`?)"), "{err}");
+}
+
+#[test]
+fn a_cycle_between_members_is_an_error() {
+    let e = env(r#"{ members: ["*"] }"#);
+    e.member("a", "a", r#"core: "workspace""#);
+    e.member("core", "core", r#"b: "workspace""#);
+    e.member("b", "b", r#"a: "workspace""#);
+    e.member("leaf", "leaf", r#"a: "workspace""#);
+    let err = Workspace::load(&e.root).unwrap_err();
+    assert_eq!(
+        err,
+        "a/package.vlt:1:83: error: members depend on each other in a cycle: a → core → b → a"
+    );
+}
+
+#[test]
+fn a_glob_of_another_case_matches_no_member() {
+    let e = env(r#"{ members: ["Apps/*"] }"#);
+    e.member("apps/a", "a", "");
+    let err = Workspace::load(&e.root).unwrap_err();
+    assert!(
+        err.ends_with("`Apps/*` matches no package (no directory it names has a package.vlt)"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_non_member_is_told_it_installs_on_its_own() {
+    let e = env(r#"{ members: ["a"] }"#);
+    e.member("a", "a", "");
+    let other = e.member("other/x", "x", "");
+    let installed = e.install(&other).unwrap();
+    assert_eq!(installed.notes.len(), 1);
+    assert!(installed.notes[0].ends_with("velt.workspace.vlt does not list this package, so it is installed on its own, with its own velt.lock.json"), "{:?}", installed.notes);
+    // A broken member does not stop a package the workspace doesn't list.
+    std::fs::write(e.root.join("a/package.vlt"), "broken").unwrap();
+    assert!(e.install(&other).is_ok());
 }
 
 #[test]

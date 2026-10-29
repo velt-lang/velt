@@ -160,9 +160,10 @@ fn install_at_the_root_installs_every_member() {
     assert!(!o.status.success());
     let err = text(&o.stderr);
     assert!(
-        err.contains(
-            "apps/b/package.vlt: `core` is a member of this workspace; write `core: \"workspace\"`"
-        ),
+        err.contains("apps/b/package.vlt:1:")
+            && err.contains(
+                "error: `core` is a member of this workspace; write `core: \"workspace\"`"
+            ),
         "{err}"
     );
 }

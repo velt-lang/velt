@@ -2,6 +2,7 @@
 //! subset and bounds, and each check located at the value it rejects.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use velt_common::{Diagnostics, FileId};
 
@@ -25,6 +26,7 @@ impl Reader<'_> {
     fn workspace(&mut self, value: &Value) -> WorkspaceFile {
         let mut ws = WorkspaceFile {
             members: vec![],
+            member_spans: vec![],
             toolchain: None,
             registry: None,
             dependencies: BTreeMap::new(),
@@ -37,7 +39,7 @@ impl Reader<'_> {
             match key.name.as_str() {
                 "members" => {
                     members = true;
-                    ws.members = self.members(v);
+                    (ws.members, ws.member_spans) = self.members(v);
                 }
                 "velt" => {
                     if let Some(s) = self.string(v, "velt") {
@@ -61,19 +63,21 @@ impl Reader<'_> {
         ws
     }
 
-    /// `members`: at least one glob, each [`check_member_pattern`], none twice.
-    fn members(&mut self, value: &Value) -> Vec<String> {
+    /// `members`: at least one glob, each [`check_member_pattern`], none twice; with where each
+    /// is written.
+    fn members(&mut self, value: &Value) -> (Vec<String>, Vec<Range<u32>>) {
         let ValueKind::Array(elems) = &value.kind else {
             self.error(
                 format!("`members` must be an array, not {}", value.kind.describe()),
                 value.span,
             );
-            return vec![];
+            return (vec![], vec![]);
         };
         if elems.is_empty() {
             self.error("`members` is empty: list the member packages", value.span);
         }
         let mut out: Vec<String> = vec![];
+        let mut spans = vec![];
         for elem in elems {
             let Some(pattern) = self.string(elem, "members") else {
                 continue;
@@ -84,8 +88,9 @@ impl Reader<'_> {
             }
             self.check(check_member_pattern(pattern), elem.span);
             out.push(pattern.to_string());
+            spans.push(elem.span.lo..elem.span.hi);
         }
-        out
+        (out, spans)
     }
 
     /// The workspace's `dependencies`: a package's, where `"workspace"` has nothing to refer to.
@@ -115,6 +120,9 @@ fn check_member_pattern(pattern: &str) -> Result<(), String> {
     let bad = |why: &str| Err(format!("member pattern `{pattern}`: {why}"));
     if body.is_empty() {
         return bad("empty");
+    }
+    if body.starts_with('!') {
+        return bad("write `!` once");
     }
     if body.contains('\\') {
         return bad("separate directories with `/`");
@@ -181,6 +189,7 @@ mod tests {
             ("a\\\\b", "separate directories with `/`"),
             ("a**", "`**` must be a whole segment"),
             ("!.", "the root can't be excluded; leave out `\".\"`"),
+            ("!!a", "write `!` once"),
         ] {
             let errs = read(&format!("{{ members: [\"{pattern}\"] }}")).unwrap_err();
             assert_eq!(errs.len(), 1, "{pattern}: {errs:?}");
