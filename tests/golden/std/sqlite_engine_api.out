@@ -17,6 +17,10 @@ SCAN users
 id | id | id | id
 true
 true false
+pulled: 1 'ann' 2.0 NULL X'0102' 2 'bo' 3.5 'hi' NULL 3 'cy' -1.0 'x' X''
+pulled: 2 'bo' 3 'cy'
+pulled: 'cy' -1.0 'bo' 3.5
+pulled: NULL X'0102' 2 'ANN' 'hi' NULL 3 'BO'
 SQLITE_ERROR no such column: nosuch
 SQLITE_ERROR no such table: nosuch
 SQLITE_ERROR incomplete input

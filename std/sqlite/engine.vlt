@@ -26,7 +26,8 @@ import { readFileBytesSync } from "velt:fs";
 /**
  * A failed operation. `code` is SQLite's result code name: "SQLITE_ERROR" (bad SQL, an unknown
  * table or column, a failure while running), "SQLITE_CORRUPT" (a malformed file),
- * "SQLITE_RANGE" (parameters), "SQLITE_MISMATCH" (a row that does not fit the requested type).
+ * "SQLITE_CANTOPEN" (a file that cannot be read), "SQLITE_RANGE" (parameters),
+ * "SQLITE_MISMATCH" (a row that does not fit the requested type).
  */
 export class SqliteError extends Error {
   code: string;

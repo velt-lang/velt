@@ -2,6 +2,7 @@
 // by column name, parameters by position and by name, column names, the plan cache, errors.
 import { open } from "velt:sqlite";
 import { openDatabase, SqliteError } from "velt:sqlite/engine";
+import { quote } from "velt:sqlite/exec/func";
 import { tmpdir } from "velt:os";
 import { uuidv4 } from "velt:uuid";
 import { removeSync } from "velt:fs";
@@ -98,6 +99,19 @@ function main() {
     db.prepare("SELECT 200 AS n") == db.prepare("SELECT 200 AS n"),
     db.prepare("SELECT 0 AS n") == first,
   );
+
+  // Rows read one at a time through the typed reads' getters are the rows values() gives.
+  for (const sql of [
+    "SELECT * FROM users",
+    "SELECT id, name FROM users WHERE id > 1",
+    "SELECT name, score FROM users ORDER BY id DESC LIMIT 2",
+    "SELECT note, data, id + 1, upper(name) FROM users WHERE score > 0",
+  ]) {
+    const st = db.prepare(sql);
+    const pulled = st.pulledValues().map((v) => quote(v)).join(" ");
+    const all = st.values().map((v) => quote(v)).join(" ");
+    console.log(pulled == all ? `pulled: ${pulled}` : `pulled ${pulled}, values() ${all}`);
+  }
 
   // Errors: SQLite's codes and messages.
   for (const sql of [
