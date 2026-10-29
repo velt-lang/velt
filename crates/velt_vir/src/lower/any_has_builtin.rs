@@ -9,9 +9,8 @@ use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
-/// `Array.prototype`, besides `Object.prototype`'s names.
+/// `Array.prototype`, besides `length` and `Object.prototype`'s names.
 pub(super) const ARRAY_PROTO: &[&str] = &[
-    "length",
     "at",
     "concat",
     "copyWithin",

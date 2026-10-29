@@ -165,12 +165,15 @@ impl FnLower<'_, '_> {
                 let arr = self.content(&vp, ty);
                 let n = Operand::Copy(proj(&arr, Proj::Field(1)));
                 let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
+                // `length` first: the common test costs one comparison.
+                self.has_names(key, &["length"], HAS_YES);
                 self.has_index_key(key, n, HAS_YES, HAS_NO);
                 self.has_names(key, ARRAY_PROTO, HAS_YES);
                 self.has_names(key, &OBJECT_PROTO, HAS_YES);
                 self.ret_status(HAS_NO);
             }
             TyKind::Tuple(es) => {
+                self.has_names(key, &["length"], HAS_YES);
                 self.has_index_key(key, cint(es.len() as i128, Ty::U64), HAS_YES, HAS_NO);
                 self.has_names(key, ARRAY_PROTO, HAS_YES);
                 self.has_names(key, &OBJECT_PROTO, HAS_YES);
