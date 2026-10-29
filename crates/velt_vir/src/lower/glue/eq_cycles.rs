@@ -27,6 +27,11 @@ impl FnLower<'_, '_> {
     pub(super) fn guarded_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
         let a = self.deref_param(pa, ty);
         let b = self.deref_param(pb, ty);
+        self.guarded_eq(a, b, ty)
+    }
+
+    /// [`guarded_eq_body`](Self::guarded_eq_body) of the objects (pointers) at `a` and `b`.
+    pub(super) fn guarded_eq(&mut self, a: Place, b: Place, ty: TyId) {
         let (yes, no, enter) = (self.new_block(), self.new_block(), self.new_block());
         let (ptr_a, ptr_b) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
         let same = self.rvalue_temp(

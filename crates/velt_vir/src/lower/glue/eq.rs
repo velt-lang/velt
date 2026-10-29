@@ -115,6 +115,11 @@ impl FnLower<'_, '_> {
             }
             // `any` / `unknown` (generic code over them): by value, as `===` (keys: SameValueZero).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.key_mode),
+            // `toEqual`: by the objects the interface values hold (eq_dyn.rs).
+            TyKind::Dyn(..) if self.deep_mode && self.deep_dyn(ty) => {
+                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
+                self.call_glue(Glue::DeepEq, ty, vec![pa, pb])
+            }
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
@@ -365,6 +370,12 @@ impl FnLower<'_, '_> {
     }
 
     pub(in crate::lower) fn eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
+        if self.deep_mode && self.deep_dyn(ty) {
+            return self.dyn_deep_eq_body(pa, pb, ty);
+        }
+        if self.virtual_deep_eq(ty) {
+            return self.virtual_deep_eq_body(pa, pb, ty);
+        }
         if self.guarded(ty) {
             return self.guarded_eq_body(pa, pb, ty);
         }

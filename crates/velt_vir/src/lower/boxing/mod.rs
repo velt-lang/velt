@@ -115,6 +115,12 @@ pub(super) struct Boxing {
     /// Code that runs in a `read` callback calls a function value (or another function through
     /// a pointer): every type a shared read reaches is counted (locks.rs `count_reached`).
     pub(super) read_indirect: bool,
+    /// `toEqual` compares values of these interfaces (glue/eq_dyn.rs): their tables have the
+    /// `DynDeepEq` slot. Empty in a program that doesn't, whose tables are unchanged.
+    pub(in crate::lower) deep_dyns: FxHashSet<DefId>,
+    /// Class hierarchies (by root) with a vtable pointer whose objects `toEqual` compares: their
+    /// class tables have the `ObjDeepEq` slot, so the object's own class compares its fields.
+    pub(in crate::lower) deep_roots: FxHashSet<DefId>,
 }
 
 impl Boxing {
@@ -269,6 +275,10 @@ pub(super) struct Facts {
     pub(super) lock_values: FxHashSet<TyId>,
     /// Code in read mode called a function through a pointer (`Boxing::read_indirect`).
     pub(super) read_indirect: bool,
+    /// Interfaces and class roots `toEqual` compares through their tables (`Boxing::deep_dyns`,
+    /// `Boxing::deep_roots`).
+    pub(in crate::lower) deep_dyns: FxHashSet<DefId>,
+    pub(in crate::lower) deep_roots: FxHashSet<DefId>,
 }
 
 impl Cx<'_> {
@@ -483,6 +493,9 @@ impl Cx<'_> {
             .extend(self.facts.any_call_keys.iter().cloned());
         next.dyn_to_any
             .extend(self.facts.dyn_to_any.iter().copied());
+        next.deep_dyns.extend(self.facts.deep_dyns.iter().copied());
+        next.deep_roots
+            .extend(self.facts.deep_roots.iter().copied());
         let dyns = self.facts.identity.iter().copied();
         let dyns: Vec<TyId> = dyns
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
