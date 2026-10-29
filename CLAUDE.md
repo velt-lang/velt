@@ -53,7 +53,10 @@ follow it. The essentials for agents:
 4. Compiler code must not panic on user input; report `Diagnostic`s. Internal invariant
    violations may panic with a message starting `ICE:`.
 5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates
-   the docs; `ts` code blocks in the docs must compile.
+   the docs; `ts` code blocks in the docs must compile. It also files a docs-sync issue on
+   `velt-lang/velt-lang.github.io` before merge, linked from the pull request, and a release
+   comments its tag on those issues (CONTRIBUTING.md "The website's docs"); never open pull
+   requests on the website from here.
 6. Never commit secrets, tokens or personal data.
 
 ## Pitfalls (each cost a session real time)
