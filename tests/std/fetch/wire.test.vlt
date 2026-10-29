@@ -1,0 +1,556 @@
+// The `fetch` client against servers that write HTTP/1.1 by hand (velt:net): framing, reason
+// phrases, pooled connections, what it refuses, when it sends a request again; and its URL check.
+import { Channel, channel } from "velt:channel";
+import { hexDecode } from "velt:encoding";
+import { target } from "velt:fetch/client/target";
+import { IoError } from "velt:io";
+import { listen, TcpListener, TcpStream } from "velt:net";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+import { URL } from "velt:url";
+
+// "hello gzip" in gzip.
+const GZIP = "1f8b08000000000002ffcb48cdc9c95748afca2c0000196ad2df0a000000";
+
+function wireResponses(): Map<string, string> {
+  return new Map([
+    [
+      "/chunked",
+      "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nx-trailer: t\r\n\r\n",
+    ],
+    ["/continue", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"],
+    ["/reason", "HTTP/1.1 299 Custom Reason\r\ncontent-length: 0\r\n\r\n"],
+    ["/no-reason", "HTTP/1.1 404 \r\ncontent-length: 0\r\n\r\n"],
+    ["/keep", "HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\nkept"],
+    ["/stale", "HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nstale"],
+    ["/garbage", "SMTP is not HTTP\r\n\r\n"],
+  ]);
+}
+
+async function serveWire(conn: TcpStream, closed: Channel<string>) {
+  const responses = wireResponses();
+  let input = "";
+  while (true) {
+    const end = input.indexOf("\r\n\r\n");
+    if (end < 0) {
+      const more = await conn.readString();
+      if (more == "") {
+        break;
+      }
+      input += more;
+      continue;
+    }
+    const line = input.slice(0, input.indexOf("\r\n"));
+    input = input.slice(end + 4);
+    const path = line.split(" ")[1];
+    if (path == "/close") {
+      await conn.write("HTTP/1.1 200 OK\r\n\r\nuntil the end");
+      break;
+    }
+    if (path == "/pieces") {
+      for (const c of "HTTP/1.1 200 OK\r\ncontent-length: 6\r\n\r\npieces") {
+        await conn.write(c);
+      }
+      continue;
+    }
+    if (path == "/gzip") {
+      const body = hexDecode(GZIP);
+      await conn.write(
+        "HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\ntransfer-encoding: chunked\r\n\r\n",
+      );
+      for (let i: i64 = 0; i < (body.length as i64); i += 7) {
+        const piece = body.slice(i, i + 7);
+        await conn.write(`${piece.length.toString(16)}\r\n`);
+        await conn.writeBytes(piece);
+        await conn.write("\r\n");
+      }
+      await conn.write("0\r\n\r\n");
+      continue;
+    }
+    await conn.write(responses.get(path) ?? "HTTP/1.1 500 Unknown\r\ncontent-length: 0\r\n\r\n");
+    if (path == "/stale" || path == "/garbage") {
+      conn.close();
+      await closed.send(path);
+      return;
+    }
+  }
+  conn.close();
+}
+
+/** Accepts until `listener` is closed, each connection served by `serveOne`; `accepted` gets one
+ * message per connection. */
+function acceptAll(
+  listener: TcpListener,
+  accepted: Channel<i64>,
+  serveOne: (conn: TcpStream) => Promise<void, unknown>,
+) {
+  spawn(async () => {
+    while (true) {
+      let conn: TcpStream;
+      try {
+        conn = await listener.accept();
+      } catch (e) {
+        return;
+      }
+      accepted.trySend(1);
+      spawn(serveOne(conn));
+    }
+  });
+}
+
+/** How many messages wait in `c`, taking them. */
+function drained(c: Channel<i64>): i64 {
+  let n: i64 = 0;
+  while (c.tryReceive() != null) {
+    n++;
+  }
+  return n;
+}
+
+describe("fetch on the wire", () => {
+  // A chunked body with extensions and a trailer, a `100 Continue` before the response, a body
+  // that ends with the connection, a response written a byte at a time, reason phrases,
+  // keep-alive connections reused, a pooled connection the server closed (never used again: a
+  // GET and a POST both go out on a new connection, as in Node), a chunked gzip body read whole
+  // and as it arrives, and a response that is not HTTP. (Was the golden std/fetch_wire.)
+  // What the server closed without saying so, as it closes it.
+  const closed = channel<string>(4);
+  const accepted = channel<i64>(1024);
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const listener = await listen("127.0.0.1:0");
+    base = `http://127.0.0.1:${listener.port}`;
+    acceptAll(listener, accepted, async (conn: TcpStream) => await serveWire(conn, closed));
+    close = () => {
+      closed.close();
+      listener.close();
+    };
+  });
+  afterAll(() => close());
+
+  it("reads a chunked body with extensions and a trailer", async () => {
+    const chunked = await fetch(`${base}/chunked`);
+    expect(chunked).toHaveStatus(200);
+    expect(chunked).toHaveHeader("transfer-encoding", "chunked");
+    expect(await chunked.text()).toBe("hello world");
+  });
+
+  it("skips a 100 Continue", async () => {
+    expect(await fetch(`${base}/continue`)).toHaveStatus(200);
+  });
+
+  it("keeps a reason phrase, or the status's own when there is none", async () => {
+    const reason = await fetch(`${base}/reason`);
+    expect(reason).toHaveStatus(299);
+    expect(reason.statusText).toBe("Custom Reason");
+    expect(reason.ok).toBe(true);
+    expect((await fetch(`${base}/no-reason`)).statusText).toBe("Not Found");
+  });
+
+  it("reads a body that ends with the connection, and one written a byte at a time", async () => {
+    expect(await (await fetch(`${base}/close`)).text()).toBe("until the end");
+    expect(await (await fetch(`${base}/pieces`)).text()).toBe("pieces");
+  });
+
+  it("sends requests in turn on one connection", async () => {
+    await (await fetch(`${base}/keep`)).text();
+    drained(accepted);
+    for (let i = 0; i < 3; i++) {
+      await (await fetch(`${base}/keep`)).text();
+    }
+    expect(drained(accepted)).toBe(0);
+  });
+
+  it("never uses a pooled connection the server closed again", async () => {
+    // The server closes the connection after `/stale`, without saying so. Taken from the pool,
+    // the connection is found closed (or, if the close arrives later, a GET that fails before
+    // any response is sent again): the next request goes out on a new connection. A POST, which
+    // may not be sent twice, too: the client checks every pooled connection before using it.
+    expect(await (await fetch(`${base}/stale`)).text()).toBe("stale");
+    expect(await (await fetch(`${base}/keep`)).text()).toBe("kept");
+    await closed.receive();
+    await (await fetch(`${base}/stale`)).text();
+    await closed.receive();
+    const res = await fetch(`${base}/keep`, { method: "POST", body: "x" });
+    expect(await res.text()).toBe("kept");
+  });
+
+  it("decodes a chunked gzip body read whole and as it arrives", async () => {
+    expect(await (await fetch(`${base}/gzip`)).text()).toBe("hello gzip");
+    const streamed = await fetch(`${base}/gzip`);
+    const parts: string[] = [];
+    const body = streamed.body;
+    if (body != null) {
+      for await (const chunk of body) {
+        parts.push(new TextDecoder().decode(chunk));
+      }
+    }
+    expect(parts.join("")).toBe("hello gzip");
+  });
+
+  it("fails on a response that is not HTTP", async () => {
+    let why = "";
+    try {
+      await fetch(`${base}/garbage`);
+    } catch (e) {
+      why = `${e instanceof IoError ? e.code : ""} ${e.message}`;
+    }
+    expect(why).toBe("EPROTO fetch failed: invalid HTTP response: status line");
+    await closed.receive();
+  });
+});
+
+function manyHeaders(): string {
+  const many: string[] = [];
+  for (let i = 0; i < 150; i++) {
+    many.push(`x-h${i}: ${i}\r\n`);
+  }
+  return many.join("");
+}
+
+function strictResponses(): Map<string, string> {
+  return new Map([
+    ["/300", "HTTP/1.1 300 Multiple Choices\r\nlocation: /echo\r\ncontent-length: 0\r\n\r\n"],
+    ["/304", "HTTP/1.1 304 Not Modified\r\nlocation: /echo\r\n\r\n"],
+    ["/status", "HTTP/1.1 099 Low\r\ncontent-length: 0\r\n\r\n"],
+    ["/name", "HTTP/1.1 200 OK\r\nX-Bad : v\r\ncontent-length: 0\r\n\r\n"],
+    ["/nul", "HTTP/1.1 200 OK\r\nx-nul: a\u0000b\r\ncontent-length: 0\r\n\r\n"],
+    ["/reason", "HTTP/1.1 200 O\rK\r\ncontent-length: 0\r\n\r\n"],
+    [
+      "/both",
+      "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ncontent-length: 3\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
+    ],
+    ["/many", `HTTP/1.1 200 OK\r\n${manyHeaders()}content-length: 2\r\n\r\nok`],
+  ]);
+}
+
+/** The request heads in `input` once whole, with their bodies (by `content-length`). */
+function request(input: string): [string, string, number] | null {
+  const end = input.indexOf("\r\n\r\n");
+  if (end < 0) {
+    return null;
+  }
+  const head = input.slice(0, end);
+  const at = head.indexOf("\r\ncontent-length: ");
+  const length = at < 0 ? 0 : parseInt(head.slice(at + 18).split("\r\n")[0], 10);
+  if (input.length < end + 4 + length) {
+    return null;
+  }
+  return [head, input.slice(end + 4, end + 4 + length), end + 4 + length];
+}
+
+async function serveStrict(conn: TcpStream) {
+  const responses = strictResponses();
+  let input = "";
+  while (true) {
+    const r = request(input);
+    if (r == null) {
+      const more = await conn.readString();
+      if (more == "") {
+        break;
+      }
+      input += more;
+      continue;
+    }
+    const [head, body, used] = r;
+    input = input.slice(used);
+    const path = head.split(" ")[1];
+    if (path == "/echo") {
+      const lengths = head.split("\r\n").filter((l) => l.startsWith("content-length:"));
+      const text = `${lengths.join(",")} body=${body}`;
+      await conn.write(`HTTP/1.1 200 OK\r\ncontent-length: ${text.length}\r\n\r\n${text}`);
+      continue;
+    }
+    if (path == "/end") {
+      // As Node's `socket.end()` right after the write: no more output, but a request that
+      // still arrives is read, and the connection then closed without an answer. The wait only
+      // bounds how long a connection the client keeps pooled stays open.
+      await conn.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+      conn.shutdown();
+      await conn.readableWithin(500);
+      break;
+    }
+    if (path == "/trailer") {
+      await conn.write("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n");
+      const line = `x-t: ${"t".repeat(1000)}\r\n`;
+      try {
+        while (true) {
+          await conn.write(line);
+        }
+      } catch (e) {
+        break;
+      }
+    }
+    await conn.write(responses.get(path) ?? "HTTP/1.1 500 Unknown\r\ncontent-length: 0\r\n\r\n");
+  }
+  conn.close();
+}
+
+describe("fetch's strict framing", () => {
+  // The client keeps HTTP/1.1 framing its own and reads responses as strictly as Node: a
+  // caller's `content-length` must match the body and `transfer-encoding` is refused (else a
+  // header could smuggle a second request onto the connection); only 301, 302, 303, 307 and 308
+  // are followed; a malformed response is refused, 150 headers are fine; a chunked trailer that
+  // never ends fails once it is larger than a head may be; POSTs to a server that ends each
+  // connection right after its response (without `connection: close`) all succeed, as with
+  // Node. (Was the golden std/fetch_wire_strict.)
+  const accepted = channel<i64>(1024);
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const listener = await listen("127.0.0.1:0");
+    base = `http://127.0.0.1:${listener.port}`;
+    acceptAll(listener, accepted, async (conn: TcpStream) => await serveStrict(conn));
+    close = () => {
+      accepted.close();
+      listener.close();
+    };
+  });
+  afterAll(() => close());
+
+  async function failure(path: string): Promise<string> {
+    try {
+      const res = await fetch(`${base}${path}`);
+      return `ok ${res.status} ${await res.text()}`;
+    } catch (e) {
+      return e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+    }
+  }
+
+  async function post(headers: Record<string, string>): Promise<string> {
+    try {
+      const res = await fetch(`${base}/echo`, { method: "POST", body: "abcd", headers: headers });
+      return await res.text();
+    } catch (e) {
+      return e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+    }
+  }
+
+  it("keeps content-length its own and refuses transfer-encoding", async () => {
+    expect(await post({})).toBe("content-length: 4 body=abcd");
+    expect(await post({ "content-length": "4" })).toBe("content-length: 4 body=abcd");
+    expect(await post({ "content-length": "3" })).toBe(
+      "EINVAL fetch failed: Request body length does not match content-length header",
+    );
+    expect(await post({ "transfer-encoding": "chunked" })).toBe(
+      "EINVAL fetch failed: invalid transfer-encoding header",
+    );
+    // The connection is still in step: the next request gets its own response.
+    expect(await post({})).toBe("content-length: 4 body=abcd");
+  });
+
+  it("returns a 300 or 304 with a location", async () => {
+    for (const path of ["/300", "/304"]) {
+      const res = await fetch(`${base}${path}`);
+      expect(res).toHaveStatus(Number(path.slice(1)));
+      expect(res.redirected).toBe(false);
+      expect(res).toHaveHeader("location", "/echo");
+    }
+  });
+
+  it("refuses a malformed response", async () => {
+    const invalid = "EPROTO fetch failed: invalid HTTP response:";
+    expect(await failure("/status")).toBe(`${invalid} status code`);
+    expect(await failure("/name")).toBe(`${invalid} header line`);
+    expect(await failure("/nul")).toBe(`${invalid} header value`);
+    expect(await failure("/reason")).toBe(`${invalid} reason phrase`);
+    expect(await failure("/both")).toBe(`${invalid} both transfer-encoding and content-length`);
+    expect(await failure("/many")).toBe("ok 200 ok");
+    expect(await failure("/trailer")).toBe(`${invalid} trailer too large`);
+  });
+
+  it("sends POSTs to a server that ends each connection after its response", async () => {
+    // A close in the same tick as the response is deterministic here; a close a moment later
+    // depends on the runner's timing, so it is measured by hand, not pinned.
+    let failed = 0;
+    for (let i = 0; i < 50; i++) {
+      try {
+        await (await fetch(`${base}/end`, { method: "POST", body: "x" })).text();
+      } catch (e) {
+        failed += 1;
+      }
+    }
+    expect(failed).toBe(0);
+  });
+});
+
+async function requestLine(c: TcpStream): Promise<string> {
+  let got = "";
+  while (!got.includes("\r\n\r\n")) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      return "";
+    }
+    got += chunk;
+  }
+  return got.split("\r\n")[0];
+}
+
+async function resendConnection(c: TcpStream, n: i64, reused: bool, log: Channel<string>) {
+  let answeredFirst = false;
+  while (true) {
+    const line = await requestLine(c);
+    if (line == "") {
+      break;
+    }
+    if (line.includes(" /first ")) {
+      log.trySend(`conn ${n}: answers ${line}`);
+      await c.write("HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nfirst");
+      answeredFirst = true;
+    } else if (reused && !answeredFirst) {
+      log.trySend(`conn ${n}: answers ${line}`);
+      await c.write("HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\nsecond");
+      break;
+    } else {
+      log.trySend(`conn ${n}: drops ${line}`);
+      break;
+    }
+  }
+  c.close();
+}
+
+async function resendServer(l: TcpListener, connections: i64, reused: bool, log: Channel<string>) {
+  const tasks: Promise<void, IoError>[] = [];
+  for (let n = 1; n <= connections; n++) {
+    const c = await l.accept();
+    tasks.push(spawn(resendConnection(c, n, reused, log)));
+  }
+  await Promise.all(tasks);
+}
+
+/** The result of a `/second` request, then what the server read, one line each. */
+async function scenario(method: string, reused: bool, connections: i64): Promise<string[]> {
+  const l = await listen("127.0.0.1:0");
+  const log = channel<string>();
+  const accepting = spawn(resendServer(l, connections, reused, log));
+  const base = `http://127.0.0.1:${l.port}`;
+  if (reused) {
+    await (await fetch(`${base}/first`)).text();
+    // A request that may not be sent twice takes only a pooled connection idle for 5 ms or
+    // more (a close sent shortly after the response has arrived by then): wait at least that, so
+    // POST and PATCH reuse it too. (A lower bound: waiting longer changes nothing.)
+    await sleep(10);
+  }
+  let result = "";
+  try {
+    const r = await fetch(`${base}/second`, { method: method });
+    result = `${r.status} ${await r.text()}`;
+  } catch (e) {
+    result = "rejected";
+  }
+  await accepting;
+  const lines = [result];
+  let line = log.tryReceive();
+  while (line != null) {
+    lines.push(line);
+    line = log.tryReceive();
+  }
+  l.close();
+  return lines;
+}
+
+describe("sending a request again", () => {
+  // fetch sends an idempotent request once more only when it failed on a *reused* pooled
+  // connection (#1020). The raw server answers `/first` and keeps the connection open; a
+  // `/second` on that same connection is read and dropped unanswered. On a reused connection a
+  // `/second` on a new connection is answered (the resend); on a fresh one it is dropped too.
+  // The server's log shows what it read: POST and PATCH, and anything on a fresh connection, are
+  // read once. (Was the golden std/fetch_resend_reused.)
+  it("resends an idempotent request that failed on a reused connection", async () => {
+    for (const method of ["GET", "PUT"]) {
+      expect(await scenario(method, true, 2)).toEqual([
+        "200 second",
+        "conn 1: answers GET /first HTTP/1.1",
+        `conn 1: drops ${method} /second HTTP/1.1`,
+        `conn 2: answers ${method} /second HTTP/1.1`,
+      ]);
+    }
+  });
+
+  it("never resends a POST or a PATCH", async () => {
+    for (const method of ["POST", "PATCH"]) {
+      expect(await scenario(method, true, 1)).toEqual([
+        "rejected",
+        "conn 1: answers GET /first HTTP/1.1",
+        `conn 1: drops ${method} /second HTTP/1.1`,
+      ]);
+    }
+  });
+
+  it("never resends a request that failed on a fresh connection", async () => {
+    for (const method of ["GET", "PUT"]) {
+      expect(await scenario(method, false, 1)).toEqual([
+        "rejected",
+        `conn 1: drops ${method} /second HTTP/1.1`,
+      ]);
+    }
+  });
+});
+
+const URLS = [
+  "http://example.com/",
+  "https://api.example.com:8443/v1/users?id=7",
+  "HTTP://EXAMPLE.COM/A",
+  "http://Example.com/",
+  "http://127.0.0.1:3000/x",
+  "http://127.1/",
+  "http://0x7f.0.0.1/",
+  "http://a.xn--nxasmq6b/",
+  "http://h:80/default",
+  "https://h:443/default",
+  "http://h:0080/zero",
+  "http://h/a/./b/../c",
+  "http://h/%2e/x",
+  "http://h/%2E%2e/x",
+  "http://h/a b",
+  "http://h/a\\b",
+  "http://h/q?a=1&b={x}",
+  "http://h/frag#part",
+  "https://[::1]:8443/v6?x",
+  "http://h?q",
+  "http://user:pw@h/",
+  "http://h.example./trailing-dot",
+];
+
+describe("the client's URL check", () => {
+  // std/fetch/client/target.vlt takes a URL as it is only when WHATWG parsing would serialize it
+  // unchanged: for each URL, the target's `href`, host, request-target and origin (its
+  // connection pool's key) agree with velt:url's, whichever way it was taken. (Was the golden
+  // std/fetch_target.)
+  it("agrees with velt:url", () => {
+    const differs: string[] = [];
+    for (const u of URLS) {
+      const t = target(u);
+      const w = new URL(u);
+      w.hash = "";
+      const agrees =
+        t.href == w.href &&
+        t.host == w.host &&
+        t.path == `${w.pathname}${w.search}` &&
+        t.origin == w.origin;
+      if (!agrees) {
+        differs.push(`${u} ${t.href} ${w.href} ${t.host} ${t.path}`);
+      }
+    }
+    expect(differs).toEqual([]);
+  });
+
+  it("refuses what is not an http: or https: URL", () => {
+    const why: string[] = [];
+    for (const bad of ["not a url", "ftp://example.com/", "http://1.2.3.256/", "http://h:65536/"]) {
+      try {
+        target(bad);
+        why.push("taken");
+      } catch (e) {
+        why.push(`${e.code} ${e.message}`);
+      }
+    }
+    expect(why).toEqual([
+      "EINVAL Invalid URL: not a url",
+      "ENOTSUP fetch supports http: and https: URLs, not ftp",
+      "EINVAL Invalid URL: http://1.2.3.256/",
+      "EINVAL Invalid URL: http://h:65536/",
+    ]);
+  });
+});

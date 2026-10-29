@@ -1,4 +1,4 @@
-// Helper for the websocket_* tests: a WebSocket client that speaks the protocol by hand over
+// Helper for the velt:websocket tests: a WebSocket client that speaks the protocol by hand over
 // std/net, so a test can send what a correct peer never would and see the exact frames that
 // come back.
 import { connect, TcpStream } from "velt:net";

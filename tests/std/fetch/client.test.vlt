@@ -1,0 +1,660 @@
+// The global `fetch` against a velt:http server: responses and their bodies, requests, redirects,
+// codings, cancelling and the "fetch safely" pattern. The client halves are valid TypeScript and
+// check what Node 22 gives for them (against an equivalent `node:http` server).
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
+import { IoError } from "velt:io";
+import { AbortError, AbortSignal, TimeoutError } from "velt:task";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+
+type Info = { name: string; tags: string[] };
+
+async function handle(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/json") {
+    return Response.json({ name: "velt", tags: ["a", "b"] });
+  }
+  if (path == "/echo") {
+    const ct = req.headers.get("content-type") ?? "-";
+    return new Response(`${req.method} ${ct} ${req.headers.get("x-a") ?? "-"} ${await req.text()}`);
+  }
+  if (path == "/redirect" || path == "/see-other") {
+    const r = new Response(null, { status: path == "/redirect" ? 302 : 303 });
+    r.headers.append("location", path == "/redirect" ? "/json" : "/echo");
+    return r;
+  }
+  if (path == "/headers") {
+    const r = new Response("ok");
+    r.headers.append("x-multi", "1");
+    r.headers.append("x-multi", "2");
+    r.headers.append("set-cookie", "a=1");
+    r.headers.append("set-cookie", "b=2");
+    r.headers.append("x-one", "one");
+    return r;
+  }
+  if (path == "/start") {
+    const r = new Response(null, { status: 302 });
+    r.headers.append("location", "/b");
+    return r;
+  }
+  if (path == "/b") {
+    const r = new Response("at b");
+    r.headers.append("x-kind", "b");
+    return r;
+  }
+  if (path == "/kind") {
+    const r = new Response("ok");
+    r.headers.set("x-kind", "test");
+    return r;
+  }
+  if (path == "/bytes") {
+    const b: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+    const r = new Response(b);
+    // The handler's array stays its own.
+    r.headers.set("x-kept", String(b.length));
+    return r;
+  }
+  if (path == "/got") {
+    return new Response(`got ${await req.text()}`);
+  }
+  return new Response("nope", { status: 404 });
+}
+
+describe("fetch", () => {
+  // The global `fetch` API against a local server. (Was the golden std/fetch.)
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, handle);
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("reads a JSON response once", async () => {
+    const res = await fetch(`${base}/json`);
+    expect(res).toHaveStatus(200);
+    expect(res.ok).toBe(true);
+    expect(res.statusText).toBe("OK");
+    expect(res.url).toBe(`${base}/json`);
+    expect(res.redirected).toBe(false);
+    expect(res.type).toBe("basic");
+    expect(res).toHaveHeader("Content-Type", "application/json");
+    expect(res.headers.has("content-length")).toBe(true);
+    expect(res.bodyUsed).toBe(false);
+    const info: Info = await res.json();
+    expect(info.name).toBe("velt");
+    expect(info.tags.join("+")).toBe("a+b");
+    expect(res.bodyUsed).toBe(true);
+    await expect(res.text()).rejects.toThrow("Body is unusable: Body has already been read");
+  });
+
+  it("an HTTP error status is a response, not an error", async () => {
+    const missing = await fetch(`${base}/missing`);
+    expect(missing).toHaveStatus(404);
+    expect(missing.ok).toBe(false);
+    expect(missing.statusText).toBe("Not Found");
+    expect(await missing.text()).toBe("nope");
+  });
+
+  it("sends bodies and headers given in every form", async () => {
+    // An object literal, a `Headers`, form fields, a `Request`, a `URL`.
+    const post = await fetch(`${base}/echo`, {
+      method: "post",
+      headers: { "X-A": "1" },
+      body: "hello",
+    });
+    expect(await post.text()).toBe("POST text/plain;charset=UTF-8 1 hello");
+    const h = new Headers({ "Content-Type": "application/json" });
+    h.append("x-a", "2");
+    const put = await fetch(`${base}/echo`, {
+      method: "PUT",
+      headers: h,
+      body: JSON.stringify({ k: 1 }),
+    });
+    expect(await put.text()).toBe('PUT application/json 2 {"k":1}');
+    const form = await fetch(new URL(`${base}/echo`), {
+      method: "POST",
+      body: new URLSearchParams("a=1&b=x+y"),
+    });
+    expect(await form.text()).toBe(
+      "POST application/x-www-form-urlencoded;charset=UTF-8 - a=1&b=x+y",
+    );
+    const req = new Request(`${base}/echo`, { method: "PATCH", body: "from a request" });
+    expect(req.method).toBe("PATCH");
+    expect(req.url).toBe(`${base}/echo`);
+    expect(req.headers.get("content-type")).toBe("text/plain;charset=UTF-8");
+    expect(await (await fetch(req)).text()).toBe("PATCH text/plain;charset=UTF-8 - from a request");
+    const bytes = await (await fetch(`${base}/json`)).bytes();
+    expect(bytes.length).toBe(32);
+    expect(bytes[0]).toBe(123);
+  });
+
+  it("follows, returns or refuses a redirect", async () => {
+    const r1 = await fetch(`${base}/redirect`);
+    expect(r1).toHaveStatus(200);
+    expect(r1.redirected).toBe(true);
+    expect(r1.url).toBe(`${base}/json`);
+    await r1.text();
+    const r2 = await fetch(`${base}/redirect`, { redirect: "manual" });
+    expect(r2).toHaveStatus(302);
+    expect(r2.redirected).toBe(false);
+    expect(r2).toHaveHeader("location", "/json");
+    await expect(fetch(`${base}/redirect`, { redirect: "error" })).rejects.toThrow();
+    // 303 turns a POST into a GET without a body.
+    const r3 = await fetch(`${base}/see-other`, { method: "POST", body: "data" });
+    expect(await r3.text()).toBe("GET - - ");
+  });
+
+  it("iterates repeated headers sorted, joined, each set-cookie apart", async () => {
+    const multi = await fetch(`${base}/headers`);
+    const seen: string[] = [];
+    for (const [k, v] of multi.headers) {
+      if (k.startsWith("x-") || k == "set-cookie") {
+        seen.push(`${k} ${v}`);
+      }
+    }
+    expect(seen).toEqual(["set-cookie a=1", "set-cookie b=2", "x-multi 1, 2", "x-one one"]);
+    expect(multi).toHaveHeader("x-multi", "1, 2");
+    expect(multi.headers.getSetCookie().length).toBe(2);
+  });
+
+  it("makes responses", async () => {
+    const made = new Response("made", { status: 201, statusText: "Made", headers: { "X-B": "b" } });
+    expect(made).toHaveStatus(201);
+    expect(made.ok).toBe(true);
+    expect(made.statusText).toBe("Made");
+    expect(made).toHaveHeader("x-b", "b");
+    expect(made).toHaveHeader("content-type", "text/plain;charset=UTF-8");
+    expect(await made.text()).toBe("made");
+    const j = Response.json({ a: 1 }, { status: 202 });
+    expect(j).toHaveStatus(202);
+    expect(j).toHaveHeader("content-type", "application/json");
+    expect(await j.text()).toBe('{"a":1}');
+    const jh = Response.json([1], { headers: { "x-id": "1" } });
+    expect(jh).toHaveHeader("content-type", "application/json");
+    expect(jh).toHaveHeader("x-id", "1");
+    const jt = Response.json([1], { headers: { "content-type": "application/problem+json" } });
+    expect(jt).toHaveHeader("content-type", "application/problem+json");
+  });
+
+  it("reads a null body any number of times, never sends a used request again", async () => {
+    const none = new Response(null);
+    expect(await none.text()).toBe("");
+    expect(await none.text()).toBe("");
+    expect(none.bodyUsed).toBe(false);
+    const once = new Request(`${base}/echo`, { method: "POST", body: "once" });
+    expect(await (await fetch(once)).text()).toBe("POST text/plain;charset=UTF-8 - once");
+    expect(once.bodyUsed).toBe(true);
+    await expect(fetch(once)).rejects.toThrow(
+      "Cannot construct a Request with a Request object that has already been used.",
+    );
+    // Only HTTP whitespace is trimmed from header values, not a no-break space.
+    expect(new Headers({ "x-s": "\u00a0 v \t" }).get("x-s")).toBe("\u00a0 v");
+  });
+
+  it("fails without a response, and for a GET with a body", async () => {
+    await expect(fetch("http://127.0.0.1:1/")).rejects.toThrow(/^fetch failed/);
+    await expect(fetch(`${base}/echo`, { method: "GET", body: "x" })).rejects.toThrow(
+      "Request with GET/HEAD method cannot have body.",
+    );
+  });
+
+  it("copies status text, URL, redirected and headers out when first read", async () => {
+    // Here the first read comes after the body was read, on a redirected response, on a URL
+    // that WHATWG parsing normalizes and on a 404. (Was the golden std/fetch_lazy_after_body.)
+    const port = base.slice(base.lastIndexOf(":") + 1);
+    const cases: [string, string, string][] = [
+      [`${base}/start`, "at b 200 OK /b true", "b text/plain;charset=UTF-8 true true"],
+      [
+        `HTTP://127.0.0.1:${port}/a/../b#x`,
+        "at b 200 OK /b false",
+        "b text/plain;charset=UTF-8 true true",
+      ],
+      [
+        `${base}/missing`,
+        "nope 404 Not Found /missing false",
+        "null text/plain;charset=UTF-8 true true",
+      ],
+    ];
+    for (const [url, first, second] of cases) {
+      const res = await fetch(url);
+      const body = await res.text();
+      expect(
+        `${body} ${res.status} ${res.statusText} ${res.url.replace(base, "")} ${res.redirected}`,
+      ).toBe(first);
+      expect(
+        `${res.headers.get("x-kind")} ${res.headers.get("content-type")} ${res.headers.has("content-length")} ${res.bodyUsed}`,
+      ).toBe(second);
+    }
+  });
+
+  it("keeps a response's headers readable after the response is released", async () => {
+    // `headers` is a `Headers` of its own, copied when the head arrived (it used to be a view of
+    // the runtime response, which stopped the program). (Was the golden
+    // std/fetch_headers_outlive_response.)
+    async function headersOf(url: string): Promise<Headers> {
+      const res = await fetch(url);
+      expect(res).toHaveStatus(200);
+      expect(res).toHaveHeader("x-kind", "test");
+      expect(await res.text()).toBe("ok");
+      return res.headers;
+    }
+    const headers = await headersOf(`${base}/kind`);
+    expect(headers.get("x-kind")).toBe("test");
+    expect(headers.get("content-type")).toBe("text/plain;charset=UTF-8");
+  });
+
+  it("copies byte bodies, so the caller's array stays valid", async () => {
+    // Both a server's `new Response(b)` and a fetch's `body: b` (the runtime used to take a
+    // borrowed array's buffer, so its owner freed it a second time). (Was the golden
+    // std/fetch_bytes_bodies.)
+    const payload: u8[] = [104, 105, 33];
+    const res = await fetch(`${base}/bytes`);
+    expect(res).toHaveHeader("x-kept", "20");
+    const got = await res.bytes();
+    expect(got.length).toBe(20);
+    expect(got[0]).toBe(1);
+    expect(got[19]).toBe(20);
+    const sent = await fetch(`${base}/got`, { method: "POST", body: payload });
+    expect(await sent.text()).toBe("got hi!");
+    expect(payload.length).toBe(3);
+    expect(payload[0]).toBe(104);
+    const req = new Request(`${base}/got`, { method: "PUT", body: payload });
+    expect(await (await fetch(req)).text()).toBe("got hi!");
+    // A byte body's leading byte order mark is not text, as in JS.
+    const bom: u8[] = [239, 187, 191, 104, 105];
+    expect(await new Response(bom).text()).toBe("hi");
+    expect(bom.length).toBe(5);
+  });
+});
+
+function encoded(name: string): u8[] {
+  if (name == "gzip") {
+    return [
+      31,
+      139,
+      8,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      10,
+      203,
+      72,
+      205,
+      201,
+      201,
+      87,
+      72,
+      175,
+      202,
+      44,
+      0,
+      0,
+      25,
+      106,
+      210,
+      223,
+      10,
+      0,
+      0,
+      0,
+    ];
+  }
+  if (name == "br") {
+    return [139, 3, 128, 104, 101, 108, 108, 111, 32, 98, 114, 3];
+  }
+  if (name == "deflate") {
+    return [120, 156, 203, 72, 205, 201, 201, 87, 72, 73, 77, 203, 73, 44, 73, 5, 0, 35, 12, 5, 10];
+  }
+  return [203, 72, 205, 201, 201, 87, 40, 74, 44, 7, 0];
+}
+
+// "hello twice", deflated, then gzipped (Node's `zlib`).
+function twice(): u8[] {
+  return [
+    31,
+    139,
+    8,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    10,
+    171,
+    152,
+    115,
+    218,
+    227,
+    236,
+    201,
+    147,
+    225,
+    26,
+    154,
+    231,
+    125,
+    252,
+    88,
+    25,
+    36,
+    63,
+    176,
+    4,
+    2,
+    0,
+    53,
+    123,
+    115,
+    204,
+    19,
+    0,
+    0,
+    0,
+  ];
+}
+
+// The body of `/stream`: three parts, sent as they are made.
+async function* threeParts(): AsyncGenerator<u8[]> {
+  for (let i = 0; i < 3; i++) {
+    yield utf8Encode("x".repeat(1000));
+    await sleep(20);
+  }
+}
+
+async function encodings(req: Request): Promise<Response> {
+  const p = new URL(req.url).pathname.slice(1);
+  if (p == "gzip" || p == "br" || p == "deflate" || p == "raw") {
+    const r = new Response(encoded(p));
+    r.headers.set("content-encoding", p == "raw" ? "deflate" : p);
+    return r;
+  }
+  if (p == "twice") {
+    const r = new Response(twice());
+    r.headers.set("content-encoding", "deflate, gzip");
+    return r;
+  }
+  if (p == "not-modified") {
+    const r = new Response(null, { status: 304 });
+    r.headers.set("content-encoding", "gzip");
+    return r;
+  }
+  if (p == "nothing-gzip" || p == "nothing-br") {
+    const r = new Response("");
+    r.headers.set("content-encoding", p.slice(8));
+    return r;
+  }
+  if (p == "bom") {
+    const bom: u8[] = [239, 187, 191, 104, 105];
+    return new Response(bom);
+  }
+  if (p == "accept") {
+    return new Response(req.headers.get("accept-encoding") ?? "-");
+  }
+  if (p == "stream") {
+    return new Response(BodyStream.from(threeParts()));
+  }
+  if (p == "empty") {
+    return new Response(null, { status: 204 });
+  }
+  const bad = new Response("this is not gzip");
+  bad.headers.set("content-encoding", "gzip");
+  return bad;
+}
+
+describe("fetch's content codings and streamed bodies", () => {
+  // `fetch` decodes gzip, deflate (zlib and raw) and brotli bodies, asks for them as Node does,
+  // and streams a body chunk by chunk. (Was the golden std/fetch_decode.)
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, encodings);
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("decodes each coding", async () => {
+    for (const enc of ["gzip", "br", "deflate", "raw"]) {
+      const res = await fetch(`${base}/${enc}`);
+      expect(res).toHaveHeader("content-encoding", enc == "raw" ? "deflate" : enc);
+      expect(await res.text()).toBe(`hello ${enc}`);
+    }
+  });
+
+  it("undoes several codings last first", async () => {
+    const res = await fetch(`${base}/twice`);
+    expect(res).toHaveHeader("content-encoding", "deflate, gzip");
+    expect(await res.text()).toBe("hello twice");
+  });
+
+  it("has nothing to decode for a HEAD, a 304 or an empty body", async () => {
+    const head = await fetch(`${base}/gzip`, { method: "HEAD" });
+    expect(head).toHaveStatus(200);
+    expect(await head.text()).toBe("");
+    expect(head.body == null).toBe(true);
+    const same = await fetch(`${base}/not-modified`);
+    expect(same).toHaveStatus(304);
+    expect(await same.text()).toBe("");
+    for (const enc of ["gzip", "br"]) {
+      const none = await fetch(`${base}/nothing-${enc}`);
+      expect(none).toHaveHeader("content-encoding", enc);
+      expect(await none.text()).toBe("");
+    }
+  });
+
+  it("drops a leading byte order mark", async () => {
+    expect(await (await fetch(`${base}/bom`)).text()).toBe("hi");
+  });
+
+  it("asks for gzip and deflate unless the request names something", async () => {
+    expect(await (await fetch(`${base}/accept`)).text()).toBe("gzip, deflate");
+    const own = await fetch(`${base}/accept`, { headers: { "Accept-Encoding": "identity" } });
+    expect(await own.text()).toBe("identity");
+  });
+
+  it("streams a body as it arrives, once", async () => {
+    const streamed = await fetch(`${base}/stream`);
+    const body = streamed.body;
+    let bytes = 0;
+    let chunks = 0;
+    if (body != null) {
+      for await (const chunk of body) {
+        bytes += chunk.length;
+        chunks += 1;
+      }
+    }
+    expect(bytes).toBe(3000);
+    expect(chunks).toBeGreaterThanOrEqual(1);
+    expect(streamed.bodyUsed).toBe(true);
+    await expect(streamed.text()).rejects.toThrow("Body is unusable: Body has already been read");
+    const empty = await fetch(`${base}/empty`);
+    expect(empty).toHaveStatus(204);
+    expect(empty.body == null).toBe(true);
+  });
+
+  it("rejects a body that does not decode", async () => {
+    await expect((await fetch(`${base}/bad`)).text()).rejects.toThrow();
+  });
+});
+
+describe("cancelling a fetch", () => {
+  // An `AbortSignal` cancels a `fetch`: before it starts, while it waits for the response, and
+  // while the body is received (`fetch` resolves once the headers are in, as in JS). A timeout
+  // signal rejects with `TimeoutError`. Events are ordered by signals, not by sleeps: the server
+  // reports each request's arrival and holds it until the end. (Was the golden std/fetch_abort.)
+  const arrived = new AbortController();
+  const release = new AbortController();
+  let base = "";
+  let close = () => {};
+
+  // The body of `/stream`: a first part, then nothing until `release` is aborted.
+  async function* held(signal: AbortSignal): AsyncGenerator<u8[]> {
+    yield utf8Encode("first part ");
+    await signal.whenAborted();
+    yield utf8Encode("never read");
+  }
+
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      if (new URL(req.url).pathname == "/stream") {
+        return new Response(BodyStream.from(held(release.signal)));
+      }
+      arrived.abort("arrived");
+      await release.signal.whenAborted();
+      return new Response("late");
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => {
+      release.abort();
+      server.close();
+    };
+  });
+  afterAll(() => close());
+
+  async function why(p: Promise<Response, unknown>): Promise<string> {
+    try {
+      await p;
+      return "resolved";
+    } catch (e) {
+      const kind =
+        e instanceof TimeoutError
+          ? "TimeoutError"
+          : e instanceof AbortError ? "AbortError" : "other";
+      return `${kind}: ${(e as Error).message}`;
+    }
+  }
+
+  it("rejects at once when already aborted", async () => {
+    const early = new AbortController();
+    early.abort("not needed");
+    expect(await why(fetch(`${base}/hang`, { signal: early.signal }))).toBe(
+      "AbortError: not needed",
+    );
+  });
+
+  it("rejects when aborted while the server holds the request", async () => {
+    const ac = new AbortController();
+    const pending = fetch(`${base}/hang`, { signal: ac.signal });
+    await arrived.signal.whenAborted();
+    ac.abort("user cancelled");
+    expect(await why(pending)).toBe("AbortError: user cancelled");
+  });
+
+  it("rejects with TimeoutError for a timeout signal", async () => {
+    expect(await why(fetch(`${base}/hang`, { signal: AbortSignal.timeout(30) }))).toBe(
+      "TimeoutError: timed out after 30 ms",
+    );
+  });
+
+  it("rejects the body's read when aborted while it is received", async () => {
+    const body = new AbortController();
+    const res = await fetch(`${base}/stream`, { signal: body.signal });
+    expect(res).toHaveStatus(200);
+    expect(res).toHaveHeader("transfer-encoding", "chunked");
+    const text = res.text();
+    body.abort("enough");
+    try {
+      await text;
+      expect("resolved").toBe("rejected");
+    } catch (e) {
+      expect(e instanceof AbortError).toBe(true);
+      expect(e.message).toBe("enough");
+    }
+  });
+});
+
+type User = { id: number; name: string };
+
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, text: string) {
+    super(`HTTP ${status} ${text}`);
+    this.status = status;
+  }
+}
+
+describe("fetching safely", () => {
+  // The "fetch safely" pattern (#137): check the status, decode into a type (no schema step:
+  // `json<T>()` checks the data), time out with a signal, and catch every failure by type. (Was
+  // the golden std/fetch_safely.)
+  const release = new AbortController();
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      if (path == "/ok") {
+        return Response.json({ id: 1, name: "Ada" });
+      }
+      if (path == "/bad") {
+        return Response.json({ id: "one" });
+      }
+      if (path == "/slow") {
+        await release.signal.whenAborted();
+        return new Response("late");
+      }
+      return new Response("no such user", { status: 404 });
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => {
+      release.abort();
+      server.close();
+    };
+  });
+  afterAll(() => close());
+
+  async function getUser(url: string, ms: i64): Promise<User> {
+    const res = await fetch(url, { signal: AbortSignal.timeout(ms) });
+    if (!res.ok) {
+      throw new HttpError(res.status, res.statusText);
+    }
+    return await res.json<User>();
+  }
+
+  // `ms`: a minute for the paths that answer (a hang guard, never reached), a short timeout only
+  // for the one that never answers until the end.
+  async function show(path: string, ms: i64 = 60000): Promise<string> {
+    try {
+      const u = await getUser(`${base}${path}`, ms);
+      return `user ${u.id} ${u.name}`;
+    } catch (e) {
+      if (e instanceof HttpError) {
+        return `status ${e.status} ${e.message}`;
+      } else if (e instanceof JsonError) {
+        return `bad body: ${e.message}`;
+      } else if (e instanceof TimeoutError) {
+        return "timed out";
+      } else if (e instanceof AbortError) {
+        return "aborted";
+      } else if (e instanceof IoError) {
+        return `failed ${e.code}`;
+      }
+      return "other";
+    }
+  }
+
+  it("decodes a user", async () => {
+    expect(await show("/ok")).toBe("user 1 Ada");
+  });
+
+  it("throws an HttpError for an error status", async () => {
+    expect(await show("/missing")).toBe("status 404 HTTP 404 Not Found");
+  });
+
+  it("throws a JsonError for data of another shape", async () => {
+    expect(await show("/bad")).toBe("bad body: expected number at $.id");
+  });
+
+  it("times out", async () => {
+    expect(await show("/slow", 50)).toBe("timed out");
+  });
+});

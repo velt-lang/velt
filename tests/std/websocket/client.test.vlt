@@ -1,0 +1,101 @@
+// A velt:websocket client against a velt:http server, over TCP and TLS.
+import { channel, Channel } from "velt:channel";
+import { serve } from "velt:http";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import { WebSocket, connectWebSocket, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+// Server side of one connection: echoes text upper-cased and binary reversed until closed, then
+// reports on `done`.
+async function echo(ws: WebSocket, done: Channel<i64>): Promise<void> {
+  let m = await ws.receive();
+  while (m != null) {
+    if (m.isBinary) {
+      const data = m.data.clone();
+      data.reverse();
+      await ws.sendBytes(data);
+    } else {
+      await ws.send(m.text.toUpperCase());
+    }
+    m = await ws.receive();
+  }
+  await ws.close();
+  await done.send(1);
+}
+
+async function echoing(req: Request, done: Channel<i64>): Promise<Response> {
+  if (new URL(req.url).pathname == "/ws" && isWebSocketRequest(req)) {
+    const up = upgradeWebSocket(req);
+    spawn(echo(up.socket, done));
+    return up.response;
+  }
+  return new Response(`plain ${isWebSocketRequest(req)}`);
+}
+
+describe("a WebSocket client", () => {
+  // `connectWebSocket` to a server that upgrades with `upgradeWebSocket`, over TCP and TLS: text
+  // and binary messages, close codes that may not be sent, an ordinary request to the same path,
+  // and a refused handshake. (Was the golden std/websocket.)
+  const done = channel<i64>();
+  let port = 0;
+  let securePort = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve(
+      { port: 0 },
+      async (req: Request): Promise<Response> => await echoing(req, done),
+    );
+    const secure = await serve(
+      { port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } },
+      async (req: Request): Promise<Response> => await echoing(req, done),
+    );
+    port = server.port as number;
+    securePort = secure.port as number;
+    close = () => {
+      server.close();
+      secure.close();
+      done.close();
+    };
+  });
+  afterAll(() => close());
+
+  async function talk(url: string, ca: string) {
+    const ws = await connectWebSocket(url, { ca: ca });
+    await ws.send("hello");
+    const a = await ws.receive();
+    expect(a?.text ?? "none").toBe("HELLO");
+    expect(a?.isBinary ?? true).toBe(false);
+    await ws.sendBytes([1u8, 2u8, 3u8]);
+    const b = await ws.receive();
+    expect(b?.data ?? []).toEqual([3u8, 2u8, 1u8]);
+    expect(b?.isBinary ?? false).toBe(true);
+    // An invalid close code (reserved, or out of range for u16) throws and leaves it open.
+    for (const bad of [1005, 4294968296]) {
+      await expect(ws.close(bad)).rejects.toThrow(
+        `invalid WebSocket close code ${bad} (1000-1003, 1007-1014 or 3000-4999)`,
+      );
+    }
+    await ws.send("still open");
+    expect((await ws.receive())?.text ?? "closed").toBe("STILL OPEN");
+    await ws.close(1000, "bye");
+    expect(await done.receive()).toBe(1);
+  }
+
+  it("talks over TCP", async () => {
+    await talk(`ws://127.0.0.1:${port}/ws`, "");
+  });
+
+  it("talks over TLS", async () => {
+    await talk(`wss://localhost:${securePort}/ws`, TEST_CA);
+  });
+
+  it("leaves an ordinary request to the server", async () => {
+    expect(await (await fetch(`http://127.0.0.1:${port}/ws`)).text()).toBe("plain false");
+  });
+
+  it("fails when the server refuses the handshake", async () => {
+    await expect(connectWebSocket(`ws://127.0.0.1:${port}/other`)).rejects.toThrow(
+      /^WebSocket handshake failed/,
+    );
+  });
+});
