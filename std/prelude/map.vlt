@@ -470,22 +470,24 @@ export class Map<K, V> {
   /**
    * `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
    * matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
+   * `deep`: the values (and unmatched keys) compare as Vitest's `toEqual` does
+   * (`__intrinsic_deep_eq`: class instances by their fields).
    */
-  __deepEquals(other: Map<K, V>): bool {
+  __deepEquals(other: Map<K, V>, deep: bool): bool {
     if (this._size != other._size) {
       return false;
     }
     if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveDeepEquals(other);
+      return this.liveDeepEquals(other, deep);
     }
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
         const o = other.lookup(this.entryKeys[e], p);
         if (o < 0) {
-          return this.deepEqualsByContent(other);
+          return this.deepEqualsByContent(other, deep);
         }
-        if (!__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
           return false;
         }
       }
@@ -493,10 +495,15 @@ export class Map<K, V> {
     return true;
   }
 
+  /** Two keys or values, as `deepEqual` compares them, or (`deep`) as Vitest's `toEqual`. */
+  private static entriesEqual<T>(a: T, b: T, deep: bool): bool {
+    return deep ? __intrinsic_deep_eq(a, b) : __intrinsic_eq(a, b);
+  }
+
   // `__deepEquals` once a key of this map is not a key of `other`: an object key is matched by
   // identity, so, as in Node's `isDeepStrictEqual`, each such entry is paired with a distinct
   // entry of `other` whose key and value are deeply equal.
-  private deepEqualsByContent(other: Map<K, V>): bool {
+  private deepEqualsByContent(other: Map<K, V>, deep: bool): bool {
     const used: bool[] = __intrinsic_array_with_capacity(other.entryKeys.length);
     for (let o: usize = 0; o < other.entryKeys.length; o++) {
       used.push(false);
@@ -507,7 +514,7 @@ export class Map<K, V> {
         const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
         if (o < 0) {
           misses.push(e);
-        } else if (__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+        } else if (Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
           used[o as usize] = true;
         } else {
           return false;
@@ -520,8 +527,8 @@ export class Map<K, V> {
         if (
           !used[o] &&
           other.__liveAt(o) &&
-          __intrinsic_eq(this.entryKeys[e], other.entryKeys[o]) &&
-          __intrinsic_eq(this.entryValues[e], other.entryValues[o])
+          Map.entriesEqual(this.entryKeys[e], other.entryKeys[o], deep) &&
+          Map.entriesEqual(this.entryValues[e], other.entryValues[o], deep)
         ) {
           used[o] = true;
           found = true;
@@ -615,15 +622,15 @@ export class Map<K, V> {
     return out;
   }
 
-  private liveDeepEquals(other: Map<K, V>): bool {
+  private liveDeepEquals(other: Map<K, V>, deep: bool): bool {
     const live = this.liveBits();
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       if (this.entryValues[e] != null || bitAt(live, e)) {
         const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
         if (o < 0) {
-          return this.deepEqualsByContent(other);
+          return this.deepEqualsByContent(other, deep);
         }
-        if (!__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
           return false;
         }
       }

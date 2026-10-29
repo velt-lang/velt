@@ -40,8 +40,69 @@ impl FnLower<'_, '_> {
         self.eq_body(pa, pb, ty);
     }
 
+    /// `Intrinsic::DeepEq` (Vitest's `toEqual`) of the values of concrete type `ty` at two
+    /// places: `eq_values` in `deep_mode` (Bool operand).
+    pub(in crate::lower) fn deep_eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.deep_mode, true);
+        let r = self.eq_values(a, b, ty);
+        self.deep_mode = outer;
+        r
+    }
+
+    /// `Glue::DeepEq`: a class instance (not the prelude `Map` or `Record`, which compare by
+    /// content anyway) is equal to itself, else when its fields are; any other type as `Eq`
+    /// compares it, its parts in `deep_mode`. An object that reaches itself again through its
+    /// fields, in two copies, recurses without end (Vitest stops at the cycle).
+    pub(super) fn deep_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
+        self.deep_mode = true;
+        if !self.cx.is_class(ty) || self.is_dictionary(ty) {
+            return self.eq_body(pa, pb, ty);
+        }
+        let a = self.deref_param(pa, ty);
+        let b = self.deref_param(pb, ty);
+        let (no, yes) = (self.new_block(), self.new_block());
+        let same = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(a.clone()),
+                Operand::Copy(b.clone()),
+            ),
+        );
+        let fields = self.new_block();
+        self.branch(same, yes, fields);
+        self.switch_to(fields);
+        for (x, y, t) in self.struct_parts(&a, &b, ty) {
+            let e = self.eq_values(&x, &y, t);
+            self.when(e, no);
+        }
+        self.goto(yes);
+        self.switch_to(yes);
+        self.terminate(Terminator::Return(Operand::Const(
+            Const::Bool(true),
+            Ty::Bool,
+        )));
+        self.switch_to(no);
+        self.terminate(Terminator::Return(Operand::Const(
+            Const::Bool(false),
+            Ty::Bool,
+        )));
+    }
+
+    /// A class instance, or a nullable one: compared through `Glue::DeepEq` in `deep_mode`.
+    fn deep_class(&mut self, ty: TyId) -> bool {
+        let inner = match self.cx.kind(ty) {
+            TyKind::Option(e, _) => e,
+            _ => ty,
+        };
+        self.cx.is_class(inner) && !self.is_dictionary(inner)
+    }
+
     /// The equality glue for the current mode.
     fn eq_glue(&self) -> Glue {
+        if self.deep_mode {
+            return Glue::DeepEq;
+        }
         if self.value_mode {
             return Glue::SameValue;
         }
@@ -106,6 +167,14 @@ impl FnLower<'_, '_> {
                 self.ref_identity(a, b, ty)
             }
             TyKind::Promise(..) => self.promise_identity(a, b),
+            _ if self.deep_mode && vt.is_float() => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.same_value(x, y, vt)
+            }
+            _ if self.deep_mode && self.deep_class(ty) => {
+                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
+                self.call_glue(Glue::DeepEq, ty, vec![pa, pb])
+            }
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
@@ -346,7 +415,8 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) if self.is_dictionary(ty) => {
                 let (map_ty, ma) = self.dictionary_map(&a, ty);
                 let (_, mb) = self.dictionary_map(&b, ty);
-                let args = vec![Operand::Copy(ma), Operand::Copy(mb)];
+                let deep = Operand::Const(Const::Bool(self.deep_mode), Ty::Bool);
+                let args = vec![Operand::Copy(ma), Operand::Copy(mb), deep];
                 let r = self.call_map_method(map_ty, "__deepEquals", args, Ty::Bool);
                 self.when(r, no);
             }

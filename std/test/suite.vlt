@@ -16,17 +16,35 @@ export type Body = () => Promise<void, unknown>;
 export interface Settles {
   /** Waits for it if it is a promise; its rejection is the callback's error. */
   __settle(): Promise<void, unknown>;
+  /** `"promise"`, `"function"` or `"value"`. */
+  __kind(): string;
 }
 
 extend<T> T implements Settles {
   async __settle(): Promise<void, unknown> {}
+
+  __kind(): string {
+    return typeof this == "function" ? "function" : "value";
+  }
 }
 
 extend<V, E> Promise<V, E> implements Settles {
   async __settle(): Promise<void, unknown> {
     await this;
   }
+
+  __kind(): string {
+    return "promise";
+  }
 }
+
+/** Why a hook that returns a function fails: Vitest's teardown form, not supported yet. */
+const TEARDOWN =
+  "a hook returned a function: Vitest runs it as the hook's teardown, Velt doesn't yet; clean up in `afterEach` or `afterAll`";
+
+/** Why an `async` `describe` callback fails the group. */
+const ASYNC_DESCRIBE =
+  "a `describe` callback can't be `async` yet (Vitest awaits it): register the group's tests without awaiting, and await in a `beforeAll`";
 
 /** A `describe` block, or a file's top level (named `""`), with its hooks. */
 export class Suite {
@@ -39,6 +57,11 @@ export class Suite {
   readonly afterEach: Body[] = [];
   /** What its `beforeAll` hooks threw, in the process running it: its tests fail with it. */
   setupError: string | null = null;
+  /**
+   * An outer group's `beforeAll` threw: this group's hooks don't run (neither `beforeAll` nor
+   * `afterAll`), and its tests fail with that error.
+   */
+  blocked: bool = false;
 
   constructor(name: string, parent: Suite | null) {
     this.name = name;
@@ -126,22 +149,44 @@ function body<R extends Settles>(fn: () => R throws unknown): Body {
   };
 }
 
+/** A hook's `fn` as a `Body`; one that returns a function (a teardown) fails. */
+function hook<R extends Settles>(fn: () => R throws unknown): Body {
+  return async (): Promise<void, unknown> => {
+    const r = fn();
+    if (r.__kind() == "function") {
+      throw new Error(TEARDOWN);
+    }
+    await r.__settle();
+  };
+}
+
 /**
  * A group of tests: `fn` runs when the file's tests are collected, and the tests and hooks it
- * registers belong to the group. If it throws, a test named as the group fails with the error.
+ * registers belong to the group. If it throws (or is `async`), none of the group's tests run: a
+ * test named as the group fails with the error.
  */
-export function describe(name: string, fn: () => void throws unknown) {
+export function describe<R extends Settles>(name: string, fn: () => R throws unknown) {
   register((parent) => {
     const suite = new Suite(join(parent.name, name), parent);
     const outer = collecting;
+    const start = collected.length;
     collecting = suite;
+    let error: string | null = null;
     try {
-      fn();
+      const r = fn();
+      if (r.__kind() == "promise") {
+        error = `Error: ${ASYNC_DESCRIBE}`;
+        // What it registers after its first `await` would be lost, and its error unreported.
+        r.__settle().catch((e) => {});
+      }
     } catch (e) {
-      const error = `${__intrinsic_error_text(e)}${__intrinsic_throw_loc()}`;
-      collected.push(new Case(suite.name, async (): Promise<void, unknown> => {}, suite, error));
+      error = `${__intrinsic_error_text(e)}${__intrinsic_throw_loc()}`;
     }
     collecting = outer;
+    if (error != null) {
+      collected.splice(start as i64, collected.length as i64);
+      collected.push(new Case(suite.name, async (): Promise<void, unknown> => {}, suite, error));
+    }
   });
 }
 
@@ -160,31 +205,37 @@ export function test<R extends Settles>(name: string, fn: () => R throws unknown
 
 /** Runs `fn` once before the first test of the group (or file) that runs in this process. */
 export function beforeAll<R extends Settles>(fn: () => R throws unknown) {
-  const run = body(fn);
+  const run = hook(fn);
   register((suite) => {
     suite.beforeAll.push(run);
   });
 }
 
-/** Runs `fn` once after the last test of the group (or file) that runs in this process. */
+/**
+ * Runs `fn` once after the last test of the group (or file) that runs in this process; a group's
+ * `afterAll` hooks run last-registered first, as Vitest's.
+ */
 export function afterAll<R extends Settles>(fn: () => R throws unknown) {
-  const run = body(fn);
+  const run = hook(fn);
   register((suite) => {
-    suite.afterAll.push(run);
+    suite.afterAll.unshift(run);
   });
 }
 
 /** Runs `fn` before each test of the group (or file), outer groups' first. */
 export function beforeEach<R extends Settles>(fn: () => R throws unknown) {
-  const run = body(fn);
+  const run = hook(fn);
   register((suite) => {
     suite.beforeEach.push(run);
   });
 }
 
-/** Runs `fn` after each test of the group (or file), inner groups' first, also after a failure. */
+/**
+ * Runs `fn` after each test of the group (or file), inner groups' first, also after a failure;
+ * a group's `afterEach` hooks run last-registered first, as Vitest's.
+ */
 export function afterEach<R extends Settles>(fn: () => R throws unknown) {
-  const run = body(fn);
+  const run = hook(fn);
   register((suite) => {
     suite.afterEach.unshift(run);
   });

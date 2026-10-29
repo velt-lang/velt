@@ -125,17 +125,24 @@ ok cart > async > waits
 - A callback may be `async`; it is awaited, and a rejection fails the test as a throw does.
 - `beforeAll` and `afterAll` run once around a group's tests (or a file's, at the top level),
   `beforeEach` and `afterEach` around each of them: the outer groups' `beforeEach` first, the
-  inner groups' `afterEach` first, and `afterEach` also after a failure. A `beforeAll` that
-  throws fails the group's tests with its error.
+  inner groups' `afterEach` first, and `afterEach` also after a failure. A group's `afterEach`
+  and `afterAll` hooks run last-registered first, as in Vitest. A `beforeAll` that throws fails
+  the group's tests with its error, and the hooks of the groups inside it don't run.
 - A `describe` callback runs when the file's tests are collected, before the first test runs.
-  If it throws, a test named as the group fails with the error.
-- Matchers: `toBe` (`Object.is`), `toEqual` (deep equality, as `assertEq`), `toBeNull`,
-  `toBeUndefined`, `toBeDefined`, `toBeTruthy`, `toBeFalsy`, `toContain` and `toHaveLength` (an
-  array or a string), `toMatch` (a string: a `RegExp`, or a string it contains),
-  `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual` (a
-  `Comparable` type: numbers, strings), and `toThrow` on a function (`expect(() => parse("x"))
-  .toThrow("bad")`). `.not` checks the opposite. `await expect(p).resolves` and `.rejects` check
-  what a promise resolves to, or its error (`.rejects.toThrow("boom")`).
+  If it throws, none of the group's tests run: a test named as the group fails with the error.
+- Not yet as in Vitest: a `describe` callback can't be `async`, and a hook can't return a
+  teardown function (`beforeEach(() => () => cleanup())`). Both fail with a message saying so;
+  await in a `beforeAll` instead, and clean up in `afterEach` or `afterAll`.
+- Matchers: `toBe` (`Object.is`), `toEqual` (deep equality as Vitest's: contents, recursively,
+  class instances by their fields, a `Date` by its time, a `Set` by its members in any order,
+  numbers with `Object.is`), `toBeNull`, `toBeUndefined`, `toBeDefined`, `toBeTruthy`,
+  `toBeFalsy`, `toContain` and `toHaveLength` (an array or a string), `toMatch` (a string: a
+  `RegExp`, or a string it contains), `toBeGreaterThan`, `toBeGreaterThanOrEqual`,
+  `toBeLessThan`, `toBeLessThanOrEqual` (a `Comparable` type: numbers, strings), and `toThrow` on
+  a function (`expect(() => parse("x")).toThrow("bad")`). `.not` checks the opposite. `await
+  expect(p).resolves` and `.rejects` check what a promise resolves to, or its error
+  (`.rejects.toThrow("boom")`). Failure messages are Vitest's (`expected 2 to be 3 // Object.is
+  equality`).
 - A matcher only fits the types it checks: `expect(1).toContain(1)` is a compile error.
 - `export function test_*` and `describe`/`it` can be in one file: the functions run first.
 - When a test ends its process (a panic), the runner starts the file again from the next test.
