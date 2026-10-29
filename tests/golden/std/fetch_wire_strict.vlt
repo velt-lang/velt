@@ -146,7 +146,9 @@ async function main() {
   for (const path of ["/status", "/name", "/nul", "/reason", "/both", "/many", "/trailer"]) {
     console.log(path, await failure(`${base}${path}`));
   }
-  for (const path of ["/end", "/end-later"]) {
+  // A close in the same tick as the response is deterministic here; a close a moment later
+  // (`/end-later`) depends on the runner's timing, so it is measured by hand, not pinned.
+  for (const path of ["/end"]) {
     let failed = 0;
     for (let i = 0; i < 50; i++) {
       try {

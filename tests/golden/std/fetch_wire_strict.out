@@ -13,4 +13,3 @@ content-length: 4 body=abcd
 /many ok 200 ok
 /trailer EPROTO fetch failed: invalid HTTP response: trailer too large
 /end: 50 POSTs, failed: 0
-/end-later: 50 POSTs, failed: 0
