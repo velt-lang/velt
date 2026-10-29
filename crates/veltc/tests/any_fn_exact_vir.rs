@@ -82,8 +82,12 @@ fn a_function_of_exactly_the_type_is_called_without_the_closure() {
     };
     // The closure's environment: header (drop, clone, transfer) and the `any` it calls.
     let envs: HashSet<String> = has("velt_rt_alloc(48_u64").into_iter().collect();
-    assert!(!envs.is_empty(), "no closure environment in `main`:\n{body}");
-    let calls = has("call (_");
+    assert!(
+        !envs.is_empty(),
+        "no closure environment in `main`:\n{body}"
+    );
+    // The call of the converted function, `f(i)`, in the loop.
+    let calls = has("fn(ptr, f64) -> f64)");
     let call = calls
         .iter()
         .find(|b| !envs.contains(*b))
