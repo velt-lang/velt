@@ -1,5 +1,5 @@
-//! `toEqual`'s cycle guard (`Glue::DeepEq`, velt_vir `lower/glue/eq.rs`): the pairs of class
-//! instances (and object values) being compared field by field on this thread, with Vitest's
+//! The cycle guard of `toEqual` and `deepEqual` (velt_vir `lower/glue/eq_cycles.rs`): the pairs
+//! of objects being compared field by field on this thread, with Vitest's
 //! `aStack`/`bStack` rule: a pair met again while it is being compared (the same cycle on both
 //! sides: a parent pointer, rings of one length) counts as equal, an object met again with
 //! another partner (a cycle on one side, rings of two lengths) as different. The glue is

@@ -45,6 +45,7 @@ mod drop;
 mod drop_chain;
 mod drop_depth;
 mod eq;
+mod eq_cycles;
 mod eq_numbers;
 mod format;
 mod format_array;

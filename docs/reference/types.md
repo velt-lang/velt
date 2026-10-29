@@ -580,7 +580,9 @@ one that stops early, or a sum of floats, whose order it must keep.
   ```
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
-  and values, in any key order; other class instances by identity. `assertEq` uses it.
+  and values, in any key order; other class instances by identity. A value that holds itself
+  (a ring of object values) compares without looping: the same cycle on both sides is equal.
+  `assertEq` uses it.
 - `<`, `<=`, `>`, `>=` work on numbers and strings, and on a class or struct implementing
   `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
   `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).

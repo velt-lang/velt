@@ -688,7 +688,8 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
   arrays, structs, object literals, interface and function values — by identity; `T | null`,
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
-  (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
+  (`__intrinsic_eq`, `deepEqual`, `assertEq`); an object value, array, `Map` or `Record` whose
+  type can hold itself is compared under the same cycle rule as `DeepEq`'s (#1881). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
   only: `velt:test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
   same object compares by its fields, floats with SameValue (`NaN` equal to itself, `0` unequal
   to `-0`), and cycles go by Vitest's rule: a class instance or object value met again while its
