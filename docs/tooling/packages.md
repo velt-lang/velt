@@ -62,8 +62,9 @@ dependencies: {
   the checksum, are the same on every machine, and the variables a git hook sets (`GIT_DIR`)
   never redirect it.
 - **Packages of the same repository.** A `path` dependency of a package from git is another
-  package of the same commit, locked with it; a `path` that leads out of the repository (or a
-  symbolic link that does) is an error. A package from git can't be a workspace member: its
+  package of the same commit, locked with it; a `path` that leads out of the repository is an
+  error, and so is a commit with a symbolic link that points out of it (the lock pins the
+  repository's files, not what such a link reaches). A package from git can't be a workspace member: its
   `"workspace"` dependencies are errors. A registry requirement on the same name (another
   package's `json: "1.2"`) is met by the git package when its version matches, as by a `path`
   package.

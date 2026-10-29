@@ -160,8 +160,11 @@ whitespace, `?` or `#`; no password, and no user at all in `http(s)`), and with 
 `/`-separated plain directory names (no `..`, root, drive or `:`). A git package's own `path`
 dependencies become `Want::Git` of the same URL at `GitRef::Rev(<commit>)` with their directory
 relative to the checkout, and must stay inside it (lexically and through symbolic links); so must
-the package's directory. git runs without `git rev-parse --local-env-vars`'s variables and never
-prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
+the package's directory. A checked-out commit with a symbolic link that resolves outside the
+checkout (followed through the checkout's own links, at most 40, its missing parts taken as
+written; `git::check_links`) is refused before it enters the cache. The scratch repository is
+made with `--template=`, and the checkout runs with `core.hooksPath` at an empty directory. git
+runs without `git rev-parse --local-env-vars`'s variables and never prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
 `core.autocrlf=false`, `core.eol=lf`, `core.symlinks=true` and `core.longpaths=true`. Lock query
 values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
 `Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal

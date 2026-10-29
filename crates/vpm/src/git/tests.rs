@@ -466,9 +466,73 @@ fn paths_never_lead_out_of_the_repository() {
         let app = e.app(&format!("link: {{ git: \"{url}\", path: \"link\" }}"));
         let _ = std::fs::remove_file(app.join("velt.lock.json"));
         let err = e.install(&app, false).unwrap_err();
+        // Refused when it is checked out, before anything reads the package.
         assert!(
-            err.contains("leads out of the repository (through a symbolic link)"),
+            err.contains("has a symbolic link `link` that points out of the repository"),
             "{err}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn links_must_resolve_inside_the_checkout() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = tmp.path().join("tree");
+    std::fs::create_dir_all(tree.join("lib/src")).unwrap();
+    std::fs::create_dir_all(tree.join("d")).unwrap();
+    std::fs::write(tree.join("lib/src/real.vlt"), "\n").unwrap();
+    // Inside: a sibling, a parent's child, a link to a directory link, one that dangles inside.
+    symlink("real.vlt", tree.join("lib/src/same.vlt")).unwrap();
+    symlink("../lib", tree.join("d/lib")).unwrap();
+    symlink("d/lib/src", tree.join("srclink")).unwrap();
+    symlink("not-yet", tree.join("lib/dangling")).unwrap();
+    assert_eq!(check_links(&tree), Ok(()));
+
+    let refused = |name: &str, target: &str| {
+        let link = tree.join(name);
+        symlink(target, &link).unwrap();
+        let err = check_links(&tree).unwrap_err();
+        std::fs::remove_file(&link).unwrap();
+        assert!(
+            err.contains(&format!("`{name}` that points out of the repository")),
+            "{err}"
+        );
+    };
+    refused("lib/src/leak.vlt", "/etc/passwd");
+    refused("lib/src/up.vlt", "../../../outside/lib.vlt");
+    // `d/up` is the checkout's root, so `../x` through it leaves the checkout, though its text
+    // alone (`d/up/../x`) looks as if it stays inside.
+    symlink("..", tree.join("d/up")).unwrap();
+    refused("chain", "d/up/../x");
+    // A loop never ends inside.
+    symlink("loop2", tree.join("loop1")).unwrap();
+    refused("loop2", "loop1");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_repository_with_a_link_out_of_it_is_refused() {
+    let e = env();
+    e.upstream.commit_package("lib", "lib", "x");
+    let outside = e.root.join("outside.vlt");
+    std::fs::write(&outside, "export const says = \"secret\";\n").unwrap();
+    std::os::unix::fs::symlink(&outside, e.upstream.dir.join("lib/src/leak.vlt")).unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "leak"]);
+    let app = e.app(&format!(
+        "lib: {{ git: \"{}\", path: \"lib\" }}",
+        e.upstream.url()
+    ));
+    let err = e.install(&app, false).unwrap_err();
+    assert!(
+        err.contains("has a symbolic link `lib/src/leak.vlt` that points out of the repository"),
+        "{err}"
+    );
+    // Nothing was put in the cache.
+    let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+    assert!(!repository_dir(&e.loc, &e.upstream.url())
+        .join(commit)
+        .exists());
 }

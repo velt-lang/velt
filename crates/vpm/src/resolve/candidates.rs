@@ -267,8 +267,9 @@ impl Provider<'_> {
     }
 }
 
-/// Whether `dir` is inside `checkout` once symbolic links are followed. A path that doesn't exist
-/// counts as inside: reading it reports it.
+/// Whether `dir` is inside `checkout` once symbolic links are followed. A path that doesn't
+/// resolve (missing, or a dangling link) counts as inside: reading the package there reports it,
+/// and the checkout's links were already checked to point inside it (`git::check_links`).
 fn inside(dir: &Path, checkout: &Path) -> bool {
     match (dir.canonicalize(), checkout.canonicalize()) {
         (Ok(dir), Ok(checkout)) => dir.starts_with(checkout),

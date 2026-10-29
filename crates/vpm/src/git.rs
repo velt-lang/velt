@@ -15,6 +15,7 @@
 //! beside it in the repository (sigx's Velt half imports its sibling TypeScript packages).
 //! Nothing in the checkout runs.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -263,19 +264,24 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(&tree)
         .map_err(|e| format!("cannot create `{}`: {e}", tree.display()))?;
     let repo_arg = repo.to_string_lossy().into_owned();
-    git(None, &["init", "-q", "--bare", &repo_arg])?;
+    // No template: hooks from the user's `init.templateDir` would run at the checkout.
+    git(None, &["init", "-q", "--bare", "--template=", &repo_arg])?;
     git(
         Some(&repo),
         &["fetch", "-q", "--depth", "1", "--", url, commit],
     )
     .map_err(|e| format!("cannot fetch commit {commit} of {url}: {e}"))?;
     let work_tree = format!("--work-tree={}", tree.display());
+    let no_hooks = format!("core.hooksPath={}", scratch.0.join("no-hooks").display());
     git_with(
         Config::Own,
         Some(&repo),
-        &[&work_tree, "checkout", "-q", "-f", commit, "--", "."],
+        &[
+            "-c", &no_hooks, &work_tree, "checkout", "-q", "-f", commit, "--", ".",
+        ],
     )
     .map_err(|e| format!("cannot check out commit {commit} of {url}: {e}"))?;
+    check_links(&tree).map_err(|e| format!("commit {commit} of {url} {e}"))?;
     match std::fs::rename(&tree, dir) {
         Ok(()) => Ok(()),
         // Another `velt` put the same commit in place meanwhile.
@@ -285,6 +291,71 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
             dir.display()
         )),
     }
+}
+
+/// Every symbolic link in the checkout at `tree` must point inside it: the checksum covers a
+/// link's text, not what it points to, so a link out of the repository (`/etc/…`, `../../x`, a
+/// file elsewhere on this machine) would build what the lock doesn't pin. Each link is resolved
+/// inside the checkout, following the checkout's own links, so a chain can't leave it either; a
+/// part that doesn't exist yet is taken as written.
+fn check_links(tree: &Path) -> Result<(), String> {
+    let mut files = vec![];
+    collect(tree, "", &mut files)?;
+    for rel in files {
+        let path = tree.join(&rel);
+        let is_link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        if !is_link {
+            continue;
+        }
+        let target = std::fs::read_link(&path)
+            .map_err(|e| format!("has a symbolic link `{rel}` that can't be read: {e}"))?;
+        let dir: Vec<OsString> = rel.split('/').map(OsString::from).collect();
+        let dir = dir[..dir.len() - 1].to_vec();
+        if resolve_inside(tree, dir, &target, &mut 0).is_none() {
+            return Err(format!(
+                "has a symbolic link `{rel}` that points out of the repository (`{}`)",
+                target.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Where `target`, a link's text in the checkout's directory `at` (its components), leads inside
+/// the checkout at `tree`, following the checkout's links (at most 40 of them); `None` when it
+/// leaves the checkout or loops.
+fn resolve_inside(
+    tree: &Path,
+    mut at: Vec<OsString>,
+    target: &Path,
+    hops: &mut u32,
+) -> Option<Vec<OsString>> {
+    use std::path::Component;
+    for c in target.components() {
+        match c {
+            Component::Normal(name) => {
+                at.push(name.to_os_string());
+                let path = tree.join(at.iter().collect::<PathBuf>());
+                let is_link =
+                    std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+                if is_link {
+                    *hops += 1;
+                    if *hops > 40 {
+                        return None;
+                    }
+                    let next = std::fs::read_link(&path).ok()?;
+                    at.pop();
+                    at = resolve_inside(tree, at, &next, hops)?;
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                at.pop()?;
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(at)
 }
 
 /// A directory removed when dropped.
