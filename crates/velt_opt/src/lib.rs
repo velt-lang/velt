@@ -71,6 +71,10 @@
 //!   uses inside a loop are kept in locals (loaded on entry, stored back at every suspension).
 //! - `dead_fills`: at the same point, the zero fill of a new object is dropped when every
 //!   field is written after it before anything can read the object.
+//! - `invariant_reads`: then, a read through object and array header pointers (a typed
+//!   array's buffer, its bytes' length) inside a loop nest that writes no memory and calls
+//!   nothing is made once in front of the outermost such loop, each pointer tested for null
+//!   first, so LLVM sees the bound of an inner loop's check defined outside every loop.
 //! - `cold_calls`: last, the calls of a function to one callee that never returns (the
 //!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
 //!   small function with many checks stays cheap enough for LLVM to inline.
@@ -104,6 +108,7 @@ mod frozen;
 mod gated_clones;
 mod heap_sroa;
 mod inline;
+mod invariant_reads;
 mod locals;
 mod map_probe;
 mod module_state;
@@ -273,6 +278,14 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 });
             }
             promote_memory(program, t);
+            let kinds = invariant_reads::Kinds::of(&program.aggs, &program.externs);
+            for func in with_bodies(&mut program.funcs) {
+                if t.time("invariant_reads", || {
+                    invariant_reads::run(&program.aggs, &kinds, func)
+                }) {
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+            }
             let no_return = cold_calls::NoReturn::find(program);
             for func in &mut program.funcs {
                 if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
