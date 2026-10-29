@@ -41,7 +41,8 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
     let mut command = no_window::command(env!("CARGO_BIN_EXE_velt"));
     command.arg("test").arg(dir);
     if release {
-        command.arg("--release");
+        // No block counters there: an exported `VELT_RC_STATS=1` would fail every file.
+        command.arg("--release").env_remove("VELT_RC_STATS");
     } else {
         command.env("VELT_RC_STATS", "1");
         // As the goldens' debug runs: the checking allocator (a use after free aborts), unless
