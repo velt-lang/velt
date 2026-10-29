@@ -4,3 +4,9 @@
 4096 FROM terms once flattened: error: too many FROM clause terms, max: 200
 65536 references: error: too many references to "t": max 65535
 endless recursion under LIMIT: 1 2 3
+2000 result columns: 1
+2001 result columns: error: too many columns in result set
+2000 ORDER BY terms: 1 2
+2001 ORDER BY terms: error: too many terms in ORDER BY clause
+2000 GROUP BY terms: 1 2
+2001 GROUP BY terms: error: too many terms in GROUP BY clause

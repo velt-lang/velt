@@ -23,13 +23,16 @@ import { AG_COUNT_STAR, AggCtx, Group } from "velt:sqlite/exec/agg";
 import { prepareError } from "velt:sqlite/exec/errors";
 import { C, ExprCompiler, hasAggregate } from "velt:sqlite/exec/expr";
 import {
+  MAX_COLUMN,
+  checkResultWidth,
+  checkTerms,
   orderKeys,
   rangeError,
   resultColumns,
   resultIndex,
   termNumber,
 } from "velt:sqlite/exec/result";
-export { ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
+export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
 import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
 import { describe, outerOrEmpty } from "velt:sqlite/exec/core_plan";
 import { Emitter, limitValue } from "velt:sqlite/exec/emit";
@@ -154,6 +157,7 @@ function compileCoreOnce(
   const onExprs = fp.onExprs;
   const onLevel = fp.onLevel;
   sc.aliases = core.columns;
+  checkResultWidth(core.columns, sc);
   // WHERE and ON terms, each at the innermost level it reads.
   const whereParts: Expr[] = [];
   andTerms(core.where, whereParts);
@@ -207,6 +211,7 @@ function compileCoreOnce(
   sc.results = false;
   q.out.width = q.names.length;
   // ORDER BY: a sort.
+  checkTerms(tail.orderBy.length, "ORDER");
   if (tail.orderBy.length > 0) {
     orderKeys(c, tail.orderBy, osc, q, em);
   }
@@ -222,6 +227,7 @@ function compileCoreOnce(
   let groupStep: Step | null = null;
   const groups = new GroupState();
   if (isAgg) {
+    checkTerms(core.groupBy.length, "GROUP");
     groupStep = groupStepFor(c, core, sc, agg, groups, q);
   }
   const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc);
@@ -388,6 +394,9 @@ function valuesCore(
   sc.parent = outer;
   const rows: Ev[][] = [];
   const width = core.values[0].length;
+  if (width > MAX_COLUMN) {
+    prepareError("too many columns in result set");
+  }
   for (const r of core.values) {
     if (r.length != width) {
       prepareError("all VALUES must have the same number of terms");

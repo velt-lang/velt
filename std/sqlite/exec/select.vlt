@@ -27,7 +27,14 @@ import { ExprCompiler, hasAggregate } from "velt:sqlite/exec/expr";
 import { SortKey } from "velt:sqlite/exec/emit";
 import { KeySet } from "velt:sqlite/exec/keys";
 import { compoundRows } from "velt:sqlite/exec/compound";
-import { Tail, compileCore, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/core";
+import {
+  Tail,
+  checkTerms,
+  compileCore,
+  ordinal,
+  rangeError,
+  resultIndex,
+} from "velt:sqlite/exec/core";
 import { forCompare } from "velt:sqlite/exec/ops";
 import { Val } from "velt:sqlite/exec/value";
 
@@ -632,6 +639,7 @@ export class SelectCompiler extends ExprCompiler {
       colls.push(c >= 0 ? c as u8 : BINARY);
     }
     const sort: SortKey[] = [];
+    checkTerms(s.orderBy.length, "ORDER");
     for (let k: usize = 0; k < s.orderBy.length; k++) {
       const t = s.orderBy[k];
       let i = resultIndex(t.expr, s.cores[0].columns, width, "ORDER", k);

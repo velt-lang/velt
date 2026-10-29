@@ -29,6 +29,44 @@ import { prepareError } from "velt:sqlite/exec/errors";
 import { C, ExprCompiler } from "velt:sqlite/exec/expr";
 import { Emitter, SortKey } from "velt:sqlite/exec/emit";
 
+/** SQLITE_MAX_COLUMN: the most result columns, and ORDER BY and GROUP BY terms (2,000). */
+export const MAX_COLUMN: usize = 2000;
+
+/**
+ * SQLite's `too many columns in result set` when the result columns, `*` and `t.*` expanded,
+ * are more than `MAX_COLUMN` (selectExpander checks it before anything else is resolved).
+ */
+export function checkResultWidth(cols: ResultColumn[], sc: Scope) {
+  let n: usize = 0;
+  for (const rc of cols) {
+    const e = rc.expr;
+    if (e.kind != E_STAR) {
+      n++;
+      continue;
+    }
+    for (const src of sc.fromOrder.length > 0 ? sc.fromOrder : sc.sources) {
+      if (e.table != "" && src.name.toUpperCase() != e.table.toUpperCase()) {
+        continue;
+      }
+      for (let i: usize = 0; i < src.cols.length; i++) {
+        if (e.table != "" || !src.hidden[i]) {
+          n++;
+        }
+      }
+    }
+  }
+  if (n > MAX_COLUMN) {
+    prepareError("too many columns in result set");
+  }
+}
+
+/** SQLite's `too many terms in ORDER BY clause` (or GROUP BY) past `MAX_COLUMN` terms. */
+export function checkTerms(n: usize, kind: string) {
+  if (n > MAX_COLUMN) {
+    prepareError(`too many terms in ${kind} BY clause`);
+  }
+}
+
 /** The result columns: `*` and `t.*` expanded, names, affinities and collations. */
 export function resultColumns(
   c: ExprCompiler,

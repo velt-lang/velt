@@ -2,8 +2,9 @@
 // FROM subqueries nested 200 deep (the parser's nesting bound, #1774, stops them before SQLite's
 // 416, "Recursion limit"), views nest 999 deep
 // and not 1000 ("VIEWs and/or subqueries nested too deep"), a statement references a table at
-// most 65534 times (CTEs expanded), and an endless recursive CTE ends at an outer LIMIT. The
-// expected output is the sqlite3 shell's for the same statements.
+// most 65534 times (CTEs expanded), an endless recursive CTE ends at an outer LIMIT, and a
+// result has at most 2,000 columns, ORDER BY and GROUP BY terms. The expected output is the
+// sqlite3 shell's for the same statements.
 import { open } from "velt:sqlite";
 import { openDatabase, Database } from "velt:sqlite/engine";
 import { Val } from "velt:sqlite/exec/value";
@@ -67,5 +68,14 @@ function main() {
     "endless recursion under LIMIT",
     "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r LIMIT 3",
   );
+  // SQLITE_MAX_COLUMN: 2,000 result columns, ORDER BY terms and GROUP BY terms.
+  const ones = (n: i64) => Array.from({ length: n }, () => "1").join(", ");
+  const ids = (n: i64) => Array.from({ length: n }, () => "id").join(", ");
+  show(db, "2000 result columns", `SELECT count(*) FROM (SELECT ${ones(2000)})`);
+  show(db, "2001 result columns", `SELECT count(*) FROM (SELECT ${ones(2001)})`);
+  show(db, "2000 ORDER BY terms", `SELECT id FROM t ORDER BY ${ids(2000)}`);
+  show(db, "2001 ORDER BY terms", `SELECT id FROM t ORDER BY ${ids(2001)}`);
+  show(db, "2000 GROUP BY terms", `SELECT id FROM t GROUP BY ${ids(2000)}`);
+  show(db, "2001 GROUP BY terms", `SELECT id FROM t GROUP BY ${ids(2001)}`);
   removeSync(path);
 }
