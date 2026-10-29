@@ -1,5 +1,5 @@
 // A parsed value writes its 16-17 digit doubles with the runtime's printer straight into the
-// tape writer's byte buffer: the text equals what Node prints, also across the buffer's 8 KB chunks.
+// tape writer's byte buffer: the text equals what Node prints, also across the buffer's 2 KB chunks.
 const v = JSON.parseValue(
   "[0.1,1.7976931348623157e308,5e-324,-2.2250738585072014e-308,123456789012345678,0.30000000000000004,1e21,1.5e-7,-0.0]",
 );
