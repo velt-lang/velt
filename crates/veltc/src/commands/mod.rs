@@ -15,6 +15,7 @@ mod doc;
 mod doctor;
 mod fmt;
 pub mod lsp;
+pub mod members;
 mod package;
 mod project;
 mod registry;

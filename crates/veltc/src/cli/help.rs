@@ -5,7 +5,12 @@ use crate::style::{paint, Stream, Style};
 use crate::templates::Template;
 
 mod environment;
+mod options;
 use environment::ENVIRONMENT;
+use options::{
+    AFFECTED, BACKEND, CPU, DEBUG_INFO, FAIL_FAST, LOCKED, MEMBER, PACKAGE, RELEASE, REPORT,
+    TARGET, TEMPLATE, TIMINGS, VERBOSE, WORKSPACE,
+};
 
 /// One `velt` command's help.
 pub struct CommandHelp {
@@ -36,38 +41,6 @@ impl CommandHelp {
         flags
     }
 }
-
-const RELEASE: (&str, &str) = (
-    "--release",
-    "optimize (LLVM when clang is found) and link without debug info",
-);
-const DEBUG_INFO: (&str, &str) = ("-g", "keep debug info in a --release build");
-const TARGET: (&str, &str) = (
-    "--target <triple>",
-    "target triple (default: the host); wasm32-wasip1 and wasm32-unknown-unknown build WebAssembly",
-);
-const CPU: (&str, &str) = (
-    "--cpu <name>",
-    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.vlt)",
-);
-const BACKEND: (&str, &str) = (
-    "--backend <name>",
-    "cranelift | llvm (default: llvm for --release when clang is found)",
-);
-const LOCKED: (&str, &str) = ("--locked", "fail if velt.lock.json would change");
-const VERBOSE: (&str, &str) = ("-v, --verbose", "print per-stage timings to stderr");
-const TIMINGS: (&str, &str) = (
-    "--timings",
-    "like -v, plus the time of each optimizer pass and codegen step",
-);
-const REPORT: (&str, &str) = (
-    "--report numbers",
-    "list the `number` variables in loops that stay doubles (not integers), and why",
-);
-const TEMPLATE: (&str, &str) = (
-    "--template <name>",
-    "app | cli | api | websocket | lib (default: app)",
-);
 
 /// Every command, in the order `velt --help` lists them.
 pub const COMMANDS: &[CommandHelp] = &[
@@ -115,11 +88,18 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
+        usage: &[
+            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
+            "build (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<build options>]",
+        ],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("-o, --output <path>", "output file"),
             RELEASE,
             DEBUG_INFO,
@@ -151,10 +131,11 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &[
             "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
             "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
+            "run -p <member> [<run options>]",
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
+        options: &[MEMBER, RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),
@@ -168,6 +149,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &[
             "check [<file.vlt>] [--json] [--locked] [-v]",
             "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
+            "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
         ],
         about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
                 with 1 if there are errors. Nothing is lowered, compiled or linked. With a \
@@ -179,6 +161,10 @@ pub const COMMANDS: &[CommandHelp] = &[
                 folders the package's `tsCompat` lists, then reports what in them `tsc` would \
                 reject or run differently, for code shared with TypeScript.",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--json", "diagnostics as one JSON document on stdout (for editors and tools)"),
             (
                 "--ts-compat [<file|dir>...]",
@@ -198,12 +184,16 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
-        usage: &["dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]"],
+        usage: &[
+            "dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]",
+            "dev -p <member> [<dev options>]",
+        ],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
                 it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
                 sockets stay open across restarts.",
         options: &[
+            MEMBER,
             ("--exe", "link an executable for each version instead of the JIT"),
             RELEASE,
             DEBUG_INFO,
@@ -224,11 +214,16 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &[
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch]",
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
+            "test (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<test options>]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed.",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--filter <text>", "only the tests whose name contains <text>"),
             ("--exact", "with --filter: only the test named <text>"),
             ("--release", "build the tests optimized"),
@@ -255,10 +250,19 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "fmt",
         summary: "Format .vlt (and .ts, .tsx) files",
-        usage: &["fmt [<file|dir>...] [--check]"],
+        usage: &[
+            "fmt [<file|dir>...] [--check]",
+            "fmt (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<fmt options>]",
+        ],
         about: "Without paths, formats the package's package.vlt and the .vlt, .ts and .tsx \
                 files of src/ (or every .vlt file under the current directory).",
-        options: &[("--check", "write nothing; list unformatted files and exit 1 if any")],
+        options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
+            ("--check", "write nothing; list unformatted files and exit 1 if any"),
+        ],
         examples: &[
             ("velt fmt", "format the package"),
             ("velt fmt --check src tests", "check formatting (CI)"),
@@ -490,10 +494,17 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "doc",
         summary: "Generate HTML API docs",
-        usage: &["doc [<file|dir>...] [--std] [-o <dir>]"],
+        usage: &[
+            "doc [<file|dir>...] [--std] [-o <dir>]",
+            "doc (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<doc options>]",
+        ],
         about: "Documents exported items and the `///` comments above them. Without paths: the \
                 package's src/ into <package>/target/doc.",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--std", "document the standard library"),
             ("-o, --output <dir>", "output directory"),
         ],

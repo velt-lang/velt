@@ -124,11 +124,22 @@ there notes that the workspace does not list it.
 `velt run` and `velt dev` take one member (`-p app`); at the root without one, they list the
 runnable members.
 
-The members run in dependency order, `--jobs` at once (default: the number of cores), in one
-process: one installed graph, one cache handle, one std. Output is grouped per member and
-printed when the member finishes; a summary lists every member's result, and the command fails
-when one did. All members run even after a failure (CI wants every failure in one run);
-`--fail-fast` stops at the first.
+The members run in dependency order, as one `velt` per member, at most half the cores' worth at
+once (each member's build already compiles on every core). A member starts once the selected
+members it depends on finished, so it takes their code from the machine's build cache instead of
+compiling it at the same time. The workspace is installed once before them, so none writes the
+lock. Output is grouped per member and printed when the member finishes; a summary lists every
+member's result, and the command fails when one did, with the first failure's exit code. All
+members run even after a failure (CI wants every failure in one run); `--fail-fast` starts no
+more. One selected member runs in the same process, in its directory. `velt build` skips
+libraries when it builds several members: the members that use them build them.
+
+*Revised in step 2:* this note first proposed one process for all members (one installed graph,
+one std). The commands print as they work and read the current directory, so that would mean
+capturing every command's output and passing a directory to all of them; the processes share
+what matters already (the build cache and the stamps are on disk), and the frontend work that a
+single process could share is #1612's. `--affected` without a base takes the upstream merge base
+on a workstation and is an error in CI (`CI` set): a CI checkout often has no upstream branch.
 
 ### The caches workspaces rely on
 
@@ -225,7 +236,6 @@ Steps 1 and 2 make a working monorepo; each step updates
 
 ## Open questions
 
-- Should `--affected` default to the upstream merge base, or need an explicit base in CI?
 - Should test results be cached by default, or opt in per member? Tests that talk to a database
   or the network can pass once and fail later; the stamp only knows the program and its
   environment. The proposal caches by default and prints `cached` visibly; `--no-cache` and the
