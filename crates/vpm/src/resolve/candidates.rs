@@ -1,7 +1,7 @@
 //! Candidate versions for a requirement: registry index entries (cached per name) or the single
 //! package at a path, each with its own dependency requirements.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use semver::Version;
@@ -28,6 +28,8 @@ pub(super) struct Provider<'a> {
     /// members, with `"workspace"` replaced.
     manifests: &'a BTreeMap<PathBuf, Manifest>,
     indexes: HashMap<String, Option<Index>>,
+    /// Warnings for the user, as candidates were made (`git::link_warnings`).
+    pub warnings: BTreeSet<String>,
 }
 
 impl<'a> Provider<'a> {
@@ -43,6 +45,7 @@ impl<'a> Provider<'a> {
             prefer,
             manifests,
             indexes: HashMap::new(),
+            warnings: BTreeSet::new(),
         }
     }
 
@@ -185,7 +188,7 @@ impl<'a> Provider<'a> {
 impl Provider<'_> {
     /// The package of a git requirement: at the commit the lockfile records for the same spec
     /// (no network), else at the commit its reference names now; checked out into the cache.
-    fn git_candidate(&self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
+    fn git_candidate(&mut self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
         let named = |e: String| format!("git dependency `{}`: {e}", req.name);
         let locked = self
             .prefer
@@ -218,6 +221,10 @@ impl Provider<'_> {
             )));
         }
         let manifest = Manifest::from_dir(&dir).map_err(named)?;
+        let windows = cfg!(windows);
+        let warnings =
+            crate::git::link_warnings(&checkout, &spec.url, spec.subdir.as_deref(), windows);
+        self.warnings.extend(warnings);
         if manifest.package.name != req.name {
             return Err(named(format!(
                 "the package at `{sub}` of {} is `{}`",

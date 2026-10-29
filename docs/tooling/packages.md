@@ -66,7 +66,9 @@ dependencies: {
   error, and so is a commit with a symbolic link that points out of it (the lock pins the
   repository's files, not what such a link reaches). On Windows, a repository's symbolic links
   are checked out as plain files holding their target, as git does where it can't make links,
-  so the checkout hashes the same as on Linux and macOS. A package from git can't be a workspace member: its
+  so the checkout hashes the same as on Linux and macOS. Links in a git dependency are not
+  followed on Windows: a package that imports a file or a directory through one builds on Linux
+  and macOS but not on Windows, and `velt` warns about each link in such a package there. A package from git can't be a workspace member: its
   `"workspace"` dependencies are errors. A registry requirement on the same name (another
   package's `json: "1.2"`) is met by the git package when its version matches, as by a `path`
   package.

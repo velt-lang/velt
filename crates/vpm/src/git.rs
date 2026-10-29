@@ -246,6 +246,58 @@ pub fn checkout(
     Ok(dir)
 }
 
+/// The list of a checkout's symbolic links (`/`-separated paths, one per line), beside it and
+/// outside the hashed tree: `<cache>/git/<repository>/<commit>.links`.
+fn links_file(checkout: &Path) -> PathBuf {
+    let mut name = checkout.file_name().unwrap_or_default().to_os_string();
+    name.push(".links");
+    checkout.with_file_name(name)
+}
+
+/// The symbolic links of the commit checked out at `checkout` (empty for a checkout made before
+/// they were listed).
+pub fn links(checkout: &Path) -> Vec<String> {
+    std::fs::read_to_string(links_file(checkout))
+        .map(|text| {
+            text.lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// On Windows, a warning per symbolic link inside the package at `subdir` of the checkout (all
+/// of it for `None`): it is a file holding its target there, so importing through it fails with
+/// errors that don't say why. `windows` is whether this is Windows (a parameter for tests).
+pub fn link_warnings(
+    checkout: &Path,
+    url: &str,
+    subdir: Option<&str>,
+    windows: bool,
+) -> Vec<String> {
+    if !windows {
+        return vec![];
+    }
+    let prefix = subdir.map(|s| format!("{s}/")).unwrap_or_default();
+    links(checkout)
+        .into_iter()
+        .filter(|link| link.starts_with(&prefix))
+        .map(|link| {
+            // A file holding the target on Windows; a link elsewhere (for tests).
+            let path = checkout.join(&link);
+            let target = std::fs::read_link(&path)
+                .map(|t| t.to_string_lossy().into_owned())
+                .or_else(|_| std::fs::read_to_string(&path))
+                .unwrap_or_default();
+            format!(
+                "`{link}` is a symbolic link in {url}; on Windows a git dependency's links are checked out as files holding their target (`{}`), so it can't be imported or read through",
+                target.trim()
+            )
+        })
+        .collect()
+}
+
 /// `<cache>/git/<repository>`: named by a hash of the URL, so two URLs never share checkouts.
 fn repository_dir(loc: &Locations, url: &str) -> PathBuf {
     let hash = Sha256::digest(url.as_bytes());
@@ -284,6 +336,20 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
     )
     .map_err(|e| format!("cannot check out commit {commit} of {url}: {e}"))?;
     check_links(&tree).map_err(|e| format!("commit {commit} of {url} {e}"))?;
+    // The commit's links, as git lists them: on Windows they are checked out as files, and a
+    // package that uses one is told why ([`link_warnings`]).
+    let listing = git(Some(&repo), &["ls-tree", "-r", "-z", "--full-tree", commit])
+        .map_err(|e| format!("cannot list commit {commit} of {url}: {e}"))?;
+    let links: Vec<&str> = listing
+        .split('\0')
+        .filter_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            meta.starts_with("120000 ").then_some(path)
+        })
+        .collect();
+    let list = links_file(dir);
+    std::fs::write(&list, links.join("\n"))
+        .map_err(|e| format!("cannot write `{}`: {e}", list.display()))?;
     match std::fs::rename(&tree, dir) {
         Ok(()) => Ok(()),
         // Another `velt` put the same commit in place meanwhile.

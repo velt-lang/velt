@@ -70,6 +70,8 @@ pub struct Resolution {
     pub packages: BTreeMap<String, ResolvedPackage>,
     /// Selected registry versions that are yanked (kept only because the lockfile pins them).
     pub yanked: Vec<(String, Version)>,
+    /// Things the user should know about the packages (a git package's links on Windows).
+    pub warnings: Vec<String>,
 }
 
 /// What a requirement asks for.
@@ -175,6 +177,7 @@ fn solve_root(
         root_dependencies,
         packages,
         yanked,
+        warnings: provider.warnings.into_iter().collect(),
     })
 }
 

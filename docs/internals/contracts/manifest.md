@@ -167,7 +167,10 @@ made with `--template=`, and the checkout runs with `core.hooksPath` at an empty
 runs without `git rev-parse --local-env-vars`'s variables and never prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
 `core.autocrlf=false`, `core.eol=lf`, `core.longpaths=true`, and `core.symlinks=true`
 (`false` on Windows: links are files holding the stored text, which hash as a link's text does
-elsewhere; Git for Windows would write link targets with `\`). Lock query
+elsewhere; Git for Windows would write link targets with `\`). The commit's links (`git ls-tree`
+mode `120000`) are listed in `<commit>.links` beside the checkout, outside the hashed tree; on
+Windows, resolving a git package warns about each link inside it (`git::link_warnings`, printed
+with the yanked versions by `velt install` and builds). Lock query
 values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
 `Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
 spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with

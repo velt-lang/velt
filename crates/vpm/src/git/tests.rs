@@ -587,3 +587,39 @@ fn a_link_hashes_as_the_repository_stores_it() {
     copy_with_links_as_files(&checkout, &copy);
     assert_eq!(tree_checksum(&copy).unwrap(), checksum);
 }
+
+/// The commit's links are listed beside the checkout, and on Windows a package with one is told
+/// why importing through it fails.
+#[test]
+fn a_package_with_links_is_told_about_them_on_windows() {
+    let e = env();
+    e.upstream.commit_package("lib", "lib", "x");
+    let text = e.root.join("link-text");
+    std::fs::write(&text, "lib.vlt").unwrap();
+    let blob = e
+        .upstream
+        .git(&["hash-object", "-w", &text.to_string_lossy()]);
+    for path in ["lib/src/alias.vlt", "other/alias.vlt"] {
+        let entry = format!("120000,{blob},{path}");
+        e.upstream
+            .git(&["update-index", "--add", "--cacheinfo", &entry]);
+    }
+    e.upstream.git(&["commit", "-q", "-m", "links"]);
+    let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+    let url = e.upstream.url();
+    let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
+    let installed = e.install(&app, false).unwrap();
+    let checkout = repository_dir(&e.loc, &url).join(&commit);
+    assert_eq!(links(&checkout), ["lib/src/alias.vlt", "other/alias.vlt"]);
+    let warnings = link_warnings(&checkout, &url, Some("lib"), true);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("`lib/src/alias.vlt` is a symbolic link in")
+            && warnings[0].contains("holding their target (`lib.vlt`)"),
+        "{}",
+        warnings[0]
+    );
+    assert!(link_warnings(&checkout, &url, Some("lib"), false).is_empty());
+    // Builds print them with the yanked versions, on Windows only.
+    assert_eq!(installed.yank_warnings().len(), usize::from(cfg!(windows)));
+}

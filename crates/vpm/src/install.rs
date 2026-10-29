@@ -41,18 +41,22 @@ pub struct Installed {
     pub lock_changed: bool,
     /// Installed registry versions that are yanked (pinned by `velt.lock.json`); callers warn.
     pub yanked: Vec<(String, semver::Version)>,
+    /// Warnings of the resolution, printed with the yanked versions ([`Installed::yank_warnings`]).
+    pub warnings: Vec<String>,
     /// Things `velt install` tells the user (a package below a workspace that doesn't list it).
     pub notes: Vec<String>,
 }
 
 impl Installed {
-    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version.
+    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version, then
+    /// the resolution's other warnings (a git package's links on Windows).
     pub fn yank_warnings(&self) -> Vec<String> {
         self.yanked
             .iter()
             .map(|(name, version)| {
                 format!("`{name}` {version} is yanked (pinned by velt.lock.json)")
             })
+            .chain(self.warnings.iter().cloned())
             .collect()
     }
 }
@@ -172,6 +176,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
+        warnings: resolution.warnings.clone(),
         notes,
     })
 }
