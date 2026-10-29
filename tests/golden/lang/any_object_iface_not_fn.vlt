@@ -1,0 +1,9 @@
+// A property that holds no function where the interface has a method (#1886): Node throws a
+// `TypeError` at the call; Velt checks the conversion and stops there.
+interface Ctx {
+  n: number;
+  update(): void;
+}
+const bad = { n: 1, update: 5 };
+const c = bad as unknown as Ctx;
+c.update();

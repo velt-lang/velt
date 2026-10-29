@@ -1,0 +1,36 @@
+// A function whose result a plain assignment takes as the method's result fills the method
+// (#1886): a `T` for a `T | undefined`, an optional object for an optional interface, an
+// object literal (also a nested one) for an interface of only fields it fits, `undefined`.
+interface Item {
+  v: number;
+}
+
+interface Ctx {
+  n: number;
+  get(): number | undefined;
+  make(): Item;
+  maybe(): Item | null;
+  opt(): Item | undefined;
+  pair(): { a: Item };
+  nothing(): number | undefined;
+}
+
+let count = 4;
+let k = 0;
+const init = {
+  n: 1,
+  get: () => 1,
+  make: () => ({ v: count }),
+  maybe: () => ({ v: 7 }),
+  opt: () => (k > 0 ? { v: k } : undefined),
+  pair: () => ({ a: { v: 3 } }),
+  nothing: () => undefined,
+};
+const c = init as unknown as Ctx;
+console.log(c.get(), c.make().v, c.maybe()?.v);
+console.log(c.opt(), c.pair().a.v, c.nothing());
+k = 3;
+console.log(c.opt()?.v);
+count = 5;
+const stored: Ctx = init;
+console.log(stored.get(), stored.make().v, stored.opt()?.v);

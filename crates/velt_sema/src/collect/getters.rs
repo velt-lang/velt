@@ -29,22 +29,8 @@ fn getter_of(
     ty: TyId,
     wrap: Option<TyId>,
 ) -> DefId {
-    let a = cx.adt(d).expect("ICE: adt");
-    let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
-    let fname = a.fields[index].name.clone();
-    let name = format!("{qual}.<{fname}>");
-    let mut info = super::fn_placeholder(name.clone(), span, span, module, FnKind::Method, None);
-    info.generics = n.clone();
-    info.this = Some(ThisSig {
-        ty: self_ty,
-        mode: PassMode::Borrow,
-    });
-    info.ret = wrap.unwrap_or(ty);
-    info.fixed_modes = true;
-    info.state = BodyState::Done;
-    info.owner = Some(d);
-    info.local_kinds = vec![crate::body::LocalKind::This];
-    let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
+    let fname = cx.adt(d).expect("ICE: adt").fields[index].name.clone();
+    let (def, name, n, span) = getter_info(cx, d, self_ty, &fname, wrap.unwrap_or(ty));
     let copy = cx.is_copy(ty);
     let this = hir::Expr {
         kind: H::Local(LocalId(0), UseMode::Borrow),
@@ -83,15 +69,110 @@ fn getter_of(
         ),
         None => (ty, value),
     };
-    cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(
-        name,
-        n.len() as u32,
-        self_ty,
-        ret,
-        value,
-        span,
-    )));
+    cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(name, n, self_ty, ret, value, span)));
     def
+}
+
+/// The declaration of the getter `<fname>` of class/struct `d` (self type `self_ty`) returning
+/// `ret`: its definition, name, number of type parameters and span (the body comes after).
+fn getter_info(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    fname: &str,
+    ret: TyId,
+) -> (DefId, String, u32, Span) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
+    let name = format!("{qual}.<{fname}>");
+    let mut info = super::fn_placeholder(name.clone(), span, span, module, FnKind::Method, None);
+    info.generics = n.clone();
+    info.this = Some(ThisSig {
+        ty: self_ty,
+        mode: PassMode::Borrow,
+    });
+    info.ret = ret;
+    info.fixed_modes = true;
+    info.state = BodyState::Done;
+    info.owner = Some(d);
+    info.local_kinds = vec![crate::body::LocalKind::This];
+    let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
+    (def, name, n.len() as u32, span)
+}
+
+/// The getter of optional interface field `fname` (of type `want`, `T | null`) for an object
+/// type `d` that lacks it: `undefined` (an object type converted to an interface,
+/// `crate::object_ifaces`).
+pub(crate) fn absent_getter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    fname: &str,
+    want: TyId,
+) -> DefId {
+    value_getter(cx, d, self_ty, fname, want, |span| hir::Expr {
+        kind: H::Lit(hir::Lit::Null),
+        ty: want,
+        span,
+    })
+}
+
+/// A getter `<fname>` of class/struct `d` (self type `self_ty`, local 0 in the body) returning
+/// `ret`, the value `value` makes at the span it is given.
+pub(crate) fn value_getter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    fname: &str,
+    ret: TyId,
+    value: impl FnOnce(Span) -> hir::Expr,
+) -> DefId {
+    let (def, name, n, span) = getter_info(cx, d, self_ty, fname, ret);
+    let v = value(span);
+    cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(name, n, self_ty, ret, v, span)));
+    def
+}
+
+/// A setter of field `index` (type `ty`) of class/struct `d` taking a `want`: the field gets
+/// the value `value` makes of the parameter (local 1, read as given) at the span it is given.
+pub(crate) fn value_setter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    want: TyId,
+    value: impl FnOnce(hir::Expr, Span) -> hir::Expr,
+) -> DefId {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (fname, ty) = (a.fields[index].name.clone(), a.fields[index].ty);
+    let unit = cx.ty.unit;
+    setter_def(cx, d, self_ty, &fname, want, false, |span, copy| {
+        let this = hir::Expr {
+            kind: H::Local(LocalId(0), UseMode::BorrowMut),
+            ty: self_ty,
+            span,
+        };
+        let place = hir::Expr {
+            kind: H::Field {
+                base: Box::new(this),
+                index: index as u32,
+                mode: UseMode::BorrowMut,
+            },
+            ty,
+            span,
+        };
+        let mode = if copy { UseMode::Copy } else { UseMode::Move };
+        let v = hir::Expr {
+            kind: H::Local(LocalId(1), mode),
+            ty: want,
+            span,
+        };
+        let assign = H::Assign {
+            place: Box::new(place),
+            value: Box::new(value(v, span)),
+        };
+        Some((assign, unit))
+    })
 }
 
 /// The getter of required field `index` (type `ty`) of `d` for an optional field of type
@@ -184,6 +265,120 @@ pub(crate) fn getter_only_setter(
     let cname = cx.adt(d).expect("ICE: adt").name.clone();
     let msg =
         format!("TypeError: Cannot set property {fname} of #<{cname}> which has only a getter");
+    let (str_, never) = (cx.ty.str_, cx.ty.never);
+    setter_def(cx, d, self_ty, fname, ty, false, |span, _| {
+        let call = H::Call {
+            callee: Callee::Intrinsic(Intrinsic::Panic),
+            args: vec![hir::Expr {
+                kind: H::Lit(hir::Lit::Str(msg)),
+                ty: str_,
+                span,
+            }],
+        };
+        Some((call, never))
+    })
+}
+
+/// The setter slot of optional interface field `fname` (of type `want`, `T | null`) stored in
+/// field `index` of type `T` of object type `d` (`crate::object_ifaces`): a `T` is written, and
+/// `undefined`, which the field cannot hold, stops with a `TypeError`.
+pub(crate) fn some_setter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    want: TyId,
+) -> DefId {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (fname, ty) = (a.fields[index].name.clone(), a.fields[index].ty);
+    let msg = format!(
+        "TypeError: Cannot set property {fname} to undefined: the object's `{fname}` holds no `undefined`"
+    );
+    let (str_, never, unit) = (cx.ty.str_, cx.ty.never, cx.ty.unit);
+    let copy = cx.is_copy(ty);
+    setter_def(cx, d, self_ty, &fname, want, false, |span, _| {
+        let v = |mode| hir::Expr {
+            kind: H::Local(LocalId(1), mode),
+            ty: want,
+            span,
+        };
+        let stop = hir::Expr {
+            kind: H::Call {
+                callee: Callee::Intrinsic(Intrinsic::Panic),
+                args: vec![hir::Expr {
+                    kind: H::Lit(hir::Lit::Str(msg)),
+                    ty: str_,
+                    span,
+                }],
+            },
+            ty: never,
+            span,
+        };
+        let this = hir::Expr {
+            kind: H::Local(LocalId(0), UseMode::BorrowMut),
+            ty: self_ty,
+            span,
+        };
+        let place = hir::Expr {
+            kind: H::Field {
+                base: Box::new(this),
+                index: index as u32,
+                mode: UseMode::BorrowMut,
+            },
+            ty,
+            span,
+        };
+        let payload = hir::Expr {
+            kind: H::UnwrapSome(
+                Box::new(v(UseMode::Borrow)),
+                if copy { UseMode::Copy } else { UseMode::Move },
+            ),
+            ty,
+            span,
+        };
+        let assign = hir::Expr {
+            kind: H::Assign {
+                place: Box::new(place),
+                value: Box::new(payload),
+            },
+            ty: unit,
+            span,
+        };
+        let pat = |kind| hir::Pat {
+            kind,
+            ty: want,
+            span,
+        };
+        let arms = vec![
+            hir::Arm {
+                pat: pat(hir::PatKind::None),
+                guard: None,
+                body: stop,
+            },
+            hir::Arm {
+                pat: pat(hir::PatKind::Wildcard),
+                guard: None,
+                body: assign,
+            },
+        ];
+        let scrutinee = Box::new(v(UseMode::Borrow));
+        Some((H::Match { scrutinee, arms }, unit))
+    })
+}
+
+/// The setter slot of optional interface field `fname` (type `ty`) for an object type `d` that
+/// lacks it (`crate::object_ifaces`): an object of a fixed shape gets no new properties, so a
+/// write stops with a `TypeError`, as one through `any` does (#924).
+pub(crate) fn fixed_shape_setter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    fname: &str,
+    ty: TyId,
+) -> DefId {
+    let msg = format!(
+        "TypeError: Cannot add property {fname}: an object of a fixed shape gets no new properties (#924)"
+    );
     let (str_, never) = (cx.ty.str_, cx.ty.never);
     setter_def(cx, d, self_ty, fname, ty, false, |span, _| {
         let call = H::Call {

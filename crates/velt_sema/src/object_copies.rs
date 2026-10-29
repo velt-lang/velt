@@ -448,14 +448,39 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
             format!("`{name}` is assigned here"),
         )
     };
-    let d = Diagnostic::error(
-        format!(
-            "a value of type `{from}` converts to `{to}` by copying its fields, and this program assigns {field}, which the other object would not see"
+    // A copy an interface's getter makes of an object converted to it (`object_assigns.rs`)
+    // has no place in the source: the write is the place, reported once (a part write goes
+    // through the getter's copy and the setter's).
+    const GETTER_COPY: &str = "an object converted to an interface holds";
+    let reported = |cx: &Ctx| {
+        cx.diags.iter().any(|d| {
+            d.message.starts_with(GETTER_COPY) && d.labels.first().is_some_and(|l| l.span == w.span)
+        })
+    };
+    if c.span == Span::DUMMY && reported(cx) {
+        return;
+    }
+    let d = match c.span == Span::DUMMY {
+        true => Diagnostic::error(
+            format!(
+                "{GETTER_COPY} a `{from}` that the interface reads as `{to}` by copying its fields, and this assigns {field} of that copy, which the object would not see"
+            ),
+            w.span,
         ),
-        c.span,
-    )
-    .with_label(w.span, label);
-    let d = with_notes(cx, d, c);
+        false => Diagnostic::error(
+            format!(
+                "a value of type `{from}` converts to `{to}` by copying its fields, and this program assigns {field}, which the other object would not see"
+            ),
+            c.span,
+        )
+        .with_label(w.span, label),
+    };
+    let d = match c.span == Span::DUMMY {
+        true => d
+            .with_note(format!("Node changes the object's own field; Velt's object types have fixed layouts, so each read of the field through the interface is a new `{to}` with the same field values"))
+            .with_note(format!("give the object's field the interface's type (`{to}`), or assign the whole field through the interface")),
+        false => with_notes(cx, d, c),
+    };
     let d = cx.with_layout_note(d, c.to);
     cx.error(d);
 }
@@ -492,7 +517,8 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
     };
     let d = Diagnostic::error(
         format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program {what}: {why}"),
-        c.span,
+        // A copy an interface's getter makes (`object_assigns.rs`) has no place of its own.
+        if c.span == Span::DUMMY { span } else { c.span },
     )
     .with_label(span, "here, or in the function this calls");
     let d = with_notes(cx, d, c);

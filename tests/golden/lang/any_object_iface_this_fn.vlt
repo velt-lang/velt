@@ -1,0 +1,31 @@
+// A `function` expression using `this`, held by a property of an object literal converted
+// through `unknown` to an interface (#1886): the method call passes the object as `this`, as
+// Node does, so its writes reach the object.
+interface Counter {
+  n: number;
+  name: string;
+  bump(by: number): number;
+  describe(prefix: string): string;
+  reset(): void;
+}
+
+const counter = {
+  n: 10,
+  name: "c",
+  bump: function (this: any, by: number) {
+    this.n = this.n + by;
+    return this.n;
+  },
+  describe: function (this: any, prefix: string) {
+    return prefix + " " + this.name + "=" + this.n;
+  },
+  reset: function (this: any) {
+    this.n = 0;
+  },
+};
+const u: unknown = counter;
+const c = u as Counter;
+console.log(c.bump(5), c.bump(1), counter.n);
+console.log(c.describe("now"));
+c.reset();
+console.log(c.n, counter.n);

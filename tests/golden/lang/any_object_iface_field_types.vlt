@@ -1,0 +1,43 @@
+// Through `any`, an object's field of another type than the interface's converts through `any`
+// at each read and write (#1886), as Node reads whatever the object holds.
+interface Ctx {
+  props: { a: number };
+  emit: any;
+  renderFn: (() => string) | null;
+  forwarded?: any;
+  update(): void;
+}
+
+interface Counter {
+  count: number;
+  bump(): void;
+}
+
+const init = {
+  props: { a: 1, b: 2 } as any,
+  emit: () => console.log("emit"),
+  renderFn: null as any,
+  update: () => console.log("update"),
+};
+const c = init as unknown as Ctx;
+console.log(c.props.a, c.renderFn === null, c.forwarded === undefined);
+const emit = c.emit;
+emit();
+c.update();
+init.renderFn = () => "rendered";
+const r = c.renderFn;
+console.log(r === null ? "none" : r());
+c.renderFn = () => "set through the interface";
+const f = init.renderFn;
+console.log(f());
+c.renderFn = null;
+console.log(init.renderFn === null);
+
+const state = {
+  count: 3 as any,
+  bump: () => console.log("bump"),
+};
+const k = state as unknown as Counter;
+k.count = k.count + 1;
+k.bump();
+console.log(state.count, k.count * 2);
