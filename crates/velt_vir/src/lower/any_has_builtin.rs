@@ -314,7 +314,11 @@ impl FnLower<'_, '_> {
     pub(super) fn has_index_key(&mut self, key: vir::Local, len: Operand, yes: i128, no: i128) {
         let k = Operand::Copy(Place::local(key));
         let c = Place::local(self.temp(Ty::I64));
-        self.call_rt(Rt::StrCharCodeAt, vec![k.clone(), cint(0, Ty::I64)], Some(c.clone()));
+        self.call_rt(
+            Rt::StrCharCodeAt,
+            vec![k.clone(), cint(0, Ty::I64)],
+            Some(c.clone()),
+        );
         let off = Rvalue::Binary(BinOp::Sub, Operand::Copy(c), cint(b'0' as i128, Ty::I64));
         let off = self.rvalue_temp(Ty::I64, off);
         let off = self.rvalue_temp(Ty::U64, Rvalue::Cast(off, Ty::U64));
@@ -364,9 +368,11 @@ impl FnLower<'_, '_> {
                 let a = self.addr(vp);
                 self.push_str(&bp, a);
             }
-            TyKind::Symbol => {
-                self.call_rt(Rt::StrbufPushSymbol, vec![bp.clone(), Operand::Copy(vp)], None)
-            }
+            TyKind::Symbol => self.call_rt(
+                Rt::StrbufPushSymbol,
+                vec![bp.clone(), Operand::Copy(vp)],
+                None,
+            ),
             _ => self.push_scalar(&bp, Operand::Copy(vp), ty),
         }
         let text = self.temp(Ty::Agg(STR_AGG));

@@ -209,7 +209,13 @@ impl FnLower<'_, '_> {
         let class = self.cx.adt_def(d).kind == hir::AdtKind::Class;
         let fields: Vec<(String, bool, bool)> = (self.cx.adt_def(d).fields.iter())
             .enumerate()
-            .map(|(i, f)| (f.name.clone(), f.optional && !class, f.private && i < std_prefix))
+            .map(|(i, f)| {
+                (
+                    f.name.clone(),
+                    f.optional && !class,
+                    f.private && i < std_prefix,
+                )
+            })
             .collect();
         for (i, (name, optional, internal)) in fields.iter().enumerate() {
             if name.starts_with('#') || *internal {
