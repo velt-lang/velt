@@ -243,6 +243,20 @@ impl FnCx<'_, '_> {
     fn union_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
+        if let Some((mut pat, vs)) = self.number_lit_pat(inner, l, span, span) {
+            if inner != sty {
+                pat = self.present_pat(pat, sty, span);
+            }
+            let touched = (0..s.slots.len())
+                .filter(|&k| s.slots[k].variant.is_some_and(|v| vs.contains(&v)))
+                .collect();
+            return Sel {
+                pat,
+                guard: None,
+                touched,
+                covered: vec![],
+            };
+        }
         let (v, m) = match self.lit_member(inner, l) {
             Ok(x) => x,
             Err(msg) => {

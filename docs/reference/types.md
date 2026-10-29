@@ -550,7 +550,12 @@ one that stops early, or a sum of floats, whose order it must keep.
   `T` (in either order) as if both were `T | null`: `null` equals no value. Likewise a union
   compares with one of its members (`string | number` with `number`): the two are equal when
   the union holds that member with an equal value, so the string `"3"` never equals the
-  number `3`, as with `===` in JS.
+  number `3`, as with `===` in JS. Every number is a number, though: in a union of several
+  number types (`f64 | u8`, which `[bytes[0], bytes.length]` has) two values are equal when
+  their numbers are, whichever members hold them, so `1.0` equals `1u8` (in `===`, `switch`,
+  `Map` and `Set` keys, `indexOf` and `deepEqual`), and `x === 1` tests every member that can
+  hold a 1. The comparison is exact: an `i64` above 2^53 equals no `f64` it only rounds to. A
+  literal goes to a member that can hold it (`256` as `f64 | u8` is the `f64`).
 - An interface value compares the object behind it: two `Shape` values of one class instance
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it

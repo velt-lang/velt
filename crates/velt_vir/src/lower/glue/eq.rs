@@ -156,7 +156,7 @@ impl FnLower<'_, '_> {
 
     /// SameValue of two floats (`Object.is`): `x == y && (x != 0 || bits(x) == bits(y))`, or
     /// both `NaN`.
-    fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
+    pub(super) fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
         let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
         let zero = Operand::Const(Const::Float(0.0), vt);
         let nonzero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), zero));
@@ -463,7 +463,10 @@ impl FnLower<'_, '_> {
                     Operand::Copy(proj(&b, Proj::Field(0))),
                 );
                 let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ta, tb));
-                self.when(same, no);
+                // Different members of `f64 | u8` can still hold equal numbers (eq_numbers.rs).
+                let numbers = self.several_numbers(ty);
+                let other = if numbers { self.new_block() } else { no };
+                self.when(same, other);
                 let bb = b.clone();
                 self.for_each_variant(&a, ty, |lw, v, parts| {
                     let view = lw.cx.view(ty, v);
@@ -474,6 +477,15 @@ impl FnLower<'_, '_> {
                         lw.when(e, no);
                     }
                 });
+                if numbers {
+                    let done = self.new_block();
+                    self.goto(done);
+                    self.switch_to(other);
+                    let e = self.numbers_eq(&a, &b, ty);
+                    self.when(e, no);
+                    self.goto(done);
+                    self.switch_to(done);
+                }
             }
             TyKind::Option(e, _) => self.eq_option(&a, &b, ty, e, no),
             TyKind::Array(e) => {
@@ -553,6 +565,18 @@ impl FnLower<'_, '_> {
                     let v = self.hash_value(&x, t);
                     add(self, v);
                 }
+            }
+            TyKind::Adt(..) if self.several_numbers(ty) => {
+                self.for_each_variant(&place, ty, |lw, v, parts| {
+                    if let Some(n) = parts.first().and_then(|(x, _)| lw.number_hash(ty, v, x)) {
+                        return add(lw, n);
+                    }
+                    add(lw, cint(v as i128, Ty::U64));
+                    for (x, t) in parts {
+                        let v = lw.hash_value(&x, t);
+                        add(lw, v);
+                    }
+                });
             }
             TyKind::Adt(..) => {
                 let tag = Operand::Copy(proj(&place, Proj::Field(0)));

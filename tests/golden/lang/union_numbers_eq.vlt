@@ -1,0 +1,78 @@
+// A union of several number types (`f64 | u8`) compares by number, as every number is a number
+// in TypeScript (#1890): `1.0` equals `1u8` in `===`, `switch`, narrowing, `Map` and `Set`
+// keys, `indexOf` / `includes` and `deepEqual`. The comparison is exact: an `i64` above 2^53
+// equals no `f64` it rounds to. `-0` equals `0` in `===` and in keys; `NaN` equals itself only
+// in keys. A literal the `u8` member can't hold (`256`) is held by the `f64` member.
+type N = f64 | u8;
+type W = i64 | f64 | u64 | i8 | f32;
+
+function eq(a: N, b: N): bool {
+  return a === b;
+}
+
+function isOne(a: N): bool {
+  return a === 1;
+}
+
+function loose(a: f64 | i32, b: f64 | i32): bool {
+  return a == b;
+}
+
+function kind(x: N): string {
+  switch (x) {
+    case 1:
+      return "one";
+    case 1.5:
+      return "one and a half";
+    case 300:
+      return "three hundred";
+    default:
+      return "other";
+  }
+}
+
+function narrowed(x: N): string {
+  if (x === 1) {
+    return `is ${x}`;
+  }
+  return `not ${x}`;
+}
+
+function weq(a: W, b: W): bool {
+  return a === b;
+}
+
+function main() {
+  console.log(eq(1.0, 1u8), eq(1u8, 1u8), eq(1.0, 1.0), isOne(1.0), isOne(1u8));
+  console.log(loose(2.0, 2), eq(1.0, 1u8) !== true, eq(1.5, 1u8));
+  console.log(eq(-0, 0u8), eq(0u8, -0), eq(NaN, NaN), eq(255u8, 255), eq(256, 0u8));
+  console.log(kind(1.0), kind(1u8), kind(1.5), kind(300), kind(44u8));
+  console.log(narrowed(1.0), narrowed(1u8), narrowed(2u8));
+
+  const m = new Map<N, string>();
+  m.set(1.0, "f");
+  m.set(1u8, "u");
+  m.set(-0, "z");
+  m.set(0u8, "zu");
+  console.log(m.size, m.get(1u8), m.get(1.0), m.get(0), m.get(-0));
+  const s = new Set<N>([2.0, 2u8, 3u8, NaN, NaN]);
+  console.log(s.size, s.has(3.0), s.has(2u8));
+
+  console.log(deepEqual<N[]>([1.0, 2u8], [1u8, 2.0]), deepEqual<N[]>([1.5], [1u8]));
+  const bytes = new Uint8Array([7]);
+  console.log(deepEqual([bytes[0], bytes.length], [7, 1]));
+  const xs: N[] = [7.0, 300, 1u8];
+  console.log(xs.indexOf(1.0), xs.includes(7u8), xs.lastIndexOf(1));
+
+  console.log(
+    weq(9007199254740993i64, 9007199254740992.0),
+    weq(9007199254740992i64, 9007199254740992.0),
+  );
+  console.log(weq(-1i8, 18446744073709551615u64), weq(-1i8, -1.0), weq(-128i8, -128i64));
+  console.log(weq(0.5f32, 0.5), weq(0.1f32, 0.1));
+  console.log(
+    weq(9223372036854775807i64, 9223372036854775808.0),
+    weq(-9223372036854775808i64, -9223372036854775808.0),
+  );
+  console.log(weq(18446744073709551615u64, 18446744073709551616.0));
+}

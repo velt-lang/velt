@@ -375,10 +375,16 @@ impl FnCx<'_, '_> {
         let Some((l, nullable, u)) = self.union_local(other) else {
             return (vec![], vec![]);
         };
-        let Some((v, _)) = self.lit_member_quiet(u, lit) else {
-            return (vec![], vec![]);
+        let numbers = self.number_lit_members(u, &lit).filter(|f| !f.is_empty());
+        let vs = match numbers {
+            // `x === 1` on `f64 | u8`: either number member may hold the 1.
+            Some(found) => found.into_iter().map(|(v, ..)| v).collect(),
+            None => match self.lit_member_quiet(u, lit) {
+                Some((v, _)) => vec![v],
+                None => return (vec![], vec![]),
+            },
         };
-        let mut t = vec![Fact::Members(l, vec![v])];
+        let mut t = vec![Fact::Members(l, vs)];
         if nullable {
             t.push(Fact::NonNull(l));
         }
