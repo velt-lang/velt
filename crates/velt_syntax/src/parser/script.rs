@@ -72,7 +72,7 @@ impl Parser<'_> {
             }
         }
         body.sort_by_key(|s| s.span.lo);
-        let is_async = body.iter().any(|s| self.mentions(s.span, "await"));
+        let is_async = self.awaits(&body);
         let last = body.iter().map(|s| s.span.hi).max().unwrap_or(first.hi);
         let span = Span::new(self.file, first.lo, last);
         let sig = FnSig {
@@ -212,15 +212,55 @@ impl Parser<'_> {
 
     /// Does the source text in `span` contain `word` as a whole identifier, not after a `.`
     /// (`x.word` is a member, not a reference)?
+    /// Does one of `stmts` await at their own level (`await`, `for await`, `await using`), not
+    /// only in a function they make (an arrow, a function expression, a method, a nested
+    /// declaration), which may run later (#1859)?
+    fn awaits(&self, stmts: &[Stmt]) -> bool {
+        struct Nested(Vec<Span>);
+        impl<'a> crate::visit::Visit<'a> for Nested {
+            fn item(&mut self, item: &'a Item) {
+                self.0.push(item.span);
+            }
+            fn function(&mut self, _sig: &'a FnSig, body: &'a Block) {
+                self.0.push(body.span);
+            }
+            fn expr(&mut self, e: &'a Expr) {
+                if matches!(e.kind, ExprKind::Arrow { .. } | ExprKind::Function(_)) {
+                    self.0.push(e.span);
+                }
+            }
+        }
+        let mut nested = Nested(vec![]);
+        for s in stmts {
+            crate::visit::walk_stmt(s, &mut nested);
+        }
+        let inside = |at: u32| nested.0.iter().any(|n| n.lo <= at && at < n.hi);
+        stmts.iter().any(|s| {
+            self.mention_offsets(s.span, "await")
+                .any(|at| !inside(s.span.lo + at as u32))
+        })
+    }
+
     fn mentions(&self, span: Span, word: &str) -> bool {
+        self.mention_offsets(span, word).next().is_some()
+    }
+
+    /// Where `word` stands as a word in the text of `span`, relative to its start.
+    fn mention_offsets<'s>(
+        &'s self,
+        span: Span,
+        word: &'s str,
+    ) -> impl Iterator<Item = usize> + 's {
         let text = &self.src[span.lo as usize..span.hi as usize];
         let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-        text.match_indices(word).any(|(at, _)| {
-            let before = text[..at].trim_end().chars().next_back();
-            let touching = text[..at].chars().next_back().is_some_and(ident);
-            let after = text[at + word.len()..].chars().next();
-            !touching && before != Some('.') && !after.is_some_and(ident)
-        })
+        text.match_indices(word)
+            .filter(move |(at, _)| {
+                let before = text[..*at].trim_end().chars().next_back();
+                let touching = text[..*at].chars().next_back().is_some_and(ident);
+                let after = text[at + word.len()..].chars().next();
+                !touching && before != Some('.') && !after.is_some_and(ident)
+            })
+            .map(|(at, _)| at)
     }
 }
 

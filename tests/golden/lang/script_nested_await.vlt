@@ -1,0 +1,6 @@
+// An `await` inside a callback that an imported module's top level passes on is not top-level
+// `await` there (#1859): the module loads, and the callbacks run when called.
+import { runAll } from "./_script_nested_await_lib";
+
+console.log("main");
+await runAll();
