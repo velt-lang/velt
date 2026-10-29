@@ -331,10 +331,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   are linked; a missing one is compiled then, alone (itself, the small functions it may inline
   with their bodies, declarations of what they call, the statics they name; optimized at
   `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
-  If one fails, the build optimizes the program as lowered, without the cache. The link reads
-  the objects through `<object stem>.std/<n>.<o|obj>` beside the program's objects (hard links to
-  the cache's files, copies where the file system has none, replaced by each build; MSVC's linker
-  reads an input without an extension as `<name>.obj`), and the stamp's `std` lines name those.
+  If one fails, the build optimizes the program as lowered, without the cache. Each object is
+  placed as soon as it is looked up again or stored, before codegen, in `<object stem>.std/<n>.<o|obj>`
+  beside the program's objects (hard links to the cache's files, copies where the file system has
+  none, replaced by each build; MSVC's linker reads an input without an extension as
+  `<name>.obj`); one gone from the cache by then makes the build fall back as above. The link
+  reads those, and the stamp's `std` lines name them.
   The miss threshold is 1,000 statements unless `VELT_STD_OBJECT_MIN_MISSES` says otherwise. `VELT_STD_OBJECT_STATS=1` prints, on stderr, the std
   statements by reason (`served`, `small`, `$dup`, `statics with identity`, `callbacks`), each
   linked symbol (`velt: std cache: links <symbol> (<n> statements)`) and `velt: std cache: <n>

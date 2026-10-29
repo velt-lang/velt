@@ -385,7 +385,9 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     optimize_stage(sess, opts, &mut program)?;
     if let Some((unsplit, plan)) = std_plan {
         let t = Instant::now();
-        match std_cache::link(plan, &program, &cg) {
+        let place =
+            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+        match std_cache::link(plan, &program, &cg, &place) {
             Ok(linked) => {
                 if std_cache::stats() {
                     eprintln!(
@@ -396,6 +398,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
                 sess.std_objects = linked.objects;
             }
             Err(why) => {
+                place.clear();
                 if std_cache::stats() {
                     eprintln!("velt: std cache: not used for this build: {why}");
                 }
@@ -596,11 +599,11 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
-    // The std cache's objects, under names the linker takes (`OutputPaths::link_std_objects`).
-    let std_objects = paths
-        .link_std_objects(&sess.std_objects)
-        .map_err(|e| BuildError::Failed(format!("cannot place the std cache's objects: {e}")))?;
-    sess.std_objects = std_objects;
+    // The std cache's objects are in place (`std_cache::link`); a build without them leaves
+    // none of an earlier one's.
+    if sess.std_objects.is_empty() {
+        paths.std_objects().clear();
+    }
     let mut linked = object_paths.clone();
     linked.extend(sess.std_objects.iter().cloned());
     link_stage(sess, opts, &target, &linked, &paths)?;

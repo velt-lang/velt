@@ -86,6 +86,30 @@ enum Object {
     Compile(Key, vir::Program),
 }
 
+/// Where [`link`] puts the objects it links: `<dir>/<n>.<ext>` (`OutputPaths::std_objects`).
+pub(crate) struct Place {
+    pub dir: PathBuf,
+    pub ext: String,
+}
+
+impl Place {
+    /// Remove what an earlier build put there.
+    pub fn clear(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+
+    /// Link (or copy) the cached file `from` in as object `n`.
+    fn put(&self, n: usize, from: &std::path::Path) -> Result<PathBuf, String> {
+        let to = self.dir.join(format!("{n}.{}", self.ext));
+        let placed = std::fs::create_dir_all(&self.dir).and_then(|()| {
+            std::fs::hard_link(from, &to).or_else(|_| std::fs::copy(from, &to).map(drop))
+        });
+        placed
+            .map(|()| to)
+            .map_err(|e| format!("{}: {e}", from.display()))
+    }
+}
+
 /// What [`link`] did.
 #[derive(Default)]
 pub(super) struct Linked {
@@ -174,17 +198,32 @@ pub(super) fn split(
 }
 
 /// After `program` is optimized: link what it still calls of what [`split`] took out, compiling
-/// (in parallel) and storing the functions not yet in the cache. `Err` when one of them could
-/// not be compiled on its own: the build then optimizes the program as it was before `split`.
+/// (in parallel) and storing the functions not yet in the cache, and placing each object in
+/// `place` as soon as it is found or stored. `Err` when one of them could not be compiled on its
+/// own, or is gone from the cache by then (another build's garbage collection, `velt clean
+/// --cache`): the build then optimizes the program as it was before `split`.
 pub(super) fn link(
     plan: Plan,
     program: &vir::Program,
     cg: &velt_codegen_cl::CodegenOptions,
+    place: &Place,
+) -> Result<Linked, String> {
+    match crate::build_cache::cache() {
+        Some(cache) => link_with(plan, program, cg, cache, place),
+        None => Ok(Linked::default()),
+    }
+}
+
+/// [`link`] with `cache`.
+fn link_with(
+    plan: Plan,
+    program: &vir::Program,
+    cg: &velt_codegen_cl::CodegenOptions,
+    cache: &velt_build_cache::Cache,
+    place: &Place,
 ) -> Result<Linked, String> {
     let mut out = Linked::default();
-    let Some(cache) = crate::build_cache::cache() else {
-        return Ok(out);
-    };
+    place.clear();
     // What the program still calls, and what those objects call in turn.
     let mut needed: HashSet<&str> = (program.funcs.iter())
         .filter(|f| f.linkage == Linkage::Import)
@@ -216,7 +255,7 @@ pub(super) fn link(
             Object::Found(key) => {
                 let path = (cache.path_of(KIND, &key))
                     .ok_or_else(|| format!("{}: no longer in the cache", entry.symbol))?;
-                out.objects.push(path);
+                out.objects.push(place.put(out.objects.len(), &path)?);
                 out.hits += 1;
             }
             Object::Compile(key, alone) => {
@@ -230,7 +269,7 @@ pub(super) fn link(
         let object = object.map_err(|e| format!("{symbol}: {e}"))?;
         let path = compile::store(cache, key, &object)
             .ok_or_else(|| format!("{symbol}: its object could not be stored"))?;
-        out.objects.push(path);
+        out.objects.push(place.put(out.objects.len(), &path)?);
         out.misses += 1;
     }
     Ok(out)
@@ -301,6 +340,51 @@ mod tests {
     /// What a linked function's object may call back stays in the program, visible to it: what
     /// it calls, and what the small functions it may have inlined call. The function itself
     /// becomes a declaration.
+    /// An entry found before the program was optimized but gone by the link (another build's
+    /// garbage collection, `velt clean --cache`) is an `Err`, which makes the build fall back;
+    /// one still there is placed under an object file's name.
+    #[test]
+    fn an_entry_gone_by_the_link_is_an_error_not_a_failed_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = velt_build_cache::Cache::new(&tmp.path().join("cache"), u64::MAX);
+        let program = vir::Program {
+            funcs: vec![Function::new(
+                "_V3stdN1f".into(),
+                vec![],
+                vir::Ty::I64,
+                Linkage::Import,
+            )],
+            ..vir::Program::default()
+        };
+        let key = Key([9; 32]);
+        let plan = || super::Plan {
+            entries: vec![super::Entry {
+                symbol: "_V3stdN1f".into(),
+                object: super::Object::Found(key),
+                calls: vec![],
+            }],
+        };
+        let cg = velt_codegen_cl::CodegenOptions {
+            target: velt_codegen_cl::host_triple(),
+            optimize: true,
+            cpu: None,
+        };
+        let place = super::Place {
+            dir: tmp.path().join("app.std"),
+            ext: "obj".into(),
+        };
+        let gone = link_with(plan(), &program, &cg, &cache, &place)
+            .err()
+            .unwrap();
+        assert!(gone.contains("no longer in the cache"), "{gone}");
+        let object = tmp.path().join("f.o");
+        std::fs::write(&object, b"object bytes").unwrap();
+        assert!(cache.put_file(KIND, &key, &object));
+        let linked = link_with(plan(), &program, &cg, &cache, &place).unwrap();
+        assert_eq!(linked.objects, [place.dir.join("0.obj")]);
+        assert_eq!(std::fs::read(&linked.objects[0]).unwrap(), b"object bytes");
+    }
+
     #[test]
     fn what_linked_code_may_call_is_exported() {
         let mut p = vir::Program {

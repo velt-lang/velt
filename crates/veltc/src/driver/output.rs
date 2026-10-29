@@ -33,35 +33,21 @@ impl OutputPaths {
         }
     }
 
-    /// Where the build links the std cache's objects from (`std_cache`): copies (hard links where
-    /// the file system has them) named like the program's objects, in `<object stem>.std/`. The
-    /// cache's files have no extension, which MSVC's linker reads as `<name>.obj`; and a copy is
-    /// the object the build linked, whatever the cache's garbage collection does later.
-    pub fn link_std_objects(&self, cached: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
+    /// Where the build links the std cache's objects from (`std_cache::link` puts them there):
+    /// hard links (copies where the file system has none) in `<object stem>.std/`, named like the
+    /// program's objects. The cache's files have no extension, which MSVC's linker reads as
+    /// `<name>.obj`; and a link is the object the build used, whatever the cache's garbage
+    /// collection does later.
+    pub(crate) fn std_objects(&self) -> super::std_cache::Place {
         let stem = self
             .object
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy();
-        let dir = self.object.with_file_name(format!("{stem}.std"));
-        let _ = std::fs::remove_dir_all(&dir);
-        if cached.is_empty() {
-            return Ok(vec![]);
+        super::std_cache::Place {
+            dir: self.object.with_file_name(format!("{stem}.std")),
+            ext: (self.object.extension()).map_or("o".into(), |e| e.to_string_lossy().into_owned()),
         }
-        std::fs::create_dir_all(&dir)?;
-        let ext = self
-            .object
-            .extension()
-            .map_or("o".into(), |e| e.to_string_lossy().into_owned());
-        let mut out = Vec::with_capacity(cached.len());
-        for (i, from) in cached.iter().enumerate() {
-            let to = dir.join(format!("{i}.{ext}"));
-            if std::fs::hard_link(from, &to).is_err() {
-                std::fs::copy(from, &to)?;
-            }
-            out.push(to);
-        }
-        Ok(out)
     }
 
     /// Removes the objects of codegen units `count` and above, left by an earlier build with more
