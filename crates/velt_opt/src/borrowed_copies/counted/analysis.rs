@@ -34,8 +34,12 @@ impl Cx<'_> {
             }
         }
         let params = self.func.params.len();
+        let glue_addrs = self.glue_addrs(&members)?;
+        let derived = self.derived(&members)?;
         for &m in &members {
-            let ok = (m.0 as usize) >= params && self.usage.is_register(m);
+            let scalar = self.func.locals[m.0 as usize].ty == velt_vir::vir::Ty::Ptr;
+            let ok = (m.0 as usize) >= params
+                && (self.usage.is_register(m) || (scalar && self.usage.get(m).address_taken));
             if !ok {
                 return None;
             }
@@ -47,6 +51,8 @@ impl Cx<'_> {
         let mut fam = Family {
             root: r,
             members,
+            glue_addrs,
+            derived,
             counts,
             inc,
             releases: vec![],
@@ -64,9 +70,110 @@ impl Cx<'_> {
         Some(fam)
     }
 
+    /// Whether `s` writes a member with the root's own load.
+    fn loads_member(&self, fam: &Family, s: &Stmt) -> bool {
+        matches!(s, Stmt::Assign(d, rv) if d.proj.is_empty()
+            && fam.members.contains(&d.local)
+            && (d.local == fam.root || self.repeats_root_load(fam, rv)))
+    }
+
+    /// Whether `rv` is the root's own load, `*p` of a register `p` written once.
+    fn repeats_root_load(&self, fam: &Family, rv: &Rvalue) -> bool {
+        let Some((_, root_rv)) = self.def_of(fam.root) else {
+            return false;
+        };
+        let Rvalue::Use(Operand::Copy(src)) = root_rv else {
+            return false;
+        };
+        let stable_base = matches!(src.proj.as_slice(), [Proj::Deref(_)])
+            && self.usage.is_register(src.local)
+            && self.usage.get(src.local).defs == 1;
+        stable_base && rv == root_rv
+    }
+
+    /// The registers taking a member's address, when every such address goes only to release
+    /// glue as its one argument (`None` when some address goes elsewhere).
+    fn glue_addrs(&self, members: &FxHashSet<Local>) -> Option<FxHashSet<Local>> {
+        let mut addrs = FxHashSet::default();
+        for s in self.func.blocks.iter().flat_map(|b| &b.stmts) {
+            let Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
+                continue;
+            };
+            if !members.contains(&p.local) || !p.proj.is_empty() {
+                continue;
+            }
+            let reg = self.usage.is_register(d.local) && self.usage.get(d.local).defs == 1;
+            if !p.proj.is_empty() || !d.proj.is_empty() || !reg {
+                return None;
+            }
+            addrs.insert(d.local);
+        }
+        let mut glue_reads: FxHashMap<Local, u32> = FxHashMap::default();
+        for b in &self.func.blocks {
+            if let Some(a) = self.glue_arg(&b.term).filter(|a| addrs.contains(a)) {
+                *glue_reads.entry(a).or_default() += 1;
+            }
+        }
+        let only_glue = addrs
+            .iter()
+            .all(|a| glue_reads.get(a).copied().unwrap_or(0) == self.usage.get(*a).reads);
+
+        only_glue.then_some(addrs)
+    }
+
+    /// The registers written once with the address of a part of a member's object
+    /// (`&(*m).rows`): pointers into it, whose uses are uses of the object (`None` when such an
+    /// address goes into another kind of local).
+    fn derived(&self, members: &FxHashSet<Local>) -> Option<FxHashSet<Local>> {
+        let mut out = FxHashSet::default();
+        for s in self.func.blocks.iter().flat_map(|b| &b.stmts) {
+            let Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
+                continue;
+            };
+            if !members.contains(&p.local) || !matches!(p.proj.first(), Some(Proj::Deref(_))) {
+                continue;
+            }
+            let reg = self.usage.is_register(d.local) && self.usage.get(d.local).defs == 1;
+            if !reg || !d.proj.is_empty() {
+                return None;
+            }
+            out.insert(d.local);
+        }
+        Some(out)
+    }
+
+    /// `call g(a)` of release glue `g` with no result: `a`.
+    fn glue_arg(&self, t: &Terminator) -> Option<Local> {
+        let Terminator::Call {
+            callee: velt_vir::vir::Callee::Func(g),
+            args,
+            dest: None,
+            ..
+        } = t
+        else {
+            return None;
+        };
+        let glue = self.frees.glue.get(g.0 as usize).copied().unwrap_or(false);
+        match args.as_slice() {
+            [a] if glue => local_of(a),
+            _ => None,
+        }
+    }
+
     /// Block `b` as a release of `fam`: it branches on `count == 1`, its other side stores
-    /// `count - 1`. Records the statements computing them.
+    /// `count - 1`, or it calls release glue with a member's address. Records the statements
+    /// computing them.
     fn release(&self, fam: &mut Family, b: usize) -> Option<Release> {
+        if let Some(a) = self.glue_arg(&self.func.blocks[b].term) {
+            let Terminator::Call { next, .. } = self.func.blocks[b].term else {
+                return None;
+            };
+            return fam.glue_addrs.contains(&a).then_some(Release {
+                test: b,
+                dec: next,
+                store: None,
+            });
+        }
         let Terminator::Branch { cond, els, .. } = &self.func.blocks[b].term else {
             return None;
         };
@@ -113,7 +220,7 @@ impl Cx<'_> {
         Some(Release {
             test: b,
             dec: *els,
-            store: (els.0 as usize, store),
+            store: Some((els.0 as usize, store)),
         })
     }
 
@@ -160,7 +267,9 @@ impl Cx<'_> {
     }
 
     fn explained(&self, fam: &Family, at: Point) -> bool {
-        at == fam.inc || fam.count_stmts.contains(&at) || fam.releases.iter().any(|r| r.store == at)
+        at == fam.inc
+            || fam.count_stmts.contains(&at)
+            || fam.releases.iter().any(|r| r.store == Some(at))
     }
 
     fn stmt(&self, fam: &Family, w: &mut Walk, at: Point, s: &Stmt) {
@@ -184,9 +293,13 @@ impl Cx<'_> {
         if fam.members.contains(&d) {
             match dst.proj.first() {
                 None => {
-                    // The root's definition (a load), the null of a drop flag, or a copy.
+                    // The root's definition (a load), the null of a drop flag, a copy, or the
+                    // plain copy of a nullable field the root's load repeats once it found the
+                    // field set (`c = this.cursor; if (c != null) { r = this.cursor; r.count++;
+                    // c = r }`): the same pointer, or null.
                     let root = d == fam.root;
                     let ok = root
+                        || self.repeats_root_load(fam, rv)
                         || match rv {
                             Rvalue::Use(op) if is_int(op, 0) => true,
                             Rvalue::Use(op) => {
@@ -206,8 +319,20 @@ impl Cx<'_> {
                 Some(_) => w.bail = true,
             }
         }
+        if fam.derived.contains(&d) && !dst.proj.is_empty() {
+            // A write through a pointer into the object: a use of it.
+            w.uses.insert(at);
+        }
         if let Rvalue::AddrOf(p) = rv {
-            w.bail |= fam.members.contains(&p.local) || fam.counts.contains(&p.local);
+            // The address release glue is given, or a pointer into the object (a use).
+            let glue = fam.glue_addrs.contains(&d) && fam.members.contains(&p.local);
+            let inside = fam.derived.contains(&d) && fam.members.contains(&p.local);
+            if inside {
+                w.uses.insert(at);
+            }
+            w.bail |= !glue
+                && !inside
+                && (fam.members.contains(&p.local) || fam.counts.contains(&p.local));
             return;
         }
         // A member's value may only be copied into a member, offset to its count word, or
@@ -233,7 +358,11 @@ impl Cx<'_> {
         let Operand::Copy(p) = op else { return };
         if fam.counts.contains(&p.local) {
             w.bail = true;
-        } else if fam.members.contains(&p.local) {
+        } else if fam.members.contains(&p.local) || fam.derived.contains(&p.local) {
+            if fam.derived.contains(&p.local) {
+                // Read through or handed on: a use of the object either way.
+                w.uses.insert(at);
+            }
             match p.proj.first() {
                 None => w.bail |= !value_ok,
                 Some(Proj::Deref(_)) => {
@@ -255,7 +384,9 @@ impl Cx<'_> {
                 for a in args {
                     // Passed to the call, which borrows it.
                     self.operand(fam, w, at, a, true);
-                    if local_of(a).is_some_and(|m| fam.members.contains(&m)) {
+                    if local_of(a)
+                        .is_some_and(|m| fam.members.contains(&m) || fam.derived.contains(&m))
+                    {
                         w.uses.insert(at);
                     }
                 }
@@ -374,7 +505,10 @@ impl Cx<'_> {
             let block = &self.func.blocks[b];
             live |= uses.contains(&(b, block.stmts.len()));
             for si in (0..block.stmts.len()).rev() {
-                if (b, si) == fam.inc {
+                // Before the increment, or before the load the copy starts from (the root's, or
+                // its repeat for a nullable field, which the increment follows when the field
+                // is set), the copy holds no object yet.
+                if (b, si) == fam.inc || self.loads_member(fam, &block.stmts[si]) {
                     live = false;
                 } else if uses.contains(&(b, si)) {
                     live = true;
@@ -385,15 +519,18 @@ impl Cx<'_> {
                 work.extend(preds[b].iter().copied());
             }
         }
-        (0..n).filter(|&b| reach[b]).all(|b| {
-            let block = &self.func.blocks[b];
-            let Terminator::Call { callee, next, .. } = &block.term else {
-                return true;
-            };
-            let handed = uses.contains(&(b, block.stmts.len()));
-            let used = handed || live_in[next.0 as usize];
-            !used || !self.frees.may_free(callee, handed)
-        })
+        // A release of a family borrowed with this one (a glue call) goes away too.
+        (0..n)
+            .filter(|&b| reach[b] && !cut.contains_key(&b))
+            .all(|b| {
+                let block = &self.func.blocks[b];
+                let Terminator::Call { callee, next, .. } = &block.term else {
+                    return true;
+                };
+                let handed = uses.contains(&(b, block.stmts.len()));
+                let used = handed || live_in[next.0 as usize];
+                !used || !self.frees.may_free(callee, handed)
+            })
     }
 }
 
