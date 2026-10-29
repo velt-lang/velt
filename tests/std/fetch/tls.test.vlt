@@ -1,0 +1,111 @@
+// `fetch` over HTTPS against a velt:http server with the test certificate.
+import { serve } from "velt:http";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+describe("fetch over HTTPS", () => {
+  // A request and a POST over TLS, trusted through the test CA; untrusted without it; plain HTTP
+  // to a TLS port fails, and a bad key fails at serve time. (Was the golden std/https.)
+  let port = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
+      req: Request,
+    ): Promise<Response> => {
+      const url = new URL(req.url);
+      if (url.pathname == "/page") {
+        return new Response("<h1>hi</h1>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      const r = new Response(
+        `secure ${req.method} ${url.protocol} ${url.pathname} ${await req.text()}`,
+      );
+      r.headers.set("content-type", "text/plain");
+      return r;
+    });
+    port = server.port as number;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("fetches with the test CA", async () => {
+    const a = await fetch(`https://localhost:${port}/hello`, { ca: TEST_CA });
+    expect(a).toHaveStatus(200);
+    expect(a).toHaveHeader("content-type", "text/plain");
+    expect(await a.text()).toBe("secure GET https: /hello ");
+    const b = await fetch(`https://127.0.0.1:${port}/page`, {
+      method: "POST",
+      body: "x",
+      ca: TEST_CA,
+    });
+    expect(b).toHaveStatus(200);
+    expect(b).toHaveHeader("content-type", "text/html; charset=utf-8");
+    expect(await b.text()).toBe("<h1>hi</h1>");
+  });
+
+  it("does not trust the certificate without the test CA", async () => {
+    await expect(fetch(`https://localhost:${port}/hello`)).rejects.toThrow("certificate");
+  });
+
+  it("fails for plain HTTP to a TLS port", async () => {
+    await expect(fetch(`http://127.0.0.1:${port}/hello`)).rejects.toThrow();
+  });
+
+  it("refuses a bad key at serve time", async () => {
+    let why = "";
+    try {
+      const bad = await serve(
+        { port: 0, tls: { cert: TEST_CERT, key: "nope" } },
+        async (req: Request): Promise<Response> => new Response("x"),
+      );
+      bad.close();
+    } catch (e) {
+      why = `${e.code} ${e.message.startsWith("invalid key PEM")}`;
+    }
+    expect(why).toBe("EINVAL true");
+  });
+});
+
+async function answer(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const to = url.searchParams.get("to");
+  if (to != null) {
+    return Response.redirect(to, 302);
+  }
+  return new Response(`${url.protocol} ${req.headers.get("accept-encoding") ?? ""}`);
+}
+
+describe("the accept-encoding of each redirect hop", () => {
+  // The `accept-encoding` `fetch` sends is chosen for each hop of a redirect from that hop's
+  // scheme, as undici does: `br, gzip, deflate` over HTTPS and `gzip, deflate` over HTTP, also
+  // after a redirect from one to the other (#606). Each server is told where to redirect in the
+  // query. (Was the golden std/fetch_redirect_codings.)
+  let https = "";
+  let http = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const secure = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, answer);
+    const plain = await serve({ port: 0 }, answer);
+    https = `https://localhost:${secure.port}/echo`;
+    http = `http://127.0.0.1:${plain.port}/echo`;
+    close = () => {
+      plain.close();
+      secure.close();
+    };
+  });
+  afterAll(() => close());
+
+  it("is br, gzip, deflate after a redirect up to HTTPS", async () => {
+    const up = await fetch(`${http}?to=${encodeURIComponent(https)}`, { ca: TEST_CA });
+    expect(up.redirected).toBe(true);
+    expect(await up.text()).toBe("https: br, gzip, deflate");
+  });
+
+  it("is gzip, deflate after a redirect down to HTTP", async () => {
+    const down = await fetch(`${https}?to=${encodeURIComponent(http)}`, { ca: TEST_CA });
+    expect(down.redirected).toBe(true);
+    expect(await down.text()).toBe("http: gzip, deflate");
+  });
+});

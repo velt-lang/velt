@@ -1,0 +1,382 @@
+// velt:websocket's connections through its public API: messages as an async iterable, the order
+// frames go out in, and topics.
+import { channel, Channel } from "velt:channel";
+import { serve } from "velt:http";
+import { IoError } from "velt:io";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import {
+  WebSocket,
+  connectWebSocket,
+  publish,
+  publishBytes,
+  upgradeWebSocket,
+} from "velt:websocket";
+
+describe("a WebSocket as an async iterable", () => {
+  // The server session iterates the messages with `for await` until the client closes; the
+  // client reads replies with `for await` and leaves the loop early, which keeps the connection
+  // open for `receive`. (Was the golden std/websocket_for_await.)
+  it("is read with for await, and left early", async () => {
+    const done = channel<i64>();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const up = upgradeWebSocket(req);
+      const ws = up.socket;
+      spawn(async () => {
+        let n = 0;
+        for await (const m of ws) {
+          n++;
+          await ws.send(`${n}: ${m.text.toUpperCase()}`);
+        }
+        await ws.close();
+        await done.send(n);
+      });
+      return up.response;
+    });
+    const ws = await connectWebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    for (const w of ["one", "two", "three"]) {
+      await ws.send(w);
+    }
+    const replies: string[] = [];
+    for await (const reply of ws) {
+      replies.push(reply.text);
+      if (reply.text.startsWith("2:")) {
+        break;
+      }
+    }
+    expect(replies).toEqual(["1: ONE", "2: TWO"]);
+    expect((await ws.receive())?.text ?? "none").toBe("3: THREE");
+    await ws.close(1000, "bye");
+    expect(await done.receive()).toBe(3);
+    await server.shutdown();
+    done.close();
+  });
+});
+
+const BIG = 100000;
+
+// 40 messages of 100 KB, all queued before the first is awaited: 4 MB, past the 1 MiB mark.
+async function flood(ws: WebSocket, done: Channel<string>): Promise<void> {
+  const sends: Promise<void, IoError>[] = [];
+  for (let i = 0; i < 40; i++) {
+    sends.push(ws.send(`${i}:` + "x".repeat(BIG)));
+  }
+  await Promise.all(sends);
+  await ws.send("end of flood");
+  await ws.close();
+  await done.send("flood sent");
+}
+
+async function numbered(ws: WebSocket, task: i64, n: i64): Promise<void> {
+  for (let i: i64 = 0; i < n; i++) {
+    await ws.send(`${task}:${i}`);
+    if (i % 50 == 0) {
+      await yieldNow();
+    }
+  }
+}
+
+// Four tasks send through copies of one socket.
+async function crowd(ws: WebSocket, done: Channel<string>): Promise<void> {
+  const tasks: Promise<void, IoError>[] = [];
+  for (let t: i64 = 0; t < 4; t++) {
+    tasks.push(spawn(numbered(ws, t, 500)));
+  }
+  await Promise.all(tasks);
+  await ws.close(1000, "all sent");
+  await done.send("crowd sent");
+}
+
+async function quiet(ws: WebSocket, done: Channel<string>): Promise<void> {
+  while ((await ws.receive()) != null) {}
+  await ws.close();
+  await done.send("quiet closed");
+}
+
+describe("the order frames go out in", () => {
+  // Frames go out in call order (also the ones queued before a server-side upgrade has
+  // completed, and past the high-water mark, where a send waits for the flusher), sends from
+  // several tasks keep each task's order, and closing ends the stream after everything queued.
+  // (Was the golden std/websocket_order.)
+  const done = channel<string>();
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const up = upgradeWebSocket(req);
+      const path = new URL(req.url).pathname;
+      if (path == "/early") {
+        // Before the 101 is returned: queued, and sent right after it.
+        const ws = up.socket;
+        await ws.send("first");
+        await ws.sendBytes([2u8]);
+        await ws.send("third");
+        spawn(async () => {
+          await ws.close();
+          await done.send("early sent");
+        });
+      } else if (path == "/flood") {
+        spawn(flood(up.socket, done));
+      } else if (path == "/quiet") {
+        spawn(quiet(up.socket, done));
+      } else {
+        spawn(crowd(up.socket, done));
+      }
+      return up.response;
+    });
+    base = `ws://127.0.0.1:${server.port}`;
+    close = () => {
+      server.close();
+      done.close();
+    };
+  });
+  afterAll(() => close());
+
+  it("is call order, also before the upgrade has completed", async () => {
+    const early = await connectWebSocket(`${base}/early`);
+    const got: string[] = [];
+    for await (const m of early) {
+      got.push(m.isBinary ? `bytes ${m.data}` : m.text);
+    }
+    expect(got).toEqual(["first", "bytes 2", "third"]);
+    expect(await done.receive()).toBe("early sent");
+    await early.close();
+  });
+
+  it("is call order past the high-water mark", async () => {
+    const floodWs = await connectWebSocket(`${base}/flood`);
+    let next = 0;
+    let inOrder = true;
+    let last = "";
+    for await (const m of floodWs) {
+      if (m.text.length > 100) {
+        inOrder =
+          inOrder && m.text.startsWith(`${next}:`) && m.text.length == BIG + `${next}:`.length;
+        next++;
+      } else {
+        last = m.text;
+      }
+    }
+    expect(next).toBe(40);
+    expect(inOrder).toBe(true);
+    expect(last).toBe("end of flood");
+    expect(await done.receive()).toBe("flood sent");
+    await floodWs.close();
+  });
+
+  it("keeps each task's order", async () => {
+    const crowdWs = await connectWebSocket(`${base}/crowd`);
+    const seen: i64[] = [0, 0, 0, 0];
+    let perTask = true;
+    for await (const m of crowdWs) {
+      const parts = m.text.split(":");
+      const task = parseInt(parts[0], 10) as i64;
+      perTask = perTask && (parseInt(parts[1], 10) as i64) == seen[task];
+      seen[task] += 1;
+    }
+    expect(seen).toEqual([500, 500, 500, 500]);
+    expect(perTask).toBe(true);
+    expect(await done.receive()).toBe("crowd sent");
+    await crowdWs.close();
+  });
+
+  it("refuses a send after the close frame, and on a released handle", async () => {
+    const late = await connectWebSocket(`${base}/quiet`);
+    const closing = late.close();
+    let why = "";
+    try {
+      await late.send("too late");
+    } catch (e) {
+      why = `${e.code} ${e.message}`;
+    }
+    expect(why).toBe("EPIPE the WebSocket is closed");
+    await closing;
+    try {
+      await late.send("released");
+    } catch (e) {
+      why = `${e.code} ${e.message}`;
+    }
+    expect(why).toBe("EBADF handle is closed");
+    expect(await done.receive()).toBe("quiet closed");
+  });
+});
+
+async function next(c: WebSocket): Promise<string> {
+  const m = await c.receive();
+  if (m == null) {
+    return "closed";
+  }
+  return m.isBinary ? `${m.data}` : m.text;
+}
+
+// Receives until the connection ends; how many messages came.
+async function drain(ws: WebSocket): Promise<i64> {
+  let n: i64 = 0;
+  while ((await ws.receive()) != null) {
+    n++;
+  }
+  return n;
+}
+
+/** Connections to a server whose handler hands each server side to the test. */
+class Sides {
+  clients: WebSocket[] = [];
+  servers: WebSocket[] = [];
+
+  /** Closes every connection, each server side once its client's close came. */
+  async close() {
+    for (const c of this.clients) {
+      await c.close();
+    }
+    for (const s of this.servers) {
+      await drain(s);
+      await s.close();
+    }
+  }
+}
+
+describe("topics", () => {
+  // `subscribe`, `publish` (to all, or from a connection to the others), `publishBytes` and
+  // `unsubscribe`; connections that close leave their topics. A client-side connection can
+  // subscribe too, and gets every published frame masked with a key of its own (the server would
+  // fail the connection otherwise), also while its reading task has a message in hand; a
+  // subscription that races an unsubscribe emptying the topic is kept. (Were the goldens
+  // std/websocket_topics and std/websocket_topics_sides.)
+  const socks = channel<WebSocket>();
+  let url = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const up = upgradeWebSocket(req);
+      await socks.send(up.socket);
+      return up.response;
+    });
+    url = `ws://127.0.0.1:${server.port}/`;
+    close = () => {
+      server.close();
+      socks.close();
+    };
+  });
+  afterAll(() => close());
+
+  async function connections(n: i64): Promise<Sides> {
+    const sides = new Sides();
+    for (let i: i64 = 0; i < n; i++) {
+      sides.clients.push(await connectWebSocket(url));
+      sides.servers.push((await socks.receive())!);
+    }
+    return sides;
+  }
+
+  it("publishes to every subscriber, or from one to the others", async () => {
+    const p = await connections(3);
+    const c1 = p.clients[0];
+    const c2 = p.clients[1];
+    const c3 = p.clients[2];
+    const s1 = p.servers[0];
+    const s2 = p.servers[1];
+    const s3 = p.servers[2];
+    await s1.subscribe("room");
+    await s1.subscribe("room"); // a second subscribe is a no-op
+    await s2.subscribe("room");
+    await s3.subscribe("room");
+    expect(publish("room", "hello")).toBe(3);
+    expect([await next(c1), await next(c2), await next(c3)]).toEqual(["hello", "hello", "hello"]);
+    expect(s1.publish("room", "from s1")).toBe(2);
+    expect([await next(c2), await next(c3)]).toEqual(["from s1", "from s1"]);
+    expect(publishBytes("room", [1u8, 2u8])).toBe(3);
+    expect([await next(c1), await next(c2), await next(c3)]).toEqual(["1,2", "1,2", "1,2"]);
+    s3.unsubscribe("room");
+    expect(publish("room", "two left")).toBe(2);
+    expect([await next(c1), await next(c2)]).toEqual(["two left", "two left"]);
+    expect(publish("nobody", "x")).toBe(0);
+
+    // Connections that subscribe and close leave the topic.
+    for (let i = 0; i < 20; i++) {
+      const one = await connections(1);
+      await one.servers[0].subscribe("room");
+      await one.close();
+    }
+    expect(publish("room", "end")).toBe(2);
+    expect([await next(c1), await next(c2)]).toEqual(["end", "end"]);
+    s1.unsubscribe("room");
+    s2.unsubscribe("room");
+    await p.close();
+  });
+
+  it("are open to the client side, which gets published frames masked", async () => {
+    const p = await connections(1);
+    const c1 = p.clients[0];
+    const s1 = p.servers[0];
+    await c1.subscribe("up");
+    expect(publish("up", "from a publish")).toBe(1);
+    expect(await next(s1)).toBe("from a publish");
+    expect(c1.publish("up", "nobody")).toBe(0);
+    expect(c1.publishBytes("up", [7u8])).toBe(0);
+    expect(publish("up", "again")).toBe(1);
+    expect(await next(s1)).toBe("again");
+
+    // Published while the client's reading task has a message in hand (the moment its own send
+    // would be written as a reply): the publish still starts the connection's flusher, and what
+    // the client sends next goes out after it.
+    await s1.send("to the client");
+    expect(await next(c1)).toBe("to the client");
+    expect(publish("up", "in hand")).toBe(1);
+    await c1.send("after it");
+    expect([await next(s1), await next(s1)]).toEqual(["in hand", "after it"]);
+    c1.unsubscribe("up");
+    expect(publish("up", "gone")).toBe(0);
+    await p.close();
+  });
+
+  it("keep a subscription that races an unsubscribe emptying the topic", async () => {
+    // Subscribes and unsubscribes in a loop; a publish while subscribed must reach the
+    // connection.
+    async function churn(ws: WebSocket, rounds: i64, check: bool): Promise<i64> {
+      let missed: i64 = 0;
+      for (let i: i64 = 0; i < rounds; i++) {
+        await ws.subscribe("race");
+        if (check && publish("race", "x") < 1) {
+          missed++;
+        }
+        ws.unsubscribe("race");
+        if (i % 64 == 0) {
+          await yieldNow();
+        }
+      }
+      return missed;
+    }
+    // Two server-side connections churn on one topic from two tasks.
+    const p = await connections(2);
+    const c2 = p.clients[0];
+    const c3 = p.clients[1];
+    const s2 = p.servers[0];
+    const s3 = p.servers[1];
+    const counted = spawn(drain(c2));
+    const other = spawn(drain(c3));
+    const a = spawn(churn(s2, 2000, true));
+    const b = spawn(churn(s3, 2000, false));
+    expect([await a, await b]).toEqual([0, 0]);
+    expect(publish("race", "y")).toBe(0);
+
+    // Closing a subscribed connection takes it out of its topics.
+    await s2.subscribe("race");
+    await s3.subscribe("race");
+    await s3.subscribe("other");
+    expect(publish("race", "z")).toBe(2);
+    await s3.close();
+    expect([publish("race", "z"), publish("other", "z")]).toEqual([1, 0]);
+    let code = "";
+    try {
+      await s3.subscribe("race");
+    } catch (e) {
+      code = e.code;
+    }
+    expect(code).toBe("EBADF");
+    await s2.close();
+    expect(publish("race", "z")).toBe(0);
+    expect(await counted).toBeGreaterThan(0);
+    expect(await other).toBeGreaterThanOrEqual(0);
+    await c2.close();
+    await c3.close();
+  });
+});

@@ -1,2 +1,0 @@
-true https: br, gzip, deflate
-true http: gzip, deflate

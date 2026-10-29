@@ -124,8 +124,9 @@ them in each.)
 
 - **A golden** (`tests/golden/**`) when the program's output is the specification: the language
   (`m1`–`m4`, `lang`), compile errors (`.err`), exit codes and panic messages (`.code`,
-  `.stderr`), and runtime or ownership cases where the exact order of what is printed (across
-  tasks, callbacks, drops) is what's being tested.
+  `.stderr`), how `console.log` prints a value (std/fetch_inspect), and runtime or ownership
+  cases where the exact order of what is printed (across tasks, callbacks, drops) is what's being
+  tested.
 - **`velt test`** (`tests/std/<module>/*.test.vlt`) for the standard library's behaviour: a
   `describe` per subject, an `it` per case, `expect` checks instead of printed text, so a
   failure names the case and its line. They run with `cargo test -p veltc --test std_tests`

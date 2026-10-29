@@ -1,0 +1,478 @@
+// velt:fetch's bodies and headers made by the program: byte, stream, blob and form bodies,
+// clones, the init types, and `Headers`. Valid TypeScript; checks what Node 22 gives.
+import { serve } from "velt:http";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+
+function entries(h: Headers): string {
+  const parts: string[] = [];
+  for (const [name, value] of h) {
+    parts.push(`${name}=${value}`);
+  }
+  return parts.join(" ");
+}
+
+async function* parts(): AsyncGenerator<Uint8Array> {
+  yield new TextEncoder().encode("one ");
+  yield new TextEncoder().encode("two");
+}
+
+describe("byte bodies", () => {
+  it("are copied when the response is made", async () => {
+    // Emptying the array afterwards changes neither the body nor a typed array over its bytes
+    // (an `ArrayBuffer`'s bytes are its own; std/fetch/body.vlt `bodyParts`). (Was the golden
+    // std/fetch_body_copies_bytes.)
+    const raw: u8[] = [0, 0, 0, 0, 0, 0, 0xf8, 0x3f];
+    const buf = await new Response(raw).arrayBuffer();
+    const f = new Float64Array(buf);
+    raw.length = 0;
+    expect(f.length).toBe(1);
+    expect(f[0]).toBe(1.5);
+    f[0] = 2;
+    raw.push(7);
+    expect(raw[0]).toBe(7);
+    expect(raw.length).toBe(1);
+    expect(f[0]).toBe(2);
+  });
+
+  it("are read by subclasses of Response and Request", async () => {
+    // `bytes()` and `arrayBuffer()` are an `extend` block of the base (std/fetch/typed.vlt), as
+    // in Node. (Was the golden std/fetch_subclass_bytes.)
+    class MyRes extends Response {}
+    class Tagged extends MyRes {}
+    class MyReq extends Request {}
+    expect((await new MyRes("hello").bytes()).length).toBe(5);
+    expect((await new Tagged("abc").arrayBuffer()).byteLength).toBe(3);
+    expect((await new MyReq("http://x/", { method: "POST", body: "hi" }).bytes()).length).toBe(2);
+    expect(await new MyRes("text").text()).toBe("text");
+  });
+});
+
+describe("a ReadableStream body", () => {
+  // A `ReadableStream` of `Uint8Array` chunks is a body (#1129): read whole, read again as a
+  // stream, and a chunk of another type fails the read as in Node. (Was the golden
+  // std/fetch_readable_stream_body.)
+  it("is read whole", async () => {
+    const stream: ReadableStream<Uint8Array> = ReadableStream.from(parts());
+    const res = new Response(stream, { status: 201, headers: { "x-kind": "stream" } });
+    expect(res).toHaveStatus(201);
+    expect(res).toHaveHeader("x-kind", "stream");
+    expect(res.bodyUsed).toBe(false);
+    expect(await res.text()).toBe("one two");
+    expect(res.bodyUsed).toBe(true);
+  });
+
+  it("is read chunk by chunk through body", async () => {
+    const again = new Response(ReadableStream.from(parts()));
+    const body = again.body;
+    const seen: string[] = [];
+    if (body != null) {
+      for await (const chunk of body) {
+        seen.push(new TextDecoder().decode(chunk));
+      }
+    }
+    expect(seen).toEqual(["one ", "two"]);
+  });
+
+  it("fails the read on a chunk that is not bytes", async () => {
+    const bad = new ReadableStream<string>({
+      start(c) {
+        c.enqueue("not bytes");
+        c.close();
+      },
+    });
+    await expect(new Response(bad).text()).rejects.toThrow("Received non-Uint8Array chunk");
+  });
+});
+
+function show(v: FormDataEntryValue | null): string {
+  if (v == null) {
+    return "null";
+  }
+  if (typeof v == "string") {
+    return JSON.stringify(v);
+  }
+  return `${v.name} ${v.type} ${v.size}`;
+}
+
+function makeForm(): FormData {
+  const f = new File(["abc"], "a.txt", { type: "text/plain", lastModified: 5 });
+  const fd = new FormData();
+  fd.append("a", "1\n2");
+  fd.append("file", f);
+  fd.append("b", new Blob(["zz"]));
+  fd.append("c", new Blob(["zz"]), "c.bin");
+  return fd;
+}
+
+// The form after a `set` and a `delete`.
+function changedForm(): FormData {
+  const fd = makeForm();
+  fd.set("a", "3");
+  fd.delete("b");
+  return fd;
+}
+
+describe("Blob, File and FormData", () => {
+  // Made, sliced and read; a form sent as `multipart/form-data` (as undici writes it) and read
+  // back with `formData()`, also by a server it is uploaded to; a urlencoded body as a form; a
+  // blob body's type as its `content-type`; and headers given as name-value pairs. (Was the
+  // golden std/fetch_form_blob.)
+  it("makes, slices and reads a Blob", async () => {
+    const b = new Blob(["héllo", new Uint8Array([33])], { type: "Text/Plain" });
+    expect(b.size).toBe(7);
+    expect(b.type).toBe("text/plain");
+    expect(await b.text()).toBe("héllo!");
+    expect(await b.slice(-3).text()).toBe("lo!");
+    expect(b.slice(1, 3, "x/y").type).toBe("x/y");
+    expect((await b.bytes()).length).toBe(7);
+    expect((await b.arrayBuffer()).byteLength).toBe(7);
+    expect(new Blob([]).type).toBe("");
+    expect(new Blob(["a"], { type: "é" }).type).toBe("");
+    let streamed = 0;
+    for await (const c of new Blob(["str", "eam"]).stream()) {
+      streamed += c.length;
+    }
+    expect(streamed).toBe(6);
+  });
+
+  it("makes a File", () => {
+    const f = new File(["abc"], "a.txt", { type: "text/plain", lastModified: 5 });
+    expect(`${f.name} ${f.size} ${f.type} ${f.lastModified}`).toBe("a.txt 3 text/plain 5");
+    expect(f instanceof Blob).toBe(true);
+  });
+
+  it("gets FormData's entries", () => {
+    const fd = makeForm();
+    expect(show(fd.get("a"))).toBe('"1\\n2"');
+    expect(fd.getAll("a").length).toBe(1);
+    expect(fd.has("b")).toBe(true);
+    expect(show(fd.get("b"))).toBe("blob  2");
+    expect(show(fd.get("c"))).toBe("c.bin  2");
+    expect([...changedForm().keys()]).toEqual(["a", "file", "c"]);
+  });
+
+  it("writes a form as multipart/form-data and reads it back", async () => {
+    const r = new Response(makeForm());
+    const ct = r.headers.get("content-type") ?? "";
+    expect(ct.replace(/\d+$/, "N")).toBe("multipart/form-data; boundary=----formdata-undici-N");
+    const t = await r.text();
+    expect(t.replaceAll(ct.slice(30), "BOUNDARY")).toBe(
+      '--BOUNDARY\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n2\r\n' +
+        '--BOUNDARY\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nabc\r\n' +
+        '--BOUNDARY\r\nContent-Disposition: form-data; name="b"; filename="blob"\r\nContent-Type: application/octet-stream\r\n\r\nzz\r\n' +
+        '--BOUNDARY\r\nContent-Disposition: form-data; name="c"; filename="c.bin"\r\nContent-Type: application/octet-stream\r\n\r\nzz\r\n' +
+        "--BOUNDARY--\r\n",
+    );
+    const back = await new Response(t, { headers: { "content-type": ct } }).formData();
+    const got: string[] = [];
+    for (const [k, v] of back) {
+      got.push(`${k} ${show(v)} ${typeof v == "string" ? "" : await v.text()}`);
+    }
+    expect(got).toEqual([
+      'a "1\\r\\n2" ',
+      "file a.txt text/plain 3 abc",
+      "b blob application/octet-stream 2 zz",
+      "c c.bin application/octet-stream 2 zz",
+    ]);
+  });
+
+  it("reads a urlencoded body as a form, and refuses another type", async () => {
+    const u = await new Response("x=1&y=%20", {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect(show(u.get("x"))).toBe('"1"');
+    expect(show(u.get("y"))).toBe('" "');
+    await expect(new Response("x").formData()).rejects.toThrow(
+      'Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded".',
+    );
+  });
+
+  it("gives a blob body's type as its content-type, and the content-type as a blob's", async () => {
+    const bl = await new Response("abc", { headers: { "content-type": "A/b" } }).blob();
+    expect(bl.size).toBe(3);
+    expect(bl.type).toBe("a/b");
+    const rb = new Response(new Blob(["q"], { type: "x/q" }));
+    expect(rb).toHaveHeader("content-type", "x/q");
+    expect(await rb.text()).toBe("q");
+  });
+
+  it("sends a form in a request", async () => {
+    const req = new Request("http://x.test/", { method: "POST", body: changedForm() });
+    expect(
+      (req.headers.get("content-type") ?? "").startsWith("multipart/form-data; boundary="),
+    ).toBe(true);
+    const rf = await req.formData();
+    expect(show(rf.get("a"))).toBe('"3"');
+    expect(show(rf.get("file"))).toBe("a.txt text/plain 3");
+  });
+
+  it("takes headers as name-value pairs", () => {
+    const pairs = new Headers([
+      ["accept", "text/html"],
+      ["accept", "application/json"],
+    ]);
+    expect(pairs.get("accept")).toBe("text/html, application/json");
+  });
+
+  it("uploads a form to a server", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const form = await req.formData();
+      const file = form.get("file");
+      const size = file == null || typeof file == "string" ? -1 : file.size;
+      return new Response(`${show(form.get("a"))} ${size}`);
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`, {
+      method: "POST",
+      body: changedForm(),
+    });
+    expect(await res.text()).toBe('"3" 3');
+    await server.shutdown();
+  });
+});
+
+async function answer(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/echo") {
+    // A received body, read by the clone and then by the request.
+    const copy = req.clone();
+    const first = await copy.text();
+    return new Response(`${first}|${await req.text()}`);
+  }
+  if (path == "/stream") {
+    return new Response(ReadableStream.from(parts()));
+  }
+  return new Response("x".repeat(100000), { headers: { "x-big": "yes" } });
+}
+
+describe("clone()", () => {
+  // `Response.clone()` and `Request.clone()` (#573): each copy reads the whole body on its own, a
+  // streamed or fetched body teed between them; a used body cannot be cloned. A request's
+  // `signal` is never null. (Was the golden std/fetch_clone.)
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, answer);
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("copies a response made by the program, until its body is used", async () => {
+    const made = new Response("hello", {
+      status: 201,
+      statusText: "Made",
+      headers: { "x-a": "1" },
+    });
+    const copy = made.clone();
+    expect(copy).toHaveStatus(201);
+    expect(copy.statusText).toBe("Made");
+    expect(copy).toHaveHeader("x-a", "1");
+    expect(await copy.text()).toBe("hello");
+    expect(await made.text()).toBe("hello");
+    expect(() => made.clone()).toThrow("Response.clone: Body has already been consumed.");
+  });
+
+  it("tees a streamed body", async () => {
+    const streamed = new Response(ReadableStream.from(parts()));
+    const twin = streamed.clone();
+    expect(await twin.text()).toBe("one two");
+    expect(await streamed.text()).toBe("one two");
+  });
+
+  it("tees a fetched body", async () => {
+    const big = await fetch(`${base}/big`);
+    const bigCopy = big.clone();
+    const [a, b] = await Promise.all([big.text(), bigCopy.text()]);
+    expect([a.length, b.length]).toEqual([100000, 100000]);
+    expect(bigCopy).toHaveHeader("x-big", "yes");
+    expect(bigCopy.url).toBe(big.url);
+    const chunked = await fetch(`${base}/stream`);
+    const chunkedCopy = chunked.clone();
+    expect(await chunked.text()).toBe("one two");
+    expect(await chunkedCopy.text()).toBe("one two");
+    // Only the clone is read: the original is dropped unread.
+    const once = await fetch(`${base}/stream`);
+    expect(await once.clone().text()).toBe("one two");
+  });
+
+  it("copies a received request's body for its handler", async () => {
+    const echoed = await fetch(`${base}/echo`, { method: "POST", body: "payload" });
+    expect(await echoed.text()).toBe("payload|payload");
+  });
+
+  it("copies a request, until its body is used", async () => {
+    const req = new Request(`${base}/echo`, {
+      method: "PUT",
+      body: "sent",
+      headers: [["x-b", "2"]],
+    });
+    const reqCopy = req.clone();
+    expect(reqCopy.method).toBe("PUT");
+    expect(reqCopy.headers.get("x-b")).toBe("2");
+    expect(await reqCopy.text()).toBe("sent");
+    expect(await req.text()).toBe("sent");
+    expect(() => req.clone()).toThrow("unusable");
+    expect(req.signal.aborted).toBe(false);
+    expect(req.signal === req.signal).toBe(true);
+    const ctl = new AbortController();
+    expect(new Request(base, { signal: ctl.signal }).signal.aborted).toBe(false);
+  });
+});
+
+describe("fetch's init types", () => {
+  // The types of fetch's signatures are global, as in TypeScript: an init object can be built up
+  // before the call (#702). (Was the golden std/fetch_init_types.)
+  function requestInit(body: string | null): RequestInit {
+    const init: RequestInit = { method: "POST" };
+    if (body != null) {
+      init.body = body;
+    }
+    const headers: HeadersInit = { "content-type": "application/json" };
+    init.headers = headers;
+    const redirect: RequestRedirect = "manual";
+    init.redirect = redirect;
+    return init;
+  }
+
+  it("make a request", async () => {
+    const req = new Request("http://example.com/", requestInit("{}"));
+    expect(req.method).toBe("POST");
+    expect(req.redirect).toBe("manual");
+    expect(req.headers.get("content-type")).toBe("application/json");
+    expect(await req.text()).toBe("{}");
+  });
+
+  it("make a response", async () => {
+    const body: BodyInit = "created";
+    const responseInit: ResponseInit = { status: 201, headers: { "x-id": "7" } };
+    const res = new Response(body, responseInit);
+    expect(res).toHaveStatus(201);
+    expect(res).toHaveHeader("x-id", "7");
+    expect(await res.text()).toBe("created");
+  });
+});
+
+describe("the content-type a body implies", () => {
+  // It reads, changes and iterates like any other header (as in Node), however it is held, and a
+  // server sends it unless the handler set one. (Was the golden std/fetch_response_implied_type.)
+  it("reads and iterates as a header", () => {
+    const a = new Response("hi");
+    a.headers.set("x-a", "1");
+    expect(a).toHaveHeader("content-type", "text/plain;charset=UTF-8");
+    expect(a.headers.has("Content-Type")).toBe(true);
+    expect(entries(a.headers)).toBe("content-type=text/plain;charset=UTF-8 x-a=1");
+  });
+
+  it("is appended to, deleted and copied as a header", () => {
+    const b = new Response("hi");
+    b.headers.append("content-type", "text/html");
+    expect(b).toHaveHeader("content-type", "text/plain;charset=UTF-8, text/html");
+    const c = new Response("hi");
+    c.headers.delete("content-type");
+    expect(c.headers.has("content-type")).toBe(false);
+    expect(entries(c.headers)).toBe("");
+    const d = Response.json([1, 2]);
+    d.headers.set("server", "velt");
+    expect(new Headers(d.headers).get("content-type")).toBe("application/json");
+    expect(entries(d.headers)).toBe("content-type=application/json server=velt");
+  });
+
+  it("is sent by a server unless the handler set one", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const res = new Response("hello");
+      res.headers.set("server", "velt");
+      if (req.url.endsWith("/html")) {
+        res.headers.set("content-type", "text/html");
+      }
+      return res;
+    });
+    const cases: [string, string][] = [
+      ["/", "text/plain;charset=UTF-8"],
+      ["/html", "text/html"],
+    ];
+    for (const [path, ct] of cases) {
+      const r = await fetch(`http://127.0.0.1:${server.port}${path}`);
+      expect(r).toHaveHeader("content-type", ct);
+      expect(r).toHaveHeader("server", "velt");
+      expect(await r.text()).toBe("hello");
+    }
+    server.close();
+  });
+});
+
+describe("a Headers' first entry", () => {
+  // A `Headers` keeps its first entry as it was given until something needs more (std/fetch/
+  // headers.vlt); reading, changing, copying and iterating it behaves as in Node either way, and
+  // a server sends it lowercased and trimmed, before the headers that follow it. (Was the golden
+  // std/fetch_headers_first_entry.)
+  it("reads, changes and iterates as in Node", () => {
+    const h = new Headers();
+    h.set("X-One", "  a \t");
+    expect(h.get("x-one")).toBe("a");
+    expect(h.has("X-ONE")).toBe(true);
+    expect(h.get("x-two")).toBeNull();
+    expect(h.has("x-two")).toBe(false);
+    expect(entries(h)).toBe("x-one=a");
+    h.set("x-ONE", "b");
+    expect(entries(h)).toBe("x-one=b");
+    h.append("X-One", "c");
+    expect(h.get("x-one")).toBe("b, c");
+    expect(entries(h)).toBe("x-one=b, c");
+  });
+
+  it("is sorted with what follows, copied and deleted", () => {
+    const one = new Headers();
+    one.append("Z-Last", "z");
+    one.append("a-first", "a");
+    expect(entries(one)).toBe("a-first=a z-last=z");
+    expect(entries(new Headers(one))).toBe("a-first=a z-last=z");
+    const gone = new Headers({ "X-Gone": "1" });
+    gone.delete("x-gone");
+    expect(gone.has("x-gone")).toBe(false);
+    expect(entries(gone)).toBe("");
+    const copy = new Headers({ Accept: "text/html" });
+    expect(entries(new Headers(copy))).toBe("accept=text/html");
+    expect(copy.get("accept")).toBe("text/html");
+  });
+
+  it("keeps the type a body implies first; setting content-type replaces it", () => {
+    const typed = new Response("hi");
+    typed.headers.set("Content-Type", "text/html");
+    expect(typed).toHaveHeader("content-type", "text/html");
+    expect(entries(typed.headers)).toBe("content-type=text/html");
+    const both = new Response("hi");
+    both.headers.set("X-A", "1");
+    both.headers.append("x-a", "2");
+    expect(both).toHaveHeader("X-A", "1, 2");
+    expect(entries(both.headers)).toBe("content-type=text/plain;charset=UTF-8 x-a=1, 2");
+  });
+
+  it("is sent lowercased and trimmed", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const res = new Response("ok");
+      if (req.url.endsWith("/one")) {
+        res.headers.set("X-Mixed", " v ");
+      } else if (req.url.endsWith("/more")) {
+        res.headers.set("Server", "velt");
+        res.headers.append("set-cookie", "a=1");
+        res.headers.append("Set-Cookie", "b=2");
+      } else if (req.url.endsWith("/bad")) {
+        res.headers.set("bad name", "x");
+      }
+      return res;
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+    const one = await fetch(`${base}/one`);
+    expect(one).toHaveStatus(200);
+    expect(one).toHaveHeader("x-mixed", "v");
+    expect(await one.text()).toBe("ok");
+    const more = await fetch(`${base}/more`);
+    expect(more).toHaveHeader("server", "velt");
+    expect(more.headers.getSetCookie().join(" | ")).toBe("a=1 | b=2");
+    // A header name that is not valid fails the handler: a 500 (the error goes to stderr, as
+    // the golden std/http_server checks).
+    expect(await fetch(`${base}/bad`)).toHaveStatus(500);
+    server.close();
+  });
+});
