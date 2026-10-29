@@ -97,9 +97,13 @@ impl Ctx<'_> {
         }
     }
 
-    /// A dynamic value converted to `t` (module docs): recorded when it is an interface type.
+    /// A dynamic value converted to `t` (module docs): recorded when it is an interface type,
+    /// or an option or array of one (whose elements a view converts, `array_view_cast.rs`).
     pub(crate) fn note_dyn_object_target(&mut self, t: TyId) {
-        let t = self.ty.opt_payload(t).unwrap_or(t);
+        let mut t = self.ty.opt_payload(t).unwrap_or(t);
+        if let TyKind::Array(e) = *self.ty.kind(t) {
+            t = self.ty.opt_payload(e).unwrap_or(e);
+        }
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
             return;
         };
