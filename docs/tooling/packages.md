@@ -137,6 +137,30 @@ export const pkg: Package = {
   workspace file, what its globs list and the lockfile, and the machine's build cache shares
   the code of a library every member uses: a second member compiles little more than its own
   code.
+- **Commands on several members.** At the workspace's root (outside its packages), `velt check`,
+  `velt test`, `velt build`, `velt fmt` and `velt doc` run on every member; anywhere, they take a
+  selection:
+
+  | Selection | Members |
+  |---|---|
+  | `--workspace` | all of them |
+  | `-p <glob>` (repeatable) | those whose name matches (`-p 'server*'`); a scoped name matches whole or without its scope (`-p 'server*'` and `-p '@org/*'` both select `@org/server`) |
+  | `--affected [<base>]` | those with a file changed since `<base>` (committed or not), and every member that uses them; without a base, the merge base with the upstream branch (in CI, name it: `--affected origin/main`). A change to `velt.workspace.vlt` or `velt.lock.json` affects all |
+
+  Members run in dependency order, several at once, each in its own `velt`; each member's output
+  is printed in one piece when it finishes, and a summary names the members that failed. A failed
+  member doesn't stop the others; `--fail-fast` starts no more. `--watch`, `-o` and `--json`
+  need one member; with one, a relative `-o` is a path from where you ran `velt`. `velt build`
+  skips libraries (the programs that use them build them), and `velt run -p <member>` and
+  `velt dev -p <member>` run one member's program from anywhere in the workspace; its arguments
+  follow `--` (`velt run -p server -- --port 8080`).
+
+  ```sh
+  velt test                       # at the root: every member
+  velt check --affected           # what this branch touched, and what uses it
+  velt build -p 'server*' -p cli  # some members, by name
+  velt run -p server              # one member's program
+  ```
 - A package below the workspace that no glob lists stays on its own, with its own lockfile and
   its own `velt` (the launcher reads the globs too); `velt install` there says so.
 

@@ -44,6 +44,16 @@ Every build command works on a single file or on a package:
   `package.vlt` and builds the package's entry (default `src/main.vlt`) to
   `<package>/target/velt/<name>`. A library-only package can't be run.
 
+### Workspaces
+
+In a [workspace](packages.md#workspaces), `velt check`, `test`, `build`, `fmt` and `doc` take
+`--workspace`, `-p <glob>` (repeatable; a member's name, or a scoped name without its scope) and
+`--affected [<base>]` to run on several members, and
+run on every member at the workspace's root outside its packages; `--fail-fast` starts no more
+members after a failure. `velt run -p <member>` and `velt dev -p <member>` run one member's
+program, with the program's arguments after `--` (`velt run -p server -- --port 8080`). A file
+argument doesn't go with a selection.
+
 ## `velt build` and `velt run`
 
 ```

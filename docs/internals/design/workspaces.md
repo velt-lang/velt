@@ -124,11 +124,22 @@ there notes that the workspace does not list it.
 `velt run` and `velt dev` take one member (`-p app`); at the root without one, they list the
 runnable members.
 
-The members run in dependency order, `--jobs` at once (default: the number of cores), in one
-process: one installed graph, one cache handle, one std. Output is grouped per member and
-printed when the member finishes; a summary lists every member's result, and the command fails
-when one did. All members run even after a failure (CI wants every failure in one run);
-`--fail-fast` stops at the first.
+The members run in dependency order, as one `velt` per member, at most half the cores' worth at
+once (each member's build already compiles on every core). A member starts once the selected
+members it depends on finished, so it takes their code from the machine's build cache instead of
+compiling it at the same time. The workspace is installed once before them, so none writes the
+lock. Output is grouped per member and printed when the member finishes; a summary lists every
+member's result, and the command fails when one did, with the first failure's exit code. All
+members run even after a failure (CI wants every failure in one run); `--fail-fast` starts no
+more. One selected member runs in the same process, in its directory. `velt build` skips
+libraries when it builds several members: the members that use them build them.
+
+*Revised in step 2:* this note first proposed one process for all members (one installed graph,
+one std). The commands print as they work and read the current directory, so that would mean
+capturing every command's output and passing a directory to all of them; the processes share
+what matters already (the build cache and the stamps are on disk), and the frontend work that a
+single process could share is #1612's. `--affected` without a base takes the upstream merge base
+on a workstation and is an error in CI (`CI` set): a CI checkout often has no upstream branch.
 
 ### The caches workspaces rely on
 
@@ -189,8 +200,10 @@ promise is speed of the tools, and these numbers come with the steps that make t
   cold and warm install, a no-op install, `test --workspace` cold, with one leaf changed, and with
   nothing changed.
 - Targets: a no-op `velt install` under 50 ms; `velt test --workspace` with nothing changed under
-  100 ms (stamps and test stamps only, no parsing).
-- Build time and IR size for the members' builds in one process versus one process per member.
+  100 ms (stamps and test stamps only, no parsing). With one `velt` per member (step 2), process
+  start alone exceeds that at 50 members, so step 3 checks the build and test stamps in the
+  parent and starts a member's `velt` only when one misses.
+- Build time and IR size for the members' builds as one process per member.
 
 ## Diagnostics
 
@@ -212,8 +225,9 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
    dependencies, one resolution and one lock; `velt install` and builds of one member inside a
    workspace. Outputs per member, and the workspace's files in the build stamp.
 2. Member selection (`--workspace`, `-p`, `--affected`) for `check`, `test`, `build`, `fmt`,
-   `doc`, run in dependency order and in parallel in one process.
-3. Test results from the test stamp.
+   `doc`, run in dependency order and in parallel, one `velt` per member.
+3. Test results from the test stamp, and the stamps checked in the parent before any member's
+   `velt` starts.
 4. `velt publish` of members; `velt add -p <member>` and `velt add --workspace` (into the
    workspace's `dependencies`).
 5. The language server's workspace graph and the workspace file's editor support.
@@ -225,7 +239,6 @@ Steps 1 and 2 make a working monorepo; each step updates
 
 ## Open questions
 
-- Should `--affected` default to the upstream merge base, or need an explicit base in CI?
 - Should test results be cached by default, or opt in per member? Tests that talk to a database
   or the network can pass once and fail later; the stamp only knows the program and its
   environment. The proposal caches by default and prints `cached` visibly; `--no-cache` and the
