@@ -288,6 +288,12 @@ function main() {
   );
   likeBoth(db, nothing, one, twelve);
   likeBoth(db, one, nothing, twelve);
+  // A NULL ESCAPE gives NULL, and the ESCAPE's length is counted up to its first NUL.
+  const a = Operand { sql: "'a'", v: textVal("a") };
+  const x = Operand { sql: "'x'", v: textVal("x") };
+  likeBoth(db, a, a, nothing);
+  likeBoth(db, x, x, Operand { sql: "'a' || char(0) || 'b'", v: textVal("a\u0000b") });
+  likeBoth(db, a, a, Operand { sql: "char(0)", v: textVal("\u0000") });
 
   // SQLite's length limit (SQLITE_MAX_LENGTH, 1,000,000,000 bytes), checked before a value is
   // built; `||` checks it on the two texts' lengths.

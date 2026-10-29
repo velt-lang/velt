@@ -8,6 +8,9 @@ NULL LIKE <50003 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C
 'a' LIKE <50020 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"
 NULL LIKE 1 ESCAPE 12: velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
 1 LIKE NULL ESCAPE 12: velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
+'a' LIKE 'a' ESCAPE NULL: velt null:, C null:
+'x' LIKE 'x' ESCAPE 'a' || char(0) || 'b': velt integer:1, C integer:1
+'a' LIKE 'a' ESCAPE char(0): velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
 a value of 1000000000 bytes: ok
 a value of 1000000001 bytes: string or blob too big
 text:ab12 null:
