@@ -1,0 +1,89 @@
+// check: no leaks
+// An argument may change the inside of a class instance or an array another argument passes
+// (docs/reference/memory.md "Exclusive access"): the callee sees the change, as in Node.
+
+class Src {
+  n: number = 0;
+  get(i: number): number {
+    this.n++;
+    return i + this.n;
+  }
+}
+
+class User {
+  src: Src = new Src();
+  v: number = 0;
+  set(x: number): void {
+    this.v = x + this.src.n * 100;
+  }
+  step(): void {
+    this.set(this.src.get(1));
+  }
+}
+
+class C {
+  v: number[] = [1, 2, 3];
+}
+class B {
+  c: C = new C();
+}
+class A {
+  b: B = new B();
+}
+
+function grow(xs: number[]): number {
+  for (let i = 0; i < 100; i++) xs.push(i);
+  return xs.length;
+}
+
+function f(c: C, n: number): string {
+  return `${c.v.length} ${c.v[0]} ${c.v[102]} ${n}`;
+}
+
+class V {
+  n: number = 1;
+  s: string = "y".repeat(30);
+}
+class H {
+  vs: V[] = [new V(), new V(), new V()];
+}
+
+function g(vs: V[], n: number): string {
+  return `${vs.length} ${n}`;
+}
+
+type Pt = { x: number; y: number };
+class O {
+  pts: Pt[] = [
+    { x: 1, y: 2 },
+    { x: 3, y: 4 },
+  ];
+}
+
+function fs(pts: Pt[], n: number): number {
+  return pts[0].x * 10 + n;
+}
+
+function main() {
+  // A class receiver and a change to one of its fields' insides.
+  const u = new User();
+  u.step();
+  u.step();
+  console.log(u.v);
+
+  // An array reallocated under a passed class instance.
+  const a = new A();
+  console.log(f(a.b.c, grow(a.b.c.v)));
+
+  // A field array truncated while it is passed: its class elements are freed.
+  const h = new H();
+  console.log(g(h.vs, (h.vs.length = 0)));
+  h.vs.push(new V());
+  console.log(h.vs.length, h.vs[0].s.length);
+
+  // An inline element changed through its array.
+  const o = new O();
+  console.log(fs(o.pts, (o.pts[0].x = 5)));
+}
+
+main();
