@@ -110,27 +110,69 @@ pub(crate) fn absent_getter(
     fname: &str,
     want: TyId,
 ) -> DefId {
-    let (def, name, n, span) = getter_info(cx, d, self_ty, fname, want);
-    let none = hir::Expr {
+    value_getter(cx, d, self_ty, fname, want, |span| hir::Expr {
         kind: H::Lit(hir::Lit::Null),
         ty: want,
         span,
-    };
-    cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(name, n, self_ty, want, none, span)));
+    })
+}
+
+/// A getter `<fname>` of class/struct `d` (self type `self_ty`, local 0 in the body) returning
+/// `ret`, the value `value` makes at the span it is given.
+pub(crate) fn value_getter(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    fname: &str,
+    ret: TyId,
+    value: impl FnOnce(Span) -> hir::Expr,
+) -> DefId {
+    let (def, name, n, span) = getter_info(cx, d, self_ty, fname, ret);
+    let v = value(span);
+    cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(name, n, self_ty, ret, v, span)));
     def
 }
 
-/// The getter of required field `index` (type `ty`) of `d` for an optional field of type
-/// `want` (`ty | undefined`) of a bound's interface: the field's value, wrapped.
-pub(crate) fn field_getter_some(
+/// A setter of field `index` (type `ty`) of class/struct `d` taking a `want`: the field gets
+/// the value `value` makes of the parameter (local 1, read as given) at the span it is given.
+pub(crate) fn value_setter(
     cx: &mut Ctx,
     d: DefId,
     self_ty: TyId,
     index: usize,
-    ty: TyId,
     want: TyId,
+    value: impl FnOnce(hir::Expr, Span) -> hir::Expr,
 ) -> DefId {
-    getter_of(cx, d, self_ty, index, ty, Some(want))
+    let a = cx.adt(d).expect("ICE: adt");
+    let (fname, ty) = (a.fields[index].name.clone(), a.fields[index].ty);
+    let unit = cx.ty.unit;
+    setter_def(cx, d, self_ty, &fname, want, false, |span, copy| {
+        let this = hir::Expr {
+            kind: H::Local(LocalId(0), UseMode::BorrowMut),
+            ty: self_ty,
+            span,
+        };
+        let place = hir::Expr {
+            kind: H::Field {
+                base: Box::new(this),
+                index: index as u32,
+                mode: UseMode::BorrowMut,
+            },
+            ty,
+            span,
+        };
+        let mode = if copy { UseMode::Copy } else { UseMode::Move };
+        let v = hir::Expr {
+            kind: H::Local(LocalId(1), mode),
+            ty: want,
+            span,
+        };
+        let assign = H::Assign {
+            place: Box::new(place),
+            value: Box::new(value(v, span)),
+        };
+        Some((assign, unit))
+    })
 }
 
 /// The setter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`):

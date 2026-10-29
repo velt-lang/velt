@@ -6,6 +6,8 @@
 //!
 //! - an interface field reads the object's field of that name, of the same type; an optional
 //!   one (`f?: T`) also a field of type `T`, or none, which reads `undefined`;
+//!   Through `any`, a field of another type converts through `any` too, checked when it is
+//!   read and written (`object_call_on.rs`), as Node reads whatever the object holds;
 //! - a getter `get f()` and a setter `set f(v)` read and write field `f`;
 //! - a method is filled by a field holding a function that takes the method's first parameters
 //!   (the call passes no more, as JavaScript drops extra arguments) and returns its result, or
@@ -26,7 +28,7 @@ use crate::any::Dynamic;
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::collect::getters::{
     absent_getter, field_getter, field_getter_some, field_setter_taking, fixed_shape_setter,
-    some_setter,
+    some_setter, unused_setter,
 };
 use crate::ctx::Ctx;
 use crate::defs::{IfaceMethod, ParamSig};
@@ -36,8 +38,9 @@ use crate::iface_writes::SetterSrc;
 /// The implementations made so far and the conversions through `any` (module docs).
 #[derive(Default)]
 pub(crate) struct ObjectImpls {
-    /// By (object type definition, interface, interface arguments); `None`: it does not fit.
-    made: FxHashMap<(DefId, DefId, Vec<TyId>), Option<u32>>,
+    /// By (object type definition, interface, interface arguments, made for a conversion
+    /// through `any`); `None`: it does not fit.
+    made: FxHashMap<(DefId, DefId, Vec<TyId>, bool), Option<u32>>,
     /// The object types (and literal interface values) the program converts to `any`.
     sources: Vec<TyId>,
     seen: FxHashSet<TyId>,
@@ -49,6 +52,9 @@ pub(crate) struct ObjectImpls {
 enum Fill {
     /// The field's value (`Some`: wrapped as this optional type).
     Field(usize, TyId, Option<TyId>),
+    /// Field `.0`'s value (of type `.1`) converted to the interface field's type `.2` through
+    /// `any`, checked when it is read.
+    Convert(usize, TyId, TyId),
     /// A field (named `.0`) the object lacks, of the optional type `.1`: `undefined`.
     Absent(String, TyId),
     /// `set f(v)` writing field `.0` (of type `.1`; `.2`: the parameter is borrowed).
@@ -69,6 +75,11 @@ enum Store {
     Absent(String, TyId),
     /// In field `.0`, of the optional field's type (`.1`) without `undefined`.
     Some(usize, TyId),
+    /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted
+    /// through `any`.
+    Convert(usize, TyId, TyId),
+    /// Never written: the interface is not written through (field `.0`, of type `.1`).
+    Unwritten(String, TyId),
 }
 
 impl Ctx<'_> {
@@ -124,6 +135,19 @@ impl Ctx<'_> {
         iface: DefId,
         args: &[TyId],
     ) -> Option<u32> {
+        self.object_iface_impl_of(self_ty, iface, args, false)
+    }
+
+    /// [`Self::object_iface_impl`]; `dynamic`: for a conversion through `any`, where a field of
+    /// another type than the interface's converts through `any` too, checked when it is read
+    /// (Node reads whatever the object holds).
+    fn object_iface_impl_of(
+        &mut self,
+        self_ty: TyId,
+        iface: DefId,
+        args: &[TyId],
+        dynamic: bool,
+    ) -> Option<u32> {
         let TyKind::Adt(d, targs) = self.ty.kind(self_ty).clone() else {
             return None;
         };
@@ -136,12 +160,12 @@ impl Ctx<'_> {
         if !self.may_fill(d, iface) {
             return None;
         }
-        let key = (d, iface, args.to_vec());
+        let key = (d, iface, args.to_vec(), dynamic);
         if let Some(made) = self.object_impls.made.get(&key) {
             return *made;
         }
         let made = self
-            .object_impl_plan(d, self_ty, iface, args)
+            .object_impl_plan(d, self_ty, iface, args, dynamic)
             .map(|(plan, setters)| self.build_object_impl(d, self_ty, iface, args, plan, setters));
         self.object_impls.made.insert(key, made);
         made
@@ -166,6 +190,7 @@ impl Ctx<'_> {
         self_ty: TyId,
         iface: DefId,
         args: &[TyId],
+        dynamic: bool,
     ) -> Option<(Vec<Fill>, Vec<Store>)> {
         let info = self.iface(iface)?;
         let (methods, ifields) = (info.methods.clone(), info.fields.clone());
@@ -227,6 +252,16 @@ impl Ctx<'_> {
                     setters.push(Store::Absent(f.name.clone(), want));
                     Fill::Absent(f.name.clone(), want)
                 }
+                // Written back through `any` only from a type that goes in as it is; an optional
+                // one (`ViewFn | null`) is never written then.
+                Some(i) if dynamic && self.converts_via_any(fields[i].1, want) => {
+                    match self.converts_via_any(want, fields[i].1) {
+                        true => setters.push(Store::Convert(i, fields[i].1, want)),
+                        false if self.iface_written(iface) => return None,
+                        false => setters.push(Store::Unwritten(f.name.clone(), want)),
+                    }
+                    Fill::Convert(i, fields[i].1, want)
+                }
                 _ => return None,
             };
             plan.push(fill);
@@ -281,6 +316,7 @@ impl Ctx<'_> {
                 Fill::Field(i, ty, None) => field_getter(self, d, self_ty, i, ty),
                 Fill::Field(i, ty, Some(want)) => field_getter_some(self, d, self_ty, i, ty, want),
                 Fill::Absent(name, want) => absent_getter(self, d, self_ty, &name, want),
+                Fill::Convert(i, ty, want) => self.convert_getter(d, self_ty, i, ty, want),
                 Fill::Setter(i, ty, borrowed) => {
                     field_setter_taking(self, d, self_ty, i, ty, borrowed)
                 }
@@ -312,6 +348,16 @@ impl Ctx<'_> {
                 },
                 Store::Absent(name, ty) => SetterSrc::Method {
                     def: fixed_shape_setter(self, d, self_ty, &name, ty),
+                    d,
+                    name,
+                },
+                Store::Convert(index, ty, want) => SetterSrc::Method {
+                    def: self.convert_setter(d, self_ty, index, ty, want),
+                    d,
+                    name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
+                },
+                Store::Unwritten(name, ty) => SetterSrc::Method {
+                    def: unused_setter(self, d, self_ty, &name, ty),
                     d,
                     name,
                 },
@@ -405,7 +451,9 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
                     }
                 }
                 _ => {
-                    cx.object_iface_impl(t, *iface, args);
+                    if cx.object_iface_impl(t, *iface, args).is_none() {
+                        cx.object_iface_impl_of(t, *iface, args, true);
+                    }
                 }
             }
         }

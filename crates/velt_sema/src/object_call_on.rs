@@ -6,8 +6,15 @@
 //! of a type that goes into an `any` as it is (a number, a string, a boolean, an object, an
 //! array, a function, an interface value or a dynamic value; no union, optional or literal type)
 //! and the result is `void`, a dynamic value or a number, string or boolean.
+//!
+//! Through `any`, an object's field of another type than the interface's (`props:
+//! Record<string, any>` for `props: PropsAccessor<{}>`, `renderFn: any` for
+//! `renderFn: ViewFn | null`) is read and written through `any` the same way: the getter
+//! converts the field's value to the interface field's type, checked at each read, and the
+//! setter the value written to the field's.
 
 use crate::any::Dynamic;
+use crate::collect::getters::{value_getter, value_setter};
 use crate::ctx::Ctx;
 use crate::defs::{IfaceMethod, ThrowSrc};
 use crate::hir::{
@@ -34,6 +41,80 @@ impl Ctx<'_> {
                 self.ty.kind(ret),
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
             )
+    }
+
+    /// Does a field of type `from` convert to and from an interface field of type `to` through
+    /// `any` (module docs)?
+    pub(crate) fn converts_via_any(&self, from: TyId, to: TyId) -> bool {
+        let plain = |t: TyId| self.dynamic(t).is_some() || self.boxes_as_is(t);
+        let core = |t: TyId| match self.ty.kind(t) {
+            TyKind::Option(p, _) => *p,
+            _ => t,
+        };
+        self.any.is_some() && plain(from) && plain(core(to))
+    }
+
+    /// The getter of an interface field of type `want` reading field `index` (of type `ty`)
+    /// through `any` (module docs).
+    pub(crate) fn convert_getter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let fname = self.adt(d).expect("ICE: adt").fields[index].name.clone();
+        let via = self.via_any_parts(ty, want);
+        let copy = self.is_copy(ty);
+        value_getter(self, d, self_ty, &fname, want, |span| {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
+            let mut read = hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index: index as u32,
+                    mode,
+                },
+                ty,
+                span,
+            };
+            if !copy {
+                read = intrinsic(Intrinsic::Share, read, ty, span);
+            }
+            via_any(read, via, span)
+        })
+    }
+
+    /// The setter of an interface field of type `want` writing field `index` (of type `ty`)
+    /// through `any` (module docs).
+    pub(crate) fn convert_setter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let via = self.via_any_parts(want, ty);
+        value_setter(self, d, self_ty, index, want, |v, span| {
+            via_any(v, via, span)
+        })
+    }
+
+    /// How a value of type `from` becomes a `to` through `any` ([`via_any`]).
+    fn via_any_parts(&mut self, from: TyId, to: TyId) -> ViaAny {
+        let defs = self.any.expect("ICE: any");
+        ViaAny {
+            any: self.ty.intern(TyKind::Dyn(defs.any, vec![])),
+            imp: self.any_impl().expect("ICE: any"),
+            boxed: self.dynamic(from).is_some(),
+            to,
+        }
     }
 
     /// Does a value of type `t` go into an `any` as it is (module docs)?
@@ -148,5 +229,46 @@ impl Ctx<'_> {
             panic!("ICE: a synthesized method without a body");
         };
         f.body.block.stmts = vec![hir::Stmt { kind, span }];
+    }
+}
+
+/// The parts of a conversion through `any` (`Ctx::via_any_parts`): the type `any`, its
+/// implementation, whether the value is dynamic already, the target type.
+#[derive(Clone, Copy)]
+struct ViaAny {
+    any: TyId,
+    imp: u32,
+    boxed: bool,
+    to: TyId,
+}
+
+/// `e` (owned) converted to `via.to` through `any`: boxed (unless it is dynamic), then checked
+/// as a `to`.
+fn via_any(e: hir::Expr, via: ViaAny, span: velt_common::Span) -> hir::Expr {
+    let boxed = match via.boxed {
+        true => e,
+        false => hir::Expr {
+            kind: H::ToDyn {
+                expr: Box::new(e),
+                impl_index: via.imp,
+            },
+            ty: via.any,
+            span,
+        },
+    };
+    if boxed.ty == via.to {
+        return boxed;
+    }
+    intrinsic(Intrinsic::AnyTo, boxed, via.to, span)
+}
+
+fn intrinsic(i: Intrinsic, arg: hir::Expr, ty: TyId, span: velt_common::Span) -> hir::Expr {
+    hir::Expr {
+        kind: H::Call {
+            callee: Callee::Intrinsic(i),
+            args: vec![arg],
+        },
+        ty,
+        span,
     }
 }
