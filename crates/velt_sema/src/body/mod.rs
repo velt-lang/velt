@@ -60,6 +60,7 @@ mod global_narrow;
 mod index_keys;
 mod key_narrow;
 mod late_consts;
+pub(crate) mod lazy_std;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 mod type_guards;

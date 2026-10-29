@@ -260,6 +260,12 @@ impl FnLower<'_, '_> {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
         };
+        if self.cx.hir.unchecked.contains(&d) {
+            ice(format_args!(
+                "`{}` was left unchecked: no checked code reaches it",
+                g.name
+            ));
+        }
         if let Some(slot) = g.slot {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
             return Operand::Copy(self.module_slot(slot));

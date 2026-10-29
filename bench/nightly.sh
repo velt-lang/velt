@@ -10,8 +10,9 @@
 # Builds velt (release) unless --velt is given, builds the benchmarks below (LLVM, --release),
 # runs each once natively (it must succeed; its time is shown, not compared) and once under
 # valgrind's cachegrind for the count, plus the instructions of `velt check` over the whole
-# standard library (bench/compile/all_std.vlt: parsing and type checking). Writes the counts to
-# --out (default: $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
+# standard library (bench/compile/all_std.vlt with VELT_EAGER_STD=1, which checks every std
+# definition: parsing and type checking). Writes the counts to --out (default:
+# $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
 # compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
@@ -138,7 +139,9 @@ std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
   /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
   { n++ }
   END { print n + 0 }')
-row=$(count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
+# With laziness off (VELT_EAGER_STD=1): a program checks only the std definitions it reaches
+# (docs/internals/design/lazy-std.md), and the row measures checking all of std.
+row=$(VELT_EAGER_STD=1 count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
 printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
 "$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" "$NODE_FILE" <<'EOF'

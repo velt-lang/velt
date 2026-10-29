@@ -26,6 +26,21 @@ fn numeric_literals() {
         "340282366920938463463374607431768211455",
         "340282366920938463463374607431768211455",
     );
+    // Past the digits lexed in 64 bits (#1658): the full u64 range, a separator and digits
+    // beyond, up to u128, in every base.
+    check("0xeef453d6923bd65a", "17218479456385750618");
+    check("0xffffffffffffffff", "18446744073709551615");
+    check("0x1_0000_0000_0000_0000", "18446744073709551616");
+    check(
+        "0xffffffffffffffffffffffffffffffff",
+        "340282366920938463463374607431768211455",
+    );
+    check("0o1777777777777777777777", "18446744073709551615");
+    check(
+        "0b1111111111111111111111111111111111111111111111111111111111111111",
+        "18446744073709551615",
+    );
+    check("0x0000000000000000000000ff", "255");
     let e = expr("1.5");
     assert!(matches!(e.kind, ExprKind::Lit(Lit::Float { value, suffix: None }) if value == 1.5));
 }
@@ -37,6 +52,13 @@ fn numeric_literal_errors() {
     assert!(errors("const x = 1.5i32;")[0].contains("invalid suffix"));
     assert!(errors("const x = 0b102;")[0].contains("invalid digit"));
     assert!(errors("const x = 0x;")[0].contains("missing digits"));
+    assert!(
+        errors("const x = 0x1_0000_0000_0000_0000_0000_0000_0000_0000;")[0].contains("too large")
+    );
+    assert!(
+        errors("const x = 0b1111111111111111111111111111111111111111111111111111111111112;")[0]
+            .contains("invalid digit")
+    );
 }
 
 #[test]

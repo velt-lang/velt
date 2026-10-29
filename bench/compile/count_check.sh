@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Instructions `velt check bench/compile/all_std.vlt` executes at each given git ref, counted the
-# way bench/nightly.sh counts compile/check_all_std (cachegrind, VELT_THREADS=1, release build).
+# way bench/nightly.sh counts compile/check_all_std (cachegrind, VELT_THREADS=1, VELT_EAGER_STD=1
+# so that every std definition is checked, release build).
 # For bisecting a compile-time change between commits. Linux only (valgrind).
 #
 #   bench/compile/count_check.sh [--prepend LINE] WORKDIR REF...
@@ -44,9 +45,9 @@ for ref in "$@"; do
     { printf '%s\n' "$PREPEND"; cat "$src/bench/compile/all_std.vlt"; } > "$src/$input"
   fi
   # velt check must succeed (as in bench/nightly.sh), or the count measures an error path.
-  (cd "$src" && VELT_STD="$src/std" "$bin" check "$input" >/dev/null 2>&1) \
+  (cd "$src" && VELT_EAGER_STD=1 VELT_STD="$src/std" "$bin" check "$input" >/dev/null 2>&1) \
     || { echo "$sha: velt check $input failed" >&2; exit 1; }
-  n=$(cd "$src" && VELT_THREADS=1 VELT_STD="$src/std" valgrind --tool=cachegrind --cache-sim=no \
+  n=$(cd "$src" && VELT_THREADS=1 VELT_EAGER_STD=1 VELT_STD="$src/std" valgrind --tool=cachegrind --cache-sim=no \
       --cachegrind-out-file="$WORK/cg-$sha${PREPEND:+-variant}.out" "$bin" check "$input" 2>&1 >/dev/null \
       | sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ,)
   [ -n "$n" ] || { echo "$sha: cachegrind failed" >&2; exit 1; }
