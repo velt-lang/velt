@@ -1,0 +1,19 @@
+// A copy of a counted field (`const d = h.arr`) handed to a function that never returns: the
+// callee replaces the field, which drops the array's last reference but for `d`'s own, while
+// it still reads `d`. In release builds the copy borrows only when no call may free while it is
+// used; a call that never returns excuses nothing once it is handed the copy (#1715).
+// Plain TypeScript: Node prints the same.
+class H { arr: number[] = [1, 2, 3]; }
+function run(d: number[], h: H): never {
+  let n = 0;
+  for (;;) {
+    h.arr = [n, n, n, n];
+    let s = 0;
+    for (let i = 0; i < d.length; i++) s += d[i];
+    console.log(s, d.length);
+    n++;
+    if (n == 3) process.exit(0);
+  }
+}
+function start() { const h = new H(); h.arr = [5, 6, 7]; const d = h.arr; run(d, h); }
+start();

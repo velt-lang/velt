@@ -43,6 +43,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   `never` function such as `corrupt("bad header")`; a method called on it, `this.db.header(n)`,
   counts as such a callee too); a callee that may (it calls a callback or a method a subclass
   overrides) gets the field shared for the call, so it stays alive whatever the callee does.
+  A local that only reads such a field (`const data = this.db.data;`) borrows it the same way
+  in a release build: it takes no count when nothing that runs while it is used could free it.
 - A **promise** is shared like an object: every holder may `await` it and gets the result
   ([Async](async.md#promises)).
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
