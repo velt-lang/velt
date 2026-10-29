@@ -10,6 +10,7 @@ use std::ops::Range;
 use velt_common::{Diagnostic, FileId, Span};
 
 use super::{scan, At, Completion, CompletionKind};
+use crate::manifest::WORKSPACE_REQUIREMENT;
 use crate::registry::{Index, IndexEntry};
 use crate::search::Hit;
 
@@ -24,8 +25,18 @@ pub struct DependencyEntry {
     pub name_range: Range<u32>,
     /// The version requirement and the bytes of its contents (inside the quotes), when written.
     pub version: Option<(String, Range<u32>)>,
-    /// It has a `path` (a local package: the registry is not asked).
-    pub has_path: bool,
+    /// Where it comes from: the registry is asked only about registry dependencies.
+    pub source: DependencySource,
+}
+
+/// Where a dependency written in `dependencies` comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencySource {
+    Registry,
+    /// It has a `path`: a local package.
+    Path,
+    /// `"workspace"`: a member of the workspace, or the workspace's requirement.
+    Workspace,
 }
 
 /// The dependencies of manifest text `src`, in order.
@@ -50,12 +61,23 @@ pub fn dependencies(src: &str) -> Vec<DependencyEntry> {
                 .find(|(k, ..)| k == name)
                 .or_else(|| detail.and_then(|f| f.values.iter().find(|(k, ..)| k == "version")))
                 .map(|(_, v, range)| (v.clone(), range.clone()));
-            let has_path = detail.is_some_and(|f| f.keys.iter().any(|(k, _)| k == "path"));
+            let has_key = |key: &str| detail.is_some_and(|f| f.keys.iter().any(|(k, _)| k == key));
+            let source = if has_key("path") {
+                DependencySource::Path
+            } else if version
+                .as_ref()
+                .is_some_and(|(v, _)| v == WORKSPACE_REQUIREMENT)
+            {
+                DependencySource::Workspace
+            } else {
+                DependencySource::Registry
+            };
+            let version = version.filter(|_| source != DependencySource::Workspace);
             DependencyEntry {
                 name: name.clone(),
                 name_range: name_range.clone(),
                 version,
-                has_path,
+                source,
             }
         })
         .collect()
@@ -265,7 +287,10 @@ pub fn diagnostics(
 ) -> Vec<Diagnostic> {
     let mut out = vec![];
     for dep in dependencies(src) {
-        let Some((req, range)) = dep.version.filter(|_| !dep.has_path) else {
+        let Some((req, range)) = dep
+            .version
+            .filter(|_| dep.source == DependencySource::Registry)
+        else {
             continue;
         };
         if !crate::manifest::is_valid_package_name(&dep.name) {
@@ -327,7 +352,10 @@ pub fn fixes(
 ) -> Vec<Fix> {
     let mut out = vec![];
     for dep in dependencies(src) {
-        let Some((req, range)) = dep.version.filter(|_| !dep.has_path) else {
+        let Some((req, range)) = dep
+            .version
+            .filter(|_| dep.source == DependencySource::Registry)
+        else {
             continue;
         };
         let touches = range.start <= hi && lo <= range.end
@@ -358,10 +386,13 @@ pub fn fixes(
 /// and the locked version (`locked`), if known.
 pub fn hover(entry: &DependencyEntry, index: Option<&Index>, locked: Option<&str>) -> String {
     let mut lines = vec![format!("**{}**", entry.name)];
-    match (index, entry.has_path) {
-        (_, true) => lines.push("local package (`path`)".into()),
-        (None, false) => lines.push("not in the registry".into()),
-        (Some(index), false) => {
+    match (index, entry.source) {
+        (_, DependencySource::Path) => lines.push("local package (`path`)".into()),
+        (_, DependencySource::Workspace) => {
+            lines.push("from the workspace (`velt.workspace.vlt`)".into())
+        }
+        (None, DependencySource::Registry) => lines.push("not in the registry".into()),
+        (Some(index), DependencySource::Registry) => {
             if let Some(newest) = newest(index) {
                 let mut line = format!("newest: {newest}");
                 if let Some((req, _)) = &entry.version {
