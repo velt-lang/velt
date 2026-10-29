@@ -1,0 +1,25 @@
+// velt:typed_array/bytes_view: `subarray` of a `u8[]` (Node's `buf.subarray` of a `Buffer`): a
+// `Uint8Array` over the array's bytes, sharing them, as Node's `Buffer` (a `Uint8Array`) does.
+// Loaded for a program that mentions `subarray` (std/prelude/global/bytes_view.vlt).
+//
+// The view's `buffer` is the array itself (`ArrayBuffer.over`): writes through either are seen by
+// both, and every access through the view is checked against the array's current length, so a
+// view stays safe when the array shrinks or grows (an index past the array's end panics, as
+// any index does). Only a program that keeps such a view (a field, a return, a closure) makes
+// its `u8[]` values counted; a view used where it is made borrows the array.
+
+import { ArrayBuffer, relative, toInteger } from "velt:typed_array/buffer";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+
+extend Array<u8> {
+  /**
+   * A `Uint8Array` of the bytes in [begin, end) (negative counts from the end, as for a typed
+   * array's `subarray`), sharing them: Node's `buf.subarray(begin, end)`.
+   */
+  subarray(begin: number = 0, end: number = Infinity): Uint8Array {
+    const n = this.length as usize;
+    const from = relative(toInteger(begin), n);
+    const stop = relative(toInteger(end), n);
+    return Uint8Array.view(ArrayBuffer.over(this), from, stop > from ? stop - from : 0);
+  }
+}

@@ -64,10 +64,10 @@ array, and the call gets the address and length of the bytes the view sees, with
   its `ArrayBuffer`, whatever its element type;
 - a `subarray(begin, end)` of one;
 - `xs.subarray(begin, end)` of a `u8[]` `xs` (Node's `buf.subarray` of a `Buffer`), with JS's
-  positions: a negative one counts from the end, and both are clamped to the array. It borrows
-  `xs` for the call (written, for a buffer the function writes); no `Uint8Array` is made. A
-  `subarray` of a `u8[]` is a view only as such an argument: elsewhere a `u8[]` has no
-  `subarray` yet (`slice` copies).
+  positions: a negative one counts from the end, and both are clamped to the array. As an
+  argument it borrows `xs` for the call (written, for a buffer the function writes), and no
+  `Uint8Array` is made; elsewhere it is the `Uint8Array` view of the array
+  ([prelude](../std/prelude.md)).
 
 The array is the one `xs` holds when the argument is evaluated, before the positions and the
 later arguments, as in JS: a later argument that gives the variable another array leaves the

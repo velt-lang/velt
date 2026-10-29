@@ -176,10 +176,9 @@ export function loadF32(b: u8[], o: usize): f32 {
 }
 
 // A view's elements: one load or store of the element's bytes, with no range check and no
-// branch, so that a loop over a view compiles like one over an array (the compiler vectorizes
-// it). A view's elements lie in its buffer, whose length never changes: `layout` checks the
-// range when the view is made, and an `ArrayBuffer`'s `bytes` are set once and nothing else
-// holds them. `o` is the byte offset of an element in range.
+// branch of their own. `o` is the byte offset of an element inside `b`: the typed arrays check
+// it against `b`'s current length first (a `u8[]`'s `subarray` makes a buffer whose bytes are
+// that array, which may become shorter), in one test the compiler can hoist from a loop.
 
 /** The `u16` of the element at `o`. */
 export function element16(b: u8[], o: usize): u16 {

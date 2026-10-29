@@ -63,16 +63,22 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     return Float32Array.view(ArrayBuffer.adopt(Buffer.alloc(n * 4)), 0, n);
   }
 
-  // Element `i` (in range).
+  // Element `i` (in the view's range).
   private get(i: usize): number {
     // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 4;
+    if (!(o + 4 <= (this.buf.bytes.length as usize))) {
+      this.gone(o);
+    }
     return elementF32(this.buf.bytes, o);
   }
 
-  // Writes element `i` (in range).
+  // Writes element `i` (in the view's range).
   private put(i: usize, v: number) {
     const o = this.off + i * 4;
+    if (!(o + 4 <= (this.buf.bytes.length as usize))) {
+      this.gone(o);
+    }
     setElementF32(this.buf.bytes, o, v as f32);
   }
 
@@ -103,9 +109,18 @@ export class Float32Array extends TypedArray implements Iterable<number> {
   }
 
   // The number of elements, below 2^52 (`layout` rejects longer views): the mask says so to
-  // the compiler, which then counts an index up to it in integers.
+  // the compiler, which then counts an index up to it in integers. Those the view still
+  // reaches when its buffer's bytes are a `u8[]` (a `u8[]`'s `subarray`) that became shorter
+  // than the view: the bytes past the array's end are gone. A loop up to `length` then has the
+  // test `xs[i]` makes, so the compiler drops it there.
   private count(): number {
-    return (this.len & 0xfffffffffffff) as number;
+    // Without a branch (a loop test whose condition spans blocks would not bound the loop's
+    // counter for the compiler): `n - off` wraps when the array ends before the view starts,
+    // and is then taken 0 times; `len - (len - avail) * short` is the smaller of the two.
+    const n = this.buf.bytes.length as usize;
+    const avail = ((n - this.off) * ((this.off <= n) as usize)) / 4;
+    const short = (avail < this.len) as usize;
+    return ((this.len - (this.len - avail) * short) & 0xfffffffffffff) as number;
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
@@ -120,18 +135,33 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     if (i != Math.trunc(i)) {
       this.outOfBounds(i);
     }
-    return this.get(i as usize);
+    // Inside the view, which is inside its buffer's bytes (`count`).
+    const o = this.off + (i as usize) * 4;
+    return elementF32(this.buf.bytes, o);
   }
 
   // `xs[i]` outside the array (cold).
   private outOfBounds(i: number): never {
-    panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
+    panic(`index out of bounds: the len is ${this.count()} but the index is ${i}`);
   }
 
-  /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
+  // Element bytes at `o` past the end of the buffer's bytes (cold): its bytes are a `u8[]`
+  // that became shorter than the view (a `u8[]`'s `subarray`), so the element is gone. Panics
+  // as an index past the array does.
+  private gone(o: usize): never {
+    const n = this.buf.bytes.length;
+    panic(`index out of bounds: the len is ${n} but the index is ${o + 4 - 1}`);
+  }
+
+  /**
+   * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
+   * end of a `u8[]` that became shorter than its `subarray`: `length`).
+   */
   __setIndex(i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
-      this.put(i as usize, v);
+      // Inside the view and inside its buffer's bytes (`count`).
+      const o = this.off + (i as usize) * 4;
+      setElementF32(this.buf.bytes, o, v as f32);
     }
   }
 
@@ -147,7 +177,7 @@ export class Float32Array extends TypedArray implements Iterable<number> {
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
   override get byteLength(): number {
-    return (this.len * 4) as number;
+    return this.count() * 4;
   }
 
   /** The number of elements. */

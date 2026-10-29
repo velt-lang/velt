@@ -180,6 +180,7 @@ import * as std_timers from "velt:timers";
 import * as std_typed_array from "velt:typed_array";
 import * as std_typed_array_base from "velt:typed_array/base";
 import * as std_typed_array_buffer from "velt:typed_array/buffer";
+import * as std_typed_array_bytes_view from "velt:typed_array/bytes_view";
 import * as std_typed_array_core from "velt:typed_array/core";
 import * as std_typed_array_data_view from "velt:typed_array/data_view";
 import * as std_typed_array_float32_array from "velt:typed_array/float32_array";

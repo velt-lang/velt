@@ -1,0 +1,26 @@
+// `subarray` of Velt's byte array `u8[]` (Node's `buf.subarray` of a `Buffer`): a `Uint8Array`
+// sharing the bytes, kept anywhere (returned, stored), with typed-array positions. This program
+// prints what `node` prints for it (`u8[]` read as `Buffer`).
+function header(page: u8[]): Uint8Array {
+  return page.subarray(0, 4);
+}
+
+function main() {
+  const b: u8[] = Buffer.alloc(8);
+  b.write("abcdefgh");
+  const v = b.subarray(2, 5);
+  console.log(v.length, v[0], v.byteOffset, v.byteLength);
+  v[1] = 90;
+  console.log(b.utf8Slice(0, 8), b.subarray(-2).join(","), b.subarray(6, 2).length);
+  const kept: Uint8Array[] = [];
+  for (let i = 0; i < 3; i++) {
+    kept.push(b.subarray(i, i + 2));
+  }
+  b[1] = 66;
+  console.log(kept.map((k) => k.join(" ")).join(" | "));
+  const h = header(b);
+  h.fill(0);
+  console.log(b.join(","), h.buffer.byteLength);
+  const dv = new DataView(b.subarray(4).buffer, 4);
+  console.log(dv.getUint16(0).toString(16), dv.byteLength);
+}

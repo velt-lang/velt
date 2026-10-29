@@ -1,0 +1,32 @@
+// A view of a `u8[]` (`subarray`) whose array became shorter (`splice`, `length = 0`) never
+// reads or writes past the array's current end: its `length` is the elements the array still
+// has in its range, a write past them does nothing (as a write past a view's end in JS), and a
+// read past them panics like any index. The same for a wider typed array made over the view's
+// buffer, whose element reads and writes have no check of their own; the views see the bytes
+// again once the array grows back.
+function main() {
+  const b: u8[] = Buffer.alloc(16);
+  b.fill(7);
+  const v = b.subarray(4, 12);
+  const w = new Uint32Array(v.buffer, 4, 2);
+  b.splice(10, 6);
+  console.log(b.length, v.length, w.length, v[5], w[0]);
+  // Past the array's end: nothing written, nothing read.
+  v[6] = 1;
+  w[1] = 1;
+  console.log(b.length, b.join(""));
+  v.fill(3, 0, 2);
+  console.log(b.join(""));
+  b.length = 0;
+  for (let i = 0; i < 8; i++) {
+    b.push(i as u8);
+  }
+  console.log(v.at(0), v[3], v.length, w.length, b.join(","));
+  for (let i = 8; i < 16; i++) {
+    b.push(i as u8);
+  }
+  console.log(v.length, w.length, v.join(","), w.join(","));
+  // A method over all the elements of a view that no longer has them panics where one is gone.
+  b.length = 9;
+  console.log(w.join(","));
+}

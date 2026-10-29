@@ -20,6 +20,19 @@ export class ArrayBuffer {
     this.bytes = Buffer.alloc(bufferLength(byteLength));
   }
 
+  // A buffer over the array `bytes`, shared with whoever else holds it (std only: a `u8[]`'s
+  // `subarray`, velt:typed_array/bytes_view). Its length is the array's: views of it check
+  // every access against the array's current length.
+  private static over(bytes: u8[]): ArrayBuffer {
+    try {
+      const b = new ArrayBuffer(0);
+      b.bytes = bytes;
+      return b;
+    } catch (e) {
+      panic(`ICE: ArrayBuffer.over: ${e.message}`);
+    }
+  }
+
   // A buffer that owns `bytes` (std only: `TextEncoder.encode`, `Uint8Array.fromBytes`).
   private static adopt(bytes: u8[]): ArrayBuffer {
     try {

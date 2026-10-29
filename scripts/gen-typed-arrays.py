@@ -91,9 +91,11 @@ export function layout(
 ): Layout {
   if (typeof arg == "number") {
     const n = toIndex(arg);
-    // V8: a byte length beyond 2^53 - 1 is an invalid length (a smaller one that can't be
-    // allocated fails in `ArrayBuffer`).
-    if (n < 0 || (n as number) * (size as number) > 9007199254740991) {
+    // A byte length beyond 2^52 - 1 is an invalid length: the bytes are an array, which holds
+    // at most that many (V8 stops far earlier); a smaller one that can't be allocated fails in
+    // `ArrayBuffer`. A view of a buffer is shorter than the buffer, so every typed array's
+    // length is below 2^52 too, which `count()` says to the compiler.
+    if (n < 0 || (n as number) * (size as number) > 4503599627370495) {
       throw new RangeError(`Invalid typed array length: ${arg}`);
     }
     return { buf: new ArrayBuffer((n as number) * (size as number)), off: 0, len: n as usize, values: null };
@@ -262,16 +264,16 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return @C@.view(ArrayBuffer.adopt(Buffer.alloc(n * @N@)), 0, n);
   }
 
-  // Element `i` (in range).
+  // Element `i` (in the view's range).
   private get(i: usize): number {
     // `this.buf.bytes` read in place: a local holding it would count a reference per access.
-    const o = this.off + i * @N@;
+    const o = this.off + i * @N@;@INSIDE@
     return @READ@;
   }
 
-  // Writes element `i` (in range).
+  // Writes element `i` (in the view's range).
   private put(i: usize, v: number) {
-    const o = this.off + i * @N@;
+    const o = this.off + i * @N@;@INSIDE@
     @WRITE@;
   }
 
@@ -301,36 +303,40 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return @N@;
   }
 
-  // The number of elements, below 2^53 (`layout` rejects longer views): the mask says so to
-  // the compiler, which then counts an index up to it in integers.
+  // The number of elements, below 2^52 (`layout` rejects longer views): the mask says so to
+  // the compiler, which then counts an index up to it in integers. Those the view still
+  // reaches when its buffer's bytes are a `u8[]` (a `u8[]`'s `subarray`) that became shorter
+  // than the view: the bytes past the array's end are gone. A loop up to `length` then has the
+  // test `xs[i]` makes, so the compiler drops it there.
   private count(): number {
-    return (this.len & 0x1fffffffffffff) as number;
+    // Without a branch (a loop test whose condition spans blocks would not bound the loop's
+    // counter for the compiler): `n - off` wraps when the array ends before the view starts,
+    // and is then taken 0 times; `len - (len - avail) * short` is the smaller of the two.
+    const n = this.buf.bytes.length as usize;
+    const avail = ((n - this.off) * ((this.off <= n) as usize)) / @N@;
+    const short = (avail < this.len) as usize;
+    return ((this.len - (this.len - avail) * short) & 0xfffffffffffff) as number;
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   __index(i: number): number {
-    // One test per branch, so the compiler knows `i` is in range where it converts it.
-    if (!(i >= 0)) {
-      this.outOfBounds(i);
-    }
-    if (!(i < this.count())) {
-      this.outOfBounds(i);
-    }
-    if (i != Math.trunc(i)) {
-      this.outOfBounds(i);
-    }
-    return this.get(i as usize);
+@INDEX_BODY@
   }
 
   // `xs[i]` outside the array (cold).
   private outOfBounds(i: number): never {
-    panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
+    panic(`index out of bounds: the len is ${this.count()} but the index is ${i}`);
   }
-
-  /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
+@GONE@
+  /**
+   * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
+   * end of a `u8[]` that became shorter than its `subarray`: `length`).
+   */
   __setIndex(i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
-      this.put(i as usize, v);
+      // Inside the view and inside its buffer's bytes (`count`).
+      const o = this.off + (i as usize) * @N@;
+      @WRITE@;
     }
   }
 
@@ -346,7 +352,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
   override get byteLength(): number {
-    return (this.len * @N@) as number;
+    return this.count() * @N@;
   }
 
   /** The number of elements. */
@@ -790,6 +796,58 @@ UINT8_EXTRA = """
 """
 
 
+# `xs[i]` of wider elements: the tests of `count`, the same as a loop up to `length` makes, so
+# the compiler drops them in such a loop (and vectorizes it).
+INDEX_WIDE = """\
+    // One test per branch, so the compiler knows `i` is in range where it converts it.
+    if (!(i >= 0)) {
+      this.outOfBounds(i);
+    }
+    if (!(i < this.count())) {
+      this.outOfBounds(i);
+    }
+    if (i != Math.trunc(i)) {
+      this.outOfBounds(i);
+    }
+    // Inside the view, which is inside its buffer's bytes (`count`).
+    const o = this.off + (i as usize) * @N@;
+    return @READ@;"""
+
+# `xs[i]` of bytes: `i` whole below 2^52 first, then one integer test that the byte is inside
+# the view and inside its buffer's bytes (`count`), which the byte read's own check then follows
+# from: one test per read where the index is not a loop's counter (a page's cells).
+INDEX_BYTE = """\
+    // One test per branch, so the compiler knows `i` is a whole number from 0 below 2^52 where
+    // it converts it (no position computed from it can wrap).
+    if (!(i >= 0)) {
+      this.outOfBounds(i);
+    }
+    if (!(i < 4503599627370496)) {
+      this.outOfBounds(i);
+    }
+    if (i != Math.trunc(i)) {
+      this.outOfBounds(i);
+    }
+    // Inside the view and inside its buffer's bytes (`count`), in one test.
+    const o = this.off + (i as usize);
+    const end = this.off + this.len;
+    const n = this.buf.bytes.length as usize;
+    if (!(o < (end < n ? end : n))) {
+      this.outOfBounds(i);
+    }
+    return @READ@;"""
+
+GONE = """
+  // Element bytes at `o` past the end of the buffer's bytes (cold): its bytes are a `u8[]`
+  // that became shorter than the view (a `u8[]`'s `subarray`), so the element is gone. Panics
+  // as an index past the array does.
+  private gone(o: usize): never {
+    const n = this.buf.bytes.length;
+    panic(`index out of bounds: the len is ${n} but the index is ${o + @N@ - 1}`);
+  }
+"""
+
+
 BUFFER_NAMES = ["ArrayBuffer", "element16", "element32", "elementF32", "elementF64", "load16",
                 "load32", "loadF32", "loadF64", "relative", "setElement16", "setElement32",
                 "setElementF32", "setElementF64", "store16", "store32", "storeF32", "storeF64",
@@ -821,6 +879,15 @@ def main():
     for c, n, read, write_, what in KINDS:
         t = TEMPLATE
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
+        # A wider element's read and write in the methods have no check of their own
+        # (typed_array/buffer `element*`), so they check that the element is still inside the
+        # buffer's bytes, which can shrink when they are a `u8[]` (its `subarray`): a callback
+        # may shrink it while a method runs. A byte's index checks itself.
+        inside = "" if n == 1 else (
+            "\n    if (!(o + %d <= (this.buf.bytes.length as usize))) {\n      this.gone(o);\n    }" % n)
+        t = t.replace("@INSIDE@", inside)
+        t = t.replace("@GONE@", "" if n == 1 else GONE)
+        t = t.replace("@INDEX_BODY@", INDEX_BYTE if n == 1 else INDEX_WIDE)
         for k, v in [("@K@", str(KINDS.index((c, n, read, write_, what)))), ("@C@", c), ("@N@", str(n)),
                      ("@READ@", read), ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
             t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@") else v)
