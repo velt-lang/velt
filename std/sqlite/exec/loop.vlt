@@ -2,7 +2,7 @@
 // a full scan, a rowid lookup or range, an index scan (prefix equality, a range on the next
 // column), or the rows of a subquery; for a LEFT JOIN, the row of NULLs when nothing matched.
 
-import { Cursor, NULL, TEXT, BLOB } from "velt:sqlite/btree";
+import { Cursor, NULL } from "velt:sqlite/btree";
 import { KeyRec } from "velt:sqlite/record";
 import "velt:sqlite/btree_back";
 import { Source } from "velt:sqlite/exec/source";
@@ -202,10 +202,6 @@ export function inValues(list: Ev[], q: Query | null, p: Params, aff: u8, coll: 
     }
   }
   return out;
-}
-
-export function isTextOrBlob(v: Val): bool {
-  return v.t == TEXT || v.t == BLOB;
 }
 
 function rowidRange(cur: Cursor, acc: Access, out: Out, each: Step): Step {

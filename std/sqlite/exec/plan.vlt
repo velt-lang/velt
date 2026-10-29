@@ -588,7 +588,7 @@ export function addKeyField(k: KeyRec, v: Val) {
     k.addInt(v.i);
   } else if (v.t == REAL) {
     k.addReal(v.r);
-  } else if (v.t == 3) {
+  } else if (v.t == TEXT) {
     k.addText(v.s);
   } else {
     k.addBlob(v.b);
