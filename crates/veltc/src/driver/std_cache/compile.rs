@@ -1,18 +1,22 @@
 //! Compiling a std function on its own, and storing its object.
 //!
-//! The function is compiled in a copy of the program, the *shell*, where every other function is
-//! a declaration (`Import`), small ones keeping their bodies so it can still inline them (they
-//! are in its key). It is exported, optimized with unknown callers (velt_opt treats a declaration
-//! as opaque, and an exported function as called from anywhere), and compiled by LLVM to an
-//! object of its own. The program's entry is declared, never defined, in such an object
-//! (vir.rs invariant 5).
+//! The function is compiled in a program of its own: itself (exported), the small functions it
+//! may inline (declarations keeping their bodies; they are in its key), declarations of what
+//! those call, and the statics they name (plain bytes: `select` keeps out functions reaching any
+//! other); the aggregates and externs are the program's, so their ids stay. It is optimized with
+//! unknown callers (velt_opt treats a declaration as opaque, an exported function as called from
+//! anywhere) and compiled by LLVM to an object of its own. The program's entry is declared,
+//! never defined, in such an object (vir.rs invariant 5).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use velt_build_cache::{Cache, Key};
-use velt_vir::vir::{self, Linkage};
+use velt_vir::vir::{
+    self, Callee, Const, FuncId, Linkage, Operand, Rvalue, StaticId, Stmt, Terminator,
+};
 
 use super::{select, KIND};
 
@@ -23,7 +27,6 @@ pub(super) fn each(
     misses: &[(usize, Key)],
     cg: &velt_codegen_cl::CodegenOptions,
 ) -> Vec<Option<Vec<u8>>> {
-    let shell = shell(program);
     let next = AtomicUsize::new(0);
     let results = Mutex::new(vec![None; misses.len()]);
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -34,7 +37,7 @@ pub(super) fn each(
                 let Some(&(i, _)) = misses.get(n) else {
                     return;
                 };
-                let object = alone(program, &shell, i, cg);
+                let object = alone(program, i, cg);
                 results.lock().unwrap_or_else(PoisonError::into_inner)[n] = object;
             });
         }
@@ -42,34 +45,128 @@ pub(super) fn each(
     results.into_inner().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `program` with every function a declaration, small internal ones keeping their bodies, and no
-/// source locations (velt_opt wants all functions with them or none).
-fn shell(program: &vir::Program) -> vir::Program {
-    let mut shell = program.clone();
-    for f in &mut shell.funcs {
-        if !select::small(f) || f.linkage != Linkage::Internal {
+/// The program of function `i` alone (module docs).
+fn program_of(program: &vir::Program, i: usize) -> vir::Program {
+    let bodies = select::inlinable(program, i);
+    let mut funcs: HashMap<usize, FuncId> = HashMap::new();
+    let mut order: Vec<usize> = vec![];
+    let mut add = |j: usize, order: &mut Vec<usize>| {
+        let n = funcs.len() as u32;
+        *funcs.entry(j).or_insert_with(|| {
+            order.push(j);
+            FuncId(n)
+        })
+    };
+    for &j in &bodies {
+        add(j, &mut order);
+    }
+    for &j in &bodies {
+        for c in select::referenced(&program.funcs[j]) {
+            add(c, &mut order);
+        }
+    }
+    let mut statics: HashMap<u32, StaticId> = HashMap::new();
+    let mut alone = vir::Program {
+        aggs: program.aggs.clone(),
+        externs: program.externs.clone(),
+        ..vir::Program::default()
+    };
+    for &j in &order {
+        let mut f = program.funcs[j].clone();
+        f.locs.clear();
+        f.linkage = if j == i {
+            Linkage::Export
+        } else {
+            Linkage::Import
+        };
+        if bodies.contains(&j) {
+            remap(
+                &mut f,
+                &funcs,
+                &mut statics,
+                &program.statics,
+                &mut alone.statics,
+            );
+        } else {
             f.blocks.clear();
             f.locals.truncate(f.params.len());
         }
-        f.locs.clear();
-        f.linkage = Linkage::Import;
+        alone.funcs.push(f);
     }
-    shell.files.clear();
-    shell
+    alone
+}
+
+/// Rename `f`'s functions and statics into the program alone, copying each static it names.
+fn remap(
+    f: &mut vir::Function,
+    funcs: &HashMap<usize, FuncId>,
+    statics: &mut HashMap<u32, StaticId>,
+    from: &[vir::StaticData],
+    to: &mut Vec<vir::StaticData>,
+) {
+    let mut op = |op: &mut Operand| match op {
+        Operand::Const(Const::Func(id), _) => *id = funcs[&(id.0 as usize)],
+        Operand::Const(Const::Static(id), _) => {
+            *id = *statics.entry(id.0).or_insert_with(|| {
+                to.push(from[id.0 as usize].clone());
+                StaticId(to.len() as u32 - 1)
+            });
+        }
+        _ => {}
+    };
+    for b in &mut f.blocks {
+        for s in &mut b.stmts {
+            match s {
+                Stmt::Assign(_, rv) => match rv {
+                    Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => op(a),
+                    Rvalue::Binary(_, a, c) => {
+                        op(a);
+                        op(c);
+                    }
+                    Rvalue::Aggregate(_, ops) => ops.iter_mut().for_each(&mut op),
+                    Rvalue::AddrOf(_) => {}
+                },
+                Stmt::MemCopy { dst, src, .. } => {
+                    op(dst);
+                    op(src);
+                }
+                Stmt::MemCopyDyn { dst, src, len, .. } => {
+                    op(dst);
+                    op(src);
+                    op(len);
+                }
+                Stmt::MemSet { dst, byte, len } => {
+                    op(dst);
+                    op(byte);
+                    op(len);
+                }
+                Stmt::Nop => {}
+            }
+        }
+        match &mut b.term {
+            Terminator::Branch { cond, .. } => op(cond),
+            Terminator::Switch { value, .. } => op(value),
+            Terminator::Return(o) => op(o),
+            Terminator::Call { callee, args, .. } => {
+                match callee {
+                    Callee::Func(id) => *id = funcs[&(id.0 as usize)],
+                    Callee::Ptr { target, .. } => op(target),
+                    Callee::Extern(_) => {}
+                }
+                args.iter_mut().for_each(&mut op);
+            }
+            Terminator::Goto(_) | Terminator::Unreachable => {}
+        }
+    }
 }
 
 /// Function `i` of `program` compiled on its own, with unknown callers.
 fn alone(
     program: &vir::Program,
-    shell: &vir::Program,
     i: usize,
     cg: &velt_codegen_cl::CodegenOptions,
 ) -> Option<Vec<u8>> {
-    let mut alone = shell.clone();
-    let mut f = program.funcs[i].clone();
-    f.linkage = Linkage::Export;
-    f.locs.clear();
-    alone.funcs[i] = f;
+    let mut alone = program_of(program, i);
     velt_opt::optimize(&mut alone, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
     if !alone.funcs.iter().any(|f| f.symbol == "velt_main") {
