@@ -7,16 +7,24 @@ import { Val, compareVals, nullVal, textVal, toText } from "velt:sqlite/exec/val
 import { utf8Encode } from "velt:encoding";
 
 /**
- * min() or max() over a frame that loses rows, as SQLite keeps it: an index of the frame's
- * values ordered by value (descending for min) then by when they came in; the result is its
- * last entry (of equal values, the latest), and a value leaving takes out the earliest equal one.
+ * min() or max() over a frame that loses rows, with SQLite's answers: the result is the frame's
+ * best value, and of equal ones the latest. Rows enter and leave in partition order, so it keeps
+ * only the values that can still be the result: a deque, best first, each later value worse than
+ * the one before it. A value coming in drops the ones it beats or equals from the back, and a row
+ * leaving is the oldest in the frame, so it leaves only from the front. O(1) a row, amortized,
+ * where scanning the frame was O(frame) (SQLite keeps an ordered index: O(log frame)).
  */
 export class MinMax {
   max: bool;
   coll: u8;
   vals: Val[] = [];
+  /** When each value in `vals` came in: 1 for the first non-NULL value stepped. */
   seqs: i64[] = [];
+  /** Where the deque starts in `vals`; the entries before it have left. */
+  head: usize = 0;
   next: i64 = 0;
+  /** How many non-NULL values have left the frame. */
+  gone: i64 = 0;
 
   constructor(max: bool, coll: u8) {
     this.max = max;
@@ -28,42 +36,40 @@ export class MinMax {
       return;
     }
     this.next++;
+    while (this.vals.length > this.head) {
+      const c = compareVals(this.vals[this.vals.length - 1], v, this.coll);
+      if (this.max ? c > 0 : c < 0) {
+        break;
+      }
+      this.vals.pop();
+      this.seqs.pop();
+    }
     this.vals.push(v);
     this.seqs.push(this.next);
   }
 
+  /** The oldest value in the frame leaves (`v`, which SQLite looks up by value). */
   remove(v: Val) {
     if (v.t == NULL) {
       return;
     }
-    let at: i64 = -1;
-    for (let i: usize = 0; i < this.vals.length; i++) {
-      if (compareVals(this.vals[i], v, this.coll) == 0) {
-        if (at < 0 || this.seqs[i] < this.seqs[at as usize]) {
-          at = i as i64;
-        }
-      }
+    this.gone++;
+    if (this.head < this.vals.length && this.seqs[this.head] == this.gone) {
+      this.head++;
     }
-    if (at >= 0) {
-      this.vals.splice(at, 1);
-      this.seqs.splice(at, 1);
+    if (this.head == this.vals.length) {
+      this.vals = [];
+      this.seqs = [];
+      this.head = 0;
+    } else if (this.head >= 1024 && this.head * 2 >= this.vals.length) {
+      this.vals = this.vals.slice(this.head as i64);
+      this.seqs = this.seqs.slice(this.head as i64);
+      this.head = 0;
     }
   }
 
   value(): Val {
-    let best: i64 = -1;
-    for (let i: usize = 0; i < this.vals.length; i++) {
-      if (best < 0) {
-        best = i as i64;
-        continue;
-      }
-      const b = best as usize;
-      const c = compareVals(this.vals[i], this.vals[b], this.coll);
-      if ((this.max ? c > 0 : c < 0) || (c == 0 && this.seqs[i] > this.seqs[b])) {
-        best = i as i64;
-      }
-    }
-    return best < 0 ? nullVal() : this.vals[best as usize];
+    return this.head < this.vals.length ? this.vals[this.head] : nullVal();
   }
 }
 

@@ -69,6 +69,11 @@ const QUERIES: string[] = [
   "SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id",
   "SELECT id, max(note) OVER (ORDER BY age ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), min(score) OVER (PARTITION BY age IS NULL ORDER BY name GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING) FROM users ORDER BY id",
   "SELECT id, last_value(nick) OVER (ORDER BY age), nth_value(name, 2) OVER (ORDER BY age ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), nth_value(score, 5) OVER (ORDER BY age), first_value(age) OVER (ORDER BY age ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM users ORDER BY id",
+  // min()/max() over frames that lose rows: equal values under NOCASE in sliding frames (the
+  // latest equal one is the result), and 20,000 rows in a frame that shrinks and in a wide
+  // sliding one (stepping each row in and out once, not scanning the frame for each row).
+  "SELECT id, max(nick) OVER (ORDER BY id ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), min(nick) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 4 FOLLOWING), max(nick) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 5 FOLLOWING) FROM users ORDER BY id",
+  "WITH RECURSIVE c(p) AS (SELECT 1 UNION ALL SELECT p + 1 FROM c WHERE p < 20000) SELECT count(*), sum(w), sum(x) FROM (SELECT min((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS w, max((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN 2000 PRECEDING AND 2000 FOLLOWING) AS x FROM c)",
   // A subquery's aggregate of a query with window functions does not make it an aggregate query.
   "SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users",
 ];
