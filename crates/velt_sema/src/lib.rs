@@ -134,21 +134,7 @@ use crate::defs::{DefInfo, FnKind};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
-
-/// `e`, an expression checked outside any function body (a class field's initializer, run by
-/// a constructor or a `new`), with its own temporaries (a `Record` literal's, ...) renumbered
-/// from `base` on, so that they don't name the locals of the body it is lowered in (those are
-/// below `base`); and how many there are. `None`: `e` declares no local.
-pub fn rebase_detached_locals(e: &hir::Expr, base: u32) -> Option<(hir::Expr, u32)> {
-    let mut e = e.clone();
-    let n = visit::detached_locals(&mut e).len() as u32;
-    if n == 0 {
-        return None;
-    }
-    let map: Vec<hir::LocalId> = (0..n).map(|i| hir::LocalId(base + i)).collect();
-    visit::remap_expr_locals(&mut e, &map);
-    Some((e, n))
-}
+pub use visit::rebase_detached_locals;
 
 /// One parsed module handed to sema by the driver.
 pub struct SourceModule {
@@ -451,6 +437,7 @@ fn check_timed(
         cpu_targets,
         generic_called,
         generic_fns,
+        lock_free_callbacks,
         ..
     } = cx;
     let defs = defs
@@ -485,6 +472,7 @@ fn check_timed(
         fresh_closures: generic_fns.fresh.into_iter().collect(),
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
+        lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
     };
     (Some(program), diags)
 }

@@ -81,6 +81,9 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_delete_record(data, key, ty);
         }
+        if self.fn_props(ty) {
+            return self.fn_prop_delete(data, key, ty, DEL_TRUE);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             // A value struct held by an `any` is a copy: a change would not reach the original.
             if !(self.cx.is_class(ty) || self.cx.is_object(ty)) {

@@ -30,9 +30,12 @@ pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
-    release_outside as module_release_outside, used as module_used,
+    release_outside as module_release_outside, touch as module_touch, used as module_used,
 };
-pub use module_state::{velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state};
+pub use module_state::{
+    velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state, velt_rt_module_with,
+    velt_rt_module_with_end,
+};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};

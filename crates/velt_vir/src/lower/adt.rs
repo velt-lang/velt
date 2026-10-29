@@ -293,6 +293,10 @@ impl FnLower<'_, '_> {
             let b = self.alloc(vt);
             let bp = self.operand_place(b.clone(), Ty::Ptr);
             self.store(proj(&bp, Proj::Deref(vt)), v);
+            if self.cx.is_any_impl(impl_index) && self.fn_props(cty) {
+                // A declared function held as `any` is one function (any_fn_props.rs).
+                self.fn_identity_into(&proj(&bp, Proj::Deref(vt)));
+            }
             b
         };
         if self.cx.is_any_impl(impl_index) && self.is_proxy(cty) {

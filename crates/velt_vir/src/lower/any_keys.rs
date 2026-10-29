@@ -102,6 +102,10 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_keys_record(data, &outp, ty);
         }
+        if self.fn_props(ty) {
+            self.fn_prop_keys(data, &outp, ty);
+            return self.ret_status(ST_OK);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyKeys, ty, d, &[data, out]);
             return self.any_keys_fields(data, &outp, ty, d);

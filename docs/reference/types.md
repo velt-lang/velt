@@ -3094,8 +3094,13 @@ a copy of the object, and a view sent to another thread (`spawn`, a channel, `sh
 there ([Async](async.md)), so a write there does not reach the object here, and converting the
 object here again gives a view of its own. A union with
 one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
-way. In a program without proxies, and into a class or an interface with methods, an object of
-another type stays a `TypeError`.
+way. In a program without proxies, an object of another type converted to an object type is a
+copy of the object's members, each read and checked as the field's type when the conversion
+runs: an optional field the object lacks is absent (`const e: G = { name: "e" } as any` with
+`interface G { name: string; tag?: string }` reads `e.tag` as `undefined`, as in Node), a
+literal-typed field (`kind: "a"`) is checked against its literal, and a required field the object
+lacks stops with a `TypeError`; a later write to the copy does not reach the object. Into a class
+or an interface with methods, an object of another type stays a `TypeError`.
 
 An object literal with a getter (`{ get value() { … } }`, the value of its own interface)
 asserted to an object type that declares only fields (`obj as Computed<T>` with
@@ -3240,9 +3245,12 @@ no new properties through `any` (#924)` (Node adds it), writing a getter that ha
 Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
 gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
 `TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
+A function is an object, as in JavaScript: it takes any property (`factory.__setup = setup`),
+which every reference to the function sees, and reads, calls, `in`, `Object.keys` and `delete`
+through `any` find it (see [Functions with properties](functions.md#functions-with-properties)).
 Writing a `readonly` field, a method, an element further past the end of an array or a longer
-`length` (Node leaves holes, which Velt's arrays don't have), or a member of a
-string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
+`length` (Node leaves holes, which Velt's arrays don't have), a function's `name` or `length`,
+or a member of a string or number stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
 `x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
 as in JavaScript; the expression is the member read or the value written. A `new C()` without
 type arguments there takes them from what the expression is assigned to, as nothing else gives

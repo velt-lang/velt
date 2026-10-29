@@ -1,0 +1,171 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// A declared function's properties held as `any` are module state (#924): `with`, `read` and
+// `write` callbacks may reach them, also through a function that came from another task, while
+// other tasks hold the module lock and wait for the same `Mutex`.
+
+function decl(): number {
+  return 1;
+}
+
+class C {
+  n: number = 0;
+  f: any = null;
+}
+
+class R {
+  hits: number = 0;
+}
+
+// Converted to `any` inside the callback.
+async function convert(m: shared<Mutex<C>>): Promise<number> {
+  return m.with((c) => {
+    const d: any = decl;
+    d.x = 5;
+    c.n += d.x;
+    return c.n;
+  });
+}
+
+// Sent to the task without its identity, read first inside the callback.
+async function sent(m: shared<Mutex<C>>, f: any): Promise<number> {
+  await Promise.resolve();
+  return m.with((c) => {
+    c.n += f.x;
+    return c.n;
+  });
+}
+
+// Tasks holding the module lock (they use the function outside the lock too) and tasks that
+// reach the function only inside callbacks, on the same locks.
+async function touched(m: shared<Mutex<C>>, rw: shared<RwLock<R>>, n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const d: any = decl;
+    d.k = 1;
+    s += m.with((c) => {
+      c.n += d.k;
+      return c.f.k;
+    });
+    s += rw.read((r) => {
+      const e: any = decl;
+      return e.k;
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function plain(
+  m: shared<Mutex<C>>,
+  rw: shared<RwLock<R>>,
+  f: any,
+  n: number,
+): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += m.with((c) => {
+      c.n += 1;
+      return f.k;
+    });
+    rw.write((r) => {
+      r.hits += f.k;
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function main(): Promise<void> {
+  const m = shared(new Mutex<C>(new C()));
+  const a = spawn(convert(m));
+  const b = spawn(convert(m));
+  console.log((await a) + (await b));
+
+  const m2 = shared(new Mutex<C>(new C()));
+  const f: any = decl;
+  f.x = 5;
+  console.log(await spawn(sent(m2, f)), f.x);
+
+  f.k = 1;
+  const c0 = new C();
+  c0.f = decl;
+  const m3 = shared(new Mutex<C>(c0));
+  const rw = shared(new RwLock<R>(new R()));
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ps.push(t % 2 == 0 ? spawn(touched(m3, rw, 300)) : spawn(plain(m3, rw, f, 300)));
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(s, m3.with((c) => c.n), rw.read((r) => r.hits));
+}
+
+await main();
+
+// A typed callback holding a `with` whose callback reads a property takes the module lock too,
+// next to typed callbacks on the same locks, which don't.
+async function outer(
+  a: shared<Mutex<C>>,
+  b: shared<Mutex<C>>,
+  rw: shared<RwLock<R>>,
+  f: any,
+  n: number,
+): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += a.with((x) => {
+      x.n += 1;
+      return b.with((y) => {
+        y.n += 1;
+        return rw.read((r) => r.hits + f.k);
+      });
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function typed(b: shared<Mutex<C>>, rw: shared<RwLock<R>>, n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += b.with((y) => {
+      y.n += 2;
+      return rw.read((r) => r.hits);
+    });
+    rw.write((r) => {
+      r.hits += 0;
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function nesting(): Promise<void> {
+  const f: any = decl;
+  f.k = 3;
+  const a = shared(new Mutex<C>(new C()));
+  const b = shared(new Mutex<C>(new C()));
+  const rw = shared(new RwLock<R>(new R()));
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ps.push(t % 2 == 0 ? spawn(outer(a, b, rw, f, 300)) : spawn(typed(b, rw, 300)));
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(s, a.with((x) => x.n), b.with((y) => y.n));
+}
+
+await nesting();

@@ -167,6 +167,7 @@ pub(crate) struct Ctx<'m> {
     /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
     pub replaced_unions: FxHashSet<DefId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     /// The properties of `globalThis` the program uses (`crate::global_this`).
@@ -495,6 +496,7 @@ impl<'m> Ctx<'m> {
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
+            lock_free_callbacks: FxHashSet::default(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
             global_props: Default::default(),

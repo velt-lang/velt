@@ -851,6 +851,20 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   initializer that stores the last slot reports it with `u64::MAX`. The descriptor's `rest`
   initializes slots `deferred..` for a block made for swapped-in code (rt_abi.md).
 
+`Program::lock_free_callbacks` (additive, #924) lists the `with` / `read` / `write` callbacks,
+written as a closure or a named function (by `DefId`), that never reach a function's properties
+held as `any` (velt_sema `locked_props.rs`). No body they may run, along the module-state walk's
+edges, uses a member of a value that is or holds `any` / `unknown` (an intrinsic, a dynamic or
+virtual call, or a call into a runtime extern with such an argument; a type parameter is not
+one), handles a type a `Proxy` may be behind (in a program that loads `Proxy`: what an `any` is
+converted to, the object types in the fields, elements and map values of what is converted to
+`any`, since a write through it converts what it stores, and what those are upcast to), calls a
+function value whose body is not known, or runs a `with` whose callback is not a closure or a
+named function written there (lowering takes the module lock for it); and no `with` inside them
+has a callback that does. In a program whose functions may have properties, lowering calls
+`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+program without `any`.
+
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is

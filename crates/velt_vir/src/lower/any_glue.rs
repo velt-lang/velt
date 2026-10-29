@@ -428,6 +428,9 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_get_record(data, key, &outp, ty);
         }
+        if self.fn_props(ty) {
+            return self.fn_prop_get(data, key, &outp, ty);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
@@ -536,35 +539,6 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
-    /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
-    /// has no members of its own; `Object.prototype`'s come later.
-    fn any_get_record(&mut self, data: vir::Local, key: vir::Local, out: &Place, ty: TyId) {
-        let (k, _) = self
-            .prelude_record(ty)
-            .unwrap_or_else(|| super::ice("record"));
-        let get = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
-        });
-        let ready = get.and_then(|m| self.ready(ty, &m));
-        let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {
-            return self.ret_status(ST_UNSUPPORTED);
-        };
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
-        let kvt = self.cx.ty(k);
-        let kp = self.deref_param(key, k);
-        let ks = self.share_value(Operand::Copy(kp), k);
-        let kslot = Place::local(self.copy_to_temp(ks, kvt));
-        let this = self.any_this(data, ty);
-        self.any_invoke(&r, this, vec![(kslot, k)], out);
-        self.ret_status(ST_OK);
-    }
-
     /// A key the fixed shape does not have: `undefined`, unless every object has it.
     fn any_get_fallback(&mut self, key: vir::Local, out: &Place) {
         for name in OBJECT_PROTO {
@@ -635,6 +609,9 @@ impl FnLower<'_, '_> {
     ) {
         if self.is_proxy(ty) {
             return self.proxy_call_body((data, key, argv, argc, out), ty);
+        }
+        if self.fn_props(ty) {
+            self.fn_prop_call((data, key, argv, argc, out), ty);
         }
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);

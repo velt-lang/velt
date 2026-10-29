@@ -1,0 +1,87 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// In a program that gives functions properties (#924), a `with` whose callback is held in a
+// value takes the module lock, so a typed callback around it does too; and a field of a proxy
+// held as a typed value runs its trap, which may read a property. Each part runs in a task that
+// reaches no property outside the callbacks.
+
+function decl(): number {
+  return 1;
+}
+
+const d: any = decl;
+d.k = 1;
+
+class P {
+  n: number = 0;
+}
+
+// The inner callback in a local.
+async function local(a: shared<Mutex<P>>, b: shared<Mutex<P>>): Promise<number> {
+  const inner = (y: P): number => {
+    y.n += 1;
+    return y.n;
+  };
+  let s = 0;
+  for (let i = 0; i < 100; i++) {
+    s += a.with((x) => b.with(inner));
+  }
+  return s;
+}
+
+// Made inside the outer callback.
+async function made(a: shared<Mutex<P>>, b: shared<Mutex<P>>): Promise<number> {
+  return a.with((x) => {
+    const g = (y: P): number => y.n + 1;
+    return b.with(g);
+  });
+}
+
+// Picked by a conditional.
+async function picked(a: shared<Mutex<P>>, b: shared<Mutex<P>>, flip: boolean): Promise<number> {
+  return a.with((x) => b.with(flip ? (y: P): number => 1 : (y: P): number => 2));
+}
+
+// A parameter of a function the outer callback calls.
+function run(b: shared<Mutex<P>>, cb: (y: P) => number): number {
+  return b.with(cb);
+}
+
+async function param(a: shared<Mutex<P>>, b: shared<Mutex<P>>): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < 100; i++) {
+    s += a.with((x) => run(b, (y) => y.n + 1));
+  }
+  return s;
+}
+
+// A proxy held as a typed value: its traps read `d.k`.
+async function trapped(a: shared<Mutex<P>>, q: { k: number }): Promise<number> {
+  const got = a.with((x) => q.k);
+  a.with((x) => {
+    q.k = 2;
+  });
+  return got;
+}
+
+async function main(): Promise<void> {
+  const a = shared(new Mutex<P>(new P()));
+  const b = shared(new Mutex<P>(new P()));
+  console.log(await spawn(local(a, b)), d.k);
+  console.log(await spawn(made(a, b)), await spawn(picked(a, b, true)), d.k);
+  console.log(await spawn(param(a, b)), d.k);
+  const p: any = new Proxy(
+    { k: 1 },
+    {
+      get: (t: any, key: any) => d.k,
+      set: (t: any, key: any, v: any) => {
+        d.k2 = v;
+        return true;
+      },
+    },
+  );
+  const q: { k: number } = p;
+  console.log(await spawn(trapped(a, q)), d.k2, d.k);
+}
+
+await main();
