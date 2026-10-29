@@ -46,7 +46,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    without a reference of its own when nothing can change the source while its text is read:
    no `velt_rt_str_clone` / `velt_rt_str_drop` pair), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
-   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
+   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end, and `cold_calls`
+   last: a function's calls of one callee that never returns (a bounds check's report) become
+   one call, reached from every site. The panic text keeps each site's location (an argument),
+   but the merged call instruction carries the first site's debug location, so a debugger or a
+   backtrace shows that line for every merged check. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
