@@ -92,11 +92,20 @@ fn self_recursion_stays_a_call_but_its_callers_may_inline_leaf_calls() {
     pb.set(rec, fb.finish());
     let main = pb.add(looping_caller(&[rec]));
     let mut p = pb.finish();
+    let main_blocks = p.funcs[main.0 as usize].blocks.len();
     inline(&mut p);
     let rec_body = &p.funcs[1];
     assert_eq!(calls_to(rec_body, rec), 1, "self-call must stay");
     assert_eq!(calls_to(rec_body, leaf), 0, "leaf is trivial");
-    assert_eq!(calls_to(&p.funcs[main.0 as usize], rec), 2);
+    let m = &p.funcs[main.0 as usize];
+    assert_eq!(calls_to(m, rec), 2);
+    // No copy of `rec`'s body: an inlined copy would bring its branch and its blocks along
+    // (and only one of the two calls, the copy's own call back staying a call).
+    assert_eq!(
+        m.blocks.len(),
+        main_blocks,
+        "rec must not be copied into main"
+    );
 }
 
 /// `a(x) = if x == k { b(x) } else { x + 1 + … }` and the same for `b` calling `a`: a cycle of
