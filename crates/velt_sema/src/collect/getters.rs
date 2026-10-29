@@ -175,6 +175,19 @@ pub(crate) fn value_setter(
     })
 }
 
+/// The getter of required field `index` (type `ty`) of `d` for an optional field of type
+/// `want` (`ty | undefined`) of a bound's interface: the field's value, wrapped.
+pub(crate) fn field_getter_some(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    ty: TyId,
+    want: TyId,
+) -> DefId {
+    getter_of(cx, d, self_ty, index, ty, Some(want))
+}
+
 /// The setter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`):
 /// `this.<field> = v`, with `v` owned (copied for Copy types) and moved into the field, as a
 /// class setter takes it: the caller shares a value it uses again. The old value is released by
