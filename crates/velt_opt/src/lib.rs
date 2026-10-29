@@ -115,6 +115,7 @@ mod timings;
 mod visit;
 mod vtable_loads;
 
+pub use callgraph::used_externs;
 pub use numrep::Unnarrowed;
 pub use timings::PassTimings;
 

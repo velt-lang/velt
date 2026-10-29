@@ -208,6 +208,7 @@ velt test --release             # optimized build
 velt test --watch               # rerun on every change
 velt test --jobs 1              # one test file at a time (default: one per core)
 velt test --no-run              # build the test programs without running them
+velt test --no-cache            # run every test file, even those whose result is kept
 ```
 
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
@@ -221,6 +222,26 @@ test program by hand (`velt test --no-run` prints its path) and it runs its test
 `--watch` reruns the tests whenever a file they import, a test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
 above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
+
+### Results that are kept
+
+A test file whose program didn't change since its tests passed isn't run again: the runner prints
+its last report, marked `(cached)`. That holds only where the compiler can show the result can't
+change: the program reaches nothing outside itself, meaning no file system, network, clock
+(`Date.now()`, `performance.now()`), environment, child processes, random numbers, standard input
+or native code. A file whose tests do reach one runs every time, and says what it reaches:
+
+```text
+running tests/pure.test.vlt (cached)
+ok test_add
+running tests/clock.test.vlt (ran: not cacheable, it uses the clock)
+ok test_clock
+```
+
+"Its program" is everything the test file imports, so a change to the code under test runs its
+tests again. Only results where every test passed are kept, so a failing test always runs.
+`--no-cache` runs everything, as does `VELT_BUILD_STAMP=off`. What reaches outside is decided per
+test file, from what its tests call, not from the runner around them.
 
 ### Checking for leaks
 

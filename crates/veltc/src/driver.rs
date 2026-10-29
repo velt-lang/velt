@@ -16,9 +16,10 @@ use crate::loader::{self, LoadOptions};
 
 mod cpu_check;
 mod output;
+pub(crate) mod outside;
 mod pipeline;
 mod recover;
-mod stamp;
+pub(crate) mod stamp;
 mod std_cache;
 
 pub use output::OutputPaths;
@@ -538,6 +539,9 @@ fn build_on_current_thread(
         None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
     };
     let mut program = program?;
+    // For the stamp: what the program reaches outside itself (`velt test` keeps a result only
+    // for a program that reaches nothing).
+    let reaches = outside::reaches(&program);
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }
@@ -621,6 +625,7 @@ fn build_on_current_thread(
             objects: object_paths.len(),
             link_inputs: &outputs,
             std_objects: &sess.std_objects,
+            outside: &reaches,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));

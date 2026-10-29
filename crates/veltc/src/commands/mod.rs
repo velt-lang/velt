@@ -75,6 +75,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             json,
             cpu,
             jobs,
+            no_cache,
         } => {
             let opts = test::TestOptions {
                 release,
@@ -85,6 +86,7 @@ pub fn execute(cmd: Command) -> ExitCode {
                 json,
                 cpu,
                 jobs,
+                no_cache,
             };
             return test::test_command(path.as_deref(), &opts, watch);
         }

@@ -212,13 +212,15 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch] [--no-cache]",
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
             "test (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<test options>]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
-                with 1 if any test failed.",
+                with 1 if any test failed. A file whose program didn't change since its tests passed, and \
+                reaches nothing outside itself (files, network, clock, environment, random numbers), \
+                isn't run again: its report is printed as `(cached)`.",
         options: &[
             WORKSPACE,
             PACKAGE,
@@ -239,6 +241,7 @@ pub const COMMANDS: &[CommandHelp] = &[
                 "build the test programs without running them, and print their paths",
             ),
             ("--json", "with --no-run: print the programs and their tests as JSON"),
+            ("--no-cache", "run every test file, keeping and using no results"),
         ],
         examples: &[
             ("velt test", "every test of the package (or under the current directory)"),

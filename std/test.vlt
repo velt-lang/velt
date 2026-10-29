@@ -17,7 +17,7 @@
 
 import { JSON } from "velt:prelude/json/json";
 import { exec, ExecResult, spawn } from "velt:child_process";
-import { readFileSync } from "velt:fs";
+import { readFileSync, writeFileSync } from "velt:fs";
 import { __claim, Body, Case, collect, Step, Suite } from "velt:test/suite";
 
 export { Expect, expect } from "velt:test/expect";
@@ -115,6 +115,17 @@ struct Plan {
   filter: string | null;
   exact: bool;
   files: PlanFile[];
+  /** Where to write how each file that ran went (`Ran[]`), for `velt test` to keep; `null`: nowhere. */
+  results: string | null;
+}
+
+/** How a file's tests went, as `velt test` keeps it for a program that didn't change. */
+struct Ran {
+  /** The file's index in `Plan.files`. */
+  index: number;
+  lines: string[];
+  passed: number;
+  failed: number;
 }
 
 /** A test file of the run. */
@@ -133,6 +144,10 @@ struct PlanFile {
   registers: bool;
   /** `test_*` functions that cannot run, with the reason. */
   skipped: Skipped[];
+  /** How its tests went last time, when its program is the same and can't have changed its mind. */
+  cached: Ran | null;
+  /** Why its result isn't kept (`the network`): what its program reaches; `null` when it is. */
+  uncacheable: string | null;
 }
 
 struct Skipped {
@@ -319,6 +334,7 @@ function report(raw: string, error: string | null, mark: string | null) {
 async function runPlan(plan: Plan): Promise<bool> {
   const paint = new Paint(plan.colorOut, plan.colorErr);
   const reports: (Report | null)[] = plan.files.map((_) => null);
+  const ran: Ran[] = [];
   let started: usize = 0;
   let printed: usize = 0;
   let passed: usize = 0;
@@ -327,7 +343,23 @@ async function runPlan(plan: Plan): Promise<bool> {
     while (started < plan.files.length) {
       const i = started;
       started++;
-      reports[i] = await runFile(plan.files[i], plan, paint);
+      const cached = plan.files[i].cached;
+      if (cached != null) {
+        const r = new Report();
+        r.lines = cached.lines;
+        r.passed = cached.passed as usize;
+        r.failed = cached.failed as usize;
+        reports[i] = r;
+      } else {
+        const r = await runFile(plan.files[i], plan, paint);
+        ran.push({
+          index: i as number,
+          lines: r.lines,
+          passed: r.passed as number,
+          failed: r.failed as number,
+        });
+        reports[i] = r;
+      }
       while (printed < reports.length && reports[printed] != null) {
         const f = plan.files[printed];
         const r = reports[printed]!;
@@ -336,7 +368,12 @@ async function runPlan(plan: Plan): Promise<bool> {
           printed++;
           continue;
         }
-        console.log(`running ${f.path}`);
+        const why = f.uncacheable;
+        const note =
+          f.cached != null
+            ? " (cached)"
+            : why != null ? ` (ran: not cacheable, it uses ${why})` : "";
+        console.log(`running ${f.path}${note}`);
         for (const s of f.skipped) {
           console.error(
             `${paint.warning("warning:")} skipping \`${s.name}\` in ${f.path}: ${s.reason}`,
@@ -362,6 +399,10 @@ async function runPlan(plan: Plan): Promise<bool> {
   const filter = plan.filter;
   if (filter != null && passed + failed == 0) {
     console.error(`no tests match \`${filter}\``);
+  }
+  const results = plan.results;
+  if (results != null) {
+    writeFileSync(results, JSON.stringify(ran));
   }
   const verdict = failed == 0 ? paint.good("ok") : paint.failed();
   console.log(`\ntest result: ${verdict}. ${passed} passed; ${failed} failed`);

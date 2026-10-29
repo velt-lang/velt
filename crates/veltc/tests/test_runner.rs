@@ -10,10 +10,12 @@ mod no_window;
 mod runtime_support;
 mod test_dir;
 
+/// `velt test` in `dir`, without kept results: these tests are about what the runner prints, which
+/// a kept result (`(cached)`, or a note on what a test reaches) would change from run to run.
 fn velt_test(dir: &Path, args: &[&str]) -> Output {
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     command
-        .arg("test")
+        .args(["test", "--no-cache"])
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", dir.join("home"));
@@ -361,7 +363,7 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     );
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     let o = command
-        .args(["test", "t"])
+        .args(["test", "--no-cache", "t"])
         .current_dir(dir)
         .env("VELT_HOME", dir.join("home"))
         .env("VELT_RC_STATS", "1")

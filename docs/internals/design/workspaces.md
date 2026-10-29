@@ -164,13 +164,19 @@ The workspace adds no cache of its own. Velt has two, and a workspace must feed 
    one `velt test --workspace` share the process's one `Cache` handle; it is already used from
    every core by a debug build's codegen and locks its files across processes.
 
-**Test results.** A rebuilt-nothing test still runs. Once the harness's build is up to date
-(its stamp hit), its last outcome can stand in for running it: a `<harness>.test-stamp` beside
-the stamp records the harness executable's content hash, the test filter, the environment the
-tests see (`VELT_*`, and the variables the harness reads), and that every test passed. `velt
-test` then prints the member as `cached` and does not run it. Only passes are recorded, and
+**Test results** (step 3, implemented). A rebuilt-nothing test still runs. When the harness's
+program is the same, its last outcome stands in for running it, but only for a test file whose
+tests the compiler can show reach nothing outside the program (the #1856 review's rule). The
+build stamp records what the program reaches (`outside`): the runtime functions its entry can
+call (`velt_opt::used_externs`, after unreachable functions are gone) that touch the file system,
+network, clock, environment, child processes, random numbers or standard input, and native
+packages' functions. For a harness this is per test file: walked from the function that
+registers the file's tests, leaving out the runner (`velt:test`'s `__run`) and the other files.
+`<harness>.test-results.json` keeps, under a key over the harness's bytes and
+`--filter`/`--exact`, the reports of the files whose tests all passed. The runner prints a kept
+report as `(cached)`, and a file that reaches outside as `(ran: not cacheable, it uses …)`.
 `--no-cache` (or `VELT_BUILD_STAMP=off`) runs everything. This is Turborepo's task cache, but
-keyed by what the compiler knows the program read instead of by globs a user declares.
+keyed by what the compiler knows the program does instead of by globs a user declares.
 
 Planned, not part of this design: a remote cache (CI sharing entries) and sharing the frontend's
 parsed and checked std between members of one process, which #1612 already tracks.
@@ -226,8 +232,8 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
    workspace. Outputs per member, and the workspace's files in the build stamp.
 2. Member selection (`--workspace`, `-p`, `--affected`) for `check`, `test`, `build`, `fmt`,
    `doc`, run in dependency order and in parallel, one `velt` per member.
-3. Test results from the test stamp, and the stamps checked in the parent before any member's
-   `velt` starts.
+3. Test results kept for test files that reach nothing outside the program (done), and the
+   stamps checked in the parent before any member's `velt` starts (next).
 4. `velt publish` of members; `velt add -p <member>` and `velt add --workspace` (into the
    workspace's `dependencies`).
 5. The language server's workspace graph and the workspace file's editor support.

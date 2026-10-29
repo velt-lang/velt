@@ -34,7 +34,7 @@ use super::BuildOptions;
 use crate::backend::Backend;
 
 /// The stamp's first line; a new format changes it, so old stamps just miss.
-const HEADER: &str = "velt-build-stamp 3";
+const HEADER: &str = "velt-build-stamp 4";
 
 /// `<exe>.build-stamp`.
 pub(super) fn path(exe: &Path) -> PathBuf {
@@ -44,7 +44,7 @@ pub(super) fn path(exe: &Path) -> PathBuf {
 }
 
 /// Whether stamps are used: not with `$VELT_BUILD_STAMP=off`.
-pub(super) fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     !std::env::var("VELT_BUILD_STAMP").is_ok_and(|v| v == "off" || v == "0")
 }
 
@@ -153,11 +153,18 @@ pub(super) struct Built<'a> {
     /// links them again, so they too must keep their size and time (a cached file does while
     /// it is cached; rewritten or removed, the stamp no longer matches).
     pub std_objects: &'a [PathBuf],
+    /// What the program reaches outside itself (`super::outside::reaches`: `-` for nothing).
+    pub outside: &'a str,
 }
 
 /// The stamp of a build configured by `key` that read the files in `sm` and `built`.
 pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
-    let mut s = format!("{HEADER}\nkey {}\nobjects {}\n", key.hex(), built.objects);
+    let mut s = format!(
+        "{HEADER}\nkey {}\nobjects {}\noutside {}\n",
+        key.hex(),
+        built.objects,
+        built.outside
+    );
     let seen = built.seen;
     let mut files = seen.read.clone();
     for (_, file) in sm.files() {
@@ -205,6 +212,16 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
     s
 }
 
+/// What the program `exe` reaches outside itself, as its build stamp records it
+/// (`super::outside::reaches`; read a file's entry with `super::outside::of_file`), or `None`
+/// without a stamp of this format.
+pub(crate) fn outside(exe: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path(exe)).ok()?;
+    let mut lines = text.lines();
+    (lines.next()? == HEADER).then_some(())?;
+    Some(lines.nth(2)?.strip_prefix("outside ")?.to_string())
+}
+
 /// Write stamp `text` to `path` whole: into a temporary file renamed into place, so a build
 /// stopped half-way leaves the old stamp or none, never part of one.
 pub(super) fn write(path: &Path, text: &str) -> std::io::Result<()> {
@@ -237,6 +254,7 @@ pub(super) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usiz
     (lines.next()? == HEADER).then_some(())?;
     (lines.next()?.strip_prefix("key ")? == key.hex()).then_some(())?;
     let objects = lines.next()?.strip_prefix("objects ")?.parse().ok()?;
+    lines.next()?.strip_prefix("outside ")?;
     for (entries, line) in lines.by_ref().enumerate() {
         if let Some(n) = line.strip_prefix("end ") {
             // Whole: as many entries as it says, and nothing after.

@@ -12,10 +12,11 @@
 //! `target/velt/test/debug/` (a harness being debugged must not block the next run's link), and
 //! lists them (`--json`: as JSON, which the VS Code extension's "Debug test" reads).
 
+mod cache;
 pub(crate) mod discover;
 mod harness;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -49,6 +50,8 @@ pub struct TestOptions {
     pub cpu: Option<String>,
     /// `--jobs`: how many test files run at once (default: one per core).
     pub jobs: Option<usize>,
+    /// `--no-cache`: run every test, keeping and using no results (`cache`).
+    pub no_cache: bool,
 }
 
 /// Settings shared by every test file of one `velt test` run.
@@ -284,6 +287,14 @@ impl Run<'_> {
         for group in groups(planned) {
             self.build_group(planned, &group, &mut built);
         }
+        // What each harness program reaches, and the results kept for it (`cache`).
+        let mut harnesses: BTreeMap<PathBuf, cache::Harness> = BTreeMap::new();
+        for (exe, _) in built.iter().flatten() {
+            harnesses.entry(exe.clone()).or_insert_with(|| {
+                let filter = self.opts.filter.as_deref();
+                cache::Harness::of(exe, filter, self.opts.exact, !self.opts.no_cache)
+            });
+        }
         let files: Vec<Value> = planned
             .iter()
             .zip(&built)
@@ -302,11 +313,18 @@ impl Run<'_> {
                     "tests": p.found.tests,
                     "registers": p.found.registers,
                     "skipped": skipped,
+                    "cached": b.as_ref().and_then(|(exe, i)| harnesses[exe].cached(*i).cloned()),
+                    "uncacheable": b.as_ref().and_then(|(exe, i)| harnesses[exe].uncacheable(*i)),
                 })
             })
             .collect();
         let workers = self.opts.jobs.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        });
+        // Where the runner says how the files it ran went, when any of them may be kept.
+        let results = harnesses.values().any(cache::Harness::keeps_any).then(|| {
+            self.out_dir
+                .join(format!("results-{}.json", std::process::id()))
         });
         let plan = json!({
             "workers": workers,
@@ -316,6 +334,7 @@ impl Run<'_> {
             "filter": self.opts.filter,
             "exact": self.opts.exact,
             "files": files,
+            "results": results,
         });
         // One per run: two runs in a package at once must not read each other's.
         let plan_file = self
@@ -331,6 +350,9 @@ impl Run<'_> {
         }
         let status = command.status();
         let _ = std::fs::remove_file(&plan_file);
+        if let Some(results) = &results {
+            keep_passed(results, &built, &mut harnesses);
+        }
         let status = status.map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
         Ok(status.success())
     }
@@ -526,6 +548,33 @@ impl Run<'_> {
 /// Which files of `planned` share a harness: those that only declare, in one; each other one
 /// alone. Of two files with the same module path (`a.test.ts` and `a.test.vlt` side by side,
 /// which one program cannot import both of), the second is alone too.
+/// Keep the reports in the runner's `results` file (`Ran[]`) of the files whose tests all passed,
+/// for the harnesses whose results may be kept (`cache`), then remove the file.
+fn keep_passed(
+    results: &Path,
+    built: &[Option<(PathBuf, usize)>],
+    harnesses: &mut BTreeMap<PathBuf, cache::Harness>,
+) {
+    let ran: Vec<Value> = std::fs::read_to_string(results)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let _ = std::fs::remove_file(results);
+    for report in ran {
+        let passed = report["failed"].as_u64() == Some(0);
+        let index = report["index"].as_u64().map(|i| i as usize);
+        let Some(Some((exe, at))) = index.and_then(|i| built.get(i)) else {
+            continue;
+        };
+        if let Some(harness) = harnesses.get_mut(exe).filter(|_| passed) {
+            harness.keep(*at, report);
+        }
+    }
+    for (exe, harness) in harnesses.iter() {
+        harness.save(exe);
+    }
+}
+
 fn groups(planned: &[Planned]) -> Vec<Vec<usize>> {
     let mut shared = vec![];
     let mut alone = vec![];
