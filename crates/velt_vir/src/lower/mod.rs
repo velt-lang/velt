@@ -36,6 +36,7 @@ mod any_has;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_exact;
 mod any_number;
 mod any_object_fill;
 mod any_proxy;

@@ -502,6 +502,11 @@ pub enum Intrinsic {
     /// operand `text: string`, a string literal read while compiling, starts the `TypeError`
     /// (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
     AnyTo,
+    /// `(x: borrow any) -> T | undefined` (`Expr::ty`, an option of the function type `T`),
+    /// made by sema only: the function `x` holds (a new reference to it) when it is of exactly
+    /// type `T`, else `undefined`. A conversion of an `any` to a function type gives that
+    /// function itself, and otherwise a closure calling it through `any`. Additive (#379).
+    AnyToExact,
     /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
     AnyTypeof,
     /// `(x: borrow any) -> bool`: JavaScript's truthiness of `x`.

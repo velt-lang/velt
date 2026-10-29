@@ -55,7 +55,6 @@ if (typeof v2 === "function") {
   console.log(entry.name, v2());
 }
 
-
 // A promise member is never held as `any`: the function member is the one converted, and a
 // function returning such a union is called through `any` as well.
 function make(): View | Promise<View> {

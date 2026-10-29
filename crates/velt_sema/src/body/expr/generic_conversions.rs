@@ -60,18 +60,7 @@ impl FnCx<'_, '_> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
-        let held = self.share_if_place(h.clone());
-        // Called as an `any` (an `unknown` would have to be narrowed first).
-        let held = match self.any_ty() {
-            Some(any) if held.ty != any => {
-                let span = held.span;
-                self.intrinsic(hir::Intrinsic::AnyTo, vec![held], any, span)
-            }
-            _ => held,
-        };
-        let g = self.forwarding(held, exp, (n, false), |s, arrow, exp| {
-            s.closure(arrow, Some(exp), true)
-        });
+        let g = self.exact_or_forwarding(h.clone(), exp, n);
         if self.cx.diags.len() == diags {
             return Ok(g);
         }
@@ -79,6 +68,82 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         Err(h)
+    }
+
+    /// The dynamic `h` as the function type `exp`: the function it holds when that is of
+    /// exactly `exp` (`Intrinsic::AnyToExact`: the one value, so `===`, `Set` and `Map` keys
+    /// see it, a round trip through `any` adds nothing, and a call costs what a call of the
+    /// function costs), else the closure calling it through `any` (`dynamic_as_fn`). A
+    /// variable is read in place, and only the closure takes a share of it.
+    fn exact_or_forwarding(&mut self, h: hir::Expr, exp: TyId, n: usize) -> hir::Expr {
+        use crate::body::places::{is_place, set_place_mode};
+        let (dty, span) = (h.ty, h.span);
+        let mut stmts = vec![];
+        let (read, held) = if is_place(&h) {
+            let mut read = h.clone();
+            set_place_mode(&mut read, hir::UseMode::Borrow);
+            (read, self.share_if_place(h))
+        } else {
+            let tmp = self.new_local("<any>", dty, false, span, crate::body::LocalKind::Temp);
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(h),
+                },
+                span,
+            });
+            let read = self.mk(H::Local(tmp, hir::UseMode::Borrow), dty, span);
+            (read, self.mk(H::Local(tmp, hir::UseMode::Move), dty, span))
+        };
+        // Called as an `any` (an `unknown` would have to be narrowed first).
+        let held = match self.any_ty() {
+            Some(any) if held.ty != any => {
+                self.intrinsic(hir::Intrinsic::AnyTo, vec![held], any, span)
+            }
+            _ => held,
+        };
+        let opt = self.cx.ty.option_of(exp, hir::Nothing::Undefined);
+        let exact = self.intrinsic(hir::Intrinsic::AnyToExact, vec![read], opt, span);
+        let b = self.new_local("<exact>", exp, false, span, crate::body::LocalKind::Bind);
+        let adapter = self.forwarding(held, exp, (n, false), |s, arrow, exp| {
+            s.closure(arrow, Some(exp), true)
+        });
+        let pat = |kind| hir::Pat {
+            kind,
+            ty: opt,
+            span,
+        };
+        let bind = hir::Pat {
+            kind: hir::PatKind::Binding(b, hir::UseMode::Move),
+            ty: exp,
+            span,
+        };
+        let arms = vec![
+            hir::Arm {
+                pat: pat(hir::PatKind::Some(Box::new(bind))),
+                guard: None,
+                body: self.mk(H::Local(b, hir::UseMode::Move), exp, span),
+            },
+            hir::Arm {
+                pat: pat(hir::PatKind::None),
+                guard: None,
+                body: adapter,
+            },
+        ];
+        let m = H::Match {
+            scrutinee: Box::new(exact),
+            arms,
+        };
+        let value = self.mk(m, exp, span);
+        if stmts.is_empty() {
+            return value;
+        }
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(value)),
+            span,
+        };
+        self.mk(H::Block(block), exp, span)
     }
 
     /// `const g = <name>` of a named generic function (`const g: G = id`), or of a constant
