@@ -139,5 +139,32 @@ SELECT id FROM users WHERE rank() OVER () > 1
   error: misuse of window function rank()
 SELECT sum(id) OVER w FROM users
   error: no such window: w
+SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id
+  1,'h',NULL
+  2,'Dave',NULL
+  3,'h',35
+  4,'Dave',25
+  5,'al',25
+  6,'h',25
+  7,'h',25
+  8,'h',25
+SELECT id, max(note) OVER (ORDER BY age ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), min(score) OVER (PARTITION BY age IS NULL ORDER BY name GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING) FROM users ORDER BY id
+  1,x'00ff',-1.0
+  2,1.5,-1.0
+  3,x'00ff',-1.0
+  4,'hi',-1.0
+  5,NULL,5.0
+  6,x'00ff',-1.0
+  7,x'00ff',-1.0
+  8,x'00ff',-1.0
+SELECT id, last_value(nick) OVER (ORDER BY age), nth_value(name, 2) OVER (ORDER BY age ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), nth_value(score, 5) OVER (ORDER BY age), first_value(age) OVER (ORDER BY age ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM users ORDER BY id
+  1,'GRACE','alice',4.5,35
+  2,'Dave','bob',NULL,28
+  3,'cc','carol',4.5,NULL
+  4,'Dave','dave',NULL,30
+  5,'al','bob',NULL,25
+  6,NULL,'Frank',4.5,NULL
+  7,'GRACE','grace',4.5,41
+  8,'h','héloïse',NULL,30
 SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users
   error: misuse of aggregate: count()

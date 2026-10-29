@@ -59,6 +59,11 @@ const QUERIES: string[] = [
   "SELECT row_number() FROM users",
   "SELECT id FROM users WHERE rank() OVER () > 1",
   "SELECT sum(id) OVER w FROM users",
+  // min()/max() from the partition's first row, and first/last/nth_value, read as the frame
+  // grows or at a position in it: ties under NOCASE, FILTER, frames empty at first or past N.
+  "SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id",
+  "SELECT id, max(note) OVER (ORDER BY age ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), min(score) OVER (PARTITION BY age IS NULL ORDER BY name GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING) FROM users ORDER BY id",
+  "SELECT id, last_value(nick) OVER (ORDER BY age), nth_value(name, 2) OVER (ORDER BY age ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), nth_value(score, 5) OVER (ORDER BY age), first_value(age) OVER (ORDER BY age ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM users ORDER BY id",
   // A subquery's aggregate of a query with window functions does not make it an aggregate query.
   "SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users",
 ];
