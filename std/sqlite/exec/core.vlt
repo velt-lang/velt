@@ -88,6 +88,8 @@ export function compileCore(
   // Again as an aggregate query when a subquery turns out to hold one of its aggregates.
   while (true) {
     const again = core.aggFromInner;
+    const refs = c.refMark();
+    const rows = c.rowsSrc.length;
     try {
       if (core.values.length > 0) {
         return valuesCore(c, core, outer, tail, new Query());
@@ -96,6 +98,8 @@ export function compileCore(
       return compileCoreOnce(c, core, outer, tail, fp);
     } catch (e) {
       if (e instanceof AggRestart && e.core == core && !again) {
+        // The FROM items compile again: what they counted the first time is taken back.
+        c.rewind(refs, rows);
         continue;
       }
       throw e;

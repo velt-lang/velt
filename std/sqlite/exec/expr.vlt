@@ -128,6 +128,22 @@ export abstract class ExprCompiler {
   /** Notes how many FROM terms `core` has once SQLite's flattener merged its subqueries. */
   abstract noteFromTerms(core: SelectCore): void;
 
+  /** Where the table references counted so far end, for `rewind`. */
+  abstract refMark(): usize;
+
+  /**
+   * Takes back what a core's compile counted and made after `refs` (references) and `rows`
+   * (FROM sources), when the core compiles again as an aggregate query.
+   */
+  rewind(refs: usize, rows: usize) {
+    this.rewindRefs(refs);
+    __intrinsic_array_truncate(this.rowsSrc, rows);
+    __intrinsic_array_truncate(this.rowsQ, rows);
+  }
+
+  /** Takes back the table references counted after `mark`. */
+  abstract rewindRefs(mark: usize): void;
+
   /** The query filling a materialized source. */
   rowsQuery(src: Source): Query {
     for (let i: usize = 0; i < this.rowsSrc.length; i++) {

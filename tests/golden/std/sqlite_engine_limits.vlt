@@ -2,9 +2,9 @@
 // FROM subqueries nested 200 deep (the parser's nesting bound, #1774, stops them before SQLite's
 // 416, "Recursion limit"), views nest 999 deep
 // and not 1000 ("VIEWs and/or subqueries nested too deep"), a statement references a table at
-// most 65534 times (CTEs expanded), an endless recursive CTE ends at an outer LIMIT, and a
-// result has at most 2,000 columns, ORDER BY and GROUP BY terms. The expected output is the
-// sqlite3 shell's for the same statements.
+// most 65534 times (CTEs expanded; once in a query compiled again), an endless recursive CTE
+// ends at an outer LIMIT, and a result has at most 2,000 columns, ORDER BY and GROUP BY terms.
+// The expected output is the sqlite3 shell's for the same statements.
 import { open } from "velt:sqlite";
 import { openDatabase, Database } from "velt:sqlite/engine";
 import { Val } from "velt:sqlite/exec/value";
@@ -63,6 +63,14 @@ function main() {
     cteChain(12).replace(" JOIN ", ", ").replace(" ON a.x = b.x", ""),
   );
   show(db, "65536 references", cteChain(16));
+  // A query that compiles again as an aggregate query counts its FROM's references once.
+  show(
+    db,
+    "32768 references, compiled again",
+    cteChain(15)
+      .replaceAll("SELECT a.x", "SELECT DISTINCT a.x")
+      .replace(" SELECT count(*) FROM c15", " SELECT (SELECT count(c15.x) FROM t) FROM c15"),
+  );
   show(
     db,
     "endless recursion under LIMIT",

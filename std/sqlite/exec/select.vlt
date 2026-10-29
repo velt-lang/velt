@@ -532,6 +532,19 @@ export class SelectCompiler extends ExprCompiler {
     return null;
   }
 
+  refMark(): usize {
+    return this.refNames.length;
+  }
+
+  rewindRefs(mark: usize) {
+    for (let r = mark; r < this.refNames.length; r++) {
+      const key = this.refNames[r].toLowerCase();
+      this.tableRefs.set(key, this.tableRefs.get(key)! - this.refCounts[r]);
+    }
+    __intrinsic_array_truncate(this.refNames, mark);
+    __intrinsic_array_truncate(this.refCounts, mark);
+  }
+
   /** Counts `n` more references to a table or view: SQLite's limit is 65535 a statement. */
   reference(name: string, n: i64) {
     const key = name.toLowerCase();
