@@ -182,11 +182,14 @@ checkout (every file, path order, `contents::checksum`'s encoding; symbolic link
 verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
 from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
 `git` (a `version` beside it is published as the requirement). A target without `package.vlt` is
-an npm source (`npm::provided::packages_at`): a workspace root's packages (its globs, each a
-`package.json` with a `name`), else the `package.json` there; the dependency's name must be one
+an npm source (`npm::provided::packages_at`): the `package.json` there, plus a workspace root's
+packages (its globs, each a `package.json` with a `name`); a member without a `name`, a
+`package.json` that doesn't parse and a duplicate name are errors (paths relative to the
+target), and a walk cut at `MAX_DIRS` is named when a package isn't found; the dependency's name must be one
 of them (else "provides no npm package named …"), its version is that package's (`0.0.0` without
 a valid one), and it has no dependencies of its own. It is `Source::Git` with `npm` (name →
-directory), locked like any git package, and no package of the graph: each dependent's
+directory), locked like any git package, and no package of the graph (two git dependencies providing one npm name are an error,
+`install::check_npm_overlap`): each dependent's
 `GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its
 directory (`NpmResolver::resolve_in`) before Node's search.
 

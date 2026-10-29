@@ -165,6 +165,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     if lock_changed {
         lockfile.write(&root)?;
     }
+    check_npm_overlap(resolution.packages.values())?;
     let graph = build_graph(
         Some((&manifest, &root, &resolution.root_dependencies)),
         resolution.packages.values(),
@@ -538,6 +539,28 @@ fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), Strin
                 "packages `{other}` and `{name}` both have native code, and their names differ only in `-` and `_`, so their native functions would share names (`velt_{}__…`); depend on only one of them",
                 crate::manifest::normalized_name(name)
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Two git dependencies that provide the same npm package would leave it to chance which one an
+/// import gets: an error naming both.
+fn check_npm_overlap<'r>(
+    packages: impl Iterator<Item = &'r ResolvedPackage>,
+) -> Result<(), String> {
+    let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+    for pkg in packages {
+        let Source::Git { npm, .. } = &pkg.source else {
+            continue;
+        };
+        for name in npm.keys() {
+            if let Some(other) = seen.insert(name, &pkg.name) {
+                return Err(format!(
+                    "git dependencies `{other}` and `{}` both provide the npm package `{name}`; depend on one of them",
+                    pkg.name
+                ));
+            }
         }
     }
     Ok(())

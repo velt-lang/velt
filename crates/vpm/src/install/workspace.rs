@@ -78,6 +78,7 @@ pub fn install(
     if lock_changed {
         lockfile.write(&ws.root)?;
     }
+    super::check_npm_overlap(packages.iter().copied())?;
     let graph = build_graph(root, packages.iter().copied(), &dirs, natives);
     Ok(Installed {
         graph,

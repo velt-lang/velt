@@ -222,10 +222,16 @@ impl Provider<'_> {
             // No Velt package: npm packages, compiled from their TypeScript sources.
             let provided = crate::npm::provided::packages_at(&dir)
                 .map_err(|e| named(format!("`{sub}` of {} at commit {short} {e}", spec.url)))?;
-            let Some(own) = provided.get(&req.name) else {
-                let names: Vec<&str> = provided.keys().map(String::as_str).collect();
+            let Some(own) = provided.by_name.get(&req.name) else {
+                let names: Vec<&str> = provided.by_name.keys().map(String::as_str).collect();
+                let cut = provided.cut.as_ref().map_or(String::new(), |pattern| {
+                    format!(
+                        "; the walk of its workspace pattern `{pattern}` stopped at {} directories, so packages past it are missing",
+                        crate::npm::workspace::MAX_DIRS
+                    )
+                });
                 return Err(named(format!(
-                    "`{sub}` of {} provides no npm package named `{}` (it has {})",
+                    "`{sub}` of {} provides no npm package named `{}` (it has {}){cut}",
                     spec.url,
                     req.name,
                     names.join(", ")
@@ -233,6 +239,7 @@ impl Provider<'_> {
             };
             let version = own.version.clone().unwrap_or(Version::new(0, 0, 0));
             let npm = provided
+                .by_name
                 .into_iter()
                 .map(|(name, p)| (name, p.dir))
                 .collect();

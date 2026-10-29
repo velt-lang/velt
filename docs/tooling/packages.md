@@ -51,9 +51,12 @@ dependencies: {
   repository that holds several packages. A `version` beside them is a requirement the package
   must meet.
 - **npm packages too.** A target without a `package.vlt` but with a `package.json` is an npm
-  package, compiled from its TypeScript sources ([npm packages](#npm-packages)), and a
-  workspace's root (`pnpm-workspace.yaml`, or `workspaces` in its `package.json`) provides every
-  package of the workspace. The dependency's name is one of those packages, and its `version`, if
+  package, compiled from its TypeScript sources ([npm packages](#npm-packages)), as
+  `npm install git+…` takes it; a workspace's root (`pnpm-workspace.yaml`, or `workspaces` in its
+  `package.json`) provides every package of the workspace besides its own. As npm and pnpm do,
+  a workspace package without a `name`, a `package.json` that doesn't parse and two packages of
+  one name are errors that name the file, and so are two git dependencies that provide the same
+  package. The dependency's name is one of those packages, and its `version`, if
   written, is checked against that package's. So a framework can be tested straight from its
   repository, with no `paths` alias and nothing installed into `node_modules`:
 

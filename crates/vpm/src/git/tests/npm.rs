@@ -76,20 +76,16 @@ fn a_whole_workspace_of_npm_packages() {
     let url = e.upstream.url();
     let app = e.app(&format!("\"@demo/signals\": {{ git: \"{url}\" }}"));
     let installed = e.install(&app, false).unwrap();
-    assert_eq!(
-        provided(&installed),
-        [
-            "@demo/shared packages/shared",
-            "@demo/signals packages/signals"
-        ]
-    );
+    // The root's own package too, as `npm install git+…` installs it.
+    let names: Vec<&String> = installed.graph.packages()[0].npm.keys().collect();
+    assert_eq!(names, ["@demo/shared", "@demo/signals", "demo-root"]);
     // The dependency's name must be one of them, and its version requirement holds.
     let app = e.app(&format!("\"@demo/nope\": {{ git: \"{url}\" }}"));
     let _ = std::fs::remove_file(app.join("velt.lock.json"));
     let err = e.install(&app, false).unwrap_err();
     assert!(
         err.contains(
-            "provides no npm package named `@demo/nope` (it has @demo/shared, @demo/signals)"
+            "provides no npm package named `@demo/nope` (it has @demo/shared, @demo/signals, demo-root)"
         ),
         "{err}"
     );
@@ -113,4 +109,59 @@ fn a_directory_with_no_package_is_an_error() {
         err.contains("has neither a package.vlt nor an npm package"),
         "{err}"
     );
+}
+
+#[test]
+fn two_git_dependencies_providing_one_package_are_an_error() {
+    let e = env();
+    npm_monorepo(&e);
+    let url = e.upstream.url();
+    let app = e.app(&format!(
+        "\"@demo/shared\": {{ git: \"{url}\" }}, \"@demo/signals\": {{ git: \"{url}\", path: \"packages/signals\" }}"
+    ));
+    let err = e.install(&app, false).unwrap_err();
+    assert!(
+        err.contains("both provide the npm package `@demo/signals`; depend on one of them"),
+        "{err}"
+    );
+}
+
+/// What `npm::provided::packages_at` makes of a directory, as an error.
+fn provided_error(files: &[(&str, &str)]) -> String {
+    let tmp = tempfile::tempdir().unwrap();
+    for (rel, text) in files {
+        let path = tmp.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    crate::npm::provided::packages_at(tmp.path()).unwrap_err()
+}
+
+#[test]
+fn workspaces_npm_would_refuse_are_errors() {
+    let ws = ("pnpm-workspace.yaml", "packages:\n  - \"packages/*\"\n");
+    let err = provided_error(&[
+        ws,
+        ("packages/a/package.json", "{ \"name\": \"same\" }"),
+        ("packages/b/package.json", "{ \"name\": \"same\" }"),
+    ]);
+    assert_eq!(
+        err,
+        "has two packages named `same`: `packages/a` and `packages/b`"
+    );
+    let err = provided_error(&[ws, ("packages/a/package.json", "{ \"name\": ")]);
+    assert!(
+        err.starts_with("has a `package.json` that doesn't parse: `packages/a/package.json`"),
+        "{err}"
+    );
+    let err = provided_error(&[
+        ws,
+        ("packages/a/package.json", "{ \"version\": \"1.0.0\" }"),
+    ]);
+    assert_eq!(
+        err,
+        "has a workspace package without a `name`: `packages/a/package.json`"
+    );
+    let err = provided_error(&[("package.json", "not json")]);
+    assert!(err.contains("`./package.json`"), "{err}");
 }
