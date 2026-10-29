@@ -1,7 +1,9 @@
 # velt:json
 
-`import { Value } from "velt:json"`. `JSON` itself is in the prelude. This module only exports
-`Value`, the dynamic JSON value (an alias of the prelude's `JsonValue`).
+`import { Value } from "velt:json"`. `JSON` itself is a global, like the prelude's names: it needs
+no import, and a program whose code never names `JSON`, `JsonValue`, `JsonError` or
+`JsonParseOptions` doesn't load it, so it costs that program no compile time. This module only
+exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`).
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
@@ -174,8 +176,8 @@ console.log(text, m.cents); // {"cents":250} 250
   options and the same default depth limit; `unknownKeys` has no effect on a `Value`.
 
   Integers stay exact without an option: an integer field reads the digits exactly, also
-  beyond 2^53 (up to the `i64` range). Every integer type reads through `i64`, so a `u64`
-  field stops at `i64::MAX` (9223372036854775807): a larger number fails with
+  beyond 2^53 (up to the `i64` range). A `u64` field takes its whole range, up to
+  18446744073709551615 (2^64 - 1); a larger number, a negative one or a fraction fails with
   `expected u64`. There is no `Date` type to decode dates into: dates stay strings.
 - A key that appears twice in an object keeps its last value, in the position of its first
   occurrence, like JavaScript: in structs, classes and object literals, `Map`, `Record` (with

@@ -20,12 +20,12 @@ fn nested(levels: usize) -> String {
 
 /// Calls `f` with each key of the object at the reader (`{` included); false on an error.
 unsafe fn each_key(r: *mut Reader, mut f: impl FnMut(&[u8]) -> bool) -> bool {
-    if velt_rt_json_reader_expect_object_start(r) == 0 {
+    if velt_rt_json_reader_expect_object_start(r as u64) == 0 {
         return false;
     }
     loop {
         let mut key = MaybeUninit::<VeltStr>::uninit();
-        match velt_rt_json_reader_next_key(r, key.as_mut_ptr()) {
+        match velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()) {
             STEP_END => return true,
             STEP_MORE => {
                 let mut key = key.assume_init();
@@ -42,14 +42,14 @@ unsafe fn each_key(r: *mut Reader, mut f: impl FnMut(&[u8]) -> bool) -> bool {
 
 /// The `kind` of the object at the reader, read ahead; the reader is back at the `{` after.
 unsafe fn lookahead_kind(r: *mut Reader) -> Option<String> {
-    let mark = velt_rt_json_reader_mark(r);
+    let mark = velt_rt_json_reader_mark(r as u64);
     let mut kind = None;
     each_key(r, |key| {
         if key != b"kind" {
-            return velt_rt_json_reader_skip_lookahead(r) == 1;
+            return velt_rt_json_reader_skip_lookahead(r as u64) == 1;
         }
         let mut s = MaybeUninit::uninit();
-        if velt_rt_json_reader_read_string(r, s.as_mut_ptr()) == 0 {
+        if velt_rt_json_reader_read_string(r as u64, s.as_mut_ptr()) == 0 {
             return false;
         }
         let mut s = s.assume_init();
@@ -57,7 +57,7 @@ unsafe fn lookahead_kind(r: *mut Reader) -> Option<String> {
         velt_rt_str_drop(&mut s);
         false // found: stop here
     });
-    velt_rt_json_reader_reset(r, mark);
+    velt_rt_json_reader_reset(r as u64, mark);
     kind
 }
 
@@ -77,7 +77,7 @@ unsafe fn decode(r: *mut Reader) -> Option<usize> {
                 false
             }
         },
-        _ => velt_rt_json_reader_skip_value(r) == 1,
+        _ => velt_rt_json_reader_skip_value(r as u64) == 1,
     });
     (ok && child_ok).then_some(depth)
 }
@@ -91,9 +91,9 @@ fn parse_counting(src: &str) -> (Option<usize>, usize) {
     let s = borrow(src);
     unsafe {
         let r = velt_rt_json_reader_new(&s);
-        let depth = decode(r).filter(|_| velt_rt_json_reader_end(r) == 1);
+        let depth = decode(r).filter(|_| velt_rt_json_reader_end(r as u64) == 1);
         let walked = (*r).lookahead_walked;
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
         (depth, walked)
     }
 }

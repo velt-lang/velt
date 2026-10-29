@@ -1,7 +1,7 @@
 //! C accessors for `json.Value` handles (`velt_rt_json_parse_value`, `velt_rt_json_value_*`).
 //!
 //! A handle is an `Arc<Value>` turned into a raw pointer, passed as a `u64` ([`Handle`]: the
-//! prelude's `JsonValue.handle` field and the declarations in `std/prelude/json.vlt`; 0 = null).
+//! prelude's `JsonValue.handle` field and the declarations in `std/prelude/json/json.vlt`; 0 = null).
 //! Every handle returned by the runtime
 //! (parse, `get`, `at`, `clone`) is a separate reference that must be released with
 //! `velt_rt_json_value_free`; freeing a parent never invalidates handles to its children.

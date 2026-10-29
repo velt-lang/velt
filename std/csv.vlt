@@ -6,6 +6,8 @@
 // not start another record, and a leading byte order mark (U+FEFF) is skipped. Quoted fields may
 // contain delimiters and line breaks. Fields are strings; no type inference.
 
+import { JSON } from "velt:prelude/json/json";
+
 /**
  * A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
  * (0 for option errors).

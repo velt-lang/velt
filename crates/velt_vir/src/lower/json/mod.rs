@@ -23,6 +23,7 @@ mod literal;
 mod map;
 mod object;
 mod read;
+mod reader;
 mod rows_read;
 mod union;
 mod union_object;
@@ -37,7 +38,7 @@ use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 /// Qualified name of the prelude's dynamic JSON value class.
-const PRELUDE_JSON_VALUE: &str = "std/prelude/json::JsonValue";
+const PRELUDE_JSON_VALUE: &str = "std/prelude/json/json::JsonValue";
 
 const STR: Ty = Ty::Agg(STR_AGG);
 /// `velt_rt_json_reader_new_with`'s flag: the source is a `u8[]` of binary rows (rt_abi.md).
@@ -91,7 +92,7 @@ enum Seg<'a> {
 }
 
 /// The name of the prelude's `JsonError` class.
-const PRELUDE_JSON_ERROR: &str = "std/prelude/json::JsonError";
+const PRELUDE_JSON_ERROR: &str = "std/prelude/json/json::JsonError";
 
 impl Cx<'_> {
     /// `{ expected: string, path: string }`, the decoders' failure context.
@@ -112,7 +113,7 @@ impl Cx<'_> {
         self.intern(TyKind::Adt(d, vec![]))
     }
 
-    /// The prelude's `JsonError` definition: `std/prelude/json::JsonError`, else (a program
+    /// The prelude's `JsonError` definition: `std/prelude/json/json::JsonError`, else (a program
     /// built without the real prelude, as in unit tests) the first type named `JsonError`. A
     /// user's own class of that name is never it.
     pub(super) fn json_error_def(&self) -> Option<hir::DefId> {

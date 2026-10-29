@@ -22,6 +22,7 @@
 // nothing. Closing the database while statements exist is safe: they then throw
 // "SQLITE_MISUSE".
 
+import { JSON } from "velt:prelude/json/json";
 import { IoResult, IoStatus } from "velt:io";
 
 // `RunResult` as the driver returns it (`velt_std_sqlite::statement::RunInfo`).

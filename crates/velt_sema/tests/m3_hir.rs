@@ -189,7 +189,7 @@ fn http_server_shapes() {
 #[test]
 fn json_shapes() {
     let p = golden("m4/json.vlt");
-    let parse = func(&p, "std/prelude/json::JSON.parse");
+    let parse = func(&p, "std/prelude/json/json::JSON.parse");
     assert!(intrinsics(parse).contains(&Intrinsic::JsonParse));
     assert!(parse.throws.is_some(), "JSON.parse throws JsonError");
     let main = func(&p, "main");

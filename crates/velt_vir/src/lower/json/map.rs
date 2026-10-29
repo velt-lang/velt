@@ -134,7 +134,7 @@ impl FnLower<'_, '_> {
         self.switch_to(head);
         let step = self.temp(Ty::U8);
         let ka = self.addr(Place::local(key));
-        self.call_rt(
+        self.reader_rt(
             Rt::JsonNextKey,
             vec![ro, ka.clone()],
             Some(Place::local(step)),

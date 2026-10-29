@@ -164,11 +164,11 @@ impl FnLower<'_, '_> {
                 }
             },
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
-                // The handle field is a `u64` in Velt, a `const VeltJson*` for the runtime.
+                // The handle field is a `u64`, as the runtime takes it.
                 let h = self.field_place(place, ty, 0);
                 let hty = self.cx.adt_field_tys(ty)[0];
                 let ht = self.cx.ty(hty);
-                let h = self.cast_to(Operand::Copy(h), ht, Ty::Ptr);
+                let h = self.cast_to(Operand::Copy(h), ht, Ty::U64);
                 self.call_rt(Rt::StrbufPushJsonValue, vec![b, h], None);
             }
             TyKind::Adt(..) if self.prelude_map(ty).is_some() => {

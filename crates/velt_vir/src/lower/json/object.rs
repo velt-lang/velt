@@ -60,11 +60,11 @@ impl FnLower<'_, '_> {
         );
         self.goto(head);
         self.switch_to(head);
-        let k = self.temp(Ty::U8);
-        let ka = self.addr(Place::local(key));
-        self.call_rt(Rt::JsonNextKey, vec![ro, ka], Some(Place::local(k)));
+        // The key stays in the reader: fields compare its bytes in place (`keyIs`), and only an
+        // error path makes it a string.
+        let k = self.reader_call("nextKey", vec![ro]);
         self.terminate(Terminator::Switch {
-            value: Operand::Copy(Place::local(k)),
+            value: k,
             cases: vec![(1, dispatch), (0, end)],
             default: bad,
         });
@@ -82,7 +82,7 @@ impl FnLower<'_, '_> {
                 place,
                 ctx,
                 (ty, i as u32, name, *fty),
-                (key, seen, head),
+                (seen, head),
                 fail,
             );
         }
@@ -146,22 +146,18 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `if (key == "<name>") { decode the field; seen |= bit; continue at head }`.
+    /// `if (r.keyIs("<name>")) { decode the field; seen |= bit; continue at head }`.
     fn json_read_member(
         &mut self,
         r: Local,
         place: &Place,
         ctx: Local,
         (ty, i, name, fty): (TyId, u32, &str, TyId),
-        (key, seen, head): (Local, Local, BlockId),
+        (seen, head): (Local, BlockId),
         fail: BlockId,
     ) {
-        let ka = self.addr(Place::local(key));
-        let lit = self.str_lit(name);
-        let la = self.operand_addr(lit, STR);
-        let eq = self.rt_u8(Rt::StrEq, vec![ka.clone(), la]);
         let (hit, miss) = (self.new_block(), self.new_block());
-        self.branch(eq, hit, miss);
+        self.key_is_branch(r, name, hit, miss);
         self.switch_to(hit);
         let fp = self.field_place(place, ty, i);
         // A repeated key: the later value wins.
@@ -172,10 +168,8 @@ impl FnLower<'_, '_> {
         let bit = cint(1i128 << i, Ty::U64);
         let s = Operand::Copy(Place::local(seen));
         self.assign(Place::local(seen), Rvalue::Binary(BinOp::BitOr, s, bit));
-        self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
         self.goto(head);
         self.switch_to(field_fail);
-        self.call_rt(Rt::StrDrop, vec![ka], None);
         self.json_prepend(ctx, Seg::Field(name));
         self.goto(fail);
         self.switch_to(miss);
@@ -186,14 +180,16 @@ impl FnLower<'_, '_> {
     fn json_skip_member(&mut self, r: Local, ctx: Local, key: Local, head: BlockId, fail: BlockId) {
         let ok = self.rt_u8(Rt::JsonSkipUnknown, vec![Operand::Copy(Place::local(r))]);
         let (next, bad) = (self.new_block(), self.new_block());
-        let ka = self.addr(Place::local(key));
         self.branch(ok, next, bad);
         self.switch_to(bad);
+        // The key only for the path (the reader keeps it past its value).
+        let kv = self.reader_call("key", vec![Operand::Copy(Place::local(r))]);
+        self.assign(Place::local(key), Rvalue::Use(kv));
+        let ka = self.addr(Place::local(key));
         self.json_prepend(ctx, Seg::Key(ka.clone()));
-        self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
+        self.call_rt(Rt::StrDrop, vec![ka], None);
         self.json_fail(ctx, "value", fail);
         self.switch_to(next);
-        self.call_rt(Rt::StrDrop, vec![ka], None);
         self.goto(head);
     }
 

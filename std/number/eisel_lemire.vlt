@@ -1,0 +1,93 @@
+// velt:number/eisel_lemire (std-internal) — decimal to double, correctly rounded, in Velt (#1658):
+// Eisel-Lemire algorithm (Daniel Lemire, "Number Parsing at a Gigabyte per Second", 2021), as
+// fast_float and Rust's core::num::dec2flt::lemire implement it. A mantissa of up to 19 digits
+// times a power of ten is multiplied by the 128-bit power of five (std/number/pow5.vlt); in the
+// rare case the product cannot settle the rounding, the caller takes the general parser.
+
+import { POW5, POW5_SMALLEST, POW5_LARGEST } from "velt:number/pow5";
+
+declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+declare function velt_rt_math_clz64(x: u64): u64;
+
+/** `decide`'s answer: the double, or (`ok` false) no answer: take the general parser. */
+export struct Lemire {
+  ok: bool;
+  value: f64;
+}
+
+const MANTISSA_BITS: i64 = 52;
+const MIN_EXPONENT: i64 = -1023;
+const INFINITE_POWER: i64 = 0x7ff;
+const MIN_EXPONENT_ROUND_TO_EVEN: i64 = -4;
+const MAX_EXPONENT_ROUND_TO_EVEN: i64 = 23;
+
+/** The double nearest `w * 10^q` (`w` nonzero, at most 19 digits). */
+export function decide(w: u64, q: i64): Lemire {
+  if (w == 0 || q < POW5_SMALLEST) {
+    return Lemire { ok: true, value: 0 };
+  }
+  if (q > POW5_LARGEST) {
+    return Lemire { ok: true, value: Infinity };
+  }
+  // Normalize the mantissa so its top bit is set.
+  const lz = velt_rt_math_clz64(w);
+  const wn = w << lz;
+  // The product's high 128 bits, enough for the mantissa and the rounding bits (55 of them).
+  const index = ((q - POW5_SMALLEST) * 2) as usize;
+  let lo = wn * POW5[index];
+  let hi = velt_rt_math_umulh(wn, POW5[index]);
+  const mask: u64 = 0xffffffffffffffff >> ((MANTISSA_BITS + 3) as u64);
+  if ((hi & mask) == mask) {
+    // The truncated power may be too small here: add the next 64 bits of it.
+    const second = velt_rt_math_umulh(wn, POW5[index + 1]);
+    const sum = lo + second;
+    if (second > sum) {
+      hi = hi + 1;
+    }
+    lo = sum;
+  }
+  if (lo == 0xffffffffffffffff && (q < -27 || q > 55)) {
+    // Ambiguous: the exact product may be just past a rounding boundary.
+    return Lemire { ok: false, value: 0 };
+  }
+  const upper = hi >> 63;
+  let mantissa = hi >> (upper + 64 - (MANTISSA_BITS as u64) - 3);
+  let power2 = power(q) + (upper as i64) - (lz as i64) - MIN_EXPONENT;
+  if (power2 <= 0) {
+    // Subnormal (or zero).
+    if (-power2 + 1 >= 64) {
+      return Lemire { ok: true, value: 0 };
+    }
+    mantissa = mantissa >> ((-power2 + 1) as u64);
+    mantissa += mantissa & 1;
+    mantissa = mantissa >> 1;
+    power2 = mantissa < ((1 as u64) << (MANTISSA_BITS as u64)) ? 0 : 1;
+    return Lemire { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
+  }
+  // A product exactly halfway: round to even.
+  if (
+    lo <= 1 &&
+    q >= MIN_EXPONENT_ROUND_TO_EVEN &&
+    q <= MAX_EXPONENT_ROUND_TO_EVEN &&
+    (mantissa & 3) == 1 &&
+    (mantissa << (upper + 64 - (MANTISSA_BITS as u64) - 3)) == hi
+  ) {
+    mantissa = mantissa & ~(1 as u64);
+  }
+  mantissa += mantissa & 1;
+  mantissa = mantissa >> 1;
+  if (mantissa >= ((2 as u64) << (MANTISSA_BITS as u64))) {
+    mantissa = (1 as u64) << (MANTISSA_BITS as u64);
+    power2 += 1;
+  }
+  mantissa = mantissa & ~((1 as u64) << (MANTISSA_BITS as u64));
+  if (power2 >= INFINITE_POWER) {
+    return Lemire { ok: true, value: Infinity };
+  }
+  return Lemire { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
+}
+
+// floor(log2(10^q)) + 63, exact for q in the table's range.
+function power(q: i64): i64 {
+  return ((q * (152170 + 65536)) >> 16) + 63;
+}
