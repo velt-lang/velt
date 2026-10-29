@@ -623,3 +623,5 @@ fn a_package_with_links_is_told_about_them_on_windows() {
     // Builds print them with the yanked versions, on Windows only.
     assert_eq!(installed.yank_warnings().len(), usize::from(cfg!(windows)));
 }
+
+mod npm;

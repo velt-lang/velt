@@ -209,16 +209,44 @@ impl Provider<'_> {
             None => checkout.clone(),
         };
         let short = &commit[..12];
-        if !crate::probe::is_file(&dir.join(crate::manifest::MANIFEST_FILE)) {
-            return Err(named(format!(
-                "{} at commit {short} has no package at `{sub}` (no package.vlt there)",
-                spec.url
-            )));
-        }
         if !inside(&dir, &checkout) {
             return Err(named(format!(
                 "`{sub}` leads out of the repository (through a symbolic link)"
             )));
+        }
+        let checksum = match checksum {
+            Some(sum) => sum,
+            None => crate::git::tree_checksum(&checkout)?,
+        };
+        if !crate::probe::is_file(&dir.join(crate::manifest::MANIFEST_FILE)) {
+            // No Velt package: npm packages, compiled from their TypeScript sources.
+            let provided = crate::npm::provided::packages_at(&dir)
+                .map_err(|e| named(format!("`{sub}` of {} at commit {short} {e}", spec.url)))?;
+            let Some(own) = provided.get(&req.name) else {
+                let names: Vec<&str> = provided.keys().map(String::as_str).collect();
+                return Err(named(format!(
+                    "`{sub}` of {} provides no npm package named `{}` (it has {})",
+                    spec.url,
+                    req.name,
+                    names.join(", ")
+                )));
+            };
+            let version = own.version.clone().unwrap_or(Version::new(0, 0, 0));
+            let npm = provided
+                .into_iter()
+                .map(|(name, p)| (name, p.dir))
+                .collect();
+            return Ok(Candidate {
+                version,
+                source: Source::Git {
+                    spec: spec.clone(),
+                    commit,
+                    checksum,
+                    dir,
+                    npm,
+                },
+                dependencies: vec![],
+            });
         }
         let manifest = Manifest::from_dir(&dir).map_err(named)?;
         let windows = cfg!(windows);
@@ -257,10 +285,6 @@ impl Provider<'_> {
             };
             dependencies.push((r.name, want));
         }
-        let checksum = match checksum {
-            Some(sum) => sum,
-            None => crate::git::tree_checksum(&checkout)?,
-        };
         Ok(Candidate {
             version,
             source: Source::Git {
@@ -268,6 +292,7 @@ impl Provider<'_> {
                 commit,
                 checksum,
                 dir,
+                npm: BTreeMap::new(),
             },
             dependencies,
         })

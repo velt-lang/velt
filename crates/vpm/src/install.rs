@@ -277,6 +277,8 @@ fn natives<'r>(
                 let m = Manifest::from_dir(dir)?;
                 native_from_source(dir, &m, target)?
             }
+            // npm packages from git have no native code.
+            Source::Git { npm, .. } if !npm.is_empty() => None,
             Source::Git {
                 dir, spec, commit, ..
             } => {
@@ -542,23 +544,52 @@ fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), Strin
 }
 
 /// The graph of the `root` package (its manifest, directory and direct dependencies), added first
-/// so its `define` applies, and of `packages`.
+/// so its `define` applies, and of `packages`. A git dependency that provides npm packages
+/// (`Source::Git::npm`) is no package of the graph: its dependents get its npm packages
+/// ([`crate::graph::GraphPackage::npm`]).
 fn build_graph<'r>(
     root: Option<(&Manifest, &Path, &[String])>,
     packages: impl Iterator<Item = &'r ResolvedPackage>,
     dirs: &BTreeMap<String, PathBuf>,
     mut natives: BTreeMap<String, NativeLib>,
 ) -> PackageGraph {
-    let deps_of = |names: &[String]| names.iter().map(|n| (n.clone(), dirs[n].clone())).collect();
+    let packages: Vec<&ResolvedPackage> = packages.collect();
+    let npm: BTreeMap<&str, &BTreeMap<String, PathBuf>> = packages
+        .iter()
+        .filter_map(|p| match &p.source {
+            Source::Git { npm, .. } if !npm.is_empty() => Some((p.name.as_str(), npm)),
+            _ => None,
+        })
+        .collect();
+    let add = |graph: &mut PackageGraph, name: &str, dir: &Path, deps: &[String]| {
+        let velt = deps
+            .iter()
+            .filter(|n| !npm.contains_key(n.as_str()))
+            .map(|n| (n.clone(), dirs[n].clone()))
+            .collect();
+        let added = graph.add(name, dir, velt);
+        for n in deps {
+            if let Some(provided) = npm.get(n.as_str()) {
+                added
+                    .npm
+                    .extend(provided.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+        }
+    };
     let mut graph = PackageGraph::default();
     if let Some((manifest, root, dependencies)) = root {
-        let added = graph.add(&manifest.package.name, root, deps_of(dependencies));
+        add(&mut graph, &manifest.package.name, root, dependencies);
+        let added = graph.last_mut();
         configure(added, manifest);
         added.native = natives.remove(&manifest.package.name);
     }
-    for pkg in packages {
+    for pkg in packages
+        .iter()
+        .filter(|p| !npm.contains_key(p.name.as_str()))
+    {
         let dir = &dirs[&pkg.name];
-        let added = graph.add(&pkg.name, dir, deps_of(&pkg.dependencies));
+        add(&mut graph, &pkg.name, dir, &pkg.dependencies);
+        let added = graph.last_mut();
         // A dependency's aliases and JSX source apply inside that dependency; an unreadable
         // manifest (already reported by resolution) simply contributes none.
         if let Ok(m) = Manifest::from_dir(dir) {

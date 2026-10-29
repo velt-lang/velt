@@ -32,6 +32,13 @@ pub trait PackageResolver {
     fn defines(&self) -> std::collections::BTreeMap<String, String> {
         Default::default()
     }
+
+    /// The directory of npm package `name` that a git dependency of the package containing
+    /// `importer` provides (`vpm::npm::provided`), if one does.
+    fn npm_package(&self, importer: &Path, name: &str) -> Option<PathBuf> {
+        let _ = (importer, name);
+        None
+    }
 }
 
 impl PackageResolver for vpm::PackageGraph {
@@ -49,6 +56,10 @@ impl PackageResolver for vpm::PackageGraph {
 
     fn defines(&self) -> std::collections::BTreeMap<String, String> {
         vpm::PackageGraph::defines(self)
+    }
+
+    fn npm_package(&self, importer: &Path, name: &str) -> Option<PathBuf> {
+        vpm::PackageGraph::npm_package(self, importer, name)
     }
 }
 
