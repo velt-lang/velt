@@ -258,8 +258,10 @@ expressions (exported ones too):
 - `Promise<T>` for an `async` function, `T` from its returns.
 
 A function declared to return `never` must not reach its end, as in TypeScript (TS2534): every
-path throws, loops forever or calls another `never` function. `function f(x: number): never {
-if (x > 0) { throw new Error("p"); } }` is an error.
+path throws, loops forever (`while (true)`, `for (;;)` or `do … while (true)` without a `break`
+out of it) or calls another `never` function. `function f(x: number): never {
+if (x > 0) { throw new Error("p"); } }` is an error, and so is a `return;` in it (TS2322);
+`return fail();` with `fail(): never` is fine.
 
 Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
 a narrowed `T | null` result divide like `number`s, and a method returning integers that a
