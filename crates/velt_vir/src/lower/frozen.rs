@@ -138,7 +138,7 @@ impl FnLower<'_, '_> {
             Some(hir::Def::Fn(f)) => f.captures.iter().any(|c| c.inner == root),
             _ => false,
         };
-        captured || self.caller_alias(root)
+        (captured && self.caller_capture(root)) || self.caller_alias(root)
     }
 
     /// [`place_root`], not through a copy of an object type's fields (`part_copy_upcast`),

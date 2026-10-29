@@ -57,6 +57,9 @@ struct Transfer {
     /// Started by `keep_begin`: a `read` callback's value going into its caller's containers,
     /// whose objects the reader did not make stay themselves (`velt_rt_xfer_keeps`).
     keep: bool,
+    /// Started by `share_begin`: a value sema transferred out of a `read` callback into its
+    /// caller's containers, whose objects the reader made stay themselves (`velt_rt_xfer_keeps`).
+    share: bool,
 }
 
 thread_local! {
@@ -110,13 +113,33 @@ pub extern "C" fn velt_rt_xfer_keep_begin() {
     }
 }
 
-/// 1 inside a transfer started by `velt_rt_xfer_keep_begin`, else 0.
+/// Start transferring a value sema transferred out of a `read` callback into its caller's
+/// containers (velt_vir leave_levels.rs `transfer_stored`): as `begin`, and when it is the
+/// outermost one, the transfer glue keeps the objects the reader made and still references
+/// instead of copying them (`velt_rt_xfer_keeps`), so the caller holds the same object.
+#[no_mangle]
+pub extern "C" fn velt_rt_xfer_share_begin() {
+    let outer = DEPTH.with(|d| d.replace(d.get() + 1));
+    if outer == 0 {
+        TRANSFER.with(|t| t.borrow_mut().share = true);
+    }
+}
+
+/// 1 inside a transfer started by `velt_rt_xfer_keep_begin`, 2 inside one started by
+/// `velt_rt_xfer_share_begin`, else 0.
 #[no_mangle]
 pub extern "C" fn velt_rt_xfer_keeps() -> u8 {
     if DEPTH.with(Cell::get) == 0 {
         return 0;
     }
-    TRANSFER.with(|t| u8::from(t.borrow().keep))
+    TRANSFER.with(|t| {
+        let t = t.borrow();
+        if t.keep {
+            1
+        } else {
+            2 * u8::from(t.share)
+        }
+    })
 }
 
 /// Done transferring a value: the outermost `end` releases the deferred references and
@@ -136,6 +159,7 @@ pub unsafe extern "C" fn velt_rt_xfer_end() {
     let mut deferred = TRANSFER.with(|t| {
         let mut t = t.borrow_mut();
         t.keep = false;
+        t.share = false;
         if t.copies.capacity() > KEEP {
             t.copies = HashMap::default();
         } else {

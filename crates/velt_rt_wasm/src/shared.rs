@@ -80,7 +80,9 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, _reader: u64) -> u64 {
 pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
     READ_DEPTH -= 1;
     *p -= 1;
-    if READ_DEPTH == 0 && !(*std::ptr::addr_of!(WAITING)).is_empty() {
+    if READ_DEPTH == 0
+        && !((*std::ptr::addr_of!(WAITING)).is_empty() && (*std::ptr::addr_of!(LEAVING)).is_empty())
+    {
         free_waiting();
     }
 }
@@ -108,6 +110,8 @@ pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, _how: u64) {
 // mode itself (one thread: a depth) and the checks.
 static mut READ_DEPTH: u32 = 0;
 const LOCAL: u64 = 1 << 62;
+/// velt_rt `read_mode::STORED`.
+const STORED: u64 = 1 << 61;
 
 /// A drop glue function: releases the reference at the pointer it is given.
 type DropGlue = unsafe extern "C" fn(*mut *mut u8);
@@ -129,6 +133,11 @@ pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
 
 #[cold]
 unsafe fn free_waiting() {
+    while let Some((c, p, drop)) = (*std::ptr::addr_of_mut!(LEAVING)).pop() {
+        *c &= !(LOCAL | STORED);
+        let mut slot = p;
+        drop(&mut slot);
+    }
     while let Some((p, drop)) = (*std::ptr::addr_of_mut!(WAITING)).pop() {
         let mut slot = p;
         drop(&mut slot);
@@ -163,8 +172,65 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
     u8::from(unsafe { in_read() })
 }
 
+/// velt_rt `read_mode::velt_rt_lk_leave`: in a nested read, the bit goes when the reads end.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+    if READ_DEPTH as u64 > LEAVE_TO {
+        return;
+    }
+    if READ_DEPTH <= 1 {
+        if !leaving(p) {
+            *p &= !LOCAL;
+        }
+        return;
+    }
+    *p += 1;
+    (*std::ptr::addr_of_mut!(LEAVING)).push((p, obj, drop));
+}
+
+/// velt_rt `read_mode::velt_rt_lk_keep_made`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
+    if (READ_DEPTH <= 1 || READ_DEPTH as u64 > LEAVE_TO) && !leaving(p) {
+        *p = 1;
+    }
+}
+
+/// velt_rt `read_mode::velt_rt_lk_share_made`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_share_made(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+    if READ_DEPTH as u64 > LEAVE_TO || leaving(p) {
+        return;
+    }
+    *p = (*p | STORED) + 1;
+    (*std::ptr::addr_of_mut!(LEAVING)).push((p, obj, drop));
+}
+
+/// velt_rt `read_mode::leaving`.
+unsafe fn leaving(p: *mut u64) -> bool {
+    (*std::ptr::addr_of!(LEAVING))
+        .iter()
+        .any(|&(c, _, _)| c == p)
+}
+
+/// Objects a nested read stored outside every read (velt_rt `read_mode::LEAVING`).
+static mut LEAVING: Vec<(*mut u64, *mut u8, DropGlue)> = Vec::new();
+
+/// velt_rt `read_mode::velt_rt_lk_leave_to` (one thread).
+static mut LEAVE_TO: u64 = 1;
+
+/// velt_rt `read_mode::velt_rt_lk_leave_to`.
+#[no_mangle]
+pub extern "C" fn velt_rt_lk_leave_to(levels: u64) -> u64 {
+    // SAFETY: one thread.
+    unsafe { std::mem::replace(&mut *std::ptr::addr_of_mut!(LEAVE_TO), levels) }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
+    if in_read() && *p & STORED != 0 {
+        crate::panic::fatal("cannot change an object a `read` callback made after storing it outside the callback: it is the caller's from then on, as the same object (store it once it is complete, or change it through the caller's container after `read`)");
+    }
     if in_read() && *p & LOCAL == 0 {
         crate::panic::fatal(
             "cannot modify a value an `RwLock` holds inside its `read` callback (other readers read it at the same time): change it in `write`",

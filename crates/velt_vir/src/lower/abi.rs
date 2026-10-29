@@ -79,11 +79,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
             rw_reader: None,
             mode: LkMode::Plain,
             own_captures: false,
+            own_deep: false,
             args_to_caller: false,
             kept_args: 0,
             kept_handed: vec![],
             kept_drops: vec![],
             caller_aliases: None,
+            leave_levels: None,
+            share_dests: None,
+            elems_to_caller: false,
             lock_callback: None,
             scope_ends: FxHashMap::default(),
             asyncx: None,
@@ -114,6 +118,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;
+        lw.own_deep = lw.cx.cur_own_deep;
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
         lw

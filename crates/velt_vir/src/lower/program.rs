@@ -80,6 +80,8 @@ impl<'h> Cx<'h> {
             cur_def: None,
             cur_mode: super::LkMode::Plain,
             cur_own: false,
+            cur_own_deep: false,
+            closure_parents: FxHashMap::default(),
             nothing_clashes: vec![],
             atomic_copies: vec![],
             user_site: velt_common::Span::DUMMY,
@@ -157,7 +159,12 @@ impl<'h> Cx<'h> {
 
     /// The function for `read` callback literal `work` that code outside read mode calls
     /// (`Work::ReadOwn`).
-    pub(super) fn func_read_own(&mut self, work: Work) -> FuncId {
+    /// With `deep`, the literal is in a `Work::Deferred` instance (`FnLower::own_deep`).
+    pub(super) fn func_read_own(&mut self, work: Work, deep: bool) -> FuncId {
+        let work = match deep {
+            true => Work::Deferred(Box::new(work)),
+            false => work,
+        };
         match self.has_lock_set() {
             true => self.func_in(Work::ReadOwn(Box::new(work)), super::LkMode::Plain),
             false => self.func_in(work, super::LkMode::Read),
@@ -217,16 +224,20 @@ impl<'h> Cx<'h> {
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
+                let deep = matches!(work, Work::ReadOwn(w) if matches!(**w, Work::Deferred(_)));
                 let (mode, suffix) = match work {
                     Work::Read(_) => (super::LkMode::Read, "_R"),
+                    Work::ReadOwn(_) if deep => (super::LkMode::Read, "_OD"),
                     Work::ReadOwn(_) => (super::LkMode::Read, "_O"),
                     Work::Deferred(_) => (super::LkMode::Deferred, "_D"),
                     _ => (super::LkMode::Checked, "_K"),
                 };
                 self.cur_mode = mode;
                 self.cur_own = matches!(work, Work::ReadOwn(_));
+                self.cur_own_deep = deep;
                 let mut f = super::FnLower::build(self, w);
                 self.cur_own = false;
+                self.cur_own_deep = false;
                 // `_K` / `_R` follow no mangled name or suffix the plain version has.
                 f.symbol.push_str(suffix);
                 f

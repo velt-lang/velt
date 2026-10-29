@@ -1,0 +1,57 @@
+// check: no leaks
+// The result of a `read` nested in another `read` callback is a copy the outer reader made:
+// it is the outer reader's own, so the outer callback can change it, store it into the
+// caller's containers and drop it, and a later `write` of either lock leaves it as it was
+// (#1523).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+class Row {
+  cells: number[] = [];
+  constructor(cells: number[]) {
+    this.cells = cells;
+  }
+}
+
+class Grid {
+  rows: Row[] = [new Row([4]), new Row([5, 6])];
+}
+
+function firstRows(g: shared<RwLock<Grid>>): Row[] {
+  return g.read((x) => x.rows.slice());
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const g = shared(new RwLock<Grid>(new Grid()));
+  const out: number[][] = [];
+  const rows: Row[] = [];
+  let count = 0;
+  a.read((x) => {
+    const inner = b.read((y) => y.items.map((e) => e));
+    inner.push([5]);
+    inner[0].push(7);
+    out.push(inner[2]);
+    out.push(inner[0]);
+    const lit = b.read((y) => [y.items[0], x.items[1]]);
+    lit.push([8]);
+    count = lit.length + x.items.length;
+    const dropped = b.read((y) => y.items.slice());
+    count += dropped.length;
+    const rs = firstRows(g);
+    rs[1].cells.push(9);
+    rows.push(rs[1]);
+  });
+  a.write((c) => {
+    c.items = [];
+  });
+  b.write((c) => {
+    c.items = [];
+  });
+  g.write((c) => {
+    c.rows = [];
+  });
+  console.log(out, count, rows);
+}

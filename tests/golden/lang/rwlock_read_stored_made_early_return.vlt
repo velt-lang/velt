@@ -1,0 +1,27 @@
+// check: no leaks
+// Arrays a `read` callback made and stored into the caller's array, then left by an early
+// `return` from the callback's loop: the caller keeps them, freed once (#1541).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function pick(a: RwLock<Box>, out: number[][][]): number {
+  return a.read((x) => {
+    for (let i = 0; i < 5; i++) {
+      const c = x.items.slice(i % 2);
+      out.push(c);
+      if (out.length == 3) {
+        return c.length;
+      }
+    }
+    return -1;
+  });
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][][] = [];
+  console.log(pick(a, out), pick(a, out), out.length);
+  out[0].push([7]);
+  console.log(JSON.stringify(out));
+}

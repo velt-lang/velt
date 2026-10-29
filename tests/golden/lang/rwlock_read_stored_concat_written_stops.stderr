@@ -1,0 +1,1 @@
+panic: cannot change an object a `read` callback made after storing it outside the callback: it is the caller's from then on, as the same object (store it once it is complete, or change it through the caller's container after `read`)

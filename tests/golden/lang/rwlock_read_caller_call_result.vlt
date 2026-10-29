@@ -1,0 +1,52 @@
+// check: no leaks
+// A `read` callback stores what a function returns of the caller's own variable (the variable
+// itself or a part of it) into the caller's container. That is the caller's object, not one
+// of the lock's value, so it is stored as it is, as in JavaScript: a later change to it shows
+// through both, also from a nested `read` and through a method call.
+class Box {
+  items: string[][] = [["s"]];
+}
+
+class Holder {
+  rows: string[][] = [["h"]];
+  top(): string[] {
+    return this.rows[0];
+  }
+}
+
+function first(xs: string[][]): string[] {
+  return xs[0];
+}
+
+function same(xs: string[][]): string[][] {
+  return xs;
+}
+
+function main() {
+  const lock = new RwLock(new Box());
+  const other = new RwLock(new Box());
+  const mine = [["p"]];
+  const got: string[][] = [];
+  const all: string[][][] = [];
+  const h = new Holder();
+  lock.read((v) => {
+    got.push(first(mine));
+    all.push(same(mine));
+    got.push(h.top());
+    other.read((w) => {
+      got.push(first(mine));
+    });
+  });
+  got[0].push("z");
+  all[0].push(["q"]);
+  got[1].push("y");
+  console.log(got[0], mine[0], got[2]);
+  console.log(mine.length, all[0].length);
+  console.log(h.rows[0]);
+  const m = new Map<string, string[]>();
+  lock.read((v) => {
+    m.set("k", first(mine));
+  });
+  m.get("k")!.push("w");
+  console.log(mine[0]);
+}

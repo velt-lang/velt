@@ -1,0 +1,19 @@
+// An array a `read` callback made holding parts of the lock's value is the caller's once stored
+// into the caller's array, as the same object: a write through the callback's own variable
+// afterwards stops the program instead of changing only a copy (#1541; Node shares the
+// array, so the write would reach the caller's).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][][] = [];
+  a.read((x) => {
+    const c = x.items.concat([[5]]);
+    out.push(c);
+    console.log("stored", out[0] === c);
+    c.push([8]);
+  });
+  console.log(JSON.stringify(out));
+}
