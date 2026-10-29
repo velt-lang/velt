@@ -661,13 +661,10 @@ impl Ctx<'_> {
     /// `bounds` taken as readable (checked where the generic is instantiated).
     pub(crate) fn frozen_readable_under(&mut self, bounds: &[Vec<Bound>], t: TyId) -> bool {
         let frozen = self.prelude_iface("Frozen");
-        let params = (0..bounds.len() as u32)
+        let params: Vec<u32> = (0..bounds.len() as u32)
             .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
             .collect();
-        let saved = std::mem::replace(&mut self.frozen_params, params);
-        let ok = self.frozen_readable(t);
-        self.frozen_params = saved;
-        ok
+        self.frozen_readable_in(t, &params, &mut rustc_hash::FxHashSet::default())
     }
 
     /// Does interface `b`, or one it extends, declare a generic method?

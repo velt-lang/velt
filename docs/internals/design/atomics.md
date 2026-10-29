@@ -630,9 +630,11 @@ instantiated, as any interface bound is; lowering instantiates per type already,
 Sema reads a `shared<T>` as a `T` only when `Ctx::frozen_readable` accepts `T`, and a type
 parameter never was. The prelude's marker interface `Frozen` is compiler-known like
 `AtomicValue`: `Ctx::satisfies` decides it for a concrete type with `frozen_readable`, and
-inside a generic body `FnCx::frozen_readable_here` sets `Ctx::frozen_params` to the parameters
-bounded by it, which `frozen_readable_in` then takes as readable. Lowering is unchanged: at
-instantiation the type is concrete and the frozen machinery reads it as for a written type.
+inside a generic body `FnCx::frozen_readable_here` (`Ctx::frozen_readable_under`) passes the
+parameters bounded by it to `frozen_readable_in`, which takes them as readable. Lowering is
+unchanged but for one case: at instantiation the type is concrete and the frozen machinery reads
+it as for a written type, except that a `shared` 64-bit integer, an atomic one, is read with the
+atomic load `get()` uses.
 `ConcurrentMap<K, V>` (step 4.3) stores a non-`u64` `V` as `shared<V>` and returns it this way.
 
 ## Not in this design

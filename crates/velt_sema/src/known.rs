@@ -280,10 +280,17 @@ impl Ctx<'_> {
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
     /// counts atomically.
     pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
+        self.frozen_readable_in(t, &[], &mut rustc_hash::FxHashSet::default())
     }
 
-    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+    /// `frozen_readable`, taking the type parameters `frozen` (bounded by `Frozen` where the
+    /// type is read: `Ctx::frozen_readable_under`) as readable.
+    pub(crate) fn frozen_readable_in(
+        &mut self,
+        t: TyId,
+        frozen: &[u32],
+        seen: &mut rustc_hash::FxHashSet<TyId>,
+    ) -> bool {
         if !seen.insert(t) {
             return true;
         }
@@ -294,7 +301,7 @@ impl Ctx<'_> {
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Shared(_) => return true,
             // `T extends Frozen` in the body being checked: whatever it is, it is readable.
-            TyKind::Param(p) => return self.frozen_params.contains(&p),
+            TyKind::Param(p) => return frozen.contains(&p),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return false,
             TyKind::Adt(d, _)
                 if Some(d) == self.mutex_ty()
@@ -320,7 +327,9 @@ impl Ctx<'_> {
             }
             k => crate::types::children(&k),
         };
-        parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
+        parts
+            .into_iter()
+            .all(|p| self.frozen_readable_in(p, frozen, seen))
     }
 
     /// Does a value of type `t` reach a `Mutex` or `RwLock`, whose value is read only under
