@@ -11,8 +11,8 @@
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
 //! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals
 //!    `0..params.len()` hold the incoming params.
-//! 5. Lowering emits the program entry as an exported function `velt_main() -> I32`
-//!    (see rt_abi.md); backends need no special casing.
+//! 5. A program's entry is an exported `velt_main() -> I32` (rt_abi.md); code compiled on its
+//!    own to link into one (the std cache) declares it (`Import`). Backends need no special case.
 //! 7. `BinOp::Rem` on floats is C `fmod` (JS `%`). `Rvalue::Cast` also allows int → `Bool` (`!= 0`).
 //!    Lowering guards signed `MIN / -1` (wrapping neg; `MIN % -1` = 0), so backends never trap on it.
 //! 6. Every block ends in exactly one terminator; every local is assigned before it is read

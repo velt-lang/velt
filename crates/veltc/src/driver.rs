@@ -19,6 +19,7 @@ mod output;
 mod pipeline;
 mod recover;
 mod stamp;
+mod std_cache;
 
 pub use output::OutputPaths;
 use pipeline::on_pipeline_thread;
@@ -149,6 +150,8 @@ pub struct Session {
     /// What codegen took from the build cache: `(found, of, what)` ("functions", "codegen
     /// units"); `None` without a cache.
     pub cached: Option<(usize, usize, &'static str)>,
+    /// Objects of std functions the program links instead of compiling (`std_cache`).
+    pub std_objects: Vec<PathBuf>,
 }
 
 impl Session {
@@ -365,6 +368,24 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         )));
     }
 
+    if std_cache::wanted(opts) {
+        let t = Instant::now();
+        let cg = velt_codegen_cl::CodegenOptions {
+            target: opts.target(),
+            optimize: opts.release,
+            cpu: opts.cpu.clone(),
+        };
+        let split = std_cache::split(&mut program, opts, &cg);
+        sess.std_objects = split.objects;
+        sess.record("std cache", t);
+        if std_cache::stats() {
+            eprintln!(
+                "velt: std cache: {} found, {} compiled",
+                split.hits, split.misses
+            );
+        }
+    }
+
     let t = Instant::now();
     let level = if opts.release {
         velt_opt::OptLevel::Speed
@@ -450,7 +471,12 @@ fn build_on_current_thread(
         let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
         let stamp_path = stamp::path(&paths.executable);
         let objects = stamp::read(&stamp_path, &key)
-            .map(|n| (0..n).map(|i| paths.unit_object(i)).collect::<Vec<_>>())
+            .map(|(n, std)| {
+                (0..n)
+                    .map(|i| paths.unit_object(i))
+                    .chain(std)
+                    .collect::<Vec<_>>()
+            })
             .filter(|objects| objects.iter().all(|o| o.is_file()));
         if objects.is_none() {
             // A build that fails half-way must not leave a stamp of the old one.
@@ -543,7 +569,9 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
-    link_stage(sess, opts, &target, &object_paths, &paths)?;
+    let mut linked = object_paths.clone();
+    linked.extend(sess.std_objects.iter().cloned());
+    link_stage(sess, opts, &target, &linked, &paths)?;
     crate::build_cache::collect_garbage_if_due();
     // Warnings are shown by every build, so a build with diagnostics gets no stamp.
     if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
@@ -557,6 +585,7 @@ fn build_on_current_thread(
             virtual_root: generated,
             objects: object_paths.len(),
             link_inputs: &outputs,
+            std_objects: &sess.std_objects,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));

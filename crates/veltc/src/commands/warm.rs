@@ -13,8 +13,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use velt_build_cache::KeyHasher;
-
 /// The CPUs to warm for: this machine's, then the target's default.
 const CPUS: [Option<&str>; 2] = [Some("native"), None];
 
@@ -154,20 +152,7 @@ fn detach(_: &mut Command) {}
 /// Who compiled the cache's entries: this velt's version line and its executable (a rebuilt
 /// development velt is another toolchain).
 fn toolchain_key() -> velt_build_cache::Key {
-    let mut h = KeyHasher::new();
-    h.part(crate::commands::version::version_line().as_bytes());
-    if let Some(meta) = std::env::current_exe()
-        .ok()
-        .and_then(|e| std::fs::metadata(e).ok())
-    {
-        h.part(&meta.len().to_le_bytes());
-        let time = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
-        h.part(&time.unwrap_or_default().as_nanos().to_le_bytes());
-    }
-    h.finish()
+    crate::build_cache::compiler_identity()
 }
 
 /// The warm-up programs: the `.vlt` files of `dir` by name, then those `programs.txt` there lists

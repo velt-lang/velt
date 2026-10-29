@@ -168,6 +168,10 @@ A build never compiles the same thing twice:
   compiles little more than its own code. It runs once per Velt version; `velt cache warm` runs
   it in the foreground, `--background` detached. The installers skip it in CI (`CI` set), where
   the cache goes away with the runner, and when `VELT_CACHE_WARM=off`.
+- **Std compiled once (experimental).** With `VELT_STD_OBJECT=1`, a release build compiles each
+  larger std function it uses on its own, stores it in the build cache, and links it; the next
+  program that compiles the same std function links it from the cache instead of compiling it
+  again. `VELT_STD_OBJECT_STATS=1` shows what it found, compiled and left in the program.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
   the build cache)`) and when a build was up to date.
 

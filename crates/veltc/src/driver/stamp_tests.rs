@@ -29,6 +29,7 @@ fn render_of(sm: &SourceMap, seen: &Seen, link_inputs: &[PathBuf]) -> String {
         virtual_root: None,
         objects: 2,
         link_inputs,
+        std_objects: &[],
     };
     render(&Key::of(&[b"opts"]), sm, &built)
 }
@@ -169,8 +170,43 @@ fn a_generated_root_is_left_to_the_key() {
         virtual_root: Some(&root),
         objects: 1,
         link_inputs: &[],
+        std_objects: &[],
     };
     let stamp = render(&key, &sm, &built);
     assert!(!stamp.contains("harness.vlt"));
     assert_eq!(check(&stamp, &key, LATER), Some(1));
+}
+
+/// The std cache's objects are recorded and handed back for the fast path's link; one rewritten
+/// (touched) or removed makes the stamp stale, so the build links (and compiles) again.
+#[test]
+fn std_objects_are_linked_again_and_must_stay_as_they_were() {
+    let tmp = tempfile::tempdir().unwrap();
+    let member = tmp.path().join("member.o");
+    std::fs::write(&member, b"object").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let set = |p: &std::path::Path, t| {
+        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+        f.set_modified(t).unwrap();
+    };
+    set(&member, old);
+    let key = Key::of(&[b"opts"]);
+    let built = Built {
+        seen: &Seen::default(),
+        virtual_root: None,
+        objects: 1,
+        link_inputs: &[],
+        std_objects: std::slice::from_ref(&member),
+    };
+    let stamp = render(&key, &SourceMap::new(), &built);
+    let path = tmp.path().join("app.build-stamp");
+    std::fs::write(&path, &stamp).unwrap();
+    let (objects, std) = read(&path, &key).unwrap();
+    assert_eq!((objects, std), (1, vec![vpm::relpath::absolute(&member)]));
+    set(&member, std::time::SystemTime::now());
+    assert_eq!(read(&path, &key), None, "touched");
+    set(&member, old);
+    assert!(read(&path, &key).is_some());
+    std::fs::remove_file(&member).unwrap();
+    assert_eq!(read(&path, &key), None, "removed");
 }

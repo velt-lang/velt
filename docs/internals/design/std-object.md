@@ -1,6 +1,10 @@
 # Design: compiling std's Velt code once (a cached std object)
 
-Status: proposed (#1728, part of the JSON engine, #1655). Nothing here is implemented.
+Status: #1728, part of the JSON engine (#1655). Steps 1 and 2 are implemented. Step 3 changed
+plan: std functions are cached one by one, per key, instead of in one object built in a world
+loading all of std ("The std cache" below, the maintainer decision on #1728). The sections after
+it describe the single object, kept for the reasoning; its world build, manifest and fixed tables
+are dropped from the plan.
 
 ## Problem
 
@@ -47,6 +51,43 @@ calls to a symbol that the object defines; the linker adds the object as it adds
 Generic functions, small functions and functions std marks as fast paths stay in the program,
 where the inliner can use them. The code in the object is still Velt compiled by Velt, so the
 rule "no Rust fast paths" holds. Debug builds get std optimized.
+
+## The std cache (step 3, as built)
+
+A single object built in a world loading all of std links only about 62% of the std code programs
+compile: whole-program facts, above all which types are counted (`Boxing`), differ between that
+world and a program, and adopting the world's would box `f64[]` and `u8[]` in every program.
+Cached one by one, keyed by their code, std functions serve 82-89% of it, and what a program links
+is exactly what it would have compiled (measurements on #1728). So step 3 is a cache of std
+functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds behind
+`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`):
+
+- After lowering, each std function the cache serves gets a key: its canonical code
+  (`velt_vir::fingerprint`, `Mode::Link`) and parameter attributes, those of every small function
+  it may inline, and who compiles it for what (`build_cache::compiler_identity`, clang, target,
+  CPU, optimization level). Whole-program facts show in the code, so the key covers them.
+- A hit is linked. A miss is compiled now, on its own, with unknown callers: in a copy of the
+  program where every other function is a declaration (`Import`), small ones keeping their
+  bodies to be inlined, and stored under its key. Either way it becomes a declaration in the
+  program; the program's functions its object may call are exported. A function that cannot be
+  compiled on its own stays in the program.
+- The build stamp records the objects it linked (`std` lines, by size and time) and the fast
+  path links them again; a cached file keeps its size and time while it is cached.
+
+What the cache does not serve, and why (`VELT_STD_OBJECT_STATS=1` prints the std statements of
+a build by reason):
+- **Small functions** (under 40 statements, velt_opt's `SMALL_COST`): they stay where their
+  callers can inline them, and are compiled into the cached functions that call them (so they are
+  in those functions' keys).
+- **Renamed duplicates** (`$dup`): not the same function in every program.
+- **Functions reaching statics with identity**: a static with relocations (vtables, type
+  descriptors, `any` tables) or one the program writes (module state, static atomics), named by
+  the function or by a small function it may inline. A copy in another object would be another
+  address. Serving them needs statics with symbols and linkage in VIR (step 4); it is the largest
+  exclusion left, 3-5k statements in `fetch.vlt`, the todo-api example and the sqlite engine.
+- **Functions that call through a function pointer** (callbacks): in the program `const_fields`
+  specializes them for the closure their caller passes and inlines it; compiled on their own,
+  `Array.map` and `Map.upsert` ran 3-6% slower.
 
 ## What stays in the program, and what goes to the object
 
@@ -494,12 +535,10 @@ head, with interleaved runs:
    do not change; `panic_locations.rs` gets a case for a panic inside std. The hot-reload
    fingerprint sees the new panic texts once, as one edit of std would.
 2. VIR fingerprints and `Linkage::Import` in both backends (tests with hand-built VIR).
-3. The object build and the cache (lock, rename, eviction), with the fixed class id and header
-   tables, off by default (`VELT_STD_OBJECT=1` to try). Goldens in both modes. Report the share
-   of reached std functions that link (above); decide there whether step 4 goes ahead or more
-   facts get fixed first.
-4. `__intrinsic_inline`, the number formatter split into its fast path and the rest.
-   Measurements of the acceptance check; then on by default.
+3. The std cache ("The std cache" above), behind `VELT_STD_OBJECT=1`; on by default for release
+   builds in a separate change once the measurements hold on all three OSes.
+4. Statics with symbols and linkage in VIR, so code reaching statics with identity is served too;
+   `__intrinsic_inline` for fast paths where measurements ask for one.
 5. Prebuilt objects in `scripts/package.sh` and target packs.
 6. Later: statics with identity in the object, the JIT host keeping std compiled, a cheaper
    fingerprint if lowering std shows up in profiles.

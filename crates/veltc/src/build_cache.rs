@@ -21,6 +21,26 @@ fn open() -> Option<Cache> {
     Some(Cache::new(&root, limit()))
 }
 
+/// Who compiles: this velt's version line and its executable's size and modification time (a
+/// rebuilt development velt is another compiler). Every key of compiled code, the build stamp
+/// and the warm-up marker include it.
+pub fn compiler_identity() -> velt_build_cache::Key {
+    let mut h = velt_build_cache::KeyHasher::new();
+    h.part(crate::commands::version::version_line().as_bytes());
+    let meta = std::env::current_exe()
+        .ok()
+        .and_then(|e| std::fs::metadata(e).ok());
+    if let Some(meta) = meta {
+        h.part(&meta.len().to_le_bytes());
+        let time = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+        h.part(&time.unwrap_or_default().as_nanos().to_le_bytes());
+    }
+    h.finish()
+}
+
 /// The cache's directory, `None` when it is turned off.
 pub fn root() -> Option<PathBuf> {
     match std::env::var_os("VELT_BUILD_CACHE") {

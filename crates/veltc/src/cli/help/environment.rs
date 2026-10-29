@@ -43,6 +43,10 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "`off`: installing a toolchain does not warm the build cache (nor does CI, `CI` set)",
     ),
     (
+        "VELT_STD_OBJECT",
+        "`1`: release builds link std functions compiled once in the build cache (experimental)",
+    ),
+    (
         "VELT_BUILD_STAMP",
         "`off`: compile even when nothing changed since the last build of the same output",
     ),

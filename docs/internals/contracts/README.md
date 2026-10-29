@@ -140,3 +140,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   caller assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may
   clone one only when its body is kept, and the clone is the program's own `Internal` function. `keys::disambiguate` never renames an
   `Import` symbol.
+- A body-less `Import` is opaque to every pass (#1862): it may write through any pointer it is
+  given and call back; per-function passes skip it.
+- **A declared entry** (#1728 step 3): code compiled on its own to link into a program (the std
+  cache, cli.md "Std cache") declares `velt_main` (`Import`, `() -> I32`) instead of defining
+  it; verification accepts that (vir.rs invariant 5). A program still defines it.
