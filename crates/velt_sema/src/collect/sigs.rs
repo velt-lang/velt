@@ -75,6 +75,13 @@ pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
     cx.sigq.filling_sigs.pop();
 }
 
+/// A parameter type written `readonly T[]` (parsed as `ReadonlyArray<T>`, which is `T[]` from
+/// here on): a `declare system function` buffer the C function only reads.
+fn written_readonly(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, .. }
+        if path.len() == 1 && path[0].name == "ReadonlyArray")
+}
+
 pub(crate) fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
     let span = cx.def_spans[d.0 as usize];
     cx.modules[module]
@@ -221,7 +228,16 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         );
         throws = None;
     }
+    if kind == FnKind::Extern && sig.is_system && !sig.generics.is_empty() {
+        cx.err(
+            "a system function has no type parameters: its C signature fixes every type",
+            sig.generics[0].name.span,
+        );
+    }
     let f = cx.fn_info_mut(d);
+    if kind == FnKind::Extern && sig.is_system {
+        f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());
+    }
     f.declared_throws = throws;
     f.is_async = sig.is_async && !sig.is_generator;
     f.is_generator = sig.is_generator;

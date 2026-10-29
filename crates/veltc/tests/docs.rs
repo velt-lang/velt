@@ -218,6 +218,9 @@ fn compile(root: &Path, program: &str) -> Result<(), (bool, String)> {
         input: root.join("__doc_snippet.vlt"),
         root_source: Some(program.to_string()),
         emit: Emit::Vir,
+        // The examples that call system functions call POSIX ones (docs/reference/
+        // system-functions.md), which a Windows target lacks: there they are checked for Linux.
+        target: cfg!(windows).then(|| "x86_64-unknown-linux-gnu".to_string()),
         ..Default::default()
     };
     let mut sess = Session::new();

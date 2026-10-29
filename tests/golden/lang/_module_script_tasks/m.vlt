@@ -1,0 +1,5 @@
+// Reads no module state of its own: only its top-level statement runs when it is evaluated.
+console.log("m top");
+export function f(): number {
+  return 1;
+}

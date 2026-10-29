@@ -8,14 +8,15 @@
 
 use cranelift_codegen::ir::UserFuncName;
 use cranelift_codegen::isa::CallConv;
-use cranelift_codegen::{CodegenError, Context};
+use cranelift_codegen::Context;
 use cranelift_frontend::FunctionBuilderContext;
-use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleError};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleReloc};
 use rustc_hash::FxHashMap;
 use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
 use crate::abi::{make_signature, validate_aggregates};
+use crate::cache::{compile_all, CacheStats, CodeCache};
 use crate::debug_info::FunctionLines;
 use crate::function::{translate_function, LibFunctions};
 use crate::unwind::FunctionUnwind;
@@ -34,6 +35,8 @@ pub(crate) struct Built {
     pub unwind: Vec<FunctionUnwind>,
     /// Line tables per defined function, when the program has source locations.
     pub lines: Vec<FunctionLines>,
+    /// How many functions came from the cache.
+    pub cache: CacheStats,
 }
 
 /// Module-level ids of the program's entities, indexed by VIR id.
@@ -76,42 +79,78 @@ pub(crate) fn build_module<M: Module>(
     program: &vir::Program,
     naming: &Naming,
 ) -> CodegenResult<Built> {
+    build_module_cached(module, program, naming, None)
+}
+
+/// [`build_module`], compiling the functions on every core and through `cache` (see `cache`).
+/// Functions translated and compiled together: enough to keep every core busy, few enough that
+/// their contexts take little memory (all of a 30 000-function program's took a gigabyte).
+const BATCH: usize = 1024;
+
+pub(crate) fn build_module_cached<M: Module>(
+    module: &mut M,
+    program: &vir::Program,
+    naming: &Naming,
+    cache: Option<&dyn CodeCache>,
+) -> CodegenResult<Built> {
     validate_aggregates(program)?;
     let (decls, defs) = declare_all(module, program, naming)?;
 
+    // In batches, so that only one batch's contexts (IR and code) are alive at a time: translate
+    // its functions (sequential: it declares into the module), compile them (in parallel,
+    // through the cache), and define their code in order.
+    let mut libs = LibFunctions::default();
+    let mut builder_ctx = FunctionBuilderContext::new();
+    let mut stats = CacheStats::default();
     let mut unwind = Vec::new();
     let mut lines = Vec::new();
-    let mut libs = LibFunctions::default();
-    let mut ctx = module.make_context();
-    let mut builder_ctx = FunctionBuilderContext::new();
-    for (i, func) in program.funcs.iter().enumerate() {
-        let Some(id) = defs[i] else { continue };
-        module.clear_context(&mut ctx);
-        ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
-        ctx.func.name = UserFuncName::user(0, id.as_u32());
-        let srclocs = translate_function(
-            module,
-            program,
-            &decls,
-            &mut libs,
-            func,
-            &mut ctx.func,
-            &mut builder_ctx,
-        )
-        .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
-        define(module, id, &mut ctx, &func.symbol)?;
-        unwind.extend(unwind_info(module, id, &ctx, &func.symbol)?);
-        if !program.files.is_empty() {
-            lines.extend(FunctionLines::new(id, func, &ctx, &srclocs));
+    let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
+        .filter_map(|(i, func)| Some((defs[i]?, func)))
+        .collect();
+    for batch in defined.chunks(BATCH) {
+        let mut translated = Vec::with_capacity(batch.len());
+        for &(id, func) in batch {
+            let mut ctx = module.make_context();
+            ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
+            ctx.func.name = UserFuncName::user(0, id.as_u32());
+            let srclocs = translate_function(
+                module,
+                program,
+                &decls,
+                &mut libs,
+                func,
+                &mut ctx.func,
+                &mut builder_ctx,
+            )
+            .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
+            translated.push((ctx, srclocs));
+        }
+        let symbols: Vec<&str> = batch.iter().map(|(_, f)| f.symbol.as_str()).collect();
+        let mut ctxs: Vec<Context> = translated
+            .iter_mut()
+            .map(|t| take_context(&mut t.0))
+            .collect();
+        stats.add(compile_all(module.isa(), &mut ctxs, &symbols, cache)?);
+        for ((&(id, func), (_, srclocs)), ctx) in batch.iter().zip(&translated).zip(&ctxs) {
+            define_compiled(module, id, ctx, &func.symbol)?;
+            unwind.extend(unwind_info(module, id, ctx, &func.symbol)?);
+            if !program.files.is_empty() {
+                lines.extend(FunctionLines::new(id, func, ctx, srclocs));
+            }
         }
     }
-    module.clear_context(&mut ctx);
     Ok(Built {
         funcs: defs,
         references: decls.funcs,
         unwind,
         lines,
+        cache: stats,
     })
+}
+
+/// The context in `slot`, leaving an empty one.
+fn take_context(slot: &mut Context) -> Context {
+    std::mem::replace(slot, Context::new())
 }
 
 /// Declarations of everything, plus the ids of the function code this module defines.
@@ -124,7 +163,10 @@ fn declare_all<M: Module>(
     let (funcs, defs) = match naming {
         Naming::Program => {
             let funcs = declare_program_functions(module, program, call_conv)?;
-            let defs = funcs.iter().copied().map(Some).collect();
+            // An imported function's code is in another object (vir.rs invariant 11).
+            let defs = (funcs.iter().zip(&program.funcs))
+                .map(|(&id, f)| (f.linkage != vir::Linkage::Import).then_some(id))
+                .collect();
             (funcs, defs)
         }
         Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
@@ -210,7 +252,7 @@ fn declare_all<M: Module>(
     Ok((decls, defs))
 }
 
-/// Every function under its symbol, with its VIR linkage.
+/// Every function under its symbol, with its VIR linkage (an imported one as an import).
 fn declare_program_functions<M: Module>(
     module: &mut M,
     program: &vir::Program,
@@ -222,6 +264,7 @@ fn declare_program_functions<M: Module>(
         let linkage = match f.linkage {
             vir::Linkage::Export => Linkage::Export,
             vir::Linkage::Internal => internal,
+            vir::Linkage::Import => Linkage::Import,
         };
         funcs.push(declare_function(
             module, call_conv, &f.symbol, &f.params, f.ret, linkage,
@@ -391,20 +434,37 @@ fn write_reloc<M: Module>(
     Ok(())
 }
 
+/// Compile `ctx`'s function and define it as `id` in `module`.
 pub(crate) fn define<M: Module>(
     module: &mut M,
     id: FuncId,
     ctx: &mut Context,
     symbol: &str,
 ) -> CodegenResult<()> {
-    match module.define_function(id, ctx) {
-        Ok(()) => Ok(()),
-        Err(ModuleError::Compilation(CodegenError::Verifier(errs))) => {
-            let msg = cranelift_codegen::print_errors::pretty_verifier_error(&ctx.func, None, errs);
-            bail!("codegen: compiling function `{symbol}` failed: {msg}")
-        }
-        Err(other) => bail!("codegen: compiling function `{symbol}` failed: {other:?}"),
-    }
+    crate::cache::compile_all(module.isa(), std::slice::from_mut(ctx), &[symbol], None)?;
+    define_compiled(module, id, ctx, symbol)
+}
+
+/// Define `id` in `module` with the code compiled in `ctx`.
+fn define_compiled<M: Module>(
+    module: &mut M,
+    id: FuncId,
+    ctx: &Context,
+    symbol: &str,
+) -> CodegenResult<()> {
+    let code = ctx
+        .compiled_code()
+        .ok_or_else(|| format!("ICE: function `{symbol}` was not compiled"))?;
+    let relocs: Vec<ModuleReloc> = code
+        .buffer
+        .relocs()
+        .iter()
+        .map(|reloc| ModuleReloc::from_mach_reloc(reloc, &ctx.func, id))
+        .collect();
+    let alignment = u64::from(code.buffer.alignment);
+    module
+        .define_function_bytes(id, alignment, code.buffer.data(), &relocs)
+        .map_err(|e| format!("codegen: defining function `{symbol}` failed: {e:?}"))
 }
 
 pub(crate) fn unwind_info<M: Module>(

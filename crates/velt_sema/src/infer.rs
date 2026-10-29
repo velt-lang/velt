@@ -584,8 +584,22 @@ impl Ctx<'_> {
         if self.ty.is_bottom(ty) {
             return true;
         }
+        // The prelude's `AtomicValue` is the compiler's: the types an `Atomic` holds (a type
+        // parameter only through its own bound, below).
+        if Some(b.iface) == self.prelude_iface("AtomicValue")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return matches!(
+                self.ty.kind(ty),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
+            ) || self.atomic_ref(ty);
+        }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
+            // Only a direct `T extends AtomicValue`: nothing else can stand for the compiler's.
+            if Some(b.iface) == self.prelude_iface("AtomicValue") {
+                return declared.contains(b);
+            }
             if declared
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b))

@@ -55,15 +55,18 @@ impl FnCx<'_, '_> {
         match self.cx.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error => true,
             _ if self.cx.atomic_ref(t) => true,
+            // `T extends AtomicValue`: checked where the generic is instantiated.
+            _ if self.atomic_value_param(t) => true,
             _ => {
                 let shown = self.cx.display(t);
                 let d = Diagnostic::error(
-                    format!("`Atomic<T>` needs a number type, `bool` or a `shared` value, found `{shown}`"),
+                    format!("`Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `{shown}`"),
                     span,
                 )
-                .with_note(
-                    "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one",
-                );
+                .with_note(match self.cx.ty.kind(t) {
+                    TyKind::Param(_) => "bound the type parameter: `T extends AtomicValue` (checked where the generic is used)",
+                    _ => "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one",
+                });
                 self.cx.error(d);
                 false
             }
@@ -106,6 +109,24 @@ impl FnCx<'_, '_> {
             let t = self.cx.atomic_value(args[0].ty)?;
             if !self.atomic_value_ty(t, span) {
                 return Some(self.error_expr(span));
+            }
+            // On a type parameter, only what every `AtomicValue` has the same way: `load`,
+            // `store`, `exchange` and `compareExchangeWeak` (whose result is a `bool` for
+            // every `T`; `compareExchange` returns the value before for a number, whether it
+            // swapped for a reference).
+            if self.atomic_value_param(t) {
+                let generic_ok = matches!(
+                    i,
+                    Intrinsic::AtomicLoad | Intrinsic::AtomicStore | Intrinsic::AtomicCasWeak
+                ) || op == Some(0);
+                if !generic_ok {
+                    let shown = self.cx.display(args[0].ty);
+                    self.cx.error(
+                        Diagnostic::error(format!("`{name}` is not available on `{shown}`, whose `T` is a type parameter"), span)
+                            .with_note("generic code has `load`, `store`, `exchange` and `compareExchangeWeak` (in a loop); the others depend on what `T` is"),
+                    );
+                    return Some(self.error_expr(span));
+                }
             }
             let kind = self.cx.ty.kind(t);
             let int = matches!(kind, TyKind::Int(_));
@@ -182,6 +203,19 @@ impl FnCx<'_, '_> {
         Some(self.intrinsic(i, out, ret, span))
     }
 
+    /// Is `t` a type parameter bounded by the prelude's `AtomicValue`?
+    fn atomic_value_param(&self, t: TyId) -> bool {
+        let TyKind::Param(p) = self.cx.ty.kind(t) else {
+            return false;
+        };
+        let Some(iface) = self.cx.prelude_iface("AtomicValue") else {
+            return false;
+        };
+        self.bounds
+            .get(*p as usize)
+            .is_some_and(|bs| bs.iter().any(|b| b.iface == iface))
+    }
+
     /// The ordering an argument names (its index in `ORDERS`): a string literal, or a value
     /// whose type is one string literal type. A union of string literals is an enum, so a
     /// literal passed as one is the variant of its own literal type.
@@ -219,7 +253,10 @@ pub(crate) fn static_atomic_init(cx: &crate::ctx::Ctx, init: &hir::Expr) -> bool
     match &init.kind {
         hir::ExprKind::AdtLit { def, fields, .. } => {
             Some(*def) == cx.atomic_ty()
-                && fields.first().is_some_and(super::thread_local::is_literal)
+                // A `string`'s word points to a box made at run time: kept in the module state.
+                && fields
+                    .first()
+                    .is_some_and(|f| super::thread_local::is_literal(f) && f.ty != cx.ty.str_)
         }
         _ => false,
     }

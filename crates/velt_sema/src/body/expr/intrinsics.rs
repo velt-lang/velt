@@ -16,6 +16,9 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "spawn_handled" => I::SpawnHandled,
         "print_err" => I::PrintErr,
         "to_string" => I::ToString,
+        "error_text" => I::ErrorText,
+        "inspect" => I::Inspect,
+        "throw_loc" => I::ThrowLoc,
         "str_concat" => I::StrConcat,
         "str_len" => I::StrLen,
         "str_byte_len" => I::StrByteLen,
@@ -233,7 +236,8 @@ impl FnCx<'_, '_> {
             | I::HoldsDynamic
             | I::HoldsDynamicOrClass => (vec![(t, B)], bool_, true),
             I::NullAs => (vec![], t, true),
-            I::ToString => (vec![(t, B)], str_, true),
+            I::ToString | I::ErrorText | I::Inspect => (vec![(t, B)], str_, true),
+            I::ThrowLoc => (vec![], str_, false),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));
                 (vec![(t, O)], s, true)

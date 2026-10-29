@@ -443,10 +443,15 @@ fn test_filter_and_no_run() {
         h["file"].as_str().unwrap().ends_with("math.test.vlt"),
         "{out}"
     );
-    // Built, not run: running it fails the assertion.
+    // Built, not run: run by hand, it runs its tests itself and the assertion fails.
     let exe = Path::new(h["executable"].as_str().unwrap());
     let run = std::process::Command::new(exe).output().unwrap();
-    assert_eq!(run.status.code(), Some(101));
+    assert_eq!(run.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        out.contains("FAILED test_bad\n    AssertionError: assertEq failed at "),
+        "{out}"
+    );
     // In a directory of its own, so debugging it doesn't block the next run's link.
     assert_eq!(
         exe.parent().and_then(|d| d.file_name()),
@@ -474,6 +479,15 @@ fn test_filter_and_no_run() {
     let o = s.velt("app", &["test", "--filter", "test_add", "--exact"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
+
+    // No match: said, and nothing built or run.
+    let _ = std::fs::remove_dir_all(s.dir.join("app/target/velt/test"));
+    let o = s.velt("app", &["test", "--filter", "nope"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("no tests match `nope`"), "{stderr}");
+    assert!(!s.dir.join("app/target/velt/test").exists());
 
     // A test file that does not parse: its errors, with their location, are in the JSON.
     s.write("app/src/garbled.test.vlt", "export function test_y( {\n");

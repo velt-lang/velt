@@ -6,12 +6,13 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--b
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
-velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]
+velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
-velt clean
+velt clean [--cache]
+velt cache warm [--background]
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
@@ -55,6 +56,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
   build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
+  `test --jobs <n>` / `-j <n>` (additive): how many test files run at once (default: one per
+  core); the output is the same for any `n`, in file order.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
@@ -240,6 +243,51 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
   (`<exe>.link-stamp` beside it).
+- Build stamp and build cache (additive, #1612). `build`, `run` and `test` with `--emit exe`
+  (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
+  matches: the compiler (version, executable size and time), the options, a generated root's
+  source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
+  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
+  session's source map and the configuration files module resolution read) by content hash (the
+  size and time it had when it was read first, not recorded when it was modified less than 2 s
+  before it was read, and not trusted when not older than the stamp), what
+  module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
+  missing as it was, every directory listed has the same entries), the manifests and lockfile
+  of the package graph, and by size and time the unit objects and the executable it wrote (so
+  an output another build or tool rewrote is a change) and extra link inputs. The objects it names must
+  exist; the link step then runs (and checks its own stamp). The stamp ends with `end <entries>`
+  and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
+  does not match removes it first, as does a build of the executable that writes none
+  (`VELT_BUILD_STAMP=off`, `--report`). `VELT_BUILD_STAMP=off|0` disables it.
+  Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
+  `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
+  profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from
+  `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
+  holds only what the cache makes (a directory with other files is used, never adopted), and
+  `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
+  `warm/` and the marker (the root too when it is then empty); layout `v3/<kind>/`
+  with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
+  Cranelift version) and `llvm`
+  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR).
+  Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
+  (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
+  value, minutes since 1970 of the last use; the last record of a key wins) appended under an
+  exclusive lock of `<nn>.lock`; a value whose checksum does not match is a miss, and the next
+  store appends it again. Larger ones are files, `<kind>/large/<2 hex>/<62 hex>`: the value's
+  length (8 bytes) and checksum (8), then the value, synced and renamed into place, used at their
+  modification time; one that fails its check is removed (a miss) and stored again. File entries
+  (`Cache::put_file`/`path_of`/`touch`, for files a linker reads) are plain files in
+  `<kind>/files/<2 hex>/<62 hex>` with the length and checksum in a `.check` sidecar, checked
+  before the path is handed out; stored, and removed when damaged, under `<kind>/files.lock`.
+  Their time of use is the sidecar's: the file keeps its size and time while it is cached. Limit
+  `$VELT_BUILD_CACHE_SIZE` (`parse_size`: `500M`, `2G`, bytes; default 2 GiB) on the disk space
+  the files take (allocated blocks), enforced after a build that stored entries, at most hourly
+  (`gc-stamp`): entries used least recently go until 3/4 of it, packs with a quarter unreferenced
+  are rewritten, and other layout directories (`v1`) are removed. The directory must be writable only by trusted
+  users: entries are used as they are. A hit refreshes its time of use
+  when that is over an hour old. `-v` appends
+  `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
+  stage, with `(unchanged: nothing to compile)` when it matched.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -330,7 +378,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
   Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
   build that `link.exe` links emits none, leaving function symbols).
-- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
+- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler; a
+  standard-library file as `std/<path below the std root>`) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit
   code**. Compiler errors → exit code 1, nothing executed. Internal compiler errors → 101.
@@ -404,6 +453,22 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   existing `.gitignore`. Refuses (without `--force`) inside another package.
 - `clean` (additive): removes `<package>/target` (found upward from the cwd like `build`) and
   prints `Removed <dir> (<n> files, <size>)`; no `target/` → `Clean nothing to remove`.
+  `clean --cache` removes the build cache's directory instead (same output; the cache turned off
+  → `Clean nothing to remove (the build cache is off: $VELT_BUILD_CACHE)`).
+- `cache warm [--background]` (additive, #1612): with the build cache on, builds each
+  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
+  root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
+  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  writes the marker `<cache>/warm/<hex>` (SHA-256 of the version line and the executable's size
+  and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
+  present it prints that the cache is warm and does nothing; one run per marker at a time
+  (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
+  others ran. `--background` starts `velt cache warm` detached (own process group, lowest
+  priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns; it does nothing
+  when `$CI` is set (non-empty) or `$VELT_CACHE_WARM` is `off`. The cache off →
+  a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
+  after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
+  failures).
 - `completions <shell>` (additive): prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--backend`/`--emit` values and files.
 - Help (additive): `velt --help` lists commands, templates and environment variables;
@@ -456,7 +521,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: check every standard-library definition, not only those the program reaches; docs/internals/design/lazy-std.md).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

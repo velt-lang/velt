@@ -1,6 +1,11 @@
 //! `velt test [file|dir]`: find `*.test.vlt` / `*.test.ts` / `*.test.tsx` files ([`discover`]),
-//! compile a generated harness per file ([`harness`]) and run it, printing `ok <name>` / `FAILED
-//! <name>` and a summary. Exit code 1 if any test failed or did not build.
+//! compile a generated harness ([`harness`]) and run it, printing `ok <name>` / `FAILED <name>`
+//! and a summary. Exit code 1 if any test failed or did not build.
+//!
+//! The test files that only declare (`discover::runs_code`) share one harness, built once; a file
+//! that runs code when evaluated gets one of its own, as does each file of a shared harness that
+//! fails to build (so its errors are its own). Each file runs in a process of its own, up to
+//! `--jobs` of them at once ([`exec`]), and their output is printed in file order.
 //!
 //! `--filter <text>` keeps the tests whose name contains it (`--exact`: is it). `--no-run` builds
 //! the harnesses without running them, with variables for debuggers, into
@@ -10,6 +15,7 @@
 pub(crate) mod discover;
 mod harness;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -41,6 +47,8 @@ pub struct TestOptions {
     pub json: bool,
     /// `--cpu`.
     pub cpu: Option<String>,
+    /// `--jobs`: how many test files run at once (default: one per core).
+    pub jobs: Option<usize>,
 }
 
 /// Settings shared by every test file of one `velt test` run.
@@ -51,13 +59,13 @@ struct Run<'o> {
     packages: Option<vpm::PackageGraph>,
     /// The CPU the harnesses are built for (`super::cpu`).
     cpu: Option<String>,
-    passed: usize,
+    /// Tests that failed before running (files that do not parse) or, with `--no-run`, did not
+    /// build.
     failed: usize,
     /// Every file the builds read (for `--watch`).
     watched: Vec<PathBuf>,
-    /// Harness builds so far: each gets its own executable, since on Windows the one a crashed
-    /// test ran from can stay locked for a moment and the rebuild for the remaining tests would
-    /// fail to link over it.
+    /// Harness builds so far: each gets its own executable, so a `--no-run` harness being
+    /// debugged (Windows locks a running executable) never blocks linking another.
     builds: usize,
     /// Tests that matched the filter.
     selected: usize,
@@ -65,6 +73,8 @@ struct Run<'o> {
     /// diagnostics of their builds.
     harnesses: Vec<Value>,
     diagnostics: Vec<Value>,
+    /// The modules the test files import, as read so far.
+    scanned: discover::Scanned,
 }
 
 /// What one `velt test` run found.
@@ -162,52 +172,66 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         out_dir,
         cpu: super::cpu::for_running_here(cpu, &host, opts.release),
         packages: project.map(|p| p.graph),
-        passed: 0,
         failed: 0,
         watched,
         builds: 0,
         selected: 0,
         harnesses: vec![],
         diagnostics: vec![],
+        scanned: discover::Scanned::default(),
     };
+    let mut planned = vec![];
     for file in &files {
-        run.file(file)?;
+        planned.extend(run.plan(file)?);
     }
     if let (Some(filter), 0) = (&opts.filter, run.selected) {
         if !opts.json {
             eprintln!("no tests match `{filter}`");
         }
-    }
-    if opts.no_run {
-        if opts.json {
-            print_json(&run.harnesses, run.diagnostics);
-        } else {
-            for h in &run.harnesses {
-                println!("{}", h["executable"].as_str().unwrap_or_default());
-            }
+        // Nothing to build or run, and no summary of nothing; a file that doesn't parse has
+        // been reported and fails the run.
+        if !opts.no_run {
+            return Ok(Outcome {
+                passed: run.failed == 0,
+                watched: run.watched,
+            });
         }
+    }
+    if !opts.no_run {
+        let passed = run.run(&planned)?;
         return Ok(Outcome {
-            passed: run.failed == 0,
+            passed,
             watched: run.watched,
         });
     }
-    let verdict = if run.failed == 0 {
-        paint(Stream::Stdout, Style::Good, "ok")
+    for p in &planned {
+        run.build_only(p);
+    }
+    if opts.json {
+        print_json(&run.harnesses, run.diagnostics);
     } else {
-        failed()
-    };
-    println!(
-        "\ntest result: {verdict}. {} passed; {} failed",
-        run.passed, run.failed
-    );
+        for h in &run.harnesses {
+            println!("{}", h["executable"].as_str().unwrap_or_default());
+        }
+    }
     Ok(Outcome {
         passed: run.failed == 0,
         watched: run.watched,
     })
 }
 
+/// A test file with tests to run.
+struct Planned {
+    file: PathBuf,
+    /// Its file name without the extension (`math.test`).
+    module_name: String,
+    found: discover::TestFunctions,
+}
+
 impl Run<'_> {
-    fn file(&mut self, file: &Path) -> Result<(), String> {
+    /// Find the tests of `file` that the filter selects; `None` when there are none, or when it
+    /// does not parse (reported).
+    fn plan(&mut self, file: &Path) -> Result<Option<Planned>, String> {
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -224,34 +248,151 @@ impl Run<'_> {
                 println!("{} {} (does not parse)", failed(), file.display());
             }
             self.failed += 1;
-            return Ok(());
+            return Ok(None);
         };
         if self.opts.filter.is_some() {
             found.tests.retain(|t| self.selects(t));
             found.async_tests.retain(|t| self.selects(t));
             found.skipped.retain(|(t, _)| self.selects(t));
             if found.tests.is_empty() {
-                return Ok(());
+                return Ok(None);
             }
         }
         self.selected += found.tests.len();
-        if self.opts.no_run {
-            self.build_only(file, module_name, &found);
-            return Ok(());
+        Ok(Some(Planned {
+            file: file.to_path_buf(),
+            module_name: module_name.to_string(),
+            found,
+        }))
+    }
+
+    /// Build the harnesses for `planned` and run them: `velt:test` in a harness without test
+    /// files runs every file, as the plan it is handed says, prints the report and exits with
+    /// the run's verdict. Returns whether every test passed.
+    fn run(&mut self, planned: &[Planned]) -> Result<bool, String> {
+        // Without test files, so no test file's module code (or what it imports) runs in it.
+        let Some(runner) = self.build_harness(&[]) else {
+            return Ok(false);
+        };
+        // For each file: the harness it is in, and its index there.
+        let mut built: Vec<Option<(PathBuf, usize)>> = vec![None; planned.len()];
+        for group in groups(planned) {
+            self.build_group(planned, &group, &mut built);
         }
-        println!("running {}", file.display());
-        for (test, reason) in &found.skipped {
-            eprintln!(
-                "{} skipping `{test}` in {}: {reason}",
-                paint(Stream::Stderr, Style::Warning, "warning:"),
-                file.display()
-            );
+        let files: Vec<Value> = planned
+            .iter()
+            .zip(&built)
+            .map(|(p, b)| {
+                let skipped: Vec<Value> = p
+                    .found
+                    .skipped
+                    .iter()
+                    .map(|(name, reason)| json!({"name": name, "reason": reason}))
+                    .collect();
+                json!({
+                    "path": p.file.display().to_string(),
+                    "script": vpm::relpath::absolute(&p.file).to_string_lossy(),
+                    "exe": b.as_ref().map(|(exe, _)| exe.to_string_lossy().into_owned()),
+                    "index": b.as_ref().map_or(0, |(_, i)| *i),
+                    "tests": p.found.tests,
+                    "skipped": skipped,
+                })
+            })
+            .collect();
+        let workers = self.opts.jobs.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        });
+        let plan = json!({
+            "workers": workers,
+            "colorOut": crate::style::enabled(Stream::Stdout),
+            "colorErr": crate::style::enabled(Stream::Stderr),
+            "failed": self.failed,
+            "files": files,
+        });
+        // One per run: two runs in a package at once must not read each other's.
+        let plan_file = self
+            .out_dir
+            .join(format!("plan-{}.json", std::process::id()));
+        std::fs::create_dir_all(&self.out_dir)
+            .and_then(|()| std::fs::write(&plan_file, plan.to_string()))
+            .map_err(|e| format!("cannot write `{}`: {e}", plan_file.display()))?;
+        let mut command = std::process::Command::new(&runner);
+        command.env(harness::PLAN_VAR, &plan_file);
+        for var in harness::CHILD_VARS {
+            command.env_remove(var);
         }
-        let mut remaining = found.tests;
-        while !remaining.is_empty() {
-            remaining = self.run_harness(file, module_name, remaining, &found.async_tests);
+        let status = command.status();
+        let _ = std::fs::remove_file(&plan_file);
+        let status = status.map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
+        Ok(status.success())
+    }
+
+    /// Build one harness for the files `group` of `planned` and record it in `built`. When a
+    /// shared harness fails, the files its errors are in are built alone, which reports them, and
+    /// the others share a harness again. Errors in none of them (in a module they import) leave
+    /// each file to be built alone, to find out whose they are.
+    fn build_group(
+        &mut self,
+        planned: &[Planned],
+        group: &[usize],
+        built: &mut [Option<(PathBuf, usize)>],
+    ) {
+        let files: Vec<&Planned> = group.iter().map(|&i| &planned[i]).collect();
+        let quiet = group.len() > 1;
+        match self.build_files(&files, quiet) {
+            Ok(exe) => {
+                for (index, &i) in group.iter().enumerate() {
+                    built[i] = Some((exe.clone(), index));
+                }
+            }
+            Err(broken) if quiet => {
+                let (bad, rest): (Vec<_>, Vec<_>) = group
+                    .iter()
+                    .enumerate()
+                    .partition(|(at, _)| broken.is_empty() || broken.contains(at));
+                for (_, &i) in bad {
+                    self.build_group(planned, &[i], built);
+                }
+                let rest: Vec<usize> = rest.into_iter().map(|(_, &i)| i).collect();
+                if !rest.is_empty() {
+                    self.build_group(planned, &rest, built);
+                }
+            }
+            Err(_) => {}
         }
-        Ok(())
+    }
+
+    /// The harness of `files` alone; without files, the runner.
+    fn build_harness(&mut self, files: &[&Planned]) -> Option<PathBuf> {
+        self.build_files(files, false).ok()
+    }
+
+    /// Build the harness of `files`; reports the build's diagnostics unless it fails and is
+    /// `quiet` (a shared harness, whose files are then built again). A failed build gives the
+    /// indexes in `files` of the files its errors are in.
+    fn build_files(&mut self, files: &[&Planned], quiet: bool) -> Result<PathBuf, Vec<usize>> {
+        let opts = self.harness_options(files);
+        let mut sess = Session::new();
+        let result = driver::build(&mut sess, &opts);
+        // The harness itself is generated (never on disk); everything else it read is watched.
+        self.watched.extend(
+            sess.sm
+                .files()
+                .map(|(_, f)| f.path.clone())
+                .filter(|p| *p != opts.input),
+        );
+        match result {
+            Ok(artifact) => {
+                report(&sess, false);
+                Ok(artifact_path(artifact))
+            }
+            Err(_) if quiet => Err(files_with_errors(&sess, files)),
+            Err(e) => {
+                report(&sess, false);
+                let _ = failure_code(&e);
+                Err(vec![])
+            }
+        }
     }
 
     /// Whether `--filter` (and `--exact`) select the test `name`.
@@ -288,12 +429,16 @@ impl Run<'_> {
             }
             return Ok(None);
         }
-        Ok(Some(discover::test_functions(&module)))
+        let mut found = discover::test_functions(&module);
+        found.runs_code =
+            found.runs_code || discover::imports_run_code(file, &module, &mut self.scanned);
+        Ok(Some(found))
     }
 
-    /// `--no-run`: build the harness for `found` and record it.
-    fn build_only(&mut self, file: &Path, module_name: &str, found: &discover::TestFunctions) {
-        let opts = self.harness_options(file, module_name, &found.tests, &found.async_tests);
+    /// `--no-run`: build the harness for `p` alone and record it.
+    fn build_only(&mut self, p: &Planned) {
+        let (file, found) = (&p.file, &p.found);
+        let opts = self.harness_options(&[p]);
         let mut sess = Session::new();
         let built = driver::build(&mut sess, &opts);
         let failure = match &built {
@@ -327,15 +472,25 @@ impl Run<'_> {
         }
     }
 
-    /// The build of a harness running `tests` of `file`.
-    fn harness_options(
-        &mut self,
-        file: &Path,
-        module_name: &str,
-        tests: &[String],
-        async_tests: &[String],
-    ) -> BuildOptions {
-        let dir = file.parent().unwrap_or(Path::new(""));
+    /// The build of a harness running the tests of `files`: next to the file when it is one, else
+    /// in the directory that holds them all.
+    fn harness_options(&mut self, files: &[&Planned]) -> BuildOptions {
+        let dir = common_dir(files.iter().map(|p| p.file.as_path()));
+        let name = match files {
+            [] => "runner".to_string(),
+            [one] => one.module_name.clone(),
+            _ => "harness".to_string(),
+        };
+        let harness_files: Vec<harness::HarnessFile> = files
+            .iter()
+            .map(|p| harness::HarnessFile {
+                // With its extension: `a.test.vlt` and `a.test.ts` side by side are not ambiguous
+                // here.
+                import_spec: import_spec(&dir, &p.file),
+                tests: &p.found.tests,
+                async_tests: &p.found.async_tests,
+            })
+            .collect();
         // `--no-run` harnesses get a directory of their own: one being debugged must not keep
         // the next run from linking its harness (Windows locks a running executable).
         let out_dir = match self.opts.no_run {
@@ -343,22 +498,10 @@ impl Run<'_> {
             false => self.out_dir.clone(),
         };
         let opts = BuildOptions {
-            input: dir.join(format!("__velt_test_{module_name}.vlt")),
-            // With its extension: `a.test.vlt` and `a.test.ts` side by side are not ambiguous here.
-            root_source: Some(harness::harness_source(
-                &format!(
-                    "./{}",
-                    file.file_name().unwrap_or_default().to_string_lossy()
-                ),
-                tests,
-                async_tests,
-            )),
+            input: dir.join(format!("__velt_test_{name}.vlt")),
+            root_source: Some(harness::harness_source(&harness_files)),
             packages: self.packages.clone(),
-            output: Some(out_dir.join(format!(
-                "{}_{}",
-                module_name.replace('.', "_"),
-                self.builds
-            ))),
+            output: Some(out_dir.join(format!("{}_{}", name.replace('.', "_"), self.builds))),
             release: self.opts.release,
             cpu: self.cpu.clone(),
             // What `--no-run` builds is for a debugger.
@@ -368,85 +511,121 @@ impl Run<'_> {
         self.builds += 1;
         opts
     }
+}
 
-    /// Build and run a harness for `tests`; returns the tests still to run after a crash.
-    fn run_harness(
-        &mut self,
-        file: &Path,
-        module_name: &str,
-        tests: Vec<String>,
-        async_tests: &[String],
-    ) -> Vec<String> {
-        let opts = self.harness_options(file, module_name, &tests, async_tests);
-        let mut sess = Session::new();
-        let built = driver::build(&mut sess, &opts);
-        // The harness itself is generated (never on disk); everything else it read is watched.
-        self.watched.extend(
-            sess.sm
-                .files()
-                .map(|(_, f)| f.path.clone())
-                .filter(|p| *p != opts.input),
-        );
-        let exe = match built {
-            Ok(artifact) => artifact_path(artifact),
-            Err(e) => {
-                report(&sess, false);
-                let _ = failure_code(&e);
-                for t in &tests {
-                    println!("{} {t} (build failed)", failed());
-                }
-                self.failed += tests.len();
-                return vec![];
-            }
-        };
-        report(&sess, false);
-        self.execute(&exe, file, tests)
+/// Which files of `planned` share a harness: those that only declare, in one; each other one
+/// alone. Of two files with the same module path (`a.test.ts` and `a.test.vlt` side by side,
+/// which one program cannot import both of), the second is alone too.
+fn groups(planned: &[Planned]) -> Vec<Vec<usize>> {
+    let mut shared = vec![];
+    let mut alone = vec![];
+    let mut paths = HashSet::new();
+    for (i, p) in planned.iter().enumerate() {
+        let path = p.file.with_file_name(&p.module_name);
+        if p.found.runs_code || !paths.insert(path) {
+            alone.push(vec![i]);
+        } else {
+            shared.push(i);
+        }
     }
+    let mut groups = vec![];
+    if !shared.is_empty() {
+        groups.push(shared);
+    }
+    groups.extend(alone);
+    groups
+}
 
-    fn execute(&mut self, exe: &Path, file: &Path, tests: Vec<String>) -> Vec<String> {
-        // `process.argv[1]` is the test file, as with `node --test`.
-        let output = match std::process::Command::new(exe)
-            .env(super::build::SCRIPT_VAR, vpm::relpath::absolute(file))
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) => {
-                crate::style::error(&format!("cannot run `{}`: {e}", exe.display()));
-                self.failed += tests.len();
-                return vec![];
-            }
-        };
-        let run = harness::read_output(&String::from_utf8_lossy(&output.stdout), &tests);
-        for line in &run.display {
-            match line.strip_prefix("ok ") {
-                Some(name) => println!("{} {name}", paint(Stream::Stdout, Style::Good, "ok")),
-                None => println!("{line}"),
+/// The indexes in `files` of the test files `sess` reported an error in.
+fn files_with_errors(sess: &Session, files: &[&Planned]) -> Vec<usize> {
+    let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let wanted: Vec<PathBuf> = files.iter().map(|p| same(&p.file)).collect();
+    let mut broken: Vec<usize> = sess
+        .diagnostics
+        .iter()
+        .filter(|d| d.is_error())
+        .filter_map(|d| d.labels.first())
+        .filter_map(|l| sess.sm.files().find(|(id, _)| *id == l.span.file))
+        .filter_map(|(_, f)| wanted.iter().position(|w| *w == same(&f.path)))
+        .collect();
+    broken.sort_unstable();
+    broken.dedup();
+    broken
+}
+
+/// The deepest directory holding every one of `files`.
+fn common_dir<'p>(mut files: impl Iterator<Item = &'p Path>) -> PathBuf {
+    let parent = |f: &Path| f.parent().unwrap_or(Path::new("")).to_path_buf();
+    let mut dir = files.next().map(parent).unwrap_or_default();
+    for f in files {
+        while !f.starts_with(&dir) {
+            match dir.parent() {
+                Some(up) => dir = up.to_path_buf(),
+                None => return PathBuf::new(),
             }
         }
-        self.passed += run.passed;
-        let code = super::build::exit_code(output.status);
-        if run.passed == tests.len() {
-            if code != 0 {
-                println!(
-                    "{} (test harness exited with code {code} after all tests passed)",
-                    failed()
-                );
-                self.failed += 1;
-            }
-            return vec![];
-        }
-        println!("{} {} (exit code {code})", failed(), tests[run.passed]);
-        for line in String::from_utf8_lossy(&output.stderr).lines() {
-            println!("    {line}");
-        }
-        self.failed += 1;
-        tests[run.passed + 1..].to_vec()
     }
+    dir
+}
+
+/// `./sub/a.test.vlt`: how a harness in `dir` imports `file`.
+fn import_spec(dir: &Path, file: &Path) -> String {
+    let rel = file.strip_prefix(dir).unwrap_or(file);
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    format!("./{}", parts.join("/"))
 }
 
 fn artifact_path(artifact: driver::Artifact) -> PathBuf {
     match artifact {
         driver::Artifact::Executable(p) => vpm::relpath::absolute(&p),
         other => unreachable!("ICE: test harness built {other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn planned(file: &str, runs_code: bool) -> Planned {
+        let name = Path::new(file).file_name().unwrap().to_string_lossy();
+        Planned {
+            file: PathBuf::from(file),
+            module_name: vpm::sources::strip_source_extension(&name)
+                .unwrap()
+                .to_string(),
+            found: discover::TestFunctions {
+                runs_code,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn files_that_only_declare_share_a_harness() {
+        let files = [
+            planned("p/tests/a.test.vlt", false),
+            planned("p/tests/b.test.vlt", true),
+            planned("p/src/c.test.vlt", false),
+            // Same module path as `a.test.vlt`: one program can't import both.
+            planned("p/tests/a.test.ts", false),
+        ];
+        assert_eq!(groups(&files), [vec![0, 2], vec![1], vec![3]]);
+        assert_eq!(groups(&files[1..2]), [vec![0]]);
+    }
+
+    #[test]
+    fn harness_goes_where_it_can_import_every_file() {
+        let (a, c) = (
+            Path::new("p/tests/a.test.vlt"),
+            Path::new("p/src/x/c.test.vlt"),
+        );
+        assert_eq!(common_dir([a].into_iter()), Path::new("p/tests"));
+        let dir = common_dir([a, c].into_iter());
+        assert_eq!(dir, Path::new("p"));
+        assert_eq!(import_spec(&dir, c), "./src/x/c.test.vlt");
+        assert_eq!(import_spec(Path::new("p/tests"), a), "./a.test.vlt");
     }
 }

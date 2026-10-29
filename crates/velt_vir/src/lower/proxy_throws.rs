@@ -33,7 +33,7 @@ use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, 
 
 impl super::Cx<'_> {
     /// The prelude's `Proxy` class type, when the program has loaded it.
-    fn prelude_proxy_ty(&mut self) -> Option<TyId> {
+    pub(super) fn prelude_proxy_ty(&mut self) -> Option<TyId> {
         if let Some(t) = self.prelude_proxy {
             return t;
         }
@@ -187,6 +187,7 @@ impl FnLower<'_, '_> {
         // The key's string for the message (a number key formatted only on this path).
         let ka = match key {
             ProxyKey::Str(k) => Operand::Copy(Place::local(k)),
+            ProxyKey::Sym(_) => self.proxy_key_addr("Symbol()"),
             ProxyKey::Num(n) => {
                 let s = self.temp(Ty::Agg(STR_AGG));
                 let sa = self.addr(Place::local(s));

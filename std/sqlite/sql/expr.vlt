@@ -163,6 +163,15 @@ export abstract class ExprParser extends TokenCursor {
 
   /** One operator of `=`'s level: = == != <> IS, IN, LIKE and kin, BETWEEN, ISNULL, NOT NULL. */
   equality(e: Expr): Expr {
+    // Its operands nest through its own frame and an operand's: a level of its own. A chain
+    // (`a = b = c`) is a loop of calls, each left before the next.
+    this.enter();
+    const r = this.equalityBody(e);
+    this.leave();
+    return r;
+  }
+
+  equalityBody(e: Expr): Expr {
     const t = this.peek();
     if (t.kind == T_OP) {
       this.pos++;

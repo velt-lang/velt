@@ -111,6 +111,12 @@ impl FnLower<'_, '_> {
         let p = self.atomic_place(a);
         let cell = self.field_place(&p, aty, 0);
         let vt = match self.cx.kind(aty) {
+            // An `Atomic<string>`'s word is the pointer of the box holding it (atomic_str.rs).
+            TyKind::Adt(_, args)
+                if args.len() == 1 && matches!(self.cx.kind(args[0]), TyKind::Str) =>
+            {
+                Ty::Ptr
+            }
             TyKind::Adt(_, args) if args.len() == 1 => self.cx.ty(args[0]),
             k => ice(format_args!("Atomic intrinsic on {k:?}")),
         };
@@ -157,7 +163,9 @@ impl FnLower<'_, '_> {
             }
             _ => {
                 let v = self.expr(a);
-                self.place_of(v, a.ty)
+                // Substituted: in generic code (`T extends AtomicValue`) it names a type param.
+                let ty = self.sub(a.ty);
+                self.place_of(v, ty)
             }
         }
     }

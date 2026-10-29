@@ -129,6 +129,15 @@ pub mod interp;
 #[path = "../tests/common/mod.rs"]
 mod testkit;
 
+#[cfg(test)]
+mod import_tests;
+
+/// The functions with code: the per-function passes leave a declaration (an `Import` without
+/// a body, vir.rs invariant 11) alone.
+fn with_bodies(funcs: &mut [vir::Function]) -> impl Iterator<Item = &mut vir::Function> {
+    funcs.iter_mut().filter(|f| !f.blocks.is_empty())
+}
+
 /// How hard to optimize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {
@@ -163,7 +172,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.aggs,
                 &program.statics,
             );
-            for func in &mut program.funcs {
+            for func in with_bodies(&mut program.funcs) {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(&program.aggs, func, t);
@@ -184,7 +193,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.statics,
             );
             let signatures = t.time("signatures", || callgraph::signatures(program));
-            for func in &mut program.funcs {
+            for func in with_bodies(&mut program.funcs) {
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(&program.aggs, func, t);
                 }
@@ -215,7 +224,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.aggs,
                 &program.statics,
             );
-            for func in &mut program.funcs {
+            for func in with_bodies(&mut program.funcs) {
                 if t.time("module_state", || module_state::run(lookups, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
@@ -259,7 +268,7 @@ fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut Pas
 /// bodies they live in), then clean up the loads and stores it moved.
 fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
     let signatures = t.time("signatures", || callgraph::signatures(program));
-    for func in &mut program.funcs {
+    for func in with_bodies(&mut program.funcs) {
         let mut changed = t.time("noalias", || noalias::run(&program.aggs, func));
         changed |= t.time("frozen", || frozen::run(&program.aggs, func));
         changed |= t.time("frame_slots", || frame_slots::run(&program.aggs, func));
@@ -283,7 +292,7 @@ fn speed_round(
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let allocator = heap_sroa::Allocator::find(program);
-    for func in &mut program.funcs {
+    for func in with_bodies(&mut program.funcs) {
         changed |= t.time("vtable_loads", || {
             vtable_loads::run(&program.aggs, &program.statics, allocator, func)
         });

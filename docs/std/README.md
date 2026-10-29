@@ -55,6 +55,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Text | [regex](regex.md) |
 | Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
+| Testing | [test](test.md) (the runner `velt test` builds into test programs) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
 

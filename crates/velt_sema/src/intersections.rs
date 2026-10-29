@@ -183,7 +183,7 @@ impl Ctx<'_> {
             // A function type makes a function with properties once the parts are known.
             if self.deferred_part(ty)
                 || matches!(self.ty.kind(ty), TyKind::FnPtr { .. })
-                || self.brandable(ty)
+                || self.brand_operand(ty)
                 || self.dynamic(ty).is_some()
                 || self.has_type_params_at_head(ty)
             {
@@ -344,9 +344,9 @@ impl Ctx<'_> {
         if let Some(t) = self.dynamic_meet(&mut operands, &mut names) {
             return t;
         }
-        // A primitive with object types is a branded type.
+        // A primitive or a class instance with object types is a branded type.
         let bases: Vec<usize> = (0..operands.len())
-            .filter(|&i| self.brandable(operands[i].0))
+            .filter(|&i| self.brand_operand(operands[i].0))
             .collect();
         let brand = match bases.as_slice() {
             [i] if operands.len() > 1 => {
@@ -420,7 +420,7 @@ impl Ctx<'_> {
         match brand {
             // `string & {}` (the literal-union idiom `T | (string & {})`) holds every string, as
             // in TypeScript: only a part with fields brands a primitive.
-            Some(base) if self.is_object_type(acc) && self.public_fields(acc).is_empty() => base,
+            Some(base) if self.brand_adds_nothing(base, acc) => base,
             Some(base) => self.brand_type(base, acc, module, span),
             None => acc,
         }

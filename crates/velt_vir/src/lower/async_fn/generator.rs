@@ -37,7 +37,9 @@ pub(super) const GEN_THREW: i128 = 2;
 /// `return()` through a reference it holds to itself) panics, as JS throws "Generator is already
 /// running". A call keeps its receiver alive (stabilize.rs), so the body cannot drop the last
 /// reference to its own generator; were it dropped anyway (`DROP_BIT | GEN_RUNNING`), freeing
-/// the state under the running body would be unsound, so that panics too.
+/// the state under the running body would be unsound, so that panics too. `velt_opt`'s
+/// `frame_slots` recognizes a generator's resume function by this dispatch case (and then
+/// never marks its frame `noalias`): keep the two in step.
 pub(super) const GEN_RUNNING: i128 = 0x7FFF_FFFE;
 /// Byte offsets of the table entries: resume `(state, cx) -> u32`, close `(state)`, free `(obj)`,
 /// and for an async generator close-start `(state)` ([`Work::AsyncCloseStart`]).

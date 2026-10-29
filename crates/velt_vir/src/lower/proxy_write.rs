@@ -34,6 +34,21 @@ impl FnLower<'_, '_> {
         v
     }
 
+    /// Store the owned `v` into field `index` of the proxiable `bty` value at `base`, through
+    /// the `set` trap when it holds a proxy (a key write in a generic body, spread_object.rs).
+    pub(super) fn proxy_store(
+        &mut self,
+        base: &Place,
+        bty: TyId,
+        index: u32,
+        place: &hir::Expr,
+        v: Operand,
+    ) {
+        let hop = self.retained_hop(base, bty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+        self.proxy_write_at(&ptr, bty, index, place, v);
+    }
+
     /// Store the owned `v` into field `index` of the `bty` value at `ptr`, through the `set`
     /// trap when it holds a proxy. `place` is the HIR target (for a presence flag).
     fn proxy_write_at(
@@ -75,7 +90,55 @@ impl FnLower<'_, '_> {
         index: u32,
         value: &hir::Expr,
     ) -> Operand {
+        if let Some(x) = any_to_value(value) {
+            return self.proxy_assign_any(place, (base, index), value, x);
+        }
         self.proxy_assign_as(place, (base, index), value, false)
+    }
+
+    /// `base.f = x as F` with `x` an `any` (`factory.__props = null as any`): on a proxy or a
+    /// view, `x` itself goes to the `set` trap, as Node stores whatever value it is given (a
+    /// read of the field checks it as `F`); on the object itself, it is converted to `F` first
+    /// (a `TypeError` for a value that is no `F`, which this layout cannot hold).
+    fn proxy_assign_any(
+        &mut self,
+        place: &hir::Expr,
+        (base, index): (&hir::Expr, u32),
+        value: &hir::Expr,
+        x: &hir::Expr,
+    ) -> Operand {
+        let bty = self.sub(base.ty);
+        let ptr = self.proxy_hold(base, bty, value);
+        let xt = self.sub(x.ty);
+        let v = self.consume(x);
+        if self.dead() {
+            return super::unit();
+        }
+        let xvt = self.cx.ty(xt);
+        let held = Place::local(self.copy_to_temp(v, xvt));
+        let (name, fty) = self.proxy_field(bty, index);
+        let drops = self.cx.needs_drop(fty);
+        self.proxy_split(
+            &ptr,
+            |lw, u| {
+                if name.starts_with('#') {
+                    return lw.proxy_private(&name);
+                }
+                let key = lw.proxy_key_addr(&name);
+                let vp = lw.addr(held.clone());
+                let f = lw.cx.func(Work::Glue(Glue::ProxySet, xt));
+                lw.call(Callee::Func(f), vec![u, key, vp], None, false);
+            },
+            |lw| {
+                let v = lw.any_unbox(&held, xt, fty);
+                if lw.dead() {
+                    return;
+                }
+                let fp = lw.proxy_hot_place(&ptr, bty, index);
+                lw.store_assigned(place, fp, v, fty, true, drops);
+            },
+        );
+        super::unit()
     }
 
     /// [`proxy_assign`](Self::proxy_assign), also giving the assigned value when `want` (the
@@ -289,5 +352,19 @@ fn same_index(a: &hir::Expr, b: &hir::Expr) -> bool {
         (K::Local(x, _), K::Local(y, _)) => x == y,
         (K::Lit(x), K::Lit(y)) => x == y && a.ty == b.ty,
         _ => false,
+    }
+}
+
+/// The `any` that `value` converts with `AnyTo` to a type that is not dynamic, if it is one.
+fn any_to_value(value: &hir::Expr) -> Option<&hir::Expr> {
+    match &value.kind {
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::AnyTo),
+            args,
+        } => match args.as_slice() {
+            [x] => Some(x),
+            _ => None,
+        },
+        _ => None,
     }
 }

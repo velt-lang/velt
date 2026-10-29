@@ -1,0 +1,32 @@
+// Every `declare system function` is checked against the compiler's table of the C library's
+// functions: unknown names, wrong types, pointers spelled as integers, buffers declared with the
+// wrong direction, strings, structs with fields C lacks, and callbacks are compile errors.
+declare system function preed(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pread(fd: i32, buf: readonly u8[], offset: i64): isize;
+declare system function pwrite(fd: i32, buf: u8[], offset: i64): isize;
+declare system function read(fd: i32, buf: u64): isize;
+declare system function write(fd: i64, buf: readonly u8[]): isize;
+declare system function close(fd: i32): void;
+declare system function open(path: string, flags: i32, mode: u32): i32;
+declare system function unlink(path: u8[]): i32;
+declare system function fsync(fd: i32, extra: i32): i32;
+
+struct Bad {
+  l_type: i16;
+  nope: i64;
+}
+
+declare system function fcntl(fd: i32, cmd: i32, lock: Bad): i32;
+declare system function lseek(fd: i32, offset: i64, whence: (x: i32) => void): i64;
+declare system function ftruncate(fd: i32, length: f64): i32;
+declare system function pread$range(fd: i32, buf: u8[], start: usize, end: i64, offset: i64): isize;
+
+class Handle {
+  fd: i32 = 0;
+}
+
+declare system function fstat(fd: i32, st: Handle): i32;
+declare function fdatasync(fd: i32): i32;
+declare async system function fchmod(fd: i32, mode: u32): Promise<i32>;
+
+function main() {}

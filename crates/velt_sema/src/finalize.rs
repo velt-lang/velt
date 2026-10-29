@@ -12,7 +12,10 @@ use crate::hir::{
 };
 use crate::hooks;
 
-pub(crate) fn build_defs(cx: &mut Ctx) {
+/// Returns the deferred std definitions nothing reached (`hir::Program::unchecked`), whose stubs
+/// it builds first (`body::lazy_std`).
+pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
+    let unchecked = crate::body::lazy_std::stub_unreached(cx);
     let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
     let assigned = crate::assigned_fields::assigned_objects(cx);
     // An object literal's slot method returning a promise that never rejects, in a group whose
@@ -57,6 +60,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,
                 is_async: f.is_async,
+                system: f.system.clone(),
                 span: f.span,
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),
@@ -74,6 +78,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
         };
         cx.defs[i] = def;
     }
+    unchecked
 }
 
 /// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods, and

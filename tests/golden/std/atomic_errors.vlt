@@ -4,7 +4,7 @@ function first<T>(a: Atomic<T>): T {
   return a.load();
 }
 
-const s = new Atomic<string>("x");
+const s = new Atomic<string | null>("x");
 const n = new Atomic<u64>(1);
 const o = "acquire";
 n.load(o);

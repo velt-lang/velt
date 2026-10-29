@@ -2,7 +2,7 @@
 //! TypeScript-compatibility lint [`ts_compat`]), [`create`] (new/init from templates),
 //! [`package`] (add/install/update/publish), [`clean`], [`test`] (the test runner), [`fmt`] (the
 //! formatter), [`lsp`] (the language server), [`doctor`] (installation checks), [`version`]
-//! (`--version`); [`cpu`] picks the CPU a build is for; [`project`] finds and installs the enclosing package; [`wasm`] runs
+//! (`--version`), [`warm`] (`velt cache warm`); [`cpu`] picks the CPU a build is for; [`project`] finds and installs the enclosing package; [`wasm`] runs
 //! WebAssembly builds. `velt dev` lives in [`crate::dev`]; help and completions come from
 //! [`crate::cli`].
 
@@ -21,7 +21,8 @@ mod registry;
 mod target;
 pub mod test;
 mod ts_compat;
-mod version;
+pub(crate) mod version;
+mod warm;
 mod wasm;
 
 use std::process::ExitCode;
@@ -49,7 +50,9 @@ pub fn execute(cmd: Command) -> ExitCode {
             print!("{}", cli::completions::script(shell));
             Ok(())
         }
-        Command::Clean => clean::clean_command(),
+        Command::Clean { cache: false } => clean::clean_command(),
+        Command::Clean { cache: true } => clean::clean_cache_command(),
+        Command::CacheWarm { background } => warm::warm_command(background),
         Command::Target(action) => target::target_command(&action),
         Command::Toolchain => toolchain_without_launcher(),
         Command::Build(args) => return build::build_command(&args),
@@ -70,6 +73,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             no_run,
             json,
             cpu,
+            jobs,
         } => {
             let opts = test::TestOptions {
                 release,
@@ -79,6 +83,7 @@ pub fn execute(cmd: Command) -> ExitCode {
                 no_run,
                 json,
                 cpu,
+                jobs,
             };
             return test::test_command(path.as_deref(), &opts, watch);
         }

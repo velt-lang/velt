@@ -34,6 +34,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let sig = &d.sig;
+        if let (Some(t), false) = (&sig.this_param, sig.is_generator) {
+            let this_ty = self.resolve(t);
+            return self.this_fn_expr(d, this_ty, exp, span);
+        }
         if let Some(t) = &sig.this_param {
             let this_ty = self.resolve(t);
             let shown = self.cx.display(this_ty);
@@ -134,6 +138,7 @@ impl FnCx<'_, '_> {
         frame.escaping = true;
         frame.is_async = sig.is_async;
         frame.yield_ty = Some(t);
+        frame.type_guards = self.f.type_guards.clone();
         let n = self.cx.generator_next_ty(ret);
         frame.next_ty = (!self.cx.ty.is_bottom(n)).then_some(n);
         frame.fn_expr_name = Some(sig.name.name.clone()).filter(|n| !n.is_empty());

@@ -756,6 +756,11 @@ impl FnLower<'_, '_> {
             // An array of another element type: a view of it (array_view.rs).
             self.array_view_make(p, desc.clone(), ty, &out, done);
         }
+        if !self.cx.proxiable(ty) {
+            // An object of another object type, where no view can be made: a copy of its
+            // members (any_object_fill.rs).
+            self.any_object_fill(p, from, ty, &out, done);
+        }
         self.any_type_error(desc, ty);
         self.switch_to(done);
         Operand::Copy(out)

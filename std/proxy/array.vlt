@@ -122,7 +122,8 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
   const f = `${from}`;
   const t = `${to}`;
   if (trapHas(p, f)) {
-    arraySet(p, o, t, trapGet(p, f, o));
+    const v = trapGet(p, f, o);
+    arraySet(p, o, t, v);
   } else {
     trapDelete(p, t);
   }

@@ -340,7 +340,10 @@ impl FnCheck<'_> {
             }
         }
         if f.blocks.is_empty() {
-            self.err(None, "has no blocks".into());
+            // A declaration of a function the link adds (invariant 11): nothing more to check.
+            if f.linkage != Linkage::Import {
+                self.err(None, "has no blocks".into());
+            }
             return false;
         }
         true

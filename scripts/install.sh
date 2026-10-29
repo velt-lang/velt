@@ -44,6 +44,10 @@ if [ ! -s "$root/default" ]; then
     printf '%s\n' "$version" > "$root/default"
 fi
 
+# Compile std into the build cache in the background, so a first build compiles little more than
+# its own code (`velt cache warm`; a velt older than the command just declines).
+"$dest/bin/velt" cache warm --background >/dev/null 2>&1 || true
+
 echo "installed velt $version into $dest (default: $(cat "$root/default"))"
 echo
 echo "Add the launcher to your PATH (append this line to ~/.profile, ~/.bashrc or ~/.zshrc):"

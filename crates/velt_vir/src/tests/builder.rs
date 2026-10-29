@@ -100,6 +100,8 @@ impl PB {
             upcast_impls: Default::default(),
             extension_impls: Default::default(),
             dyn_bounds: Default::default(),
+            lock_free_callbacks: Default::default(),
+            unchecked: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),
             generic_dyn_methods: Default::default(),

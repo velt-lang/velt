@@ -85,6 +85,7 @@ impl Parser<'_> {
             ret: None,
             throws: None,
             is_async,
+            is_system: false,
             is_generator: false,
             this_param: None,
             span,

@@ -218,9 +218,19 @@ pub unsafe extern "C" fn velt_rt_bytes_range_to_str(
     out: *mut IoResult<VeltStr>,
 ) {
     let bytes = range(b, start, end);
-    let r = match std::str::from_utf8(bytes) {
-        Ok(s) => IoResult::ok(VeltStr::from_bytes(s.as_bytes())),
-        Err(_) => IoResult::err(VeltErr::from_io(&invalid_utf8("byte buffer"))),
+    // One pass to check, one to copy: ASCII is UTF-8 with a unit a byte, and UTF-8 text holds
+    // no lone surrogate, so only its units are counted (#1717).
+    let r = if bytes.is_ascii() {
+        // SAFETY: ASCII is UTF-8, and its UTF-16 length is its byte length.
+        IoResult::ok(VeltStr::from_text_counted(
+            std::str::from_utf8_unchecked(bytes),
+            bytes.len(),
+        ))
+    } else {
+        match std::str::from_utf8(bytes) {
+            Ok(s) => IoResult::ok(VeltStr::from_text(s)),
+            Err(_) => IoResult::err(VeltErr::from_io(&invalid_utf8("byte buffer"))),
+        }
     };
     r.write_to(out);
 }
@@ -234,6 +244,7 @@ pub unsafe extern "C" fn velt_rt_bytes_range_to_str_lossy(
     end: i64,
     out: *mut VeltStr,
 ) {
+    // UTF-8 text (repaired or not) holds no lone surrogate: only its units are counted.
     out.write(text_of(range(b, start, end)));
 }
 
@@ -256,9 +267,50 @@ pub(crate) fn text_of(bytes: &[u8]) -> VeltStr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::MaybeUninit;
 
     fn arr(v: &[u8]) -> VeltBytes {
         VeltBytes::from_vec(v.to_vec())
+    }
+
+    #[test]
+    fn range_to_str_counts_units_and_validates() {
+        let long_ascii = "a".repeat(40);
+        let mixed = format!("{long_ascii}é𝄞x");
+        for text in ["", "ab", long_ascii.as_str(), "é", mixed.as_str()] {
+            let mut b = arr(text.as_bytes());
+            let mut out = MaybeUninit::<IoResult<VeltStr>>::uninit();
+            let mut lossy = MaybeUninit::<VeltStr>::uninit();
+            // SAFETY: a valid owned buffer; the results are read once and dropped.
+            unsafe {
+                velt_rt_bytes_range_to_str(&b, 0, i64::MAX, out.as_mut_ptr());
+                let r = out.assume_init();
+                assert_eq!(r.err.code, 0, "{text:?}");
+                let mut s = r.value.assume_init();
+                assert_eq!(s.text().ok(), Some(text));
+                assert_eq!(s.units(), text.encode_utf16().count(), "{text:?}");
+                crate::str::velt_rt_str_drop(&mut s);
+                velt_rt_bytes_range_to_str_lossy(&b, 0, i64::MAX, lossy.as_mut_ptr());
+                let mut l = lossy.assume_init();
+                assert_eq!(l.units(), text.encode_utf16().count(), "{text:?}");
+                crate::str::velt_rt_str_drop(&mut l);
+                drop(b.take_vec());
+            }
+        }
+        let mut bad = arr(&[b'a', 0xff, b'b']);
+        let mut out = MaybeUninit::<IoResult<VeltStr>>::uninit();
+        let mut lossy = MaybeUninit::<VeltStr>::uninit();
+        // SAFETY: as above.
+        unsafe {
+            velt_rt_bytes_range_to_str(&bad, 0, 3, out.as_mut_ptr());
+            assert_ne!(out.assume_init_ref().err.code, 0);
+            velt_rt_bytes_range_to_str_lossy(&bad, 0, 3, lossy.as_mut_ptr());
+            let mut l = lossy.assume_init();
+            assert_eq!(l.text().ok(), Some("a\u{FFFD}b"));
+            assert_eq!(l.units(), 3);
+            crate::str::velt_rt_str_drop(&mut l);
+            drop(bad.take_vec());
+        }
     }
 
     #[test]

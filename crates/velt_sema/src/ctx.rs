@@ -167,10 +167,11 @@ pub(crate) struct Ctx<'m> {
     /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
     pub replaced_unions: FxHashSet<DefId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
-    /// The properties of `globalThis` the program uses (`crate::global_this`).
-    pub global_props: crate::global_this::GlobalProps,
+    pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
+    pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// How many function values (arrows, function expressions, literal methods) are being
@@ -495,8 +496,10 @@ impl<'m> Ctx<'m> {
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
+            lock_free_callbacks: FxHashSet::default(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            lazy: crate::body::lazy_std::Lazy::new(),
             global_props: Default::default(),
             global_cycles: 0,
             fn_value_depth: 0,

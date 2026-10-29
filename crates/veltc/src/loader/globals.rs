@@ -39,19 +39,19 @@ pub(super) struct Global {
 
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
 pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
-    let Ok(entries) = std::fs::read_dir(std_root.join("prelude").join("global")) else {
+    let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude").join("global")) else {
         return vec![];
     };
     let mut files: Vec<PathBuf> = entries
-        .flatten()
+        .into_iter()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "vlt"))
         .collect();
     files.sort();
     files
         .into_iter()
         .filter_map(|file| {
-            let src = std::fs::read_to_string(&file).ok()?;
+            let src = vpm::probe::read_to_string(&file).ok()?;
             let names = reexported_names(&src);
             let when = load_when(&src);
             Some(Global { file, names, when })
@@ -138,7 +138,28 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 /// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
 /// or for `RegExp` also by a regular expression literal.
 pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool {
-    mentions(src, name) || (name == "RegExp" && src.contains('/') && has_regex(module))
+    mentions(src, name)
+        || (name == "RegExp" && src.contains('/') && has_regex(module))
+        || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
+}
+
+/// The global a function expression with a `this` parameter loads (std/this_fn.vlt).
+const THIS_FN: &str = "__ThisFn";
+
+/// Whether `module` holds a function expression (not a generator) whose `this` parameter its
+/// body uses (sema's `this_fn_expr`, whose value is a `__ThisFn`).
+fn has_this_fn(module: &ast::Module) -> bool {
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Function(d) = &e.kind {
+                self.0 |= d.sig.this_param.is_some() && !d.sig.is_generator;
+            }
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
 }
 
 /// Whether `module` holds a `new RegExp(…)` (what the parser makes of a regex literal).

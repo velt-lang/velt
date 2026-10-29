@@ -86,6 +86,13 @@ impl FnLower<'_, '_> {
             }
             (I::PrintErr, _) => self.print(2, args),
             (I::ToString, [a]) => self.stringify(a, ty, false),
+            (I::ErrorText, [a]) => self.text_of(a, Self::push_error_text),
+            (I::Inspect, [a]) => self.text_of(a, Self::format_top_inspect),
+            (I::ThrowLoc, []) => {
+                let (_, buf) = self.new_strbuf(0);
+                self.push_throw_loc(&buf);
+                self.finish_text(buf)
+            }
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
@@ -266,6 +273,7 @@ impl FnLower<'_, '_> {
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
             (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyToExact, [a]) => self.any_to_exact(a, ty),
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
@@ -383,6 +391,25 @@ impl FnLower<'_, '_> {
     }
 
     /// Evaluate two operands to places (the first held if the second may change it).
+    /// `Intrinsic::ErrorText` or `Intrinsic::Inspect` of `a`: what `push` appends for it to a
+    /// new builder, as an owned string.
+    fn text_of(&mut self, a: &hir::Expr, push: fn(&mut Self, &Operand, &Place, TyId)) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        let p = self.place_of(v, t);
+        let (_, buf) = self.new_strbuf(0);
+        push(self, &buf, &p, t);
+        self.finish_text(buf)
+    }
+
+    /// The string the builder `buf` holds (an owned string; the builder is consumed).
+    fn finish_text(&mut self, buf: Operand) -> Operand {
+        let text = self.temp(Ty::Agg(STR_AGG));
+        let tp = self.addr(Place::local(text));
+        self.call_rt(Rt::StrbufFinish, vec![buf, tp], None);
+        Operand::Copy(Place::local(text))
+    }
+
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
         let later = self.later_of(b);

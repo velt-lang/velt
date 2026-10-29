@@ -406,3 +406,12 @@ fn early_use_of_a_later_declaration_formats() {
         "console.log(K);\nconst K = 1;\nnew Box();\n\nclass Box {}\n"
     );
 }
+
+#[test]
+fn system_function_declarations() {
+    holds(
+        "declare system function pwrite(fd: i32, buf: readonly u8[], start: usize, end: usize, offset: i64): isize;
+export declare system function lastOsError(): i32;
+declare function velt_rt_x(): void;",
+    );
+}

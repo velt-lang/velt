@@ -121,6 +121,13 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
+- Error and value text (standard library only; `velt:test` and `assertEq` use them):
+  `Intrinsic::ErrorText` (`__intrinsic_error_text(e)`, `e` borrowed, any type) is what an
+  uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
+  (`__intrinsic_throw_loc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
+  on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
+  `Intrinsic::Inspect` (`__intrinsic_inspect(x)`, borrowed) is `x` as Node's `util.inspect`
+  writes it. Each yields an owned string.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only
@@ -312,6 +319,9 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
+  A `declare system function` (`ExternFnDef::system`, per param whether it was written
+  `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
+  structs): callers pass those `BorrowMut`.
 
 ## Generic methods
 - Generic interface methods: `InterfaceDef::methods[slot]` as usual; the method's own type
@@ -786,8 +796,10 @@ whose receiver is always `Global(d)` of a module `const` initialized by such an 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
 `new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,
-`f64`, `bool`, `shared<U>` or `shared<U> | null` (sema rejects any other `T`, a type parameter
-too). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
+`f64`, `bool`, `shared<U>`, `shared<U> | null`, `string`, or a type parameter bounded by the
+prelude's `AtomicValue` (sema rejects any other `T`; on a type parameter only `AtomicLoad`,
+`AtomicStore`, the `AtomicRmw` exchange and `AtomicCasWeak` occur; lowering lays an `Atomic<string>`'s field out as `shared<string>`, atomics.md
+"Strings"). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
 (whether it swapped; atomics.md "References"); its value arguments are moved in, and its
 `expected` argument may be a `Share` that lowering reads through. A call of one of its methods
 is not a `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
@@ -838,6 +850,45 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   the initializer of slots `from..to` there on the block (`velt_rt_module_block`). The
   initializer that stores the last slot reports it with `u64::MAX`. The descriptor's `rest`
   initializes slots `deferred..` for a block made for swapped-in code (rt_abi.md).
+
+`Program::lock_free_callbacks` (additive, #924) lists the `with` / `read` / `write` callbacks,
+written as a closure or a named function (by `DefId`), that never reach a function's properties
+held as `any` (velt_sema `locked_props.rs`). No body they may run, along the module-state walk's
+edges, uses a member of a value that is or holds `any` / `unknown` (an intrinsic, a dynamic or
+virtual call, or a call into a runtime extern with such an argument; a type parameter is not
+one), handles a type a `Proxy` may be behind (in a program that loads `Proxy`: what an `any` is
+converted to, the object types in the fields, elements and map values of what is converted to
+`any`, since a write through it converts what it stores, and what those are upcast to), calls a
+function value whose body is not known, or runs a `with` whose callback is not a closure or a
+named function written there (lowering takes the module lock for it); and no `with` inside them
+has a callback that does. In a program whose functions may have properties, lowering calls
+`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+program without `any`.
+
+## Unchecked definitions (#1658; additive)
+
+Sema checks standard-library definitions that only std code refers to when checked code
+reaches them (docs/internals/design/lazy-std.md). `Program::unchecked` lists the ones nothing
+reached. Each still has a definition, so every `DefId` has one:
+
+- a function or method: a `Def::Fn` with its signature (`name`, `generics`, `params` as the
+  first locals, `this` first for a method, `self_ty`, `ret`, `is_async`, `is_generator`) and an
+  empty body (no statements, no value);
+- a module constant: a `Def::Global` of type `void` whose `init` is `Lit(Unit)`.
+
+Checked code never refers to one: no `Callee::Def`, `FnRef` or `Global` names it, no checked
+expression has a type whose methods it is, and no value of such a type exists, so no
+`vtable`, `impls` entry or `dyn_members` table of a type the program uses holds one. Lowering
+never builds or reads one: building a function in `unchecked` (any `Work` of its `DefId`) or
+reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
+look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
+`HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
+methods of the prelude's types, the modules in `EAGER`, and, in the glue built for a JSON
+intrinsic, the definitions of the module in `JSON_GLUE` it calls and the prelude definitions
+`JSON_GLUE_PRELUDE` lists with that module, which sema checks once checked code instantiates
+such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
+`JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for `JsonStringify` and
+`DbBind`.
 
 ## Symbols
 
@@ -1161,6 +1212,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
   the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
   Lowering reads the text while compiling; it is never evaluated.
+- `Intrinsic::AnyToExact` (`(x: borrow any) -> T | undefined`, `Expr::ty` an option of the
+  function type `T`; made by sema only, additive): the function `x` holds, as a new reference,
+  when its table is `T`'s (one comparison), else `undefined`. Sema converts an `any` or
+  `unknown` to a function type `T` as
+  `match AnyToExact(x) { Some(f) => f, None => <closure calling x through any> }`, so a
+  function of exactly `T` stays the one value (identity, `Set` / `Map` keys, round trips) and
+  costs no call through `any`.
 - A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
   `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
   still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
@@ -1520,3 +1578,12 @@ at the start of the class's block or of the function's body (`body/expr/ctor_loc
 captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).
+
+## Type tests (std/prelude/type_tests.vlt; additive)
+
+`typeIs<A, B>()` and `asType<B>(x)` are ordinary `Call { Def(prelude fn, [A, B]) }` /
+`Call { Def(prelude fn, [B, A]), [x] }` nodes (sema `body/type_guards.rs` checks `asType`'s
+guard and refuses both as values). Lowering replaces them per instance (velt_vir
+`lower/type_tests.rs`): `typeIs` by the constant `A == B` (the `if` it guards then lowers one
+branch), `asType` by `x` itself when `A == B` and by a trap otherwise (only reachable in a
+branch the constant made dead).

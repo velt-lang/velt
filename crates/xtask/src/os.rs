@@ -86,13 +86,14 @@ pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-late
 
 /// How many jobs check the goldens in parallel on each OS in the merge queue
 /// (.github/workflows/queue-goldens.yml), after one job built them. Windows, whose goldens take
-/// longest, gets the most. macOS gets one: its goldens are not the queue's long pole, and with 5
-/// macOS runners for everything, more shards would let two queue entries starve each other.
+/// longest, gets the most. macOS gets two: in one job its goldens grew to the job's 30-minute
+/// limit (2026-10). With 5 macOS runners for everything, more shards would let queue entries
+/// starve each other.
 /// Every runner in [`QUEUE_OSES`] needs an entry: the workflow fails when an OS has no shards.
 pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 2),
     ("windows-latest", 3),
-    ("macos-latest", 1),
+    ("macos-latest", 2),
 ];
 
 /// How many jobs check the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) in parallel
@@ -149,7 +150,7 @@ mod tests {
             all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
             "{all}"
         );
-        assert!(all.contains(r#""macos-latest":["1/1"]"#), "{all}");
+        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
         assert_eq!(golden_shards_json(&["other"]), "{}");
         assert_eq!(golden_shards_json(&[]), "{}");
     }

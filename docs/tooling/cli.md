@@ -14,7 +14,8 @@ prints every command's options and examples.
 | `velt dev` | run, then hot-swap or restart on every change ([`velt dev`](dev.md)) |
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
-| `velt clean` | remove the package's `target/` directory |
+| `velt clean [--cache]` | remove the package's `target/` directory; `--cache`: the machine's [build cache](#build-cache) |
+| `velt cache warm` | compile the standard library into the [build cache](#build-cache) ahead of a first build |
 | `velt add`, `install`, `update`, `publish`, `native build` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
@@ -64,6 +65,9 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
   ±3 %, one faster). Smaller programs are one unit. `VELT_CODEGEN_UNITS=N`
   asks for N units (at most the core count); `VELT_CODEGEN_UNITS=1` turns splitting off.
 - `--backend llvm` without `--release` gives an unoptimized build with full line information.
+- Nothing is compiled twice ([below](#build-cache)): a build whose inputs did not change since
+  the last build of the same output only links (or does nothing), and code compiled once on a
+  machine is taken from the build cache by every later build, in any project.
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
   silicon.
@@ -110,6 +114,49 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
   the file. Without a file (the package's entry) program arguments follow `--`
   (`velt run -- --port 8080`); a `--` right after a file is accepted too. Compile errors exit
   with 1 and run nothing.
+
+### Build cache
+
+A build never compiles the same thing twice:
+
+- **Nothing changed.** `velt build`, `velt run` and `velt test` record what a build read in a
+  stamp beside the program (`<program>.build-stamp`): every source file (std, packages, `.d.ts`
+  files) by content, every path imports were looked up at and every directory listed for them,
+  `package.vlt`, `package.json`, `tsconfig.json` and `velt.lock.json`, the build's options and
+  the compiler. When none of that changed, the next build parses and compiles nothing; running
+  the program again costs only its start. Saving a file without changing it changes nothing
+  either; a file changed while a build read it counts as changed. A new file that an import
+  would now find (a `.ts` beside a `.vlt`, a package in a `node_modules` nearer the importer)
+  counts as a change. A
+  build that printed warnings gets no stamp, so the warnings show every time.
+  `VELT_BUILD_STAMP=off` compiles every time.
+- **Something changed.** The code each function compiles to is kept in a cache that every build
+  on the machine shares, whatever the project: `$VELT_HOME/build-cache` (`~/.velt/build-cache`),
+  or `VELT_BUILD_CACHE`. A debug build compiles only the functions whose code differs from any
+  compiled before, on every core; std's functions, a package's, and generic instances such as
+  `Map<string, number>` compile once per machine. A release build takes each codegen unit's
+  object from the cache when clang compiled the same code with the same flags before.
+- Entries are found by their contents, the target, the CPU and the version of what compiled them,
+  so they are never out of date, and projects pinned to different Velt versions keep their
+  entries side by side.
+- The cache stays under `VELT_BUILD_CACHE_SIZE` (default `2G`) of disk space: about once an
+  hour, a build that added code removes the code used least recently until the cache is under
+  three quarters of that. Small entries (most compiled functions) are packed into a few files
+  instead of a file each, so they take the space of their contents. `velt clean --cache` removes it all
+  (only what the cache made: a `VELT_BUILD_CACHE` directory that holds other files keeps them);
+  `VELT_BUILD_CACHE=off` builds without it.
+- Entries are used as they are, so a `VELT_BUILD_CACHE` directory must be writable only by users
+  you trust: whoever can write to it can put code into your builds.
+- **Warm from the start.** Installing a Velt version (the install scripts, `velt toolchain
+  install`, or the launcher installing the version a package pins) starts `velt cache warm` in
+  the background at low priority: it compiles a set of programs shipped with the toolchain
+  (`share/velt/warm/`) that reach most of std, for this machine's CPU (what `velt run` and
+  `velt test` build for) and the default one (`velt build`). A project's first build then
+  compiles little more than its own code. It runs once per Velt version; `velt cache warm` runs
+  it in the foreground, `--background` detached. The installers skip it in CI (`CI` set), where
+  the cache goes away with the runner, and when `VELT_CACHE_WARM=off`.
+- `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
+  the build cache)`) and when a build was up to date.
 
 ## `velt check`
 
@@ -382,6 +429,9 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_CPU` | the CPU builds are for when `--cpu` does not say ([CPU](platforms.md#cpu)); a CPU of another architecture does not apply |
 | `VELT_CPU_DISABLE` | read by programs: features (`popcnt,sse4.2`) the start-up CPU check treats as missing, to test the check ([CPU](platforms.md#cpu)) |
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
+| `VELT_BUILD_CACHE` | the [build cache](#build-cache)'s directory (default `$VELT_HOME/build-cache`); `off` turns it off |
+| `VELT_BUILD_CACHE_SIZE` | how large the build cache may grow (`500M`, `10G`; default `2G`) before the code used least recently is removed |
+| `VELT_BUILD_STAMP` | `off`: compile even when no input changed since the last build of the same output |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |

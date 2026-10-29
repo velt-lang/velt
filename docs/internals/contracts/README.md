@@ -10,7 +10,7 @@ helper), and explain it in your final report.
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
-| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
+| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`, `fingerprint::{Canon, Mode, Fingerprint, fingerprint, attrs_hold, is_state_layout}` (function fingerprints for `velt dev` and the cached std object; `Canon::reaches_mutable_static`); values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
@@ -44,7 +44,9 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
   hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
-  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
+  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller; a
+  location in a standard-library file reads `std/<path below the std root>`, the same on every
+  machine, while debug info keeps the path as loaded), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
   rt_abi.md).
 - `velt_opt` keeps `locs` aligned with every statement it moves, splits or deletes; inlined code
@@ -125,3 +127,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `velt_opt`: dead-code elimination keeps described locals; `numrep` moves a description to
   the narrowed local; inlined locals lose theirs. Backends turn them into debugger variables
   or ignore them.
+
+## Imported functions (additive VIR extension)
+- `vir::Linkage::Import` (vir.rs invariant 11; #1728, design/std-object.md): a function defined
+  in another object of the same executable, such as the cached std object. It has no blocks (a
+  declaration; the only functions without an entry block) or a body kept only for `velt_opt` to
+  inline; the printer shows a declaration as `fn#<i> import <symbol>(<params>) -> <ret>`.
+- Backends declare it under its symbol and never emit its body: LLVM `declare hidden` with its
+  param attributes, in every codegen unit that refers to it (no unit defines or copies it);
+  Cranelift a `Linkage::Import` function.
+- `velt_opt`: treated as `Export` for anything that rewrites a signature, param attributes or
+  caller assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may
+  clone one only when its body is kept, and the clone is the program's own `Internal` function. `keys::disambiguate` never renames an
+  `Import` symbol.

@@ -40,6 +40,7 @@ and no garbage collector. Three rules shape every decision:
 12. [Diagnostics](diagnostics.md) — the format and wording of compiler errors
 13. [TSX](tsx.md) — JSX syntax, the provider, typing of elements and components, async
     components, how elements are compiled
+14. [System functions](system-functions.md) — `declare system function`: the C library, safely
 
 How Velt differs from TypeScript, item by item, is in
 [Velt for TypeScript developers](../book/ts-developers.md).

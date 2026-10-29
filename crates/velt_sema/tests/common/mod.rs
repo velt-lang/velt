@@ -406,6 +406,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         ret: ret.map(ty),
         throws: None,
         is_async: false,
+        is_system: false,
         is_generator: false,
         this_param: None,
         span: D,

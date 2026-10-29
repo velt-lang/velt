@@ -273,6 +273,15 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
         if let Some(m) = extern_written_param(&f.name).and_then(|i| modes.get_mut(i)) {
             *m = PassMode::BorrowMut;
         }
+        // A system function writes every buffer not written `readonly` and every struct it is
+        // given (docs/reference/system-functions.md): the caller's value changes.
+        if let Some(readonly) = &f.system {
+            for (m, &ro) in modes.iter_mut().zip(readonly) {
+                if *m == PassMode::Borrow && !ro {
+                    *m = PassMode::BorrowMut;
+                }
+            }
+        }
     }
     modes
 }

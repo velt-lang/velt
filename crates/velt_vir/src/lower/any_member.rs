@@ -109,7 +109,13 @@ impl Cx<'_> {
                     e.is_union
                         && args.is_empty()
                         && e.variants.iter().all(|v| match v.payload.as_slice() {
-                            [p] => !self.is_dynamic(*p) && self.any_boxable_plain(*p),
+                            // A promise member is never held as `any`: boxing one stops
+                            // (`any_box_with`), the other members box.
+                            [p] => {
+                                !self.is_dynamic(*p)
+                                    && (self.any_boxable_plain(*p)
+                                        || matches!(self.types.kind(*p), TyKind::Promise(..)))
+                            }
                             _ => false,
                         })
                 }
@@ -171,6 +177,12 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
                 self.for_each_variant(&p, t, |lw, v, parts| match parts.as_slice() {
+                    [(_, pt)] if matches!(lw.cx.kind(*pt), TyKind::Promise(..)) => {
+                        lw.panic_msg("TypeError: a promise cannot be held as `any` yet (#924)");
+                        lw.terminate(Terminator::Unreachable);
+                        let next = lw.new_block();
+                        lw.switch_to(next);
+                    }
                     [(pp, pt)] => lw.any_box_into(Operand::Copy(pp.clone()), *pt, out),
                     // A zero-sized member (`undefined`, a literal type such as `"a"`): the value
                     // its type names.
@@ -454,7 +466,13 @@ impl FnLower<'_, '_> {
         self.proxy_join(done);
     }
 
-    fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
+    pub(super) fn any_index_at(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        i: Operand,
+        out: Operand,
+    ) {
         self.any_nullish_check(desc, NullKey::Num(&i));
         let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
             let n = lw.copy_to_temp(i.clone(), Ty::F64);

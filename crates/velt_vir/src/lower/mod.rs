@@ -23,11 +23,14 @@ mod abi;
 mod adapters;
 mod adt;
 mod any;
+mod any_args;
 mod any_builtin;
 mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_exact;
+mod any_fn_props;
 mod any_generic_fn;
 mod any_glue;
 mod any_has;
@@ -35,6 +38,7 @@ mod any_iface;
 mod any_keys;
 mod any_member;
 mod any_number;
+mod any_object_fill;
 mod any_proxy;
 mod any_record;
 mod any_rest;
@@ -51,6 +55,7 @@ mod assign_target;
 mod async_fn;
 mod atomic;
 mod atomic_ref;
+mod atomic_str;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -84,6 +89,7 @@ mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
+mod key_any;
 mod keys;
 mod layout;
 mod literal_accessors;
@@ -119,11 +125,14 @@ mod stmt;
 mod strbuf;
 mod strings;
 mod symbols;
+mod system;
 mod template;
+mod this_fn;
 mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_tests;
 mod types;
 mod upcast;
 mod view_unswitch;
@@ -172,6 +181,9 @@ pub(crate) fn lower_program(
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.target = opts
+            .target
+            .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
@@ -204,6 +216,7 @@ pub(crate) fn lower_program(
             diags.extend(cx.fresh_fn_diagnostics());
             diags.extend(cx.counted_atomic_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
+            diags.extend(cx.unavailable_diagnostics());
             cx.unfreeze_module_reach();
             let types_now = cx.types.clone();
             let program = cx.finish();
@@ -389,6 +402,16 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// The target triple, for system functions (`LowerOptions::target`).
+    target: String,
+    /// Calls of system functions the target lacks: (the declaration, the calling function, the
+    /// user code being lowered then, `user_site`).
+    unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
+    /// Per user call site of a standard-library function, that function (call.rs): what an
+    /// unavailable system function deep in std is reported as, at the user's call.
+    std_calls: FxHashMap<velt_common::Span, DefId>,
+    /// The aggregates of C structs (system.rs), by the table's struct.
+    system_aggs: FxHashMap<usize, vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
     /// nothing in it can make a task's await word non-0.
     no_await_steps: bool,

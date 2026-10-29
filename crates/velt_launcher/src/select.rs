@@ -321,6 +321,19 @@ pub fn newest_published(ctx: &Context, req: &Requirement) -> Result<Version, Str
     }
 }
 
+/// Have the newly installed toolchain at `prefix` compile std into the build cache, in the
+/// background (`velt cache warm --background` returns at once), so the first build of a project
+/// compiles little more than its own code. Best effort: a toolchain without the command (older
+/// than it) or a failure changes nothing about the install.
+fn warm_build_cache(prefix: &Path) {
+    let _ = std::process::Command::new(velt_exe(prefix))
+        .args(["cache", "warm", "--background"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 /// Add to the newly installed `version` (at `prefix`) the target packs of the version it follows
 /// ([`velt_toolchain::layout::predecessor`]), so `velt build --target …` keeps working after a
 /// patch update. The new toolchain's own `velt target add` downloads and checks them against its
@@ -379,6 +392,7 @@ pub fn install_from(
         release::install_toolchain_from_file(&ctx.root, file, unverified, None)?;
     if installed {
         carry_target_packs(ctx, &before, &version, &prefix);
+        warm_build_cache(&prefix);
     }
     Ok((version, installed))
 }
@@ -390,6 +404,7 @@ pub fn install(ctx: &Context, version: &Version) -> Result<PathBuf, String> {
     match release::install_toolchain(&ctx.root, version, &ctx.base) {
         Ok(prefix) => {
             carry_target_packs(ctx, &before, version, &prefix);
+            warm_build_cache(&prefix);
             Ok(prefix)
         }
         Err(_) if ctx.root.is_installed(&Toolchain::Version(version.clone())) => {

@@ -10,7 +10,7 @@
 # base-src) with each toolchain (LLVM, --release) and runs it under cachegrind with
 # VELT_THREADS=1. Prints `name base-Ir branch-Ir same|DIFF` per program (DIFF: the outputs
 # differ; db/velt/sqlite prints its timings, so it is DIFF unless those are stripped), then the
-# compile row (`velt check bench/compile/all_std.vlt`), then the programs sorted by change.
+# compile row (`VELT_EAGER_STD=1 velt check bench/compile/all_std.vlt`), then the programs sorted by change.
 # A program that fails to build prints FAIL. Knobs: JOBS (parallel programs, default 6), ONLY and
 # SKIP (regular expressions over the paths), TO (timeout per run, seconds, default 1800).
 # WORK defaults to $CARGO_TARGET_DIR/compiler-ab; keep it on a Linux file system (not /mnt/*).
@@ -52,7 +52,7 @@ find "$W/branch-src/bench" -name '*.vlt' | grep -E "${ONLY:-.}" | grep -vE "${SK
   | xargs -P "${JOBS:-6}" -I{} bash -c 'one {}' | tee "$W/counts.txt"
 
 for v in base branch; do
-  ir=$(cd "$W" && VELT_STD=$W/$v-src/std valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/tc-$v/velt" check "$W/$v-src/bench/compile/all_std.vlt" 2>&1 >/dev/null | grep -oP 'I\s+refs:\s+\K[0-9,]+' | tr -d ,)
+  ir=$(cd "$W" && VELT_EAGER_STD=1 VELT_STD=$W/$v-src/std valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/tc-$v/velt" check "$W/$v-src/bench/compile/all_std.vlt" 2>&1 >/dev/null | grep -oP 'I\s+refs:\s+\K[0-9,]+' | tr -d ,)
   echo "compile $v $ir"
 done
 

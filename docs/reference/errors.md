@@ -191,8 +191,23 @@ nothing; `null` means success).
   is where it was last thrown. They differ for a rethrow (`catch (e) { throw e; }`) and for an
   error made earlier than it is thrown (#356).
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
-  `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
-  101. They cannot be caught.
+  `panic(msg)`. They print `panic: … at file:line:col` and exit with code 101. They cannot be
+  caught. A failed `assert`, `assertEq` or `assertThrows` throws an `AssertionError` (an
+  `Error`, as Node's `assert` throws), which can. Like any error, it is part of the inferred
+  error type of the function that calls them: a function with `throws ParseError` that calls
+  `assert` must allow `AssertionError` too (`throws ParseError | AssertionError`), and a `catch`
+  that handles only `ParseError` no longer covers everything the block throws. Where nothing may
+  throw (a sort comparator or a promise executor, whose function types don't allow throwing, and
+  `toString`), `assert` is a compile error; an invariant check there is `if (!cond) panic(msg)`:
+
+  ```ts
+  const xs = [3, 1, 2];
+  xs.sort((a, b) => {
+    if (Number.isNaN(a - b)) panic("not comparable");
+    return a - b;
+  });
+  console.log(xs.join(",")); // 1,2,3
+  ```
 - There is no `Result` type, no `Ok`/`Err` and no postfix `?`: errors propagate by themselves,
   and values use unions.
 

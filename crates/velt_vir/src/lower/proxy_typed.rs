@@ -440,6 +440,8 @@ impl FnLower<'_, '_> {
         self.proxy_split(
             &ptr,
             |lw, _| {
+                // The slot of the trap's answer drops in this arm: the other never sets it.
+                lw.push_scope(super::ScopeKind::Temps);
                 let (_, fty) = lw.proxy_field(bty, index);
                 let fp = lw.proxy_read_at(&ptr, bty, index);
                 let some = match lw.cx.kind(fty) {
@@ -447,6 +449,7 @@ impl FnLower<'_, '_> {
                     _ => super::FnLower::ctrue(),
                 };
                 lw.assign(Place::local(out), Rvalue::Use(some));
+                lw.pop_scope();
             },
             |lw| {
                 let mut fp = lw.proxy_hot_place(&ptr, bty, index);

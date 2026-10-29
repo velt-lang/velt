@@ -1436,3 +1436,32 @@ What changed:
   executable. `bench/nightly.sh` also runs each benchmark that has a Node version under `node`
   (best of 3 interleaved, wall time) and marks the rows where Velt takes longer than Node in a
   second table; wall time on a shared runner is a guide, so those rows don't fail the job.
+
+## Positioned file I/O over system functions (`bench/fs/pread`, #1716, 2026-10-27)
+
+`velt:fs`'s `readSync`/`writeSync`/`fsyncSync` are Velt code calling `pread`/`pwrite`/`fcntl`
+directly (`declare system function`), against Rust (`FileExt::read_at`, `sync_all`) and Node
+(`fs.readSync` with a position). Workloads: 200,000 random 4 KiB reads of a cached 64 MiB file,
+8 sequential passes in 64 KiB reads, 200 100-byte writes each followed by an fsync.
+
+User-space instructions (cachegrind, Linux arm64 VM; the kernel's share of a read is the same
+for all, and it is most of the time):
+
+| program | instructions |
+|---|---:|
+| Velt, the whole benchmark through `velt:fs` | 12.85 M |
+| Rust, the whole benchmark | 8.18 M |
+| Velt, the random reads through a bare `declare system function pread` | 8.03 M |
+| Velt, an empty program (runtime start-up) | 0.40 M |
+
+A `pread` from Velt costs what it costs from Rust (about 38 instructions per random read with
+the loop, in both); Node's argument checks in `readSync` (descriptor, offset, length, position)
+add about 22 instructions per call, under 1% of a cached 4 KiB read. Wall time (macOS, M-series,
+best of 10 interleaved) was taken on a machine at load 100+ from other builds, so it only says
+that the three are within noise of each other for `random_4k` (Velt 824 ms, Rust 1167, Node
+1567 in one run; 640, 565, 867 in another), and that fsync is the disk's (about 4 ms each with
+`F_FULLFSYNC` in all three): rerun `bench/fs/pread/run.sh 10` on an idle machine for the table.
+
+Build cost of a program using the fd API (`openSync` + `readSync` + `closeSync`) against one
+using `readFileBytesSync` (Rust runtime): 8,215 against 2,427 lines of `--emit llvm`, and a
+`velt build --release` of 0.54–0.63 s against 0.19–0.39 s (same loaded machine).

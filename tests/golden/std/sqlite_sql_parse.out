@@ -13,32 +13,32 @@ SELECT NOT NOT NOT NOT N… (4004 bytes): height 1000, 1 cores
 SELECT NOT NOT NOT NOT N… (4008 bytes): error at 7: Expression tree is too large (maximum depth 1000)
 SELECT - - - - - - - - -… (2006 bytes): height 1000, 1 cores
 SELECT - - - - - - - - -… (2008 bytes): error at 2007: Expression tree is too large (maximum depth 1000)
-SELECT CAST(CAST(CAST(CA… (12995 bytes): error at 507: Recursion limit
-SELECT 1+(1+(1+(1+(1+(1+… (4004 bytes): error at 306: Recursion limit
-SELECT (((((((((((((((((… (2008 bytes): error at 206: Recursion limit
-SELECT (((((((((((((((((… (10008 bytes): error at 206: Recursion limit
-SELECT f(f(f(f(f(f(f(f(f… (1508 bytes): error at 206: Recursion limit
-SELECT f(f(f(f(f(f(f(f(f… (9008 bytes): error at 206: Recursion limit
-SELECT (SELECT (SELECT (… (4508 bytes): error at 800: Recursion limit
-SELECT (SELECT (SELECT (… (27008 bytes): error at 800: Recursion limit
-SELECT (((((((((((((((((… (5007 bytes): error at 206: Recursion limit
+SELECT CAST(CAST(CAST(CA… (12995 bytes): error at 1257: Recursion limit
+SELECT 1+(1+(1+(1+(1+(1+… (4004 bytes): error at 756: Recursion limit
+SELECT (((((((((((((((((… (2008 bytes): error at 506: Recursion limit
+SELECT (((((((((((((((((… (10008 bytes): error at 506: Recursion limit
+SELECT f(f(f(f(f(f(f(f(f… (1508 bytes): error at 506: Recursion limit
+SELECT f(f(f(f(f(f(f(f(f… (9008 bytes): error at 506: Recursion limit
+SELECT (SELECT (SELECT (… (4508 bytes): error at 2000: Recursion limit
+SELECT (SELECT (SELECT (… (27008 bytes): error at 2000: Recursion limit
+SELECT (((((((((((((((((… (5007 bytes): error at 506: Recursion limit
 SELECT 1 UNION SELECT 1 … (7493 bytes): height 1, 500 cores
 SELECT 1 UNION SELECT 1 … (7508 bytes): error at 7500: too many terms in compound SELECT
 SELECT 1 FROM t JOIN t J… (456 bytes): height 1, 1 cores
 SELECT 1 FROM t JOIN t J… (463 bytes): error at 16: at most 64 tables in a join
 SELECT 1 FROM t, t, t, t… (615 bytes): error at 615: too many FROM clause terms, max: 200
-SELECT 1 BETWEEN 1 BETWE… (160008 bytes): error at 1997: Recursion limit
-SELECT 1 NOT BETWEEN 1 N… (200008 bytes): error at 2793: Recursion limit
-WITH a AS (WITH a AS (WI… (210008 bytes): error at 1100: Recursion limit
-SELECT * FROM (SELECT * … (160015 bytes): error at 1500: Recursion limit
-SELECT CASE WHEN CASE WH… (210008 bytes): error at 1997: Recursion limit
-SELECT EXISTS (SELECT EX… (160008 bytes): error at 1500: Recursion limit
-SELECT 1 IN (1 IN (1 IN … (70008 bytes): error at 1201: Recursion limit
-SELECT 1 IN f(1 IN f(1 I… (80008 bytes): error at 707: Recursion limit
-SELECT f(1) FILTER (WHER… (200008 bytes): error at 1889: Recursion limit
-SELECT 1 LIMIT (SELECT 1… (170016 bytes): error at 1600: Recursion limit
-SELECT (VALUES ((VALUES … (110008 bytes): error at 899: Recursion limit
-SELECT CAST(CAST(CAST(CA… (130008 bytes): error at 507: Recursion limit
+SELECT 1 BETWEEN 1 BETWE… (160008 bytes): error at 2499: Recursion limit
+SELECT 1 NOT BETWEEN 1 N… (200008 bytes): error at 3495: Recursion limit
+WITH a AS (WITH a AS (WI… (210008 bytes): error at 2750: Recursion limit
+SELECT * FROM (SELECT * … (160015 bytes): error at 3750: Recursion limit
+SELECT CASE WHEN CASE WH… (210008 bytes): error at 4997: Recursion limit
+SELECT EXISTS (SELECT EX… (160008 bytes): error at 3750: Recursion limit
+SELECT 1 IN (1 IN (1 IN … (70008 bytes): error at 1503: Recursion limit
+SELECT 1 IN f(1 IN f(1 I… (80008 bytes): error at 1171: Recursion limit
+SELECT f(1) FILTER (WHER… (200008 bytes): error at 4739: Recursion limit
+SELECT 1 LIMIT (SELECT 1… (170016 bytes): error at 4000: Recursion limit
+SELECT (VALUES ((VALUES … (110008 bytes): error at 2249: Recursion limit
+SELECT CAST(CAST(CAST(CA… (130008 bytes): error at 1257: Recursion limit
 SELECT ?32766, ? (16 bytes): error at 15: too many SQL variables
 SELECT ?, ?, ?, ?, ?, ?,… (98306 bytes): error at 98305: too many SQL variables
 SELECT :p0, :p1, :p2, :p… (283798 bytes): height 1, 1 cores

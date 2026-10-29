@@ -172,9 +172,10 @@ state layout, even in its own code.
   optimizer cannot move it away from what programs embed.
 
 **The fingerprint exists already.** `velt dev` compares versions of a program per function with
-`Canon` (`velt_codegen_cl/src/dev/fingerprint.rs`, hot-reload.md "Classification"): functions and
-externs by symbol, statics by contents, aggregates by structure. It moves to `velt_vir` (the VIR
-crate, where both `velt_codegen_cl` and the object build can use it) with one mode per use. Three
+`Canon` (now `velt_vir::fingerprint`, `Mode::HotReload`; hot-reload.md "Classification"):
+functions and externs by symbol, statics by contents, aggregates by structure. It moved to
+`velt_vir` (the VIR crate, where both `velt_codegen_cl` and the object build can use it) with one
+mode per use (#1828). Three
 of its omissions are right for hot reload and unsound for linking, so link mode drops them:
 
 | Omission in `Canon` today | Why hot reload can | Link mode |
@@ -192,7 +193,11 @@ pointer"), and the runtime compares some statics' addresses (type descriptors;
 `velt_codegen_llvm/src/units/mod.rs`, which already gives them one copy across codegen units).
 So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
 of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
-second block. Std has no module-level `let` today, so this is for later. A function that refers
+second block. Std has no module-level `let` today, so this is for later. Static atomics
+(`StaticData::mutable`, such as the four words of `std/sync/epoch.vlt`) are written by address,
+and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
+catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
+the functions that reach a static atomic. A function that refers
 to any of these statics does not go into the object in the first version: two copies, the
 program's and the object's, would compare unequal. The object build marks these functions. A later version can give such statics one symbol, defined once, as codegen units do.
 
@@ -228,7 +233,10 @@ program's and the object's, would compare unequal. The object build marks these 
   there, as `numrep/params.rs` and the ONCE rule (`inline/mod.rs`, `decide`) already treat
   `Export`. Passes that clone a callee as `Internal` (`const_fields` specialization,
   `gated_clones`) may clone an `Import` only when its body is kept, and the clone is the
-  program's own.
+  program's own. An analysis that learns about a callee from its body treats an `Import`
+  without one as opaque, like an extern: it may write through every pointer it is given
+  (`const_fields`' read-only params), and it is never inlined (the int32 helpers of debug
+  builds are matched by name).
 - **Symbol clashes.** `keys::disambiguate` (`lower/keys.rs`) renames a repeated symbol to
   `…$dup2`. An `Import` symbol is never renamed: on a clash the program's own function gets the
   suffix, and a std function whose symbol needed `$dup` in the object build never goes into the
@@ -259,7 +267,9 @@ program's and the object's, would compare unequal. The object build marks these 
    prelude counts as one), using the codegen-unit machinery: parallel clang processes, functions
    called across members `hidden`.
 5. Write the objects and a `manifest.json`: per exported function its symbol, fingerprint,
-   optimized cost, member and inferred attributes; the std class id and header table; a hash per
+   optimized cost, member and inferred attributes, and a fingerprint for every function the
+   object build lowered that an exported one reaches (closures, glue, generic instances, the
+   small functions inlined into its copy), so the link fixpoint can compare those too; the std class id and header table; a hash per
    std file; and the key below.
 
 The build uses all cores. A program links only the members whose functions it calls, plus the
@@ -442,13 +452,13 @@ head, with interleaved runs:
   every function (`inline::cost` and `Budget`, `dead_funcs`, the per-function passes, which skip
   it), the interpreter (`velt_opt/src/interp`: a call to one is not evaluated), the VIR printer
   (`Display` for `Program` in `vir.rs`, which prints a `declare` line), both backends, and the dev
-  fingerprint and `classify` (`velt_codegen_cl/src/dev/`), which never see one since the JIT does
+  fingerprint (`velt_vir::fingerprint`) and `classify` (`velt_codegen_cl/src/dev/`), which never see one since the JIT does
   not use the object, but must not panic on one. An `Import` with a body kept for inlining is
   verified and optimized like any function, and never emitted.
 - The rule for passes and `keys::disambiguate` above, written into `vir.rs`'s module comment.
 - `velt_vir`'s lowering entry: a root set instead of `main` for the object build, the class id
-  and header tables from the manifest, and the fingerprint (`Canon`, moved from
-  `velt_codegen_cl/src/dev/fingerprint.rs`, with a link mode).
+  and header tables from the manifest, and the fingerprint (`Canon`, in `velt_vir::fingerprint`
+  with a link mode since #1828).
 - HIR: the `__intrinsic_inline` intrinsic (hir_encodings.md).
 - cli.md: `VELT_STD_OBJECT`, `VELT_STD_OBJECT_DIR`, `VELT_CACHE_DIR`, `velt clean --cache`;
   `--emit vir|llvm` show declarations for linked std functions.

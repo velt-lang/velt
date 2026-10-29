@@ -612,6 +612,13 @@ impl<'h> Cx<'h> {
         let a = self.adt_def(d);
         let map = (a.name == "Map" || a.name.ends_with("::Map"))
             && a.fields.get(2).is_some_and(|f| f.name == "entryValues");
+        // An `Atomic<string>`'s word points to a box holding the string (atomic_str.rs).
+        if args.len() == 1
+            && matches!(self.kind(args[0]), TyKind::Str)
+            && super::atomic::is_atomic(self, d)
+        {
+            return vec![self.intern(TyKind::Shared(args[0]))];
+        }
         let tys: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
         self.map_fields += u32::from(map);
         let out = tys.into_iter().map(|f| self.subst(f, &args)).collect();

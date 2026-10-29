@@ -321,7 +321,9 @@ impl FnCx<'_, '_> {
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
         // the body adds to the original.
+        // A branded value iterates as its primitive or class instance (`crate::brands`).
         let it = self.receiver_expr(iter);
+        let it = self.unbrand(it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {

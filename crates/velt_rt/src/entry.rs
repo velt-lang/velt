@@ -82,6 +82,7 @@ fn finish(code: i32) -> i32 {
         // end, as in Node, where nothing runs at exit.
         if crate::str::stats::counting() {
             crate::task::local::module_drop_at_exit();
+            crate::fn_props::drop_at_exit();
         }
         // Nothing receives any more: drop the values still queued in channels. Not on a failing
         // exit: tasks may still be running then, and drop glue runs user code.

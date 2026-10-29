@@ -15,9 +15,12 @@ use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
 mod cpu_check;
+mod output;
 mod pipeline;
 mod recover;
+mod stamp;
 
+pub use output::OutputPaths;
 use pipeline::on_pipeline_thread;
 
 /// What to build and how.
@@ -143,6 +146,9 @@ pub struct Session {
     pub show_details: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
     pub reports: Vec<String>,
+    /// What codegen took from the build cache: `(found, of, what)` ("functions", "codegen
+    /// units"); `None` without a cache.
+    pub cached: Option<(usize, usize, &'static str)>,
 }
 
 impl Session {
@@ -177,9 +183,20 @@ impl Session {
             .chain([("total", total)])
         {
             s.push_str(&format!(
-                "velt: {name:<8} {:>9.3} ms\n",
+                "velt: {name:<8} {:>9.3} ms",
                 d.as_secs_f64() * 1e3
             ));
+            match self.cached {
+                Some((found, of, what)) if name == "codegen" => {
+                    s.push_str(&format!(
+                        "  ({found} of {of} {what} from the build cache)\n"
+                    ));
+                }
+                _ if name == "stamp" && !self.timings.iter().any(|(n, _)| *n == "parse") => {
+                    s.push_str("  (unchanged: nothing to compile)\n");
+                }
+                _ => s.push('\n'),
+            }
             let steps = self.details.iter().filter(|(stage, ..)| *stage == name);
             for (_, step, d) in steps.filter(|_| self.show_details) {
                 s.push_str(&format!(
@@ -288,6 +305,7 @@ fn sema_stage(
             std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,
+            &opts.target(),
             &mut sess.diagnostics,
         );
     }
@@ -307,6 +325,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let t = Instant::now();
     let std_root = loader::std_root();
     let native_inits = crate::native::inits(opts.packages.as_ref());
+    let target = opts.target();
     let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
@@ -319,6 +338,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // information (they refer to its files); release builds with `-g` keep line information
         // only, and their optimizations stay as they are.
         debug_info: !opts.release && opts.debug_vars && line_info,
+        target: Some(&target),
     };
     let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
         Ok(p) => p,
@@ -422,7 +442,46 @@ fn build_on_current_thread(
     opts: &BuildOptions,
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
-    let mut program = compile_to_vir(sess, opts)?;
+    // An executable whose inputs are those of its last build is up to date (`stamp`).
+    let stamped = (opts.emit == Emit::Exe && !opts.report_numbers && stamp::enabled()).then(|| {
+        let t = Instant::now();
+        let backend = Backend::resolve(opts.backend, opts.release).0;
+        let key = stamp::options_key(opts, backend);
+        let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
+        let stamp_path = stamp::path(&paths.executable);
+        let objects = stamp::read(&stamp_path, &key)
+            .map(|n| (0..n).map(|i| paths.unit_object(i)).collect::<Vec<_>>())
+            .filter(|objects| objects.iter().all(|o| o.is_file()));
+        if objects.is_none() {
+            // A build that fails half-way must not leave a stamp of the old one.
+            let _ = std::fs::remove_file(&stamp_path);
+            // Made before the build looks at directories, so their listings include it.
+            if let Some(dir) = paths.executable.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+        }
+        sess.record("stamp", t);
+        (key, paths, stamp_path, objects)
+    });
+    // A build that writes the executable without a stamp (`VELT_BUILD_STAMP=off`, `--report`)
+    // leaves no stamp of an earlier one beside it.
+    if stamped.is_none() && opts.emit == Emit::Exe {
+        let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
+        let _ = std::fs::remove_file(stamp::path(&paths.executable));
+    }
+    if let Some((_, paths, _, Some(objects))) = &stamped {
+        link_stage(sess, opts, &target, objects, paths)?;
+        return Ok(Artifact::Executable(paths.executable.clone()));
+    }
+    // What module resolution looked at, for the stamp.
+    let (program, seen) = match &stamped {
+        Some(_) => vpm::probe::record(|| {
+            stamp::note_project(opts);
+            compile_to_vir(sess, opts)
+        }),
+        None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
+    };
+    let mut program = program?;
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }
@@ -460,10 +519,14 @@ fn build_on_current_thread(
     } else {
         codegen_units()
     };
-    let objects = backend
+    let (objects, cached) = backend
         .emit_objects(&program, &cg, units, &mut steps)
         .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")))?;
     sess.record("codegen", t);
+    sess.cached = cached.map(|c| match backend {
+        Backend::Cranelift => (c.hits, c.hits + c.misses, "functions"),
+        Backend::Llvm => (c.hits, c.hits + c.misses, "codegen units"),
+    });
     sess.record_details("codegen", &steps);
 
     let t = Instant::now();
@@ -480,10 +543,39 @@ fn build_on_current_thread(
     }
     paths.remove_unit_objects_from(objects.len());
 
+    link_stage(sess, opts, &target, &object_paths, &paths)?;
+    crate::build_cache::collect_garbage_if_due();
+    // Warnings are shown by every build, so a build with diagnostics gets no stamp.
+    if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
+        let generated = opts.root_source.as_ref().map(|_| opts.input.as_path());
+        // The outputs too: another build or tool that rewrites them (`--emit obj` onto a unit
+        // object, an older velt) makes this stamp stale.
+        let mut outputs = object_paths.clone();
+        outputs.push(paths.executable.clone());
+        let built = stamp::Built {
+            seen: &seen,
+            virtual_root: generated,
+            objects: object_paths.len(),
+            link_inputs: &outputs,
+        };
+        // Best effort: without a stamp the next build compiles again.
+        let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));
+    }
+    Ok(Artifact::Executable(paths.executable))
+}
+
+/// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).
+fn link_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    target: &str,
+    objects: &[PathBuf],
+    paths: &OutputPaths,
+) -> Result<(), BuildError> {
     let t = Instant::now();
     let linked = crate::link::link_executable(
-        &target,
-        &object_paths,
+        target,
+        objects,
         &paths.executable,
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
@@ -495,7 +587,7 @@ fn build_on_current_thread(
     if linked == crate::link::Linked::UpToDate {
         sess.record_details("link", &[("up to date", t.elapsed())]);
     }
-    Ok(Artifact::Executable(paths.executable))
+    Ok(())
 }
 
 /// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
@@ -519,225 +611,9 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
         .map_err(|e| BuildError::Failed(format!("cannot write `{}`: {e}", path.display())))
 }
 
-/// Where `build` puts its outputs (relative paths are relative to the current directory).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputPaths {
-    /// Linked executable (empty for `--emit obj`).
-    pub executable: PathBuf,
-    /// Object file.
-    pub object: PathBuf,
-}
-
-impl OutputPaths {
-    /// Object file of codegen unit `i`: [`Self::object`] for the first, `<stem>.cgu<i>.<ext>`
-    /// beside it for the others.
-    pub fn unit_object(&self, i: usize) -> PathBuf {
-        if i == 0 {
-            return self.object.clone();
-        }
-        let stem = self
-            .object
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
-        match self.object.extension() {
-            Some(ext) => self
-                .object
-                .with_file_name(format!("{stem}.cgu{i}.{}", ext.to_string_lossy())),
-            None => self.object.with_file_name(format!("{stem}.cgu{i}")),
-        }
-    }
-
-    /// Removes the objects of codegen units `count` and above, left by an earlier build with more
-    /// units (so a directory listing or a manual link doesn't pick up stale code).
-    pub fn remove_unit_objects_from(&self, count: usize) {
-        for i in count.max(1).. {
-            let path = self.unit_object(i);
-            if std::fs::remove_file(&path).is_err() {
-                break;
-            }
-        }
-    }
-
-    /// Output paths for `input` given `-o`, `--emit` and the target.
-    pub fn new(input: &Path, output: Option<&Path>, emit: Emit, target: &str) -> OutputPaths {
-        if velt_codegen_llvm::is_wasm(target) {
-            return Self::wasm(input, output, emit);
-        }
-        let windows = target.contains("windows");
-        let obj_ext = if windows { "obj" } else { "o" };
-        let stem = input
-            .file_stem()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-
-        if emit == Emit::Obj {
-            let object = match output {
-                Some(o) => o.to_path_buf(),
-                None => Path::new("target")
-                    .join("velt")
-                    .join(format!("{stem}.{obj_ext}")),
-            };
-            return OutputPaths {
-                executable: PathBuf::new(),
-                object,
-            };
-        }
-
-        let executable = match output {
-            // `link.exe /OUT:foo` would produce an unrunnable `foo`; Windows executables need `.exe`.
-            Some(o) if windows && o.extension().is_none() => o.with_extension("exe"),
-            Some(o) => o.to_path_buf(),
-            None => Path::new("target").join("velt").join(if windows {
-                format!("{stem}.exe")
-            } else {
-                stem
-            }),
-        };
-        // Object next to the executable: `<exe name without .exe>.<obj_ext>`.
-        let name = executable
-            .file_name()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-        let base = if windows {
-            name.strip_suffix(".exe").unwrap_or(&name)
-        } else {
-            &name
-        };
-        let object = executable.with_file_name(format!("{base}.{obj_ext}"));
-        OutputPaths { executable, object }
-    }
-
-    /// WebAssembly outputs: `<stem>.wasm` (a module, not an executable) and `<stem>.o`.
-    fn wasm(input: &Path, output: Option<&Path>, emit: Emit) -> OutputPaths {
-        let stem = input
-            .file_stem()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-        let default_dir = Path::new("target").join("velt");
-        if emit == Emit::Obj {
-            let object =
-                output.map_or_else(|| default_dir.join(format!("{stem}.o")), Path::to_path_buf);
-            return OutputPaths {
-                executable: PathBuf::new(),
-                object,
-            };
-        }
-        let executable = match output {
-            Some(o) if o.extension().is_none() => o.with_extension("wasm"),
-            Some(o) => o.to_path_buf(),
-            None => default_dir.join(format!("{stem}.wasm")),
-        };
-        let object = executable.with_extension("o");
-        OutputPaths { executable, object }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const WIN: &str = "x86_64-pc-windows-msvc";
-    const LINUX: &str = "x86_64-unknown-linux-gnu";
-
-    fn paths(input: &str, out: Option<&str>, emit: Emit, target: &str) -> (PathBuf, PathBuf) {
-        let p = OutputPaths::new(Path::new(input), out.map(Path::new), emit, target);
-        (p.executable, p.object)
-    }
-
-    #[test]
-    fn codegen_unit_objects_sit_beside_the_first() {
-        let p = OutputPaths::new(
-            Path::new("app.vlt"),
-            Some(Path::new("out/app")),
-            Emit::Exe,
-            LINUX,
-        );
-        assert_eq!(p.unit_object(0), PathBuf::from("out/app.o"));
-        assert_eq!(p.unit_object(2), PathBuf::from("out/app.cgu2.o"));
-        let p = OutputPaths::new(Path::new("app.vlt"), None, Emit::Exe, WIN);
-        let dir = Path::new("target").join("velt");
-        assert_eq!(p.unit_object(1), dir.join("app.cgu1.obj"));
-    }
-
-    #[test]
-    fn fewer_codegen_units_remove_stale_objects() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = OutputPaths::new(
-            Path::new("app.vlt"),
-            Some(&dir.path().join("app")),
-            Emit::Exe,
-            LINUX,
-        );
-        for i in 0..4 {
-            std::fs::write(p.unit_object(i), b"obj").unwrap();
-        }
-        p.remove_unit_objects_from(2);
-        let exists: Vec<bool> = (0..4).map(|i| p.unit_object(i).exists()).collect();
-        assert_eq!(exists, [true, true, false, false]);
-        p.remove_unit_objects_from(1);
-        assert!(p.unit_object(0).exists() && !p.unit_object(1).exists());
-    }
-
-    #[test]
-    fn default_output_paths() {
-        let dir = Path::new("target").join("velt");
-        assert_eq!(
-            paths("tests/hello.vlt", None, Emit::Exe, WIN),
-            (dir.join("hello.exe"), dir.join("hello.obj"))
-        );
-        assert_eq!(
-            paths("hello.vlt", None, Emit::Exe, LINUX),
-            (dir.join("hello"), dir.join("hello.o"))
-        );
-        assert_eq!(
-            paths("a.b.vlt", None, Emit::Exe, LINUX),
-            (dir.join("a.b"), dir.join("a.b.o"))
-        );
-        assert_eq!(
-            paths("hello.vlt", None, Emit::Obj, LINUX).1,
-            dir.join("hello.o")
-        );
-    }
-
-    #[test]
-    fn explicit_output_paths() {
-        assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, WIN),
-            (PathBuf::from("out/app.exe"), PathBuf::from("out/app.obj"))
-        );
-        assert_eq!(
-            paths("h.vlt", Some("out/app.exe"), Emit::Exe, WIN).1,
-            PathBuf::from("out/app.obj")
-        );
-        assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, LINUX),
-            (PathBuf::from("out/app"), PathBuf::from("out/app.o"))
-        );
-        assert_eq!(
-            paths("h.vlt", Some("x.o"), Emit::Obj, LINUX).1,
-            PathBuf::from("x.o")
-        );
-    }
-
-    #[test]
-    fn wasm_output_paths() {
-        let dir = Path::new("target").join("velt");
-        assert_eq!(
-            paths("hi.vlt", None, Emit::Exe, "wasm32-wasip1"),
-            (dir.join("hi.wasm"), dir.join("hi.o"))
-        );
-        assert_eq!(
-            paths(
-                "hi.vlt",
-                Some("out/app"),
-                Emit::Exe,
-                "wasm32-unknown-unknown"
-            ),
-            (PathBuf::from("out/app.wasm"), PathBuf::from("out/app.o"))
-        );
-        assert_eq!(
-            paths("hi.vlt", None, Emit::Obj, "wasm32-wasip1").1,
-            dir.join("hi.o")
-        );
-    }
 
     #[test]
     fn missing_input_is_an_error_not_a_panic() {

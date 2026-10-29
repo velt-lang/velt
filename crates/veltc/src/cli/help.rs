@@ -4,6 +4,9 @@
 use crate::style::{paint, Stream, Style};
 use crate::templates::Template;
 
+mod environment;
+use environment::ENVIRONMENT;
+
 /// One `velt` command's help.
 pub struct CommandHelp {
     /// The command word.
@@ -219,7 +222,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch]",
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
@@ -232,6 +235,10 @@ pub const COMMANDS: &[CommandHelp] = &[
             CPU,
             LOCKED,
             ("--watch", "rerun on every change"),
+            (
+                "--jobs <n>, -j <n>",
+                "run <n> test files at once (default: one per core)",
+            ),
             (
                 "--no-run",
                 "build the test programs without running them, and print their paths",
@@ -259,12 +266,32 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "clean",
-        summary: "Remove the package's target/ directory",
-        usage: &["clean"],
+        summary: "Remove the package's target/ directory, or the build cache",
+        usage: &["clean [--cache]"],
         about: "Deletes <package>/target (build outputs, test binaries, docs) and reports the \
-                space freed.",
-        options: &[],
-        examples: &[("velt clean", "remove the build outputs of the current package")],
+                space freed. With --cache, deletes the build cache instead: the compiled code \
+                every build on this machine shares ($VELT_BUILD_CACHE, default \
+                $VELT_HOME/build-cache), which builds keep under $VELT_BUILD_CACHE_SIZE (2G) on \
+                their own.",
+        options: &[("--cache", "remove the machine's build cache instead of target/")],
+        examples: &[
+            ("velt clean", "remove the build outputs of the current package"),
+            ("velt clean --cache", "remove the build cache shared by all projects"),
+        ],
+    },
+    CommandHelp {
+        name: "cache",
+        summary: "Compile the standard library into the build cache ahead of time",
+        usage: &["cache warm [--background]"],
+        about: "Compiles a set of programs that reach most of the standard library (shipped in \
+                share/velt/warm/), for this machine's CPU and the default one, so the first \
+                build of a project compiles little more than its own code. Runs once per \
+                toolchain; the installers start it after installing a version.",
+        options: &[(
+            "--background",
+            "start it detached at low priority and return at once",
+        )],
+        examples: &[("velt cache warm", "fill the build cache now")],
     },
     CommandHelp {
         name: "add",
@@ -563,65 +590,6 @@ pub fn find(name: &str) -> Option<&'static CommandHelp> {
 pub fn command_names() -> Vec<&'static str> {
     COMMANDS.iter().map(|c| c.name).collect()
 }
-
-const ENVIRONMENT: &[(&str, &str)] = &[
-    ("VELT_STD", "standard library directory"),
-    ("VELT_HOME", "vpm home (default ~/.velt: cache/, registry/)"),
-    (
-        "VELT_REGISTRY",
-        "package registry: a directory (default $VELT_HOME/registry) or an http(s):// URL",
-    ),
-    (
-        "VELT_REGISTRY_TOKEN",
-        "a registry token for every registry server, overriding `velt login` (for CI)",
-    ),
-    (
-        "VELT_CA_FILE",
-        "PEM file of extra CA certificates to trust for https:// registries",
-    ),
-    (
-        "VELT_CLANG",
-        "clang used by the LLVM backend (default: PATH, then the standard LLVM install)",
-    ),
-    (
-        "VELT_RT_LIB",
-        "runtime library (default: next to velt, or <prefix>/lib when installed)",
-    ),
-    (
-        "VELT_RT_LINK",
-        "`static`: debug builds link the static runtime instead of the shared one",
-    ),
-    ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
-    (
-        "VELT_LLVM_BIN",
-        "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
-    ),
-    (
-        "VELT_WASI_SYSROOT",
-        "directory with wasi-libc's crt1-command.o and libc.a (default: rustup's)",
-    ),
-    (
-        "VELT_WASM_RUNNER",
-        "program running wasm32-wasip1 modules for `velt run` (default: wasmtime)",
-    ),
-    (
-        "VELT_TOOLCHAIN",
-        "the toolchain the launcher runs for this command: a version or a linked name",
-    ),
-    (
-        "VELT_TOOLCHAIN_AUTO_INSTALL",
-        "`0`: the launcher does not install a missing pinned version",
-    ),
-    (
-        "VELT_INSTALL_BASE_URL",
-        "where toolchains and target packs are downloaded from (a mirror)",
-    ),
-    (
-        "VELT_INSTALL_PUBLIC_KEY",
-        "keys release signatures are checked with instead of velt's (another build's releases)",
-    ),
-    ("NO_COLOR", "set to disable colored output"),
-];
 
 fn heading(text: &str) -> String {
     paint(Stream::Stdout, Style::Heading, text)

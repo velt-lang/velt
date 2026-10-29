@@ -51,6 +51,9 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
     let text = |ty: &ast::TypeExpr| analysis.snippet(ty.span).to_string();
     match &item.kind {
         ast::ItemKind::Function(f) => function(analysis, &f.sig),
+        ast::ItemKind::ExternFn(sig) if sig.is_system => {
+            format!("declare system {}", function(analysis, sig))
+        }
         ast::ItemKind::ExternFn(sig) => format!("declare {}", function(analysis, sig)),
         ast::ItemKind::Class(t) if t.is_abstract => type_decl(analysis, "abstract class", t),
         ast::ItemKind::Class(t) => type_decl(analysis, "class", t),

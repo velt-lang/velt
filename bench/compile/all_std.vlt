@@ -1,7 +1,9 @@
-// Compile-time benchmark input: imports every std module, so sema checks all of std and the
-// prelude (bench/nightly.sh divides its instructions by the code lines of all of std/, which
-// is only a cost per line when all of std is checked; crates/veltc/tests/bench_programs.rs
-// checks that no module is missing). A small main touches a few modules and names the globals
+// Compile-time benchmark input: imports every std module, so with VELT_EAGER_STD=1 sema checks
+// all of std and the prelude (without it, the prelude's free functions and statics this program
+// doesn't reach stay unchecked; docs/internals/design/lazy-std.md). bench/nightly.sh divides its
+// instructions with VELT_EAGER_STD=1 by the code lines of all of std/, which is only a cost per
+// line when all of std is checked; crates/veltc/tests/bench_programs.rs checks that no module is
+// missing and that all of std checks without diagnostics. A small main touches a few modules and names the globals
 // loaded on demand whose modules nothing imports (`Proxy` and `Reflect`,
 // std/prelude/global/proxy.vlt).
 import { existsSync } from "velt:fs";
@@ -83,6 +85,7 @@ import * as std_fetch_response from "velt:fetch/response";
 import * as std_fetch_streams from "velt:fetch/streams";
 import * as std_fetch_tee from "velt:fetch/tee";
 import * as std_fetch_typed from "velt:fetch/typed";
+import * as std_fs_fd from "velt:fs/fd";
 import * as std_fs_stream from "velt:fs_stream";
 import * as std_hash from "velt:hash";
 import * as std_html from "velt:html";
@@ -140,14 +143,18 @@ import * as std_sort_merge from "velt:sort/merge";
 import * as std_sort_stable from "velt:sort/stable";
 import * as std_sqlite from "velt:sqlite";
 import * as std_sqlite_btree from "velt:sqlite/btree";
+import * as std_sqlite_exec_value from "velt:sqlite/exec/value";
 import * as std_sqlite_format from "velt:sqlite/format";
 import * as std_sqlite_real from "velt:sqlite/real";
 import * as std_sqlite_record from "velt:sqlite/record";
+import * as std_sqlite_schema from "velt:sqlite/schema";
 import * as std_sqlite_sql_ast from "velt:sqlite/sql/ast";
 import * as std_sqlite_sql_cursor from "velt:sqlite/sql/cursor";
 import * as std_sqlite_sql_expr from "velt:sqlite/sql/expr";
 import * as std_sqlite_sql_lexer from "velt:sqlite/sql/lexer";
 import * as std_sqlite_sql_parser from "velt:sqlite/sql/parser";
+import * as std_sqlite_sql_statement from "velt:sqlite/sql/statement";
+import * as std_sqlite_sql_table from "velt:sqlite/sql/table";
 import * as std_stdin from "velt:stdin";
 import * as std_streams from "velt:streams";
 import * as std_streams_byte_source from "velt:streams/byte_source";
@@ -155,6 +162,8 @@ import * as std_symbol from "velt:symbol";
 import * as std_sync from "velt:sync";
 import * as std_sync_epoch from "velt:sync/epoch";
 import * as std_task from "velt:task";
+import * as std_test from "velt:test";
+import * as std_this_fn from "velt:this_fn";
 import * as std_timers from "velt:timers";
 import * as std_typed_array from "velt:typed_array";
 import * as std_typed_array_base from "velt:typed_array/base";

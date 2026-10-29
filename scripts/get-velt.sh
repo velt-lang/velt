@@ -349,6 +349,9 @@ fi
 bin="$root/bin"
 VELT_TOOLCHAIN="$version" "$bin/velt" --version >/dev/null ||
     err "the launcher in $bin does not run velt $version"
+# Compile std into the build cache in the background, so a first build compiles little more than
+# its own code (`velt cache warm`; a velt older than the command just declines).
+"$dest/bin/velt" cache warm --background >/dev/null 2>&1 || true
 
 # --- PATH ---------------------------------------------------------------------------------------
 add_line() { # <file> <line>

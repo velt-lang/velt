@@ -60,8 +60,10 @@ mod global_narrow;
 mod index_keys;
 mod key_narrow;
 mod late_consts;
+pub(crate) mod lazy_std;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
+mod type_guards;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
 mod chain_facts;
 mod literal_patterns;
@@ -260,6 +262,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub std_callback: Option<Vec<bool>>,
     /// An arrow whose parameters without a type are `any` (`dynamic_member.rs`).
     pub any_callback: Option<Span>,
+    /// Operands of reflective operations (`Object.keys`, `in`, `Object.hasOwn`, spreads, ...),
+    /// whose class instance brands are checked as their classes (`brand_members.rs`).
+    pub instance_args: rustc_hash::FxHashSet<velt_syntax::ast::NodeId>,
     /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
     /// its own (`FnState::never_end`).
     pub promise_callback: bool,
@@ -396,6 +401,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             std_callback: None,
             any_callback: None,
+            instance_args: Default::default(),
             promise_callback: false,
             literal_slot: None,
             method_this: None,

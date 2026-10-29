@@ -16,13 +16,14 @@ use crate::resolve::TyEnv;
 const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
+    super::lazy_std::plan(cx);
     super::literal_hosts::find(cx);
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
         field_defaults(cx, d);
     }
     for &d in &all {
-        if cx.global(d).is_some() {
+        if cx.global(d).is_some() && !super::lazy_std::deferred(cx, d) {
             ensure_global(cx, d);
         }
     }
@@ -33,8 +34,12 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::defaults::iface_defaults(cx);
     super::literal_hosts::ensure_all(cx);
     for d in fns {
-        ensure_body(cx, d);
+        if !super::lazy_std::deferred(cx, d) {
+            ensure_body(cx, d);
+        }
     }
+    // What the checked code refers to of the standard library's deferred definitions.
+    super::lazy_std::reach(cx);
     super::returns::check_deferred(cx);
     static_copy_uses(cx);
     super::expr::iface_from_object::check_unwraps(cx);

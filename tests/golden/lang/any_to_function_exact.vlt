@@ -1,0 +1,33 @@
+// An `any` holding a function of exactly the type it is converted to gives that function
+// itself (#379), as Node keeps one function: `===`, `indexOf`, `Set` and `Map` keys see it,
+// and converting it back and forth adds nothing.
+type L = (n: number) => number;
+const l1: L = (n) => n + 1;
+const l2: L = (n) => n * 2;
+const store: any[] = [l1, l2];
+const back = store[0] as L;
+console.log(back === l1, back(1));
+const ls: L[] = [l1, l2];
+console.log(ls.indexOf(store[1] as L));
+const set = new Set<L>([l1]);
+console.log(set.has(store[0] as L));
+const names = new Map<L, string>([[l2, "twice"]]);
+console.log(names.get(store[1] as L));
+
+// Round trips through `any` keep the one function, however many there are.
+type F = (n: number) => number;
+let h: F = (n) => n + 1;
+for (let i = 0; i < 200000; i++) {
+  const a: any = h;
+  h = a as F;
+}
+console.log(h(1), h === (store[0] as any as F) ? "same" : "other");
+
+// A million calls through an exact conversion call the function directly.
+let sum = 0;
+const held: any = l1;
+for (let i = 0; i < 1000000; i++) {
+  const f = held as L;
+  sum += f(i);
+}
+console.log(sum);

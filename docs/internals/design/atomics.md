@@ -187,8 +187,8 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
   per constant, so a swap keeps its value.
-- ``` `Atomic<T>` needs a number type, `bool` or a `shared` value, found `string` ``` (a type
-  parameter too: the instruction depends on the type).
+- ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
+  (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
@@ -569,6 +569,61 @@ entry are redirected there.
 - **Tests:** `std/atomic_ref_sections`. A task on another thread is inside a function holding a
   loaded value while main replaces it 10 times and collects 100 times: nothing is dropped
   until it returns. Without sections, all 10 are dropped and the holder reads a freed string.
+
+## Strings (#1696 step 2f)
+
+A string is three words (rt_abi.md), so an `Atomic<string>`'s word points to a counted box
+holding one: the box a `shared<string>` has. velt_vir `Cx::adt_field_tys` lays the
+`Atomic<string>`'s field out as `shared<string>`, so its drop glue releases the box, and
+`new Atomic<string>(s)` boxes `s` (`adt_lit`). `lower/atomic_str.rs` lowers the methods:
+- **`load`:** the string in the box, borrowed, as a reference `load` is (the function's
+  section keeps the box). In an async function or a generator it is copied at once, inside a
+  section of its own.
+- **`store(v)` / `exchange(v)`:** box `v` and swap it in. `exchange` gives a copy of the string
+  before. The old box is retired as `shared<string>`.
+- **`compareExchange(expected, v)`:** compares contents. It loads the box (acquire), compares
+  its string with `expected`, and swaps the pointer if no writer replaced the box meanwhile. A
+  strong one reads again when another writer did; a weak one fails then. It returns `bool` and
+  drops `v`'s box when it did not swap.
+- **Not supported:** a static `Atomic<string>`, whose box is made at run time, stays in the
+  module state. `Atomic<string | null>` is not supported yet (`Atomic<shared<string> | null>`
+  is).
+
+## `Atom<T>` (#1696 step 3)
+
+`velt:sync`'s `Atom<T>` is plain Velt on the pieces above: a struct of an `Atomic<shared<T>>`
+and a `VersionLatch` for writers.
+- **Reads:** `read(f)` loads the value borrowed and hands it to the callback, with no count, in
+  the method's own epoch section. `load()` returns it counted.
+- **Writes:** `store` and `swap` are the `Atomic`'s.
+- **`update(f)`:** takes the latch, so updates take turns. It loads, calls `f`, and publishes
+  with a compare-and-swap. A `store` or `swap` that came in between makes it run `f` again on
+  the newer value. A throw leaves the value as it was, and `finally` lets the latch go.
+- **Measured** against Rust's `arc-swap` (M4, release, load ~70; 8 threads each reading 10M
+  times, then 4 writers and 4 readers):
+  - one `read` per call: 65–91 ms against 63–81 ms, about the same;
+  - reads in a loop: 42–51 ms against 63–81 ms;
+  - mixed: 166–187 ms against 546–626 ms, about 70% less time.
+
+  Each `read` opens a section; a raw `Atomic<shared<T>>` read in a loop inside one function
+  pays it once (6–13 ms).
+
+## Generic `Atomic<T>` (#1696 step 4.1)
+
+`Atomic<T>` with `T` a type parameter is allowed when `T` is bounded by the prelude's marker
+interface `AtomicValue` (std/prelude/sync.vlt). The compiler knows its implementations (no
+`extend` declares them): `Ctx::satisfies` takes the integer types, `f32`, `f64`, `bool`,
+`string`, `shared<U>` and `shared<U> | null`. The bound is checked where the generic is
+instantiated, as any interface bound is; lowering instantiates per type already, so `atomic_word` and
+`atomic_ref_value` see the substituted `T` and pick the instruction as for written types.
+- **Operations:** sema allows on such a `T` only those every `AtomicValue` has alike:
+  `load`, `store`, `exchange` and `compareExchangeWeak`. `compareExchange` returns the value
+  before for a number but whether it swapped for a reference, and `add` and the bitwise methods
+  exist for numbers only.
+- **Borrowing:** sema cannot tell a reference `load` from a number's in generic code, so
+  `const c = a.load()` there binds by value; lowering counts a reference then (no borrow).
+- **Lowering fix:** `atomic_place`'s fallback now substitutes the receiver's type.
+- **Why:** `ConcurrentMap<K, V>` (step 4) declares `Atomic<V>` arrays.
 
 ## Not in this design
 

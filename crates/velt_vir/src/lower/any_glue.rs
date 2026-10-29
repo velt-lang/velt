@@ -249,47 +249,6 @@ impl FnLower<'_, '_> {
         v
     }
 
-    /// The `any` argument `i` (a `u64` operand) of the buffer `argv`.
-    pub(super) fn any_arg_place(&mut self, argv: vir::Local, i: Operand) -> Place {
-        let any = self.cx.any_ty();
-        let vt = self.cx.ty(any);
-        let (size, _) = self.cx.size_align(vt);
-        let off = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, i, cint(size as i128, Ty::U64)),
-        );
-        let base = Operand::Copy(Place::local(argv));
-        let p = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, base, off));
-        let pp = self.operand_place(p, Ty::Ptr);
-        proj(&pp, Proj::Deref(vt))
-    }
-
-    /// Drop the arguments `from..argc` of `argv`.
-    pub(super) fn any_drop_args(&mut self, argv: vir::Local, from: u64, argc: vir::Local) {
-        let any = self.cx.any_ty();
-        let i = Place::local(self.temp(Ty::U64));
-        self.assign(i.clone(), Rvalue::Use(cint(from as i128, Ty::U64)));
-        let (head, body, exit) = (self.new_block(), self.new_block(), self.new_block());
-        self.goto(head);
-        self.switch_to(head);
-        let n = Operand::Copy(Place::local(argc));
-        let more = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Lt, Operand::Copy(i.clone()), n),
-        );
-        self.branch(more, body, exit);
-        self.switch_to(body);
-        let ap = self.any_arg_place(argv, Operand::Copy(i.clone()));
-        self.drop_glue(ap, any);
-        let next = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Add, Operand::Copy(i.clone()), cint(1, Ty::U64)),
-        );
-        self.assign(i, Rvalue::Use(next));
-        self.goto(head);
-        self.switch_to(exit);
-    }
-
     /// The arguments converted to `params` (owned temporaries): argument `k` checked as by
     /// `AnyTo`, a missing one `undefined` (`null` for a nullable parameter, a `TypeError` for
     /// another); extra arguments are dropped.
@@ -469,6 +428,9 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_get_record(data, key, &outp, ty);
         }
+        if self.fn_props(ty) {
+            return self.fn_prop_get(data, key, &outp, ty);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
@@ -577,35 +539,6 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
-    /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
-    /// has no members of its own; `Object.prototype`'s come later.
-    fn any_get_record(&mut self, data: vir::Local, key: vir::Local, out: &Place, ty: TyId) {
-        let (k, _) = self
-            .prelude_record(ty)
-            .unwrap_or_else(|| super::ice("record"));
-        let get = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
-        });
-        let ready = get.and_then(|m| self.ready(ty, &m));
-        let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {
-            return self.ret_status(ST_UNSUPPORTED);
-        };
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
-        let kvt = self.cx.ty(k);
-        let kp = self.deref_param(key, k);
-        let ks = self.share_value(Operand::Copy(kp), k);
-        let kslot = Place::local(self.copy_to_temp(ks, kvt));
-        let this = self.any_this(data, ty);
-        self.any_invoke(&r, this, vec![(kslot, k)], out);
-        self.ret_status(ST_OK);
-    }
-
     /// A key the fixed shape does not have: `undefined`, unless every object has it.
     fn any_get_fallback(&mut self, key: vir::Local, out: &Place) {
         for name in OBJECT_PROTO {
@@ -677,9 +610,13 @@ impl FnLower<'_, '_> {
         if self.is_proxy(ty) {
             return self.proxy_call_body((data, key, argv, argc, out), ty);
         }
+        if self.fn_props(ty) {
+            self.fn_prop_call((data, key, argv, argc, out), ty);
+        }
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
         }
+        self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
             // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
@@ -716,6 +653,7 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(fty);
                 let held = Place::local(self.copy_to_temp(v, vt));
                 let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), fty);
+                self.this_fn_method_call((&held, fty, &fd, &fdesc), (data, argv, argc, out), ty);
                 let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
                 let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
                 let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
@@ -784,6 +722,9 @@ impl FnLower<'_, '_> {
             TyKind::Closure(_) => {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
+            }
+            TyKind::Adt(..) if self.cx.is_this_fn(ty) => {
+                self.this_fn_apply_body((data, argv, argc, out), ty)
             }
             // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
             TyKind::Adt(..) if self.cx.is_array_method(ty) => {

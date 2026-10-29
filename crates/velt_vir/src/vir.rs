@@ -9,7 +9,8 @@
 //!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing".
 //! 3. Drops, drop flags, moves, bounds checks, overflow policy, async state machines are all already
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
-//! 4. Block 0 is the entry block. Locals `0..params.len()` hold the incoming params.
+//! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals
+//!    `0..params.len()` hold the incoming params.
 //! 5. Lowering emits the program entry as an exported function `velt_main() -> I32`
 //!    (see rt_abi.md); backends need no special casing.
 //! 7. `BinOp::Rem` on floats is C `fmod` (JS `%`). `Rvalue::Cast` also allows int → `Bool` (`!= 0`).
@@ -49,6 +50,7 @@
 //!     `AggId` and field index in them names an existing aggregate field (checked by `verify`).
 //!     `velt_opt` passes keep a local's description on the local holding the variable's value
 //!     and drop it where no single local does.
+//! 11. `Linkage::Import` (additive; contracts README): defined elsewhere, never emitted; passes treat it as `Export`.
 
 use std::fmt;
 
@@ -204,6 +206,8 @@ pub enum Linkage {
     Export,
     /// Local to the object file.
     Internal,
+    /// Defined by another object of the link (invariant 11): declared, never emitted.
+    Import,
 }
 
 #[derive(Clone, Debug)]
@@ -749,17 +753,22 @@ impl fmt::Display for Program {
             let link = match func.linkage {
                 Linkage::Export => "export",
                 Linkage::Internal => "internal",
+                Linkage::Import => "import",
             };
             writeln!(f)?;
+            let open = if func.blocks.is_empty() { "" } else { " {" };
             writeln!(
                 f,
-                "fn#{} {} {}({}) -> {} {{",
+                "fn#{} {} {}({}) -> {}{open}",
                 i,
                 link,
                 func.symbol,
                 fmt_tys(&func.params),
                 func.ret
             )?;
+            if open.is_empty() {
+                continue;
+            }
             for (li, l) in func.locals.iter().enumerate() {
                 let kind = if li < func.params.len() {
                     "param"

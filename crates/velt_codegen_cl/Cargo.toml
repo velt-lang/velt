@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-cranelift-codegen = { version = "0.132.3", features = ["x86", "arm64"] }
+cranelift-codegen = { version = "0.132.3", features = ["x86", "arm64", "incremental-cache"] }
 cranelift-frontend = "0.132.3"
 cranelift-jit = "0.132.3"
 cranelift-module = "0.132.3"

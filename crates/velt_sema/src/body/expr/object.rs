@@ -264,6 +264,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        self.instance_spreads(props);
         if props
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))

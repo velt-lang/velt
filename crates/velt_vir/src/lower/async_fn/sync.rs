@@ -348,6 +348,21 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
+        // A callback that may reach a declared function's properties held as `any`, which are
+        // module state (velt_rt fn_props.rs): the module lock comes first, so the callback
+        // never waits for it while it holds the lock. Sema lists the callbacks that never
+        // reach them (`Program::lock_free_callbacks`).
+        let lock_free = match &f.kind {
+            hir::ExprKind::Closure(d) | hir::ExprKind::FnRef(d, _) => {
+                self.cx.hir.lock_free_callbacks.contains(d)
+            }
+            _ => false,
+        };
+        let module_took = (self.cx.boxing.fn_props && !lock_free).then(|| {
+            let took = Place::local(self.temp(Ty::U8));
+            self.call_rt(Rt::ModuleWith, vec![], Some(took.clone()));
+            took
+        });
         // An `RwLock`'s lock takes this thread's reader state (0: it looks it up) and says how
         // it went in, which its unlock takes back.
         let how = match rw {
@@ -411,6 +426,9 @@ impl FnLower<'_, '_> {
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         self.call_rt(unlock_fn, unlock_args, None);
+        if let Some(took) = module_took {
+            self.call_rt(Rt::ModuleWithEnd, vec![Operand::Copy(took)], None);
+        }
         r
     }
 

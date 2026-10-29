@@ -157,9 +157,11 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
 pub mod atomic;
+pub mod fingerprint;
 mod lower;
 pub mod mangle;
 pub mod simd;
+pub mod system;
 pub mod tls;
 mod verify;
 
@@ -191,6 +193,9 @@ pub struct LowerOptions<'a> {
     /// Describe source variables for debuggers (`Program::debug_types`, `LocalDecl::debug`;
     /// vir/debug.rs). Needs `source_map`. Off, the program is the same without them.
     pub debug_info: bool,
+    /// The target triple: system functions (`declare system function`, [`system`]) are bound
+    /// per target. `None`: the host's.
+    pub target: Option<&'a str>,
 }
 
 /// One native library to initialize before `main` runs.

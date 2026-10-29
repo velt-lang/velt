@@ -368,3 +368,18 @@ pub(crate) fn guard_param(cond: &Expr) -> Option<TyId> {
         _ => None,
     }
 }
+
+/// `e`, an expression checked outside any function body (a class field's initializer, run by
+/// a constructor or a `new`), with its own temporaries (a `Record` literal's, ...) renumbered
+/// from `base` on, so that they don't name the locals of the body it is lowered in (those are
+/// below `base`); and how many there are. `None`: `e` declares no local.
+pub fn rebase_detached_locals(e: &crate::hir::Expr, base: u32) -> Option<(crate::hir::Expr, u32)> {
+    let mut e = e.clone();
+    let n = detached_locals(&mut e).len() as u32;
+    if n == 0 {
+        return None;
+    }
+    let map: Vec<crate::hir::LocalId> = (0..n).map(|i| crate::hir::LocalId(base + i)).collect();
+    remap_expr_locals(&mut e, &map);
+    Some((e, n))
+}

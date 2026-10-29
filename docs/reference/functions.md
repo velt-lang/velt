@@ -497,6 +497,43 @@ function main() {
 }
 ```
 
+### Type tests
+
+`typeIs<A, B>()` tells whether two types are the same, decided where the generic is used: a
+constant for each instantiation, and an `if` on it runs only the branch it takes, so generic
+code can choose a representation per type at no cost (the other branch is not compiled for that
+instantiation). Inside `if (typeIs<A, B>())`, `asType<B>(x)` converts a value `x: A` to `B`, the
+same type there; anywhere else it is an error, and neither function can be used as a value.
+Both are Velt's (TypeScript has no counterpart).
+
+- **What counts as the guard:** only the `then` branch of an `if` whose condition is the call
+  itself, and closures written inside it. Not `!typeIs…` with its `else`, `typeIs… && c`, a
+  ternary, code after an early `if (!typeIs…) return;`, a test saved in a `const`, or a chain
+  (`typeIs<A, B>` with `asType<C>`).
+- **The call:** `asType<B>(x)`, with `B` written and nothing else: the type of `x` is the type
+  converted from.
+
+```ts
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v); // numbers inline: one store for `Slot<u64>`
+    } else {
+      this.boxed = [v];
+    }
+  }
+}
+
+function main() {
+  const s = new Slot<u64>();
+  s.put(7);
+  console.log(s.word, s.boxed.length); // 7 0
+}
+```
+
 ## Generators
 
 ```ts
@@ -816,13 +853,34 @@ async function main() {
   expected, as for an arrow.
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
-  annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
-  receiver): declare the function and call it with `call` or `apply` (below), take the object as
-  an ordinary parameter, or write a class method. A function expression that is the value of an
-  object-literal property (`{ v: 1, get: function () { return this.v; } }`) is a method of the
-  literal: `this` is the object, as in TS
+  annotation``, as under `--strict`, also in a generator (`function* () { … }`). A function
+  expression that is the value of an object-literal property
+  (`{ v: 1, get: function () { return this.v; } }`) is a method of the literal: `this` is the
+  object, as in TS
   ([`this` in object-literal methods](types.md#this-in-object-literal-methods)).
+- With a `this: any` parameter and a body that uses `this` or `arguments`, the value is a
+  `Function` whose `this` is bound at the call, as in JS. A method call passes its object:
+  `o.m(x)`, `o[k](x)` and `o.m?.(x)` on an `any` or a proxy (`p.push(x)` where the `get` trap
+  answers the function), `arr[0](x)` on an `any[]`, and `o.m(x)` on a typed `o` whose `m` is a
+  `Function`. `f.call(o, …)`, `f.apply(o, args)` (`null` or `undefined` for no arguments) and
+  `f.bind(o, …)` pass `o`, and a plain call `f(x)` passes `undefined`. `arguments` holds the
+  call's arguments (an `any[]`). A parameter of type `any` (or an optional one) is `undefined`
+  when its argument is left out; one of another type converts its argument, checked, so leaving
+  it out is a `TypeError` (Node would pass `undefined`), and so does an argument of another
+  type. A rest parameter's elements convert the same way. Not supported yet: another `this`
+  type, an async such function, such a function where a function type is expected (it is held as
+  a `Function` or `any`), and a destructured parameter; declare the function and call it with
+  `call` or `apply` (below), take the object as an ordinary parameter, or write a class method.
+
+  ```ts
+  const methods: Record<string, Function> = {};
+  methods.total = function (this: any, extra: number) {
+    return this.n + extra + arguments.length;
+  };
+  const o = { n: 1, total: methods.total };
+  console.log(methods.total.call({ n: 1 }, 10), o.total(20)); // 12 22
+  ```
+
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
   `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
   have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written
@@ -1327,7 +1385,39 @@ an error; use the call's result.
 
 The value is an object with a fixed set of fields, the function among them: properties the type
 does not declare can't be added, and a function whose type has no members has no properties of
-its own (`const f = () => 1; f.label = "one"` is an error). Several call signatures next to
+its own (`const f = () => 1; f.label = "one"` is an error).
+
+Held as `any`, any function takes new properties, as in JavaScript: every reference to the
+function (copies of the `any`, a closure that captured it) sees them, and reads, method calls,
+`in`, `Object.keys` and `delete` find them. A property never written reads as `undefined`.
+
+```ts
+function component(setup: (n: number) => number, name?: string): any {
+  const factory: any = function (props: any) {
+    return { type: factory, props: props || {} };
+  };
+  factory.__setup = setup;
+  factory.__name = name;
+  return factory;
+}
+
+const C = component((n) => n * 2, "C");
+console.log(C.__name, C.__setup(21), typeof C); // C 42 function
+console.log(C({}).type === C, Object.keys(C)); // true [ '__setup', '__name' ]
+```
+
+A declared function is one function, as in JavaScript: every `any` holding it sees the same
+properties and compares `===` (also as a `Map` key), in other tasks too, as a module-level `let`
+is one variable (a task that reads or writes its properties takes the module lock, and so does
+a `with`, `read` or `write` whose callback may: [Async](async.md)). Any other function (a function
+expression, an arrow, a closure) sent to another task (`spawn`, a channel, `shared`) while it is
+still used here gets a copy of its properties there, as an object gets a copy of its members
+([Async](async.md)), so a write in one task is not seen in the other. Converted back to a
+callable interface (`f as Factory` with `interface Factory { (p: number): number; __name?:
+string }`), the function's properties fill the interface's members.
+
+Through `any`, a function's own `name` and `length`, and `call`, `apply` and `bind`, are not
+supported yet (a `TypeError` naming #924). Several call signatures next to
 members (overloads) and `Object.defineProperty` onto a function are not supported yet.
 
 ### `call` and `apply`

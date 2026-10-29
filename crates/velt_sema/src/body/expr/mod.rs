@@ -5,6 +5,7 @@ mod abstract_ctor;
 mod access;
 mod accessor_rmw;
 mod any_prim;
+mod any_record_cast;
 mod any_text;
 mod arg_order;
 mod args;
@@ -19,6 +20,7 @@ mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
+mod brand_members;
 mod builtins;
 mod call;
 mod call_apply;
@@ -48,7 +50,9 @@ mod dynamic;
 mod dynamic_arith;
 mod dynamic_concat;
 mod dynamic_enum;
+mod dynamic_fill;
 mod dynamic_member;
+mod dynamic_members;
 mod dynamic_narrow;
 mod dynamic_optional;
 mod dynamic_relational;
@@ -57,6 +61,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
+mod proxy_getters;
 mod static_call;
 pub(crate) use env_globals::NODE_GLOBALS;
 pub(crate) use primitive_statics::primitive_this;
@@ -176,6 +181,8 @@ mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
+mod this_fn_call;
+mod this_fn_expr;
 mod this_param;
 mod this_type;
 mod three_state;
@@ -242,6 +249,11 @@ impl FnCx<'_, '_> {
         let h = self.collapse_dynamic_option(h);
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
+        // The operand of a reflective operation sees a class instance brand's class.
+        let h = match !self.instance_args.is_empty() && self.instance_args.contains(&e.id) {
+            true => self.unbrand_instance(h),
+            false => h,
+        };
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
@@ -300,6 +312,15 @@ impl FnCx<'_, '_> {
             }
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
+            // A member call that may pass its object to a function taking `this` (this_fn_call.rs).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
+            } if self.this_fn_call_site(callee, type_args, *optional) => {
+                self.this_fn_member_call(callee, args, *optional, span)
+            }
             A::Call {
                 callee,
                 type_args,

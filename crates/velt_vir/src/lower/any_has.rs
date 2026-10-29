@@ -148,6 +148,9 @@ impl FnLower<'_, '_> {
         if self.prelude_record(ty).is_some() {
             return self.any_has_record(data, key, ty);
         }
+        if self.fn_props(ty) {
+            return self.fn_prop_has(data, key, ty, HAS_YES, HAS_NO);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyHas, ty, d, &[data, key]);
             let fields: Vec<(String, bool)> = self

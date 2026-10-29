@@ -1,0 +1,156 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// Properties of functions held as `any` (#924): freed with the function, one identity per
+// declared function, and copied with a function sent to another task.
+
+// Short-lived functions, every other one with properties: none sees another's.
+const seen: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const f: any = () => i;
+  if (i % 2 == 0) {
+    f.n = i;
+    f.box = { v: [i] };
+  }
+  seen.push(String(f.n));
+}
+console.log(seen.join(" "));
+
+// A declared function is one function, whichever reference reaches it.
+function decl(): number {
+  return 1;
+}
+
+(decl as any).y = 2;
+console.log((decl as any).y);
+
+function tag(f: any, v: number): any {
+  f.v = v;
+  return f;
+}
+
+const keep: any = decl;
+tag(keep, 10);
+console.log(keep.v, keep(), (decl as any) === keep);
+
+// `delete` and the keys after it.
+const g: any = () => 0;
+g.a = 1;
+g.b = { c: 2 };
+g.d = "x";
+console.log(delete g.b, Object.keys(g), "b" in g);
+g.b = 3;
+console.log(Object.keys(g), g.b);
+
+// A function sent to tasks while this one rewrites its property: each task has a copy.
+async function reader(f: any, n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const o = f.obj;
+    s += o.k;
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function main(): Promise<void> {
+  const f: any = () => 1;
+  f.obj = { k: 1 };
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 4; t++) {
+    const h = f;
+    ps.push(spawn(reader(h, 5000)));
+  }
+  for (let i = 0; i < 5000; i++) {
+    f.obj = { k: 1 };
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(s);
+}
+
+await main();
+
+// Tasks that each convert a declared function again and rewrite its property: one function,
+// whose properties are module state (each task takes the module lock).
+async function worker(n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    const d: any = decl;
+    d.obj = { k: 1 };
+    const o = d.obj;
+    s += o.k;
+    if (i % 64 == 0) {
+      await Promise.resolve();
+    }
+  }
+  return s;
+}
+
+async function workers(): Promise<void> {
+  const ps: Promise<number>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(worker(2000)));
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(s);
+}
+
+await workers();
+
+// A declared function sent to another task is the function there: `===` and `Map` keys.
+async function same(f: any): Promise<void> {
+  const again: any = decl;
+  console.log("in task", f === again, f.v, again.v, f === decl, again === decl);
+  const m = new Map<any, number>();
+  m.set(f, 1);
+  console.log("map", m.get(again), new Set<any>([f, again, decl]).size, Object.is(f, again));
+}
+
+async function sameIn(): Promise<void> {
+  const f: any = decl;
+  f.v = 1;
+  await spawn(same(f));
+}
+
+await sameIn();
+
+// Back from tasks, and through a task inside a task: still the one function.
+async function back(): Promise<any> {
+  await Promise.resolve();
+  return decl;
+}
+
+async function nested(f: any): Promise<boolean> {
+  const again: any = decl;
+  return f === again && f.v === again.v;
+}
+
+async function outer(f: any): Promise<boolean> {
+  return await spawn(nested(f));
+}
+
+async function backs(): Promise<void> {
+  const ps: Promise<any>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ps.push(spawn(back()));
+  }
+  const fs = new Set<any>();
+  for (const p of ps) {
+    fs.add(await p);
+  }
+  const d: any = decl;
+  fs.add(d);
+  console.log(fs.size, [...fs][0] === decl, [...fs][0].v, await spawn(outer(d)));
+}
+
+await backs();
