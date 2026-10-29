@@ -12,6 +12,7 @@
 // makes no `Headers` until they are read: the `content-type` its body implies waits in
 // `#implied`, and a server sends it from there.
 
+import { JSON, JsonError } from "velt:prelude/json/json";
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";

@@ -118,7 +118,7 @@ impl FnLower<'_, '_> {
         let choice = self.object_choice(&tys);
         let ro = Operand::Copy(Place::local(cx.r));
         let mark = self.temp(Ty::U64);
-        self.call_rt(Rt::JsonMark, vec![ro.clone()], Some(Place::local(mark)));
+        self.reader_rt(Rt::JsonMark, vec![ro.clone()], Some(Place::local(mark)));
         self.json_expect(
             Rt::JsonObjectStart,
             vec![ro.clone()],
@@ -137,13 +137,13 @@ impl FnLower<'_, '_> {
             self.new_block(),
             self.new_block(),
         );
-        self.object_next_key(cx, &ka, head, body, end, broken);
+        self.object_next_key(cx, head, body, end, broken);
         self.switch_to(body);
         match &choice {
             ObjectChoice::Discriminant(name) => {
-                self.object_match_discriminant(cx, &ka, name, &tys, which, found)
+                self.object_match_discriminant(cx, name, &tys, which, found)
             }
-            ObjectChoice::Keys(keys) => self.object_match_keys(&ka, keys, which, found),
+            ObjectChoice::Keys(keys) => self.object_match_keys(cx.r, keys, which, found),
         }
         self.object_skip_value(cx, ka, head);
         // The object ended without the key.
@@ -153,12 +153,11 @@ impl FnLower<'_, '_> {
         self.object_decode_chosen(cx, objects, mark, which);
     }
 
-    /// The loop head `head`: read the next key into `ka`, on to `body` with a key, `end` at
+    /// The loop head `head`: read the next key (kept in the reader), on to `body` with a key, `end` at
     /// the object's end, `broken` (which fails) on malformed input.
     fn object_next_key(
         &mut self,
         cx: &UnionCx<'_>,
-        ka: &Operand,
         head: BlockId,
         body: BlockId,
         end: BlockId,
@@ -167,14 +166,10 @@ impl FnLower<'_, '_> {
         let ro = Operand::Copy(Place::local(cx.r));
         self.goto(head);
         self.switch_to(head);
-        let step = self.temp(Ty::U8);
-        self.call_rt(
-            Rt::JsonNextKey,
-            vec![ro, ka.clone()],
-            Some(Place::local(step)),
-        );
+        // The key stays in the reader (`keyIs`); only an error path makes it a string.
+        let step = self.reader_call("nextKey", vec![ro]);
         self.terminate(Terminator::Switch {
-            value: Operand::Copy(Place::local(step)),
+            value: step,
             cases: vec![(1, body), (0, end)],
             default: broken,
         });
@@ -182,24 +177,19 @@ impl FnLower<'_, '_> {
         self.json_fail(cx.ctx, "object", cx.fail);
     }
 
-    /// The key `ka` is the discriminant `name`: its value picks the member (into `which`), and
+    /// The reader's key is the discriminant `name`: its value picks the member (into `which`), and
     /// on to `found`. Otherwise falls through.
     fn object_match_discriminant(
         &mut self,
         cx: &UnionCx<'_>,
-        ka: &Operand,
         name: &str,
         tys: &[TyId],
         which: Local,
         found: BlockId,
     ) {
-        let l = self.str_lit(name);
-        let la = self.operand_addr(l, STR);
-        let eq = self.rt_u8(Rt::StrEq, vec![ka.clone(), la]);
         let (hit, other) = (self.new_block(), self.new_block());
-        self.branch(eq, hit, other);
+        self.key_is_branch(cx.r, name, hit, other);
         self.switch_to(hit);
-        self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
         let alts: Vec<LitValue> = tys
             .iter()
             .map(|t| {
@@ -220,17 +210,13 @@ impl FnLower<'_, '_> {
         self.switch_to(other);
     }
 
-    /// The key `ka` is `keys[i]`: member `i` (into `which`), and on to `found`. Otherwise
+    /// The reader's key is `keys[i]`: member `i` (into `which`), and on to `found`. Otherwise
     /// falls through.
-    fn object_match_keys(&mut self, ka: &Operand, keys: &[String], which: Local, found: BlockId) {
+    fn object_match_keys(&mut self, r: Local, keys: &[String], which: Local, found: BlockId) {
         for (i, k) in keys.iter().enumerate() {
-            let l = self.str_lit(k);
-            let la = self.operand_addr(l, STR);
-            let eq = self.rt_u8(Rt::StrEq, vec![ka.clone(), la]);
             let (hit, miss) = (self.new_block(), self.new_block());
-            self.branch(eq, hit, miss);
+            self.key_is_branch(r, k, hit, miss);
             self.switch_to(hit);
-            self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
             self.assign(Place::local(which), Rvalue::Use(cint(i as i128, Ty::U32)));
             self.goto(found);
             self.switch_to(miss);
@@ -245,11 +231,17 @@ impl FnLower<'_, '_> {
         let (next, skip_bad) = (self.new_block(), self.new_block());
         self.branch(ok, next, skip_bad);
         self.switch_to(skip_bad);
+        // The key only for the path (the reader keeps it past its value).
+        let kv = self.reader_call("key", vec![Operand::Copy(Place::local(cx.r))]);
+        let slot = Place {
+            local: self.copy_to_temp(ka.clone(), Ty::Ptr),
+            proj: vec![crate::vir::Proj::Deref(STR)],
+        };
+        self.assign(slot, Rvalue::Use(kv));
         self.json_prepend(cx.ctx, Seg::Key(ka.clone()));
-        self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
+        self.call_rt(Rt::StrDrop, vec![ka], None);
         self.json_fail(cx.ctx, "value", cx.fail);
         self.switch_to(next);
-        self.call_rt(Rt::StrDrop, vec![ka], None);
         self.goto(head);
     }
 
@@ -262,7 +254,7 @@ impl FnLower<'_, '_> {
         which: Local,
     ) {
         let ro = Operand::Copy(Place::local(cx.r));
-        self.call_rt(
+        self.reader_rt(
             Rt::JsonReset,
             vec![ro, Operand::Copy(Place::local(mark))],
             None,

@@ -15,6 +15,7 @@
 // - Started without either (a test program run by hand or under a debugger), it runs every file's
 //   tests in this process and prints the report itself.
 
+import { JSON } from "velt:prelude/json/json";
 import { exec, ExecResult } from "velt:child_process";
 import { readFileSync } from "velt:fs";
 

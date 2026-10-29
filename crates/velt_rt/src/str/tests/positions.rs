@@ -250,15 +250,15 @@ fn first_key(json: &str) -> (Owned, bool) {
     let src = Owned(VeltStr::from_bytes(json.as_bytes()));
     unsafe {
         let r = velt_rt_json_reader_new(&src.0);
-        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
         let mut key = std::mem::MaybeUninit::uninit();
-        assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), 1);
+        assert_eq!(velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()), 1);
         let key = key.assume_init();
         let borrowed = key.is_static();
         // A copy that outlives the reader and the text, as a decoder keeps a key.
         let mut kept = std::mem::MaybeUninit::uninit();
         velt_rt_str_own(&key, kept.as_mut_ptr());
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
         (Owned(kept.assume_init()), borrowed)
     }
 }

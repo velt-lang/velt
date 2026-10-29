@@ -313,3 +313,6 @@ for (const z of zeros) {
 }
 check("0." + "0".repeat(1000000) + "1e1000001");
 check("-0." + "0".repeat(1000010) + "25e1000005");
+const big = "0." + "0".repeat(1000000) + "1e1000001";
+const v: number = JSON.parse(big);
+console.log("JSON.parse", bits(v));

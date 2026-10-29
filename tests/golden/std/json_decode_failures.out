@@ -1,0 +1,16 @@
+json error: expected field "age" at $
+json error: expected string at $.tags[1]
+json error: expected i64 at $.age
+json error: expected object at $
+b 5
+c 7
+json error: Unexpected non-whitespace character after JSON at position 31 (line 1 column 32)
+json error: expected i64 at $.age
+{"items":[{"id":1,"ok":true,"at":{"x":-2,"y":0.5}},{"id":255,"ok":false,"w":2.25,"at":{"x":7,"y":1000}}],"label":"L"}
+json error: expected u8 at $.items[0].id
+json error: expected boolean at $.items[0].ok
+json error: expected field "y" at $.items[0].at
+json error: Unexpected token 'x', "{"v":1,"v":x}" is not valid JSON
+json error: Unexpected token 'x', "[[1],[2],x]" is not valid JSON
+json error: Unexpected token '}', "[{"v":[1]},{"v":}]" is not valid JSON
+json error: Unexpected token ']', "{"a":{"x":1},"b":]" is not valid JSON

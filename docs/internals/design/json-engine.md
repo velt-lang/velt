@@ -126,8 +126,9 @@ mode when wasmtime is on the machine.
 Port `velt_text/src/json_scan.rs`, `velt_rt/src/json/reader.rs`, `json_escape.rs`, the JSON
 pushes of `strbuf.rs` and float printing (`ryu`, as a std port) to Velt, as internal std modules
 in `std/json/` (`velt:json/scan`, `velt:json/reader`, `velt:json/writer`, `velt:json/tape`),
-which the prelude imports. Then switch the glue in `crates/velt_vir/src/lower/json/` from
-`Rt::Json*` calls to calls of those Velt methods.
+which the prelude's JSON module imports (`std/prelude/json/json.vlt`, a global a program loads
+only when its code names `JSON` or `JsonValue`: std/prelude/global/json.vlt). Then switch the
+glue in `crates/velt_vir/src/lower/json/` from `Rt::Json*` calls to calls of those Velt methods.
 
 Error messages and paths stay the same, and the golden tests do not change. Node's exact
 syntax errors (`node_syntax.rs`) can stay a Rust slow path for now, as they run only after a

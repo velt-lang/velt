@@ -221,7 +221,9 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_more(buf: *mut VeltStrBuf, remai
 
 /// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: *const Value) {
+pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: u64) {
+    // The value's handle is its address, a `u64` in Velt (std/prelude/json/json.vlt).
+    let h = h as usize as *const Value;
     match h.as_ref() {
         Some(v) => (*buf).push_with(|b| stringify_into(b, v)),
         None => push_ascii(buf, b"null"),
@@ -328,7 +330,7 @@ mod tests {
             velt_rt_strbuf_push_json_f64(&mut b, f64::NAN);
             velt_rt_strbuf_push_json_f64(&mut b, -f64::INFINITY);
             velt_rt_strbuf_push_json_f64(&mut b, 2.5);
-            velt_rt_strbuf_push_json_value(&mut b, std::ptr::null());
+            velt_rt_strbuf_push_json_value(&mut b, 0);
         }
         assert_eq!(
             finish(b),

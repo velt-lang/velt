@@ -98,6 +98,7 @@ pub fn load(path: &Path, src: &str) -> Loaded {
         &file,
         src.to_string(),
     );
+    l.globals(src);
     l.resolve();
     Loaded {
         modules: l.modules,
@@ -126,6 +127,33 @@ impl Loader {
         });
         self.files.push(file.to_path_buf());
         self.modules.len() - 1
+    }
+
+    /// The globals loaded on demand (`std/prelude/global/*.vlt`) whose re-exported names `src`
+    /// mentions as whole words, as the driver's loader loads them for a user module.
+    fn globals(&mut self, src: &str) {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(std_dir().join("prelude/global"))
+            .map(|rd| rd.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        files.sort();
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("read a global module");
+            let names: Vec<String> = parse(&file, &text)
+                .items
+                .iter()
+                .filter(|i| i.exported)
+                .filter_map(|i| match &i.kind {
+                    ast::ItemKind::Import(imp) => Some(imp),
+                    _ => None,
+                })
+                .flat_map(|imp| &imp.names)
+                .map(|n| n.alias.as_ref().unwrap_or(&n.name).name.clone())
+                .collect();
+            if names.iter().any(|n| mentions(src, n)) {
+                let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
+                self.add(format!("std/prelude/global/{stem}"), true, &file, text);
+            }
+        }
     }
 
     /// The module `spec` names from module `from`, loaded if new.
@@ -266,4 +294,14 @@ pub fn lint_syntax(path: &Path, src: &str) -> Vec<Finding> {
         ast: &module,
     };
     velt_tscompat::lint(&[lint_module], &[file.as_path()], None)
+}
+
+/// Whether `src` contains `name` as a whole identifier (the driver's loader's test).
+fn mentions(src: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    src.match_indices(name).any(|(at, _)| {
+        let before = src[..at].chars().next_back();
+        let after = src[at + name.len()..].chars().next();
+        !before.is_some_and(ident) && !after.is_some_and(ident)
+    })
 }

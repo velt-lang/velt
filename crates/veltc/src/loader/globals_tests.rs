@@ -110,3 +110,45 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     let (l, _, _) = load(&word_only, opts());
     assert_eq!(paths(&l), ["main"]);
 }
+
+/// The JSON modules of the repository's std a program loads (`JSON` and `JsonValue` are
+/// globals: std/prelude/global/json.vlt).
+fn json_modules(main: &str) -> Vec<String> {
+    let t = Tree::new();
+    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let root = t.write("p/main.vlt", main);
+    let opts = LoadOptions {
+        std_root: Some(std),
+        ..Default::default()
+    };
+    let (l, diags, _) = load(&root, opts);
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    let json = |p: &str| p.starts_with("std/json") || p.starts_with("std/prelude/json");
+    let paths = paths(&l);
+    paths
+        .into_iter()
+        .filter(|p| json(p))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_program_that_names_no_json_loads_no_json_modules() {
+    let hello = "console.log(\"hello, world\");\n";
+    assert_eq!(json_modules(hello), Vec::<String>::new());
+    let parse = "const n = JSON.parse<{ x: i64 }>(\"{\\\"x\\\":1}\");\nconsole.log(n.x);\n";
+    let loaded = json_modules(parse);
+    assert!(
+        loaded.contains(&"std/prelude/json/json".to_string()),
+        "{loaded:?}"
+    );
+    assert!(
+        loaded.contains(&"std/json/reader".to_string()),
+        "{loaded:?}"
+    );
+    // A type annotation names the global too; so does the std module that uses `JSON`.
+    let typed = "function f(v: JsonValue): string { return v.stringify(); }\n";
+    assert!(json_modules(typed).contains(&"std/prelude/json/json".to_string()));
+    let csv = "import { parseCsv } from \"velt:csv\";\nconsole.log(parseCsv(\"a\").length);\n";
+    assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
+}

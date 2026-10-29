@@ -902,8 +902,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
-| `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, const void* v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); emitted by the compiler, which passes the handle's address as a pointer (VIR `ptr`), unlike the `u64` handles of §3.2 |
-| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed like `push_json_value`'s (additive; `depth` added by #497) |
+| `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, u64 v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); the handle is the value's address as a `u64`, like the handles of §3.2 |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed as a pointer (VIR `ptr`), unlike `push_json_value`'s `u64` (additive; `depth` added by #497) |
 | `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the `<ref *N>` numbering of cycles starts over (node numbers per argument), unless an object is being printed (additive) |
 | `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
 | `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
@@ -942,6 +942,7 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
+| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt:encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
 | `velt_rt_str_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | `from` clamped to `0..=len` (omitted = 0); -1 if absent; empty needle ⇒ clamped `from` |
 | `velt_rt_str_last_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | last match starting `<= from`; omitted `from` = `i64::MAX` |
 | `velt_rt_str_includes` | `(const VeltStr* s, const VeltStr* needle) -> u8` | (a `position` arg ⇒ use `index_of(s, n, pos) >= 0`) |
@@ -999,6 +1000,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
+| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/json/reader.vlt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0

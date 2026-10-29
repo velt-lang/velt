@@ -26,11 +26,16 @@ fn undocumented(file: &str, owner: Option<&str>, item: &DocItem, out: &mut Vec<S
 #[test]
 fn every_prelude_export_and_member_has_a_doc_comment() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
-    let mut files: Vec<_> = std::fs::read_dir(&dir)
-        .expect("std/prelude")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
-        .collect();
+    // The JSON module is a prelude module its global loads on use (std/prelude/global/json.vlt).
+    let vlt = |d: &Path| {
+        std::fs::read_dir(d)
+            .expect("std/prelude")
+            .map(|e| e.expect("entry").path())
+            .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+            .collect::<Vec<_>>()
+    };
+    let mut files = vlt(&dir);
+    files.extend(vlt(&dir.join("json")));
     files.sort();
     assert!(!files.is_empty(), "no prelude files in {}", dir.display());
     let mut missing = Vec::new();
