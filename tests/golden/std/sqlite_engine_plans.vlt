@@ -1,0 +1,48 @@
+// Queries whose answer depends on the plan the SQLite engine written in Velt (velt:sqlite/engine)
+// picks, against C SQLite (velt:sqlite) on the same file: which row of a DISTINCT or GROUP BY
+// group shows a column that only compares equal (NOCASE), and which index gives the order. The
+// rows must be the same as C SQLite's; the queries that differ are printed.
+import { open } from "velt:sqlite";
+import { openDatabase } from "velt:sqlite/engine";
+import { checkAll } from "./_sqlite_diff";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { removeSync } from "velt:fs";
+
+const SETUP = `
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b TEXT, c REAL, e TEXT COLLATE NOCASE);
+CREATE INDEX t1_a ON t1 (a);
+CREATE INDEX t1_ba ON t1 (b, a);
+CREATE INDEX t1_e ON t1 (e);
+CREATE INDEX t1_c ON t1 (c DESC);
+INSERT INTO t1 VALUES (1, 5, '2', 12.0, 'x'), (2, 1, '2', -1.0, 'abc'), (3, 2, '3', 2.5, 'B'),
+  (4, 7, '2', 2.5, 'ABC'), (5, 3, '3', 20.0, 'b'), (6, 9, '1', 0.5, 'Abc'), (7, 4, '1', 9.5, 'X');
+`;
+
+const QUERIES = [
+  // A range on t1_c: SQLite keeps it, and DISTINCT uses a temporary b-tree (the first row of
+  // each group in t1_c's order shows).
+  "SELECT DISTINCT b, e FROM t1 WHERE t1.c < 10",
+  // A full scan: SQLite reads t1_ba, led by the first DISTINCT column, instead.
+  "SELECT DISTINCT b, e FROM t1",
+  "SELECT DISTINCT e FROM t1 WHERE c > 0",
+  "SELECT DISTINCT e, id FROM t1 WHERE c < 10",
+  "SELECT DISTINCT a FROM t1 WHERE c < 3",
+  "SELECT DISTINCT b, a FROM t1 WHERE c BETWEEN 0 AND 10",
+  "SELECT DISTINCT e FROM t1 WHERE id > 2",
+  "SELECT b, e FROM t1 GROUP BY b",
+  "SELECT e, count(*) FROM t1 WHERE c < 10 GROUP BY e",
+  "SELECT e FROM t1 WHERE a > 2 GROUP BY e",
+  // Unary minus is `0 - x`: text reads as arithmetic reads it.
+  "SELECT -('0' || c), -('0.0'), -(e), -(-9223372036854775807 - 1) FROM t1 ORDER BY id",
+];
+
+function main() {
+  const path = `${tmpdir()}/velt-engine-plans-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  const v = openDatabase(path);
+  checkAll("plans", c, v, QUERIES);
+  c.close();
+  removeSync(path);
+}

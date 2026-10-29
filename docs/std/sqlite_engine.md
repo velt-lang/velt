@@ -79,8 +79,11 @@ MULTI-INDEX OR: such a query runs, with a full scan). Nesting: views, subqueries
 ## How it runs
 
 `prepare` compiles the statement into closures (no bytecode interpreter): each FROM item
-becomes a loop over a b-tree cursor, in FROM order, reading its whole table (or the rows of its
-subquery), with each WHERE and ON term checked at the innermost loop whose columns it reads;
-ORDER BY sorts the rows; without one, LIMIT stops the loops once it has its rows. Columns are
-decoded from the record only when read. A correlated subquery runs again for each outer row; an
-uncorrelated one once per run.
+becomes a loop over a b-tree cursor (inner joins ordered so that each table is read through its
+cheapest path given the ones before it), chosen per table from the WHERE and ON terms: a rowid
+lookup or range, an index with equalities on its leading columns and a range on the next, a
+covering index, or a full scan. An ORDER BY that an index (or the rowid) already gives needs
+no sort, and LIMIT then stops the loops early; an index giving its first terms is scanned too,
+the sort then ordering only rows equal in those. Columns are decoded from the record only when
+read, and the table row behind an index entry is found only when a column the index lacks is
+read. A correlated subquery runs again for each outer row; an uncorrelated one once per run.

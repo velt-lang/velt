@@ -1,12 +1,462 @@
-// velt:sqlite/exec/core_plan — the plan choices of a SELECT core (velt:sqlite/exec/core), and the
-// plan's description in EXPLAIN QUERY PLAN's words.
+// velt:sqlite/exec/core_plan — the plan choices of a SELECT core (velt:sqlite/exec/core) made
+// as SQLite's planner makes them: the order of inner joins, the index an ORDER BY, GROUP BY or
+// DISTINCT reads, min()/max() through an index, covering indexes, `x = a OR x = b` as an IN
+// list, and the plan's description in EXPLAIN QUERY PLAN's words.
 
+import { INTEGER } from "velt:sqlite/btree";
+import { Index } from "velt:sqlite/schema";
+import {
+  E_BINARY,
+  E_CALL,
+  E_COLLATE,
+  E_COLUMN,
+  E_EXISTS,
+  E_INT,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_PARAM,
+  E_REAL,
+  E_STAR,
+  E_STRING,
+  E_SUBQUERY,
+  Expr,
+  OrderTerm,
+  SelectCore,
+} from "velt:sqlite/sql/ast";
 import { SRC_TABLE, Source } from "velt:sqlite/exec/source";
-import { Access } from "velt:sqlite/exec/plan";
+import { Query, Scope } from "velt:sqlite/exec/scope";
+import { AG_MAX, AG_MIN, AggCtx } from "velt:sqlite/exec/agg";
+import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { rangeError, resultIndex } from "velt:sqlite/exec/result";
+export { ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
+import { SortKey } from "velt:sqlite/exec/emit";
+import {
+  ACC_INDEX,
+  ACC_ROWID_EQ,
+  ACC_ROWID_IN,
+  ACC_ROWID_RANGE,
+  ACC_SCAN,
+  Access,
+  Term,
+  accessCost,
+  attachIndex,
+  chooseAccess,
+} from "velt:sqlite/exec/plan";
+import { ORDER_NONE, ORDER_REVERSE, orderedByAccess, orderIndex } from "velt:sqlite/exec/order";
+
+/**
+ * SQLite's min/max optimization: min() or max() alone (no GROUP BY) of a column an index leads
+ * with, under the index's collation: the index is read from that end, and the first row with a
+ * value ends the scan (its columns are the bare columns'). True when the plan uses it.
+ */
+export function minMaxIndex(
+  c: ExprCompiler,
+  core: SelectCore,
+  sc: Scope,
+  agg: AggCtx,
+  access: Access[],
+  left: bool[],
+): bool {
+  if (core.groupBy.length > 0 || agg.fns.length != 1 || sc.sources.length != 1 || left[0]) {
+    return false;
+  }
+  const a0 = access[0];
+  // A full scan, or a range on the index (read from the end the aggregate wants).
+  const ranged = a0.kind == ACC_INDEX && a0.eq.length == 0 && a0.inList == null;
+  if (a0.kind != ACC_SCAN && !ranged) {
+    return false;
+  }
+  const f = agg.fns[0];
+  if ((f.kind != AG_MIN && f.kind != AG_MAX) || f.filter != null || f.args.length != 1) {
+    return false;
+  }
+  let call: Expr | null = null;
+  for (const rc of core.columns) {
+    call = call != null ? call : minMaxCall(rc.expr);
+  }
+  if (call == null || call!.args.length != 1) {
+    return false;
+  }
+  let arg = call!.args[0];
+  while (arg.kind == E_COLLATE) {
+    arg = arg.a!;
+  }
+  if (arg.kind != E_COLUMN) {
+    return false;
+  }
+  const found = c.lookup(arg, sc);
+  const src = sc.sources[0];
+  if (found == null || found!.src != src || src.kind != SRC_TABLE) {
+    return false;
+  }
+  const col = found!.col;
+  if (col < 0 || col == src.rowidCol) {
+    return false;
+  }
+  if (ranged) {
+    const ix = a0.index!;
+    if (ix.columns[0] != col || ix.colls[0] != f.coll) {
+      return false;
+    }
+    a0.reverse = (f.kind == AG_MAX) != ix.desc[0];
+    return true;
+  }
+  for (const ix of src.table!.indexes) {
+    if (!ix.partial && ix.columns[0] == col && ix.colls[0] == f.coll) {
+      const a = new Access();
+      a.kind = ACC_INDEX;
+      a.index = ix;
+      a.reverse = (f.kind == AG_MAX) != ix.desc[0];
+      access[0] = a;
+      attachIndex(src, ix);
+      return true;
+    }
+  }
+  return false;
+}
+
+// The min() or max() call of a result column (outside subqueries).
+export function minMaxCall(e: Expr | null): Expr | null {
+  if (e == null) {
+    return null;
+  }
+  const x = e!;
+  if (x.kind == E_CALL && (x.name == "MIN" || x.name == "MAX") && x.args.length == 1) {
+    return x;
+  }
+  if (x.kind == E_SUBQUERY || x.kind == E_EXISTS || x.kind == E_IN_SELECT) {
+    return null;
+  }
+  let r = minMaxCall(x.a);
+  r = r != null ? r : minMaxCall(x.b);
+  r = r != null ? r : minMaxCall(x.c);
+  for (const a of x.args) {
+    r = r != null ? r : minMaxCall(a);
+  }
+  return r;
+}
+
+/**
+ * Makes the first level's access give the order of `keys` when it can: returns how many of the
+ * leading keys it orders (all of them: no sort needed).
+ */
+export function accessInOrder(
+  c: ExprCompiler,
+  keys: SortKey[],
+  terms: OrderTerm[],
+  osc: Scope,
+  access: Access[],
+  left: bool[],
+  q: Query,
+): usize {
+  // Each row of the first level is one output row when the others are rowid lookups.
+  let unique = true;
+  for (let lv: usize = 1; lv < access.length; lv++) {
+    if (access[lv].kind != ACC_ROWID_EQ || left[lv]) {
+      unique = false;
+    }
+  }
+  const dir = orderedByAccess(c, keys, terms, osc, access[0], q, unique);
+  if (dir != ORDER_NONE) {
+    access[0].reverse = dir == ORDER_REVERSE;
+    return keys.length;
+  }
+  // A range bounded on one side only is not worth a sort to SQLite: an index giving the whole
+  // order is scanned instead (the range's terms are checked on each row).
+  const a0 = access[0];
+  const oneSided =
+    (
+      a0.kind == ACC_ROWID_RANGE || (a0.kind == ACC_INDEX && a0.eq.length == 0 && a0.inList == null)
+    ) &&
+    (a0.lo == null) != (a0.hi == null);
+  if ((a0.kind == ACC_SCAN || oneSided) && !left[0]) {
+    const pick = orderIndex(c, keys, terms, osc, q, unique);
+    if (pick.index != null && (!oneSided || pick.terms == keys.length)) {
+      const a = new Access();
+      a.kind = ACC_INDEX;
+      a.index = pick.index;
+      a.reverse = pick.dir == ORDER_REVERSE;
+      access[0] = a;
+      attachIndex(osc.sources[0], pick.index!);
+      return pick.terms;
+    }
+  }
+  return 0;
+}
+
+/** An index whose first column is the first GROUP BY term (or DISTINCT result column). */
+export function groupIndex(c: ExprCompiler, core: SelectCore, sc: Scope): Index | null {
+  let first: Expr | null = null;
+  if (core.groupBy.length > 0) {
+    const e = core.groupBy[0];
+    const i = resultIndex(e, core.columns, core.columns.length, "GROUP", 0);
+    first = i >= 0 ? core.columns[i as usize].expr : e;
+  } else if (core.columns.length > 0 && core.columns[0].expr.kind != E_STAR) {
+    first = core.columns[0].expr;
+  }
+  if (first == null || first!.kind != E_COLUMN) {
+    return null;
+  }
+  const f = c.lookup(first!, sc);
+  const src = sc.sources[0];
+  if (f == null || f!.src != src || f!.col < 0 || src.kind != SRC_TABLE) {
+    return null;
+  }
+  for (const ix of src.table!.indexes) {
+    if (
+      !ix.partial &&
+      ix.columns.length > 0 &&
+      ix.columns[0] == f!.col &&
+      ix.colls[0] == src.colls[f!.col as usize]
+    ) {
+      return ix;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether index `ix`'s leading columns are the result columns of a DISTINCT (in any order, each
+ * a column of the one table under the index's collation): reading it, equal rows are adjacent.
+ */
+export function distinctOrdered(c: ExprCompiler, core: SelectCore, sc: Scope, ix: Index): bool {
+  const n = core.columns.length;
+  if (n == 0 || ix.columns.length < n) {
+    return false;
+  }
+  const src = sc.sources[0];
+  for (const rc of core.columns) {
+    if (rc.expr.kind != E_COLUMN) {
+      return false;
+    }
+    const f = c.lookup(rc.expr, sc);
+    if (f == null || f!.src != src || f!.col < 0) {
+      return false;
+    }
+    let found = false;
+    for (let k: usize = 0; k < n; k++) {
+      if (ix.columns[k] == f!.col && ix.colls[k] == src.colls[f!.col as usize]) {
+        found = true;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The index with the fewest columns holding every column of `src` the query reads. */
+export function coveringIndex(src: Source): Index | null {
+  if (src.kind != SRC_TABLE) {
+    return null;
+  }
+  let best: Index | null = null;
+  for (const ix of src.table!.indexes) {
+    if (ix.partial || (best != null && ix.columns.length >= best!.columns.length)) {
+      continue;
+    }
+    let all = true;
+    for (let i: usize = 0; i < src.used.length; i++) {
+      if (src.used[i] && (i as i64) != src.rowidCol && !ix.columns.includes(i as i64)) {
+        all = false;
+        break;
+      }
+    }
+    if (all) {
+      best = ix;
+    }
+  }
+  return best;
+}
+
+/**
+ * Orders the FROM items of an inner join greedily: each next level is the one with the
+ * cheapest access path given the levels before it (FROM order on ties), as SQLite's planner
+ * would for these shapes; then the terms' levels follow the new order.
+ */
+export function orderJoins(c: ExprCompiler, terms: Term[], sc: Scope) {
+  const from = sc.sources.slice();
+  const placed: Source[] = [];
+  const remaining: Source[] = from.slice();
+  while (remaining.length > 0) {
+    let best: i64 = 0;
+    let bestCost: i64 = 9223372036854775807;
+    for (let i: usize = 0; i < remaining.length; i++) {
+      // Placed levels first, then the candidate, then the rest (not readable by its bounds).
+      const trial: Source[] = placed.slice();
+      trial.push(remaining[i]);
+      for (let j: usize = 0; j < remaining.length; j++) {
+        if (j != i) {
+          trial.push(remaining[j]);
+        }
+      }
+      sc.sources = trial;
+      const cost = accessCost(chooseAccess(c, terms, sc, placed.length, false));
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = i as i64;
+      }
+    }
+    placed.push(remaining[best as usize]);
+    remaining.splice(best, 1);
+  }
+  sc.sources = placed;
+  for (const t of terms) {
+    let level: i64 = t.on;
+    for (const s of t.srcs) {
+      const at = placed.indexOf(s) as i64;
+      if (at > level) {
+        level = at;
+      }
+    }
+    t.level = level;
+  }
+}
 
 /** One level's access path, in the words of SQLite's EXPLAIN QUERY PLAN. */
 export function describe(src: Source, a: Access): string {
   const t = src.kind == SRC_TABLE ? src.table!.name : src.name;
   const name = src.name.toUpperCase() != t.toUpperCase() ? `${t} AS ${src.name}` : t;
+  if (a.kind == ACC_ROWID_EQ || a.kind == ACC_ROWID_IN) {
+    return `SEARCH ${name} USING INTEGER PRIMARY KEY (rowid=?)`;
+  }
+  if (a.kind == ACC_ROWID_RANGE) {
+    return `SEARCH ${name} USING INTEGER PRIMARY KEY (${rangeWords("rowid", a)})`;
+  }
+  if (a.kind == ACC_INDEX) {
+    const ix = a.index!;
+    const how = covers(src, ix) ? "COVERING INDEX" : "INDEX";
+    const n = a.eq.length + (a.inList != null ? 1 : 0);
+    if (n == 0 && a.lo == null && a.hi == null) {
+      return `SCAN ${name} USING ${how} ${ix.name}`;
+    }
+    // SQLite's words: `(a=? AND b=? AND c>? AND c<?)`.
+    const parts: string[] = [];
+    for (let k: usize = 0; k < n; k++) {
+      parts.push(`${indexColumnName(src, ix, k)}=?`);
+    }
+    if (a.lo != null || a.hi != null) {
+      parts.push(rangeWords(indexColumnName(src, ix, n), a));
+    }
+    return `SEARCH ${name} USING ${how} ${ix.name} (${parts.join(" AND ")})`;
+  }
   return `SCAN ${name}`;
+}
+
+// `x = a OR x = b OR …` on one column as `x IN (a, b, …)`, for an index lookup per value
+// (SQLite's exprAnalyzeOrTerm); null for any other term.
+export function orAsIn(e: Expr): Expr | null {
+  if (e.kind != E_BINARY || e.op != "OR") {
+    return null;
+  }
+  const parts: Expr[] = [];
+  orParts(e, parts);
+  let col: Expr | null = null;
+  const vals: Expr[] = [];
+  for (const p of parts) {
+    if (p.kind != E_BINARY || (p.op != "=" && p.op != "==")) {
+      return null;
+    }
+    const a = p.a!;
+    const b = p.b!;
+    let c: Expr | null = null;
+    let v: Expr | null = null;
+    if (a.kind == E_COLUMN && literal(b)) {
+      c = a;
+      v = b;
+    } else if (b.kind == E_COLUMN && literal(a)) {
+      c = b;
+      v = a;
+    } else {
+      return null;
+    }
+    if (col == null) {
+      col = c;
+    } else if (
+      col!.name.toUpperCase() != c!.name.toUpperCase() ||
+      col!.table.toUpperCase() != c!.table.toUpperCase()
+    ) {
+      return null;
+    }
+    vals.push(v!);
+  }
+  const x = new Expr(E_IN_LIST, e.at);
+  x.a = col;
+  x.args = vals;
+  return x;
+}
+
+export function orParts(e: Expr, out: Expr[]) {
+  if (e.kind == E_BINARY && e.op == "OR") {
+    orParts(e.a!, out);
+    orParts(e.b!, out);
+  } else {
+    out.push(e);
+  }
+}
+
+export function literal(e: Expr): bool {
+  return e.kind == E_INT || e.kind == E_REAL || e.kind == E_STRING || e.kind == E_PARAM;
+}
+
+// Whether `ix` holds every column of `src` the query reads.
+export function covers(src: Source, ix: Index): bool {
+  for (let i: usize = 0; i < src.used.length; i++) {
+    if (src.used[i] && (i as i64) != src.rowidCol && !ix.columns.includes(i as i64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A covering index that reads as `a.index` does: its leading columns the same (all of them for
+// a scan in index order), with the same collations and directions.
+export function coveringLike(src: Source, a: Access): Index | null {
+  const ix = a.index!;
+  let k = a.eq.length + (a.inList != null || a.lo != null || a.hi != null ? 1 : 0);
+  if (a.eq.length == 0 && a.inList == null && a.lo == null && a.hi == null) {
+    k = ix.columns.length;
+  }
+  const all = src.table!.indexes;
+  for (let i = all.length; i > 0; i--) {
+    const other = all[i - 1];
+    if (other == ix || other.partial || other.columns.length < k || !covers(src, other)) {
+      continue;
+    }
+    let same = true;
+    for (let i: usize = 0; i < k; i++) {
+      if (
+        other.columns[i] != ix.columns[i] ||
+        other.colls[i] != ix.colls[i] ||
+        other.desc[i] != ix.desc[i]
+      ) {
+        same = false;
+      }
+    }
+    if (same) {
+      return other;
+    }
+  }
+  return null;
+}
+
+// `c>?`, `c<?` or `c>? AND c<?` for a range access on `c`.
+export function rangeWords(col: string, a: Access): string {
+  if (a.lo != null && a.hi != null) {
+    return `${col}>? AND ${col}<?`;
+  }
+  return a.lo != null ? `${col}>?` : `${col}<?`;
+}
+
+// The name of key column `k` of `ix` (the rowid after the key columns, "<expr>" an expression).
+export function indexColumnName(src: Source, ix: Index, k: usize): string {
+  if (k >= ix.columns.length) {
+    return "rowid";
+  }
+  const c = ix.columns[k];
+  if (c == -1) {
+    return "rowid";
+  }
+  return c < 0 ? "<expr>" : src.cols[c as usize];
 }

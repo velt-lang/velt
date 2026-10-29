@@ -171,6 +171,7 @@ import * as std_sqlite_exec_keys from "velt:sqlite/exec/keys";
 import * as std_sqlite_exec_like from "velt:sqlite/exec/like";
 import * as std_sqlite_exec_loop from "velt:sqlite/exec/loop";
 import * as std_sqlite_exec_ops from "velt:sqlite/exec/ops";
+import * as std_sqlite_exec_order from "velt:sqlite/exec/order";
 import * as std_sqlite_exec_plan from "velt:sqlite/exec/plan";
 import * as std_sqlite_exec_printf from "velt:sqlite/exec/printf";
 import * as std_sqlite_exec_result from "velt:sqlite/exec/result";

@@ -34,10 +34,30 @@ import {
 } from "velt:sqlite/exec/result";
 export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
 import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
-import { describe } from "velt:sqlite/exec/core_plan";
+import {
+  accessInOrder,
+  coveringIndex,
+  coveringLike,
+  covers,
+  describe,
+  distinctOrdered,
+  groupIndex,
+  minMaxIndex,
+  orAsIn,
+  orderJoins,
+} from "velt:sqlite/exec/core_plan";
 import { Emitter, limitValue } from "velt:sqlite/exec/emit";
 import { KeySet } from "velt:sqlite/exec/keys";
-import { Access, Term, chooseAccess, levelOf } from "velt:sqlite/exec/plan";
+import {
+  ACC_INDEX,
+  ACC_SCAN,
+  Access,
+  Term,
+  accessCost,
+  attachIndex,
+  chooseAccess,
+  levelOf,
+} from "velt:sqlite/exec/plan";
 import { levelLoop } from "velt:sqlite/exec/loop";
 import { AFF_NONE } from "velt:sqlite/exec/ops";
 import { Val, compareVals, intVal, nullVal } from "velt:sqlite/exec/value";
@@ -189,6 +209,18 @@ function compileCoreOnce(
       }
     }
     terms.push(t);
+    const inTerm = orAsIn(onExprs[i]);
+    if (inTerm != null) {
+      const v = new Term(inTerm!, pred, level, onLevel[i]);
+      v.srcs = t.srcs;
+      v.virtual = true;
+      terms.push(v);
+    }
+  }
+  // Inner joins run in the order of their cheapest access paths.
+  if (sc.sources.length > 1 && !left.includes(true)) {
+    sc.fromOrder = sc.sources.slice();
+    orderJoins(c, terms, sc);
   }
   // How each level is read.
   const access: Access[] = [];
@@ -196,6 +228,9 @@ function compileCoreOnce(
     const a = chooseAccess(c, terms, sc, lv, left[lv]);
     for (const t of a.uses) {
       t.used = true;
+    }
+    if (a.kind == ACC_INDEX) {
+      attachIndex(sc.sources[lv], a.index!);
     }
     access.push(a);
   }
@@ -220,10 +255,17 @@ function compileCoreOnce(
   resultColumns(c, core.columns, osc, q, em);
   sc.results = false;
   q.out.width = q.names.length;
-  // ORDER BY: a sort.
+  // ORDER BY: by the loops' order when the first level gives it, else a sort.
   checkTerms(tail.orderBy.length, "ORDER");
+  let sortedTerms: usize = 0;
   if (tail.orderBy.length > 0) {
     orderKeys(c, tail.orderBy, osc, q, em);
+    if (!isAgg && sc.sources.length > 0) {
+      sortedTerms = accessInOrder(c, em.sort, tail.orderBy, osc, access, left, q);
+      if (sortedTerms == em.sort.length) {
+        em.sorting = false;
+      }
+    }
   }
   // LIMIT and OFFSET name no column, not even an enclosing query's (SQLite resolves them in an
   // empty name context).
@@ -243,14 +285,80 @@ function compileCoreOnce(
     groupStep = groupStepFor(c, core, sc, agg, groups, q);
   }
   const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc);
+  // GROUP BY or DISTINCT without ORDER BY on one table: SQLite scans an index led by the first
+  // grouping column, which decides which row of a group shows its bare columns. For DISTINCT
+  // over a range it does so only when the index orders all the result columns (else the range
+  // stays, and DISTINCT uses a temporary b-tree).
+  if (
+    tail.orderBy.length == 0 &&
+    sc.sources.length == 1 &&
+    accessCost(access[0]) >= 50 &&
+    (core.groupBy.length > 0 || core.distinct)
+  ) {
+    // Over a range scan too: the range's terms are still checked on each row.
+    const ix = groupIndex(c, core, sc);
+    // For DISTINCT over a range, only an index that orders every result column wins.
+    const ranged = core.groupBy.length == 0 && accessCost(access[0]) < 900;
+    if (ix != null && (!ranged || distinctOrdered(c, core, sc, ix!))) {
+      const a = new Access();
+      a.kind = ACC_INDEX;
+      a.index = ix;
+      access[0] = a;
+      attachIndex(sc.sources[0], ix!);
+    }
+  }
+  const minmax = isAgg && minMaxIndex(c, core, sc, agg, access, left);
+  // A full scan reads a covering index instead when one holds every column used (as SQLite
+  // does: index rows are smaller), unless the table's rowid order is the ORDER BY's.
+  const keepOrder = tail.orderBy.length > 0 && !em.sorting;
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    if (access[lv].kind == ACC_SCAN && !(lv == 0 && keepOrder)) {
+      const ix = coveringIndex(sc.sources[lv]);
+      if (ix != null) {
+        access[lv].kind = ACC_INDEX;
+        access[lv].index = ix;
+        attachIndex(sc.sources[lv], ix!);
+      }
+    }
+  }
+  // An index the plan reads that lacks a column the query uses gives way to one that has every
+  // column (and the same leading ones): SQLite prefers the covering index.
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    const a = access[lv];
+    if (a.kind == ACC_INDEX && !covers(sc.sources[lv], a.index!)) {
+      const better = coveringLike(sc.sources[lv], a);
+      if (better != null) {
+        a.index = better;
+        attachIndex(sc.sources[lv], better!);
+      }
+    }
+  }
   for (let lv: usize = 0; lv < sc.sources.length; lv++) {
     q.plan.push(describe(sc.sources[lv], access[lv]));
   }
   if (em.sorting) {
-    q.plan.push("USE TEMP B-TREE FOR ORDER BY");
+    const rest = em.sort.length - sortedTerms;
+    q.plan.push(
+      sortedTerms == 0
+        ? "USE TEMP B-TREE FOR ORDER BY"
+        : rest == 1
+          ? "USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+          : `USE TEMP B-TREE FOR LAST ${rest} TERMS OF ORDER BY`,
+    );
   }
   const emitRow: Step = () => em.row();
   let rowFn: Step = groupStep != null ? groupStep! : emitRow;
+  if (minmax) {
+    // The first row with a value is the minimum (maximum): the loops stop there.
+    const step = groupStep!;
+    const stopAt = q.out;
+    rowFn = () => {
+      step();
+      if (groups.single!.accs[0].has) {
+        stopAt.stop = true;
+      }
+    };
+  }
   // `SELECT count(*) FROM … [WHERE …]` alone: the loops only count.
   const countOnly = countOnlyCore(core, isAgg, agg);
   const counter = new Counter();
@@ -333,6 +441,9 @@ function compileCoreOnce(
       }
     }
     loops();
+    if (minmax) {
+      out.stop = false;
+    }
     if (isAgg) {
       outputGroups(agg, groups, having, em.out, emitRow, core.groupBy.length > 0);
     }
