@@ -242,7 +242,23 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
   (`<exe>.link-stamp` beside it).
-- Build cache (additive, #1612). Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
+- Build stamp and build cache (additive, #1612). `build`, `run` and `test` with `--emit exe`
+  (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
+  matches: the compiler (version, executable size and time), the options, a generated root's
+  source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
+  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
+  session's source map and the configuration files module resolution read) by content hash (the
+  size and time it had when it was read first, not recorded when it was modified less than 2 s
+  before it was read, and not trusted when not older than the stamp), what
+  module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
+  missing as it was, every directory listed has the same entries), the manifests and lockfile
+  of the package graph, and by size and time the unit objects and the executable it wrote (so
+  an output another build or tool rewrote is a change) and extra link inputs. The objects it names must
+  exist; the link step then runs (and checks its own stamp). The stamp ends with `end <entries>`
+  and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
+  does not match removes it first, as does a build of the executable that writes none
+  (`VELT_BUILD_STAMP=off`, `--report`). `VELT_BUILD_STAMP=off|0` disables it.
+  Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
   `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
   profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from
   `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
@@ -269,7 +285,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   are rewritten, and other layout directories (`v1`) are removed. The directory must be writable only by trusted
   users: entries are used as they are. A hit refreshes its time of use
   when that is over an hour old. `-v` appends
-  `(<n> of <m> functions|codegen units from the build cache)` to the codegen line.
+  `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
+  stage, with `(unchanged: nothing to compile)` when it matched.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -489,7 +506,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE` (above).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

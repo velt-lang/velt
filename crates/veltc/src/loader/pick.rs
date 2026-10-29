@@ -37,7 +37,7 @@ pub(super) fn first_existing(
 
 /// Whether `file` is on disk under exactly this name (the part below `base`, case included).
 pub(super) fn on_disk_exactly(dir_names: &DirNames, file: &Path, base: &Path) -> bool {
-    file.is_file() && !matches!(dir_names.case_of(file, base), Case::Differs(_))
+    vpm::probe::is_file(file) && !matches!(dir_names.case_of(file, base), Case::Differs(_))
 }
 
 impl Loader<'_, '_> {
@@ -81,7 +81,7 @@ impl Loader<'_, '_> {
     /// Whether `file` exists under exactly this name (the part below `base`, case included), on
     /// disk or in the overlay.
     fn exists_exactly(&self, file: &Path, base: &Path) -> bool {
-        if file.is_file() {
+        if vpm::probe::is_file(file) {
             return on_disk_exactly(&self.dir_names, file, base);
         }
         // A file only in the overlay: its key is the path as the editor spells it.

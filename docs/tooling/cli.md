@@ -64,8 +64,9 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
   ±3 %, one faster). Smaller programs are one unit. `VELT_CODEGEN_UNITS=N`
   asks for N units (at most the core count); `VELT_CODEGEN_UNITS=1` turns splitting off.
 - `--backend llvm` without `--release` gives an unoptimized build with full line information.
-- Code compiled once on a machine is taken from the [build cache](#build-cache) by every later
-  build, in any project.
+- Nothing is compiled twice ([below](#build-cache)): a build whose inputs did not change since
+  the last build of the same output only links (or does nothing), and code compiled once on a
+  machine is taken from the build cache by every later build, in any project.
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
   silicon.
@@ -115,9 +116,20 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
 
 ### Build cache
 
-A build never compiles the same code twice:
+A build never compiles the same thing twice:
 
-- The code each function compiles to is kept in a cache that every build
+- **Nothing changed.** `velt build`, `velt run` and `velt test` record what a build read in a
+  stamp beside the program (`<program>.build-stamp`): every source file (std, packages, `.d.ts`
+  files) by content, every path imports were looked up at and every directory listed for them,
+  `package.vlt`, `package.json`, `tsconfig.json` and `velt.lock.json`, the build's options and
+  the compiler. When none of that changed, the next build parses and compiles nothing; running
+  the program again costs only its start. Saving a file without changing it changes nothing
+  either; a file changed while a build read it counts as changed. A new file that an import
+  would now find (a `.ts` beside a `.vlt`, a package in a `node_modules` nearer the importer)
+  counts as a change. A
+  build that printed warnings gets no stamp, so the warnings show every time.
+  `VELT_BUILD_STAMP=off` compiles every time.
+- **Something changed.** The code each function compiles to is kept in a cache that every build
   on the machine shares, whatever the project: `$VELT_HOME/build-cache` (`~/.velt/build-cache`),
   or `VELT_BUILD_CACHE`. A debug build compiles only the functions whose code differs from any
   compiled before, on every core; std's functions, a package's, and generic instances such as
@@ -135,7 +147,7 @@ A build never compiles the same code twice:
 - Entries are used as they are, so a `VELT_BUILD_CACHE` directory must be writable only by users
   you trust: whoever can write to it can put code into your builds.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
-  the build cache)`).
+  the build cache)`) and when a build was up to date.
 
 ## `velt check`
 
@@ -410,6 +422,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
 | `VELT_BUILD_CACHE` | the [build cache](#build-cache)'s directory (default `$VELT_HOME/build-cache`); `off` turns it off |
 | `VELT_BUILD_CACHE_SIZE` | how large the build cache may grow (`500M`, `10G`; default `2G`) before the code used least recently is removed |
+| `VELT_BUILD_STAMP` | `off`: compile even when no input changed since the last build of the same output |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |

@@ -14,10 +14,10 @@ pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 /// The workspace patterns of directory `dir`: its `pnpm-workspace.yaml`'s `packages`, else its
 /// `package.json`'s `workspaces`; `None` when it has neither.
 pub fn patterns(dir: &Path) -> Option<Vec<String>> {
-    if let Ok(text) = std::fs::read_to_string(dir.join(PNPM_WORKSPACE)) {
+    if let Ok(text) = crate::probe::read_to_string(&dir.join(PNPM_WORKSPACE)) {
         return Some(pnpm_packages(&text));
     }
-    let text = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    let text = crate::probe::read_to_string(&dir.join("package.json")).ok()?;
     let json = Json::parse(&text).ok()?;
     let list = match json.get("workspaces")? {
         Json::Arr(items) => items,
@@ -139,7 +139,7 @@ pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -
             !glob_match(&parts, &segs)
         });
     }
-    out.retain(|d| d.join("package.json").is_file());
+    out.retain(|d| crate::probe::is_file(&d.join("package.json")));
     Listing { dirs: out, cut }
 }
 
@@ -181,7 +181,7 @@ impl Walk {
                 return;
             }
             let child = dir.join(first);
-            if child.is_dir() {
+            if crate::probe::is_dir(&child) {
                 self.expand(&child, rest);
             }
             return;
@@ -202,11 +202,11 @@ impl Walk {
             return vec![];
         }
         self.listed += 1;
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = crate::probe::read_dir(dir) else {
             return vec![];
         };
         let mut dirs: Vec<PathBuf> = entries
-            .flatten()
+            .into_iter()
             .filter(|e| {
                 let name = e.file_name();
                 let name = name.to_str().unwrap_or("");
@@ -214,7 +214,7 @@ impl Walk {
                     return false;
                 }
                 match e.file_type() {
-                    Ok(t) if t.is_symlink() => links && e.path().is_dir(),
+                    Ok(t) if t.is_symlink() => links && crate::probe::is_dir(&e.path()),
                     Ok(t) => t.is_dir(),
                     Err(_) => false,
                 }

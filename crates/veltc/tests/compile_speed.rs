@@ -187,11 +187,9 @@ fn code_compiled_once_comes_from_the_build_cache() {
     std::fs::write(dir.join("lib.vlt"), lib).unwrap();
     // `(found, of)` from the codegen line of `-v`.
     let build = || {
-        let o = velt(
-            dir,
-            &["build", "hello.vlt", "-v"],
-            &[("VELT_BUILD_CACHE", cache)],
-        );
+        // Without the build stamp, which would skip compiling an unchanged program.
+        let env = [("VELT_BUILD_CACHE", cache), ("VELT_BUILD_STAMP", "off")];
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &env);
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         let line = err
@@ -228,6 +226,133 @@ fn code_compiled_once_comes_from_the_build_cache() {
         .join("target/velt")
         .join(if cfg!(windows) { "hello.exe" } else { "hello" });
     assert_eq!(text(&run_copy(&exe, "cached").stdout), "ho\n!\n");
+}
+
+#[test]
+fn unchanged_builds_compile_nothing() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
+    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    let unchanged = || {
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &[]);
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        (err.contains("nothing to compile"), err)
+    };
+    assert!(!unchanged().0, "first build");
+    let (skipped, err) = unchanged();
+    assert!(skipped, "an unchanged build compiles nothing:\n{err}");
+    // Saving a file without changing it changes nothing; changing an import does.
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    assert!(unchanged().0);
+    std::fs::write(dir.join("lib.vlt"), lib.replace("hi", "ho")).unwrap();
+    assert!(!unchanged().0);
+    assert!(unchanged().0);
+    // A new file where imports look is a change too.
+    std::fs::write(dir.join("notes.txt"), "").unwrap();
+    assert!(!unchanged().0);
+    let off = velt(
+        dir,
+        &["build", "hello.vlt", "-v"],
+        &[("VELT_BUILD_STAMP", "off")],
+    );
+    assert!(!text(&off.stderr).contains("nothing to compile"));
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert_eq!(text(&run_copy(&exe, "stamped").stdout), "ho\n");
+}
+
+#[test]
+fn a_package_nearer_the_importer_is_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let ws = tmp.path();
+    let write = |rel: &str, text: &str| {
+        let path = ws.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let package = |dir: &str, name: &str, says: &str| {
+        write(
+            &format!("{dir}/package.json"),
+            &format!("{{ \"name\": \"{name}\" }}"),
+        );
+        let src = format!("export function say(): string {{\n  return \"{says}\";\n}}\n");
+        write(&format!("{dir}/index.ts"), &src);
+    };
+    package("node_modules/b", "b", "outer b");
+    write("p/package.json", "{ \"name\": \"p\" }");
+    package("p/node_modules/a", "a", "a");
+    let main = "import { say as a } from \"a\";\nimport { say as b } from \"b\";\n\nconsole.log(a());\nconsole.log(b());\n";
+    write("p/main.ts", main);
+    let run = || {
+        let o = velt(&ws.join("p"), &["run", "main.ts"], &[]);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+        text(&o.stdout)
+    };
+    assert_eq!(run(), "a\nouter b\n");
+    // Module resolution looked for `b` in `p/node_modules` before `node_modules`.
+    package("p/node_modules/b", "b", "INNER b");
+    assert_eq!(run(), "a\nINNER b\n");
+}
+
+/// A build that writes the program or its object without a stamp (the stamp off, `--report`,
+/// `--emit obj` onto the stamped object) leaves no stamp the next build could trust: the
+/// program must always be built from the sources as they are.
+#[test]
+fn outputs_written_without_a_stamp_are_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { word } from \"./lib\";\nfunction main() {\n  console.log(word());\n}\n";
+    std::fs::write(dir.join("main.vlt"), main).unwrap();
+    let lib = |w: &str| {
+        let src = format!("export function word(): string {{\n  return \"{w}\";\n}}\n");
+        std::fs::write(dir.join("lib.vlt"), src).unwrap();
+    };
+    let build = |args: &[&str], env: &[(&str, &str)]| {
+        let o = velt(dir, args, env);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+    };
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "main.exe" } else { "main" });
+    let object = || {
+        let entries = std::fs::read_dir(dir.join("target/velt")).unwrap();
+        (entries.flatten().map(|e| e.path()))
+            .find(|p| {
+                let ext = p.extension().unwrap_or_default();
+                p.file_stem().unwrap_or_default() == "main" && (ext == "o" || ext == "obj")
+            })
+            .unwrap()
+    };
+    type Build<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+    let middle: [Build; 2] = [
+        (&["build", "main.vlt"], &[("VELT_BUILD_STAMP", "off")]),
+        (&["build", "main.vlt", "--report", "numbers"], &[]),
+    ];
+    for (i, (args, env)) in middle.iter().enumerate() {
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        lib("AAAA");
+        build(args, env);
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        let out = run_copy(&exe, &format!("case{i}"));
+        assert_eq!(text(&out.stdout), "BBBB\n", "case {i}");
+    }
+    // An object written by `--emit obj` where the stamped build keeps its own.
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    let obj = object();
+    lib("AAAA");
+    let obj_arg = obj.to_str().unwrap();
+    build(&["build", "main.vlt", "--emit", "obj", "-o", obj_arg], &[]);
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    assert_eq!(text(&run_copy(&exe, "obj").stdout), "BBBB\n");
 }
 
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The

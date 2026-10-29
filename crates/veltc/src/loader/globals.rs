@@ -39,19 +39,19 @@ pub(super) struct Global {
 
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
 pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
-    let Ok(entries) = std::fs::read_dir(std_root.join("prelude").join("global")) else {
+    let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude").join("global")) else {
         return vec![];
     };
     let mut files: Vec<PathBuf> = entries
-        .flatten()
+        .into_iter()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "vlt"))
         .collect();
     files.sort();
     files
         .into_iter()
         .filter_map(|file| {
-            let src = std::fs::read_to_string(&file).ok()?;
+            let src = vpm::probe::read_to_string(&file).ok()?;
             let names = reexported_names(&src);
             let when = load_when(&src);
             Some(Global { file, names, when })
