@@ -141,7 +141,7 @@ function main() {
       }
     }
   }
-  console.log(`binary operators: ${cases} cases, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  console.log(`binary operators: ${cases} cases, ${bad == 0 ? "all the same" : bad + " differ"}`);
 
   cases = 0;
   bad = 0;
@@ -153,7 +153,7 @@ function main() {
       check(`CAST(${a.sql} AS ${names[i]})`, castTo(a.v, affinities[i]));
     }
   }
-  console.log(`minus and CAST: ${cases} cases, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  console.log(`minus and CAST: ${cases} cases, ${bad == 0 ? "all the same" : bad + " differ"}`);
 
   cases = 0;
   bad = 0;
@@ -203,7 +203,7 @@ function main() {
       compileLike(() => tv, () => pv, () => ev, false, false)(),
     );
   }
-  console.log(`LIKE and GLOB: ${cases} cases, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  console.log(`LIKE and GLOB: ${cases} cases, ${bad == 0 ? "all the same" : bad + " differ"}`);
   // A pattern of SQLite's longest length (50,000 bytes) whose every `%` must try many places: no
   // recursion per `%`, so no stack overflow. One byte more is SQLite's error.
   const many = textVal("a".repeat(25000));
