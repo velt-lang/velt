@@ -10,9 +10,10 @@ use velt_common::Span;
 
 use crate::body::recheck::Mark;
 use crate::body::{FnCx, Frame, LocalKind, Want};
+use crate::collect::getters::{value_getter, value_setter};
 use crate::ctx::Ctx;
 use crate::defs::FnKind;
-use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind, TyId};
+use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind, TyId, UseMode};
 use crate::resolve::TyEnv;
 
 impl Ctx<'_> {
@@ -41,8 +42,62 @@ impl Ctx<'_> {
         }
     }
 
-    /// Make synthesized method `def` (of object type `d`, its body `return <call>;` whose call
-    /// gives a `gives`) return the call's value converted to its result type `want`, as a plain
+    /// The getter of an interface field of type `want` reading field `index` (of type `ty`) of
+    /// object type `d`, converted as a plain assignment converts it.
+    pub(crate) fn assign_getter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let fname = self.adt(d).expect("ICE: adt").fields[index].name.clone();
+        let def = value_getter(self, d, self_ty, &fname, want, |span| {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            let read = hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index: index as u32,
+                    mode: UseMode::Borrow,
+                },
+                ty,
+                span,
+            };
+            hir::Expr {
+                kind: H::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+                    args: vec![read],
+                },
+                ty,
+                span,
+            }
+        });
+        self.assign_result(def, d, ty, want);
+        def
+    }
+
+    /// The setter of an interface field of type `want` writing field `index` (of type `ty`) of
+    /// object type `d`, the value converted as a plain assignment converts it.
+    pub(crate) fn assign_setter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let def = value_setter(self, d, self_ty, index, want, |v, _| v);
+        self.assign_result(def, d, want, ty);
+        def
+    }
+
+    /// Make synthesized method `def` (of object type `d`, its body `return <e>;` or
+    /// `this.f = <e>;` with `e` a `gives`) return or store `e` converted to `want`, as a plain
     /// assignment converts it (`Ctx::assigns` said it does).
     pub(crate) fn assign_result(&mut self, def: DefId, d: DefId, gives: TyId, want: TyId) {
         let module = self.adt(d).map_or(0, |a| a.module);
@@ -66,8 +121,13 @@ impl Ctx<'_> {
         }
         let r = g.new_local("#result", gives, false, span, LocalKind::Temp);
         for s in &mut stmts {
-            let StmtKind::Return(Some(call)) = &mut s.kind else {
-                continue;
+            let call = match &mut s.kind {
+                StmtKind::Return(Some(call)) => call,
+                StmtKind::Expr(hir::Expr {
+                    kind: H::Assign { value, .. },
+                    ..
+                }) => &mut **value,
+                _ => continue,
             };
             let hole = hir::Expr {
                 kind: H::Lit(hir::Lit::Unit),

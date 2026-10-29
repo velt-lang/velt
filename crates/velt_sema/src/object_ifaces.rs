@@ -55,6 +55,9 @@ enum Fill {
     /// Field `.0`'s value (of type `.1`), the same object as the interface field's type `.2`, of
     /// the same layout (`Upcast`).
     Layout(usize, TyId, TyId),
+    /// Field `.0`'s value (of type `.1`) converted to the interface field's type `.2` as a plain
+    /// assignment converts it.
+    Assign(usize, TyId, TyId),
     /// Field `.0`'s value (of type `.1`) converted to the interface field's type `.2` through
     /// `any`, checked when it is read.
     Convert(usize, TyId, TyId),
@@ -78,6 +81,9 @@ enum Store {
     Absent(String, TyId),
     /// In field `.0`, of the optional field's type (`.1`) without `undefined`.
     Some(usize, TyId),
+    /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted as
+    /// a plain assignment converts it.
+    Assign(usize, TyId, TyId),
     /// In field `.0` (of type `.1`), the value (of the interface field's type `.2`) converted
     /// through `any`.
     Convert(usize, TyId, TyId),
@@ -264,6 +270,16 @@ impl Ctx<'_> {
                     setters.push(Store::Absent(f.name.clone(), want));
                     Fill::Absent(f.name.clone(), want)
                 }
+                // One a plain assignment converts both ways by making another value (an object of
+                // another layout, `{ v, deep: { w } }` for `Inner` with `deep: Deep`): read and
+                // written as that assignment converts it, so a part write would change a copy.
+                Some(i)
+                    if self.assigns(fields[i].1, want, module).is_some()
+                        && self.assigns(want, fields[i].1, module).is_some() =>
+                {
+                    setters.push(Store::Assign(i, fields[i].1, want));
+                    Fill::Assign(i, fields[i].1, want)
+                }
                 Some(i) if dynamic && self.converts_via_any(fields[i].1, want) => {
                     setters.push(Store::Convert(i, fields[i].1, want));
                     Fill::Convert(i, fields[i].1, want)
@@ -335,6 +351,7 @@ impl Ctx<'_> {
                 Fill::Absent(name, want) => absent_getter(self, d, self_ty, &name, want),
                 Fill::Convert(i, ty, want) => self.convert_getter(d, self_ty, i, ty, want),
                 Fill::Layout(i, ty, want) => self.layout_getter(d, self_ty, i, ty, want),
+                Fill::Assign(i, ty, want) => self.assign_getter(d, self_ty, i, ty, want),
                 Fill::Setter(i, ty, borrowed) => {
                     field_setter_taking(self, d, self_ty, i, ty, borrowed)
                 }
@@ -368,6 +385,11 @@ impl Ctx<'_> {
                     def: fixed_shape_setter(self, d, self_ty, &name, ty),
                     d,
                     name,
+                },
+                Store::Assign(index, ty, want) => SetterSrc::Method {
+                    def: self.assign_setter(d, self_ty, index, ty, want),
+                    d,
+                    name: self.adt(d).expect("ICE: adt").fields[index].name.clone(),
                 },
                 Store::Convert(index, ty, want) => SetterSrc::Method {
                     def: self.convert_setter(d, self_ty, index, ty, want),

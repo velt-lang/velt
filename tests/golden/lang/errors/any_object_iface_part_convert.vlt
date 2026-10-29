@@ -5,8 +5,27 @@ interface Ctx {
   run(): void;
 }
 
+interface Deep {
+  w: number;
+}
+
+interface Outer {
+  v: number;
+  deep: Deep;
+}
+
+interface Ctx2 {
+  outer: Outer;
+  run(): void;
+}
+
 function main(): void {
   const init = { props: { a: 1 } as any, run: () => {} };
   const c = init as unknown as Ctx;
   c.props.a = 2;
+  // An object of another layout (`deep` is a `{ w }`), converted as a plain assignment
+  // converts it: a copy.
+  const two = { outer: { v: 1, deep: { w: 1 } }, run: () => {} };
+  const d = two as unknown as Ctx2;
+  d.outer.v = 2;
 }

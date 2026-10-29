@@ -1,6 +1,7 @@
 // A field holding an object a plain assignment keeps as the interface field's type is that
 // object (#1886): a write into a part of it through the interface changes the literal's, as in
-// Node, also two levels deep.
+// Node. One of another layout two levels deep converts as that assignment does: read as a
+// copy, written whole.
 interface Deep {
   w: number;
 }
@@ -35,6 +36,8 @@ console.log(init.inner.v);
 
 const two = { outer: { v: 1, deep: { w: 1 } }, run: () => {} };
 const d = two as unknown as Ctx2;
-d.outer.v = 2;
-d.outer.deep.w = 4;
+console.log(d.outer.v, d.outer.deep.w);
+two.outer.deep.w = 4;
+console.log(d.outer.deep.w);
+d.outer = { v: 5, deep: { w: 6 } };
 console.log(two.outer.v, two.outer.deep.w);
