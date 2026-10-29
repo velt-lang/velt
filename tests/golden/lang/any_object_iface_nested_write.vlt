@@ -1,12 +1,27 @@
-// A field holding an object of the interface field's layout is that object (#1886): a write
-// into a part of it through the interface changes the literal's, as in Node.
+// A field holding an object a plain assignment keeps as the interface field's type is that
+// object (#1886): a write into a part of it through the interface changes the literal's, as in
+// Node, also two levels deep.
+interface Deep {
+  w: number;
+}
+
 interface Inner {
   v: number;
+}
+
+interface Outer {
+  v: number;
+  deep: Deep;
 }
 
 interface Ctx {
   x: number;
   inner: Inner;
+  run(): void;
+}
+
+interface Ctx2 {
+  outer: Outer;
   run(): void;
 }
 
@@ -17,3 +32,9 @@ c.run();
 console.log(init.inner.v, c.inner.v);
 c.inner = { v: 3 };
 console.log(init.inner.v);
+
+const two = { outer: { v: 1, deep: { w: 1 } }, run: () => {} };
+const d = two as unknown as Ctx2;
+d.outer.v = 2;
+d.outer.deep.w = 4;
+console.log(two.outer.v, two.outer.deep.w);

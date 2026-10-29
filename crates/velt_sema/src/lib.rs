@@ -90,6 +90,7 @@ mod module_state;
 mod moves;
 mod namespaces;
 mod nested_closures;
+mod object_assigns;
 mod object_call_on;
 mod object_copies;
 mod object_ifaces;

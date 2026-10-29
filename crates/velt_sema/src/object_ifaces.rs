@@ -32,7 +32,7 @@ use crate::collect::getters::{
 };
 use crate::ctx::Ctx;
 use crate::defs::{IfaceMethod, ParamSig};
-use crate::hir::{self, Def, DefId, ExprKind as H, ImplDef, PassMode, StmtKind, TyId, TyKind};
+use crate::hir::{Def, DefId, ExprKind as H, ImplDef, PassMode, StmtKind, TyId, TyKind};
 use crate::iface_writes::SetterSrc;
 
 /// The implementations made so far and the conversions through `any` (module docs).
@@ -68,15 +68,6 @@ enum Fill {
     /// Method `.0`, the `Function` in field `.1` (of type `.2`), called with the object as
     /// `this` (a function expression using `this`, `body/expr/this_fn_expr.rs`).
     CallOn(usize, usize, TyId),
-}
-
-/// How a function's result converts to the method's (`Ctx::result_fits`): to the method's
-/// object type of the same layout (`upcast`, to the payload `some` when it is optional), then
-/// wrapped as the optional result when `some`.
-#[derive(Clone, Copy)]
-struct Wrap {
-    some: Option<TyId>,
-    upcast: bool,
 }
 
 /// How the implementation stores an interface field.
@@ -210,6 +201,7 @@ impl Ctx<'_> {
         let fields: Vec<(String, TyId)> = (self.adt(d)?.fields.iter())
             .map(|f| (f.name.clone(), f.ty))
             .collect();
+        let module = self.adt(d)?.module;
         let find = |name: &str| fields.iter().position(|(n, _)| n == name);
         let mut plan = vec![];
         for (j, m) in methods.iter().enumerate() {
@@ -235,7 +227,7 @@ impl Ctx<'_> {
                             Fill::CallOn(j, i, fields[i].1)
                         }
                         _ => {
-                            let takes = self.fn_fills_method(fields[i].1, m, &full)?;
+                            let takes = self.fn_fills_method(fields[i].1, m, &full, module)?;
                             Fill::Call(j, i, fields[i].1, takes)
                         }
                     }
@@ -252,10 +244,11 @@ impl Ctx<'_> {
                     setters.push(Store::Field(i, fields[i].1));
                     Fill::Field(i, fields[i].1, None)
                 }
-                // An object of the interface field's layout (`inner: { v: number }` for
-                // `inner: Inner`, an interface of only fields): the same object, so a write into
-                // a part of it reaches the object, as in Node.
-                Some(i) if self.same_layout(fields[i].1, want) => {
+                // An object a plain assignment keeps as the interface field's type
+                // (`inner: { v: number }` for `inner: Inner`, an interface of only fields, also
+                // with nested objects): the same object, so a write into a part of it reaches the
+                // object, as in Node.
+                Some(i) if self.assigns(fields[i].1, want, module) == Some(true) => {
                     setters.push(Store::Field(i, fields[i].1));
                     Fill::Layout(i, fields[i].1, want)
                 }
@@ -285,8 +278,15 @@ impl Ctx<'_> {
     /// The number of arguments a field of type `f` takes when it fills method `m` (whose
     /// interface arguments and implementor are `full`): its parameters are the method's first
     /// ones, it has no rest parameter, throws what the method may (anything, without a
-    /// `throws` clause) and returns the method's result (or anything for a `void` method).
-    fn fn_fills_method(&mut self, f: TyId, m: &IfaceMethod, full: &[TyId]) -> Option<usize> {
+    /// `throws` clause) and returns what a plain assignment takes as the method's result (in
+    /// `module`; anything for a `void` method, `Ctx::assigns`).
+    fn fn_fills_method(
+        &mut self,
+        f: TyId,
+        m: &IfaceMethod,
+        full: &[TyId],
+        module: usize,
+    ) -> Option<usize> {
         let TyKind::FnPtr {
             params,
             ret,
@@ -308,34 +308,8 @@ impl Ctx<'_> {
             }
         }
         let want = self.subst(m.ret, full);
-        self.result_fits(ret, want).map(|_| params.len())
-    }
-
-    /// How a function's result of type `ret` becomes a method's result of type `want`: as it
-    /// is (or dropped, for `void`), or `Some` of how it converts as TypeScript's assignability
-    /// lets it (`() => 1` for `get(): number | undefined`, an object type for an interface of
-    /// only fields it fits, `() => ({ v })` for `make(): Item`). `None` when it does not fit.
-    fn result_fits(&mut self, ret: TyId, want: TyId) -> Option<Option<Wrap>> {
-        if want == self.ty.unit || self.same_ty(ret, want) {
-            return Some(None);
-        }
-        if self.same_layout(ret, want) {
-            return Some(Some(Wrap {
-                some: None,
-                upcast: true,
-            }));
-        }
-        let p = self.ty.opt_payload(want)?;
-        if self.same_ty(ret, p) {
-            return Some(Some(Wrap {
-                some: Some(p),
-                upcast: false,
-            }));
-        }
-        self.same_layout(ret, p).then_some(Some(Wrap {
-            some: Some(p),
-            upcast: true,
-        }))
+        let fits = want == self.ty.unit || self.assigns(ret, want, module).is_some();
+        fits.then_some(params.len())
     }
 
     /// The implementation `plan` describes (see [`Self::object_impl_plan`]).
@@ -456,8 +430,6 @@ impl Ctx<'_> {
             // A `Function`: the body is `call_on_body`'s.
             return def;
         };
-        let wrap = self.result_fits(gives, ret).flatten();
-        let unit = self.ty.unit;
         // The call passes the arguments the function takes, and gives what it returns (dropped
         // for a `void` method).
         let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] else {
@@ -470,32 +442,10 @@ impl Ctx<'_> {
                 }
                 call.ty = gives;
             }
-            // The result converted to the method's (`result_fits`).
-            if let (StmtKind::Return(Some(call)), Some(w)) = (&mut s.kind, wrap) {
-                let span = call.span;
-                let hole = hir::Expr {
-                    kind: H::Lit(hir::Lit::Unit),
-                    ty: unit,
-                    span,
-                };
-                let mut e = std::mem::replace(call, hole);
-                if w.upcast {
-                    let ty = w.some.unwrap_or(ret);
-                    e = hir::Expr {
-                        kind: H::Upcast(Box::new(e)),
-                        ty,
-                        span,
-                    };
-                }
-                if w.some.is_some() {
-                    e = hir::Expr {
-                        kind: H::WrapSome(Box::new(e)),
-                        ty: ret,
-                        span,
-                    };
-                }
-                *call = e;
-            }
+        }
+        // The result converted to the method's as a plain assignment converts it.
+        if ret != self.ty.unit && !self.same_ty(gives, ret) {
+            self.assign_result(def, d, gives, ret);
         }
         def
     }
