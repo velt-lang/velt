@@ -48,6 +48,8 @@ enum Between {
     InteriorPointer,
     /// That pointer stored into the object holding the source.
     InteriorPointerEscapes,
+    /// A function imported from another unit (no body here): it may do anything.
+    ImportedCall,
 }
 
 struct Kit {
@@ -64,6 +66,7 @@ struct Kit {
     quiet: FuncId,
     freeing: FuncId,
     stuck: FuncId,
+    imported: FuncId,
 }
 
 fn kit() -> Kit {
@@ -110,6 +113,12 @@ fn kit() -> Kit {
     let n = fb.call(b, Callee::Func(freeing), vec![copy_local(a)], None);
     fb.goto(n, n);
     let stuck = pb.add(fb.finish());
+    let imported = pb.add(Function::new(
+        "_V3stdN3imp".into(),
+        vec![Ty::Ptr],
+        Ty::Unit,
+        velt_vir::vir::Linkage::Import,
+    ));
     Kit {
         pb,
         obj,
@@ -124,6 +133,7 @@ fn kit() -> Kit {
         quiet,
         freeing,
         stuck,
+        imported,
     }
 }
 
@@ -191,6 +201,9 @@ fn program(between: Between) -> (Program, FuncId) {
         }
         Between::FreeingCall => {
             b = call(&mut fb, b, Callee::Func(k.freeing), vec![copy_local(this)])
+        }
+        Between::ImportedCall => {
+            b = call(&mut fb, b, Callee::Func(k.imported), vec![copy_local(this)])
         }
         Between::StringExtern => {
             let args = vec![copy_local(this), copy_local(this), copy_local(this)];
@@ -382,6 +395,7 @@ fn a_copy_something_may_free_or_take_keeps_its_count() {
         Between::NoReturnWithData,
         Between::ClosureCall,
         Between::InteriorPointerEscapes,
+        Between::ImportedCall,
     ] {
         assert!(!borrowed(b), "{b:?}");
     }
