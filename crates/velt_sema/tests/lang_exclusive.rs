@@ -307,6 +307,29 @@ fn an_argument_may_shorten_a_field_array_another_one_passes() {
 }
 
 #[test]
+fn an_argument_may_not_replace_a_field_another_one_passes_through_a_narrowed_field() {
+    // `h.b.vs = mk()` on a narrowed `h.b` is lowered as a write to `vs` through a share of
+    // `h.b`: it replaces the array (or instance) passed, so it stays an error.
+    let src = "class V { n: number = 1; }
+               class C { vs: V[] = [new V()]; }
+               class B { vs: V[] = [new V(), new V()]; c: C = new C(); }
+               class H { b: B | undefined = new B(); }
+               function mk(): V[] { return [new V()]; }
+               function mkc(): C { return new C(); }
+               function g(vs: V[], n: number): number { vs.push(new V()); return vs.length + n; }
+               function gc(c: C, n: number): number { c.vs.push(new V()); return c.vs.length + n; }";
+    for (call, place) in [
+        ("g(h.b.vs, (h.b.vs = mk()).length)", "h.b.vs"),
+        ("gc(h.b.c, (h.b.c = mkc()).vs.length)", "h.b.c"),
+    ] {
+        let r = err_src(&format!(
+            "{src} function main() {{ const h = new H(); if (h.b) {{ console.log({call}); }} }}"
+        ));
+        assert!(r.contains(&format!("`{place}`")), "{call}: {r}");
+    }
+}
+
+#[test]
 fn a_system_function_buffer_is_not_shortened_by_another_argument() {
     // A system function's buffer is a view of bytes: a later argument shortening the array
     // would free bytes it covers, read or written.

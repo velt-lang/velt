@@ -313,7 +313,9 @@ impl Nested<'_, '_, '_> {
         let through = (access == Access::Unique)
             .then(|| self.shares.get(&place.root))
             .flatten();
-        let inside = through.is_some();
+        // Only a write to the shared value itself (`t.length = 0`) changes what it holds; a write
+        // to a place under it (`t.vs = mk()`) replaces that place, as a plain write does.
+        let inside = through.is_some() && place.proj.is_empty();
         if let Some((p, shown)) = through {
             if place.proj.is_empty() {
                 text = shown.clone();
