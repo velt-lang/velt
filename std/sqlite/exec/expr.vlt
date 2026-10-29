@@ -60,7 +60,15 @@ import {
   negate,
   truth,
 } from "velt:sqlite/exec/ops";
-import { blobVal, intVal, nullVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
+import {
+  blobVal,
+  concatOp,
+  intVal,
+  nullVal,
+  realVal,
+  textVal,
+  toText,
+} from "velt:sqlite/exec/value";
 import {
   C,
   Found,
@@ -415,15 +423,7 @@ export abstract class ExprCompiler {
       });
     }
     if (op == "||") {
-      const cat: Ev = () => {
-        const p = xe();
-        const q = ye();
-        if (p.t == NULL || q.t == NULL) {
-          return nullVal();
-        }
-        return textVal(toText(p) + toText(q));
-      };
-      return joinedColl(cat, x, y);
+      return joinedColl(() => concatOp(xe(), ye()), x, y);
     }
     const ar = arithCode(op);
     if (ar >= 0) {

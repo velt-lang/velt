@@ -13,6 +13,7 @@ import { SqlRunError } from "velt:sqlite/exec/errors";
 import { toF64, toI64 } from "velt:sqlite/exec/ops";
 import {
   Val,
+  checkLength,
   compareVals,
   intVal,
   nullVal,
@@ -259,14 +260,14 @@ export function stepValues(f: AggFn, a: Acc, v: Val, sep: Val, hasSep: bool): bo
   if (v.t == NULL) {
     return false;
   }
-  if (a.cnt > 0) {
-    if (hasSep) {
-      a.text += sep.t == NULL ? "" : toText(sep);
-    } else {
-      a.text += ",";
-    }
-  }
-  a.text += toText(v);
+  const s = a.cnt == 0 ? "" : !hasSep ? "," : sep.t == NULL ? "" : toText(sep);
+  const t = toText(v);
+  // SQLite's buffer holds the text and a NUL within its length limit.
+  const n =
+    __intrinsic_str_byte_len(a.text) + __intrinsic_str_byte_len(s) + __intrinsic_str_byte_len(t);
+  checkLength((n + 1) as u64);
+  a.text += s;
+  a.text += t;
   a.cnt++;
   return false;
 }
