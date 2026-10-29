@@ -125,7 +125,9 @@ pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
                 continue;
             };
             let ci = callee.0 as usize;
+            // A declaration (an `Import` without a body) stays a call.
             if !helpers.get(ci).copied().unwrap_or(false)
+                || program.funcs[ci].blocks.is_empty()
                 || !splice::arity_matches(args, &program.funcs[ci])
             {
                 continue;
