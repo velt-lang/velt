@@ -1,0 +1,180 @@
+// The query engine's scalar functions (velt:sqlite/exec/func: text and number functions, and
+// printf) against C SQLite (velt:sqlite): each call's result is compared with
+// what C SQLite computes for the same SQL; the calls that differ are printed. The arguments are
+// literals, read back from C SQLite as typed values.
+import { open, Database } from "velt:sqlite";
+import { INTEGER, NULL, REAL, TEXT } from "velt:sqlite/btree";
+import { BINARY } from "velt:sqlite/record";
+import { Val, blobVal, intVal, nullVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
+import { scalarFunction } from "velt:sqlite/exec/func";
+import { hexDecode, hexEncode } from "velt:encoding";
+
+struct Described {
+  d: string;
+}
+
+struct Int {
+  i: i64;
+}
+
+struct Typed {
+  ty: string;
+  v: string;
+}
+
+const DESCRIBE =
+  "typeof(e) || ':' || CASE typeof(e) WHEN 'blob' THEN hex(e) WHEN 'null' THEN '' ELSE CAST(e AS TEXT) END AS d";
+
+function describe(v: Val): string {
+  if (v.t == NULL) {
+    return "null:";
+  }
+  if (v.t == INTEGER) {
+    return `integer:${toText(v)}`;
+  }
+  if (v.t == REAL) {
+    return `real:${toText(v)}`;
+  }
+  if (v.t == TEXT) {
+    return `text:${toText(v)}`;
+  }
+  return `blob:${hexEncode(v.b).toUpperCase()}`;
+}
+
+/** The value of literal `sql`, as C SQLite reads it. */
+function literal(db: Database, sql: string): Val {
+  const rows: Typed[] = db
+    .prepare(
+      `SELECT typeof(e) AS ty, CASE typeof(e) WHEN 'real' THEN printf('%!.17g', e) WHEN 'blob' THEN hex(e) ELSE coalesce(CAST(e AS TEXT), '') END AS v FROM (SELECT ${sql} AS e)`,
+    )
+    .all();
+  const r = rows[0];
+  if (r.ty == "null") {
+    return nullVal();
+  }
+  if (r.ty == "integer") {
+    const ints: Int[] = db.prepare(`SELECT ${sql} AS i`).all();
+    return intVal(ints[0].i);
+  }
+  if (r.ty == "real") {
+    return realVal(parseFloat(r.v));
+  }
+  if (r.ty == "text") {
+    return textVal(r.v);
+  }
+  return blobVal(hexDecode(r.v));
+}
+
+function cValue(db: Database, expr: string): string {
+  try {
+    const rows: Described[] = db.prepare(`SELECT ${DESCRIBE} FROM (SELECT ${expr} AS e)`).all();
+    return rows[0].d;
+  } catch (e) {
+    const m = e.message;
+    const at = m.indexOf(" in ");
+    return `error: ${at >= 0 ? m.slice(0, at) : m}`;
+  }
+}
+
+function veltValue(db: Database, name: string, args: string[]): string {
+  const evs: (() => Val throws Error)[] = [];
+  for (const a of args) {
+    const v = literal(db, a);
+    evs.push(() => v);
+  }
+  try {
+    const f = scalarFunction(name.toUpperCase(), name, evs, BINARY);
+    if (f == null) {
+      return `error: no such function: ${name}`;
+    }
+    return describe(f!());
+  } catch (e) {
+    return `error: ${e.message}`;
+  }
+}
+
+struct Call {
+  name: string;
+  args: string[];
+}
+
+function call(name: string, args: string[]): Call {
+  return Call { name: name, args: args };
+}
+
+const CALLS: Call[] = [
+  call("length", ["'héllo'"]),
+  call("length", ["x'00ff'"]),
+  call("length", ["12.5"]),
+  call("octet_length", ["'héllo'"]),
+  call("lower", ["'ÀBC'"]),
+  call("upper", ["'àbc'"]),
+  call("typeof", ["1.0"]),
+  call("abs", ["-9223372036854775807"]),
+  call("abs", ["'-2.5'"]),
+  call("coalesce", ["NULL", "NULL", "3"]),
+  call("ifnull", ["NULL", "'x'"]),
+  call("nullif", ["1", "1.0"]),
+  call("iif", ["0", "'a'", "'b'"]),
+  call("min", ["3", "'a'", "2.5"]),
+  call("max", ["3", "'a'", "x'01'"]),
+  call("max", ["3", "NULL"]),
+  call("substr", ["'héllo'", "2", "3"]),
+  call("substr", ["'hello'", "-3"]),
+  call("substr", ["'hello'", "0", "2"]),
+  call("substr", ["x'0102030405'", "2", "-1"]),
+  call("substr", ["'hello'", "-2", "-5"]),
+  call("instr", ["'héllo'", "'l'"]),
+  call("instr", ["x'010203'", "x'03'"]),
+  call("replace", ["'aaa'", "'a'", "'bb'"]),
+  call("replace", ["'abc'", "''", "'x'"]),
+  call("trim", ["'  x  '"]),
+  call("ltrim", ["'xxyxx'", "'x'"]),
+  call("rtrim", ["'aé!é'", "'é!'"]),
+  call("round", ["2.5"]),
+  call("round", ["-2.5"]),
+  call("round", ["1.005", "2"]),
+  call("round", ["123456.789", "-2"]),
+  call("round", ["'7.45'", "1"]),
+  call("hex", ["'é'"]),
+  call("hex", ["12.5"]),
+  call("quote", ["'it''s'"]),
+  call("quote", ["0.1"]),
+  call("quote", ["x'ab'"]),
+  call("quote", ["NULL"]),
+  call("char", ["72", "233", "128512"]),
+  call("unicode", ["'é'"]),
+  call("zeroblob", ["3"]),
+  call("sign", ["-0.5"]),
+  call("sign", ["'abc'"]),
+  call("concat", ["'a'", "NULL", "1", "2.5"]),
+  call("concat_ws", ["'-'", "'a'", "NULL", "'b'"]),
+  call("like", ["'a%'", "'ABC'"]),
+  call("glob", ["'a*'", "'ABC'"]),
+  call("printf", ["'%d %5.2f %s %x'", "42", "3.14159", "'hi'", "255"]),
+  call("printf", ["'%-6s|%06d|%+d'", "'ab'", "42", "7"]),
+  call("printf", ["'%q %Q %w'", "'it''s'", "NULL", "'a\"b'"]),
+  call("printf", ["'%.3e %g %g'", "123456.789", "0.0001", "1e20"]),
+  call("printf", ["'%!.20g'", "0.1"]),
+  call("printf", ["'%c%c'", "'xyz'", "65"]),
+  call("printf", ["'%,d'", "1234567"]),
+  call("printf", ["'%5.1s|'", "'abc'"]),
+  call("format", ["'%lld%%'", "9223372036854775807"]),
+];
+
+function main() {
+  const db = open(":memory:");
+  let bad = 0;
+  for (const c of CALLS) {
+    const sql = `${c.name}(${c.args.join(", ")})`;
+    const want = cValue(db, sql);
+    const mine = veltValue(db, c.name, c.args);
+    if (want != mine) {
+      bad++;
+      console.log(`${sql}: velt ${mine}, C ${want}`);
+    } else {
+      console.log(`${sql} = ${mine}`);
+    }
+  }
+  console.log(`${CALLS.length} calls, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+}

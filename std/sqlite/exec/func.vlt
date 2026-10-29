@@ -1,0 +1,563 @@
+// velt:sqlite/exec/func — SQLite's core scalar functions (https://sqlite.org/lang_corefunc.html),
+// each compiled from its arguments' compiled expressions. Text functions work on UTF-8 and
+// fold case for ASCII letters only, as SQLite does without ICU.
+
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
+import { SqlRunError, prepareError } from "velt:sqlite/exec/errors";
+import { FMT_FLOAT, atof, formatReal } from "velt:sqlite/exec/fp";
+import { realToI64, toF64, toI64, truth } from "velt:sqlite/exec/ops";
+import { printf } from "velt:sqlite/exec/printf";
+import {
+  PatternInfo,
+  asciiLower,
+  cBytes,
+  asciiUpper,
+  charAt,
+  charLength,
+  chars,
+  hexUpper,
+  inSet,
+  patternMatch,
+} from "velt:sqlite/exec/text";
+import {
+  Val,
+  blobVal,
+  compareVals,
+  intVal,
+  nullVal,
+  parseNumeric,
+  realVal,
+  textVal,
+  toBlob,
+  toText,
+} from "velt:sqlite/exec/value";
+import { utf8Encode } from "velt:encoding";
+
+type Ev = () => Val throws Error;
+
+// `shown`: the name as written, for the message.
+function arity(shown: string, n: usize, lo: usize, hi: usize) {
+  if (n < lo || n > hi) {
+    prepareError(`wrong number of arguments to function ${shown}()`);
+  }
+}
+
+/** The text of a value as functions read it (`sqlite3_value_text`). */
+function text(v: Val): string {
+  return toText(v);
+}
+
+/**
+ * The compiled call of scalar function `name` (upper case) with these arguments, or null when
+ * there is no such function. `coll` is the collation of the first argument that has one.
+ */
+export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): Ev | null {
+  const n = a.length;
+  if (name == "PRINTF" || name == "FORMAT") {
+    return () => {
+      const vals: Val[] = [];
+      for (const f of a) {
+        vals.push(f());
+      }
+      return printf(vals);
+    };
+  }
+  if (name == "LENGTH" || name == "OCTET_LENGTH") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    const octets = name == "OCTET_LENGTH";
+    return () => {
+      const v = x();
+      if (v.t == NULL) {
+        return v;
+      }
+      if (v.t == BLOB) {
+        return intVal(v.b.length as i64);
+      }
+      const s = text(v);
+      return intVal(octets ? __intrinsic_str_byte_len(s) as i64 : charLength(s));
+    };
+  }
+  if (name == "LOWER" || name == "UPPER") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    const up = name == "UPPER";
+    return () => {
+      const v = x();
+      if (v.t == NULL) {
+        return v;
+      }
+      const s = text(v);
+      return textVal(up ? asciiUpper(s) : asciiLower(s));
+    };
+  }
+  if (name == "TYPEOF") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => textVal(typeName(x().t));
+  }
+  if (name == "ABS") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => {
+      const v = x();
+      if (v.t == NULL) {
+        return v;
+      }
+      if (v.t == INTEGER) {
+        if (v.i == -9223372036854775807 - 1) {
+          throw new SqlRunError("integer overflow");
+        }
+        return intVal(v.i < 0 ? -v.i : v.i);
+      }
+      return realVal(Math.abs(toF64(v)));
+    };
+  }
+  if (name == "COALESCE" || name == "IFNULL") {
+    if (name == "IFNULL") {
+      arity(shown, n, 2, 2);
+    } else {
+      arity(shown, n, 2, 1000);
+    }
+    return () => {
+      for (const f of a) {
+        const v = f();
+        if (v.t != NULL) {
+          return v;
+        }
+      }
+      return nullVal();
+    };
+  }
+  if (name == "NULLIF") {
+    arity(shown, n, 2, 2);
+    const x = a[0];
+    const y = a[1];
+    return () => {
+      const v = x();
+      return compareVals(v, y(), coll) != 0 ? v : nullVal();
+    };
+  }
+  if (name == "IIF" || name == "IF") {
+    arity(shown, n, 2, 3);
+    const c = a[0];
+    const y = a[1];
+    return () => {
+      if (truth(c()) == 1) {
+        return y();
+      }
+      return n == 3 ? a[2]() : nullVal();
+    };
+  }
+  if (name == "MIN" || name == "MAX") {
+    const max = name == "MAX";
+    return () => {
+      let best = a[0]();
+      if (best.t == NULL) {
+        return best;
+      }
+      for (let i: usize = 1; i < n; i++) {
+        const v = a[i]();
+        if (v.t == NULL) {
+          return v;
+        }
+        const c = compareVals(best, v, coll);
+        if ((max && c < 0) || (!max && c >= 0)) {
+          best = v;
+        }
+      }
+      return best;
+    };
+  }
+  if (name == "SUBSTR" || name == "SUBSTRING") {
+    arity(shown, n, 2, 3);
+    return substrFn(a);
+  }
+  if (name == "INSTR") {
+    arity(shown, n, 2, 2);
+    const x = a[0];
+    const y = a[1];
+    return () => instr(x(), y());
+  }
+  if (name == "REPLACE") {
+    arity(shown, n, 3, 3);
+    const x = a[0];
+    const y = a[1];
+    const z = a[2];
+    return () => replace(x(), y(), z());
+  }
+  if (name == "TRIM" || name == "LTRIM" || name == "RTRIM") {
+    arity(shown, n, 1, 2);
+    const flags: i64 = name == "LTRIM" ? 1 : name == "RTRIM" ? 2 : 3;
+    return () => trim(a[0](), n == 2 ? a[1]() : textVal(" "), flags);
+  }
+  if (name == "ROUND") {
+    arity(shown, n, 1, 2);
+    return () => round(a[0](), n == 2 ? a[1]() : intVal(0), n == 2);
+  }
+  if (name == "HEX") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => textVal(hexUpper(toBlob(x())));
+  }
+  if (name == "QUOTE") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => textVal(quote(x()));
+  }
+  if (name == "LIKE" || name == "GLOB") {
+    arity(shown, n, 2, name == "LIKE" ? 3 : 2);
+    const glob = name == "GLOB";
+    return () => {
+      const p = a[0]();
+      const s = a[1]();
+      if (p.t == NULL || s.t == NULL) {
+        return nullVal();
+      }
+      let esc: i64 = 0;
+      if (n == 3) {
+        const e = a[2]();
+        if (e.t == NULL) {
+          return nullVal();
+        }
+        const cs = chars(utf8Encode(text(e)));
+        if (cs.length != 1) {
+          throw new SqlRunError("ESCAPE expression must be a single character");
+        }
+        esc = cs[0];
+      }
+      const info = new PatternInfo(glob, esc);
+      return intVal(patternMatch(cBytes(text(p)), cBytes(text(s)), info) ? 1 : 0);
+    };
+  }
+  if (name == "CHAR") {
+    return () => {
+      let s = "";
+      for (const f of a) {
+        let c = toI64(f());
+        if (c < 0 || c > 0x10ffff) {
+          c = 0xfffd;
+        }
+        s += String.fromCodePoint(c as f64);
+      }
+      return textVal(s);
+    };
+  }
+  if (name == "UNICODE") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => {
+      const v = x();
+      if (v.t == NULL) {
+        return v;
+      }
+      const b = utf8Encode(text(v));
+      // C strings: text that starts with a NUL is empty.
+      return b.length == 0 || b[0] == 0 ? nullVal() : intVal(charAt(b, 0).c);
+    };
+  }
+  if (name == "ZEROBLOB") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => {
+      const k = toI64(x());
+      const b: u8[] = [];
+      for (let i: i64 = 0; i < k; i++) {
+        b.push(0);
+      }
+      return blobVal(b);
+    };
+  }
+  if (name == "SIGN") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => sign(x());
+  }
+  if (name == "CONCAT" || name == "CONCAT_WS") {
+    const ws = name == "CONCAT_WS";
+    arity(shown, n, ws ? 2 : 1, 1000);
+    return () => {
+      let sep = "";
+      let from: usize = 0;
+      if (ws) {
+        const s = a[0]();
+        if (s.t == NULL) {
+          return nullVal();
+        }
+        sep = text(s);
+        from = 1;
+      }
+      let out = "";
+      let first = true;
+      for (let i = from; i < n; i++) {
+        const v = a[i]();
+        if (v.t == NULL) {
+          continue;
+        }
+        if (!first) {
+          out += sep;
+        }
+        out += text(v);
+        first = false;
+      }
+      return textVal(out);
+    };
+  }
+  return null;
+}
+
+/** The name `typeof()` gives a storage class. */
+export function typeName(t: u8): string {
+  if (t == NULL) {
+    return "null";
+  }
+  if (t == INTEGER) {
+    return "integer";
+  }
+  if (t == REAL) {
+    return "real";
+  }
+  return t == TEXT ? "text" : "blob";
+}
+
+function substrFn(a: Ev[]): Ev {
+  const three = a.length == 3;
+  return () => {
+    const v = a[0]();
+    if (v.t == NULL) {
+      return v;
+    }
+    const pv = a[1]();
+    let p1 = toI64(pv);
+    let p2: i64 = 1000000000;
+    if (three) {
+      const q = a[2]();
+      p2 = toI64(q);
+      if (p2 == 0 && q.t == NULL) {
+        return nullVal();
+      }
+    }
+    if (p1 == 0 && pv.t == NULL) {
+      return nullVal();
+    }
+    const blob = v.t == BLOB;
+    const b = blob ? v.b : utf8Encode(text(v));
+    // Text stops at a NUL.
+    let end = b.length;
+    let len: i64 = 0;
+    if (blob) {
+      len = b.length as i64;
+    } else {
+      for (let i: usize = 0; i < b.length; i++) {
+        if (b[i] == 0) {
+          end = i;
+          break;
+        }
+        if ((b[i] & 0xc0) != 0x80) {
+          len++;
+        }
+      }
+    }
+    if (p1 < 0) {
+      p1 += len;
+      if (p1 < 0) {
+        p2 = p2 < 0 ? 0 : p2 + p1;
+        p1 = 0;
+      }
+    } else if (p1 > 0) {
+      p1--;
+    } else if (p2 > 0) {
+      p2--;
+    }
+    if (p2 < 0) {
+      if (p2 < -p1) {
+        p2 = p1;
+      } else {
+        p2 = -p2;
+      }
+      p1 -= p2;
+    }
+    if (blob) {
+      // An empty blob is a NULL pointer to sqlite3_value_blob: the result is NULL.
+      if (len == 0) {
+        return nullVal();
+      }
+      if (p1 >= len) {
+        return blobVal([]);
+      }
+      if (p2 > len - p1) {
+        p2 = len - p1;
+      }
+      return blobVal(b.slice(p1, p1 + p2));
+    }
+    let i: usize = 0;
+    while (i < end && p1 > 0) {
+      i += charAt(b, i).len;
+      p1--;
+    }
+    let j = i;
+    while (j < end && p2 > 0) {
+      j += charAt(b, j).len;
+      p2--;
+    }
+    return textVal(b.utf8Slice(i as i64, (j < end ? j : end) as i64));
+  };
+}
+
+function instr(h: Val, nd: Val): Val {
+  if (h.t == NULL || nd.t == NULL) {
+    return nullVal();
+  }
+  const isText = !(h.t == BLOB && nd.t == BLOB);
+  const hb = h.t == BLOB && !isText ? h.b : utf8Encode(text(h));
+  const nb = nd.t == BLOB && !isText ? nd.b : utf8Encode(text(nd));
+  if (nb.length == 0) {
+    return intVal(1);
+  }
+  let n: i64 = 1;
+  let i: usize = 0;
+  while (i + nb.length <= hb.length) {
+    let same = true;
+    for (let k: usize = 0; k < nb.length; k++) {
+      if (hb[i + k] != nb[k]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return intVal(n);
+    }
+    n++;
+    i++;
+    while (isText && i < hb.length && (hb[i] & 0xc0) == 0x80) {
+      i++;
+    }
+  }
+  return intVal(0);
+}
+
+function replace(x: Val, y: Val, z: Val): Val {
+  if (x.t == NULL || y.t == NULL) {
+    return nullVal();
+  }
+  const pat = text(y);
+  if (pat == "") {
+    return x;
+  }
+  if (z.t == NULL) {
+    return nullVal();
+  }
+  const s = text(x);
+  if (s == "") {
+    return textVal(s);
+  }
+  return textVal(s.split(pat).join(text(z)));
+}
+
+function trim(x: Val, set: Val, flags: i64): Val {
+  if (x.t == NULL || set.t == NULL) {
+    return nullVal();
+  }
+  const b = utf8Encode(text(x));
+  // The set is read as a C string: it stops at a NUL.
+  const cs = chars(cBytes(text(set)));
+  let lo: usize = 0;
+  let hi = b.length;
+  if (cs.length > 0) {
+    if ((flags & 1) != 0) {
+      while (lo < hi) {
+        const c = charAt(b, lo);
+        if (!inSet(cs, c.c)) {
+          break;
+        }
+        lo += c.len;
+      }
+    }
+    if ((flags & 2) != 0) {
+      while (hi > lo) {
+        let k = hi - 1;
+        while (k > lo && (b[k] & 0xc0) == 0x80) {
+          k--;
+        }
+        if (!inSet(cs, charAt(b, k).c)) {
+          break;
+        }
+        hi = k;
+      }
+    }
+  }
+  return textVal(b.utf8Slice(lo as i64, hi as i64));
+}
+
+function round(x: Val, y: Val, two: bool): Val {
+  if (two && y.t == NULL) {
+    return nullVal();
+  }
+  let n: i64 = two ? toI64(y) : 0;
+  if (n > 30) {
+    n = 30;
+  }
+  if (n < 0) {
+    n = 0;
+  }
+  if (x.t == NULL) {
+    return x;
+  }
+  let r = toF64(x);
+  if (r < -4503599627370496.0 || r > 4503599627370496.0) {
+    return realVal(r);
+  }
+  if (n == 0) {
+    return realVal(realToI64(r + (r < 0 ? -0.5 : 0.5)) as f64);
+  }
+  const s = formatReal(r, FMT_FLOAT, n, true, false, false);
+  return realVal(atof(utf8Encode(s), 0).value);
+}
+
+/** `quote(v)`: the SQL literal of a value. */
+export function quote(v: Val): string {
+  if (v.t == NULL) {
+    return "NULL";
+  }
+  if (v.t == INTEGER) {
+    return String(v.i);
+  }
+  if (v.t == REAL) {
+    return formatReal(v.r, 2, 17, true, true, false);
+  }
+  if (v.t == BLOB) {
+    return "X'" + hexUpper(v.b) + "'";
+  }
+  // %Q reads a C string: text stops at a NUL.
+  let t = v.s;
+  const nul = t.indexOf("\u0000");
+  if (nul >= 0) {
+    t = t.slice(0, nul);
+  }
+  return "'" + t.split("'").join("''") + "'";
+}
+
+function sign(v: Val): Val {
+  let x = v;
+  // sqlite3_value_numeric_type: only TEXT is read as a number (a BLOB stays a BLOB).
+  if (x.t == TEXT) {
+    // Read as a C string: up to a NUL.
+    let t = text(x);
+    const nul = t.indexOf("\u0000");
+    if (nul >= 0) {
+      t = t.slice(0, nul);
+    }
+    const p = parseNumeric(t);
+    if (!p.whole) {
+      return nullVal();
+    }
+    x = p.v;
+  }
+  if (x.t == INTEGER) {
+    return intVal(x.i < 0 ? -1 : x.i > 0 ? 1 : 0);
+  }
+  if (x.t == REAL) {
+    return intVal(x.r < 0 ? -1 : x.r > 0 ? 1 : 0);
+  }
+  return nullVal();
+}
