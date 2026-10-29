@@ -881,6 +881,7 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
+| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/json/tape.vlt) prints a double there |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`) |
 | `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |

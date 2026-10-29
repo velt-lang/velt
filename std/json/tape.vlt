@@ -38,7 +38,7 @@ declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
-declare function velt_rt_strbuf_push_f64(out: string, v: f64);
+declare function velt_rt_bytes_put_f64(bytes: u8[], at: u64, v: f64): u64;
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_all(m: mask8x16): bool;
@@ -453,7 +453,7 @@ class ByteOut {
   }
 
   // A number as `JSON.stringify` writes it: from its digits when it has at most 15, else by the
-  // general printer (flushed first).
+  // runtime's general printer, which writes into the buffer too.
   number(out: string, x: f64): void {
     if (x != x || x == Infinity || x == -Infinity) {
       this.ascii(out, "null");
@@ -462,9 +462,11 @@ class ByteOut {
     const d = shortNumber(x);
     if (!d.ok) {
       // More than 15 digits, or out of the plain range: the general printer (not 0, which is
-      // an integer).
-      this.flush(out);
-      velt_rt_strbuf_push_f64(out, x);
+      // an integer), into the buffer (the array has 32 bytes past `OUT_CAP`).
+      if (this.n > OUT_CAP) {
+        this.flush(out);
+      }
+      this.n = velt_rt_bytes_put_f64(this.buf, this.n as u64, x) as usize;
       return;
     }
     if (this.n + 18 > OUT_CAP) {

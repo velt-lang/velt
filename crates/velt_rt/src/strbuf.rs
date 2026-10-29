@@ -129,6 +129,47 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u8s(
     }
 }
 
+/// The most bytes [`velt_rt_bytes_put_f64`] writes: JavaScript's longest number text
+/// (`-2.2250738585072014e-308` is 24).
+pub const PUT_F64_ROOM: u64 = 32;
+
+/// Write finite `v` as `JSON.stringify` writes it (JavaScript's shortest round-trip text) into
+/// the `u8[]` `bytes` at byte `at`, and return the position after it: a writer that gathers
+/// its text in a byte array (std/json/tape.vlt's `ByteOut`) prints a double in place, without
+/// handing its bytes to a builder first. Writes nothing and returns `at` unless the array has
+/// [`PUT_F64_ROOM`] bytes from `at` (callers make room first).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_put_f64(
+    bytes: *mut crate::bytes::VeltBytes,
+    at: u64,
+    v: f64,
+) -> u64 {
+    let b = &mut *bytes;
+    if b.len < at || b.len - at < PUT_F64_ROOM {
+        return at;
+    }
+    crate::freed::check_value(v.to_bits(), "a number read from a freed block");
+    let room = std::slice::from_raw_parts_mut(b.ptr.add(at as usize), PUT_F64_ROOM as usize);
+    let mut out = InPlace { room, n: 0 };
+    velt_text::fmt::push_f64(&mut out, v);
+    at + out.n as u64
+}
+
+/// Text written into a fixed slice (what does not fit is dropped; [`PUT_F64_ROOM`] always fits).
+struct InPlace<'a> {
+    room: &'a mut [u8],
+    n: usize,
+}
+
+impl velt_text::Out for InPlace<'_> {
+    #[inline]
+    fn extend(&mut self, bytes: &[u8]) {
+        let k = bytes.len().min(self.room.len() - self.n);
+        self.room[self.n..self.n + k].copy_from_slice(&bytes[..k]);
+        self.n += k;
+    }
+}
+
 /// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
 #[inline(never)]
 unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
@@ -333,6 +374,23 @@ mod tests {
         }
         let want = format!("x={} {} 0.30000000000000004 1e+21truewörld", -42, u64::MAX);
         assert_eq!(finish(b), want);
+    }
+
+    #[test]
+    fn put_f64_writes_in_place_and_needs_its_room() {
+        use crate::bytes::VeltBytes;
+        let mut bytes = VeltBytes::from_vec(vec![b'.'; 40]);
+        let put = |b: &mut VeltBytes, at: u64, v: f64| unsafe { velt_rt_bytes_put_f64(b, at, v) };
+        let end = put(&mut bytes, 1, -2.2250738585072014e-308);
+        let text = unsafe { bytes.as_bytes() };
+        assert_eq!(&text[..end as usize], b".-2.2250738585072014e-308");
+        assert_eq!(text[end as usize], b'.');
+        assert_eq!(put(&mut bytes, 3, 0.1 + 0.2), 3 + 19);
+        assert_eq!(put(&mut bytes, 0, -0.0), 1);
+        // Fewer than 32 bytes from `at`: nothing written.
+        assert_eq!(put(&mut bytes, 9, 1.5), 9);
+        assert_eq!(put(&mut bytes, 41, 1.5), 41);
+        unsafe { drop(bytes.take_vec()) };
     }
 
     #[test]
