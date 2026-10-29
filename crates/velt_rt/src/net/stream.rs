@@ -368,6 +368,48 @@ impl StreamObj {
         }
     }
 
+    /// Whether an idle stream (one parked between requests) can carry another request: nothing
+    /// has arrived on it, not even its end. A raw socket is asked with a system call; another
+    /// transport (TLS) is polled for input once without waiting, which reads its records (a
+    /// session ticket is not input) and finds a close the reactor has not reported yet.
+    pub(crate) fn idle_open(&self) -> bool {
+        if self.aborted.load(Ordering::Acquire) {
+            return false;
+        }
+        let ready = match &self.io {
+            Io::Tcp(stream) => return stream.idle_open(),
+            Io::Lazy(lazy) => match lazy.ready.get() {
+                Some(Ok(ready)) => ready,
+                _ => return false,
+            },
+        };
+        match ready {
+            Ready::Tcp {
+                stream, has_prefix, ..
+            } => !has_prefix.load(Ordering::Acquire) && stream.idle_open(),
+            Ready::Split(split) => {
+                if self.held_end.load(Ordering::Acquire)
+                    || !self
+                        .held
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_empty()
+                {
+                    return false;
+                }
+                let Ok(mut r) = split.r.try_lock() else {
+                    return false;
+                };
+                let mut probe = [0u8; 1];
+                let mut buf = tokio::io::ReadBuf::new(&mut probe);
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                // Pending: nothing yet (cancel-safe: nothing was taken). Anything else (bytes,
+                // the end, an error) means the connection is not idle and open.
+                Pin::new(&mut *r).poll_read(&mut cx, &mut buf).is_pending()
+            }
+        }
+    }
+
     /// Waits until [`try_read_into`](Self::try_read_into) may find something (data, the end of
     /// the stream or an error; a raw socket may also wake without data). A transport other than
     /// a raw socket reads its next chunk here, which the next `try_read_into` hands over.

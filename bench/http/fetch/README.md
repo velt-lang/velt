@@ -20,11 +20,48 @@ cachegrind instead and prints the instructions it executed (`I refs`). It needs 
 works in WSL and VMs where `perf` can't count, and the count varies far less between runs than
 times on a busy machine.
 
+The nightly benchmark guard (`bench/nightly.sh`) counts `bench/fetch/loopback.vlt` instead: the
+client against a Velt server in the same process (small, JSON and gzip bodies, sequential), which
+needs no Rust build and whose count repeats to within about 0.2%.
+
 The reqwest client is built with reqwest's `gzip` feature (for `gzip`), so it sends
 `accept-encoding: gzip` in every scenario; Velt and Node send `accept-encoding: gzip, deflate`.
 The server ignores it except on `/json-gzip`.
 
 ## Results
+
+### The client in Velt
+
+Since the client is Velt code (std/fetch/client/) on `velt:net`, with gzip and Brotli decoded by
+`velt:compress`, instead of hyper, `flate2` and `brotli-decompressor` in the runtime.
+Instructions each client executed (cachegrind's `I refs`, millions), Linux x86-64 container,
+4 cores; `main` at 692592c, built the same way:
+
+| Scenario | `main` (hyper client) | Velt client | reqwest 0.12 | Velt client / reqwest |
+|---|---:|---:|---:|---:|
+| `seq` | 405.4 | 164.3 | 645.8 | 0.25 |
+| `conc` | 3,640 | 1,474 | 5,957 | 0.25 |
+| `big` | 108.7 | 1.8 | 107.6 | 0.02 |
+| `json` | 681.9 | 659.5 | 783.3 | 0.84 |
+| `gzip` | 930.1 | 832.2 | 977.1 | 0.85 |
+
+Wall clock under cachegrind followed the same order (`seq`: 1,315 → 4,041 req/s against
+reqwest's 919; `big`: 128 → 365 MB/s). Where it comes from:
+
+- A request is written into one array with its small body and leaves in one write; the response
+  head is parsed in place in the connection's read buffer, and its headers become strings only
+  when read. A body that arrives with its head (most small responses) gives the connection back
+  to the pool at once, and `text()` decodes it from the read buffer.
+- A body of known length is read from the socket straight into an array of its size: `big`
+  copies nothing (hyper's client copied the 100 MB once).
+- `text()` validates UTF-8 before decoding (`Buffer.utf8Slice`, which now does so for every
+  caller), as #653 did for the old client.
+- gzip: `velt:compress/inflate` decodes the 1 MB in 0.65 of `flate2`'s instructions
+  (bench/stdport `gunzip`), its CRC-32 folded with carry-less multiplication (PCLMULQDQ /
+  PMULL through `velt:simd`'s `u64x2.clmulLow` & co.), as `flate2` does.
+- HTTP/1.1 only, as Node's `fetch`: HTTP/2 is not offered over TLS any more.
+
+### Before
 
 Instructions each client executed in user space (`COUNT=valgrind`: cachegrind's `I refs`, in
 millions, the mean of 2 runs, which differed by less than 0.2%), Ubuntu 20.04 in WSL 2 on a

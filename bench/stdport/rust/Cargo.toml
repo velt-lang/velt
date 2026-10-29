@@ -11,7 +11,11 @@ publish = false
 # `velt:crypto` does in Velt.
 [dependencies]
 base64 = "0.22"
+# `brotli` only writes the inputs of `brotli_decode` (gen_inputs.rs).
+brotli = "8"
+brotli-decompressor = "6.0.1"
 dashu-int = "0.6"
+flate2 = "1"
 hex = "0.4"
 itoa = "1"
 memchr = "2"

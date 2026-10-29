@@ -69,8 +69,9 @@ async function main() {
   it throws reaches the reader as an `Error` with its text.
 - **Bodies**: `res.body` / `req.body` are a `ReadableStream<Uint8Array>` ([fetch](fetch.md)),
   pulled only as they are read. Each read of `res.body` gives a new stream object (in JS it is
-  the same one). A `ReadableStream` is not a body yet (`new Response(stream)`,
-  #1129): pass `BodyStream.from(gen())` with an async generator of `u8[]` chunks.
+  the same one). A `ReadableStream<Uint8Array>` is a body, as in Node: `new Response(stream)`,
+  `fetch(url, { method: "POST", body: stream })`; a stream is read when the body is, and a
+  chunk that is not a `Uint8Array` fails that read (`Received non-Uint8Array chunk`).
 - `console.log(stream)` prints what Node prints: `ReadableStream { locked: false, state:
   'readable', supportsBYOB: false }`.
 

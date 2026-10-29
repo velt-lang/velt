@@ -61,24 +61,36 @@ pub enum SimdTy {
 
 /// A CPU extension a gated function is compiled for (#1330): its first statement is
 /// `__intrinsic_target("sha-arm")` (std only), and every call of it sits behind the check of
-/// that extension (`u32x4.hasShaArm()`), so backends may use the extension anywhere in it.
+/// that extension (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`), so backends may use the
+/// extension anywhere in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CpuTarget {
     /// The ARMv8 SHA instructions.
     ShaArm,
     /// The x86 SHA extensions (with SSSE3 and SSE4.1).
     ShaX86,
+    /// The x86 carry-less multiplication, PCLMULQDQ (with SSSE3 and SSE4.1).
+    ClmulX86,
+    /// The ARMv8 64-bit polynomial multiplication, PMULL.
+    ClmulArm,
 }
 
 impl CpuTarget {
     /// Every target.
-    pub const ALL: [CpuTarget; 2] = [CpuTarget::ShaArm, CpuTarget::ShaX86];
+    pub const ALL: [CpuTarget; 4] = [
+        CpuTarget::ShaArm,
+        CpuTarget::ShaX86,
+        CpuTarget::ClmulX86,
+        CpuTarget::ClmulArm,
+    ];
 
     /// The name `__intrinsic_target` takes.
     pub fn name(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => "sha-arm",
             CpuTarget::ShaX86 => "sha-x86",
+            CpuTarget::ClmulX86 => "clmul-x86",
+            CpuTarget::ClmulArm => "clmul-arm",
         }
     }
 
@@ -87,12 +99,20 @@ impl CpuTarget {
         CpuTarget::ALL.into_iter().find(|t| t.name() == name)
     }
 
-    /// The static method of `u32x4` that checks for it (`velt:simd`).
+    /// The static method of velt:simd that checks for it, by its definition's full name.
     pub fn check(self) -> &'static str {
         match self {
-            CpuTarget::ShaArm => "hasShaArm",
-            CpuTarget::ShaX86 => "hasShaX86",
+            CpuTarget::ShaArm => "std/simd/sha::u32x4.hasShaArm",
+            CpuTarget::ShaX86 => "std/simd/sha::u32x4.hasShaX86",
+            CpuTarget::ClmulX86 => "std/simd/clmul::u64x2.hasClmulX86",
+            CpuTarget::ClmulArm => "std/simd/clmul::u64x2.hasClmulArm",
         }
+    }
+
+    /// The check as code calls it: `u32x4.hasShaArm`.
+    pub fn check_call(self) -> &'static str {
+        let full = self.check();
+        full.rsplit("::").next().unwrap_or(full)
     }
 }
 

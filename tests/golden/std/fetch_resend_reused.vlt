@@ -59,6 +59,10 @@ async function scenario(method: string, reused: bool, connections: i64) {
   const base = `http://127.0.0.1:${l.port}`;
   if (reused) {
     await (await fetch(`${base}/first`)).text();
+    // A request that may not be sent twice takes only a pooled connection idle for 5 ms or
+    // more (a close sent shortly after the response has arrived by then): wait at least that, so
+    // POST and PATCH reuse it too. (A lower bound: waiting longer changes nothing.)
+    await sleep(10);
   }
   let result = "";
   try {

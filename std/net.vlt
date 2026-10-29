@@ -61,6 +61,8 @@ declare async function velt_rt_tcp_listen_tls(
   key: string,
   alpn: string,
 ): Promise<IoResult<u64>>;
+declare function velt_rt_tcp_park(s: u64, key: string);
+declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
 declare async function velt_rt_tcp_connect_tls(
   addr: string,
   serverName: string,
@@ -297,6 +299,30 @@ export struct TcpStream {
    */
   close() {
     velt_rt_tcp_close(this.handle);
+  }
+
+  /**
+   * Hands this idle stream to the runtime's pool under `key` (std only: `fetch`'s keep-alive
+   * connections, crates/velt_rt/src/net/park.rs), for `TcpStream.unpark(key)` in any task. This
+   * copy must not be used any more.
+   */
+  private park(key: string) {
+    velt_rt_tcp_park(this.handle, key);
+  }
+
+  /**
+   * The stream most recently parked under `key` that is still open, or null (std only); with
+   * `settled`, only one idle long enough that a close sent right after its last response has
+   * arrived (for a request that may not be sent twice). One idle too long is closed.
+   */
+  private static unpark(key: string, settled: bool = false): TcpStream | null {
+    const h = velt_rt_tcp_unpark(key, settled ? 1 : 0);
+    return h == 0 ? null : TcpStream { handle: h };
+  }
+
+  /** The stream behind runtime handle `h` (std only: a connect the `fetch` client raced). */
+  private static ofHandle(h: u64): TcpStream {
+    return TcpStream { handle: h };
   }
 }
 

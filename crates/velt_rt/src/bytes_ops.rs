@@ -55,6 +55,37 @@ pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
     out.write(VeltBytes::from_vec(Vec::from_raw_parts(p, len, len)));
 }
 
+/// An array of `n` bytes whose contents are not set (`Buffer.allocUnsafe(n)`): for a buffer the
+/// program fills before it reads it (a decoder's output), which a zeroed one would write twice.
+/// Its bytes are whatever the allocator's block held: any `u8` value, never undefined
+/// behaviour for Velt code, which reads them only as bytes. Limits as `velt_rt_bytes_zeroed`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_uninit(n: u64, out: *mut VeltBytes) {
+    if n > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let len = crate::mem::block_size(n, 1);
+    if len == 0 {
+        out.write(VeltBytes::from_vec(Vec::new()));
+        return;
+    }
+    let p = match std::alloc::Layout::array::<u8>(len) {
+        Ok(layout) => std::alloc::alloc(layout),
+        Err(_) => std::ptr::null_mut(),
+    };
+    if p.is_null() {
+        crate::mem::out_of_memory(n, 1);
+    }
+    // Not through a `Vec`: its bytes would have to be initialized. Freed by generated code like
+    // one of its own blocks (leak counters), as `VeltBytes::from_vec` counts it.
+    crate::str::stats::block_alloc();
+    out.write(VeltBytes {
+        ptr: p,
+        len: len as u64,
+        cap: len as u64,
+    });
+}
+
 /// First position at or after `from` (relative) holding `byte`, or -1.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_index_of(b: *const VeltBytes, byte: u8, from: i64) -> i64 {
@@ -214,9 +245,23 @@ pub unsafe extern "C" fn velt_rt_bytes_range_to_str_lossy(
     out: *mut VeltStr,
 ) {
     // UTF-8 text (repaired or not) holds no lone surrogate: only its units are counted.
-    out.write(VeltStr::from_text(&String::from_utf8_lossy(range(
-        b, start, end,
-    ))));
+    out.write(text_of(range(b, start, end)));
+}
+
+/// `bytes` decoded as UTF-8, invalid sequences as U+FFFD (as JS decodes). Valid text, nearly
+/// all of it, is only validated (ASCII, the most common, only scanned) and copied once, where
+/// [`String::from_utf8_lossy`] would walk it chunk by chunk at several times the cost.
+pub(crate) fn text_of(bytes: &[u8]) -> VeltStr {
+    if bytes.is_ascii() {
+        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
+        return unsafe {
+            VeltStr::from_text_counted(std::str::from_utf8_unchecked(bytes), bytes.len())
+        };
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => VeltStr::from_text(s),
+        Err(_) => VeltStr::from_text(&String::from_utf8_lossy(bytes)),
+    }
 }
 
 #[cfg(test)]

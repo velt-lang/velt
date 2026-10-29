@@ -1,0 +1,368 @@
+// std/compress/brotli/commands (internal to velt:compress/brotli): the commands of a compressed
+// meta-block (RFC 7932 section 9.3): literals inserted, then a back-reference copied or a word
+// of the static dictionary written.
+//
+// This is where decoding spends its time, so the bit reader, the output position and the whole
+// command and block state live in locals for the length of the loop (one function, so that
+// they stay in registers), and prefix codes are decoded inline: one table lookup, two for codes
+// longer than 8 bits. Block switches, distances and dictionary words go through calls, with the
+// locals they touch written back around them.
+//
+// The loop works in steps: a command's lengths, one literal (the last one of a command
+// together with the distance), a distance, a copy. After each it stops when the next byte to
+// load is past `safeEnd` or the output reached `limit`. The driver
+// (decoder.vlt) passes a `safeEnd` 16 bytes before the end of the input, so no step (at most 117
+// bits) reads past the input; near the end it passes -1, runs one step at a time and checks
+// afterwards whether the step needed more input than there is. A step's refill loads 8 bytes
+// at `pos`, which the zeros after the input (bits.vlt) keep inside the buffer.
+
+import { COMMANDS } from "velt:compress/brotli/command";
+import { CONTEXT } from "velt:compress/brotli/context";
+import { writeWord } from "velt:compress/brotli/dictionary";
+import { switchCommands, switchDistances, switchLiterals } from "velt:compress/brotli/header";
+import {
+  State,
+  STAGE_COMMAND,
+  STAGE_COPY,
+  STAGE_DISTANCE,
+  STAGE_INSERT,
+} from "velt:compress/brotli/state";
+
+// The vector operations used here (`velt:simd` is the API; declared again for the unchecked
+// load and store, which take no range check): every load and store below stays inside its
+// array by the argument next to it.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+// The next 8 input bytes from `pos`, first byte lowest (a 16-byte load): inside `buf`, as a step
+// never takes `pos` more than 37 bytes past the input and `PAD` zeros follow it (bits.vlt).
+function load64(buf: u8[], pos: usize): u64 {
+  return velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(buf, pos as u64)), 0);
+}
+
+// Stopped at a step boundary (input or output limit).
+const STEP: i64 = 0;
+/** The meta-block is complete. */
+export const META_DONE: i64 = 1;
+/** Invalid data; `State.error` says why. */
+export const FAILED: i64 = 2;
+
+/**
+ * Decodes commands of the current meta-block from the cursor's stage until a step ends past
+ * `safeEnd` (the input position) or at `limit` (the output position), the meta-block ends, or
+ * the data is invalid. `s.out` has room for 64 bytes past `limit`.
+ */
+export function decodeCommands(s: State, safeEnd: i64, limit: usize): i64 {
+  const br = s.br;
+  const buf = br.buf;
+  const c = s.cur;
+  const out = s.out;
+  const tables = s.tables;
+  const litTables = s.litTables;
+  const litMap = s.litMap;
+  let bits = br.bits;
+  let count = br.count;
+  let pos = br.pos;
+  let outPos = c.outPos;
+  let stage = c.stage;
+  let metaLeft = c.metaLeft;
+  let insertLeft = c.insertLeft;
+  let copyLength = c.copyLength;
+  let lastDistance = c.lastDistance;
+  let cmdLeft = c.cmdLeft;
+  let cmdTable = c.cmdTable;
+  let litLeft = c.litLeft;
+  let litTable = c.litTable;
+  let litShift = c.litShift;
+  let litMapAt = c.litMapAt;
+  let status = STEP;
+  while (true) {
+    if (stage == STAGE_COMMAND) {
+      if (cmdLeft == 0) {
+        br.bits = bits;
+        br.count = count;
+        br.pos = pos;
+        switchCommands(s);
+        bits = br.bits;
+        count = br.count;
+        pos = br.pos;
+        cmdLeft = c.cmdLeft;
+        cmdTable = c.cmdTable;
+      }
+      cmdLeft--;
+      if (count < 39) {
+        bits = bits | (load64(buf, pos) << count);
+        pos += ((63 - count) >> 3) as usize;
+        count = count | 56;
+      }
+      // The insert-and-copy symbol, then its two lengths' extra bits.
+      let e = tables[cmdTable + ((bits & 255) as usize)];
+      if ((e & 255) > 8) {
+        bits = bits >> 8;
+        count -= 8;
+        e =
+          tables[cmdTable +
+            ((e >> 16) as usize) +
+            ((bits & ((1 << (((e & 255) - 8) as u64)) - 1)) as usize)];
+      }
+      bits = bits >> ((e & 255) as u64);
+      count -= (e & 255) as u64;
+      const symbol = (e >> 16) as usize;
+      const info = COMMANDS[symbol];
+      const insertBits = info & 255;
+      insertLeft = (((info >> 16) & 0xffff) + (bits & ((1 << insertBits) - 1))) as usize;
+      bits = bits >> insertBits;
+      count -= insertBits;
+      if (count < 24) {
+        bits = bits | (load64(buf, pos) << count);
+        pos += ((63 - count) >> 3) as usize;
+        count = count | 56;
+      }
+      const copyBits = (info >> 8) & 255;
+      copyLength = ((info >> 32) + (bits & ((1 << copyBits) - 1))) as usize;
+      bits = bits >> copyBits;
+      count -= copyBits;
+      lastDistance = symbol < 128;
+      metaLeft -= insertLeft as i64;
+      if (metaLeft < 0) {
+        s.error = "brotli: literals past the end of the meta-block";
+        status = FAILED;
+        break;
+      }
+      stage = STAGE_INSERT;
+      if (pos as i64 > safeEnd) {
+        break;
+      }
+    }
+    if (stage == STAGE_INSERT) {
+      if (insertLeft > 0) {
+        // The literals, each by the tree its context picks (section 7.1): from the two bytes
+        // before it, which are 0 before the stream's start.
+        let p1: u8 = 0;
+        let p2: u8 = 0;
+        if (outPos >= 2) {
+          p1 = out[outPos - 1];
+          p2 = out[outPos - 2];
+        } else if (outPos == 1) {
+          p1 = out[0];
+        }
+        let stopped = false;
+        while (true) {
+          if (litLeft == 0) {
+            br.bits = bits;
+            br.count = count;
+            br.pos = pos;
+            switchLiterals(s);
+            bits = br.bits;
+            count = br.count;
+            pos = br.pos;
+            litLeft = c.litLeft;
+            litTable = c.litTable;
+            litShift = c.litShift;
+            litMapAt = c.litMapAt;
+          }
+          litLeft--;
+          if (count < 15) {
+            bits = bits | (load64(buf, pos) << count);
+            pos += ((63 - count) >> 3) as usize;
+            count = count | 56;
+          }
+          let at: usize;
+          if (litTable >= 0) {
+            at = litTable as usize;
+          } else {
+            const ctx = ((CONTEXT[p1 as usize] | (CONTEXT[p2 as usize] >> 32)) >> litShift) & 63;
+            at = litTables[litMap[litMapAt + (ctx as usize)] as usize];
+          }
+          let e = tables[at + ((bits & 255) as usize)];
+          if ((e & 255) > 8) {
+            bits = bits >> 8;
+            count -= 8;
+            e =
+              tables[at +
+                ((e >> 16) as usize) +
+                ((bits & ((1 << (((e & 255) - 8) as u64)) - 1)) as usize)];
+          }
+          bits = bits >> ((e & 255) as u64);
+          count -= (e & 255) as u64;
+          const literal = (e >> 16) as u8;
+          out[outPos] = literal;
+          outPos++;
+          p2 = p1;
+          p1 = literal;
+          insertLeft--;
+          if (insertLeft == 0) {
+            break;
+          }
+          if (pos as i64 > safeEnd || outPos >= limit) {
+            stopped = true;
+            break;
+          }
+        }
+        if (stopped) {
+          break;
+        }
+      }
+      if (metaLeft == 0) {
+        status = META_DONE;
+        break;
+      }
+      stage = STAGE_DISTANCE;
+    }
+    if (stage == STAGE_DISTANCE) {
+      let distance = c.d0;
+      let push = false;
+      if (!lastDistance) {
+        br.bits = bits;
+        br.count = count;
+        br.pos = pos;
+        const code = readDistanceCode(s, copyLength);
+        distance = codeDistance(s, code);
+        bits = br.bits;
+        count = br.count;
+        pos = br.pos;
+        if (distance <= 0) {
+          s.error = "brotli: invalid distance";
+          status = FAILED;
+          break;
+        }
+        push = code != 0;
+      }
+      const total = s.base + outPos;
+      const maxDistance = total < s.maxBackward ? total : s.maxBackward;
+      if (distance as usize > maxDistance) {
+        // Past the window: a word of the static dictionary (not remembered as a distance).
+        const n = writeWord(out, outPos, copyLength, distance as usize - maxDistance - 1);
+        if (n < 0 || n > metaLeft) {
+          s.error = "brotli: invalid dictionary reference";
+          status = FAILED;
+          break;
+        }
+        outPos += n as usize;
+        metaLeft -= n;
+        if (metaLeft == 0) {
+          status = META_DONE;
+          break;
+        }
+        stage = STAGE_COMMAND;
+      } else {
+        if (push) {
+          c.d3 = c.d2;
+          c.d2 = c.d1;
+          c.d1 = c.d0;
+          c.d0 = distance;
+        }
+        metaLeft -= copyLength as i64;
+        if (metaLeft < 0) {
+          s.error = "brotli: copy past the end of the meta-block";
+          status = FAILED;
+          break;
+        }
+        c.distance = distance as usize;
+        c.copyLeft = copyLength;
+        stage = STAGE_COPY;
+      }
+      if (pos as i64 > safeEnd || outPos >= limit) {
+        break;
+      }
+    }
+    if (stage == STAGE_COPY) {
+      const room = limit - outPos;
+      const n = c.copyLeft < room ? c.copyLeft : room;
+      copyBack(out, outPos, c.distance, n);
+      outPos += n;
+      c.copyLeft -= n;
+      if (c.copyLeft > 0) {
+        break;
+      }
+      if (metaLeft == 0) {
+        status = META_DONE;
+        break;
+      }
+      stage = STAGE_COMMAND;
+      if (pos as i64 > safeEnd || outPos >= limit) {
+        break;
+      }
+    }
+  }
+  br.bits = bits;
+  br.count = count;
+  br.pos = pos;
+  c.outPos = outPos;
+  c.stage = stage;
+  c.metaLeft = metaLeft;
+  c.insertLeft = insertLeft;
+  c.copyLength = copyLength;
+  c.lastDistance = lastDistance;
+  c.cmdLeft = cmdLeft;
+  c.cmdTable = cmdTable;
+  c.litLeft = litLeft;
+  c.litTable = litTable;
+  c.litShift = litShift;
+  c.litMapAt = litMapAt;
+  return status;
+}
+
+// A command's distance code, read with the bit reader in `s.br` (section 4), after a block
+// switch of the distances if one is due.
+function readDistanceCode(s: State, copyLength: usize): usize {
+  const c = s.cur;
+  if (c.distLeft == 0) {
+    switchDistances(s);
+  }
+  c.distLeft--;
+  const ctx: usize = copyLength > 4 ? 3 : copyLength - 2;
+  return s.br.symbol(s.tables, s.distTables[s.distMap[c.distMapAt + ctx] as usize]);
+}
+
+// The distance distance code `code` stands for (0 or less for an invalid one), reading its
+// extra bits.
+function codeDistance(s: State, code: usize): i64 {
+  const c = s.cur;
+  if (code < 4) {
+    return code == 0 ? c.d0 : code == 1 ? c.d1 : code == 2 ? c.d2 : c.d3;
+  }
+  if (code < 16) {
+    // 4-9 change the last distance, 10-15 the one before: -1, +1, -2, +2, -3, +3.
+    const delta = ((code - 4) % 6 >> 1) as i64 + 1;
+    const d = code < 10 ? c.d0 : c.d1;
+    return (code & 1) == 0 ? d - delta : d + delta;
+  }
+  const d = s.distCodes[code];
+  const extra = d & 255;
+  return ((d >> 8) + (s.br.read(extra) << s.postfixBits)) as i64;
+}
+
+// Copies `n` bytes to `out[at]` from `distance` bytes back, which may overlap them (each byte
+// copied is then copied again: a repeating pattern). Sixteen bytes at a time; may write up to
+// 15 bytes past the copy.
+function copyBack(out: u8[], at: usize, distance: usize, n: usize) {
+  let from = at - distance;
+  let to = at;
+  const end = at + n;
+  if (distance < 16) {
+    if (distance == 1) {
+      out.fill(out[from], to as i64, end as i64);
+      return;
+    }
+    // Byte by byte until the pattern spans 16 bytes or more; past that, the bytes a whole
+    // number of periods back are the same, and that far back a 16-byte step does not overlap.
+    const period = distance * ((15 + distance) / distance);
+    const head = to + period - distance;
+    while (to < end && to < head) {
+      out[to] = out[from];
+      to++;
+      from++;
+    }
+    from = to - period;
+  }
+  // `from` is below `to`, and `to` stays within 15 bytes of `end` <= the output limit, past
+  // which `out` has 64 bytes of room (decoder.vlt).
+  while (to < end) {
+    velt_simd_u8x16_store(velt_simd_u8x16_load(out, from as u64), out, to as u64);
+    to += 16;
+    from += 16;
+  }
+}

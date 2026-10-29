@@ -1,0 +1,100 @@
+// velt:simd/clmul: carry-less multiplication of 64-bit lanes as methods of `u64x2` (docs/std/simd.md
+// "Carry-less multiplication"): x86's PCLMULQDQ and ARM's PMULL, the instruction behind CRC
+// folding and GHASH. `a.clmulLow(b)` is the 128-bit product of the low lanes as polynomials over
+// GF(2) (XOR instead of addition, no carries), its low 64 bits in lane 0.
+//
+// Every method always works: it is the instruction where the CPU has it (`u64x2.hasClmulX86()`,
+// `u64x2.hasClmulArm()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact
+// emulation, a shift and XOR per bit. The checks are false on WebAssembly, in debug (Cranelift)
+// builds and with `VELT_SIMD_DISABLE=clmul`. Code that would be slower on the emulation than
+// without the instruction (a table-driven CRC) checks `u64x2.hasClmul()` first; in a function
+// gated on the extension (`__intrinsic_target("clmul-x86")`, std only) the methods are the bare
+// instructions.
+
+declare function velt_simd_has_clmul_x86(): bool;
+declare function velt_simd_has_clmul_arm(): bool;
+declare function velt_simd_u64x2_pclmulqdq_0(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pclmulqdq_1(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pclmulqdq_16(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pclmulqdq_17(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pmull_0(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pmull_1(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pmull_16(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_pmull_17(a: u64x2, b: u64x2): u64x2;
+
+extend u64x2 {
+  /** Whether the CPU has x86's PCLMULQDQ, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=clmul`). */
+  static hasClmulX86(): bool {
+    return velt_simd_has_clmul_x86();
+  }
+
+  /** Whether the CPU has ARM's 64-bit PMULL (false off arm64, in debug builds, and with `VELT_SIMD_DISABLE=clmul`). */
+  static hasClmulArm(): bool {
+    return velt_simd_has_clmul_arm();
+  }
+
+  /** Whether the carry-less multiplications are an instruction here rather than an emulation. */
+  static hasClmul(): bool {
+    return velt_simd_has_clmul_x86() || velt_simd_has_clmul_arm();
+  }
+
+  /** The carry-less product of lane 0 of `this` and lane 0 of `b` (PCLMULQDQ imm 0x00, PMULL). */
+  clmulLow(b: u64x2): u64x2 {
+    if (velt_simd_has_clmul_x86()) {
+      return velt_simd_u64x2_pclmulqdq_0(this, b);
+    }
+    if (velt_simd_has_clmul_arm()) {
+      return velt_simd_u64x2_pmull_0(this, b);
+    }
+    return clmul64(this.lane(0), b.lane(0));
+  }
+
+  /** The carry-less product of lane 1 of `this` and lane 1 of `b` (PCLMULQDQ imm 0x11, PMULL2). */
+  clmulHigh(b: u64x2): u64x2 {
+    if (velt_simd_has_clmul_x86()) {
+      return velt_simd_u64x2_pclmulqdq_17(this, b);
+    }
+    if (velt_simd_has_clmul_arm()) {
+      return velt_simd_u64x2_pmull_17(this, b);
+    }
+    return clmul64(this.lane(1), b.lane(1));
+  }
+
+  /** The carry-less product of lane 0 of `this` and lane 1 of `b` (PCLMULQDQ imm 0x10). */
+  clmulLowHigh(b: u64x2): u64x2 {
+    if (velt_simd_has_clmul_x86()) {
+      return velt_simd_u64x2_pclmulqdq_16(this, b);
+    }
+    if (velt_simd_has_clmul_arm()) {
+      return velt_simd_u64x2_pmull_16(this, b);
+    }
+    return clmul64(this.lane(0), b.lane(1));
+  }
+
+  /** The carry-less product of lane 1 of `this` and lane 0 of `b` (PCLMULQDQ imm 0x01). */
+  clmulHighLow(b: u64x2): u64x2 {
+    if (velt_simd_has_clmul_x86()) {
+      return velt_simd_u64x2_pclmulqdq_1(this, b);
+    }
+    if (velt_simd_has_clmul_arm()) {
+      return velt_simd_u64x2_pmull_1(this, b);
+    }
+    return clmul64(this.lane(1), b.lane(0));
+  }
+}
+
+/** The 128-bit carry-less product of `a` and `b`, low half in lane 0: one shifted XOR per set bit of `b`. */
+function clmul64(a: u64, b: u64): u64x2 {
+  let lo: u64 = 0;
+  let hi: u64 = 0;
+  let rest = b;
+  while (rest != 0) {
+    const i = rest.trailingZeros() as u64;
+    lo ^= a << i;
+    if (i > 0) {
+      hi ^= a >> (64 - i);
+    }
+    rest &= rest - 1;
+  }
+  return u64x2.splat(lo).withLane(1, hi);
+}

@@ -118,12 +118,6 @@ impl Signal {
     }
 }
 
-/// Abort `s` with no reason (tests of the operations that take a signal).
-#[cfg(test)]
-pub(crate) fn abort_for_test(s: &Signal) {
-    s.abort(&Reason::default());
-}
-
 /// The signal behind handle bits `h` (0 = none), as a new reference.
 ///
 /// # Safety

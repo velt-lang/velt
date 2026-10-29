@@ -1,0 +1,165 @@
+// std/compress/inflate/checksum (std-internal): the checks a gzip member (CRC-32, RFC 1952 §8)
+// and a zlib stream (Adler-32, RFC 1950 §9) end with, computed as the output is made.
+//
+// CRC-32 folds 64 bytes per step with carry-less multiplication where the CPU has it (Intel's
+// "Fast CRC Computation for Generic Polynomials Using PCLMULQDQ", the constants of
+// `crc32fast`), and otherwise takes eight bytes per step through the slicing-by-8 tables (one
+// 16-byte load gives two steps); Adler-32 sums 5552 bytes between reductions, the most that
+// cannot overflow 32 bits.
+
+import { u8x16, u64x2 } from "velt:simd";
+import { CRC_TABLE } from "velt:compress/inflate/tables";
+
+// The vector load without its range check: `crc32` loads only where 16 bytes are left.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+
+/** The CRC-32 of `bytes[start..end]` after `crc` (0 to start). */
+export function crc32(crc: u32, bytes: u8[], start: i64, end: i64): u32 {
+  let c = (crc ^ 0xffffffff) as u64;
+  let i = start;
+  if (end - start >= 128 && u64x2.hasClmul()) {
+    const blocks = (end - start) & ~15;
+    if (u64x2.hasClmulX86()) {
+      c = foldX86(c, bytes, start, start + blocks);
+    } else {
+      c = fold(c, bytes, start, start + blocks);
+    }
+    i = start + blocks;
+  }
+  while (i + 16 <= end) {
+    const v = velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(bytes, i as u64));
+    c = step8(v.lane(0) ^ c);
+    c = step8(v.lane(1) ^ c);
+    i += 16;
+  }
+  while (i < end) {
+    c = (CRC_TABLE[((c ^ (bytes[i] as u64)) & 255) as i64] as u64) ^ (c >> 8);
+    i += 1;
+  }
+  return (c ^ 0xffffffff) as u32;
+}
+
+/**
+ * `fold` compiled for PCLMULQDQ: its carry-less multiplications are the bare instruction, with
+ * no check of the CPU around each.
+ */
+function foldX86(c: u64, bytes: u8[], start: i64, end: i64): u64 {
+  __intrinsic_target("clmul-x86");
+  return fold(c, bytes, start, end);
+}
+
+/** The 16 bytes at `bytes[at..]` as two 64-bit lanes. */
+function block(bytes: u8[], at: i64): u64x2 {
+  return velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(bytes, at as u64));
+}
+
+/** `a` folded across 128 bits onto `b` by `keys`. */
+function reduce128(a: u64x2, b: u64x2, keys: u64x2): u64x2 {
+  return a.clmulLow(keys).xor(a.clmulHigh(keys)).xor(b);
+}
+
+/**
+ * The CRC state `c` (inverted) after `bytes[start..end]`, at least 128 bytes in whole 16-byte
+ * blocks: four lanes of 128 bits folded 64 bytes at a time, folded into one, reduced to 64 and
+ * then 32 bits (Barrett reduction).
+ */
+function fold(c: u64, bytes: u8[], start: i64, end: i64): u64 {
+  const zero = u64x2.splat(0);
+  const low32 = zero.withLane(0, 0xffffffff);
+  let x3 = block(bytes, start).xor(zero.withLane(0, c));
+  let x2 = block(bytes, start + 16);
+  let x1 = block(bytes, start + 32);
+  let x0 = block(bytes, start + 48);
+  let i = start + 64;
+  const k1k2 = u64x2.splat(0x154442bd4).withLane(1, 0x1c6e41596);
+  while (i + 64 <= end) {
+    x3 = reduce128(x3, block(bytes, i), k1k2);
+    x2 = reduce128(x2, block(bytes, i + 16), k1k2);
+    x1 = reduce128(x1, block(bytes, i + 32), k1k2);
+    x0 = reduce128(x0, block(bytes, i + 48), k1k2);
+    i += 64;
+  }
+  const k3k4 = u64x2.splat(0x1751997d0).withLane(1, 0xccaa009e);
+  let x = reduce128(x3, x2, k3k4);
+  x = reduce128(x, x1, k3k4);
+  x = reduce128(x, x0, k3k4);
+  while (i + 16 <= end) {
+    x = reduce128(x, block(bytes, i), k3k4);
+    i += 16;
+  }
+  // 128 bits to 64, to 32: shifted right by 8 bytes, then by 4.
+  x = x.clmulLowHigh(k3k4).xor(zero.withLane(0, x.lane(1)));
+  const shifted = u8x16.shuffle(
+    x.asU8x16(),
+    zero.asU8x16(),
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    16,
+    16,
+    16,
+  );
+  x = x.and(low32).clmulLow(zero.withLane(0, 0x163cd6124)).xor(shifted.asU64x2());
+  const pu = u64x2.splat(0x1db710641).withLane(1, 0x1f7011641);
+  const t1 = x.and(low32).clmulLowHigh(pu);
+  const t2 = t1.and(low32).clmulLow(pu);
+  return (x.xor(t2).lane(0) >> 32) & 0xffffffff;
+}
+
+/** Eight bytes, the CRC so far XORed into their first four, through the tables. */
+function step8(a: u64): u64 {
+  return ((
+    CRC_TABLE[(1792 + (a & 255)) as i64] ^
+    CRC_TABLE[(1536 + ((a >> 8) & 255)) as i64] ^
+    CRC_TABLE[(1280 + ((a >> 16) & 255)) as i64] ^
+    CRC_TABLE[(1024 + ((a >> 24) & 255)) as i64] ^
+    CRC_TABLE[(768 + ((a >> 32) & 255)) as i64] ^
+    CRC_TABLE[(512 + ((a >> 40) & 255)) as i64] ^
+    CRC_TABLE[(256 + ((a >> 48) & 255)) as i64] ^
+    CRC_TABLE[(a >> 56) as i64]
+  ) as u64);
+}
+
+/** Adler-32's modulus, and the most bytes summed before reducing by it. */
+const BASE: u64 = 65521;
+const NMAX: i64 = 5552;
+
+/** The Adler-32 of `bytes[start..end]` after `adler` (1 to start). */
+export function adler32(adler: u32, bytes: u8[], start: i64, end: i64): u32 {
+  let a = (adler & 65535) as u64;
+  let b = (adler >> 16) as u64;
+  let i = start;
+  while (i < end) {
+    const stop = end - i > NMAX ? i + NMAX : end;
+    while (i + 4 <= stop) {
+      a += bytes[i] as u64;
+      b += a;
+      a += bytes[i + 1] as u64;
+      b += a;
+      a += bytes[i + 2] as u64;
+      b += a;
+      a += bytes[i + 3] as u64;
+      b += a;
+      i += 4;
+    }
+    while (i < stop) {
+      a += bytes[i] as u64;
+      b += a;
+      i += 1;
+    }
+    a %= BASE;
+    b %= BASE;
+  }
+  return ((b << 16) | a) as u32;
+}

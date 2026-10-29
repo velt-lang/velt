@@ -1,16 +1,15 @@
 //! HTTP: a compiled request handler served by `velt_rt_http_serve`, exercised with raw HTTP/1.1
-//! keep-alive requests from plain threads and with the runtime's own `fetch`.
+//! keep-alive requests from plain threads.
 
 use super::fake::{arg, block_on_fut, fut_result, ok, take_string};
 use crate::bytes::VeltBytes;
-use crate::http::client::*;
 use crate::http::request::*;
 use crate::http::respond::*;
 use crate::http::response::*;
 use crate::http::server::*;
 use crate::result::IoResult;
 use crate::str::VeltStr;
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
+use crate::str_array::VeltStrArray;
 use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
 use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
@@ -359,82 +358,6 @@ fn keep_alive_throughput() {
         "http keep-alive: {n} requests in {secs:.2}s = {:.0} req/s",
         n as f64 / secs
     );
-}
-
-/// `fetch` through the C ABI: `headers` borrows `strs` (`cap` 0: nothing to free).
-unsafe fn send(method: &str, url: &str, strs: &[VeltStr], body: Option<&str>) -> *mut VeltFut {
-    let headers = VeltStrArray {
-        ptr: strs.as_ptr() as *mut VeltStr,
-        len: strs.len() as u64,
-        cap: 0,
-    };
-    let mut text = arg(body.unwrap_or(""));
-    let mut bytes = VeltBytes::from_vec(vec![]);
-    let kind = if body.is_some() { 1 } else { 0 };
-    velt_rt_http_fetch_send(
-        &arg(method),
-        &arg(url),
-        &headers,
-        kind,
-        &mut text,
-        &mut bytes,
-        0,
-        0,
-        &arg(""),
-    )
-}
-
-unsafe fn text(r: FetchRespHandle) -> String {
-    take_string(ok(block_on_fut::<IoResult<VeltStr>>(
-        velt_rt_http_fetch_resp_text(r),
-    )))
-}
-
-#[test]
-fn fetch_get_and_post() {
-    let port = server_port();
-    let url = format!("http://127.0.0.1:{port}/json");
-    let r = ok(block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
-        send("GET", &url, &[], None)
-    }));
-    unsafe {
-        assert_eq!(velt_rt_http_fetch_resp_status(r), 200);
-        assert!(!velt_rt_http_fetch_resp_redirected(r));
-        let mut out = MaybeUninit::uninit();
-        velt_rt_http_fetch_resp_status_text(r, out.as_mut_ptr());
-        assert_eq!(take_string(out.assume_init()), "OK");
-        let mut out = MaybeUninit::uninit();
-        velt_rt_http_fetch_resp_url(r, out.as_mut_ptr());
-        assert_eq!(take_string(out.assume_init()), url);
-        let mut list = MaybeUninit::<VeltStrArray>::uninit();
-        velt_rt_http_fetch_resp_headers(r, list.as_mut_ptr());
-        let mut list = list.assume_init();
-        let flat: Vec<String> = (0..list.len as usize)
-            .map(|i| String::from_utf8((*list.ptr.add(i)).as_bytes().to_vec()).unwrap())
-            .collect();
-        velt_rt_str_array_drop(&mut list);
-        let ct = flat.iter().position(|n| n == "content-type").unwrap();
-        assert_eq!(flat[ct + 1], "application/json");
-        assert_eq!(text(r), r#"{"ok":true}"#);
-        velt_rt_http_fetch_resp_drop(r);
-    }
-
-    let url = format!("http://127.0.0.1:{port}/post?z");
-    let headers = [arg("x-test"), arg("fetch")];
-    let r = ok(block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
-        send("POST", &url, &headers, Some("data!"))
-    }));
-    unsafe {
-        assert_eq!(text(r), "POST /post?z [fetch] data!");
-        velt_rt_http_fetch_resp_drop(r);
-    }
-
-    // Only http:// and https:// are fetched (checked before any connection is made).
-    let ftp = block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
-        send("GET", "ftp://example.com/", &[], None)
-    });
-    assert_eq!(ftp.err.code, crate::result::code::UNSUPPORTED);
-    take_string(ftp.err.message);
 }
 
 #[test]

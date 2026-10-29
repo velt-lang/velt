@@ -29,6 +29,9 @@ cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 # never has the name of one of velt's.
 cargo build --release -q --manifest-path "$HERE/rust/Cargo.toml" --target-dir "$OUT/rust"
 VELT="$TARGET/release/velt"
+# The compressed inputs of the decompression rows, made by the Rust side's encoders.
+export STDPORT_INPUTS="$OUT/inputs"
+"$OUT/rust/release/gen_inputs" "$STDPORT_INPUTS"
 
 names=()
 for src in "$HERE"/*.vlt; do

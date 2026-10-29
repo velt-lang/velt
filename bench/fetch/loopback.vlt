@@ -1,0 +1,141 @@
+// The global `fetch` against a Velt server in the same process, for the nightly instruction
+// guard (bench/nightly.sh, #601): sequential keep-alive GETs of a small body, of a JSON body read
+// with `json<T>()`, and of a gzip-compressed body. The client's work dominates; the full client
+// comparison with Node and reqwest is bench/http/fetch.
+import { serve } from "velt:http";
+
+struct Item {
+  id: i64;
+  name: string;
+}
+
+const items: Item[] = [];
+for (let i: i64 = 0; i < 100; i++) {
+  items.push({ id: i, name: `item ${i}` });
+}
+const listJson = JSON.stringify(items);
+// "velt fetch " 2000 times, gzipped.
+const packed: u8[] = [
+  31,
+  139,
+  8,
+  0,
+  0,
+  0,
+  0,
+  0,
+  2,
+  255,
+  237,
+  198,
+  177,
+  13,
+  0,
+  32,
+  8,
+  0,
+  176,
+  87,
+  248,
+  205,
+  96,
+  24,
+  28,
+  9,
+  247,
+  251,
+  3,
+  115,
+  59,
+  117,
+  242,
+  117,
+  220,
+  236,
+  83,
+  49,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  170,
+  186,
+  239,
+  7,
+  32,
+  82,
+  36,
+  25,
+  240,
+  85,
+  0,
+  0,
+];
+
+async function answer(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/json") {
+    return new Response(listJson, { headers: { "content-type": "application/json" } });
+  }
+  if (path == "/gzip") {
+    return new Response(packed, { headers: { "content-encoding": "gzip" } });
+  }
+  return new Response("hello");
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, answer);
+  const base = `http://127.0.0.1:${server.port}`;
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 2000; i++) {
+    total += (await (await fetch(`${base}/small`)).text()).length as i64;
+  }
+  for (let i: i64 = 0; i < 300; i++) {
+    const list: Item[] = await (await fetch(`${base}/json`)).json();
+    total += list.length as i64;
+  }
+  for (let i: i64 = 0; i < 300; i++) {
+    total += (await (await fetch(`${base}/gzip`)).text()).length as i64;
+  }
+  console.log(total);
+  await server.shutdown();
+}
+
+await main();
