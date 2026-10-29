@@ -654,7 +654,8 @@ export abstract class ExprCompiler {
       // An aggregate reading only an enclosing query's columns is that query's.
       const owner = aggOwner(this, e, sc);
       if (owner.agg == null) {
-        if (owner != sc && owner.output && owner.core != null && !owner.core!.aggFromInner) {
+        // Only from a result column: in ORDER BY it is too late (SQLite's misuse error).
+        if (owner != sc && owner.results && owner.core != null && !owner.core!.aggFromInner) {
           owner.core!.aggFromInner = true;
           throw new AggRestart(owner.core!);
         }

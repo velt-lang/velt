@@ -129,9 +129,11 @@ export class Scope {
   base: Scope | null = null;
   /** Set when a name resolved in an enclosing scope. */
   outer: bool = false;
-  /** The core whose FROM items these are, and whether its result columns are being compiled. */
+  /** The core whose FROM items these are, and whether its output (result columns on) compiles. */
   core: SelectCore | null = null;
   output: bool = false;
+  /** Set while the result columns of a core that is not (yet) an aggregate query compile. */
+  results: bool = false;
   /** Set while an aggregate's arguments compile: no aggregate is allowed there. */
   inAggArgs: bool = false;
 

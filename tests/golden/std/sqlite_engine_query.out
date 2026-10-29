@@ -633,6 +633,8 @@ SELECT max(count(*)) FROM users
   error: misuse of aggregate function count()
 SELECT id FROM users WHERE count(*) > 1
   error: misuse of aggregate function count()
+SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)
+  error: misuse of aggregate: count()
 SELECT nosuchfn(1)
   error: no such function: nosuchfn
 SELECT substr('x')

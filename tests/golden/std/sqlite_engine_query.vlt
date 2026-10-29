@@ -227,6 +227,8 @@ const QUERIES: string[] = [
   "SELECT count(count(*)) FROM users",
   "SELECT max(count(*)) FROM users",
   "SELECT id FROM users WHERE count(*) > 1",
+  // An outer query's aggregate in a subquery in ORDER BY: too late to make it an aggregate query.
+  "SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)",
   "SELECT nosuchfn(1)",
   "SELECT substr('x')",
   "SELECT 1 FROM users ORDER BY 5",
