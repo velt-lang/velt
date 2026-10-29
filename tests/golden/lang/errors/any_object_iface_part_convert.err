@@ -1,7 +1,3 @@
-any_object_iface_part_convert.vlt:25:5: error: a part of `props` is changed through `Ctx`, but an object converted to `Ctx` holds `props` as a value of another type
+any_object_iface_part_convert.vlt:11:5: error: a part of `props` is changed through `Ctx`, but an object converted to `Ctx` holds `props` as a value of another type
   = note: the object's `props` is converted to `Ctx`'s field type at each read, so this would change a copy; Node changes the object's own `props`
   = note: give the object's `props` the type of `Ctx`'s field, or assign the whole value (`x.props = …`)
-
-any_object_iface_part_convert.vlt:30:5: error: a part of `outer` is changed through `Ctx2`, but an object converted to `Ctx2` holds `outer` as a value of another type
-  = note: the object's `outer` is converted to `Ctx2`'s field type at each read, so this would change a copy; Node changes the object's own `outer`
-  = note: give the object's `outer` the type of `Ctx2`'s field, or assign the whole value (`x.outer = …`)

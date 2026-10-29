@@ -188,6 +188,9 @@ impl Ctx<'_> {
                 Some(SetterSrc::Unwritable { span, name, .. }) => {
                     found.push((*span, name.clone(), None));
                 }
+                // A field read as a copy (`object_assigns.rs`): the copy-write check reports it.
+                Some(SetterSrc::Method { def, .. })
+                    if self.object_impls.assign_setters.contains(def) => {}
                 Some(SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }) => {
                     let at = self.adt(*d).map_or(Span::DUMMY, |a| a.span);
                     found.push((at, name.clone(), Some(*d)));
@@ -512,6 +515,11 @@ impl Ctx<'_> {
                     param,
                     this,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param, this)),
+                SetterSrc::Method { def, .. }
+                    if self.object_impls.assign_setters.contains(&def) =>
+                {
+                    defs.push(def)
+                }
                 SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
                     if self.iface_writes.parts.contains_key(&(iface, k)) =>
                 {

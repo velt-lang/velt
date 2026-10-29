@@ -77,7 +77,8 @@ impl Ctx<'_> {
                 span,
             }
         });
-        self.assign_result(def, d, ty, want);
+        let name = format!("<object>.{fname}");
+        self.assign_result(def, d, (ty, want), (false, &name));
         def
     }
 
@@ -92,14 +93,25 @@ impl Ctx<'_> {
         want: TyId,
     ) -> DefId {
         let def = value_setter(self, d, self_ty, index, want, |v, _| v);
-        self.assign_result(def, d, want, ty);
+        self.assign_result(def, d, (want, ty), (false, "value"));
+        // A write into a part of the field is a write into the copy the getter made, which
+        // the copy-write check reports (not `iface_writes` `converted_part`).
+        self.object_impls.assign_setters.insert(def);
         def
     }
 
     /// Make synthesized method `def` (of object type `d`, its body `return <e>;` or
     /// `this.f = <e>;` with `e` a `gives`) return or store `e` converted to `want`, as a plain
     /// assignment converts it (`Ctx::assigns` said it does).
-    pub(crate) fn assign_result(&mut self, def: DefId, d: DefId, gives: TyId, want: TyId) {
+    /// `result`: a method's result, else a field's value read or written (`name`, the source
+    /// a diagnostic shows).
+    pub(crate) fn assign_result(
+        &mut self,
+        def: DefId,
+        d: DefId,
+        (gives, want): (TyId, TyId),
+        (result, name): (bool, &str),
+    ) {
         let module = self.adt(d).map_or(0, |a| a.module);
         let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] else {
             return;
@@ -107,10 +119,10 @@ impl Ctx<'_> {
         let span = f.span;
         let old_locals = f.body.locals.clone();
         let mut stmts = std::mem::take(&mut f.body.block.stmts);
-        // The copies this conversion makes are the interface's reads of the object, which the
-        // getter makes at each read: a write into a part of one through the interface is
-        // reported as such (`iface_writes.rs` `converted_part`), not as a copy's write.
-        let copies = self.object_copies.mark();
+        // A result's copy is of the fresh value the function returned, which nothing else sees:
+        // it is no copy a write is checked against. A field's copies are (`object_copies`): a
+        // write into one (`const o = c.outer; o.v = 2`) is an error, as for a plain assignment.
+        let copies = result.then(|| self.object_copies.mark());
         let env = TyEnv::new(module, &[]);
         let mut g = FnCx::new(self, module, env, Frame::new(FnKind::Method, Some(want)));
         g.body_def = Some(def);
@@ -123,7 +135,7 @@ impl Ctx<'_> {
             };
             g.new_local(&l.name, l.ty, l.mutable, span, kind);
         }
-        let r = g.new_local("#result", gives, false, span, LocalKind::Temp);
+        let r = g.new_local(name, gives, false, span, LocalKind::Temp);
         for s in &mut stmts {
             let call = match &mut s.kind {
                 StmtKind::Return(Some(call)) => call,
@@ -163,7 +175,9 @@ impl Ctx<'_> {
         g.cx.checking.pop();
         let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
         drop(g);
-        self.object_copies.rollback(copies);
+        if let Some(copies) = copies {
+            self.object_copies.rollback(copies);
+        }
         if let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] {
             f.body.locals = frame.locals;
             f.body.block.stmts = stmts;

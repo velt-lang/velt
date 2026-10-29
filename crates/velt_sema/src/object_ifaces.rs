@@ -46,6 +46,9 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
+    /// The setters of fields read and written as a plain assignment converts them
+    /// (`Ctx::assign_setter`).
+    pub assign_setters: FxHashSet<DefId>,
 }
 
 /// What fills one slot of the implementation.
@@ -467,7 +470,7 @@ impl Ctx<'_> {
         }
         // The result converted to the method's as a plain assignment converts it.
         if ret != self.ty.unit && !self.same_ty(gives, ret) {
-            self.assign_result(def, d, gives, ret);
+            self.assign_result(def, d, (gives, ret), (true, "result"));
         }
         def
     }
