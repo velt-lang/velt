@@ -368,43 +368,42 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         )));
     }
 
-    if std_cache::wanted(opts) {
-        let t = Instant::now();
-        let cg = velt_codegen_cl::CodegenOptions {
-            target: opts.target(),
-            optimize: opts.release,
-            cpu: opts.cpu.clone(),
-        };
-        let split = std_cache::split(&mut program, opts, &cg);
-        sess.std_objects = split.objects;
-        sess.record("std cache", t);
-        if std_cache::stats() {
-            eprintln!(
-                "velt: std cache: {} found, {} compiled",
-                split.hits, split.misses
-            );
-        }
-    }
-
-    let t = Instant::now();
-    let level = if opts.release {
-        velt_opt::OptLevel::Speed
-    } else {
-        velt_opt::OptLevel::None
+    // The std cache (#1728): std functions out of the program before it is optimized, their
+    // objects linked after. The program as lowered is kept to fall back on.
+    let cg = velt_codegen_cl::CodegenOptions {
+        target: opts.target(),
+        optimize: opts.release,
+        cpu: opts.cpu.clone(),
     };
-    let mut passes = velt_opt::PassTimings::new();
-    velt_opt::optimize_timed(&mut program, level, &mut passes);
-    let verify_start = Instant::now();
-    let verified = velt_vir::verify(&program);
-    let mut steps = passes.entries().to_vec();
-    steps.push(("verify", verify_start.elapsed()));
-    sess.record("optimize", t);
-    sess.record_details("optimize", &steps);
-    if let Err(errs) = verified {
-        return Err(BuildError::Ice(format!(
-            "VIR verification failed after optimization:\n  {}",
-            errs.join("\n  ")
-        )));
+    let std_plan = std_cache::wanted(opts).then(|| {
+        let t = Instant::now();
+        let unsplit = program.clone();
+        let plan = std_cache::split(&mut program, opts, &cg);
+        sess.record("std cache", t);
+        (unsplit, plan)
+    });
+    optimize_stage(sess, opts, &mut program)?;
+    if let Some((unsplit, plan)) = std_plan {
+        let t = Instant::now();
+        match std_cache::link(plan, &program, &cg) {
+            Ok(linked) => {
+                if std_cache::stats() {
+                    eprintln!(
+                        "velt: std cache: {} found, {} compiled, {} no longer called",
+                        linked.hits, linked.misses, linked.dropped
+                    );
+                }
+                sess.std_objects = linked.objects;
+            }
+            Err(why) => {
+                if std_cache::stats() {
+                    eprintln!("velt: std cache: not used for this build: {why}");
+                }
+                program = unsplit;
+                optimize_stage(sess, opts, &mut program)?;
+            }
+        }
+        sess.record("std cache link", t);
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));
@@ -414,6 +413,34 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         }
     }
     Ok(program)
+}
+
+/// `velt_opt` over `program` (release builds: `Speed`), then verification.
+fn optimize_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    program: &mut vir::Program,
+) -> Result<(), BuildError> {
+    let t = Instant::now();
+    let level = if opts.release {
+        velt_opt::OptLevel::Speed
+    } else {
+        velt_opt::OptLevel::None
+    };
+    let mut passes = velt_opt::PassTimings::new();
+    velt_opt::optimize_timed(program, level, &mut passes);
+    let verify_start = Instant::now();
+    let verified = velt_vir::verify(program);
+    let mut steps = passes.entries().to_vec();
+    steps.push(("verify", verify_start.elapsed()));
+    sess.record("optimize", t);
+    sess.record_details("optimize", &steps);
+    verified.map_err(|errs| {
+        BuildError::Ice(format!(
+            "VIR verification failed after optimization:\n  {}",
+            errs.join("\n  ")
+        ))
+    })
 }
 
 /// Full build per `opts.emit`, run on a large-stack thread.

@@ -20,24 +20,23 @@ use velt_vir::vir::{
 
 use super::{select, KIND};
 
-/// Compile each function of `misses` on its own, in parallel: its object, or `None` when it
-/// could not be (it then stays in the program).
+/// Compile each of `programs` (a function's program of its own, [`program_of`]) in parallel:
+/// its object, or why it could not be.
 pub(super) fn each(
-    program: &vir::Program,
-    misses: &[(usize, Key)],
+    programs: Vec<&vir::Program>,
     cg: &velt_codegen_cl::CodegenOptions,
-) -> Vec<Option<Vec<u8>>> {
+) -> Vec<Result<Vec<u8>, String>> {
     let next = AtomicUsize::new(0);
-    let results = Mutex::new(vec![None; misses.len()]);
+    let results = Mutex::new(vec![Err(String::new()); programs.len()]);
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     std::thread::scope(|scope| {
-        for _ in 0..workers.min(misses.len()) {
+        for _ in 0..workers.min(programs.len()) {
             scope.spawn(|| loop {
                 let n = next.fetch_add(1, Ordering::Relaxed);
-                let Some(&(i, _)) = misses.get(n) else {
+                let Some(&program) = programs.get(n) else {
                     return;
                 };
-                let object = alone(program, i, cg);
+                let object = alone(program.clone(), cg);
                 results.lock().unwrap_or_else(PoisonError::into_inner)[n] = object;
             });
         }
@@ -46,7 +45,7 @@ pub(super) fn each(
 }
 
 /// The program of function `i` alone (module docs).
-fn program_of(program: &vir::Program, i: usize) -> vir::Program {
+pub(super) fn program_of(program: &vir::Program, i: usize) -> vir::Program {
     let bodies = select::inlinable(program, i);
     let mut funcs: HashMap<usize, FuncId> = HashMap::new();
     let mut order: Vec<usize> = vec![];
@@ -160,39 +159,19 @@ fn remap(
     }
 }
 
-/// Function `i` of `program` compiled on its own, with unknown callers.
-fn alone(
-    program: &vir::Program,
-    i: usize,
-    cg: &velt_codegen_cl::CodegenOptions,
-) -> Option<Vec<u8>> {
-    let mut alone = program_of(program, i);
+/// A function's program of its own, optimized with unknown callers and compiled to an object.
+fn alone(mut alone: vir::Program, cg: &velt_codegen_cl::CodegenOptions) -> Result<Vec<u8>, String> {
     velt_opt::optimize(&mut alone, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
     if !alone.funcs.iter().any(|f| f.symbol == "velt_main") {
         let main = vir::Function::new("velt_main".into(), vec![], vir::Ty::I32, Linkage::Import);
         alone.funcs.push(main);
     }
-    let not_compiled = |why: String| {
-        if super::stats() {
-            eprintln!(
-                "velt: std cache: {} stays in the program: {why}",
-                program.funcs[i].symbol
-            );
-        }
-    };
-    if let Err(errs) = velt_vir::verify(&alone) {
-        not_compiled(errs.join("; "));
-        return None;
-    }
+    velt_vir::verify(&alone).map_err(|errs| errs.join("; "))?;
     let mut steps = vec![];
-    match crate::backend::Backend::Llvm.emit_objects(&alone, cg, Some(1), &mut steps) {
-        Ok((objects, _)) => objects.into_iter().next(),
-        Err(e) => {
-            not_compiled(e);
-            None
-        }
-    }
+    let (objects, _) =
+        crate::backend::Backend::Llvm.emit_objects(&alone, cg, Some(1), &mut steps)?;
+    objects.into_iter().next().ok_or_else(|| "no object".into())
 }
 
 /// Store `object` under `key`: the path of the cached file, which the link reads. Two builds
