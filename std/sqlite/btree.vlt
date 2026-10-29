@@ -15,16 +15,17 @@ import {
   LEAF_INDEX,
   LEAF_TABLE,
   localSize,
+  maxLocal,
   readBe,
   readU16,
   readU32,
   readVarint,
-  readVarintUnchecked,
   serialSize,
 } from "velt:sqlite/format";
-import { compareRecords } from "velt:sqlite/record";
+import { KeyRec, compareRecords } from "velt:sqlite/record";
 import { realText } from "velt:sqlite/real";
 import { utf8DecodeLossy } from "velt:encoding";
+import "velt:sqlite/btree_seek";
 
 /** A b-tree is at most this deep: SQLite's own limit (BTCURSOR_MAX_DEPTH). */
 const MAX_DEPTH: usize = 20;
@@ -58,6 +59,10 @@ export class Cursor {
   types: i64[] = [];
   offsets: usize[] = [];
   parsed: bool = false;
+  /** The most payload an index cell keeps on its page. */
+  maxIndexLocal: usize = 0;
+  /** The most payload a cell of this b-tree keeps on its page. */
+  maxLocalHere: usize = 0;
   /**
    * The page last entered (its header's offset; 1 is none), checked once as SQLite's
    * btreeInitPage does: its first byte, where its cells may start (past the pointer array),
@@ -75,6 +80,7 @@ export class Cursor {
   constructor(db: DbFile, root: u32) {
     this.db = db;
     this.root = root;
+    this.maxIndexLocal = maxLocal(db.usable, false);
     const t = db.data[db.header(root)];
     if (t == LEAF_TABLE || t == INTERIOR_TABLE) {
       this.table = true;
@@ -83,6 +89,7 @@ export class Cursor {
     } else {
       throw new CorruptError(`page ${root} is not a b-tree root`);
     }
+    this.maxLocalHere = maxLocal(db.usable, this.table);
   }
 
   /** Moves to the first entry; false if the tree is empty. */
@@ -111,7 +118,9 @@ export class Cursor {
     // Next cell on the leaf.
     if (idx < readU16(data, leaf + 3)) {
       this.cells[depth] = idx;
-      return this.load();
+      this.locate(leaf, idx);
+      this.valid = true;
+      return true;
     }
     // Climb to the first ancestor with a cell (or right pointer) left to visit.
     while (depth > 0) {
@@ -141,67 +150,17 @@ export class Cursor {
 
   /** On a table b-tree, moves to the row with key `rowid`; false if there is none. */
   seekRowid(rowid: i64): bool {
-    const data = this.db.data;
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
-    let page = this.root;
-    while (true) {
-      if (this.pages.length >= MAX_DEPTH) {
-        corrupt("b-tree too deep");
+    const lo = this.findLeaf(rowid);
+    const leaf = this.db.header(this.pages[this.pages.length - 1]);
+    this.cells.push(lo);
+    if (lo < readU16(this.db.data, leaf + 3)) {
+      this.load();
+      if (this.rowid == rowid) {
+        return true;
       }
-      const h = this.db.header(page);
-      const t = data[h];
-      const n = readU16(data, h + 3);
-      if (t == LEAF_TABLE) {
-        // Binary search for the key.
-        let lo: usize = 0;
-        let hi = n;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          const cell = this.cellOffset(h, 8, mid);
-          const len = this.pSafe ? readVarintUnchecked(data, cell).len : readVarint(data, cell).len;
-          const key =
-            this.pSafe
-              ? readVarintUnchecked(data, cell + len).value
-              : readVarint(data, cell + len).value;
-          if (key < rowid) {
-            lo = mid + 1;
-          } else {
-            hi = mid;
-          }
-        }
-        this.pages.push(page);
-        this.cells.push(lo);
-        if (lo < n) {
-          this.load();
-          if (this.rowid == rowid) {
-            return true;
-          }
-        }
-        this.valid = false;
-        return false;
-      }
-      if (t != INTERIOR_TABLE) {
-        throw new CorruptError(`page ${page} is not a table b-tree page`);
-      }
-      // The first cell whose key is >= rowid holds it in its left subtree.
-      let lo: usize = 0;
-      let hi = n;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        const cell = this.cellOffset(h, 12, mid);
-        const key =
-          this.pSafe ? readVarintUnchecked(data, cell + 4).value : readVarint(data, cell + 4).value;
-        if (key < rowid) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
-        }
-      }
-      this.pages.push(page);
-      this.cells.push(lo);
-      page = lo < n ? this.childAt(h, lo) : readU32(data, h + 8);
     }
+    this.valid = false;
+    return false;
   }
 
   /**
@@ -299,26 +258,59 @@ export class Cursor {
     const data = this.db.data;
     const t = data[h];
     const leaf = t == LEAF_TABLE || t == LEAF_INDEX;
-    let at = this.cellOffset(h, leaf ? 8 : 12, i);
+    // cellOffset, in place.
+    const base = h == 100 ? 0 : h;
+    const hlen: usize = leaf ? 8 : 12;
+    const n = ((data[h + 3] as usize) << 8) | (data[h + 4] as usize);
+    const cellsEnd = h + hlen + 2 * n;
+    if (cellsEnd > base + this.db.usable) {
+      corrupt(`cell count ${n} overflows its page`);
+    }
+    const ptr = h + hlen + 2 * i;
+    const off = ((data[ptr] as usize) << 8) | (data[ptr + 1] as usize);
+    if (base + off < cellsEnd || off + 4 > this.db.usable) {
+      corrupt(`cell offset ${off} out of range`);
+    }
+    let at = base + off;
     if (!leaf) {
       at += 4;
     }
-    const safe = this.pSafe;
-    const sz = safe ? readVarintUnchecked(data, at) : readVarint(data, at);
-    at += sz.len;
+    // Sizes and rowids of one or two varint bytes are read in place.
+    let szv: i64 = 0;
+    const s0 = data[at];
+    if (s0 < 0x80) {
+      szv = s0 as i64;
+      at++;
+    } else if (data[at + 1] < 0x80) {
+      szv = (((s0 & 0x7f) as i64) << 7) | (data[at + 1] as i64);
+      at += 2;
+    } else {
+      const sz = readVarint(data, at);
+      szv = sz.value;
+      at += sz.len;
+    }
     if (this.table) {
-      const key = safe ? readVarintUnchecked(data, at) : readVarint(data, at);
-      this.rowid = key.value;
-      at += key.len;
+      const k0 = data[at];
+      if (k0 < 0x80) {
+        this.rowid = k0 as i64;
+        at++;
+      } else if (data[at + 1] < 0x80) {
+        this.rowid = (((k0 & 0x7f) as i64) << 7) | (data[at + 1] as i64);
+        at += 2;
+      } else {
+        const key = readVarint(data, at);
+        this.rowid = key.value;
+        at += key.len;
+      }
     }
     // A payload is at most 2^31 - 1 bytes (SQLite's limit) and its overflow fits in the file.
-    if ((sz.value as u64) > 2147483647) {
-      corrupt(`payload size ${sz.value}`);
+    if (szv < 0 || szv > 2147483647) {
+      corrupt(`payload size ${szv}`);
     }
-    const size = sz.value as usize;
+    const size = szv as usize;
     const usable = this.db.usable;
-    const end = this.pEnd;
-    const keep = localSize(usable, this.table, size);
+    const end = (h == 100 ? 0 : h) + usable;
+    const keep = size <= this.maxLocalHere ? size : localSize(usable, this.table, size);
     if (keep == size) {
       if (at + size > end) {
         corrupt("cell runs past its page");
@@ -364,54 +356,7 @@ export class Cursor {
    * not `valid`) when every entry is smaller.
    */
   seekKey(key: u8[], fields: usize, colls: u8[], desc: bool[]): bool {
-    const data = this.db.data;
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
-    let page = this.root;
-    while (true) {
-      if (this.pages.length >= MAX_DEPTH) {
-        corrupt("b-tree too deep");
-      }
-      const h = this.db.header(page);
-      const t = data[h];
-      if (t != LEAF_INDEX && t != INTERIOR_INDEX) {
-        throw new CorruptError(`page ${page} is not an index b-tree page`);
-      }
-      const n = readU16(data, h + 3);
-      // The first cell >= key.
-      let lo: usize = 0;
-      let hi = n;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        this.locate(h, mid);
-        if (this.compareKey(key, fields, colls, desc) < 0) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
-        }
-      }
-      this.pages.push(page);
-      if (t == LEAF_INDEX) {
-        if (lo < n) {
-          this.cells.push(lo);
-          return this.load();
-        }
-        if (n == 0) {
-          if (this.pages.length > 1) {
-            corrupt(`page ${page} is an empty leaf below the root`);
-          }
-          this.valid = false;
-          return false;
-        }
-        // Past this leaf's last entry: the next entry is in an ancestor, if any.
-        this.cells.push(n - 1);
-        this.load();
-        return this.next();
-      }
-      // Entries equal to the key may sit in the subtree left of cell `lo`.
-      this.cells.push(lo);
-      page = lo < n ? this.childAt(h, lo) : readU32(data, h + 8);
-    }
+    return this.seekKeyRec(new KeyRec(key), fields, colls, desc);
   }
 
   /** Copies a payload whose first `keep` bytes are at `at` and the rest on overflow pages. */
@@ -449,16 +394,63 @@ export class Cursor {
     if (this.parsed) {
       return;
     }
-    const types = this.types;
-    const offsets = this.offsets;
-    __intrinsic_array_truncate(types, 0);
-    __intrinsic_array_truncate(offsets, 0);
+    __intrinsic_array_truncate(this.types, 0);
+    __intrinsic_array_truncate(this.offsets, 0);
+    // The common record in place: a one-byte header size, serial types of one or two bytes.
+    // Anything else (and any damage) goes through decodeHeader, which reports it.
+    if (this.local && this.parseFast()) {
+      this.parsed = true;
+      return;
+    }
+    __intrinsic_array_truncate(this.types, 0);
+    __intrinsic_array_truncate(this.offsets, 0);
     if (this.local) {
-      decodeHeader(this.db.data, this.start, this.size, types, offsets);
+      decodeHeader(this.db.data, this.start, this.size, this.types, this.offsets);
     } else {
-      decodeHeader(this.scratch, 0, this.size, types, offsets);
+      decodeHeader(this.scratch, 0, this.size, this.types, this.offsets);
     }
     this.parsed = true;
+  }
+
+  // decodeHeader's common case inline; false (nothing decided) for anything it does not cover.
+  parseFast(): bool {
+    const data = this.db.data;
+    const types = this.types;
+    const offsets = this.offsets;
+    let at = this.start;
+    const size = this.size;
+    if (size == 0) {
+      return false;
+    }
+    const h0 = data[at] as usize;
+    if (h0 >= 0x80 || h0 > size || h0 == 0) {
+      return false;
+    }
+    const end = at + h0;
+    at++;
+    let body = h0;
+    while (at < end) {
+      const b = data[at];
+      if (b < 0x80) {
+        if (b == 10 || b == 11) {
+          return false;
+        }
+        at++;
+        types.push(b as i64);
+        offsets.push(body);
+        body += b < 12 ? smallSize(b) : ((b - 12) >> 1) as usize;
+      } else {
+        if (at + 1 >= end || data[at + 1] >= 0x80) {
+          return false;
+        }
+        const t = (((b & 0x7f) as usize) << 7) | (data[at + 1] as usize);
+        at += 2;
+        types.push(t as i64);
+        offsets.push(body);
+        body += (t - 12) >> 1;
+      }
+    }
+    return body <= size;
   }
 
   /** The number of columns in the current record. */
@@ -738,6 +730,14 @@ function decodeHeader(data: u8[], start: usize, size: usize, types: i64[], offse
   }
 }
 
+// The body bytes of serial types 0 to 11 (10 and 11 never get here).
+function smallSize(b: u8): usize {
+  if (b < 5) {
+    return b as usize;
+  }
+  return b == 5 ? 6 : b < 8 ? 8 : 0;
+}
+
 /** Why a decoded header is corrupt (out of line: only damaged files get here). */
 function headerError(types: i64[], offsets: usize[], size: usize, overrun: bool): never {
   for (let i: usize = 0; i < types.length; i++) {
@@ -748,7 +748,8 @@ function headerError(types: i64[], offsets: usize[], size: usize, overrun: bool)
 }
 
 /** The integer of serial type `t` (1 to 6 big-endian two's complement, 8 is 0, 9 is 1). */
-function intValue(data: u8[], at: usize, t: i64): i64 {
+/** The integer of serial type `t` (1 to 6, 8 or 9) whose bytes are at `at`. */
+export function intValue(data: u8[], at: usize, t: i64): i64 {
   if (t == 8 || t == 0) {
     return 0;
   }

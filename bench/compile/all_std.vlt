@@ -151,6 +151,8 @@ import * as std_sort_merge from "velt:sort/merge";
 import * as std_sort_stable from "velt:sort/stable";
 import * as std_sqlite from "velt:sqlite";
 import * as std_sqlite_btree from "velt:sqlite/btree";
+import * as std_sqlite_btree_back from "velt:sqlite/btree_back";
+import * as std_sqlite_btree_seek from "velt:sqlite/btree_seek";
 import * as std_sqlite_exec_date from "velt:sqlite/exec/date";
 import * as std_sqlite_exec_date_format from "velt:sqlite/exec/date_format";
 import * as std_sqlite_exec_errors from "velt:sqlite/exec/errors";
