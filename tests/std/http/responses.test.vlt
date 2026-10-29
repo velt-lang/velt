@@ -52,6 +52,7 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(204);
     expect(r).not.toHaveHeader("content-type");
     expect(r).not.toHaveHeader("content-length");
+    expect(r).not.toHaveHeader("etag");
     expect(await r.text()).toBe("");
   });
 
@@ -69,6 +70,8 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(204);
     expect(r).not.toHaveHeader("content-type");
     expect(r).not.toHaveHeader("content-length");
+    expect(r).not.toHaveHeader("etag");
+    expect(await r.text()).toBe("");
   });
 
   it("200 gets the default content-type and its length", async () => {
@@ -76,6 +79,7 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(200);
     expect(r).toHaveHeader("content-type", "text/plain;charset=UTF-8");
     expect(r).toHaveHeader("content-length", "5");
+    expect(r).not.toHaveHeader("etag");
     expect(await r.text()).toBe("hello");
   });
 });
