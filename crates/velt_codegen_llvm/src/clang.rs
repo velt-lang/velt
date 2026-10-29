@@ -324,7 +324,7 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
 
 /// clang's optimization flag for release builds: `-O3`, or `$VELT_LLVM_OPT` (`1`, `2`, `3`, `s`
 /// or `z`, with or without the `-O`) to trade code speed for compile time.
-pub(crate) fn opt_flag() -> &'static str {
+pub fn opt_flag() -> &'static str {
     static FLAG: OnceLock<&'static str> = OnceLock::new();
     FLAG.get_or_init(|| {
         let level = std::env::var("VELT_LLVM_OPT").unwrap_or_default();

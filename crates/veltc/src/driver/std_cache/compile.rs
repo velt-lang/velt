@@ -175,9 +175,10 @@ fn alone(mut alone: vir::Program, cg: &velt_codegen_cl::CodegenOptions) -> Resul
         alone.funcs.push(main);
     }
     velt_vir::verify(&alone).map_err(|errs| errs.join("; "))?;
+    // Not through the unit cache: the object is stored once, as the `stdfn` entry.
     let mut steps = vec![];
     let (objects, _) =
-        crate::backend::Backend::Llvm.emit_objects(&alone, cg, Some(1), &mut steps)?;
+        velt_codegen_llvm::emit_objects_cached(&alone, cg, Some(1), &mut steps, None)?;
     objects.into_iter().next().ok_or_else(|| "no object".into())
 }
 

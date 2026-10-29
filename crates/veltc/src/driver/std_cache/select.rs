@@ -99,6 +99,21 @@ pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
     order
 }
 
+/// The functions the code of `set` (an [`inlinable`] set) calls without compiling them: what its
+/// object declares, in a deterministic order.
+pub(super) fn declared(program: &vir::Program, set: &[usize]) -> Vec<usize> {
+    let mut seen: HashSet<usize> = set.iter().copied().collect();
+    let mut out = vec![];
+    for &j in set {
+        for c in referenced(&program.funcs[j]) {
+            if seen.insert(c) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 /// Whether every static `f` names holds plain bytes: no relocations, never written.
 fn plain_statics(program: &vir::Program, f: &vir::Function) -> bool {
     let mut plain = true;

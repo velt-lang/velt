@@ -312,14 +312,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   when that is over an hour old. `-v` appends
   `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
   stage, with `(unchanged: nothing to compile)` when it matched.
-- Std cache (additive, #1728 step 3; off by default). Release builds with `VELT_STD_OBJECT=1`
+- Std cache (additive, #1728 step 3; off by default). Release executables (`--emit exe`) built by
+  LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
   take std functions out of the program: each std function that is not small (40 statements),
   not a `$dup` rename, reaches no static with relocations or written (named by it or by a small
   function it may inline) and makes no indirect call is keyed by SHA-256 over `velt std function
   1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
-  size and time, the target, the CPU and the optimization level, then, for it and each small
-  internal function it reaches through small ones (in that order), its symbol,
-  `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its parameter attributes. Before optimization,
+  size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
+  optimization level; then, for it and each small internal function it reaches through small
+  ones (in that order), its symbol, `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its
+  parameter attributes; then, for each function that code calls without compiling it (what its
+  object declares), its symbol, params, return type and parameter attributes. A found entry is
+  looked up again when linking; gone by then, the build falls back as below. Before optimization,
   each found key (kind `stdfn`, `Cache::path_of`), and each missing one when the missing
   functions come to at least 1,000 statements (else they stay in the program), makes the function
   an `Import` declaration; functions their objects may reference are made `Export`. After

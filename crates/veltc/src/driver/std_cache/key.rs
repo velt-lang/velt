@@ -24,6 +24,8 @@ use crate::driver::BuildOptions;
 pub(super) struct Inputs {
     pub compiler: Key,
     pub backend: String,
+    /// clang's optimization flag (`VELT_LLVM_OPT`, `-O3` by default).
+    pub opt: String,
     pub target: String,
     pub cpu: Option<String>,
     pub optimize: bool,
@@ -41,6 +43,18 @@ impl Code {
         Code {
             symbol: f.symbol.clone(),
             text: canon.text(f),
+            attrs: format!("{:?}", f.param_attrs),
+        }
+    }
+
+    /// A function the object declares (calls without compiling it): its signature and the
+    /// parameter attributes LLVM declares it with, which the caller is optimized against. They
+    /// are whole-program facts (`readonly` depends on the counted types, `noalias` on module
+    /// state), so two programs can declare one callee differently.
+    pub fn declared(f: &vir::Function) -> Code {
+        Code {
+            symbol: f.symbol.clone(),
+            text: format!("declare {:?} -> {:?}", f.params, f.ret),
             attrs: format!("{:?}", f.param_attrs),
         }
     }
@@ -62,6 +76,7 @@ impl Inputs {
         Inputs {
             compiler: crate::build_cache::compiler_identity(),
             backend: format!("clang\0{path}\0{size}\0{time}"),
+            opt: velt_codegen_llvm::opt_flag().to_string(),
             target: cg.target.clone(),
             cpu: cg.cpu.clone(),
             optimize: opts.release,
@@ -74,6 +89,7 @@ impl Inputs {
         h.part(b"velt std function 1");
         h.part(&self.compiler.0);
         h.part(self.backend.as_bytes());
+        h.part(self.opt.as_bytes());
         h.part(self.target.as_bytes());
         h.part(self.cpu.as_deref().unwrap_or("").as_bytes());
         h.part(&[u8::from(self.cpu.is_some()), u8::from(self.optimize)]);
@@ -94,6 +110,7 @@ mod tests {
         Inputs {
             compiler: Key([1; 32]),
             backend: "clang a".into(),
+            opt: "-O3".into(),
             target: "aarch64-apple-darwin".into(),
             cpu: None,
             optimize: true,
@@ -120,7 +137,11 @@ mod tests {
     fn every_input_is_in_the_key() {
         let key = of(&base(), &[F, G]);
         assert_eq!(key, of(&base(), &[F, G]), "deterministic");
-        let inputs: [Inputs; 6] = [
+        let inputs: [Inputs; 7] = [
+            Inputs {
+                opt: "-O1".into(),
+                ..base()
+            },
             Inputs {
                 compiler: Key([2; 32]),
                 ..base()
@@ -149,17 +170,34 @@ mod tests {
         for (n, other) in inputs.iter().enumerate() {
             assert_ne!(key, of(other, &[F, G]), "input {n}");
         }
-        let code = [
+        let changed_code = [
             [("_V3stdN1h", F.1, F.2), G],
             [(F.0, "fn() other body", F.2), G],
             [(F.0, F.1, "[noalias]"), G],
             [F, (G.0, "fn() other small", G.2)],
             [F, (G.0, G.1, "[frozen]")],
         ];
-        for (n, parts) in code.iter().enumerate() {
+        for (n, parts) in changed_code.iter().enumerate() {
             assert_ne!(key, of(&base(), parts), "code {n}");
         }
         assert_ne!(key, of(&base(), &[F]), "an inlinable function less");
+        // A declared callee whose attributes differ (`readonly` here, not there).
+        let mut g = vir::Function::new(
+            "_V3stdN1g".into(),
+            vec![vir::Ty::Ptr],
+            vir::Ty::Unit,
+            vir::Linkage::Import,
+        );
+        let plain = base().key([code(F.0, F.1, F.2), Code::declared(&g)]);
+        g.param_attrs = vec![vir::ParamAttrs {
+            readonly: true,
+            ..vir::ParamAttrs::default()
+        }];
+        assert_ne!(
+            plain,
+            base().key([code(F.0, F.1, F.2), Code::declared(&g)]),
+            "declared attributes"
+        );
         assert_ne!(key, of(&base(), &[G, F]), "another function first");
     }
 }

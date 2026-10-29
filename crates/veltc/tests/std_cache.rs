@@ -188,3 +188,35 @@ fn a_build_with_few_misses_leaves_them_in_the_program() {
     assert!(found > 0 && compiled == 0, "{}", text(&warm.stderr));
     assert_eq!(run(dir, "s2"), "1 a\n");
 }
+
+/// Only release executables built by LLVM without debug info use the std cache: an object, VIR
+/// or LLVM IR would name std functions it does not define, cached objects have no line info, and
+/// the cache holds LLVM's code.
+#[test]
+fn only_release_executables_use_the_std_cache() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    for extra in [
+        &["--emit", "obj", "-o", "a.o"][..],
+        &["-g", "-o", "g"][..],
+        &["--backend", "cranelift", "-o", "c"][..],
+    ] {
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        let o = (cmd.args(["build", "a.vlt", "--release"]).args(extra))
+            .current_dir(dir)
+            .env("VELT_STD_OBJECT", "1")
+            .env("VELT_STD_OBJECT_STATS", "1")
+            .env("VELT_BUILD_CACHE", &cache)
+            .output()
+            .unwrap();
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{extra:?}: {err}");
+        assert!(
+            !err.contains("std cache"),
+            "{extra:?} used the std cache:\n{err}"
+        );
+    }
+}

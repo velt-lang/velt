@@ -80,6 +80,12 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
 - The build stamp records the objects it linked (`std` lines, by size and time) and the fast
   path links them again; a cached file keeps its size and time while it is cached.
 
+The cache serves release executables built by LLVM without debug info (`-g`): an object or
+IR from `--emit` would name std functions it does not define, and the cached objects carry no
+line info. The key also covers clang's optimization flag and, for every function a cached
+object calls without compiling it, the signature and parameter attributes it is declared with,
+which are whole-program facts the caller is optimized against.
+
 What the cache does not serve, and why (`VELT_STD_OBJECT_STATS=1` prints the std statements of
 a build by reason):
 - **Small functions** (under 40 statements, velt_opt's `SMALL_COST`): they stay where their

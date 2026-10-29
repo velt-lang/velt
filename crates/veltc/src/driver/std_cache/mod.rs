@@ -39,9 +39,17 @@ const KIND: &str = "stdfn";
 /// compiled as usual; a larger build, or the warm-up, stores them.
 const MIN_MISSES: usize = 1000;
 
-/// Whether the std cache is on: release builds with `VELT_STD_OBJECT=1`.
+/// Whether the std cache is on: `VELT_STD_OBJECT=1`, for release executables built by LLVM
+/// without debug info. An object, VIR or LLVM IR (`--emit`) would name std functions it does not
+/// define; the cached objects carry no line info; and the cache holds LLVM's code.
 pub(super) fn wanted(opts: &BuildOptions) -> bool {
-    opts.release && std::env::var("VELT_STD_OBJECT").is_ok_and(|v| v == "1")
+    let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
+        == crate::backend::Backend::Llvm;
+    opts.release
+        && opts.emit == super::Emit::Exe
+        && !opts.debug_info
+        && llvm
+        && std::env::var("VELT_STD_OBJECT").is_ok_and(|v| v == "1")
 }
 
 /// `VELT_STD_OBJECT_STATS`: say what the std cache did, and why std code stayed in the program.
@@ -64,8 +72,9 @@ struct Entry {
 }
 
 enum Object {
-    /// In the cache.
-    Found(PathBuf),
+    /// In the cache (checked again when linking: another build's garbage collection may have
+    /// removed it since).
+    Found(Key),
     /// Not yet: the function's program of its own, to compile if the program still calls it.
     Compile(Key, vir::Program),
 }
@@ -108,8 +117,16 @@ pub(super) fn split(
     let canon = Canon::new(program, Mode::Link);
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let code = (select::inlinable(program, i).into_iter())
-                .map(|j| key::Code::of(&program.funcs[j], &canon));
+            let set = select::inlinable(program, i);
+            let declared = select::declared(program, &set);
+            let code = (set
+                .iter()
+                .map(|&j| key::Code::of(&program.funcs[j], &canon)))
+            .chain(
+                declared
+                    .iter()
+                    .map(|&j| key::Code::declared(&program.funcs[j])),
+            );
             let key = inputs.key(code);
             (i, key, cache.path_of(KIND, &key))
         })
@@ -126,7 +143,7 @@ pub(super) fn split(
     let taken: HashSet<usize> = looked_up.iter().map(|&(i, _, _)| i).collect();
     for (i, key, found) in looked_up {
         let object = match found {
-            Some(path) => Object::Found(path),
+            Some(_) => Object::Found(key),
             None => Object::Compile(key, compile::program_of(program, i)),
         };
         let symbol = program.funcs[i].symbol.clone();
@@ -189,7 +206,9 @@ pub(super) fn link(
             continue;
         }
         match entry.object {
-            Object::Found(path) => {
+            Object::Found(key) => {
+                let path = (cache.path_of(KIND, &key))
+                    .ok_or_else(|| format!("{}: no longer in the cache", entry.symbol))?;
                 out.objects.push(path);
                 out.hits += 1;
             }
