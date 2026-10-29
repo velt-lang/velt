@@ -121,7 +121,9 @@ export function minMaxCall(e: Expr | null): Expr | null {
     return null;
   }
   const x = e!;
-  if (x.kind == E_CALL && (x.name == "MIN" || x.name == "MAX") && x.args.length == 1) {
+  if (
+    x.kind == E_CALL && x.over == null && (x.name == "MIN" || x.name == "MAX") && x.args.length == 1
+  ) {
     return x;
   }
   if (x.kind == E_SUBQUERY || x.kind == E_EXISTS || x.kind == E_IN_SELECT) {

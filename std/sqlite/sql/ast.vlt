@@ -48,6 +48,8 @@ export class Expr {
   distinct: bool = false;
   star: bool = false;
   filter: Expr | null = null;
+  /** OVER: a window function's window. */
+  over: Window | null = null;
   /** The source offset, for errors. */
   at: usize = 0;
   /** The tree's height (a leaf is 1), bounded as in SQLite (velt:sqlite/sql/expr). */
@@ -57,6 +59,36 @@ export class Expr {
     this.kind = kind;
     this.at = at;
   }
+}
+
+/** Window frame kinds and bound kinds. */
+export const FRAME_DEFAULT: u8 = 0;
+export const FRAME_ROWS: u8 = 1;
+export const FRAME_RANGE: u8 = 2;
+export const FRAME_GROUPS: u8 = 3;
+export const BOUND_UNBOUNDED_PRECEDING: u8 = 0;
+export const BOUND_PRECEDING: u8 = 1;
+export const BOUND_CURRENT: u8 = 2;
+export const BOUND_FOLLOWING: u8 = 3;
+export const BOUND_UNBOUNDED_FOLLOWING: u8 = 4;
+
+/** A window: `OVER name`, or `OVER ([base] [PARTITION BY ...] [ORDER BY ...] [frame])`. */
+export class Window {
+  /** A named window this one is (`OVER w`) or builds on (`OVER (w ORDER BY ...)`). */
+  base: string = "";
+  /** The name a WINDOW clause gives it. */
+  name: string = "";
+  partition: Expr[] = [];
+  orderBy: OrderTerm[] = [];
+  frame: u8 = FRAME_DEFAULT;
+  start: u8 = BOUND_UNBOUNDED_PRECEDING;
+  startExpr: Expr | null = null;
+  end: u8 = BOUND_CURRENT;
+  endExpr: Expr | null = null;
+  /** EXCLUDE: "" (NO OTHERS), "CURRENT ROW", "GROUP", "TIES". */
+  exclude: string = "";
+  /** The definition's source text (two windows with the same text are the same window). */
+  text: string = "";
 }
 
 /** A result column: an expression and its alias (`*` and `t.*` are E_STAR). */
@@ -131,6 +163,8 @@ export class SelectCore {
   having: Expr | null = null;
   /** VALUES (…), (…): one row per entry. */
   values: Expr[][] = [];
+  /** WINDOW name AS (...), ...: the named windows. */
+  windows: Window[] = [];
   /** Set by the compiler: a subquery holds an aggregate of this core (its columns are ours). */
   aggFromInner: bool = false;
   /** Set by the compiler: its FROM terms once SQLite's flattener merged its subqueries. */

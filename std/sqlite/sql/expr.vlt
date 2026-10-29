@@ -50,6 +50,7 @@ import {
   E_UNARY,
   Expr,
   FromItem,
+  Window,
   ResultColumn,
   Select,
   SelectCore,
@@ -69,6 +70,9 @@ export abstract class ExprParser extends TokenCursor {
 
   /** A whole SELECT (velt:sqlite/sql/parser). */
   abstract select(): Select;
+
+  /** The window after OVER (velt:sqlite/sql/parser). */
+  abstract over(): Window;
 
   // Expressions, lowest precedence first.
 
@@ -583,7 +587,8 @@ export abstract class ExprParser extends TokenCursor {
       this.expectOp(")");
     }
     if (this.isKeyword("OVER")) {
-      throw new SqlError("window functions are not supported yet", this.peek().start);
+      this.pos++;
+      e.over = this.over();
     }
     return sized(e);
   }

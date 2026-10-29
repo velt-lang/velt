@@ -31,6 +31,15 @@ import {
   ResultColumn,
   Select,
   SelectCore,
+  Window,
+  FRAME_GROUPS,
+  FRAME_RANGE,
+  FRAME_ROWS,
+  BOUND_CURRENT,
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
 } from "velt:sqlite/sql/ast";
 
 /** SQLite's limits: terms of a compound SELECT, FROM items, and tables in one join. */
@@ -270,7 +279,19 @@ export class Parser extends ExprParser {
       c.having = this.expr();
     }
     if (this.isKeyword("WINDOW")) {
-      throw new SqlError("window functions are not supported yet", this.peek().start);
+      this.pos++;
+      while (true) {
+        const name = this.name();
+        this.expectKw("AS");
+        this.expectOp("(");
+        const w = this.windowBody();
+        this.expectOp(")");
+        w.name = name;
+        c.windows.push(w);
+        if (!this.eatOp(",")) {
+          break;
+        }
+      }
     }
     return c;
   }
@@ -308,6 +329,115 @@ export class Parser extends ExprParser {
       if (!this.eatOp(",")) {
         return out;
       }
+    }
+  }
+
+  /** After OVER: a window's name, or its definition in parentheses. */
+  over(): Window {
+    if (!this.isOp("(")) {
+      const w = new Window();
+      w.base = this.name();
+      return w;
+    }
+    this.pos++;
+    const w = this.windowBody();
+    this.expectOp(")");
+    return w;
+  }
+
+  /** `[base] [PARTITION BY ...] [ORDER BY ...] [frame]`, inside parentheses. */
+  windowBody(): Window {
+    const w = new Window();
+    const from = this.peek().start;
+    if (
+      this.isName() &&
+      !this.isKw("PARTITION") &&
+      !this.isKw("ORDER") &&
+      !this.isKw("ROWS") &&
+      !this.isKw("RANGE") &&
+      !this.isKw("GROUPS")
+    ) {
+      w.base = this.name();
+    }
+    if (this.isKw("PARTITION")) {
+      this.pos++;
+      this.expectKw("BY");
+      w.partition.push(this.expr());
+      while (this.eatOp(",")) {
+        w.partition.push(this.expr());
+      }
+    }
+    if (this.isKw("ORDER")) {
+      this.pos++;
+      this.expectKw("BY");
+      w.orderBy = this.orderTerms();
+    }
+    let kind: u8 = 0;
+    if (this.eatKw("ROWS")) {
+      kind = FRAME_ROWS;
+    } else if (this.eatKw("RANGE")) {
+      kind = FRAME_RANGE;
+    } else if (this.eatKw("GROUPS")) {
+      kind = FRAME_GROUPS;
+    }
+    if (kind != 0) {
+      w.frame = kind;
+      if (this.eatKw("BETWEEN")) {
+        this.frameBound(w, true);
+        this.expectKw("AND");
+        this.frameBound(w, false);
+      } else {
+        this.frameBound(w, true);
+        w.end = BOUND_CURRENT;
+      }
+      if (this.eatKw("EXCLUDE")) {
+        if (this.eatKw("NO")) {
+          this.expectKw("OTHERS");
+        } else if (this.eatKw("CURRENT")) {
+          this.expectKw("ROW");
+          w.exclude = "CURRENT ROW";
+        } else if (this.eatKw("GROUP")) {
+          w.exclude = "GROUP";
+        } else {
+          this.expectKw("TIES");
+          w.exclude = "TIES";
+        }
+      }
+    }
+    w.text =
+      this.pos > 0 && this.toks[this.pos - 1].end > from
+        ? byteSlice(this.sql, from, this.toks[this.pos - 1].end)
+        : "";
+    return w;
+  }
+
+  frameBound(w: Window, start: bool) {
+    let kind: u8 = BOUND_CURRENT;
+    let e: Expr | null = null;
+    if (this.eatKw("UNBOUNDED")) {
+      if (this.eatKw("PRECEDING")) {
+        kind = BOUND_UNBOUNDED_PRECEDING;
+      } else {
+        this.expectKw("FOLLOWING");
+        kind = BOUND_UNBOUNDED_FOLLOWING;
+      }
+    } else if (this.eatKw("CURRENT")) {
+      this.expectKw("ROW");
+    } else {
+      e = this.expr();
+      if (this.eatKw("PRECEDING")) {
+        kind = BOUND_PRECEDING;
+      } else {
+        this.expectKw("FOLLOWING");
+        kind = BOUND_FOLLOWING;
+      }
+    }
+    if (start) {
+      w.start = kind;
+      w.startExpr = e;
+    } else {
+      w.end = kind;
+      w.endExpr = e;
     }
   }
 

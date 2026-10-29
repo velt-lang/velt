@@ -1,0 +1,114 @@
+// Window functions in the SQLite engine written in Velt (velt:sqlite/engine, #1720) on a database
+// C SQLite writes (through velt:sqlite): ranking and value functions, aggregates over frames
+// (ROWS, GROUPS, RANGE, EXCLUDE, FILTER), named windows and their errors; each value printed as
+// SQLite's quote() prints it. The expected output is the sqlite3 shell's (`.mode quote`) for the
+// same queries on the same data; rows of a query without ORDER BY are sorted on both sides.
+import { open } from "velt:sqlite";
+import { openDatabase, Database } from "velt:sqlite/engine";
+import { BLOB, REAL } from "velt:sqlite/btree";
+import { Val } from "velt:sqlite/exec/value";
+import { quote } from "velt:sqlite/exec/func";
+import { hexEncode } from "velt:encoding";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { removeSync } from "velt:fs";
+
+const SETUP = `
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INT, score REAL, note,
+  nick TEXT COLLATE NOCASE);
+CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT, body TEXT,
+  created TEXT NOT NULL, stars NUMERIC);
+CREATE INDEX posts_user ON posts (user_id);
+CREATE INDEX posts_created ON posts (created DESC, id DESC);
+CREATE TABLE tags (post_id INTEGER, tag TEXT, PRIMARY KEY (post_id, tag));
+CREATE INDEX tags_tag ON tags (tag);
+CREATE TABLE kv (k TEXT PRIMARY KEY, v);
+CREATE VIEW popular AS SELECT post_id, count(*) AS n FROM tags GROUP BY post_id HAVING count(*) > 1;
+INSERT INTO users VALUES
+  (1, 'alice', 30, 4.5, NULL, 'Al'), (2, 'bob', 25, 3.0, 'hi', 'BOBBY'), (3, 'carol', 35, NULL, 7, 'cc'),
+  (4, 'dave', 25, 2.25, x'00ff', 'Dave'), (5, 'eve', NULL, 5.0, 1.5, 'al'), (6, 'Frank', 41, -1.0, '12', NULL),
+  (7, 'grace', 30, 1e10, '', 'GRACE'), (8, 'héloïse', 28, 0.1, 'ü', 'h');
+INSERT INTO posts VALUES
+  (1, 1, 'Hello', 'first post', '2024-01-01', 5), (2, 1, 'Again', 'second', '2024-01-03', '7'),
+  (3, 2, 'Bob here', NULL, '2024-01-02', 2.5), (4, 3, 'x', 'carol''s', '2024-01-05', NULL),
+  (5, 3, 'y', 'more', '2024-01-04', 0), (6, 3, 'z', '', '2024-01-04', -3), (7, 9, 'orphan', 'no user', '2024-01-06', 1),
+  (8, 5, 'Eve', 'eve', '2024-01-07', '1e2'), (9, 7, 'Grace', 'g', '2024-01-02', 'abc'), (10, 2, 'Bob 2', 'b2', '2024-01-08', 4);
+INSERT INTO tags VALUES (1, 'intro'), (1, 'misc'), (2, 'misc'), (3, 'intro'), (4, 'Misc'),
+  (5, 'news'), (8, 'news'), (8, 'intro'), (9, 'misc'), (10, 'x');
+INSERT INTO kv VALUES ('a', 1), ('b', '2'), ('c', 3.5), ('d', NULL), ('e', x'41'), ('f', 'text'),
+  ('g', -9223372036854775808), ('h', 9223372036854775807), ('i', 1e300), ('j', 0.30000000000000004);
+`;
+
+const QUERIES: string[] = [
+  // Window functions: ranking, values, aggregates over frames, named windows.
+  "SELECT id, age, row_number() OVER (ORDER BY age, id), rank() OVER w, dense_rank() OVER w FROM users WINDOW w AS (ORDER BY age) ORDER BY id",
+  "SELECT id, user_id, row_number() OVER (PARTITION BY user_id ORDER BY created DESC) AS n FROM posts ORDER BY user_id, n",
+  "SELECT id, percent_rank() OVER (ORDER BY created), cume_dist() OVER (ORDER BY created), ntile(3) OVER (ORDER BY id) FROM posts ORDER BY id",
+  "SELECT id, lag(title) OVER (ORDER BY id), lead(title, 2, '-') OVER (ORDER BY id) FROM posts ORDER BY id",
+  "SELECT id, first_value(id) OVER w, last_value(id) OVER w, nth_value(id, 2) OVER w FROM posts WINDOW w AS (PARTITION BY user_id ORDER BY id) ORDER BY id",
+  "SELECT id, sum(stars) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), avg(stars) OVER (ORDER BY id ROWS 2 PRECEDING) FROM posts ORDER BY id",
+  "SELECT id, count(*) OVER (ORDER BY created GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE TIES), group_concat(id, '+') OVER (ORDER BY created RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM posts ORDER BY id",
+  "SELECT user_id, count(*), sum(count(*)) OVER (ORDER BY user_id) FROM posts GROUP BY user_id ORDER BY user_id",
+  "SELECT name FROM (SELECT name, rank() OVER (ORDER BY score DESC) AS r FROM users) WHERE r <= 3 ORDER BY r",
+  "SELECT id, total(score) FILTER (WHERE age > 26) OVER (ORDER BY id) FROM users ORDER BY id",
+  "SELECT id, user_id, row_number() OVER (PARTITION BY user_id) FROM posts",
+  // min() and max() over a moving frame give the latest of equal values; sums taking out a row that overflows go approximate as SQLite 3.54's.
+  "SELECT x, min(y) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND 2 FOLLOWING), max(y) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM (SELECT 1 x, 5 y UNION ALL SELECT 2, 3.0 UNION ALL SELECT 3, 3 UNION ALL SELECT 4, 7 UNION ALL SELECT 5, 3 UNION ALL SELECT 6, 3.0 UNION ALL SELECT 7, 9 UNION ALL SELECT 8, 9.0) ORDER BY x",
+  "SELECT k, total(v) OVER w, avg(v) OVER w FROM kv WINDOW w AS (ORDER BY k ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING) ORDER BY k",
+  "SELECT x, total(y) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND 3 FOLLOWING) FROM (SELECT 1 x, -9223372036854775807 - 1 y UNION ALL SELECT 2, 5 UNION ALL SELECT 3, 9223372036854775807 UNION ALL SELECT 4, -1 UNION ALL SELECT 5, 1 UNION ALL SELECT 6, 4 UNION ALL SELECT 7, 6 UNION ALL SELECT 8, 6) ORDER BY x",
+  "SELECT row_number() FROM users",
+  "SELECT id FROM users WHERE rank() OVER () > 1",
+  "SELECT sum(id) OVER w FROM users",
+];
+
+/** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */
+function shown(v: Val): string {
+  if (v.t == BLOB) {
+    return `x'${hexEncode(v.b)}'`;
+  }
+  if (v.t == REAL && (v.r == Infinity || v.r == -Infinity)) {
+    return v.r > 0 ? "Inf" : "-Inf";
+  }
+  return quote(v);
+}
+
+/** The rows of a query: each value as the shell's quote mode prints it, or the error. */
+function rows(db: Database, sql: string): string[] {
+  const out: string[] = [];
+  try {
+    const st = db.prepare(sql);
+    const vals = st.values();
+    const n = st.columns().length as usize;
+    const count: usize = n == 0 ? 0 : (vals.length as usize) / n;
+    for (let r: usize = 0; r < count; r++) {
+      const parts: string[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        const v = vals[r * n + i];
+        parts.push(shown(v));
+      }
+      out.push(parts.join(","));
+    }
+  } catch (e) {
+    return [`error: ${e.message}`];
+  }
+  return out;
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-engine-query-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  c.close();
+  const db = openDatabase(path);
+  for (const q of QUERIES) {
+    let r = rows(db, q);
+    if (!q.includes("ORDER BY")) {
+      r = r.toSorted();
+    }
+    console.log(q);
+    for (const line of r) {
+      console.log(`  ${line}`);
+    }
+  }
+  removeSync(path);
+}

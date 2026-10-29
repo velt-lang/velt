@@ -42,6 +42,8 @@ import {
 import { ROWID, Source } from "velt:sqlite/exec/source";
 import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt:sqlite/exec/scope";
 import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
+import { windowKind } from "velt:sqlite/exec/window";
+import { windowCall } from "velt:sqlite/exec/window_call";
 import { aggMisuse, aggOwner, aggregateCore } from "velt:sqlite/exec/agg_owner";
 import { prepareError } from "velt:sqlite/exec/errors";
 import { scalarFunction } from "velt:sqlite/exec/func";
@@ -78,6 +80,7 @@ import {
   bound,
   comparisonOp,
   constant,
+  hasWindow,
   joinedColl,
   plain,
 } from "velt:sqlite/exec/compiled";
@@ -168,6 +171,9 @@ export abstract class ExprCompiler {
 
   expr(e: Expr, sc: Scope): C {
     const k = e.kind;
+    if (sc.win != null && !hasWindow(e)) {
+      return this.collected(e, sc);
+    }
     if (k == E_INT) {
       return constant(e.text != "" ? realVal(9223372036854775808.0) : intVal(e.ival));
     }
@@ -663,8 +669,26 @@ export abstract class ExprCompiler {
     return plain(ev);
   }
 
+  /** In the output of a query with window functions: a value computed as the rows are collected. */
+  collected(e: Expr, sc: Scope): C {
+    const w = sc.win!;
+    const x = this.expr(e, sc.winBase!);
+    w.captures.push(x.ev);
+    const k = w.captures.length - 1;
+    return C { ev: () => w.capture(k), aff: x.aff, coll: x.coll, explicit: x.explicit };
+  }
+
   call(e: Expr, sc: Scope): C {
     const lname = this.written(e);
+    if (e.over != null) {
+      if (sc.win == null) {
+        prepareError(`misuse of window function ${lname}()`);
+      }
+      return windowCall(this, e, sc, lname);
+    }
+    if (windowKind(e.name) >= 0) {
+      prepareError(`misuse of window function ${lname}()`);
+    }
     const kind = aggregateKind(e.name, e.args.length, e.star);
     if (kind >= 0) {
       // Where the call is written must allow an aggregate (SQLite's name context), even one

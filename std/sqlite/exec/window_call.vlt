@@ -1,0 +1,222 @@
+// velt:sqlite/exec/window_call — a window function call compiled (velt:sqlite/exec/window
+// computes them): its window resolved against the WINDOW clause and checked as SQLite checks it,
+// its arguments and the window's PARTITION BY and ORDER BY compiled in the scope the rows are
+// collected in.
+
+import { BINARY } from "velt:sqlite/record";
+import {
+  BOUND_CURRENT,
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
+  Expr,
+  FRAME_DEFAULT,
+  FRAME_RANGE,
+  OrderTerm,
+  Window,
+} from "velt:sqlite/sql/ast";
+import { Ev, Scope } from "velt:sqlite/exec/scope";
+import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
+import { prepareError } from "velt:sqlite/exec/errors";
+import { scalarFunction } from "velt:sqlite/exec/func";
+import { C, ExprCompiler } from "velt:sqlite/exec/expr";
+import { SortKey } from "velt:sqlite/exec/emit";
+import { plain } from "velt:sqlite/exec/compiled";
+import {
+  W_AGG,
+  W_FIRST,
+  W_LAG,
+  W_LAST,
+  W_LEAD,
+  W_NTH,
+  W_NTILE,
+  WinFn,
+  windowKind,
+} from "velt:sqlite/exec/window";
+import { intVal, nullVal } from "velt:sqlite/exec/value";
+
+/** Arity of a window function kind: [least, most]. */
+export function windowArity(kind: i64): i64[] {
+  if (kind == W_NTILE as i64 || kind == W_FIRST as i64 || kind == W_LAST as i64) {
+    return [1, 1];
+  }
+  if (kind == W_LAG as i64 || kind == W_LEAD as i64) {
+    return [1, 3];
+  }
+  if (kind == W_NTH as i64) {
+    return [2, 2];
+  }
+  return [0, 0];
+}
+
+/** A resolved window and the key two equal windows share. */
+export struct Resolved {
+  w: Window;
+  key: string;
+}
+
+/** The window of `OVER ...`, with the named windows of the WINDOW clause resolved. */
+export function resolveWindow(o: Window, named: Window[]): Resolved {
+  let w = o;
+  let key = o.text;
+  if (o.base != "") {
+    let b: Window | null = null;
+    let at: usize = 0;
+    for (let i: usize = 0; i < named.length; i++) {
+      if (named[i].name.toUpperCase() == o.base.toUpperCase()) {
+        b = named[i];
+        at = i;
+        break;
+      }
+    }
+    if (b == null) {
+      prepareError(`no such window: ${o.base}`);
+    }
+    // A named window may build on one defined before it.
+    const rb = resolveWindow(b!, named.slice(0, at as i64));
+    if (
+      o.text == "" && o.partition.length == 0 && o.orderBy.length == 0 && o.frame == FRAME_DEFAULT
+    ) {
+      w = rb.w;
+      key = rb.key;
+    } else {
+      const base = rb.w;
+      if (o.partition.length > 0) {
+        prepareError(`cannot override PARTITION clause of window: ${o.base}`);
+      }
+      if (o.orderBy.length > 0 && base.orderBy.length > 0) {
+        prepareError(`cannot override ORDER BY clause of window: ${o.base}`);
+      }
+      if (base.frame != FRAME_DEFAULT) {
+        prepareError(`cannot override frame specification of window: ${o.base}`);
+      }
+      const nw = new Window();
+      nw.partition = base.partition;
+      nw.orderBy = o.orderBy.length > 0 ? o.orderBy : base.orderBy;
+      nw.frame = o.frame;
+      nw.start = o.start;
+      nw.startExpr = o.startExpr;
+      nw.end = o.end;
+      nw.endExpr = o.endExpr;
+      nw.exclude = o.exclude;
+      w = nw;
+      key = rb.key + "|" + o.text;
+    }
+  }
+  checkFrame(w);
+  return Resolved { w: w, key: key };
+}
+
+// The frames SQLite rejects (sqlite3WindowAlloc).
+function checkFrame(w: Window) {
+  if (w.frame == FRAME_DEFAULT) {
+    return;
+  }
+  const s = w.start;
+  const e = w.end;
+  if (
+    s == BOUND_UNBOUNDED_FOLLOWING ||
+    e == BOUND_UNBOUNDED_PRECEDING ||
+    (s == BOUND_CURRENT && e == BOUND_PRECEDING) ||
+    (s == BOUND_FOLLOWING && (e == BOUND_PRECEDING || e == BOUND_CURRENT))
+  ) {
+    prepareError("unsupported frame specification");
+  }
+  if (
+    w.frame == FRAME_RANGE &&
+    (s == BOUND_PRECEDING || s == BOUND_FOLLOWING || e == BOUND_PRECEDING || e == BOUND_FOLLOWING)
+  ) {
+    if (w.orderBy.length != 1) {
+      prepareError("RANGE with offset PRECEDING/FOLLOWING requires one ORDER BY expression");
+    }
+    prepareError("unsupported: RANGE frames with an offset");
+  }
+}
+
+/** A window function call (`... OVER ...`) in the output of a query. */
+export function windowCall(c: ExprCompiler, e: Expr, sc: Scope, lname: string): C {
+  const w = sc.win!;
+  const base = sc.winBase!;
+  const r = resolveWindow(e.over!, sc.windows);
+  let wk = windowKind(e.name);
+  let ak: i64 = -1;
+  if (wk < 0) {
+    ak = aggregateKind(e.name, e.args.length, e.star);
+    if (ak == -2) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (ak < 0) {
+      const probe: Ev[] = [];
+      for (const a of e.args) {
+        probe.push(() => nullVal());
+      }
+      if (scalarFunction(e.name, lname, probe, BINARY) != null) {
+        prepareError(`${lname}() may not be used as a window function`);
+      }
+      prepareError(`no such function: ${lname}`);
+    }
+    wk = W_AGG as i64;
+  } else {
+    const ar = windowArity(wk);
+    if (e.star || e.args.length < (ar[0] as usize) || e.args.length > (ar[1] as usize)) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (e.filter != null) {
+      prepareError("FILTER clause may only be used with aggregate window functions");
+    }
+  }
+  if (e.distinct) {
+    prepareError("DISTINCT is not supported for window functions");
+  }
+  const f = new WinFn(wk as u8);
+  const before = w.specs.length;
+  f.spec = w.spec(r.key);
+  if (w.specs.length > before) {
+    const sp = w.specs[f.spec];
+    for (const p of r.w.partition) {
+      const pc = c.expr(p, base);
+      sp.partition.push(pc.ev);
+      sp.terms.push(OrderTerm { expr: p, desc: false, nulls: 0 });
+      sp.sk.push(new SortKey(-1, null, false, 0, pc.coll >= 0 ? pc.coll as u8 : BINARY));
+    }
+    for (const t of r.w.orderBy) {
+      const oc = c.expr(t.expr, base);
+      sp.order.push(oc.ev);
+      sp.terms.push(t);
+      sp.sk.push(new SortKey(-1, null, t.desc, t.nulls, oc.coll >= 0 ? oc.coll as u8 : BINARY));
+    }
+  }
+  f.argAt = w.evs.length;
+  f.nargs = e.args.length;
+  for (const a of e.args) {
+    const ac = c.expr(a, base);
+    if (wk == W_AGG as i64 && w.evs.length == f.argAt) {
+      const af = new AggFn(ak as u8, e.name.toLowerCase());
+      af.coll = ac.coll >= 0 ? ac.coll as u8 : BINARY;
+      f.agg = af;
+    }
+    w.evs.push(ac.ev);
+  }
+  if (wk == W_AGG as i64 && f.agg == null) {
+    f.agg = new AggFn(ak as u8, e.name.toLowerCase());
+  }
+  if (e.filter != null) {
+    const p = c.pred(e.filter!, base);
+    f.filterAt = w.evs.length as i64;
+    w.evs.push(() => intVal(p() ? 1 : 0));
+  }
+  f.frame = r.w.frame;
+  f.start = r.w.start;
+  f.end = r.w.end;
+  f.exclude = r.w.exclude;
+  if (r.w.startExpr != null) {
+    f.startN = c.ev(r.w.startExpr!, base);
+  }
+  if (r.w.endExpr != null) {
+    f.endN = c.ev(r.w.endExpr!, base);
+  }
+  w.fns.push(f);
+  const slot = w.fns.length - 1;
+  return plain(() => w.value(slot));
+}

@@ -24,6 +24,7 @@ import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
 import { Ev, Params, Query, Scope } from "velt:sqlite/exec/scope";
 import { SqlRunError, prepareError } from "velt:sqlite/exec/errors";
 import { ExprCompiler, hasAggregate } from "velt:sqlite/exec/expr";
+import { hasWindow } from "velt:sqlite/exec/compiled";
 import { SortKey } from "velt:sqlite/exec/emit";
 import { KeySet } from "velt:sqlite/exec/keys";
 import { compoundRows } from "velt:sqlite/exec/compound";
@@ -170,7 +171,7 @@ function flattenable(s: Select): bool {
     return false;
   }
   for (const rc of core.columns) {
-    if (hasAggregate(rc.expr)) {
+    if (hasAggregate(rc.expr) || hasWindow(rc.expr)) {
       return false;
     }
   }
