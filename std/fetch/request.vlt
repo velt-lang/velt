@@ -15,8 +15,17 @@ import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
+import {
+  BodyInit,
+  BodyParts,
+  BodyStream,
+  bodyParts,
+  collect,
+  impliedType,
+  sourceType,
+} from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
+import { tee } from "velt:fetch/tee";
 
 declare function velt_rt_http_req_method(r: u64): string;
 declare function velt_rt_http_req_url(r: u64): string;
@@ -75,6 +84,13 @@ class Extra {
   sending: Sending | null = null;
   body: BodyParts | null = null;
   used: bool = false;
+  // The signal of a request made without one, made when `signal` is first read.
+  idle: AbortSignal | null = null;
+}
+
+// A body read from `chunks`.
+function streamed(chunks: AsyncIterator<u8[], IoError | AbortError>): BodyParts {
+  return { kind: 3, text: "", bytes: [], stream: BodyStream.adopt(chunks), implied: 0 };
 }
 
 // The body of a request without one, as `fetch` takes it.
@@ -138,7 +154,7 @@ export class Request {
     if (redirect != null || signal != null || ca != null) {
       this.extra().sending = new Sending(
         redirect ?? this.redirect,
-        signal ?? this.signal,
+        signal ?? this.givenSignal(),
         ca ?? this.ca(),
       );
     }
@@ -150,7 +166,7 @@ export class Request {
     if (verb == "GET" || verb == "HEAD") {
       throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
     }
-    const ct = impliedType(body.implied);
+    const ct = sourceType(init.body ?? null) ?? impliedType(body.implied);
     if (ct != null && !this.headers.has("content-type")) {
       this.headers.set("content-type", ct);
     }
@@ -183,13 +199,52 @@ export class Request {
         "Cannot construct a Request with a Request object that has already been used.",
       );
     }
-    if (input.#raw != 0) {
+    if (input.fromRuntime()) {
       const body = BodyStream.adopt(input.chunks());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();
     }
     input.extra().used = true;
+  }
+
+  /**
+   * A copy of the request whose body can be read on its own: a streamed or received body is
+   * teed, each chunk going to both. Throws `IoError` "EINVAL" (JS: `TypeError`) when the body
+   * was already read.
+   */
+  clone(): Request throws IoError {
+    if (this.bodyUsed) {
+      throw new IoError("EINVAL", "unusable");
+    }
+    const r = new Request(this.url);
+    r.#verb = this.method;
+    r.#fields = new Headers(this.headers);
+    const given = this.#extra;
+    if (given != null && given.sending != null) {
+      r.extra().sending = given.sending;
+    }
+    if (!this.hasBody()) {
+      return r;
+    }
+    const body = this.made();
+    if (body == null || body.kind == 3) {
+      // A received body, or a stream: both read it through a tee from here on.
+      const s = body == null ? null : body.stream;
+      const source = s == null ? this.received() : s[Symbol.asyncIterator]();
+      const [mine, theirs] = tee(source);
+      this.extra().body = streamed(mine);
+      r.extra().body = streamed(theirs);
+      return r;
+    }
+    r.extra().body = {
+      kind: body.kind,
+      text: body.text,
+      bytes: body.bytes.slice(),
+      stream: null,
+      implied: body.implied,
+    };
+    return r;
   }
 
   // `#extra`, made if there is none.
@@ -243,8 +298,24 @@ export class Request {
     return s == null ? "follow" : s.redirect;
   }
 
-  /** The signal passed in `init` (JS gives every request a signal; Velt's is null without one). */
-  get signal(): AbortSignal | null {
+  /** The signal passed in `init`; without one, a signal that is never aborted (as in JS). */
+  get signal(): AbortSignal {
+    const given = this.givenSignal();
+    if (given != null) {
+      return given;
+    }
+    const e = this.extra();
+    const known = e.idle;
+    if (known != null) {
+      return known;
+    }
+    const made = new AbortController().signal;
+    e.idle = made;
+    return made;
+  }
+
+  // The signal passed in `init`, null without one (std only: `fetch` races only that one).
+  private givenSignal(): AbortSignal | null {
     const s = this.sending();
     return s == null ? null : s.signal;
   }
@@ -260,7 +331,7 @@ export class Request {
   /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
-    if (this.#raw != 0) {
+    if (this.fromRuntime()) {
       return unwrapIo(await velt_rt_http_req_text(this.#raw));
     }
     const body = this.made();
@@ -282,7 +353,7 @@ export class Request {
   // The body's bytes, as Velt's byte array.
   private async rawBytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
-    if (this.#raw != 0) {
+    if (this.fromRuntime()) {
       return unwrapIo(await velt_rt_http_req_bytes(this.#raw));
     }
     const body = this.made();
@@ -299,6 +370,23 @@ export class Request {
   // `bytes()` and `arrayBuffer()` are in velt:fetch/typed, loaded with the typed arrays they
   // give (std/prelude/global/fetch_bytes.vlt).
 
+  // A received request's body as the runtime receives it, chunk by chunk.
+  private async *received(): AsyncIterator<u8[], IoError | AbortError> {
+    const raw = this.#raw;
+    while (true) {
+      const chunk = unwrapIo(await velt_rt_http_req_chunk(raw));
+      if (chunk.length == 0) {
+        return;
+      }
+      yield chunk;
+    }
+  }
+
+  // Whether the body is read from the runtime: a received request's, unless `clone` teed it.
+  private fromRuntime(): bool {
+    return this.#raw != 0 && this.made() == null;
+  }
+
   // Whether there is a body (a received request without one, a GET, has none).
   private hasBody(): bool {
     if (this.#raw != 0) {
@@ -310,13 +398,14 @@ export class Request {
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
   private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
     this.claim();
-    if (this.#raw != 0) {
+    if (this.fromRuntime()) {
+      const source = this.received();
       while (true) {
-        const chunk = unwrapIo(await velt_rt_http_req_chunk(this.#raw));
-        if (chunk.length == 0) {
+        const r = await source.next();
+        if (r.done) {
           return;
         }
-        yield chunk;
+        yield r.value;
       }
     }
     const body = this.made();
@@ -355,7 +444,7 @@ export class Request {
       keepalive: false,
       isReloadNavigation: false,
       isHistoryNavigation: false,
-      signal: this.signal ?? new AbortController().signal,
+      signal: this.signal,
     };
   }
 

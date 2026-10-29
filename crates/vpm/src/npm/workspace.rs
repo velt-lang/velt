@@ -6,6 +6,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use velt_toolchain::members::{glob_match, segment_match, split};
+
 use super::json::Json;
 
 /// File name of a pnpm workspace's manifest.
@@ -115,7 +117,20 @@ pub fn package_dirs(root: &Path, patterns: &[String]) -> Listing {
 
 /// [`package_dirs`], listing at most `max_dirs` directories.
 pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -> Listing {
+    dirs_with(root, patterns, ("package.json", &[]), max_dirs)
+}
+
+/// The directories below `root` that `patterns` select, as [`package_dirs`] walks them, that hold
+/// a file named `marker` (`package.json`; `package.vlt` for Velt workspaces, `crate::workspace`),
+/// never entering directories named in `skip` besides `node_modules` (`target` for Velt).
+pub fn dirs_with(
+    root: &Path,
+    patterns: &[String],
+    (marker, skip): (&str, &'static [&'static str]),
+    max_dirs: usize,
+) -> Listing {
     let mut walk = Walk {
+        skip,
         out: vec![],
         seen: HashSet::new(),
         listed: 0,
@@ -139,18 +154,13 @@ pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -
             !glob_match(&parts, &segs)
         });
     }
-    out.retain(|d| crate::probe::is_file(&d.join("package.json")));
+    out.retain(|d| crate::probe::is_file(&d.join(marker)));
     Listing { dirs: out, cut }
 }
 
-fn split(pattern: &str) -> Vec<&str> {
-    let p = pattern.strip_prefix("./").unwrap_or(pattern);
-    p.split('/')
-        .filter(|s| !s.is_empty() && *s != ".")
-        .collect()
-}
-
 struct Walk {
+    /// Directory names never entered, besides `node_modules` and hidden ones.
+    skip: &'static [&'static str],
     out: Vec<PathBuf>,
     /// The directories in `out`.
     seen: HashSet<PathBuf>,
@@ -180,8 +190,11 @@ impl Walk {
             if *first == ".." {
                 return;
             }
+            // Matched by name among the directory's entries, as `*` segments are, so `Apps` never
+            // finds `apps`, also where the file system ignores case: a workspace means the same
+            // on every OS.
             let child = dir.join(first);
-            if crate::probe::is_dir(&child) {
+            if crate::probe::is_dir(&child) && has_entry(dir, first) {
                 self.expand(&child, rest);
             }
             return;
@@ -210,7 +223,7 @@ impl Walk {
             .filter(|e| {
                 let name = e.file_name();
                 let name = name.to_str().unwrap_or("");
-                if name == "node_modules" || name.starts_with('.') {
+                if name == "node_modules" || name.starts_with('.') || self.skip.contains(&name) {
                     return false;
                 }
                 match e.file_type() {
@@ -226,37 +239,9 @@ impl Walk {
     }
 }
 
-fn glob_match(parts: &[&str], segs: &[&str]) -> bool {
-    match parts.split_first() {
-        None => segs.is_empty(),
-        Some((&"**", rest)) => (0..=segs.len()).any(|i| glob_match(rest, &segs[i..])),
-        Some((p, rest)) => segs
-            .split_first()
-            .is_some_and(|(s, more)| segment_match(p, s) && glob_match(rest, more)),
-    }
-}
-
-/// Whether directory name `name` matches one glob segment (`*` any run of characters).
-fn segment_match(pattern: &str, name: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == name,
-        Some((pre, post)) => {
-            name.len() >= pre.len() + post.len()
-                && name.starts_with(pre)
-                && segment_match_rest(post, &name[pre.len()..])
-        }
-    }
-}
-
-fn segment_match_rest(pattern: &str, name: &str) -> bool {
-    match pattern.split_once('*') {
-        None => name.ends_with(pattern),
-        Some((pre, post)) => (0..=name.len())
-            .filter(|&i| name.is_char_boundary(i))
-            .any(|i| {
-                name[i..].starts_with(pre) && segment_match_rest(post, &name[i + pre.len()..])
-            }),
-    }
+/// Whether `dir` has an entry named exactly `name`.
+fn has_entry(dir: &Path, name: &str) -> bool {
+    crate::probe::read_dir(dir).is_ok_and(|entries| entries.iter().any(|e| e.file_name() == name))
 }
 
 #[cfg(test)]
@@ -304,8 +289,36 @@ mod tests {
             .map(|d| crate::relpath::relative(d, root))
             .collect();
         assert_eq!(rel, ["packages/a", "packages/b", "examples/x/deep"]);
-        assert!(segment_match("a*c", "abbc"));
-        assert!(!segment_match("a*c", "abd"));
+    }
+
+    #[test]
+    fn literal_segments_match_names_exactly_on_every_os() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("apps/a")).unwrap();
+        std::fs::write(root.join("apps/a/package.json"), "{}").unwrap();
+        // On a file system that ignores case `Apps` exists as a path, but no entry is named so.
+        assert!(package_dirs(root, &["Apps/*".into()]).dirs.is_empty());
+        assert!(package_dirs(root, &["apps/A".into()]).dirs.is_empty());
+        assert_eq!(package_dirs(root, &["apps/a".into()]).dirs.len(), 1);
+    }
+
+    #[test]
+    fn skipped_directories_are_not_entered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["libs/a", "libs/a/target/velt/x"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("package.vlt"), "").unwrap();
+        }
+        let patterns = ["libs/**".to_string()];
+        let found = |skip| {
+            dirs_with(root, &patterns, ("package.vlt", skip), MAX_DIRS)
+                .dirs
+                .len()
+        };
+        assert_eq!(found(&["target"]), 1);
+        assert_eq!(found(&[]), 2);
     }
 
     #[test]

@@ -38,8 +38,9 @@ fn target_call(stmt: &ast::Stmt) -> Option<&str> {
 }
 
 impl FnCx<'_, '_> {
-    /// The CPU extension the condition `c` checks: a call of velt:simd's `u32x4.hasShaArm()` or
-    /// `u32x4.hasShaX86()`, resolved to its definition (so also through `import { u32x4 as V }`,
+    /// The CPU extension the condition `c` checks: a call of velt:simd's `u32x4.hasShaArm()`,
+    /// `u32x4.hasShaX86()`, `u64x2.hasClmulX86()` or `u64x2.hasClmulArm()`, resolved to its
+    /// definition (so also through `import { u32x4 as V }`,
     /// and never a user type or function that is only named like it).
     pub(super) fn cpu_guard(&self, c: &hir::Expr) -> Option<CpuTarget> {
         let hir::ExprKind::Call {
@@ -53,9 +54,7 @@ impl FnCx<'_, '_> {
         if !args.is_empty() || !self.cx.scopes[f.module].is_std {
             return None;
         }
-        CpuTarget::ALL
-            .into_iter()
-            .find(|t| f.name == format!("std/simd/sha::u32x4.{}", t.check()))
+        CpuTarget::ALL.into_iter().find(|t| f.name == t.check())
     }
 
     /// The target function `d` is gated on: its first statement names it (std functions only).
@@ -121,8 +120,8 @@ impl FnCx<'_, '_> {
             span,
         )
         .with_note(format!(
-            "call it inside `if (u32x4.{}()) {{ … }}`, or from a function gated on the same target (a closure does not count)",
-            target.check()
+            "call it inside `if ({}()) {{ … }}`, or from a function gated on the same target (a closure does not count)",
+            target.check_call()
         ));
         self.cx.error(d);
     }
@@ -140,8 +139,8 @@ impl FnCx<'_, '_> {
             span,
         )
         .with_note(format!(
-            "a gated function cannot be stored, passed or returned: call it inside `if (u32x4.{}()) {{ … }}`",
-            target.check()
+            "a gated function cannot be stored, passed or returned: call it inside `if ({}()) {{ … }}`",
+            target.check_call()
         ));
         self.cx.error(d);
         true

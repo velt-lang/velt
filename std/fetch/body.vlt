@@ -1,22 +1,30 @@
 // std/fetch/body: what a request or response body can be made from (`BodyInit`), the parts the
-// runtime takes (text or bytes, moved rather than copied, and the `content-type` they imply),
+// client and the server take (text or bytes, and the `content-type` they imply),
 // and `BodyStream`, a body read chunk by chunk.
 
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
 import { ArrayBuffer, BufferView } from "velt:typed_array/core";
+import { ByteSource } from "velt:streams/byte_source";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
- * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`; a
- * `ReadableStream` body waits for #1129).
+ * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`, or a
+ * `ReadableStream` of `Uint8Array` chunks).
  */
-export type BodyInit = string | u8[] | BufferView | ArrayBuffer | URLSearchParams | BodyStream;
+export type BodyInit =
+  | string
+  | u8[]
+  | BufferView
+  | ArrayBuffer
+  | URLSearchParams
+  | BodyStream
+  | ByteSource;
 
 /**
- * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; `velt_rt_http_fetch_send`
- * takes the first three).
+ * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; the `fetch` client sends
+ * the first three, std/fetch/client/send.vlt).
  */
 export struct BodyParts {
   kind: u32;
@@ -61,6 +69,16 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof BodyStream) {
     return { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
   }
+  if (body instanceof ByteSource) {
+    // A blob or form: its bytes (its type is set by `sourceType`); a `ReadableStream`: its
+    // `Uint8Array` chunks, read as the body is.
+    const whole = body.__wholeBody();
+    if (whole != null) {
+      return { kind: 2, text: "", bytes: whole, stream: null, implied: 0 };
+    }
+    const stream = BodyStream.adopt(body.__byteChunks());
+    return { kind: 3, text: "", bytes: [], stream: stream, implied: 0 };
+  }
   // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
   if (body instanceof BufferView) {
     const o = body.off as i64;
@@ -73,6 +91,18 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   // A copy: the body's bytes may become an `ArrayBuffer` (`arrayBuffer()`, `bytes()`), whose
   // bytes nothing else may hold (a view reads them without a range check, typed_array/buffer).
   return { kind: 2, text: "", bytes: body.slice(), stream: null, implied: 0 };
+}
+
+/**
+ * The `content-type` a body made of a blob or form implies (a blob's type, a form's
+ * `multipart/form-data; boundary=…`), set unless the headers name one; null for any other body.
+ */
+export function sourceType(body: BodyInit | null): string | null {
+  if (body instanceof ByteSource) {
+    const t = body.__type();
+    return t.length > 0 ? t : null;
+  }
+  return null;
 }
 
 /** The bytes of a stream, in one array. */

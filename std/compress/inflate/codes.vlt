@@ -1,0 +1,245 @@
+// std/compress/inflate/codes (std-internal): the inner loop of a DEFLATE block, the literals
+// and matches of its Huffman codes (RFC 1951 §3.2.5).
+//
+// `fast` runs while 16 input bytes and a longest match (plus 16 bytes of slack) of output room
+// are left: it refills the bit buffer with one 8-byte load per symbol, without a branch (the
+// buffer then holds at least 56 bits, and a literal or length code with its extra bits and a
+// distance code with its extra bits take at most 48), and copies a match 16 bytes at a time when
+// its distance allows. `slow` decodes one symbol near the end of the input or the output, with
+// every bit counted: when the input runs out in the middle of a symbol it puts everything back
+// as it was before the symbol, to be decoded again once more input arrives.
+
+import { u8x16, u64x2 } from "velt:simd";
+import { CompressError } from "velt:compress/error";
+import { BASE, END, LITERAL, SUBTABLE } from "velt:compress/inflate/huffman";
+
+// The vector load and store without their range checks: `fast` loads only where its loop
+// condition leaves 16 input bytes, and copies only where the output has a match's room and
+// `SLACK` more.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+/** What decoding one symbol, or a run of them, ended with. */
+export const MORE: i64 = 0;
+export const BLOCK_END: i64 = 1;
+export const SHORT: i64 = 2;
+
+/** The longest match, and the bytes a 16-byte copy may write past it. */
+export const MAX_MATCH: i64 = 258;
+export const SLACK: i64 = 16;
+
+/** The bits of a decoder's input and output that the symbol loops use. */
+export class Bits {
+  /** The input: `inp[ip..inp.length]` is not read yet (a stream may be fed in pieces). */
+  inp: u8[] = [];
+  ip: i64 = 0;
+  /** Bits read ahead of `ip`, least significant first: `bc` of them are valid. */
+  bb: u64 = 0;
+  bc: u64 = 0;
+  /** The output, which is also the window matches copy from: `out[0..op]`. */
+  out: u8[] = [];
+  op: i64 = 0;
+  /** The current block's tables. */
+  lit: u32[] = [];
+  dist: u32[] = [];
+}
+
+/** The last 8-byte refill loads 16 bytes (`u8x16`), so it needs that many left. */
+const FAST_INPUT: i64 = 16;
+
+/**
+ * Decodes symbols until the block ends, the output reaches `limit`, or the input or output room
+ * gets too short for the unchecked loop (then `MORE`).
+ */
+export function fast(s: Bits, limit: i64): i64 throws CompressError {
+  const inp = s.inp;
+  const out = s.out;
+  const lit = s.lit;
+  const dist = s.dist;
+  const inEnd = (inp.length as i64) - FAST_INPUT;
+  let outEnd = (out.length as i64) - MAX_MATCH - SLACK;
+  if (limit < outEnd) {
+    outEnd = limit;
+  }
+  let ip = s.ip;
+  let bb = s.bb;
+  let bc = s.bc;
+  let op = s.op;
+  let result = MORE;
+  while (ip <= inEnd && op < outEnd) {
+    bb |=
+      velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(inp, ip as u64)), 0) << bc;
+    ip += ((63 - bc) >> 3) as i64;
+    bc |= 56;
+    let e = lit[(bb & 1023) as i64];
+    if ((e & SUBTABLE) != 0) {
+      bb >>= 10;
+      bc -= 10;
+      e = lit[((e >> 16) as u64 + (bb & ((1 << (((e >> 4) & 15) as u64)) - 1))) as i64];
+    }
+    let n = (e & 15) as u64;
+    bb >>= n;
+    bc -= n;
+    if ((e & LITERAL) != 0) {
+      out[op] = (e >> 16) as u8;
+      op += 1;
+      // The buffer still holds 41 bits: a second literal needs no refill.
+      e = lit[(bb & 1023) as i64];
+      if ((e & LITERAL) != 0) {
+        n = (e & 15) as u64;
+        bb >>= n;
+        bc -= n;
+        out[op] = (e >> 16) as u8;
+        op += 1;
+      }
+      continue;
+    }
+    if ((e & BASE) == 0) {
+      if ((e & END) != 0) {
+        result = BLOCK_END;
+        break;
+      }
+      throw new CompressError("invalid literal/length code");
+    }
+    let xb = ((e >> 4) & 15) as u64;
+    const length = ((e >> 16) as u64 + (bb & ((1 << xb) - 1))) as i64;
+    bb >>= xb;
+    bc -= xb;
+    let d = dist[(bb & 255) as i64];
+    if ((d & SUBTABLE) != 0) {
+      bb >>= 8;
+      bc -= 8;
+      d = dist[((d >> 16) as u64 + (bb & ((1 << (((d >> 4) & 15) as u64)) - 1))) as i64];
+    }
+    n = (d & 15) as u64;
+    bb >>= n;
+    bc -= n;
+    if ((d & BASE) == 0) {
+      throw new CompressError("invalid distance code");
+    }
+    xb = ((d >> 4) & 15) as u64;
+    const distance = ((d >> 16) as u64 + (bb & ((1 << xb) - 1))) as i64;
+    bb >>= xb;
+    bc -= xb;
+    if (distance > op) {
+      throw new CompressError("invalid distance too far back");
+    }
+    copyMatch(out, op, distance, length);
+    op += length;
+  }
+  s.ip = ip;
+  s.bb = bb;
+  s.bc = bc;
+  s.op = op;
+  return result;
+}
+
+/**
+ * Copies the `length` bytes `distance` back to `out[op..]`, repeating them when they overlap.
+ * May write up to 15 bytes past the match (the caller leaves room for that).
+ */
+function copyMatch(out: u8[], op: i64, distance: i64, length: i64) {
+  const from = op - distance;
+  if (distance >= 16) {
+    let k: i64 = 0;
+    while (k < length) {
+      velt_simd_u8x16_store(velt_simd_u8x16_load(out, (from + k) as u64), out, (op + k) as u64);
+      k += 16;
+    }
+  } else if (distance == 1) {
+    out.fill(out[from], op, op + length);
+  } else {
+    for (let k: i64 = 0; k < length; k++) {
+      out[op + k] = out[from + k];
+    }
+  }
+}
+
+/** Moves whole input bytes into the bit buffer while they fit. */
+export function pull(s: Bits) {
+  const inp = s.inp;
+  const end = inp.length as i64;
+  while (s.bc <= 56 && s.ip < end) {
+    s.bb |= (inp[s.ip] as u64) << s.bc;
+    s.ip += 1;
+    s.bc += 8;
+  }
+}
+
+/**
+ * Decodes one symbol with every bit counted, the output room checked by the caller (a match's
+ * worth): `MORE`, `BLOCK_END`, or `SHORT` with nothing taken when the input ends inside it.
+ */
+export function slow(s: Bits): i64 throws CompressError {
+  pull(s);
+  const bb = s.bb;
+  const bc = s.bc;
+  let used: u64 = 0;
+  let e = s.lit[(bb & 1023) as i64];
+  if ((e & SUBTABLE) != 0) {
+    used = 10;
+    e = s.lit[((e >> 16) as u64 + ((bb >> 10) & ((1 << (((e >> 4) & 15) as u64)) - 1))) as i64];
+  }
+  used += (e & 15) as u64;
+  // An entry for no code may stand for bits that have not arrived (read as zeros).
+  if (used > bc || (e == 0 && bc < 15)) {
+    return SHORT;
+  }
+  if ((e & LITERAL) != 0) {
+    take(s, used);
+    s.out[s.op] = (e >> 16) as u8;
+    s.op += 1;
+    return MORE;
+  }
+  if ((e & BASE) == 0) {
+    if ((e & END) != 0) {
+      take(s, used);
+      return BLOCK_END;
+    }
+    throw new CompressError("invalid literal/length code");
+  }
+  let xb = ((e >> 4) & 15) as u64;
+  if (used + xb > bc) {
+    return SHORT;
+  }
+  const length = ((e >> 16) as u64 + ((bb >> used) & ((1 << xb) - 1))) as i64;
+  used += xb;
+  const rest = bb >> used;
+  let d = s.dist[(rest & 255) as i64];
+  let dused: u64 = 0;
+  if ((d & SUBTABLE) != 0) {
+    dused = 8;
+    d = s.dist[((d >> 16) as u64 + ((rest >> 8) & ((1 << (((d >> 4) & 15) as u64)) - 1))) as i64];
+  }
+  dused += (d & 15) as u64;
+  if (used + dused > bc || (d == 0 && bc - used < 15)) {
+    return SHORT;
+  }
+  if ((d & BASE) == 0) {
+    throw new CompressError("invalid distance code");
+  }
+  xb = ((d >> 4) & 15) as u64;
+  if (used + dused + xb > bc) {
+    return SHORT;
+  }
+  const distance = ((d >> 16) as u64 + ((rest >> dused) & ((1 << xb) - 1))) as i64;
+  if (distance > s.op) {
+    throw new CompressError("invalid distance too far back");
+  }
+  take(s, used + dused + xb);
+  const out = s.out;
+  const op = s.op;
+  for (let k: i64 = 0; k < length; k++) {
+    out[op + k] = out[op - distance + k];
+  }
+  s.op = op + length;
+  return MORE;
+}
+
+/** Drops `n` bits from the bit buffer. */
+function take(s: Bits, n: u64) {
+  s.bb >>= n;
+  s.bc -= n;
+}

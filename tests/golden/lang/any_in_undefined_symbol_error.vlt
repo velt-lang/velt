@@ -1,0 +1,7 @@
+// A well-known symbol `in` an `undefined` held in an `any` stops with Node's `TypeError`, which
+// shows the key as `Symbol(Symbol.asyncIterator)`.
+function main(): void {
+  const u: any = undefined;
+  console.log("before");
+  console.log(Symbol.asyncIterator in u);
+}

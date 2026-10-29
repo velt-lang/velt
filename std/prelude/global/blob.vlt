@@ -1,0 +1,4 @@
+// Global (loaded when a module names one of these): `Blob`, `File` and `FormData`, as in Node
+// (docs/std/fetch.md).
+export { Blob, File, BlobPart, BlobPropertyBag, FilePropertyBag } from "velt:fetch/blob";
+export { FormData, FormDataEntryValue } from "velt:fetch/form";

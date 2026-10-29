@@ -463,7 +463,7 @@ thread-local value (`velt_tls_*_32_0` of `velt:os::lastOsError:I32`, crate::tls)
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
-`VeltResp`, `VeltFetchResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
+`VeltResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
 `VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
@@ -475,11 +475,11 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
-- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`, `VeltFetchResp`) are registry keys as
+- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`) are registry keys as
   well, so a stale or forged one never reaches memory (additive): server operations on a closed
   handle are no-ops (port 0, `shutdown` resolves at once), a dead response key is ignored
   (`velt_rt_http_resp_drop`) and the server answers 500 for one, and using a
-  released request or fetch response is a fatal error that says so.
+  released request is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
   `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
   keeps every handle in a `private` field (the standard library may use the private members of
@@ -578,6 +578,8 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
 | `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
 | `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
+| `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | keeps idle stream `s` under `key` (the `fetch` client's origin) for a later `velt_rt_tcp_unpark` in any task; closed instead when the key holds 512 already. The caller gives the handle up. Additive |
+| `velt_rt_tcp_unpark` | `(const VeltStr* key, uint32_t settled) -> VeltStream` | the stream most recently parked under `key` that is still open (each is checked with a look at the socket that must find nothing; one idle over 60 s is closed), or 0. With `settled` not 0, only a stream idle for at least 5 ms, so a close its server sent shortly after the response has arrived (for a request that may not be sent twice). Process-wide runtime state, so no Velt memory is kept and tasks do not take the module lock for it. The WebAssembly runtime defines the client's §6 symbols without a network: connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`). Additive |
 
 ## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
 
@@ -636,40 +638,16 @@ one too (`velt_rt_keep_alive_acquire`, §2).
 `status` (invalid ⇒ 500), the reason phrase (`""` for the standard one), the headers as the flat
 list `[name, value, …]`, and the body by `kind`: 0 none, 1 `text` (**taken**: zero-copy if owned,
 `*text` left empty), 2 `bytes` (copied: the array may be borrowed), 3 a stream std fills next
-(§14.17), 4 a stream of a fetched response's body (decoded, so a `content-encoding` the client
-decoded is dropped). A streamed body drops `content-length`. `implied` is the `content-type`
+(§14.17), 4 a stream of a fetched response's body (std leaves out a `content-encoding` the
+client decoded). A streamed body drops `content-length`. `implied` is the `content-type`
 the body implies, added unless the headers have one: 0 none, 1 `text/plain;charset=UTF-8`, 2
 `application/json`, 3 `application/x-www-form-urlencoded;charset=UTF-8`. A bodiless status (1xx,
 204, 304) gets no body and no `content-type`. An invalid header name or value builds nothing
 (result 0); std answers 500 then.
 
-**Client** (the global `fetch`, std/fetch.vlt; `http://` and `https://`, other schemes fail with
-`ENOTSUP`; HTTPS and HTTP/2 as in §14.8). The future is READY once the status and headers have
-arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are followed as the Fetch
-standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
-are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
-received, as soon as it is aborted; the operation then fails with `UNKNOWN` (99) and std throws the
-signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
-with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
-five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
-per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
-with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
-fails with `EILSEQ` (5). velt_rt_wasm implements the same symbols without a network:
-`velt_rt_http_fetch_send` fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no
-network access`), and the accessors of a fetched response are unreachable (fatal if reached).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*`, `user-agent: velt` and `accept-encoding: gzip, deflate` (`br, gzip, deflate` for `https://`) added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
-| `velt_rt_http_fetch_resp_status` | `(VeltFetchResp r) -> u32` | |
-| `velt_rt_http_fetch_resp_status_text` | `(VeltFetchResp r, VeltStr* out)` | the server's reason phrase, else the standard one, else `""` |
-| `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
-| `velt_rt_http_fetch_resp_redirected` | `(VeltFetchResp r) -> bool` | |
-| `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
-| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD, a leading UTF-8 byte order mark dropped (as JS decodes); a second body read fails `EINVAL` |
-| `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
-| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
-| `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
+**Client**: the global `fetch` has no runtime symbols of its own. Its HTTP/1.1 client is Velt
+code (std/fetch/client/) on the §6 streams, which the runtime pools between requests
+(`velt_rt_tcp_park` / `velt_rt_tcp_unpark`, §6), and bodies are decoded by velt:compress (Velt).
 
 ## 8. Process
 
@@ -1321,8 +1299,8 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
 root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
-ALPN `h2` and `http/1.1`. The client (`velt_rt_http_fetch_send`, §7) accepts `https://` and
-negotiates HTTP/2 when the server offers it.
+ALPN `h2` and `http/1.1`. The `fetch` client (Velt code, §7) connects with
+`velt_rt_tcp_connect_tls` and offers `http/1.1` only.
 HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrades`).
 
 | Symbol | Signature | Notes |

@@ -33,14 +33,21 @@ impl Ctx<'_> {
     }
 
     /// Reports `iface` named in an `extends` or `implements` at `span` if it is the prelude's
-    /// `AtomicValue`, whose types only the compiler decides; whether it was.
-    pub(crate) fn refuse_atomic_value(&mut self, iface: DefId, span: velt_common::Span) -> bool {
-        if Some(iface) != self.prelude_iface("AtomicValue") {
+    /// `AtomicValue` or `Frozen`, whose types only the compiler decides; whether it was.
+    pub(crate) fn refuse_known_iface(&mut self, iface: DefId, span: velt_common::Span) -> bool {
+        let note = if Some(iface) == self.prelude_iface("AtomicValue") {
+            ("AtomicValue", "the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values")
+        } else if Some(iface) == self.prelude_iface("Frozen") {
+            ("Frozen", "the compiler decides whose `shared` values are read in place: those nothing could change")
+        } else {
             return false;
-        }
+        };
         self.error(
-            velt_common::Diagnostic::error("`AtomicValue` cannot be extended or implemented", span)
-                .with_note("the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values"),
+            velt_common::Diagnostic::error(
+                format!("`{}` cannot be extended or implemented", note.0),
+                span,
+            )
+            .with_note(note.1),
         );
         true
     }
@@ -273,10 +280,17 @@ impl Ctx<'_> {
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
     /// counts atomically.
     pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
+        self.frozen_readable_in(t, &[], &mut rustc_hash::FxHashSet::default())
     }
 
-    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+    /// `frozen_readable`, taking the type parameters `frozen` (bounded by `Frozen` where the
+    /// type is read: `Ctx::frozen_readable_under`) as readable.
+    pub(crate) fn frozen_readable_in(
+        &mut self,
+        t: TyId,
+        frozen: &[u32],
+        seen: &mut rustc_hash::FxHashSet<TyId>,
+    ) -> bool {
         if !seen.insert(t) {
             return true;
         }
@@ -286,9 +300,9 @@ impl Ctx<'_> {
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Shared(_) => return true,
-            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
-                return false
-            }
+            // `T extends Frozen` in the body being checked: whatever it is, it is readable.
+            TyKind::Param(p) => return frozen.contains(&p),
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return false,
             TyKind::Adt(d, _)
                 if Some(d) == self.mutex_ty()
                     || Some(d) == self.rwlock_ty()
@@ -313,7 +327,9 @@ impl Ctx<'_> {
             }
             k => crate::types::children(&k),
         };
-        parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
+        parts
+            .into_iter()
+            .all(|p| self.frozen_readable_in(p, frozen, seen))
     }
 
     /// Does a value of type `t` reach a `Mutex` or `RwLock`, whose value is read only under

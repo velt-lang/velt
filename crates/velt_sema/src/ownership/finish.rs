@@ -55,7 +55,7 @@ pub(super) fn reassigned_fixed_params(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
         FnKind::Closure => "a closure",
         _ => "an overridden or interface method",
     };
-    let ev = evidence::collect(cx, &mut f.body.block);
+    let ev = evidence::collect(cx, &mut f.body.block, f.captures.len()..f.params.len());
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
     for p in &f.params[first..] {
         let Some(&at) = ev.reassigned.get(&p.local) else {
@@ -155,7 +155,7 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
             break;
         }
     }
-    let ev = evidence::collect(cx, &mut f.body.block);
+    let ev = evidence::collect(cx, &mut f.body.block, f.captures.len()..f.params.len());
     let mut errors = direct_writes(cx, f);
     let written: Vec<velt_common::Span> = errors
         .iter()

@@ -280,6 +280,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
             hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+            hir::CpuTarget::ClmulX86 => crate::simd::Ext::ClmulX86,
+            hir::CpuTarget::ClmulArm => crate::simd::Ext::ClmulArm,
         });
         func
     }

@@ -233,7 +233,10 @@ program's and the object's, would compare unequal. The object build marks these 
   there, as `numrep/params.rs` and the ONCE rule (`inline/mod.rs`, `decide`) already treat
   `Export`. Passes that clone a callee as `Internal` (`const_fields` specialization,
   `gated_clones`) may clone an `Import` only when its body is kept, and the clone is the
-  program's own.
+  program's own. An analysis that learns about a callee from its body treats an `Import`
+  without one as opaque, like an extern: it may write through every pointer it is given
+  (`const_fields`' read-only params), and it is never inlined (the int32 helpers of debug
+  builds are matched by name).
 - **Symbol clashes.** `keys::disambiguate` (`lower/keys.rs`) renames a repeated symbol to
   `…$dup2`. An `Import` symbol is never renamed: on a clash the program's own function gets the
   suffix, and a std function whose symbol needed `$dup` in the object build never goes into the

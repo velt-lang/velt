@@ -1,0 +1,50 @@
+// A method of a shared object that hands `this` to a function value whose body the compiler
+// sees (a module-level closure) is checked by that body, as a direct call is (#1836): one that
+// only calls an `Atomic`'s `add` reads `this` and works on the shared object in place, from four
+// threads at once; the same method on an object of this thread's works as well.
+
+const count = (c: C) => {
+  c.hits.add(1);
+};
+
+function countF(c: C) {
+  c.hits.add(1);
+}
+
+class C {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+  tickV() {
+    count(this);
+  }
+  tickF() {
+    countF(this);
+  }
+}
+
+async function work(c: shared<C>) {
+  for (let i = 0; i < 1000; i++) {
+    c.tickV();
+    c.tickF();
+  }
+}
+
+function own() {
+  const c = new C();
+  c.tickV();
+  c.tickF();
+  console.log(c.hits.load());
+}
+
+async function main() {
+  own();
+  const c = shared(new C());
+  c.tickV();
+  c.tickF();
+  console.log(c.hits.load());
+  const ts: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ts.push(spawn(work(c)));
+  }
+  await Promise.all(ts);
+  console.log(c.hits.load());
+}

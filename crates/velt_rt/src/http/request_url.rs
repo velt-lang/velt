@@ -11,8 +11,8 @@
 //! static string touches no reference count, and a slice of it (`url.slice(start)`) borrows its
 //! bytes instead of copying them. Later URLs are shared heap strings.
 
-use super::client::text_of;
 use super::request::Conn;
+use crate::bytes_ops::text_of;
 use crate::str::{VeltStr, INLINE_MAX};
 use hyper::header::HOST;
 use std::cell::RefCell;

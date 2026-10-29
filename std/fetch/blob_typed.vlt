@@ -1,0 +1,31 @@
+// velt:fetch/blob_typed: the `Blob` readers that give typed arrays and streams, `bytes()`,
+// `arrayBuffer()` and `stream()`. `extend` blocks of their own, loaded (with what they give) only
+// by programs that call them (std/prelude/global/blob_typed.vlt).
+
+import { ReadableStream } from "velt:streams";
+import { ArrayBuffer } from "velt:typed_array/buffer";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+import { Blob } from "velt:fetch/blob";
+
+extend Blob {
+  /** The bytes, in a new `Uint8Array`. */
+  async bytes(): Promise<Uint8Array> {
+    return Uint8Array.wrap(this.held().slice());
+  }
+
+  /** The bytes, in a new `ArrayBuffer`. */
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    return ArrayBuffer.adopt(this.held().slice());
+  }
+
+  /** The bytes as a `ReadableStream` of one `Uint8Array` chunk. */
+  stream(): ReadableStream<Uint8Array> {
+    return ReadableStream.body<Uint8Array>(chunkOf(this.held().slice()), false);
+  }
+}
+
+async function* chunkOf(bytes: u8[]): AsyncGenerator<Uint8Array, Error> {
+  if (bytes.length > 0) {
+    yield Uint8Array.wrap(bytes);
+  }
+}

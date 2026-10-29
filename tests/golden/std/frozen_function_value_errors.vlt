@@ -1,0 +1,134 @@
+// A getter or method that hands `this` to a function value whose body changes it (a module-level
+// closure) changes `this`, as a direct call would (#1836): calling it on a shared object is an
+// error, directly and through a bound's field, where it would change the shared value. So is one
+// handing it to a function value the compiler cannot resolve to one closure (a module `let`, a
+// reassigned local, a field, a call's result, a choice of two), which may change it, also when
+// the call is in an arrow function that captures `this` and the function value.
+
+const poke = (o: B) => {
+  o.k++;
+};
+
+interface HasK {
+  readonly kk: u64;
+}
+
+class B implements HasK {
+  k: u64 = 0;
+  get kk(): u64 {
+    poke(this);
+    return this.k;
+  }
+  viaClosure(): u64 {
+    poke(this);
+    return this.k;
+  }
+}
+
+function viaK<V extends Frozen & HasK>(s: shared<V>): u64 {
+  return s.kk;
+}
+
+let hook = (o: U) => {
+  o.k++;
+};
+const pure = (o: U) => {};
+const bad = (o: U) => {
+  o.k++;
+};
+const hooks = { f: bad };
+
+function getHook(): (o: U) => void {
+  return bad;
+}
+
+let flag = true;
+
+class U {
+  k: u64 = 0;
+  viaLet(): u64 {
+    hook(this);
+    return this.k;
+  }
+  viaReassigned(): u64 {
+    let f = pure;
+    if (flag) {
+      f = bad;
+    }
+    f(this);
+    return this.k;
+  }
+  viaField(): u64 {
+    hooks.f(this);
+    return this.k;
+  }
+  viaCall(): u64 {
+    getHook()(this);
+    return this.k;
+  }
+  viaTernary(): u64 {
+    const f = flag ? bad : pure;
+    f(this);
+    return this.k;
+  }
+}
+
+function makeHook(): (o: C) => void {
+  return (o: C) => {
+    o.k++;
+  };
+}
+
+let poker = (o: C) => {
+  o.k++;
+};
+
+interface HasC {
+  readonly cc: u64;
+}
+
+class C implements HasC {
+  k: u64 = 0;
+  viaCapturedValue(): u64 {
+    const h = makeHook();
+    const g = () => {
+      h(this);
+    };
+    g();
+    return this.k;
+  }
+  viaCapturedThis(): u64 {
+    const g = () => {
+      poker(this);
+    };
+    g();
+    return this.k;
+  }
+  viaCallback(): u64 {
+    const h = makeHook();
+    [1].forEach((x) => {
+      h(this);
+    });
+    return this.k;
+  }
+  get cc(): u64 {
+    const g = () => {
+      poker(this);
+    };
+    g();
+    return this.k;
+  }
+}
+
+function viaC<V extends Frozen & HasC>(s: shared<V>): u64 {
+  return s.cc;
+}
+
+function main() {
+  const c = shared(new C());
+  console.log(c.viaCapturedValue(), c.viaCapturedThis(), c.viaCallback(), viaC<C>(c));
+  const b = shared(new B());
+  console.log(viaK<B>(b), b.kk, b.viaClosure());
+  const u = shared(new U());
+  console.log(u.viaLet(), u.viaReassigned(), u.viaField(), u.viaCall(), u.viaTernary());
+}

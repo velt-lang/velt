@@ -1,0 +1,5 @@
+22 of 22 agree
+EINVAL Invalid URL: not a url
+ENOTSUP fetch supports http: and https: URLs, not ftp
+EINVAL Invalid URL: http://1.2.3.256/
+EINVAL Invalid URL: http://h:65536/

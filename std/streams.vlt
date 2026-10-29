@@ -9,6 +9,11 @@
 // `pull` once `start` has settled (a microtask later) and again while the queue is below its
 // high-water mark or a read is waiting, never two at once; a read takes a queued chunk at once.
 
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { ByteSource } from "velt:streams/byte_source";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+
 /** Why a stream was cancelled, as given to `cancel(reason)` (JS takes any value). */
 export type CancelReason = Error | string | null;
 
@@ -408,7 +413,7 @@ async function finished<T>(p: Promise<T>): Promise<void> {
  * pull, cancel })`) or an async iterable (`ReadableStream.from`), and read with a reader
  * (`getReader()`), with `for await`, or as a `Response` body.
  */
-export class ReadableStream<R> {
+export class ReadableStream<R> extends ByteSource {
   private ctl: ReadableStreamDefaultController<R>;
 
   /**
@@ -416,6 +421,7 @@ export class ReadableStream<R> {
    * of the reads (default 1).
    */
   constructor(source: UnderlyingSource<R> = {}, strategy: QueuingStrategy = {}) throws unknown {
+    super();
     const hwm = strategy.highWaterMark ?? 1;
     if (!(hwm >= 0)) {
       throw new RangeError(`The property 'strategy.highWaterMark' is invalid. Received ${hwm}`);
@@ -470,6 +476,14 @@ export class ReadableStream<R> {
   /** `for await (const chunk of stream)`: reads to the end; leaving the loop early cancels the stream. */
   [Symbol.asyncIterator](): AsyncIterator<R, Reason> {
     return new StreamIterator<R>(this.getReader());
+  }
+
+  /**
+   * The chunks as a body's bytes (std only: `new Response(stream)`, a request body): each one
+   * must be a `Uint8Array` (copied, as a body's bytes are), else the read fails as Node's does.
+   */
+  __byteChunks(): AsyncIterator<u8[], IoError | AbortError> {
+    return bodyBytes<R>(this);
   }
 
   /** How `console.log` shows the stream, as Node does. */
@@ -586,5 +600,36 @@ async function* relay<T, E>(src: AsyncIterable<T, E>): AsyncGenerator<T, Error> 
     }
   } catch (e) {
     throw new Error(`${e}`);
+  }
+}
+
+// The chunks of `stream`, read once the body is, as bytes: a `Uint8Array` chunk's range is
+// copied, anything else fails as Node fails it; a stream another reader holds, or an error the
+// stream gives, reaches the body's reader as an `IoError`.
+async function* bodyBytes<R>(
+  stream: ReadableStream<R>,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  let reader: ReadableStreamDefaultReader<R>;
+  try {
+    reader = stream.getReader();
+  } catch (e) {
+    throw new IoError("EINVAL", e.message);
+  }
+  while (true) {
+    let r: IteratorResult<R>;
+    try {
+      r = await reader.read();
+    } catch (e) {
+      throw new IoError("EIO", `${e}`);
+    }
+    if (r.done) {
+      return;
+    }
+    const chunk: unknown = r.value;
+    if (!(chunk instanceof Uint8Array)) {
+      throw new IoError("EINVAL", "Received non-Uint8Array chunk");
+    }
+    const at = chunk.off as i64;
+    yield chunk.buf.bytes.slice(at, at + (chunk.len as i64));
   }
 }

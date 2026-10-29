@@ -1,0 +1,353 @@
+// std/compress/brotli/header (internal to velt:compress/brotli): the stream header and meta-block
+// headers of RFC 7932 (sections 9.1 and 9.2), and block switches (section 6).
+//
+// A compressed meta-block's header sets up everything its commands are decoded with: the block
+// types of the three categories, the context modes and maps, and the prefix code tables, all
+// of them back to back in `State.tables`. It is read in one go, as one step of the decoder
+// (decoder.vlt starts it over when the input runs out before its end).
+
+import { CompressError } from "velt:compress/error";
+import { Bits } from "velt:compress/brotli/bits";
+import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt:compress/brotli/tables";
+import {
+  State,
+  STAGE_COMMAND,
+  STAGE_END,
+  STAGE_METADATA,
+  STAGE_STREAM,
+  STAGE_UNCOMPRESSED,
+} from "velt:compress/brotli/state";
+
+// Block categories.
+const LITERALS: usize = 0;
+const COMMANDS: usize = 1;
+const DISTANCES: usize = 2;
+
+// The length of a block when its category has one block type: longer than any meta-block.
+const ENDLESS: usize = 1 << 24;
+
+// The window size as a power of two (section 9.1); 1 to 7 bits.
+function windowBits(br: Bits): u64 throws CompressError {
+  if (br.read(1) == 0) {
+    return 16;
+  }
+  const n = br.read(3);
+  if (n != 0) {
+    return 17 + n;
+  }
+  const m = br.read(3);
+  if (m == 1) {
+    // Large-window Brotli, an extension outside RFC 7932 that HTTP does not use.
+    throw new CompressError("brotli: invalid window size");
+  }
+  return m != 0 ? 8 + m : 17;
+}
+
+/** Reads a meta-block header (after the stream header if the stream is at its start). */
+export function readHeader(s: State) throws CompressError {
+  const br = s.br;
+  const c = s.cur;
+  if (c.stage == STAGE_STREAM) {
+    s.maxBackward = ((1 as usize) << (windowBits(br) as usize)) - 16;
+  }
+  s.isLast = br.read(1) == 1;
+  if (s.isLast && br.read(1) == 1) {
+    c.metaLeft = 0;
+    c.stage = STAGE_END;
+    return;
+  }
+  const nibbles = br.read(2);
+  if (nibbles == 3) {
+    readMetadataHeader(s);
+    return;
+  }
+  let length: i64 = 0;
+  for (let i: u64 = 0; i < nibbles + 4; i++) {
+    const nibble = br.read(4);
+    if (i == nibbles + 3 && i >= 4 && nibble == 0) {
+      throw new CompressError("brotli: invalid meta-block length");
+    }
+    length |= (nibble << (4 * i)) as i64;
+  }
+  c.metaLeft = length + 1;
+  if (!s.isLast && br.read(1) == 1) {
+    if (!br.alignToByte()) {
+      throw new CompressError("brotli: invalid padding");
+    }
+    c.stage = STAGE_UNCOMPRESSED;
+    return;
+  }
+  readCodes(s);
+  c.stage = STAGE_COMMAND;
+}
+
+// A metadata block's length, after which its bytes are skipped (section 9.2).
+function readMetadataHeader(s: State) throws CompressError {
+  const br = s.br;
+  if (br.read(1) != 0) {
+    throw new CompressError("brotli: reserved bit set");
+  }
+  const bytes = br.read(2);
+  let length: i64 = 0;
+  for (let i: u64 = 0; i < bytes; i++) {
+    const b = br.read(8);
+    if (i == bytes - 1 && bytes > 1 && b == 0) {
+      throw new CompressError("brotli: invalid metadata length");
+    }
+    length |= (b << (8 * i)) as i64;
+  }
+  if (!br.alignToByte()) {
+    throw new CompressError("brotli: invalid padding");
+  }
+  s.cur.metaLeft = bytes > 0 ? length + 1 : 0;
+  s.cur.stage = STAGE_METADATA;
+}
+
+// A number from 0 to 255 in 1 to 11 bits (section 9.2: NBLTYPES and NTREES less one).
+function varLength(br: Bits): usize {
+  if (br.read(1) == 0) {
+    return 0;
+  }
+  const n = br.read(3);
+  if (n == 0) {
+    return 1;
+  }
+  return ((1 << n) + br.read(n)) as usize;
+}
+
+// Room in `s.tables` for `n` entries from `at`, keeping those before it. The size of the
+// tables still to come is known (`MAX_TABLE_SIZE`) before they are read, so the array grows
+// at most a few times per meta-block, by twice what is needed.
+function reserve(s: State, at: usize, n: usize) {
+  const need = at + n;
+  if (need > s.tables.length) {
+    // Left unfilled: a table is written whole before it is read.
+    const size = need * 2;
+    const grown: u32[] = __intrinsic_array_with_capacity(size);
+    __intrinsic_array_set_len(grown, size);
+    const old = s.tables;
+    for (let i: usize = 0; i < at; i++) {
+      grown[i] = old[i];
+    }
+    s.tables = grown;
+  }
+}
+
+// The most entries the table of an alphabet of `size` symbols takes.
+function most(size: usize): usize {
+  return MAX_TABLE_SIZE[(size + 31) >> 5] as usize;
+}
+
+// Reads a prefix code for `size` symbols into `s.tables` at `at`; returns where the next goes.
+function readTable(s: State, size: usize, at: usize): usize throws CompressError {
+  reserve(s, at, most(size));
+  return at + s.prefix.read(s.br, size, s.tables, at);
+}
+
+// The rest of a compressed meta-block's header: block types, distance parameters, context
+// modes and maps, and the prefix codes (section 9.2, in its order).
+function readCodes(s: State) throws CompressError {
+  const br = s.br;
+  let at: usize = 0;
+  const lefts: usize[] = [ENDLESS, ENDLESS, ENDLESS];
+  for (let k: usize = 0; k < 3; k++) {
+    const n = varLength(br) + 1;
+    s.typeCount[k] = n;
+    if (n >= 2) {
+      s.typeTable[k] = at;
+      at = readTable(s, n + 2, at);
+      s.countTable[k] = at;
+      at = readTable(s, 26, at);
+      lefts[k] = blockCount(s, k);
+    }
+  }
+  s.postfixBits = br.read(2);
+  const direct = (br.read(4) << s.postfixBits) as usize;
+  const litTypes = s.typeCount[LITERALS];
+  s.litShifts = new Array<u64>(litTypes).fill(0);
+  for (let t: usize = 0; t < litTypes; t++) {
+    s.litShifts[t] = br.read(2) * 8;
+  }
+  const litTrees = varLength(br) + 1;
+  s.litMap = readContextMap(s, litTypes * 64, litTrees, at);
+  const distTrees = varLength(br) + 1;
+  s.distMap = readContextMap(s, s.typeCount[DISTANCES] * 4, distTrees, at);
+  const distSize = 16 + direct + ((48 as usize) << (s.postfixBits as usize));
+  reserve(
+    s,
+    at,
+    litTrees * most(256) + s.typeCount[COMMANDS] * most(704) + distTrees * most(distSize),
+  );
+  s.litTables = new Array<usize>(litTrees).fill(0);
+  for (let i: usize = 0; i < litTrees; i++) {
+    s.litTables[i] = at;
+    at = readTable(s, 256, at);
+  }
+  s.cmdTables = new Array<usize>(s.typeCount[COMMANDS]).fill(0);
+  for (let i: usize = 0; i < s.typeCount[COMMANDS]; i++) {
+    s.cmdTables[i] = at;
+    at = readTable(s, 704, at);
+  }
+  s.distTables = new Array<usize>(distTrees).fill(0);
+  for (let i: usize = 0; i < distTrees; i++) {
+    s.distTables[i] = at;
+    at = readTable(s, distSize, at);
+  }
+  distanceCodes(s, direct, distSize);
+  singleTrees(s);
+  resetBlocks(s, lefts);
+}
+
+// Block types start at 0 (the one before at 1) at each meta-block.
+function resetBlocks(s: State, lefts: usize[]) {
+  const c = s.cur;
+  c.litType = 0;
+  c.litPrev = 1;
+  c.litLeft = lefts[LITERALS];
+  c.cmdType = 0;
+  c.cmdPrev = 1;
+  c.cmdLeft = lefts[COMMANDS];
+  c.distType = 0;
+  c.distPrev = 1;
+  c.distLeft = lefts[DISTANCES];
+  c.litMapAt = 0;
+  c.litShift = s.litShifts[0];
+  c.litTable = s.litSingle[0];
+  c.cmdTable = s.cmdTables[0];
+  c.distMapAt = 0;
+}
+
+// For each distance code from 16 on, its base distance and extra bits (section 4).
+function distanceCodes(s: State, direct: usize, size: usize) {
+  const postfix = s.postfixBits;
+  const codes = new Array<u64>(size).fill(0);
+  for (let code: usize = 16; code < 16 + direct; code++) {
+    codes[code] = ((code - 15) << 8) as u64;
+  }
+  for (let code = 16 + direct; code < size; code++) {
+    const x = (code - direct - 16) as u64;
+    const extra = 1 + (x >> (postfix + 1));
+    const offset = ((2 + ((x >> postfix) & 1)) << extra) - 4;
+    const base = (offset << postfix) + (x & ((1 << postfix) - 1)) + (direct as u64) + 1;
+    codes[code] = (base << 8) | extra;
+  }
+  s.distCodes = codes;
+}
+
+// The literal block types whose 64 contexts all use one tree, which then needs no context.
+function singleTrees(s: State) {
+  const types = s.typeCount[LITERALS];
+  s.litSingle = new Array<i64>(types).fill(-1);
+  for (let t: usize = 0; t < types; t++) {
+    const first = s.litMap[t * 64];
+    let same = true;
+    for (let i: usize = 1; i < 64; i++) {
+      if (s.litMap[t * 64 + i] != first) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      s.litSingle[t] = s.litTables[first as usize] as i64;
+    }
+  }
+}
+
+// A context map of `size` entries for `trees` trees (section 7.3), its code's table built at
+// `at` (scratch: the tables read after it go there).
+function readContextMap(s: State, size: usize, trees: usize, at: usize): u8[] throws CompressError {
+  const map = Buffer.alloc(size);
+  if (trees < 2) {
+    return map;
+  }
+  const br = s.br;
+  const runMax = br.read(1) == 1 ? (br.read(4) + 1) as usize : 0;
+  readTable(s, trees + runMax, at);
+  let i: usize = 0;
+  while (i < size) {
+    const code = br.symbol(s.tables, at);
+    if (code == 0) {
+      i++;
+    } else if (code <= runMax) {
+      const run = ((1 as usize) << code) + (br.read(code as u64) as usize);
+      if (run > size - i) {
+        throw new CompressError("brotli: context map run past its end");
+      }
+      i += run;
+    } else {
+      map[i] = (code - runMax) as u8;
+      i++;
+    }
+  }
+  if (br.read(1) == 1) {
+    inverseMoveToFront(map);
+  }
+  return map;
+}
+
+// Undoes the move-to-front transform of a context map (section 7.3).
+function inverseMoveToFront(map: u8[]) {
+  const mtf = Buffer.alloc(256);
+  for (let i: usize = 0; i < 256; i++) {
+    mtf[i] = i as u8;
+  }
+  for (let i: usize = 0; i < map.length; i++) {
+    const index = map[i] as usize;
+    const value = mtf[index];
+    map[i] = value;
+    for (let j = index; j > 0; j--) {
+      mtf[j] = mtf[j - 1];
+    }
+    mtf[0] = value;
+  }
+}
+
+// The length of the next block of category `k` (section 6).
+function blockCount(s: State, k: usize): usize {
+  const code = s.br.symbol(s.tables, s.countTable[k]);
+  const entry = BLOCK_LENGTH_CODES[code];
+  return ((entry >> 5) as usize) + (s.br.read((entry & 31) as u64) as usize);
+}
+
+// The next block type of category `k` from a block switch command, `last` and `prev` the
+// current and previous ones (section 6).
+function nextType(s: State, k: usize, last: usize, prev: usize): usize {
+  const code = s.br.symbol(s.tables, s.typeTable[k]);
+  let t = code == 0 ? prev : code == 1 ? last + 1 : code - 2;
+  if (t >= s.typeCount[k]) {
+    t -= s.typeCount[k];
+  }
+  return t;
+}
+
+/** A block switch of the literals: the next type and its length, and what follows from it. */
+export function switchLiterals(s: State) {
+  const c = s.cur;
+  const t = nextType(s, LITERALS, c.litType, c.litPrev);
+  c.litPrev = c.litType;
+  c.litType = t;
+  c.litLeft = blockCount(s, LITERALS);
+  c.litMapAt = t * 64;
+  c.litShift = s.litShifts[t];
+  c.litTable = s.litSingle[t];
+}
+
+/** A block switch of the commands. */
+export function switchCommands(s: State) {
+  const c = s.cur;
+  const t = nextType(s, COMMANDS, c.cmdType, c.cmdPrev);
+  c.cmdPrev = c.cmdType;
+  c.cmdType = t;
+  c.cmdLeft = blockCount(s, COMMANDS);
+  c.cmdTable = s.cmdTables[t];
+}
+
+/** A block switch of the distances. */
+export function switchDistances(s: State) {
+  const c = s.cur;
+  const t = nextType(s, DISTANCES, c.distType, c.distPrev);
+  c.distPrev = c.distType;
+  c.distType = t;
+  c.distLeft = blockCount(s, DISTANCES);
+  c.distMapAt = t * 4;
+}

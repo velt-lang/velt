@@ -258,6 +258,10 @@ pub(crate) struct FnInfo<'m> {
     /// (a method returning `this` it changes is `Owned`): a value read out of a `shared` cannot
     /// be the receiver of such a method (`crate::ownership::patch`).
     pub modified_params: u64,
+    /// A closure's: bit `i`, the body changes what capture `i` holds (a captured object it
+    /// writes or hands to a function that may change it), which changes the enclosing
+    /// variable's object (`ownership::evidence`, in a program that reads a `shared`).
+    pub modified_captures: u64,
     /// Async closures: the captured variables the body modifies (name, first place). Allowed
     /// when the closure stays on its task, an error when it may reach a thread boundary
     /// (`crate::ownership::local_async`).

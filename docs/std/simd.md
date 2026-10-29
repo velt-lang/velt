@@ -108,6 +108,37 @@ function main() {
 }
 ```
 
+## Carry-less multiplication
+
+`u64x2` has the CPU's carry-less multiplication: x86's PCLMULQDQ and ARM's PMULL, which
+multiply two 64-bit lanes as polynomials over GF(2) (XOR instead of addition, so no carries)
+into a 128-bit product, its low 64 bits in lane 0. It is what CRC folding (std's gzip CRC-32,
+velt:compress) and GHASH are built on.
+
+| Method | Instruction |
+|---|---|
+| `a.clmulLow(b)` | lane 0 of `a` times lane 0 of `b` (PCLMULQDQ imm `0x00`, PMULL) |
+| `a.clmulHigh(b)` | lane 1 times lane 1 (imm `0x11`, PMULL2) |
+| `a.clmulLowHigh(b)` | lane 0 of `a` times lane 1 of `b` (imm `0x10`) |
+| `a.clmulHighLow(b)` | lane 1 of `a` times lane 0 of `b` (imm `0x01`) |
+| `u64x2.hasClmulX86()`, `u64x2.hasClmulArm()`, `u64x2.hasClmul()` | whether the CPU has them (x86: PCLMULQDQ with SSSE3 and SSE4.1; `hasClmul`: either) |
+
+As with the SHA instructions, every method works everywhere: the instruction where the CPU has
+it, an exact emulation (a shift and XOR per set bit) elsewhere, on WebAssembly, in debug builds
+and with `VELT_SIMD_DISABLE=clmul`. The emulation is far slower than the instruction, so code
+with a table-driven alternative checks `u64x2.hasClmul()` first, as velt:compress's CRC-32 does
+(about 0.45 instructions per byte with the instruction, 3.4 with its tables).
+
+```ts
+import { u64x2 } from "velt:simd";
+
+function main() {
+  // (x + 1)(x + 1) = x^2 + 1 over GF(2): 3 times 3 is 5 without carries.
+  const p = u64x2.splat(3).clmulLow(u64x2.splat(3));
+  console.log(p.lane(0), p.lane(1)); // 5 0
+}
+```
+
 Generic code given a vector (`xs.includes(v)`, a `Map` key, `xs.join()`) compares and hashes
 all 128 bits (so NaN equals NaN and `0` differs from `-0` there) and prints the type's name,
 `[u8x16]`; `typeof v` is `"object"`. A vector cannot be the value of a module-level `const` yet.

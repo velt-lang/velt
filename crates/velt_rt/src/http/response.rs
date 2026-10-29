@@ -19,7 +19,7 @@ use crate::registry::{Key, Registry};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use bytes::Bytes;
-use hyper::header::{HeaderMap, HeaderValue, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
+use hyper::header::{HeaderMap, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 
@@ -82,8 +82,8 @@ pub(super) mod kind {
     pub const BYTES: u32 = 2;
     /// Streamed: std opens the stream (`velt_rt_http_resp_stream_open`) and fills it.
     pub const STREAM: u32 = 3;
-    /// Streamed from a fetched response's body, which arrives decoded: the `content-encoding`
-    /// the client decoded and the `content-length` of the encoded body no longer apply.
+    /// Streamed from a fetched response's body: the `content-length` of the body as received no
+    /// longer applies (std leaves out a `content-encoding` the client decoded).
     pub const FETCHED: u32 = 4;
 }
 
@@ -99,16 +99,10 @@ pub(super) unsafe fn append_headers(list: &VeltStrArray, map: &mut HeaderMap) ->
     Some(())
 }
 
-/// Drops what a streamed body makes wrong: its length is not known, and a fetched body arrived
-/// decoded.
-fn strip_for_stream(headers: &mut HeaderMap, fetched: bool) {
+/// Drops what a streamed body makes wrong: its length is not known. (A fetched body that arrived
+/// decoded comes without its `content-encoding`: std/fetch/response.vlt leaves it out.)
+fn strip_for_stream(headers: &mut HeaderMap) {
     headers.remove(CONTENT_LENGTH);
-    let decoded = headers
-        .get(CONTENT_ENCODING)
-        .is_some_and(|v| super::client::decodes(v.to_str().unwrap_or("")));
-    if fetched && decoded {
-        headers.remove(CONTENT_ENCODING);
-    }
 }
 
 /// The `content-type` a body implies (`implied` of `velt_rt_http_resp_build`; std/fetch/body.vlt
@@ -169,7 +163,7 @@ pub(super) fn build(
         return Some(r);
     }
     if kind == kind::STREAM || kind == kind::FETCHED {
-        strip_for_stream(r.headers_mut(), kind == kind::FETCHED);
+        strip_for_stream(r.headers_mut());
     }
     if let Some(v) = implied_type(implied) {
         let headers = r.headers_mut();
@@ -217,6 +211,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_drop(r: RespHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyper::header::CONTENT_ENCODING;
 
     /// Builds a response; `headers` are `[name, value, …]`.
     pub(crate) unsafe fn build(
@@ -306,14 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn streamed_bodies_drop_their_length_and_decoded_coding() {
+    fn streamed_bodies_drop_their_length() {
         unsafe {
             let given = ["content-length", "10", "content-encoding", "gzip"];
             let resp = take(build(200, &given, kind::STREAM, "", 0)).unwrap();
             assert!(!resp.headers().contains_key(CONTENT_LENGTH));
             assert_eq!(resp.headers()[CONTENT_ENCODING], "gzip");
             let resp = take(build(200, &given, kind::FETCHED, "", 0)).unwrap();
-            assert!(resp.headers().is_empty());
+            assert!(!resp.headers().contains_key(CONTENT_LENGTH));
+            assert_eq!(resp.headers()[CONTENT_ENCODING], "gzip");
         }
     }
 }

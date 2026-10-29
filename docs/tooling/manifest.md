@@ -106,7 +106,9 @@ a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with
 import's files). Standard library imports (`"velt:x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
-a `path`). `velt add` edits this object and keeps your comments. See
+a `path`). `velt add` edits this object and keeps your comments. In a member of a
+[workspace](packages.md#workspaces), `name: "workspace"` depends on another member, or on the
+requirement the workspace writes for `name`. See
 [Packages](packages.md). A bare import that no dependency (and no `paths` alias) claims looks
 for an [npm package](packages.md#npm-packages).
 

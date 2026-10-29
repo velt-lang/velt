@@ -1,0 +1,106 @@
+// `Frozen` is the compiler's: a type holding a `Mutex` does not satisfy it, declaring it is an
+// error (and changes nothing), a type parameter satisfies it only through its own bound, and
+// without the bound generic code cannot read a `shared<V>` as a `V`.
+
+function unbounded<V>(s: shared<V>): V {
+  return s;
+}
+
+class Store<V extends Frozen> {
+  v: V;
+
+  constructor(v: V) {
+    this.v = v;
+  }
+}
+
+class Guarded {
+  lock: Mutex<u64> = new Mutex<u64>(0);
+}
+
+class Claims implements Frozen {
+  f: () => void = () => {};
+}
+
+const g = new Store<Guarded>(new Guarded());
+const c = new Store<Claims>(new Claims());
+
+interface Sealed extends Frozen {}
+
+interface Tag {}
+
+extend<T extends Tag> T implements Frozen {}
+
+function viaSealed<T extends Sealed>(v: T): Store<T> {
+  return new Store<T>(v);
+}
+
+function viaTag<T extends Tag>(v: T): Store<T> {
+  return new Store<T>(v);
+}
+
+// A method that changes the value is refused on a `shared<V>` read in place (named `V`).
+interface Bump {
+  bump(): void;
+}
+
+struct Counter {
+  n: u64;
+}
+
+extend Counter implements Bump {
+  bump() {
+    this.n++;
+  }
+}
+
+function bumpShared<V extends Frozen & Bump>(s: shared<V>) {
+  s.bump();
+}
+
+// A field read through the bound's getter is a part of the value inside: changing it, or a local
+// holding it, is refused as it is for a written type.
+interface HasArr {
+  readonly arr: u64[];
+}
+
+interface HasSelf {
+  readonly me: Holder;
+}
+
+class Holder implements HasArr, HasSelf {
+  k: u64 = 0;
+  a: u64[] = [0];
+  get arr(): u64[] {
+    return this.a;
+  }
+  get me(): Holder {
+    return this;
+  }
+}
+
+function writeElem<V extends Frozen & HasArr>(s: shared<V>) {
+  s.arr[0] = 7;
+}
+
+function writeLocal<V extends Frozen & HasArr>(s: shared<V>) {
+  const x = s.arr;
+  x[0] = 8;
+}
+
+function writeField<V extends Frozen & HasSelf>(s: shared<V>) {
+  s.me.k = 6;
+}
+
+function writeHeld<V extends Frozen & HasSelf>(s: shared<V>) {
+  const m = s.me;
+  m.k = 5;
+}
+
+// Both are only bounds: no value has them as its type.
+function boundsOnly() {
+  const fv: Frozen = 1;
+  const av: AtomicValue = 5;
+}
+
+function main() {}

@@ -1,0 +1,408 @@
+// std/compress/inflate/blocks (std-internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
+// three-bit header, stored blocks, and the fixed or dynamic Huffman tables of the others, whose
+// symbols velt:compress/inflate/codes decodes.
+//
+// Input may arrive in pieces. Every step that reads input either completes or, when the input
+// ends inside it, leaves the position as it was before the step (`SHORT`): a block header, a
+// dynamic block's code lengths and a symbol are decoded again whole once more input is there.
+// Only a stored block's bytes are taken as they arrive.
+
+import { CompressError } from "velt:compress/error";
+import {
+  Bits,
+  BLOCK_END,
+  fast,
+  MAX_MATCH,
+  pull,
+  SHORT,
+  SLACK,
+  slow,
+} from "velt:compress/inflate/codes";
+import {
+  build,
+  CODES,
+  CODES_ROOT,
+  CODES_SIZE,
+  DIST,
+  DIST_ROOT,
+  DIST_SIZE,
+  LITLEN,
+  LITLEN_ROOT,
+  LITLEN_SIZE,
+  Work,
+} from "velt:compress/inflate/huffman";
+import { CODE_ORDER } from "velt:compress/inflate/tables";
+
+/** Where the block decoder is. */
+const HEADER: i64 = 0;
+const STORED: i64 = 1;
+const HUFFMAN: i64 = 2;
+const DONE: i64 = 3;
+
+/** What `run` stopped at. */
+export const NEED_INPUT: i64 = 0;
+export const FULL: i64 = 1;
+export const STREAM_END: i64 = 2;
+
+/** The DEFLATE decoder: `run` decodes into `out` as far as the input and a limit allow. */
+export class Blocks extends Bits {
+  private mode: i64 = HEADER;
+  /** The block being decoded is the stream's last. */
+  private final: bool = false;
+  /** A stored block's bytes still to copy. */
+  private stored: i64 = 0;
+  private dynLit: u32[] = [];
+  private dynDist: u32[] = [];
+  private fixedLit: u32[] = [];
+  private fixedDist: u32[] = [];
+  private codes: u32[] = [];
+  private lens: u8[] = [];
+  private work: Work | null = null;
+
+  /** Starts the next stream (a gzip file's next member) once the last one ended. */
+  restart() {
+    this.mode = HEADER;
+    this.final = false;
+  }
+
+  /** Whether the last block has been decoded. */
+  get ended(): bool {
+    return this.mode == DONE;
+  }
+
+  /**
+   * Decodes until `out` holds `limit` bytes (`FULL`; a match may take it a little past), the
+   * input runs out (`NEED_INPUT`, or the `CompressError` of a truncated stream when `last`), or
+   * the last block ends (`STREAM_END`). `out` must have room for a match past `limit`; in
+   * `grow` mode it is enlarged as needed instead, and `limit` is ignored.
+   */
+  run(limit: i64, last: bool, grow: bool): i64 throws CompressError {
+    while (true) {
+      if (this.mode == HUFFMAN) {
+        const r = this.symbols(limit, grow);
+        if (r == FULL || r == NEED_INPUT) {
+          if (r == NEED_INPUT && last) {
+            throw new CompressError("unexpected end of file");
+          }
+          return r;
+        }
+        this.mode = this.final ? DONE : HEADER;
+      } else if (this.mode == HEADER) {
+        if (!this.header()) {
+          if (last) {
+            throw new CompressError("unexpected end of file");
+          }
+          return NEED_INPUT;
+        }
+      } else if (this.mode == STORED) {
+        if (grow) {
+          this.room(this.stored);
+        } else if (this.op >= limit) {
+          return FULL;
+        }
+        if (!this.copyStored(grow ? this.op + this.stored : limit)) {
+          if (last) {
+            throw new CompressError("unexpected end of file");
+          }
+          return NEED_INPUT;
+        }
+      } else {
+        return STREAM_END;
+      }
+    }
+  }
+
+  /** `out` with room for `n` more bytes and a match's slack, doubling as it grows. */
+  private room(n: i64) {
+    const need = this.op + n + MAX_MATCH + SLACK;
+    const have = this.out.length as i64;
+    if (need <= have) {
+      return;
+    }
+    let size = have * 2;
+    if (size < need) {
+      size = need;
+    }
+    const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+    bigger.set(this.out, 0);
+    this.out = bigger;
+  }
+
+  /** A Huffman block's symbols, until its end (`STREAM_END` here), `FULL` or `NEED_INPUT`. */
+  private symbols(limit: i64, grow: bool): i64 throws CompressError {
+    while (true) {
+      if (grow) {
+        this.room(MAX_MATCH * 64);
+      } else if (this.op >= limit) {
+        return FULL;
+      }
+      const r = fast(this, grow ? 9223372036854775807 : limit);
+      if (r == BLOCK_END) {
+        return STREAM_END;
+      }
+      if (!grow && this.op >= limit) {
+        return FULL;
+      }
+      if (grow) {
+        this.room(MAX_MATCH);
+      }
+      // Too close to the end of the input (or the output) for `fast`: one symbol, counted.
+      const saved = this.save();
+      const s = slow(this);
+      if (s == BLOCK_END) {
+        return STREAM_END;
+      }
+      if (s == SHORT) {
+        this.restore(saved);
+        return NEED_INPUT;
+      }
+    }
+  }
+
+  /** The input position, for a step that may have to be undone. */
+  private save(): Mark {
+    return { ip: this.ip, bb: this.bb, bc: this.bc };
+  }
+
+  private restore(m: Mark) {
+    this.ip = m.ip;
+    this.bb = m.bb;
+    this.bc = m.bc;
+  }
+
+  /** `n` bits (at most 32), or -1 when the input ends first (nothing is taken then). */
+  private bits(n: u64): i64 {
+    if (this.bc < n) {
+      pull(this);
+      if (this.bc < n) {
+        return -1;
+      }
+    }
+    const v = (this.bb & ((1 << n) - 1)) as i64;
+    this.bb >>= n;
+    this.bc -= n;
+    return v;
+  }
+
+  /** A block header (and a dynamic block's tables); false, with nothing taken, when short. */
+  private header(): bool throws CompressError {
+    const saved = this.save();
+    const h = this.bits(3);
+    if (h < 0) {
+      return false;
+    }
+    this.final = (h & 1) != 0;
+    const kind = h >> 1;
+    if (kind == 0) {
+      if (!this.storedHeader()) {
+        this.restore(saved);
+        return false;
+      }
+      this.mode = STORED;
+      return true;
+    }
+    if (kind == 1) {
+      this.useFixed();
+    } else if (kind == 2) {
+      if (!this.dynamic()) {
+        this.restore(saved);
+        return false;
+      }
+    } else {
+      throw new CompressError("invalid block type");
+    }
+    this.mode = HUFFMAN;
+    return true;
+  }
+
+  /**
+   * A stored block's lengths, after the header's byte is finished: the bytes read ahead go
+   * back to the input, which the block's bytes are copied from.
+   */
+  private storedHeader(): bool throws CompressError {
+    this.bb >>= this.bc & 7;
+    this.bc -= this.bc & 7;
+    this.unread();
+    if ((this.inp.length as i64) - this.ip < 4) {
+      return false;
+    }
+    const inp = this.inp;
+    const at = this.ip;
+    const len = (inp[at] as i64) | ((inp[at + 1] as i64) << 8);
+    const nlen = (inp[at + 2] as i64) | ((inp[at + 3] as i64) << 8);
+    if (len != (nlen ^ 65535)) {
+      throw new CompressError("invalid stored block lengths");
+    }
+    this.ip = at + 4;
+    this.stored = len;
+    return true;
+  }
+
+  /** Gives the whole bytes in the bit buffer back to the input (at a byte boundary). */
+  unread() {
+    this.ip -= (this.bc >> 3) as i64;
+    this.bb = 0;
+    this.bc = 0;
+  }
+
+  /**
+   * Copies what has arrived of a stored block, up to `out` holding `limit` bytes; false when
+   * nothing has.
+   */
+  private copyStored(limit: i64): bool {
+    let n = this.stored;
+    const have = (this.inp.length as i64) - this.ip;
+    if (n > have) {
+      n = have;
+    }
+    if (n > limit - this.op) {
+      n = limit - this.op;
+    }
+    if (n > 0) {
+      this.out.set(this.inp.slice(this.ip, this.ip + n), this.op as usize);
+      this.ip += n;
+      this.op += n;
+      this.stored -= n;
+    }
+    if (this.stored == 0) {
+      this.mode = this.final ? DONE : HEADER;
+      return true;
+    }
+    return n > 0 || have > 0;
+  }
+
+  /** The tables of a fixed-code block (§3.2.6), built the first time one is used. */
+  private useFixed() {
+    if (this.fixedLit.length == 0) {
+      const lens: u8[] = Buffer.alloc(320);
+      lens.fill(8, 0, 144);
+      lens.fill(9, 144, 256);
+      lens.fill(7, 256, 280);
+      lens.fill(8, 280, 288);
+      lens.fill(5, 288, 320);
+      const w = this.workArea();
+      this.fixedLit = new Array<u32>(LITLEN_SIZE).fill(0);
+      this.fixedDist = new Array<u32>(DIST_SIZE).fill(0);
+      build(lens, 0, 288, this.fixedLit, LITLEN_SIZE, LITLEN_ROOT, LITLEN, w);
+      build(lens, 288, 32, this.fixedDist, DIST_SIZE, DIST_ROOT, DIST, w);
+    }
+    this.lit = this.fixedLit;
+    this.dist = this.fixedDist;
+  }
+
+  private workArea(): Work {
+    const known = this.work;
+    if (known != null) {
+      return known;
+    }
+    const w = new Work();
+    this.work = w;
+    return w;
+  }
+
+  /** A dynamic block's code lengths and tables (§3.2.7); false when the input is short. */
+  private dynamic(): bool throws CompressError {
+    const hlit = this.bits(5);
+    const hdist = this.bits(5);
+    const hclen = this.bits(4);
+    if (hclen < 0) {
+      return false;
+    }
+    const nlit = hlit + 257;
+    const ndist = hdist + 1;
+    if (nlit > 286 || ndist > 30) {
+      throw new CompressError("too many length or distance symbols");
+    }
+    if (this.dynLit.length == 0) {
+      this.dynLit = new Array<u32>(LITLEN_SIZE).fill(0);
+      this.dynDist = new Array<u32>(DIST_SIZE).fill(0);
+      this.codes = new Array<u32>(CODES_SIZE).fill(0);
+      this.lens = Buffer.alloc(320);
+    }
+    const lens = this.lens;
+    const w = this.workArea();
+    lens.fill(0, 0, 19);
+    for (let i: i64 = 0; i < hclen + 4; i++) {
+      const l = this.bits(3);
+      if (l < 0) {
+        return false;
+      }
+      lens[CODE_ORDER[i] as i64] = l as u8;
+    }
+    if (!build(lens, 0, 19, this.codes, CODES_SIZE, CODES_ROOT, CODES, w)) {
+      throw new CompressError("invalid code lengths set");
+    }
+    if (!this.codeLengths(nlit + ndist)) {
+      return false;
+    }
+    if (lens[256] == 0) {
+      throw new CompressError("invalid code -- missing end-of-block");
+    }
+    if (!build(lens, 0, nlit, this.dynLit, LITLEN_SIZE, LITLEN_ROOT, LITLEN, w)) {
+      throw new CompressError("invalid literal/lengths set");
+    }
+    if (!build(lens, nlit, ndist, this.dynDist, DIST_SIZE, DIST_ROOT, DIST, w)) {
+      throw new CompressError("invalid distances set");
+    }
+    this.lit = this.dynLit;
+    this.dist = this.dynDist;
+    return true;
+  }
+
+  /** The `n` literal/length and distance code lengths, into `lens`; false when short. */
+  private codeLengths(n: i64): bool throws CompressError {
+    const lens = this.lens;
+    const codes = this.codes;
+    let i: i64 = 0;
+    while (i < n) {
+      if (this.bc < 14) {
+        pull(this);
+      }
+      const e = codes[(this.bb & 127) as i64];
+      const used = (e & 15) as u64;
+      if (used > this.bc || used == 0) {
+        return false;
+      }
+      this.bb >>= used;
+      this.bc -= used;
+      const sym = (e >> 16) as i64;
+      if (sym < 16) {
+        lens[i] = sym as u8;
+        i += 1;
+        continue;
+      }
+      let value: u8 = 0;
+      let rep: i64;
+      if (sym == 16) {
+        if (i == 0) {
+          throw new CompressError("invalid bit length repeat");
+        }
+        value = lens[i - 1];
+        rep = this.bits(2);
+        rep = rep < 0 ? -1 : 3 + rep;
+      } else if (sym == 17) {
+        rep = this.bits(3);
+        rep = rep < 0 ? -1 : 3 + rep;
+      } else {
+        rep = this.bits(7);
+        rep = rep < 0 ? -1 : 11 + rep;
+      }
+      if (rep < 0) {
+        return false;
+      }
+      if (i + rep > n) {
+        throw new CompressError("invalid bit length repeat");
+      }
+      lens.fill(value, i, i + rep);
+      i += rep;
+    }
+    return true;
+  }
+}
+
+/** A position in the input, to go back to. */
+struct Mark {
+  ip: i64;
+  bb: u64;
+  bc: u64;
+}

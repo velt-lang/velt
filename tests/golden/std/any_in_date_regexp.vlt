@@ -1,0 +1,8 @@
+// `key in x` through `any` of a `Date` and a `RegExp` (#823): what their JavaScript prototypes
+// have (and a regular expression's own `lastIndex`), not their private fields.
+function main(): void {
+  const d: any = new Date(0);
+  console.log("date", "getTime" in d, "toISOString" in d, "valueOf" in d, "t" in d, "foo" in d);
+  const re: any = /a/g;
+  console.log("regexp", "lastIndex" in re, "test" in re, "source" in re, "exec" in re, "foo" in re);
+}

@@ -60,8 +60,11 @@ function sameName(a: string, b: string): bool {
 declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
 declare function velt_rt_http_req_headers(r: u64): string[];
 
-/** `Headers` or an object literal (`{ "content-type": "text/plain" }`). */
-export type HeadersInit = Headers | Record<string, string>;
+/**
+ * `Headers`, an object literal (`{ "content-type": "text/plain" }`), or name-value pairs
+ * (`[["accept", "text/html"], ["accept", "application/json"]]`, repeats kept).
+ */
+export type HeadersInit = Headers | Record<string, string> | [string, string][];
 
 export class Headers {
   // `[name, value, …]`: lowercase names, trimmed values; with `one`, the entries after the
@@ -89,6 +92,12 @@ export class Headers {
     }
     if (init instanceof Headers) {
       this.list = init.items().clone();
+      return;
+    }
+    if (Array.isArray(init)) {
+      for (const [name, value] of init) {
+        this.append(name, value);
+      }
       return;
     }
     for (const [name, value] of Object.entries(init)) {

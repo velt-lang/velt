@@ -134,6 +134,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "AtomicValue",
         "keep thread-shared state out of code shared with TypeScript",
     ),
+    (
+        "Frozen",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
     // TypeScript's has one type argument; Velt's two.
     (
@@ -494,6 +498,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         "Buffer",
         &[
             ("alloc", "pass bytes in instead"),
+            ("allocUnsafe", "pass bytes in instead"),
             (
                 "byteLength",
                 "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",

@@ -1,0 +1,212 @@
+// std/compress/inflate/huffman (std-internal): the decoding tables of a DEFLATE block's Huffman
+// codes (RFC 1951 §3.2.2), built as zlib's `inflate_table` builds them.
+//
+// A table is indexed by the next bits of the input, least significant first, which are a code
+// read backwards: a root table of `root` bits holds every code that short (repeated for each
+// value of the bits after it), and a longer code's root entry points to a subtable indexed by
+// the bits after the root. An entry is one `u32`, so a symbol costs one load (two for a long
+// code):
+//
+// - bits 0-3: the bits the entry's code takes at its level (the root's bits for a pointer);
+// - bits 4-7: the extra bits after a length or distance code, or a subtable's index bits;
+// - bits 8-12: what the entry is (`LITERAL`, `BASE`, `END`, `SUBTABLE`; 0 is no code);
+// - bits 16-31: the literal, the length or distance before its extra bits, or where the
+//   subtable starts.
+//
+// A set of code lengths that does not make a prefix code is refused as zlib refuses it:
+// over-subscribed always, incomplete unless it is a single code of one bit (or no code at all,
+// for a block that uses no distances), whose missing entries stay 0 and fail if they are read.
+
+import { DIST_BASE, DIST_EXTRA, LENGTH_BASE, LENGTH_EXTRA } from "velt:compress/inflate/tables";
+
+/** A literal byte (code lengths: a length or a repeat code). */
+export const LITERAL: u32 = 256;
+/** A length or distance: the base in bits 16-31, its extra bits in bits 4-7. */
+export const BASE: u32 = 512;
+/** The end of the block. */
+export const END: u32 = 1024;
+/** A pointer to a subtable. */
+export const SUBTABLE: u32 = 2048;
+
+/** What a table decodes. */
+export const LITLEN: i64 = 0;
+export const DIST: i64 = 1;
+export const CODES: i64 = 2;
+
+/**
+ * The root bits of each table, and room for its subtables: zlib's `enough` program gives 1332
+ * entries for 286 symbols with a 10-bit root and 402 for 30 with an 8-bit one.
+ */
+export const LITLEN_ROOT: i64 = 10;
+export const DIST_ROOT: i64 = 8;
+export const CODES_ROOT: i64 = 7;
+export const LITLEN_SIZE: i64 = 1536;
+export const DIST_SIZE: i64 = 512;
+export const CODES_SIZE: i64 = 128;
+
+/** The longest code. */
+const MAX_BITS: i64 = 15;
+
+/** Room a build works in, kept by the decoder so a block's tables allocate nothing. */
+export class Work {
+  count: i64[] = new Array<i64>(MAX_BITS + 1).fill(0);
+  offs: i64[] = new Array<i64>(MAX_BITS + 1).fill(0);
+  sorted: u16[] = new Array<u16>(320).fill(0);
+}
+
+/** The entry for symbol `sym` of a `kind` table, without its bit count. */
+function entryOf(kind: i64, sym: i64): u32 {
+  if (kind == DIST) {
+    if (sym >= 30) {
+      return 0;
+    }
+    return (DIST_BASE[sym] << 16) | (DIST_EXTRA[sym] << 4) | BASE;
+  }
+  if (kind == CODES || sym < 256) {
+    return ((sym as u32) << 16) | LITERAL;
+  }
+  if (sym == 256) {
+    return END;
+  }
+  if (sym > 285) {
+    return 0;
+  }
+  return (LENGTH_BASE[sym - 257] << 16) | (LENGTH_EXTRA[sym - 257] << 4) | BASE;
+}
+
+/**
+ * Fills `table` (from 0, `size` entries at most) with the code whose `n` lengths are
+ * `lens[from..from + n]`; false when they make no code a stream may use.
+ */
+export function build(
+  lens: u8[],
+  from: i64,
+  n: i64,
+  table: u32[],
+  size: i64,
+  root: i64,
+  kind: i64,
+  w: Work,
+): bool {
+  const count = w.count;
+  const offs = w.offs;
+  const sorted = w.sorted;
+  for (let len: i64 = 0; len <= MAX_BITS; len++) {
+    count[len] = 0;
+  }
+  for (let s: i64 = 0; s < n; s++) {
+    count[lens[from + s] as i64] += 1;
+  }
+  let max = MAX_BITS;
+  while (max >= 1 && count[max] == 0) {
+    max -= 1;
+  }
+  table.fill(0, 0, size);
+  if (max == 0) {
+    // No code at all: every entry stays "no code" (zlib allows it but for the code lengths).
+    return kind != CODES;
+  }
+  let min: i64 = 1;
+  while (count[min] == 0) {
+    min += 1;
+  }
+  // Over-subscribed, or incomplete (zlib allows only one code of one bit, and not for CODES).
+  let left: i64 = 1;
+  for (let len: i64 = 1; len <= MAX_BITS; len++) {
+    left = (left << 1) - count[len];
+    if (left < 0) {
+      return false;
+    }
+  }
+  if (left > 0 && (kind == CODES || max != 1)) {
+    return false;
+  }
+  offs[1] = 0;
+  for (let len: i64 = 1; len < MAX_BITS; len++) {
+    offs[len + 1] = offs[len] + count[len];
+  }
+  for (let s: i64 = 0; s < n; s++) {
+    const len = lens[from + s] as i64;
+    if (len != 0) {
+      sorted[offs[len]] = s as u16;
+      offs[len] += 1;
+    }
+  }
+  return fill(lens, from, table, size, root, kind, min, max, w);
+}
+
+/**
+ * `build`'s second half: the codes in canonical order (`w.sorted`), each written to the entries
+ * its reversed bits index, a subtable started where a long code's root bits change.
+ */
+function fill(
+  lens: u8[],
+  from: i64,
+  table: u32[],
+  size: i64,
+  root: i64,
+  kind: i64,
+  min: i64,
+  max: i64,
+  w: Work,
+): bool {
+  const count = w.count;
+  const sorted = w.sorted;
+  // `huff` is the current code reversed; `next` the table (root or subtable) being filled, of
+  // `curr` index bits, whose codes have their first `drop` bits taken by the root.
+  let huff: i64 = 0;
+  let i: i64 = 0;
+  let len = min;
+  let next: i64 = 0;
+  let curr = root;
+  let drop: i64 = 0;
+  let low: i64 = -1;
+  let used: i64 = 1 << root;
+  const mask: i64 = used - 1;
+  while (true) {
+    const sym = sorted[i] as i64;
+    const entry = entryOf(kind, sym) | ((len - drop) as u32);
+    const step: i64 = 1 << (len - drop);
+    const end = next + (1 << curr);
+    for (let at = next + (huff >> drop); at < end; at += step) {
+      table[at] = entry;
+    }
+    // The next code, reversed: add one at the code's most significant end.
+    let incr: i64 = 1 << (len - 1);
+    while ((huff & incr) != 0) {
+      incr >>= 1;
+    }
+    huff = incr != 0 ? (huff & (incr - 1)) + incr : 0;
+    i += 1;
+    count[len] -= 1;
+    if (count[len] == 0) {
+      if (len == max) {
+        return true;
+      }
+      len = lens[from + (sorted[i] as i64)] as i64;
+    }
+    if (len > root && (huff & mask) != low) {
+      if (drop == 0) {
+        drop = root;
+      }
+      next += 1 << curr;
+      // The subtable's bits: enough for the codes left under this root entry.
+      curr = len - drop;
+      let left: i64 = 1 << curr;
+      while (curr + drop < max) {
+        left -= count[curr + drop];
+        if (left <= 0) {
+          break;
+        }
+        curr += 1;
+        left <<= 1;
+      }
+      used += 1 << curr;
+      if (used > size) {
+        return false;
+      }
+      low = huff & mask;
+      table[low] = ((next as u32) << 16) | ((curr as u32) << 4) | SUBTABLE | (root as u32);
+    }
+  }
+}

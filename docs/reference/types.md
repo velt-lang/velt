@@ -3071,6 +3071,30 @@ with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
 function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
+An `any` or `unknown` converted to a function type (`f as (c: Ctx<any>) => string`, also
+`T | undefined` of one) is not checked against the type the function was made with, as Node
+calls a function whatever its declared types: the result is a function of the target type that
+calls the value through `any`, converting each argument to the held function's parameter type
+and the result to the target's result type, each checked as above. A value that is no function
+converts too, and calling the result stops with `TypeError: the value converted to a function
+type is not a function` (Node's `TypeError: f is not a function`; `typeof` of the result is
+`"function"`, where Node gives the held value's). A function of exactly the target type is
+that function itself, so `===`, `indexOf`, `Set` and `Map` see the one value, as in Node. Only
+a function of another type gives a new function, at each conversion, and that one is not `===`
+the function held (Node keeps the one function). In a union (`ViewFn | Promise<ViewFn>`), the
+one function type member is told from the others by `typeof` and converted the same way; a
+`Promise` member needs no test, as a promise is never held as `any` (a function called through
+`any` that returns one stops with ``TypeError: a promise cannot be held as `any` yet``).
+
+```ts
+interface Ctx<T> {
+  v: T;
+}
+const setup: any = (c: Ctx<number>) => "x" + c.v;
+const s = setup as (c: Ctx<any>) => string;
+console.log(s({ v: 1 })); // x1
+```
+
 An object of another type converted to an object type (`a as Item` where `a` holds a class
 instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
 that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
@@ -3079,6 +3103,10 @@ and checked then as the field's type, so a field the object lacks stops with a `
 that read (Node reads `undefined`). A write goes to the object for the fields the object has;
 writing an optional field the object lacks (`item.note = "hi"` on a class instance without
 `note`) stops with the `TypeError` of a fixed-shape object (#924), where Node adds the property.
+An `any` written to a field of a view (`brands.__props = null as any`) goes to the object as it
+is, without the check as the field's type, as Node stores any value: an object that holds its
+properties as `any` (a function with properties) keeps it, and a read of the field checks it
+then; an object of a fixed layout checks it as its own field's type.
 Converting the object again while a view of it lives gives that view (an object has one view at
 a time, whatever object type it is converted to), so `===`, `Map`, `Set` and `indexOf` see one
 value. Back in an `any` (and for `WeakMap`, `WeakSet` and `WeakRef`, `in`, `Object.keys`,
@@ -3478,14 +3506,36 @@ function main(): void {
 **Planned** (#924): `JSON.parse` into an `any`, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
 
-`key in x` on an `any` asks the value held: a class instance or object type has its fields,
-methods and accessors and what every object has from `Object.prototype` (`toString`), a
-`Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
-an array its `length`. A `null` or `undefined` value stops with
-Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`. An optional field
-of a nullable type (`a?: T | null`), which keeps "absent" apart, is there while present;
-another optional field (which cannot tell "absent" from a present `undefined`) and an array
-index stop with a `TypeError` naming #823 for now.
+`key in x` on an `any` asks the value held, as Node does: a class instance or object type has
+its fields, methods and accessors (a class's inherited ones too) and what every object has from
+`Object.prototype` (`toString`), a `Record<string, V>` its keys and, unless `Object.create(null)`
+made it, what every object has. An array (or a tuple) has its element indexes (`0 in xs`,
+`"1" in xs`; not `"01"`), `length` and `Array.prototype`'s methods (`"push" in xs`,
+`Symbol.iterator in xs`); a typed array its indexes and `%TypedArray%.prototype`'s members (a
+`Uint8Array` also `toBase64`, `toHex`, `setFromBase64` and `setFromHex`); a function `call`,
+`apply`, `bind`, `name` and `length`; a `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`,
+`Error`, `ArrayBuffer`, `DataView` or `Promise` what its JavaScript prototype has (`"size" in
+map`, never a map's entries). A function's `prototype` (which a declared function has and an
+arrow or a method has not) stops with a `TypeError` naming #823 for now. A string, number,
+boolean or symbol stops with Node's `TypeError: Cannot use 'in' operator to search for 'k' in
+str`, and a `null` or `undefined` value with `... in undefined` (a symbol key shown as Node
+shows it, `'Symbol(Symbol.iterator)'`). An optional field of a nullable type in an object type
+(`a?: T | null`), which keeps "absent" apart, is there while present; another optional field
+of an object type is there while it holds a value, so `{ a: undefined }` given to an
+`a?: number` field reads as absent.
+
+```ts
+const C = Symbol("computed");
+function isComputed(v: unknown): boolean {
+  return v !== null && typeof v === "object" && C in v;
+}
+function main(): void {
+  const xs: any = [1, 2];
+  console.log(isComputed([1, 2]), 1 in xs, 2 in xs, "push" in xs); // false true false true
+  const m: any = new Map<string, number>([["a", 1]]);
+  console.log("size" in m, "a" in m); // true false
+}
+```
 
 A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
 `const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member

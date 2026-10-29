@@ -2,46 +2,33 @@
 // `Request`, `Response` and `Headers` need no import (std/prelude/global/fetch.vlt).
 //
 // `fetch` resolves once the response's status and headers have arrived; the body is received
-// when it is read. Connections are pooled per origin (HTTP/1.1 keep-alive; HTTP/2 when an
-// `https://` server offers it), redirects are followed as the Fetch standard says, and an
-// `AbortSignal` cancels the request in the runtime: it is dropped, not just abandoned
-// (crates/velt_rt/src/http/client).
+// when it is read. The client is Velt code on velt:net (std/fetch/client/): HTTP/1.1 with
+// keep-alive connections pooled per origin, redirects followed as the Fetch standard says,
+// bodies decoded by velt:compress, and an `AbortSignal` that stops the request where it is
+// waiting and closes its connection.
 
-import { IoError, IoResult, unwrapIo } from "velt:io";
+import { IoError } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
-import { BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
+import { BodyStream, bodyParts, collect, impliedType, sourceType } from "velt:fetch/body";
 import { Headers } from "velt:fetch/headers";
 import { normalizeMethod, Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
+import { ClientRequest, ERROR, FOLLOW, MANUAL, send } from "velt:fetch/client/send";
 
 export { BodyInit, BodyStream } from "velt:fetch/body";
 export { Headers, HeadersInit } from "velt:fetch/headers";
 export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 export { Response, ResponseInit } from "velt:fetch/response";
 
-// The runtime takes `text` / `bytes` (moved: left empty) and copies the rest; `headers` is the
-// flat list `[name, value, …]`.
-declare async function velt_rt_http_fetch_send(
-  method: string,
-  url: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  redirect: u32,
-  signal: u64,
-  ca: string,
-): Promise<IoResult<u64>>;
-
-function redirectMode(r: RequestRedirect): u32 {
+function redirectMode(r: RequestRedirect): i64 {
   if (r == "error") {
-    return 1;
+    return ERROR;
   }
   if (r == "manual") {
-    return 2;
+    return MANUAL;
   }
-  return 0;
+  return FOLLOW;
 }
 
 /**
@@ -65,7 +52,7 @@ export async function fetch(
     kind = 2;
   }
   const signal = o.signal;
-  const r = await velt_rt_http_fetch_send(
+  const out = new ClientRequest(
     o.method,
     o.url,
     o.headers,
@@ -73,13 +60,18 @@ export async function fetch(
     text,
     bytes,
     redirectMode(o.redirect),
-    signal == null ? 0 : signal.handle(),
+    signal,
     o.ca,
   );
-  if (r.code != 0 && signal != null) {
-    signal.throwIfAborted();
+  try {
+    return Response.adopt(await send(out), signal, o.method == "HEAD");
+  } catch (e) {
+    // An I/O error the abort caused (a closed stream) is the abort.
+    if (signal != null && e instanceof IoError) {
+      signal.throwIfAborted();
+    }
+    throw e;
   }
-  return Response.adopt(unwrapIo(r), signal, o.method == "HEAD");
 }
 
 // What `fetch` sends.
@@ -112,7 +104,7 @@ function outgoing(
     url = input.href;
   } else {
     const req = new Request(input, init);
-    const signal = req.signal;
+    const signal = req.givenSignal();
     if (signal != null) {
       signal.throwIfAborted();
     }
@@ -158,7 +150,7 @@ function outgoing(
     throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
   }
   let headers: string[] = [];
-  const ct = impliedType(body.implied);
+  const ct = sourceType(b) ?? impliedType(body.implied);
   if (given != null) {
     const h = new Headers(given);
     if (ct != null && !h.has("content-type")) {

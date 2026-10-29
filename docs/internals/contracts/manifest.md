@@ -120,6 +120,37 @@ subpath (`.`, never another) falls back to `src/index.ts`, then `src/index.tsx`,
 target of `.` under any condition (`exports::root_targets_any_condition`) has a source. Errors: a subpath not
 exported, an `exports` mixing subpaths and conditions, a target without a source.
 
+## Workspaces (additive, #1855)
+`vpm::workspace` (docs/internals/design/workspaces.md). `velt.workspace.vlt` (`WORKSPACE_FILE`) at
+a workspace root is read by the manifest reader (`manifest::read::read_workspace`: the same data
+subset and bounds; one `export const workspace: Workspace = { … }` with `members` (required,
+non-empty `/`-separated relative globs: `*`, `**` as a whole segment, `!` to exclude, `"."` for
+the root; no `..`, `./`, `\`, duplicates), `velt`, `registry`, `dependencies` (no `"workspace"`
+values; no key naming a member)). `Workspace::find` takes the nearest workspace file at or above a
+directory; `Workspace::load` lists members with `npm::workspace::dirs_with` (marker
+`package.vlt`, never entering `target`; literal segments match entry names exactly, as `*` ones do,
+on every OS; each positive glob must list a package) and checks: distinct member names; no `velt`
+or `registry` in a member; a dependency named like a member is `"workspace"`; every
+`"workspace"` names a member or a workspace dependency; no cycle of `"workspace"` dependencies
+between members. Each error is located (`file:line:col: error: …`, via `manifest::ide::locate`
+and the globs' spans, `WorkspaceFile::member_spans`). Membership of a package below a workspace
+file is decided by its globs alone (`velt_toolchain::members::lists`, also the launcher's): a
+package they don't list installs on its own (`Installed::notes` says so) and keeps its own `velt`. `Dependency::Version("workspace")`
+(`manifest::WORKSPACE_REQUIREMENT`, `Dependency::is_workspace`) is valid in any `package.vlt`;
+resolving it outside a workspace is an error. `Workspace::effective_manifest` replaces it with the
+member's directory (an absolute `path`) or the workspace's requirement (a `path` made absolute),
+and sets the workspace's `velt` and `registry`. `vpm::install` of a member (and
+`install::workspace::install` of the whole workspace) resolves all members together
+(`resolve::resolve_members`: every member is a path requirement of the root; one version per
+name), refuses a member's own `velt.lock.json`, writes the lockfile at the workspace root (members
+as `"source": "workspace+<dir>"`, `lockfile::WORKSPACE_SOURCE`; path sources relative to the
+workspace root), and returns the member's graph: the member first, then the packages it uses
+transitively. A package below a workspace file that no glob lists installs on its own. The
+launcher's pin (`velt_toolchain::pin::find_pin`) is the nearer package's `velt`, else its
+workspace file's, with the lock beside the file that holds it. A build without `-o` writes to
+`<package of the input>/target/velt/` (relative when that is the current directory); its stamp
+records the workspace file, the globs' listings, the members' manifests and the root lockfile.
+
 ## Fields
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
   never do.

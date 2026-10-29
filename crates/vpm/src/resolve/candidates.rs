@@ -1,8 +1,8 @@
 //! Candidate versions for a requirement: registry index entries (cached per name) or the single
 //! package at a path, each with its own dependency requirements.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use semver::Version;
 
@@ -23,15 +23,24 @@ pub(super) struct Provider<'a> {
     loc: &'a Locations,
     root_dir: &'a Path,
     prefer: Option<&'a Lockfile>,
+    /// Manifests to use instead of reading `package.vlt`, by package directory: a workspace's
+    /// members, with `"workspace"` replaced.
+    manifests: &'a BTreeMap<PathBuf, Manifest>,
     indexes: HashMap<String, Option<Index>>,
 }
 
 impl<'a> Provider<'a> {
-    pub fn new(loc: &'a Locations, root_dir: &'a Path, prefer: Option<&'a Lockfile>) -> Self {
+    pub fn new(
+        loc: &'a Locations,
+        root_dir: &'a Path,
+        prefer: Option<&'a Lockfile>,
+        manifests: &'a BTreeMap<PathBuf, Manifest>,
+    ) -> Self {
         Provider {
             loc,
             root_dir,
             prefer,
+            manifests,
             indexes: HashMap::new(),
         }
     }
@@ -129,10 +138,13 @@ impl<'a> Provider<'a> {
     }
 
     fn path_candidate(&self, req: &Requirement, dir: &Path) -> Result<Candidate, String> {
-        let manifest = Manifest::from_dir(dir).map_err(|e| {
-            let shown = crate::relpath::relative(dir, self.root_dir);
-            format!("path dependency `{}` at `{shown}`: {e}", req.name)
-        })?;
+        let manifest = match self.manifests.get(dir) {
+            Some(m) => m.clone(),
+            None => Manifest::from_dir(dir).map_err(|e| {
+                let shown = crate::relpath::relative(dir, self.root_dir);
+                format!("path dependency `{}` at `{shown}`: {e}", req.name)
+            })?,
+        };
         if manifest.package.name != req.name {
             return Err(format!(
                 "path dependency `{}` at `{}` is the package `{}`",

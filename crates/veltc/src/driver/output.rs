@@ -46,8 +46,9 @@ impl OutputPaths {
 
     /// Output paths for `input` given `-o`, `--emit` and the target.
     pub fn new(input: &Path, output: Option<&Path>, emit: Emit, target: &str) -> OutputPaths {
+        let dir = default_dir(input);
         if velt_codegen_llvm::is_wasm(target) {
-            return Self::wasm(input, output, emit);
+            return Self::wasm(input, output, emit, &dir);
         }
         let windows = target.contains("windows");
         let obj_ext = if windows { "obj" } else { "o" };
@@ -58,9 +59,7 @@ impl OutputPaths {
         if emit == Emit::Obj {
             let object = match output {
                 Some(o) => o.to_path_buf(),
-                None => Path::new("target")
-                    .join("velt")
-                    .join(format!("{stem}.{obj_ext}")),
+                None => dir.join(format!("{stem}.{obj_ext}")),
             };
             return OutputPaths {
                 executable: PathBuf::new(),
@@ -72,11 +71,7 @@ impl OutputPaths {
             // `link.exe /OUT:foo` would produce an unrunnable `foo`; Windows executables need `.exe`.
             Some(o) if windows && o.extension().is_none() => o.with_extension("exe"),
             Some(o) => o.to_path_buf(),
-            None => Path::new("target").join("velt").join(if windows {
-                format!("{stem}.exe")
-            } else {
-                stem
-            }),
+            None => dir.join(if windows { format!("{stem}.exe") } else { stem }),
         };
         // Object next to the executable: `<exe name without .exe>.<obj_ext>`.
         let name = executable
@@ -92,11 +87,10 @@ impl OutputPaths {
     }
 
     /// WebAssembly outputs: `<stem>.wasm` (a module, not an executable) and `<stem>.o`.
-    fn wasm(input: &Path, output: Option<&Path>, emit: Emit) -> OutputPaths {
+    fn wasm(input: &Path, output: Option<&Path>, emit: Emit, default_dir: &Path) -> OutputPaths {
         let stem = input
             .file_stem()
             .map_or_else(|| "main".into(), |s| s.to_string_lossy().into_owned());
-        let default_dir = Path::new("target").join("velt");
         if emit == Emit::Obj {
             let object =
                 output.map_or_else(|| default_dir.join(format!("{stem}.o")), Path::to_path_buf);
@@ -113,6 +107,22 @@ impl OutputPaths {
         let object = executable.with_extension("o");
         OutputPaths { executable, object }
     }
+}
+
+/// Where a build without `-o` puts its outputs: `target/velt` of the package `input` belongs to,
+/// wherever `velt` runs, so the members of a workspace built from its root keep their programs and
+/// build stamps apart (docs/internals/design/workspaces.md). Relative (to the current directory)
+/// when that is the package root, or `input` is in no package.
+fn default_dir(input: &Path) -> PathBuf {
+    let relative = Path::new("target").join("velt");
+    let Some(root) = input.parent().and_then(vpm::manifest::find_package_root) else {
+        return relative;
+    };
+    let cwd = std::env::current_dir().map(|d| vpm::relpath::absolute(&d));
+    if cwd.is_ok_and(|cwd| vpm::relpath::normalize(&cwd) == vpm::relpath::normalize(&root)) {
+        return relative;
+    }
+    root.join(relative)
 }
 
 #[cfg(test)]
@@ -200,6 +210,17 @@ mod tests {
             paths("h.vlt", Some("x.o"), Emit::Obj, LINUX).1,
             PathBuf::from("x.o")
         );
+    }
+
+    #[test]
+    fn a_package_s_outputs_go_to_its_own_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member = vpm::relpath::absolute(tmp.path()).join("apps/server");
+        std::fs::create_dir_all(member.join("src")).unwrap();
+        std::fs::write(member.join("package.vlt"), "").unwrap();
+        let p = OutputPaths::new(&member.join("src/main.vlt"), None, Emit::Exe, LINUX);
+        assert_eq!(p.executable, member.join("target/velt/main"));
+        assert_eq!(p.object, member.join("target/velt/main.o"));
     }
 
     #[test]

@@ -94,16 +94,36 @@ function rangeError(what: string): never {
   panic(`RangeError: ConcurrentMap.${what}`);
 }
 
+/** Whether a `shared<V>` is an atomic integer, which `add` and `set` change in place. */
+function atomicShared<V>(): bool {
+  return typeIs<V, i64>() || typeIs<V, u64>() || typeIs<V, isize>() || typeIs<V, usize>();
+}
+
+/** The tree word of `key` (`create` takes only `u64` keys for now). */
+function keyWord<K>(key: K): u64 {
+  if (typeIs<K, u64>()) {
+    return asType<u64>(key);
+  }
+  rangeError("keys other than u64 are not supported yet");
+}
+
 /**
- * A map from `u64` keys to `u64` values for many threads at once: share it
- * (`shared(ConcurrentMap.create(n))`) and call its methods from any task. Lookups write no
+ * A map from `u64` keys to `V` values (`u64` when not written) for many threads at once: share
+ * it (`shared(ConcurrentMap.create(n))`) and call its methods from any task. A value other than
+ * a `u64` is boxed once, and read in place by `read`. Lookups write no
  * shared memory, so readers on many cores never slow each other; writers take a latch per node.
  * A lookup waits (spins) while a writer holds its node, so it is not lock-free. Its keys are kept
  * in key ranges, but a leaf's are unsorted and leaves are not linked: there is no ordered walk,
  * iteration or size yet (#1688). Its room is fixed when it is created, and given back as
  * leaves empty.
  */
-export class ConcurrentMap {
+export class ConcurrentMap<K = u64, V extends Frozen = u64> {
+  /**
+   * The values of a map whose `V` is not `u64`: one `shared<V>` per leaf slot (`node * LEAF_CAP +
+   * slot`), read borrowed inside the reader's epoch section. A `u64` `V` sits in the pair's value
+   * word instead, and this stays empty.
+   */
+  private vals: Atomic<shared<V> | null>[] = [];
   private w: Atomic<u64>[] = [];
   private root: Atomic<u64> = new Atomic<u64>(0);
   private next: Atomic<u64> = new Atomic<u64>(1);
@@ -120,8 +140,11 @@ export class ConcurrentMap {
    * and need more room than their number. A `set` of a key the map holds can also need room,
    * when its leaf is full and splits first. Panics with a RangeError above 10^11 entries.
    */
-  static create(capacity: usize): ConcurrentMap {
-    const m = new ConcurrentMap();
+  static create(capacity: usize): ConcurrentMap<K, V> {
+    if (!typeIs<K, u64>()) {
+      rangeError("create: keys other than u64 are not supported yet (#1696)");
+    }
+    const m = new ConcurrentMap<K, V>();
     if ((capacity as u64) > 100000000000) {
       rangeError("create: at most 10^11 entries");
     }
@@ -132,11 +155,98 @@ export class ConcurrentMap {
       m.w.push(new Atomic<u64>(0));
     }
     m.w[1].store(LEAF_BIT, "relaxed");
+    if (!typeIs<V, u64>()) {
+      const slots = m.nodes * LEAF_CAP;
+      m.vals.reserve(slots as usize);
+      for (let i: u64 = 0; i < slots; i++) {
+        m.vals.push(new Atomic<shared<V> | null>(null));
+      }
+    }
     return m;
   }
 
-  /** The value of `key`, or `undefined` if the map has none. */
-  get(key: u64): u64 | undefined {
+  /** The value of `key`, or `undefined` if the map has none (a boxed value is copied). */
+  get(key: K): V | undefined {
+    const k = keyWord(key);
+    if (typeIs<V | undefined, u64 | undefined>()) {
+      return asType<V | undefined>(this.getWord(k));
+    }
+    const s = this.findBoxed(k);
+    if (s == null) {
+      return undefined;
+    }
+    return s;
+  }
+
+  /**
+   * Runs `f` on the value of `key` (the map's own, not a copy; for a 64-bit integer `V`, whose
+   * `shared` is an atomic integer, a box of its own) and returns what it returns, or
+   * `undefined` if the map has no `key`.
+   */
+  read<R, E>(key: K, f: (value: shared<V>) => R throws E): R | undefined throws E {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      const w = this.getWord(k);
+      return w == undefined ? undefined : f(shared(asType<V>(w)));
+    }
+    const s = this.findBoxed(k);
+    if (s == null) {
+      return undefined;
+    }
+    // A `shared` 64-bit integer is an atomic one (`add`, `set`): the callback gets a box of its
+    // own, so it cannot change the map's value outside the leaf's latch.
+    if (atomicShared<V>()) {
+      const v: V = s;
+      return f(shared(v));
+    }
+    return f(s);
+  }
+
+  /** Whether the map has `key`. */
+  has(key: K): bool {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      return this.getWord(k) != undefined;
+    }
+    return this.findBoxed(k) != null;
+  }
+
+  /**
+   * Makes `value` the value of `key`, adding the key if the map has none (a value other than a
+   * `u64` is boxed once). Panics with a RangeError for `key` 2^64 - 1 (the one key a map cannot
+   * hold) and when the map is out of room.
+   */
+  set(key: K, value: V) {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      this.setWord(k, asType<u64>(value));
+      return;
+    }
+    if (k == MAX_KEY) {
+      rangeError("set: the key 2^64 - 1 cannot be held");
+    }
+    const boxed = shared(value);
+    while (!this.trySetBoxed(k, boxed)) {}
+  }
+
+  /**
+   * Adds `delta` to the `u64` value of `key` (wrapping), atomically: the value before, or
+   * `undefined` if the map has no `key`. Only for `u64` values.
+   */
+  add(key: K, delta: u64): u64 | undefined {
+    if (typeIs<V, u64>()) {
+      return this.addWord(keyWord(key), delta);
+    }
+    rangeError("add: only for u64 values");
+  }
+
+  /** Removes `key`; whether the map had it (a boxed value is dropped once no reader has it). */
+  delete(key: K): bool {
+    return this.deleteWord(keyWord(key));
+  }
+
+  /** `get` of a `u64` value. */
+  private getWord(key: u64): u64 | undefined {
     // The one key a map cannot hold (and inner nodes' padding: a descent for it would follow
     // a slot no separator covers).
     if (key == MAX_KEY) {
@@ -189,9 +299,59 @@ export class ConcurrentMap {
     }
   }
 
-  /** Whether the map has `key`. */
-  has(key: u64): bool {
-    return this.get(key) != undefined;
+  /** The boxed value of `key` (`V` other than `u64`), read as `getWord` reads a value word. */
+  private findBoxed(key: u64): shared<V> | null {
+    if (key == MAX_KEY) {
+      return null;
+    }
+    restart: while (true) {
+      const n = this.root.load("acquire");
+      let node = n;
+      let b = n * NODE;
+      if ((this.w.length as u64) < NODE || b > (this.w.length as u64) - NODE) {
+        continue restart;
+      }
+      let v = this.readVersion(b);
+      if (this.root.load("acquire") != n) {
+        continue restart;
+      }
+      let meta = this.w[b + 1].load("relaxed");
+      const levels = (meta >> LEVEL_SHIFT) & 255;
+      for (let l: u64 = 0; l < levels; l++) {
+        const c = this.w[this.childWord(b, key)].load("relaxed");
+        const cb = c * NODE;
+        if (
+          c >= this.nodes || (this.w.length as u64) < NODE || cb > (this.w.length as u64) - NODE
+        ) {
+          continue restart;
+        }
+        const vc = this.readVersion(cb);
+        if (!this.isUnchanged(b, v)) {
+          continue restart;
+        }
+        node = c;
+        b = cb;
+        v = vc;
+        meta = this.w[b + 1].load("relaxed");
+      }
+      if ((meta & LEAF_BIT) == 0) {
+        continue restart;
+      }
+      const i = this.findSlot(b, key);
+      if (i >= LEAF_CAP) {
+        if (!this.isUnchanged(b, v)) {
+          continue restart;
+        }
+        return null;
+      }
+      // The reference stays valid while it is read (the epoch section around the load), even
+      // if a writer replaces it; the version check then says whether it was `key`'s.
+      const s = this.vals[node * LEAF_CAP + i].load("acquire");
+      if (!this.isUnchanged(b, v)) {
+        continue restart;
+      }
+      return s;
+    }
   }
 
   /**
@@ -199,7 +359,7 @@ export class ConcurrentMap {
    * RangeError for `key` 2^64 - 1 (the one key a map cannot hold) and when the map is out of
    * room.
    */
-  set(key: u64, value: u64) {
+  private setWord(key: u64, value: u64) {
     if (key == MAX_KEY) {
       rangeError("set: the key 2^64 - 1 cannot be held");
     }
@@ -211,7 +371,7 @@ export class ConcurrentMap {
    * if the map has no `key` (nothing is added). Like `set`, it takes the key's leaf for the
    * moment of the change; lookups go on reading meanwhile.
    */
-  add(key: u64, delta: u64): u64 | undefined {
+  private addWord(key: u64, delta: u64): u64 | undefined {
     if (key == MAX_KEY) {
       return undefined;
     }
@@ -227,7 +387,7 @@ export class ConcurrentMap {
   }
 
   /** Removes `key`; whether the map had it. */
-  delete(key: u64): bool {
+  private deleteWord(key: u64): bool {
     if (key == MAX_KEY) {
       return false;
     }
@@ -248,134 +408,140 @@ export class ConcurrentMap {
    * elements are unspecified). Unlike `BTreeMap.getMany`, which returns a new array, it fills the
    * caller's, so a loop of batches allocates nothing. Faster than one `get` per key when the map
    * is larger than the caches: the keys descend the tree in lockstep, and each prefetches its next
-   * node while the others search theirs, so their cache misses overlap. Panics with a RangeError
-   * for more than 64 keys.
+   * node while the others search theirs, so their cache misses overlap. For `u64` keys and values
+   * only for now. Panics with a RangeError for more than 64 keys.
    */
-  getManyInto(keys: u64[], values: u64[]): u64 {
-    if (keys.length > 64) {
-      rangeError("getManyInto: at most 64 keys at once");
-    }
-    const n = keys.length;
-    while (values.length < n) {
-      values.push(0);
-    }
-    const all: u64 = n == 64 ? MAX_KEY : (1 << (n as u64)) - 1;
-    // Per key: its node at `i`, the node's version at `n + i`, its next node at `2n + i`.
-    const lanes: u64[] = [];
-    lanes.reserve(3 * n);
-    let failed: u64 = 0;
-    const root = this.root.load("acquire");
-    const rb = root * NODE;
-    let rv: u64 = 0;
-    let levels: u64 = 0;
-    if ((this.w.length as u64) < NODE || rb > (this.w.length as u64) - NODE) {
-      failed = all;
-    } else {
-      rv = this.readVersion(rb);
-      levels = (this.w[rb + 1].load("relaxed") >> LEVEL_SHIFT) & 255;
-      if (this.root.load("acquire") != root) {
-        failed = all;
-        levels = 0;
-      }
-    }
-    // The key 2^64 - 1 is never held: its lane goes to `get`, which says so.
-    for (let i = 0; i < n; i++) {
-      if (keys[i] == MAX_KEY) {
-        failed |= 1 << (i as u64);
-      }
-    }
-    for (let i = 0; i < n; i++) {
-      lanes.push(rb);
-    }
-    for (let i = 0; i < n; i++) {
-      lanes.push(rv);
-    }
-    for (let i = 0; i < n; i++) {
-      lanes.push(0);
-    }
-    for (let l: u64 = 0; l < levels; l++) {
-      for (let i = 0; i < n; i++) {
-        if (((failed >> (i as u64)) & 1) != 0) {
-          continue;
+  getManyInto(keys: K[], values: V[]): u64 {
+    // The `u64` body, its elements converted where read and written (nothing at run time).
+    if (typeIs<K, u64>()) {
+      if (typeIs<V, u64>()) {
+        if (keys.length > 64) {
+          rangeError("getManyInto: at most 64 keys at once");
         }
-        const b = lanes[i];
-        const c = this.w[this.childWord(b, keys[i])].load("relaxed");
-        const cb = c * NODE;
-        if (
-          c >= this.nodes || (this.w.length as u64) < NODE || cb > (this.w.length as u64) - NODE
-        ) {
-          failed |= 1 << (i as u64);
-          continue;
+        const n = keys.length;
+        while (values.length < n) {
+          values.push(asType<V>(0 as u64));
         }
-        this.w.prefetch(cb as usize);
-        this.w.prefetch((cb + GROUP0) as usize);
-        lanes[2 * n + i] = cb;
-      }
-      // Validated in a second pass, once the prefetches have had time.
-      for (let i = 0; i < n; i++) {
-        if (((failed >> (i as u64)) & 1) != 0) {
-          continue;
+        const all: u64 = n == 64 ? MAX_KEY : (1 << (n as u64)) - 1;
+        // Per key: its node at `i`, the node's version at `n + i`, its next node at `2n + i`.
+        const lanes: u64[] = [];
+        lanes.reserve(3 * n);
+        let failed: u64 = 0;
+        const root = this.root.load("acquire");
+        const rb = root * NODE;
+        let rv: u64 = 0;
+        let levels: u64 = 0;
+        if ((this.w.length as u64) < NODE || rb > (this.w.length as u64) - NODE) {
+          failed = all;
+        } else {
+          rv = this.readVersion(rb);
+          levels = (this.w[rb + 1].load("relaxed") >> LEVEL_SHIFT) & 255;
+          if (this.root.load("acquire") != root) {
+            failed = all;
+            levels = 0;
+          }
         }
-        const cb = lanes[2 * n + i];
-        const vc = this.readVersion(cb);
-        if (!this.isUnchanged(lanes[i], lanes[n + i])) {
-          failed |= 1 << (i as u64);
-          continue;
+        // The key 2^64 - 1 is never held: its lane goes to `get`, which says so.
+        for (let i = 0; i < n; i++) {
+          if (asType<u64>(keys[i]) == MAX_KEY) {
+            failed |= 1 << (i as u64);
+          }
         }
-        lanes[i] = cb;
-        lanes[n + i] = vc;
+        for (let i = 0; i < n; i++) {
+          lanes.push(rb);
+        }
+        for (let i = 0; i < n; i++) {
+          lanes.push(rv);
+        }
+        for (let i = 0; i < n; i++) {
+          lanes.push(0);
+        }
+        for (let l: u64 = 0; l < levels; l++) {
+          for (let i = 0; i < n; i++) {
+            if (((failed >> (i as u64)) & 1) != 0) {
+              continue;
+            }
+            const b = lanes[i];
+            const c = this.w[this.childWord(b, asType<u64>(keys[i]))].load("relaxed");
+            const cb = c * NODE;
+            if (
+              c >= this.nodes || (this.w.length as u64) < NODE || cb > (this.w.length as u64) - NODE
+            ) {
+              failed |= 1 << (i as u64);
+              continue;
+            }
+            this.w.prefetch(cb as usize);
+            this.w.prefetch((cb + GROUP0) as usize);
+            lanes[2 * n + i] = cb;
+          }
+          // Validated in a second pass, once the prefetches have had time.
+          for (let i = 0; i < n; i++) {
+            if (((failed >> (i as u64)) & 1) != 0) {
+              continue;
+            }
+            const cb = lanes[2 * n + i];
+            const vc = this.readVersion(cb);
+            if (!this.isUnchanged(lanes[i], lanes[n + i])) {
+              failed |= 1 << (i as u64);
+              continue;
+            }
+            lanes[i] = cb;
+            lanes[n + i] = vc;
+          }
+        }
+        // The leaves in two passes as well: each key's candidate slot and a prefetch of its pair,
+        // then the pairs' loads and the checks.
+        let slow: u64 = 0;
+        for (let i = 0; i < n; i++) {
+          if (((failed >> (i as u64)) & 1) != 0) {
+            continue;
+          }
+          const b = lanes[i];
+          const meta = this.w[b + 1].load("relaxed");
+          if ((meta & LEAF_BIT) == 0) {
+            failed |= 1 << (i as u64);
+            continue;
+          }
+          const cand = this.candidate(b, asType<u64>(keys[i]));
+          if (cand > LEAF_CAP) {
+            slow |= 1 << (i as u64);
+            continue;
+          }
+          const at = cand < LEAF_CAP ? b + PAIRS + 2 * cand : b + 1;
+          this.w.prefetch(at as usize);
+          lanes[2 * n + i] = at;
+        }
+        let found: u64 = 0;
+        for (let i = 0; i < n; i++) {
+          if ((((failed | slow) >> (i as u64)) & 1) != 0) {
+            continue;
+          }
+          const b = lanes[i];
+          const at = lanes[2 * n + i];
+          const key = this.w[at].load("relaxed");
+          const value = this.w[at + 1].load("relaxed");
+          if (!this.isUnchanged(b, lanes[n + i])) {
+            failed |= 1 << (i as u64);
+            continue;
+          }
+          values[i] = asType<V>(value);
+          found |= (at != b + 1 && key == asType<u64>(keys[i]) ? 1 : 0) << (i as u64);
+        }
+        // Keys a writer disturbed, or with a tag shared by two keys of their leaf: one by one.
+        failed |= slow;
+        while (failed != 0) {
+          const i = failed.trailingZeros();
+          failed &= failed - 1;
+          const r = this.getWord(asType<u64>(keys[i]));
+          if (r != undefined) {
+            values[i] = asType<V>(r);
+            found |= 1 << (i as u64);
+          }
+        }
+        return found;
       }
     }
-    // The leaves in two passes as well: each key's candidate slot and a prefetch of its pair,
-    // then the pairs' loads and the checks.
-    let slow: u64 = 0;
-    for (let i = 0; i < n; i++) {
-      if (((failed >> (i as u64)) & 1) != 0) {
-        continue;
-      }
-      const b = lanes[i];
-      const meta = this.w[b + 1].load("relaxed");
-      if ((meta & LEAF_BIT) == 0) {
-        failed |= 1 << (i as u64);
-        continue;
-      }
-      const cand = this.candidate(b, keys[i]);
-      if (cand > LEAF_CAP) {
-        slow |= 1 << (i as u64);
-        continue;
-      }
-      const at = cand < LEAF_CAP ? b + PAIRS + 2 * cand : b + 1;
-      this.w.prefetch(at as usize);
-      lanes[2 * n + i] = at;
-    }
-    let found: u64 = 0;
-    for (let i = 0; i < n; i++) {
-      if ((((failed | slow) >> (i as u64)) & 1) != 0) {
-        continue;
-      }
-      const b = lanes[i];
-      const at = lanes[2 * n + i];
-      const key = this.w[at].load("relaxed");
-      const value = this.w[at + 1].load("relaxed");
-      if (!this.isUnchanged(b, lanes[n + i])) {
-        failed |= 1 << (i as u64);
-        continue;
-      }
-      values[i] = value;
-      found |= (at != b + 1 && key == keys[i] ? 1 : 0) << (i as u64);
-    }
-    // Keys a writer disturbed, or with a tag shared by two keys of their leaf: one by one.
-    failed |= slow;
-    while (failed != 0) {
-      const i = failed.trailingZeros();
-      failed &= failed - 1;
-      const r = this.get(keys[i]);
-      if (r != undefined) {
-        values[i] = r;
-        found |= 1 << (i as u64);
-      }
-    }
-    return found;
+    rangeError("getManyInto: for u64 keys and values only for now");
   }
 
   // --- latches ---------------------------------------------------------------------------
@@ -570,38 +736,7 @@ export class ConcurrentMap {
       const leaf = (meta & LEAF_BIT) != 0;
       const len = meta & LEN_MASK;
       if (len >= (leaf ? LEAF_CAP : INNER_CAP)) {
-        // Full: split it now, holding its parent too, and start over.
-        if (parent != NONE && !this.tryLockAt(parent * NODE, pv)) {
-          return false;
-        }
-        if (!this.tryLockAt(base, v)) {
-          if (parent != NONE) {
-            this.unlock(parent * NODE, pv);
-          }
-          return false;
-        }
-        if (parent == NONE && this.root.load("relaxed") != n) {
-          this.unlock(base, v);
-          return false;
-        }
-        const right = this.alloc();
-        const sep = leaf ? this.splitLeaf(n, right) : this.splitInner(n, right);
-        if (parent == NONE) {
-          const r = this.alloc();
-          const rb = r * NODE;
-          this.w[rb + keyAt(0)].store(sep, "relaxed");
-          this.padKeys(rb, 1);
-          this.w[rb + childAt(0)].store(n, "relaxed");
-          this.w[rb + childAt(1)].store(right, "relaxed");
-          const below = leaf ? 0 : (meta >> LEVEL_SHIFT) & 255;
-          this.w[rb + 1].store(((below + 1) << LEVEL_SHIFT) | 1, "relaxed");
-          this.reindex(rb, 1);
-          this.root.store(r, "release");
-        } else {
-          this.insertSeparator(parent, sep, right);
-          this.unlock(parent * NODE, pv);
-        }
-        this.unlock(base, v);
+        this.splitFull(n, v, meta, parent, pv);
         return false;
       }
       if (leaf) {
@@ -615,6 +750,93 @@ export class ConcurrentMap {
           this.place(base, k, val);
           this.w[base + 1].store(meta + 1, "relaxed");
         }
+        this.unlock(base, v);
+        return true;
+      }
+      const next = this.descend(base, v, k);
+      if (next == NONE) {
+        return false;
+      }
+      parent = n;
+      pv = v;
+      n = next;
+      v = this.readVersion(n * NODE);
+      if (!this.isUnchanged(base, pv)) {
+        return false;
+      }
+    }
+  }
+
+  /**
+   * Splits full node `n` (at version `v`, its meta word `meta`), holding its parent (`NONE` for
+   * the root) at version `pv` too; does nothing if either changed. The caller starts over.
+   */
+  private splitFull(n: u64, v: u64, meta: u64, parent: u64, pv: u64) {
+    const base = n * NODE;
+    const leaf = (meta & LEAF_BIT) != 0;
+    if (parent != NONE && !this.tryLockAt(parent * NODE, pv)) {
+      return;
+    }
+    if (!this.tryLockAt(base, v)) {
+      if (parent != NONE) {
+        this.unlock(parent * NODE, pv);
+      }
+      return;
+    }
+    if (parent == NONE && this.root.load("relaxed") != n) {
+      this.unlock(base, v);
+      return;
+    }
+    const right = this.alloc();
+    const sep = leaf ? this.splitLeaf(n, right) : this.splitInner(n, right);
+    if (parent == NONE) {
+      const r = this.alloc();
+      const rb = r * NODE;
+      this.w[rb + keyAt(0)].store(sep, "relaxed");
+      this.padKeys(rb, 1);
+      this.w[rb + childAt(0)].store(n, "relaxed");
+      this.w[rb + childAt(1)].store(right, "relaxed");
+      const below = leaf ? 0 : (meta >> LEVEL_SHIFT) & 255;
+      this.w[rb + 1].store(((below + 1) << LEVEL_SHIFT) | 1, "relaxed");
+      this.reindex(rb, 1);
+      this.root.store(r, "release");
+    } else {
+      this.insertSeparator(parent, sep, right);
+      this.unlock(parent * NODE, pv);
+    }
+    this.unlock(base, v);
+  }
+
+  /** One descent of `set` of a boxed value (`trySet`'s, storing `boxed`); `false` to start over. */
+  private trySetBoxed(k: u64, boxed: shared<V>): bool {
+    let n = this.root.load("acquire");
+    let v = this.readVersion(n * NODE);
+    if (this.root.load("acquire") != n) {
+      return false;
+    }
+    let parent = NONE;
+    let pv: u64 = 0;
+    while (true) {
+      const base = n * NODE;
+      const meta = this.w[base + 1].load("relaxed");
+      const leaf = (meta & LEAF_BIT) != 0;
+      if ((meta & LEN_MASK) >= (leaf ? LEAF_CAP : INNER_CAP)) {
+        this.splitFull(n, v, meta, parent, pv);
+        return false;
+      }
+      if (leaf) {
+        if (!this.tryLockAt(base, v)) {
+          return false;
+        }
+        let i = this.findSlot(base, k);
+        if (i >= LEAF_CAP) {
+          i = this.freeSlot(base, k);
+          this.w[base + PAIRS + 2 * i].store(k, "relaxed");
+          this.setTag(base, i, k);
+          this.w[base + 1].store(meta + 1, "relaxed");
+        }
+        // Replacing a value retires the one before: freed once no reader has it.
+        this.vals[n * LEAF_CAP + i].store(boxed, "release");
         this.unlock(base, v);
         return true;
       }
@@ -782,6 +1004,9 @@ export class ConcurrentMap {
       return DEL_ABSENT;
     }
     this.clearTag(base, i);
+    if (!typeIs<V, u64>()) {
+      this.vals[(base / NODE) * LEAF_CAP + i].store(null, "release");
+    }
     this.w[base + 1].store(meta - 1, "relaxed");
     this.unlock(base, v);
     return DEL_DONE;
@@ -843,6 +1068,9 @@ export class ConcurrentMap {
     const i = this.findSlot(leaf, k);
     if (i < LEAF_CAP) {
       this.clearTag(leaf, i);
+      if (!typeIs<V, u64>()) {
+        this.vals[n * LEAF_CAP + i].store(null, "release");
+      }
       this.w[leaf + 1].store(meta - 1, "relaxed");
       this.removeChild(path[top], k);
     }
@@ -947,9 +1175,11 @@ export class ConcurrentMap {
     const vals: u64[] = [];
     keys.reserve(LEAF_CAP as usize);
     vals.reserve(LEAF_CAP as usize);
+    const boxed = !typeIs<V, u64>();
     for (let j: u64 = 0; j < LEAF_CAP; j++) {
       const k = this.w[b + PAIRS + 2 * j].load("relaxed");
-      const v = this.w[b + PAIRS + 1 + 2 * j].load("relaxed");
+      // A boxed value's word carries its slot through the sort, to move it after.
+      const v = boxed ? j : this.w[b + PAIRS + 1 + 2 * j].load("relaxed");
       keys.push(k);
       vals.push(v);
       let at = j;
@@ -968,6 +1198,9 @@ export class ConcurrentMap {
     // Each key to its home slot in its new leaf where it can (`r` is a new node: all empty).
     this.fill(b, keys, vals, 0, keep);
     this.fill(rb, keys, vals, keep, LEAF_CAP);
+    if (boxed) {
+      this.moveBoxed(n, r);
+    }
     this.w[rb + 1].store(LEAF_BIT | (LEAF_CAP - keep), "relaxed");
     this.w[b + 1].store(LEAF_BIT | keep, "relaxed");
     return keys[keep];
@@ -983,6 +1216,28 @@ export class ConcurrentMap {
       this.w[base + PAIRS + 2 * slot].store(k, "relaxed");
       this.w[base + PAIRS + 1 + 2 * slot].store(vals[j], "relaxed");
       this.setTag(base, slot, k);
+    }
+  }
+
+  /**
+   * Moves the boxed values of full leaf `n` (held) to the slots `splitLeaf` gave their keys in
+   * `n` and `r`, whose value words name the slot of `n` each came from.
+   */
+  private moveBoxed(n: u64, r: u64) {
+    const taken: (shared<V> | null)[] = [];
+    taken.reserve(LEAF_CAP as usize);
+    for (let j: u64 = 0; j < LEAF_CAP; j++) {
+      taken.push(this.vals[n * LEAF_CAP + j].exchange(null, "acquire"));
+    }
+    for (let side: u64 = 0; side < 2; side++) {
+      const node = side == 0 ? n : r;
+      const base = node * NODE;
+      for (let slot: u64 = 0; slot < LEAF_CAP; slot++) {
+        if (this.tagAt(base, slot) != 0) {
+          const from = this.w[base + PAIRS + 1 + 2 * slot].load("relaxed");
+          this.vals[node * LEAF_CAP + slot].store(taken[from], "release");
+        }
+      }
     }
   }
 

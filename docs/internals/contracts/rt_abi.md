@@ -395,21 +395,28 @@ integer lanes) reverses the bytes within each lane.
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
-`sha1msg2` on x86-64; `velt_vir::simd::ShaOp`) are the instructions themselves: a caller runs one
-only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` (`-> bool`) is true. On the
+`sha1msg2` on x86-64), and `velt_simd_u64x2_<op>` for the carry-less multiplications
+(`pclmulqdq_<imm>` on x86-64, `pmull_<imm>` on aarch64, `imm` 0, 1, 16 or 17 choosing the 64-bit
+lanes as PCLMULQDQ's immediate does; additive), `velt_vir::simd::ExtOp`, are the instructions
+themselves: a caller runs one only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` /
+`velt_simd_has_clmul_x86()` / `velt_simd_has_clmul_arm()` (`-> bool`) is true. On the
 architecture with the extension that check reads the runtime's flag byte, otherwise (another
 architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
 The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
-changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` leaves them 0:
+changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
+leaves the SHA (carry-less) ones 0:
 
 ```c
-uint8_t velt_cpu_sha_arm;  /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
-uint8_t velt_cpu_sha_x86;  /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
+uint8_t velt_cpu_sha_x86;    /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
 ```
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
-`+sha`), which it uses for nothing else; a *gated* function (VIR `Function::target`, HIR
-`Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" | "sha-x86")`, every call of
+`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
+`Function::target`, HIR `Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension
@@ -541,10 +548,10 @@ array adopted from native code, and the growth of an array of zero-sized element
 `panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
 (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
 at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
-below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
-against the limit too. A buffer within the limit that the target cannot allocate is out of
+below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` and
+`velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer within the limit that the target cannot allocate is out of
 memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
-stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed`, `velt_rt_bytes_uninit` and in
 `velt_rt_bytes_concat`.
 
 ## Array methods on a proxy [additive, #823]
@@ -742,6 +749,7 @@ hashing, math).
 Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.md, handles are
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
 - `u8[]` (`std/prelude/bytes.vlt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
+  `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
   `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),

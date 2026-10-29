@@ -61,7 +61,7 @@ fn dependencies_are_found_with_their_ranges() {
         (req.as_str(), &src[range.start as usize..range.end as usize]),
         ("^0.2", "^0.2")
     );
-    assert!(deps[1].has_path && deps[1].version.as_ref().unwrap().0 == "1");
+    assert!(deps[1].source == DependencySource::Path && deps[1].version.as_ref().unwrap().0 == "1");
     assert_eq!(
         &src[deps[1].name_range.start as usize..deps[1].name_range.end as usize],
         "\"my-util\""
@@ -189,8 +189,9 @@ fn findings() {
 #[test]
 fn diagnostics_and_fixes() {
     let src = format!(
-        "{HEAD}{{ dependencies: {{ sqlite: \"^0.1\", gone: \"1\", other: \"1\", local: {{ path: \"../l\", version: \"9\" }} }} }};"
+        "{HEAD}{{ dependencies: {{ sqlite: \"^0.1\", gone: \"1\", other: \"1\", local: {{ path: \"../l\", version: \"9\" }}, core: \"workspace\" }} }};"
     );
+    // Neither a path nor a workspace dependency is the registry's concern.
     let diags = diagnostics(&src, "http://r", &mut lookup, &no_lock);
     let shown: Vec<(String, &str)> = diags
         .iter()
@@ -239,6 +240,18 @@ fn hover_on_a_dependency() {
         "**sqlite**  \nnewest: 0.2.5 (`^0.1` does not include it)  \nlocked: 0.1.0 (`velt.lock.json`)"
     );
     assert_eq!(hover(&dep, None, None), "**sqlite**  \nnot in the registry");
+}
+
+#[test]
+fn a_workspace_dependency_is_not_a_registry_requirement() {
+    let src = format!("{HEAD}{{ dependencies: {{ core: \"workspace\" }} }};");
+    let dep = dependency_at(&src, src.find("core").unwrap() as u32 + 1).unwrap();
+    assert_eq!(dep.source, DependencySource::Workspace);
+    assert_eq!(dep.version, None);
+    assert_eq!(
+        hover(&dep, None, None),
+        "**core**  \nfrom the workspace (`velt.workspace.vlt`)"
+    );
 }
 
 #[test]

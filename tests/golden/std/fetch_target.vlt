@@ -1,0 +1,58 @@
+// check: no leaks
+// The client's URL check (std/fetch/client/target.vlt) takes a URL as it is only when WHATWG
+// parsing would serialize it unchanged: for each URL, the target's `href`, host, request-target
+// and origin (its connection pool's key) agree with velt:url's, whichever way it was taken.
+import { target } from "velt:fetch/client/target";
+import { URL } from "velt:url";
+
+const URLS = [
+  "http://example.com/",
+  "https://api.example.com:8443/v1/users?id=7",
+  "HTTP://EXAMPLE.COM/A",
+  "http://Example.com/",
+  "http://127.0.0.1:3000/x",
+  "http://127.1/",
+  "http://0x7f.0.0.1/",
+  "http://a.xn--nxasmq6b/",
+  "http://h:80/default",
+  "https://h:443/default",
+  "http://h:0080/zero",
+  "http://h/a/./b/../c",
+  "http://h/%2e/x",
+  "http://h/%2E%2e/x",
+  "http://h/a b",
+  "http://h/a\\b",
+  "http://h/q?a=1&b={x}",
+  "http://h/frag#part",
+  "https://[::1]:8443/v6?x",
+  "http://h?q",
+  "http://user:pw@h/",
+  "http://h.example./trailing-dot",
+];
+
+function main() {
+  let same = 0;
+  for (const u of URLS) {
+    const t = target(u);
+    const w = new URL(u);
+    w.hash = "";
+    const agrees =
+      t.href == w.href &&
+      t.host == w.host &&
+      t.path == `${w.pathname}${w.search}` &&
+      t.origin == w.origin;
+    if (agrees) {
+      same += 1;
+    } else {
+      console.log("differs:", u, t.href, w.href, t.host, t.path);
+    }
+  }
+  console.log(`${same} of ${URLS.length} agree`);
+  for (const bad of ["not a url", "ftp://example.com/", "http://1.2.3.256/", "http://h:65536/"]) {
+    try {
+      target(bad);
+    } catch (e) {
+      console.log(e.code, e.message);
+    }
+  }
+}

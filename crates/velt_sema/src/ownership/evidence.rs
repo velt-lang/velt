@@ -13,7 +13,11 @@
 //!   way, e.g. `p` or `p.inner`) marks the root as possibly written, so the root is never
 //!   assumed read-only (`LocalDef::mutable`), but it does not make the root a modified param for
 //!   callers: the call site that supplies the function value accounts for what it modifies
-//!   (`super::patch`, callback rule). Array elements live in the array's heap buffer, not in the
+//!   (`super::patch`, callback rule). That holds for a function value in a param of the body.
+//!   One whose closure the body knows (a local only ever holding it, or a module-level `const`)
+//!   is checked by that closure: what it changes counts as a direct call's would. Any other (a
+//!   module `let`, a reassigned local, a field, a call's result) may change anything it is given,
+//!   as strong evidence, in a program that reads a `shared`. Array elements live in the array's heap buffer, not in the
 //!   root. A closure capturing a variable weakly passes that on to the enclosing function.
 //!
 //! Evidence is flow-insensitive: a mutation on any path (one branch, a loop body, a closure)
@@ -65,7 +69,8 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
         value: None,
         span: b.span,
     };
-    Some(collect(cx, &mut prefix).mutated.contains(&l))
+    // Only `mutated` is read, which no function value changes: every callee counts as a param.
+    Some(collect(cx, &mut prefix, 0..usize::MAX).mutated.contains(&l))
 }
 
 /// The evidence of `f`'s body, where a program reads a `shared` also through what `for…of`
@@ -74,7 +79,8 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
 /// alias or an element of an element) counts as a change of the source's local, for
 /// `FnInfo::modified_params`.
 pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> Evidence {
-    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block);
+    let params = f.captures.len()..f.params.len();
+    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block, params);
     if !cx.frozen_reads {
         return ev;
     }
@@ -116,11 +122,15 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
 }
 
 /// Collect the evidence of body `b`.
-pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
-    collect_aliased(cx, b).0
+pub(super) fn collect(cx: &mut Ctx, b: &mut Block, params: std::ops::Range<usize>) -> Evidence {
+    collect_aliased(cx, b, params).0
 }
 
-fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
+fn collect_aliased(
+    cx: &mut Ctx,
+    b: &mut Block,
+    params: std::ops::Range<usize>,
+) -> (Evidence, Aliases) {
     let closures = closure_locals(cx, b);
     let mut v = Collector {
         cx,
@@ -128,6 +138,7 @@ fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
         aliases: FxHashMap::default(),
         skip: FxHashSet::default(),
         closures,
+        params,
     };
     visit::block(b, &mut v);
     let Collector {
@@ -177,6 +188,9 @@ struct Collector<'a, 'm> {
     skip: FxHashSet<*const Expr>,
     /// Locals holding a closure literal (`closure_locals`).
     closures: Closures,
+    /// The body's declared params (after a closure's captures, which are its first params): a
+    /// function value in one is the caller's to check; a captured one is not.
+    params: std::ops::Range<usize>,
 }
 
 impl Collector<'_, '_> {
@@ -192,22 +206,61 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// Arguments of a call through a function value `callee` (see the module docs): one held
-    /// in a closure local changes what that closure may change, any other anything it is given.
+    /// Arguments of a call through a function value `callee` (see the module docs): one whose
+    /// closure this body knows (a local only ever holding it, or a module-level `const`) changes
+    /// what that closure changes, as a direct call would (#1836: `poke(this)` changes `this`);
+    /// any other may change anything it is given (weakly).
     fn indirect_args(&mut self, callee: &Expr, args: &[Expr]) {
-        let bits = match &callee.kind {
-            E::Local(l, _) => (self.closures.get(l)).map(|&c| closure_changes(self.cx, c)),
+        let known = match &callee.kind {
+            E::Local(l, _) => self.closures.get(l).copied(),
+            E::Global(g) if self.cx.frozen_reads => global_closure(self.cx, *g),
             _ => None,
         };
+        let bits = known.map(|c| closure_changes(self.cx, c));
+        // A function value in a param is the caller's to check (the callback rule, so std's
+        // `forEach` keeps reading what it walks); any other this body can't resolve to one
+        // closure may change whatever it is given (#1836).
+        let param = matches!(&callee.kind, E::Local(l, _) if self.params.contains(&(l.0 as usize)));
+        let strong = bits.is_some() || (!param && self.cx.frozen_reads);
         for (i, a) in args.iter().enumerate() {
             let known_unchanged = bits.is_some_and(|b| i >= 64 || b & (1 << i) == 0);
-            if known_unchanged || self.cx.is_copy(a.ty) || !in_root_memory(a) {
+            if known_unchanged || self.cx.is_copy(a.ty) {
+                continue;
+            }
+            if strong {
+                self.ev.deep.extend(place_root(a));
+                self.ev.modified.extend(place_root(a));
+                continue;
+            }
+            if !in_root_memory(a) {
                 continue;
             }
             if let Some(l) = place_root(a) {
                 self.ev.weak.insert(l);
             }
         }
+    }
+}
+
+/// The closure a module-level `const` is initialized with (`const poke = (o) => …`).
+fn global_closure(cx: &Ctx, g: crate::hir::DefId) -> Option<crate::hir::DefId> {
+    let crate::defs::DefInfo::Global(info) = &cx.info[g.0 as usize] else {
+        return None;
+    };
+    if info.mutable {
+        return None;
+    }
+    let init = match &cx.defs[g.0 as usize] {
+        Some(Def::Global(gd)) => &gd.init,
+        _ => info.init.as_ref()?,
+    };
+    let mut e = init;
+    while let E::Upcast(x) | E::Cast(x) = &e.kind {
+        e = x;
+    }
+    match e.kind {
+        E::Closure(c) => Some(c),
+        _ => None,
     }
 }
 
@@ -319,10 +372,18 @@ impl VisitMut for Collector<'_, '_> {
                     }
                 }
                 if let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] {
-                    for cap in &c.captures {
+                    let changes = self.cx.fn_info(*def).modified_captures;
+                    for (i, cap) in c.captures.iter().enumerate() {
                         let written = c.body.locals[cap.inner.0 as usize].mutable;
+                        // What the closure changes of a captured object, as a call would
+                        // (`() => { hook(this); }` changes `this`, #1836).
+                        let changed = i < 64 && changes & (1 << i) != 0 && self.cx.frozen_reads;
                         match cap.mode {
                             PassMode::BorrowMut => self.ev.mutated.insert(cap.outer),
+                            PassMode::Borrow if changed => {
+                                self.ev.deep.insert(cap.outer);
+                                self.ev.modified.insert(cap.outer)
+                            }
                             PassMode::Borrow if written => self.ev.weak.insert(cap.outer),
                             // A closure sharing an object it changes changes the outer
                             // variable's object too (`FnInfo::modified_params`).

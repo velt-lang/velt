@@ -44,6 +44,9 @@ pub const DEFAULT_ENTRY: &str = "src/main.vlt";
 pub const LIB_ENTRY: &str = "src/lib.vlt";
 /// Directory holding a package's modules, relative to the package root.
 pub const SRC_DIR: &str = "src";
+/// The requirement of a dependency that a workspace provides: the member of that name, or the
+/// workspace's own requirement for it ([`crate::workspace`]).
+pub const WORKSPACE_REQUIREMENT: &str = "workspace";
 
 /// A parsed and validated manifest. The serde attributes describe the legacy `velt.toml` layout
 /// ([`legacy`]); `package.vlt` is decoded by [`read`].
@@ -212,6 +215,11 @@ impl Dependency {
             Dependency::Version(_) => None,
             Dependency::Detailed(d) => d.path.as_deref(),
         }
+    }
+
+    /// Whether this is `"workspace"`: provided by the enclosing workspace.
+    pub fn is_workspace(&self) -> bool {
+        matches!(self, Dependency::Version(v) if v == WORKSPACE_REQUIREMENT)
     }
 }
 
@@ -452,6 +460,14 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
 }
 
 pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
+    if dep.is_workspace() {
+        return Ok(());
+    }
+    if dep.version() == Some(WORKSPACE_REQUIREMENT) {
+        return Err(format!(
+            "dependency `{name}`: `\"{WORKSPACE_REQUIREMENT}\"` is written as the whole value (`{name}: \"{WORKSPACE_REQUIREMENT}\"`), not as a `version`"
+        ));
+    }
     if dep.version().is_none() && dep.path().is_none() {
         return Err(format!("dependency `{name}` needs a `version` or a `path`"));
     }

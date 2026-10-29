@@ -565,6 +565,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::StrConcat
         | I::ThrowLoc
         | I::AnyTo
+        | I::AnyToExact
         | I::AnyTypeof
         | I::AnyIsArray
         | I::AnyKeys
