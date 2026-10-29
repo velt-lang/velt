@@ -3506,14 +3506,36 @@ function main(): void {
 **Planned** (#924): `JSON.parse` into an `any`, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
 
-`key in x` on an `any` asks the value held: a class instance or object type has its fields,
-methods and accessors and what every object has from `Object.prototype` (`toString`), a
-`Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
-an array its `length`. A `null` or `undefined` value stops with
-Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`. An optional field
-of a nullable type (`a?: T | null`), which keeps "absent" apart, is there while present;
-another optional field (which cannot tell "absent" from a present `undefined`) and an array
-index stop with a `TypeError` naming #823 for now.
+`key in x` on an `any` asks the value held, as Node does: a class instance or object type has
+its fields, methods and accessors (a class's inherited ones too) and what every object has from
+`Object.prototype` (`toString`), a `Record<string, V>` its keys and, unless `Object.create(null)`
+made it, what every object has. An array (or a tuple) has its element indexes (`0 in xs`,
+`"1" in xs`; not `"01"`), `length` and `Array.prototype`'s methods (`"push" in xs`,
+`Symbol.iterator in xs`); a typed array its indexes and `%TypedArray%.prototype`'s members (a
+`Uint8Array` also `toBase64`, `toHex`, `setFromBase64` and `setFromHex`); a function `call`,
+`apply`, `bind`, `name` and `length`; a `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`,
+`Error`, `ArrayBuffer`, `DataView` or `Promise` what its JavaScript prototype has (`"size" in
+map`, never a map's entries). A function's `prototype` (which a declared function has and an
+arrow or a method has not) stops with a `TypeError` naming #823 for now. A string, number,
+boolean or symbol stops with Node's `TypeError: Cannot use 'in' operator to search for 'k' in
+str`, and a `null` or `undefined` value with `... in undefined` (a symbol key shown as Node
+shows it, `'Symbol(Symbol.iterator)'`). An optional field of a nullable type in an object type
+(`a?: T | null`), which keeps "absent" apart, is there while present; another optional field
+of an object type is there while it holds a value, so `{ a: undefined }` given to an
+`a?: number` field reads as absent.
+
+```ts
+const C = Symbol("computed");
+function isComputed(v: unknown): boolean {
+  return v !== null && typeof v === "object" && C in v;
+}
+function main(): void {
+  const xs: any = [1, 2];
+  console.log(isComputed([1, 2]), 1 in xs, 2 in xs, "push" in xs); // false true false true
+  const m: any = new Map<string, number>([["a", 1]]);
+  console.log("size" in m, "a" in m); // true false
+}
+```
 
 A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
 `const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member

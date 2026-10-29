@@ -1,0 +1,7 @@
+// `key in` a number held in an `any` stops with Node's `TypeError` (#823): a primitive has no
+// properties to search.
+function main(): void {
+  const v: any = 1.5;
+  console.log("before");
+  console.log(0 in v);
+}

@@ -34,6 +34,7 @@ mod any_fn_props;
 mod any_generic_fn;
 mod any_glue;
 mod any_has;
+mod any_has_builtin;
 mod any_iface;
 mod any_keys;
 mod any_member;

@@ -235,7 +235,7 @@ impl FnLower<'_, '_> {
 
     /// The number of fields of class `d` that its nearest standard library base class
     /// declares (0 without one).
-    fn std_base_fields(&mut self, d: hir::DefId) -> usize {
+    pub(super) fn std_base_fields(&mut self, d: hir::DefId) -> usize {
         let mut cur = self.cx.adt_def(d).base;
         while let Some(b) = cur {
             let TyKind::Adt(bd, _) = self.cx.kind(b) else {

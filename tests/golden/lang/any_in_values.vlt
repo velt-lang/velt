@@ -1,0 +1,156 @@
+// check: no leaks
+// `key in x` through `any` and `unknown` as in Node (#379, #823): an array's indexes, `length`
+// and `Array.prototype`; a typed array's indexes; a `Map` or `Set` its prototype's members (never
+// its entries); a function `Function.prototype`'s; a class instance its fields, accessors and
+// methods (inherited ones too). sigx's `isComputed` tests a symbol on a children array.
+const S = Symbol("c");
+
+class Base {
+  base = 1;
+  hello(): string {
+    return "hi";
+  }
+}
+
+class Point extends Base {
+  x = 1;
+  #secret = 2;
+  get len(): number {
+    return this.x + this.#secret;
+  }
+  set len(v: number) {
+    this.x = v;
+  }
+  norm(): number {
+    return this.x;
+  }
+  static origin(): number {
+    return 0;
+  }
+}
+
+function has(v: any, k: any): boolean {
+  return k in v;
+}
+
+function isC(v: unknown): boolean {
+  return v !== null && typeof v === "object" && S in v;
+}
+
+function main(): void {
+  const a: any = [1, 2];
+  console.log(
+    "array",
+    0 in a,
+    1 in a,
+    2 in a,
+    "0" in a,
+    "1" in a,
+    "2" in a,
+    "-1" in a,
+    "01" in a,
+    "1.5" in a,
+  );
+  console.log(
+    "array",
+    "length" in a,
+    "push" in a,
+    "map" in a,
+    "toString" in a,
+    "constructor" in a,
+    "foo" in a,
+    S in a,
+    Symbol.iterator in a,
+  );
+  console.log(
+    "array keys",
+    has(a, 0),
+    has(a, 1.0),
+    has(a, -0),
+    has(a, 2),
+    has(a, NaN),
+    has(a, "includes"),
+    has(a, "x"),
+  );
+  console.log("isC", isC([1, 2]), isC({ a: 1 }), isC(new Map<string, number>()));
+  const e: any = [];
+  console.log("empty", 0 in e, "length" in e);
+  const strs: any = ["a", "b", "c"];
+  console.log("strs", 2 in strs, 3 in strs, "join" in strs);
+  const u8: any = new Uint8Array(3);
+  console.log(
+    "u8",
+    0 in u8,
+    2 in u8,
+    3 in u8,
+    "length" in u8,
+    "buffer" in u8,
+    "byteLength" in u8,
+    "subarray" in u8,
+    "push" in u8,
+    "foo" in u8,
+    Symbol.iterator in u8,
+  );
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  const ma: any = m;
+  console.log(
+    "map",
+    "a" in ma,
+    "size" in ma,
+    "get" in ma,
+    "set" in ma,
+    "forEach" in ma,
+    "toString" in ma,
+    "foo" in ma,
+    S in ma,
+    Symbol.iterator in ma,
+  );
+  const st = new Set<number>([1]);
+  const sa: any = st;
+  console.log(
+    "set",
+    1 in sa,
+    "size" in sa,
+    "add" in sa,
+    "has" in sa,
+    "values" in sa,
+    "push" in sa,
+    Symbol.iterator in sa,
+  );
+  const f: any = function named(x: number): number {
+    return x;
+  };
+  console.log(
+    "fn",
+    "call" in f,
+    "apply" in f,
+    "bind" in f,
+    "name" in f,
+    "length" in f,
+    "toString" in f,
+    "foo" in f,
+    S in f,
+  );
+  const p: any = new Point();
+  console.log(
+    "class",
+    "x" in p,
+    "base" in p,
+    "len" in p,
+    "norm" in p,
+    "hello" in p,
+    "constructor" in p,
+    "toString" in p,
+    "origin" in p,
+    "secret" in p,
+    "#secret" in p,
+    "y" in p,
+    S in p,
+  );
+  const o: any = { a: 1, b: "s" };
+  console.log("object", "a" in o, "b" in o, "c" in o, "toString" in o, S in o);
+  const r: Record<string, number> = { k: 1 };
+  const ra: any = r;
+  console.log("record", "k" in ra, "j" in ra, "hasOwnProperty" in ra);
+}

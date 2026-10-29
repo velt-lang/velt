@@ -1,0 +1,136 @@
+// check: no leaks
+// `key in x` through `any` (#379, #823): standard library classes answer as the JavaScript
+// built-ins they stand for (an `Error`, a `DataView`, an `ArrayBuffer`), not with their private
+// fields; a class has every field it declares; an object type its optional fields while
+// present; tuples, proxies of arrays, generic code and functions with properties.
+class Base {
+  base = 1;
+  hello(): string {
+    return "hi";
+  }
+}
+
+class Kept extends Base {
+  private q = 1;
+  label?: string | null;
+}
+
+class AppError extends Error {
+  code = 7;
+}
+
+interface Opt {
+  a?: number;
+  b: string;
+  c?: string | null;
+}
+
+function hasIt<T>(x: T, k: string): boolean {
+  return k in (x as any);
+}
+
+function lengthIn<T>(x: T): boolean {
+  return "length" in x;
+}
+
+function declaredFn(x: number): number {
+  return x;
+}
+
+function main(): void {
+  const k: any = new Kept();
+  console.log("kept", "q" in k, "base" in k, "hello" in k, "label" in k, "valueOf" in k);
+  const err: any = new Error("boom");
+  console.log(
+    "error",
+    "message" in err,
+    "name" in err,
+    "stack" in err,
+    "toString" in err,
+    "foo" in err,
+  );
+  const te: any = new TypeError("t");
+  console.log("typeerror", "message" in te, "name" in te, "foo" in te);
+  const ae: any = new AppError("a");
+  console.log("apperror", "code" in ae, "message" in ae, "name" in ae, "foo" in ae);
+  const t: [number, string] = [1, "a"];
+  const ta: any = t;
+  console.log("tuple", 0 in ta, 1 in ta, 2 in ta, "length" in ta, "map" in ta);
+  const wm: any = new WeakMap<object, number>();
+  console.log("weakmap", "get" in wm, "size" in wm);
+  const arrow: any = (x: number): number => x + 1;
+  console.log("arrow", "call" in arrow, "bind" in arrow, "foo" in arrow);
+  const asyncArrow: any = async (): Promise<number> => 1;
+  const method: any = new Base().hello;
+  const declared: any = declaredFn;
+  console.log("async arrow", "call" in asyncArrow, "name" in asyncArrow, "foo" in asyncArrow);
+  console.log("method", "apply" in method, "length" in method, "foo" in method);
+  console.log("declared", "bind" in declared, "caller" in declared, "foo" in declared);
+  // A function given a property through `any` (#1772) has it.
+  const g: any = function tagged(): number {
+    return 1;
+  };
+  g.tag = 1;
+  console.log("fnprops", "tag" in g, "call" in g, "other" in g, Symbol.hasInstance in g);
+  const lit: any = {
+    get g(): number {
+      return 1;
+    },
+    n: 2,
+  };
+  console.log("literal", "g" in lit, "n" in lit, "m" in lit);
+  const p: any = new Proxy([1, 2], {});
+  console.log("proxy", 0 in p, 2 in p, "length" in p, "push" in p);
+  const h: any = new Proxy(
+    { a: 1 },
+    {
+      has(t: any, k: string | symbol): boolean {
+        return k === "z";
+      },
+    },
+  );
+  console.log("trap", "a" in h, "z" in h);
+  const o1: Opt = { b: "x" };
+  const o2: Opt = { a: 1, b: "y", c: null };
+  const a1: any = o1;
+  const a2: any = o2;
+  console.log("opt", "a" in a1, "b" in a1, "c" in a1, "a" in a2, "c" in a2);
+  console.log(
+    "generic",
+    hasIt([1], "0"),
+    hasIt(new Map<string, number>(), "size"),
+    lengthIn([1, 2]),
+    lengthIn(new Set<number>()),
+  );
+  const dv: any = new DataView(new ArrayBuffer(4));
+  console.log("dataview", "getInt8" in dv, "byteLength" in dv, "foo" in dv, "at" in dv);
+  console.log(
+    "dataview",
+    "getFloat16" in dv,
+    "setFloat16" in dv,
+    "getBigInt64" in dv,
+    "setBigInt64" in dv,
+  );
+  console.log("dataview", "getBigUint64" in dv, "setBigUint64" in dv, Symbol.toStringTag in dv);
+  const ab: any = new ArrayBuffer(4);
+  console.log("buffer", "byteLength" in ab, "slice" in ab, "len" in ab);
+  const f64: any = new Float64Array([1, 2, 3]);
+  console.log("f64", 2 in f64, 3 in f64, "1.0" in f64, "map" in f64);
+  const u8: any = new Uint8Array(2);
+  console.log("u8", "toBase64" in u8, "toHex" in u8, "setFromBase64" in u8, "setFromHex" in u8);
+  console.log("f64 base64", "toBase64" in f64, "toHex" in f64, "setFromHex" in f64);
+  const nested: any = [[1], [2, 3]];
+  console.log("nested", 1 in nested, 0 in nested[1], 1 in nested[1], 2 in nested[1]);
+  const big: any = new Array<number>(5).fill(0);
+  console.log("big", 4 in big, 5 in big, "4294967295" in big, "1e0" in big, " 1" in big);
+  const ws: any = new WeakSet<object>();
+  console.log("weakset", "add" in ws, "size" in ws);
+  const m: any = new Map<number, number>();
+  console.log(
+    "wk",
+    Symbol.iterator in m,
+    Symbol.iterator in ws,
+    Symbol.toStringTag in m,
+    Symbol.asyncIterator in m,
+  );
+}
