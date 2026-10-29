@@ -86,6 +86,40 @@ impl Ctx<'_> {
         })
     }
 
+    /// The getter of an interface field of type `want` reading field `index` (of type `ty`, an
+    /// object type of the same layout): the same object (`Upcast`).
+    pub(crate) fn layout_getter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let fname = self.adt(d).expect("ICE: adt").fields[index].name.clone();
+        value_getter(self, d, self_ty, &fname, want, |span| {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            let read = hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index: index as u32,
+                    mode: UseMode::Borrow,
+                },
+                ty,
+                span,
+            };
+            hir::Expr {
+                kind: H::Upcast(Box::new(intrinsic(Intrinsic::Share, read, ty, span))),
+                ty: want,
+                span,
+            }
+        })
+    }
+
     /// The setter of an interface field of type `want` writing field `index` (of type `ty`)
     /// through `any` (module docs).
     pub(crate) fn convert_setter(

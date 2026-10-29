@@ -1,0 +1,13 @@
+// An optional interface member the object holds as a plain value can't hold `undefined`: writing
+// `undefined` through the interface stops with a `TypeError` (#1886), where Node stores it.
+interface Ctx {
+  more?: number;
+  run(): void;
+}
+
+const init = { more: 3, run: () => {} };
+const c = init as unknown as Ctx;
+c.more = 4;
+console.log(c.more, init.more);
+c.more = undefined;
+console.log(c.more, init.more);

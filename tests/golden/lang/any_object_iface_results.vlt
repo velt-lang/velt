@@ -1,0 +1,25 @@
+// A function whose result TypeScript assigns to the method's result fills the method (#1886):
+// a `T` for a `T | undefined`, an object literal for an interface of only fields it fits.
+interface Item {
+  v: number;
+}
+
+interface Ctx {
+  n: number;
+  get(): number | undefined;
+  make(): Item;
+  maybe(): Item | null;
+}
+
+let count = 4;
+const init = {
+  n: 1,
+  get: () => 1,
+  make: () => ({ v: count }),
+  maybe: () => ({ v: 7 }),
+};
+const c = init as unknown as Ctx;
+console.log(c.get(), c.make().v, c.maybe()?.v);
+count = 5;
+const stored: Ctx = init;
+console.log(stored.get(), stored.make().v);

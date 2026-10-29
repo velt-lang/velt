@@ -3136,21 +3136,27 @@ An object literal converted to an interface with methods (`init as unknown as Ct
 `update`, and a write through the interface (`c.n = 5`) changes the object. The function may
 be an arrow, a `function` expression or a named function; it may take fewer parameters than
 the method (the call passes it only those, as JavaScript drops the extra arguments), and for a
-method returning `void` it may return anything. A `function` expression using `this`
+method returning `void` it may return anything. Its result may be one TypeScript assigns to
+the method's (`() => 1` for `get(): number | undefined`, `() => ({ v })` for `make(): Item`
+with `interface Item { v: number }`). A `function` expression using `this`
 (`function (this: any, by: number) { this.n += by; }`) gets the object as `this`, as in
 `o.m()`; its arguments and result pass through `any`, so the method's parameters must be
 numbers, strings, booleans, objects, arrays, functions or dynamic values, and its result
 `void`, a number, a string, a boolean or a dynamic value (a union, an optional or a literal type
 there makes the conversion a `TypeError`). Each interface field is the object's field of that
-name. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
+name. An object of the same layout as the field's type (`inner: { v: 1 }` for
+`inner: Inner` with `interface Inner { v: number }`) is that object, so `c.inner.v = 2` changes
+the literal's. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
 `renderFn: any` for `renderFn: ViewFn | null`), it is converted through `any` at each read,
 and checked then as `x as T` is (a `TypeError` if it holds no such value), and a write
-converts the value back to the object's field type; an optional field type is not written
-back, so writing such a field through the interface makes the conversion a `TypeError`. A
-plain conversion without `any` (`const c: Ctx = init`) takes fields of the same type only. An
+converts the value back to the object's field type; changing a part of such a field
+(`c.props.a = 2`) is an error, since it would change a converted copy. A plain conversion without `any` (`const c: Ctx = init`) takes fields of the same type only. An
 optional interface field (`label?: string`, also an optional method `done?(): string`) may be
 missing from the object, and then reads `undefined`, where writing it stops with a
 `TypeError` (an object of a fixed shape gets no new properties, #924; Node adds the property).
+One the object holds as a plain value (`more: 3` for `more?: number`) can't hold `undefined`:
+writing `undefined` to it through the interface (`c.more = undefined`) stops with a
+`TypeError` (Node stores `undefined`).
 A literal whose methods use `this`, or with getters, converts as its own interface does
 ([above](#this-in-object-literal-methods)). Differences from Node: the conversion checks the
 object's members, so a member the interface requires that the object lacks, or a method the

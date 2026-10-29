@@ -32,7 +32,7 @@ use crate::collect::getters::{
 };
 use crate::ctx::Ctx;
 use crate::defs::{IfaceMethod, ParamSig};
-use crate::hir::{Def, DefId, ExprKind as H, ImplDef, PassMode, StmtKind, TyId, TyKind};
+use crate::hir::{self, Def, DefId, ExprKind as H, ImplDef, PassMode, StmtKind, TyId, TyKind};
 use crate::iface_writes::SetterSrc;
 
 /// The implementations made so far and the conversions through `any` (module docs).
@@ -52,6 +52,9 @@ pub(crate) struct ObjectImpls {
 enum Fill {
     /// The field's value (`Some`: wrapped as this optional type).
     Field(usize, TyId, Option<TyId>),
+    /// Field `.0`'s value (of type `.1`), the same object as the interface field's type `.2`, of
+    /// the same layout (`Upcast`).
+    Layout(usize, TyId, TyId),
     /// Field `.0`'s value (of type `.1`) converted to the interface field's type `.2` through
     /// `any`, checked when it is read.
     Convert(usize, TyId, TyId),
@@ -65,6 +68,15 @@ enum Fill {
     /// Method `.0`, the `Function` in field `.1` (of type `.2`), called with the object as
     /// `this` (a function expression using `this`, `body/expr/this_fn_expr.rs`).
     CallOn(usize, usize, TyId),
+}
+
+/// How a function's result converts to the method's (`Ctx::result_fits`): to the method's
+/// object type of the same layout (`upcast`, to the payload `some` when it is optional), then
+/// wrapped as the optional result when `some`.
+#[derive(Clone, Copy)]
+struct Wrap {
+    some: Option<TyId>,
+    upcast: bool,
 }
 
 /// How the implementation stores an interface field.
@@ -240,6 +252,13 @@ impl Ctx<'_> {
                     setters.push(Store::Field(i, fields[i].1));
                     Fill::Field(i, fields[i].1, None)
                 }
+                // An object of the interface field's layout (`inner: { v: number }` for
+                // `inner: Inner`, an interface of only fields): the same object, so a write into
+                // a part of it reaches the object, as in Node.
+                Some(i) if self.same_layout(fields[i].1, want) => {
+                    setters.push(Store::Field(i, fields[i].1));
+                    Fill::Layout(i, fields[i].1, want)
+                }
                 // An optional field from a field of its type without `undefined`: writing
                 // `undefined` stops with a `TypeError`.
                 Some(i) if f.optional && payload.is_some_and(|p| self.same_ty(fields[i].1, p)) => {
@@ -289,7 +308,34 @@ impl Ctx<'_> {
             }
         }
         let want = self.subst(m.ret, full);
-        (want == self.ty.unit || self.same_ty(ret, want)).then_some(params.len())
+        self.result_fits(ret, want).map(|_| params.len())
+    }
+
+    /// How a function's result of type `ret` becomes a method's result of type `want`: as it
+    /// is (or dropped, for `void`), or `Some` of how it converts as TypeScript's assignability
+    /// lets it (`() => 1` for `get(): number | undefined`, an object type for an interface of
+    /// only fields it fits, `() => ({ v })` for `make(): Item`). `None` when it does not fit.
+    fn result_fits(&mut self, ret: TyId, want: TyId) -> Option<Option<Wrap>> {
+        if want == self.ty.unit || self.same_ty(ret, want) {
+            return Some(None);
+        }
+        if self.same_layout(ret, want) {
+            return Some(Some(Wrap {
+                some: None,
+                upcast: true,
+            }));
+        }
+        let p = self.ty.opt_payload(want)?;
+        if self.same_ty(ret, p) {
+            return Some(Some(Wrap {
+                some: Some(p),
+                upcast: false,
+            }));
+        }
+        self.same_layout(ret, p).then_some(Some(Wrap {
+            some: Some(p),
+            upcast: true,
+        }))
     }
 
     /// The implementation `plan` describes (see [`Self::object_impl_plan`]).
@@ -314,6 +360,7 @@ impl Ctx<'_> {
                 }
                 Fill::Absent(name, want) => absent_getter(self, d, self_ty, &name, want),
                 Fill::Convert(i, ty, want) => self.convert_getter(d, self_ty, i, ty, want),
+                Fill::Layout(i, ty, want) => self.layout_getter(d, self_ty, i, ty, want),
                 Fill::Setter(i, ty, borrowed) => {
                     field_setter_taking(self, d, self_ty, i, ty, borrowed)
                 }
@@ -409,6 +456,8 @@ impl Ctx<'_> {
             // A `Function`: the body is `call_on_body`'s.
             return def;
         };
+        let wrap = self.result_fits(gives, ret).flatten();
+        let unit = self.ty.unit;
         // The call passes the arguments the function takes, and gives what it returns (dropped
         // for a `void` method).
         let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] else {
@@ -420,6 +469,32 @@ impl Ctx<'_> {
                     args.truncate(takes);
                 }
                 call.ty = gives;
+            }
+            // The result converted to the method's (`result_fits`).
+            if let (StmtKind::Return(Some(call)), Some(w)) = (&mut s.kind, wrap) {
+                let span = call.span;
+                let hole = hir::Expr {
+                    kind: H::Lit(hir::Lit::Unit),
+                    ty: unit,
+                    span,
+                };
+                let mut e = std::mem::replace(call, hole);
+                if w.upcast {
+                    let ty = w.some.unwrap_or(ret);
+                    e = hir::Expr {
+                        kind: H::Upcast(Box::new(e)),
+                        ty,
+                        span,
+                    };
+                }
+                if w.some.is_some() {
+                    e = hir::Expr {
+                        kind: H::WrapSome(Box::new(e)),
+                        ty: ret,
+                        span,
+                    };
+                }
+                *call = e;
             }
         }
         def

@@ -217,6 +217,12 @@ impl Ctx<'_> {
             .then(|| self.declaring_iface(d, name))
             .flatten();
         let iname = declared.unwrap_or_else(|| self.iface_name(iface));
+        if self
+            .adt(d)
+            .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
+        {
+            return self.converted_part(&iname, name, write);
+        }
         let (cname, at) = self
             .adt(d)
             .map_or((String::new(), Span::DUMMY), |a| (a.name.clone(), a.span));
@@ -232,6 +238,19 @@ impl Ctx<'_> {
                 format!("a part of `{name}` is changed through `{iname}` here"),
             );
         }
+        self.error(e);
+    }
+
+    /// A part of field `name` of `iface` (`iname`) is changed through it (at `write`), and an
+    /// object type converted to the interface holds the field as a value of another type,
+    /// converted at each read (`crate::object_ifaces`): the change would reach a copy.
+    fn converted_part(&mut self, iname: &str, name: &str, write: Option<Span>) {
+        let e = Diagnostic::error(
+            format!("a part of `{name}` is changed through `{iname}`, but an object converted to `{iname}` holds `{name}` as a value of another type"),
+            write.unwrap_or(Span::DUMMY),
+        )
+        .with_note(format!("the object's `{name}` is converted to `{iname}`'s field type at each read, so this would change a copy; Node changes the object's own `{name}`"))
+        .with_note(format!("give the object's `{name}` the type of `{iname}`'s field, or assign the whole value (`x.{name} = …`)"));
         self.error(e);
     }
 

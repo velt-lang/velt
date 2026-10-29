@@ -1,0 +1,19 @@
+// A field holding an object of the interface field's layout is that object (#1886): a write
+// into a part of it through the interface changes the literal's, as in Node.
+interface Inner {
+  v: number;
+}
+
+interface Ctx {
+  x: number;
+  inner: Inner;
+  run(): void;
+}
+
+const init = { x: 1, inner: { v: 1 }, run: () => console.log("run") };
+const c = init as unknown as Ctx;
+c.inner.v = 2;
+c.run();
+console.log(init.inner.v, c.inner.v);
+c.inner = { v: 3 };
+console.log(init.inner.v);
