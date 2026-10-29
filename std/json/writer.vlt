@@ -14,13 +14,6 @@ declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
 declare function velt_rt_strbuf_push_u64(out: string, v: u64);
 declare function velt_rt_strbuf_push_f64(out: string, v: f64);
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
-declare function velt_rt_strbuf_push_str_range(
-  out: string,
-  s: string,
-  start: u64,
-  end: u64,
-  units: u64,
-);
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
 const QUOTE: u8 = 34;
@@ -101,52 +94,10 @@ export function writeF64(out: string, x: f64): void {
     writeAscii(out, "null");
     return;
   }
-  // A short decimal: a scale `k` (at most 15) for which `x * 10^k` is an integer `m` below
-  // 10^15 that divides back to exactly `x` (a correctly rounded division of two exact values:
-  // what parsing the digits gives). At most 15 significant digits name a single double, so
-  // these digits, without trailing zeros, are JavaScript's shortest; at 10^-6 and above
-  // JavaScript writes them without an exponent.
-  const a = x < 0 ? -x : x;
-  if (a >= 1e-6 && a < 1e15) {
-    if (a == Math.trunc(a)) {
-      // An integer: its digits (citm_catalog.json's ids), without the tests below.
-      writeDecimal(out, x < 0, a as u64, 0);
-      return;
-    }
-    // Quick reject (most doubles of 16 or 17 digits, canada.json's coordinates): at the largest
-    // scale below 10^15, `a * 10^k` of a decimal of at most 15 digits is within 0.18 of an
-    // integer (`a`'s own rounding, below 2^-53 of it, is at most 0.111 there, and the product's
-    // half an ulp at most 0.0625). Farther off, no scale can pass the test below.
-    let n: usize = 0;
-    while (n < 15 && a >= POW10[n]) {
-      n++;
-    }
-    const top = n == 0 ? 15 : 15 - n;
-    const t0 = a * POW10[top];
-    const frac = t0 - Math.trunc(t0);
-    if (frac > 0.18 && frac < 0.82) {
-      velt_rt_strbuf_push_f64(out, x);
-      return;
-    }
-    for (let k: usize = 0; k <= 15; k++) {
-      const t = a * POW10[k];
-      if (t >= 1e15) {
-        break;
-      }
-      if (t == Math.trunc(t) && t / POW10[k] == a) {
-        // `a * 10^k` may round onto an integer only at a larger `k` than the digits need
-        // (4.35 * 100 is 434.99999999999994, 4.35 * 1000 is 4350): the trailing zeros go, which
-        // leaves the decimal value, and so the double it names, unchanged.
-        let m = t as u64;
-        let f = k;
-        while (f > 0 && m % 10 == 0) {
-          m = m / 10;
-          f--;
-        }
-        writeDecimal(out, x < 0, m, f);
-        return;
-      }
-    }
+  const d = shortNumber(x);
+  if (d.ok) {
+    writeDecimal(out, d.neg, d.m, d.k);
+    return;
   }
   // Anything else: JavaScript's general number printing (`-0` included, which JSON writes as 0).
   velt_rt_strbuf_push_f64(out, x == 0 ? 0 : x);
@@ -185,29 +136,82 @@ function writeAscii(out: string, s: string) {
   }
 }
 
+/** A double as `m / 10^k` with a sign, when JSON writes it from those digits (`ok`). */
+export struct ShortNumber {
+  ok: bool;
+  neg: bool;
+  m: u64;
+  k: usize;
+}
+
 /**
- * Appends bytes `start` to `end` of `src` quoted, as `writeString` writes that text: the text
- * of a JSON string that had no escapes (no quote, backslash or control character; whole
- * characters), `units` UTF-16 units. It is copied as it is, in one push, unless a byte needs an
- * escape (a lone surrogate), which only non-ASCII text can have.
+ * `x` (finite) as the digits `JSON.stringify` writes for it without an exponent, when it has at
+ * most 15 significant digits, between 10^-6 and 10^15; else `ok` false (the general printer).
+ * At most 15 significant digits name a single double (decimals that close are farther apart
+ * than doubles), so if `a = |x|` is such a decimal, it is the integer `m` nearest `a * 10^top`,
+ * at the largest scale `top` that keeps that product below 10^15, over 10^top: the product is
+ * within 0.18 of `m` (`a`'s own rounding, below 2^-53 of it, is at most 0.111 there, the
+ * product's half an ulp at most 0.0625), and dividing back is correctly rounded, so it gives `a`
+ * exactly when `m`'s digits name `a`. Those digits without trailing zeros are JavaScript's
+ * shortest; at 10^-6 and above JavaScript writes them without an exponent. One multiply and one
+ * divide, whatever the digits.
  */
-export function writeSourceString(
-  out: string,
-  src: string,
-  start: usize,
-  end: usize,
-  units: u64,
-): void {
-  if (units != ((end - start) as u64) && nextEscape(src, start, end) < end) {
-    const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
-    writeString(out, s);
-    return;
+export function shortNumber(x: f64): ShortNumber {
+  const neg = x < 0;
+  const a = neg ? -x : x;
+  if (a >= 1e-6 && a < 1e15) {
+    if (a == Math.trunc(a)) {
+      return ShortNumber { ok: true, neg, m: a as u64, k: 0 };
+    }
+    let n: usize = 0;
+    while (n < 15 && a >= POW10[n]) {
+      n++;
+    }
+    const top = n == 0 ? 15 : 15 - n;
+    const t = Math.trunc(a * POW10[top] + 0.5);
+    if (t < 1e15 && t / POW10[top] == a) {
+      let m = t as u64;
+      let k = top;
+      while (k > 0 && m % 10 == 0) {
+        m = m / 10;
+        k--;
+      }
+      return ShortNumber { ok: true, neg, m, k };
+    }
   }
-  const a = start as u64;
-  const b = end as u64;
-  velt_rt_strbuf_push_byte(out, QUOTE);
-  velt_rt_strbuf_push_str_range(out, src, a, b, units);
-  velt_rt_strbuf_push_byte(out, QUOTE);
+  return ShortNumber { ok: false, neg, m: 0, k: 0 };
+}
+
+/**
+ * Writes `m / 10^k` (`m` below 10^15) with a `-` when `neg` and `m` is not 0 into `buf` at `o`:
+ * the integer part, then `k` fraction digits; returns the end. At most 18 bytes.
+ */
+export function putDecimal(buf: u8[], o: usize, neg: bool, m: u64, k: usize): usize {
+  let at = o;
+  if (neg && m != 0) {
+    buf[at] = 45;
+    at++;
+  }
+  let w: usize = 1;
+  while (w < 15 && m >= POW10_U[w]) {
+    w++;
+  }
+  if (w <= k) {
+    w = k + 1;
+  }
+  const end = at + w + (k > 0 ? 1 : 0);
+  let pos = end;
+  let rest = m;
+  for (let i: usize = 0; i < w; i++) {
+    if (k > 0 && i == k) {
+      pos--;
+      buf[pos] = 46;
+    }
+    pos--;
+    buf[pos] = 48 + ((rest % 10) as u8);
+    rest = rest / 10;
+  }
+  return end;
 }
 
 /** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */
@@ -223,15 +227,17 @@ export function writeString(out: string, s: string): void {
   writeEscaped(out, s, i, n);
 }
 
-// The first byte of `s` (`n` bytes) from `from` that needs escaping, or `n`. Sixteen bytes at
-// a time: a block stops the scan at its first byte below 0x20, `"` or `\`, or 0xED (the lead
-// byte of U+D000–U+DFFF) with 0xA0 or above next (the bytes after the block's as a second
-// vector), so Hangul and the rest of U+D000–U+D7FF stay in the vector loop and only a lone
-// surrogate stops it. The bytes after the last whole block are read as the string's last
-// sixteen (those already checked are clean); in that block, 0xED is checked byte by byte.
-// Shorter strings are checked byte by byte. (The 0xED check and the last block come from
-// #1066.)
-function nextEscape(s: string, from: usize, n: usize): usize {
+/**
+ * The first byte of `s` from `from` to `n` (its length, or the end of a range of whole
+ * characters within it) that needs escaping, or `n`. Sixteen bytes at a time: a block stops the
+ * scan at its first byte below 0x20, `"` or `\`, or 0xED (the lead byte of U+D000–U+DFFF) with
+ * 0xA0 or above next (the bytes after the block's as a second vector), so Hangul and the rest of
+ * U+D000–U+D7FF stay in the vector loop and only a lone surrogate stops it. The bytes after the
+ * last whole block are read as the range's last sixteen (those already checked are clean); in
+ * that block, 0xED is checked byte by byte. Shorter ranges are checked byte by byte. (The 0xED
+ * check and the last block come from #1066.)
+ */
+export function nextEscape(s: string, from: usize, n: usize): usize {
   let i = from;
   if (n - from >= 16) {
     while (i + 16 <= n) {
@@ -458,10 +464,12 @@ function firstLane(m: mask8x16): usize {
   return 8 + (velt_simd_u64x2_lane(halves, 1).trailingZeros() >> 3);
 }
 
-// Copies bytes `start` to `end` of `s` (`n` bytes) to `buf` at `o`; the position after them.
-// Whole blocks while sixteen bytes of `s` are left (the last may run past `end`: the bytes
-// past it are overwritten later), then byte by byte.
-function copyRun(buf: u8[], o: usize, s: string, start: usize, end: usize, n: usize): usize {
+/**
+ * Copies bytes `start` to `end` of `s` (`n` bytes) to `buf` at `o`; the position after them.
+ * Whole blocks while sixteen bytes of `s` are left (the last may run up to 15 bytes past `end`
+ * in `buf`: room the caller keeps, and overwrites later), then byte by byte.
+ */
+export function copyRun(buf: u8[], o: usize, s: string, start: usize, end: usize, n: usize): usize {
   let i = start;
   while (i < end && i + 16 <= n) {
     velt_simd_u8x16_store(__intrinsic_str_load_u8x16(s, i as u64), buf, (o + i - start) as u64);

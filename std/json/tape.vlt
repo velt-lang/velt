@@ -22,7 +22,14 @@ import {
   detailText,
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
-import { writeF64, writeSourceString, writeString } from "velt:json/writer";
+import {
+  copyRun,
+  nextEscape,
+  putDecimal,
+  shortNumber,
+  writeF64,
+  writeString,
+} from "velt:json/writer";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
@@ -30,6 +37,8 @@ declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_strbuf_push_f64(out: string, v: f64);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_all(m: mask8x16): bool;
@@ -284,49 +293,61 @@ export class Tape {
    * that takes `out` gets no argument that is itself a call (it would make a copy of `out`
    * first, and the text would go to the copy): such arguments are made into locals before.
    * Iterative, with the open containers on a stack of its own, so a value nested as deeply as
-   * the parser allowed writes without running out of native stack.
+   * the parser allowed writes without running out of native stack. The text goes through a byte
+   * buffer (`ByteOut`) handed to the builder in chunks: punctuation, strings and short numbers
+   * cost a store, not a call each.
    */
   write(out: string, v: u32): void {
-    // The open containers, innermost last, and the member each writes next.
-    const open: u32[] = [];
-    const next: i64[] = [];
+    // The open containers, innermost last, two words each: the container's position, with
+    // bit 32 set for an object and bit 33 when its members are listed in `ordered` (read
+    // through `member`, else they follow its start in `kids`); then its member count, with the
+    // member it writes next from bit 32.
+    const open: u64[] = [];
+    const o = new ByteOut();
     let at = v;
     while (true) {
       const k = this.kind(at);
       if (k == T_ARRAY || k == T_OBJECT) {
         const object = k == T_OBJECT;
-        velt_rt_strbuf_push_byte(out, object ? 123 : 91);
-        if (this.count(at) > 0) {
-          open.push(at);
-          next.push(0);
+        o.byte(out, object ? 123 : 91);
+        const n = this.count(at);
+        if (n > 0) {
+          const ordered = (this.words[2 * (at as usize)] & ORDERED) != 0;
+          open.push((at as u64) | (object ? 1 << 32 : 0) | (ordered ? 1 << 33 : 0));
+          open.push(n as u64);
         } else {
-          velt_rt_strbuf_push_byte(out, object ? 125 : 93);
+          o.byte(out, object ? 125 : 93);
         }
       } else {
-        this.writeScalar(out, at, k);
+        this.writeScalar(o, out, at, k);
       }
       // The next value to write: the next member of the innermost open container, closing the
       // containers that have none left.
       let found = false;
       while (open.length > 0) {
         const top = open.length - 1;
-        const c = open[top];
-        const i = next[top];
-        const object = this.kind(c) == T_OBJECT;
-        if (i >= this.count(c)) {
+        const info = open[top - 1];
+        const pos = open[top];
+        const i = (pos >> 32) as i64;
+        const object = (info & (1 << 32)) != 0;
+        if (i >= ((pos & 0xffffffff) as i64)) {
           open.pop();
-          next.pop();
-          velt_rt_strbuf_push_byte(out, object ? 125 : 93);
+          open.pop();
+          o.byte(out, object ? 125 : 93);
           continue;
         }
         if (i > 0) {
-          velt_rt_strbuf_push_byte(out, 44);
+          o.byte(out, 44);
         }
-        next[top] = i + 1;
-        const m = this.member(c, i) as u32;
+        open[top] = pos + (1 << 32);
+        const c = (info & 0xffffffff) as u32;
+        const m =
+          (info & (1 << 33)) != 0
+            ? this.member(c, i) as u32
+            : this.kids[(this.words[2 * (c as usize) + 1] + (i as u64)) as usize];
         if (object) {
-          this.writeText(out, m);
-          velt_rt_strbuf_push_byte(out, 58);
+          this.writeText(o, out, m);
+          o.byte(out, 58);
           at = m + 1;
         } else {
           at = m;
@@ -335,32 +356,34 @@ export class Tape {
         break;
       }
       if (!found) {
+        o.flush(out);
         return;
       }
     }
   }
 
-  // A value that is no container, of kind `k`.
-  private writeScalar(out: string, v: u32, k: u64): void {
+  // A value that is no container, of kind `k`, into `o`.
+  private writeScalar(o: ByteOut, out: string, v: u32, k: u64): void {
     if (k == T_NULL) {
-      pushAscii(out, "null");
+      o.ascii(out, "null");
     } else if (k == T_TRUE) {
-      pushAscii(out, "true");
+      o.ascii(out, "true");
     } else if (k == T_FALSE) {
-      pushAscii(out, "false");
+      o.ascii(out, "false");
     } else if (k == T_NUMBER) {
       const x = this.number(v);
-      writeF64(out, x);
+      o.number(out, x);
     } else {
-      this.writeText(out, v);
+      this.writeText(o, out, v);
     }
   }
 
-  // String or key `v`, quoted: its source text in one push when it had no escapes.
-  private writeText(out: string, v: u32): void {
+  // String or key `v`, quoted: its source text copied when it had no escapes.
+  private writeText(o: ByteOut, out: string, v: u32): void {
     const w = this.words[2 * (v as usize)];
     const p = this.words[2 * (v as usize) + 1];
     if ((w & ESCAPED) != 0) {
+      o.flush(out);
       const s = this.decoded[p as usize];
       writeString(out, s);
       return;
@@ -368,7 +391,7 @@ export class Tape {
     const start = (p & 0xffffffff) as usize;
     const end = (p >> 32) as usize;
     const units = w >> 32;
-    writeSourceString(out, this.src, start, end, units);
+    o.source(out, this.src, start, end, units);
   }
 
   /** Value `v` as compact JSON text. */
@@ -379,6 +402,105 @@ export class Tape {
     let out = "";
     velt_rt_strbuf_finish(buf, out);
     return out;
+  }
+}
+
+// Room in `ByteOut`'s buffer before it goes to the builder; 32 more bytes take a 16-byte block
+// copied past a run's end (`copyRun`) and a number's digits.
+const OUT_CAP: usize = 8192;
+
+// JSON text for a builder, gathered in a byte array and handed over in chunks
+// (`velt_rt_strbuf_push_u8s`), with its UTF-16 count kept as it fills. Whoever writes to the
+// builder directly flushes first, so the text stays in order.
+class ByteOut {
+  buf: u8[];
+  n: usize = 0;
+  // Bytes in `buf` beyond their UTF-16 units (non-ASCII text copied in).
+  extra: u64 = 0;
+
+  constructor() {
+    this.buf = __intrinsic_array_with_capacity(OUT_CAP + 32);
+    __intrinsic_array_set_len(this.buf, OUT_CAP + 32);
+  }
+
+  flush(out: string): void {
+    if (this.n > 0) {
+      const len = this.n as u64;
+      const units = len - this.extra;
+      velt_rt_strbuf_push_u8s(out, this.buf, len, units);
+      this.n = 0;
+      this.extra = 0;
+    }
+  }
+
+  byte(out: string, b: u8): void {
+    if (this.n >= OUT_CAP) {
+      this.flush(out);
+    }
+    this.buf[this.n] = b;
+    this.n++;
+  }
+
+  ascii(out: string, s: string): void {
+    const len = __intrinsic_str_byte_len(s);
+    if (this.n + len > OUT_CAP) {
+      this.flush(out);
+    }
+    for (let i: usize = 0; i < len; i++) {
+      this.buf[this.n + i] = __intrinsic_str_byte_at(s, i as u64);
+    }
+    this.n += len;
+  }
+
+  // A number as `JSON.stringify` writes it: from its digits when it has at most 15, else by the
+  // general printer (flushed first).
+  number(out: string, x: f64): void {
+    if (x != x || x == Infinity || x == -Infinity) {
+      this.ascii(out, "null");
+      return;
+    }
+    const d = shortNumber(x);
+    if (!d.ok) {
+      // More than 15 digits, or out of the plain range: the general printer (not 0, which is
+      // an integer).
+      this.flush(out);
+      velt_rt_strbuf_push_f64(out, x);
+      return;
+    }
+    if (this.n + 18 > OUT_CAP) {
+      this.flush(out);
+    }
+    this.n = putDecimal(this.buf, this.n, d.neg, d.m, d.k);
+  }
+
+  // Bytes `start` to `end` of `src` quoted: a string's text that had no escapes (no quote,
+  // backslash or control character; whole characters), `units` UTF-16 units. Copied as they are
+  // unless a byte needs an escape (a lone surrogate, which only non-ASCII text can have).
+  source(out: string, src: string, start: usize, end: usize, units: u64): void {
+    const len = end - start;
+    if (units != (len as u64) && nextEscape(src, start, end) < end) {
+      this.flush(out);
+      const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
+      writeString(out, s);
+      return;
+    }
+    if (this.n + len + 2 > OUT_CAP) {
+      this.flush(out);
+      if (len + 2 > OUT_CAP) {
+        // Longer than the buffer: straight to the builder.
+        const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
+        velt_rt_strbuf_push_byte(out, 34);
+        velt_rt_strbuf_push_str(out, s);
+        velt_rt_strbuf_push_byte(out, 34);
+        return;
+      }
+    }
+    const srcLen = __intrinsic_str_byte_len(src);
+    this.buf[this.n] = 34;
+    const at = copyRun(this.buf, this.n + 1, src, start, end, srcLen);
+    this.buf[at] = 34;
+    this.n = at + 1;
+    this.extra += (len as u64) - units;
   }
 }
 
