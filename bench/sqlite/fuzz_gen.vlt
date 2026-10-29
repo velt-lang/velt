@@ -1,7 +1,10 @@
 // Random schemas, data and SELECTs for bench/sqlite/fuzz.vlt. Queries are deterministic in both
 // engines: an ORDER BY lists every result column after its own terms, LIMIT comes only with such
-// an ORDER BY, and the aggregates whose result depends on the order rows are visited
-// (group_concat, sums of floats) are left out.
+// an ORDER BY, and GROUP BY queries leave out the aggregates whose result depends on the order
+// rows are visited (group_concat, sums of floats). Window functions (windowed()) do use them, and
+// a window without an ORDER BY, or with ties in it, sees its rows in the order the loops visit
+// them: those queries agree only while both engines read the table the same way, so a
+// difference there can be a plan's and not a wrong result.
 
 /** A seeded pseudo-random generator (xorshift64*). */
 export class Gen {
