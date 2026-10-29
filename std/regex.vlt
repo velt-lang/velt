@@ -16,6 +16,9 @@
 // immutable and can be used from any task.
 
 import { IoResult } from "velt:io";
+import { Pattern } from "velt:regex/pattern";
+
+export { Pattern } from "velt:regex/pattern";
 
 declare function velt_rt_regex_new(pattern: string, flags: string): IoResult<u64>;
 declare function velt_rt_regex_free(re: u64);
@@ -152,7 +155,7 @@ export class RegExpMatch {
 }
 
 /** A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`. */
-export class RegExp {
+export class RegExp implements Pattern {
   /** The pattern text as given. */
   readonly source: string;
   /** The flags as given. */

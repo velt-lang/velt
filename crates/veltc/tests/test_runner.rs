@@ -136,9 +136,9 @@ fn shared_harness_parallel_files_and_failures() {
             "a same",
             "ok test_same",
             "FAILED test_panics",
-            "    AssertionError: assertEq failed at t/a.test.vlt:6:3",
+            "    AssertionError: assertEq failed",
             "      left: 1",
-            "     right: 2",
+            "     right: 2 at t/a.test.vlt:6:3",
             "a after",
             "ok test_after_panic",
             "FAILED test_throws",
@@ -380,6 +380,54 @@ fn a_leak_check_without_block_counts_fails_the_file() {
             "ok test_closes_stderr",
             "FAILED t/silent.test.vlt (no block counts on its stderr; VELT_RC_STATS=1 counts \
              blocks in debug builds)",
+        ],
+        "{stdout}"
+    );
+}
+
+/// Failures whose messages have several lines: `toEqual` on two values too long for one line,
+/// and an error whose message has a line break.
+const MULTI_LINE: &str = r#"import { expect } from "velt:test";
+
+const a = { name: "first value", items: ["one", "two", "three"], nested: { deep: true, n: 1 } };
+const b = { name: "first value", items: ["one", "two", "three"], nested: { deep: true, n: 2 } };
+
+export function test_to_equal() {
+  expect(a).toEqual(b);
+}
+
+export function test_error() {
+  throw new Error("first line\nsecond line");
+}
+"#;
+
+/// The location of a failure follows its whole message, as Vitest prints the message and then
+/// the location (#1888).
+#[test]
+fn the_location_follows_a_multi_line_message() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(dir, "t/m.test.vlt", MULTI_LINE);
+    let o = velt_test(dir, &["t"]);
+    let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+    assert_eq!(
+        block(&stdout, "m.test.vlt")[1..],
+        [
+            "FAILED test_to_equal",
+            "    AssertionError: expected {",
+            "      name: 'first value',",
+            "      items: [ 'one', 'two', 'three' ],",
+            "      nested: { deep: true, n: 1 }",
+            "    } to deeply equal {",
+            "      name: 'first value',",
+            "      items: [ 'one', 'two', 'three' ],",
+            "      nested: { deep: true, n: 2 }",
+            "    } at t/m.test.vlt:7:3",
+            "FAILED test_error",
+            "    Error: first line",
+            "    second line at t/m.test.vlt:11:3",
         ],
         "{stdout}"
     );

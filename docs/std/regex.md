@@ -43,6 +43,10 @@ in JS (`/\u{2}/` matches `"uu"`); with it, `\p{…}` and `\P{…}` are Unicode p
   not take part, where JS gives `undefined`); `limit` 0 means no limit.
 - `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
   holding a `RegExp` can be copied for another task, `spawn` or a channel).
+- `RegExp` implements `Pattern` (`source`, `flags` and `test(s, from?)`), also exported by
+  velt:regex/pattern, a module without the regex engine: code that only takes a regex (velt:test's
+  `toMatch(expected: string | Pattern)`) imports that, so a program that has no regex doesn't
+  compile velt:regex.
 - `RegExpMatch { index; end; value; captures: (string | null)[]; names }` (`index` and `end`
   are `number`s, as JS's `m.index`), with `group(n)`,
   `named(name)` and `substitute(s, repl)` (`repl` expanded for the match). `m[n]` is group `n`

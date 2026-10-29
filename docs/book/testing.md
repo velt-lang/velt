@@ -60,13 +60,14 @@ export function test_parses() {
 }
 ```
 
-When a test fails, the runner shows why and where:
+When a test fails, the runner shows why and then where (after the last line of a message of
+several lines, as Vitest shows the location after the message):
 
 ```
 FAILED test_parses_twice
-    AssertionError: assertEq failed at tests/port.test.vlt:14:3
+    AssertionError: assertEq failed
       left: 2
-     right: 3
+     right: 3 at tests/port.test.vlt:14:3
 FAILED test_uncaught
     ParseError: bad port: x at tests/port.test.vlt:5:15
 FAILED test_out_of_range (exit code 101)
@@ -137,9 +138,10 @@ ok cart > async > waits
   class instances by their fields, a `Date` by its time, a `Set` by its members in any order,
   numbers with `Object.is`), `toBeNull`, `toBeUndefined`, `toBeDefined`, `toBeTruthy`,
   `toBeFalsy`, `toContain` and `toHaveLength` (an array or a string), `toMatch` (a string: a
-  `RegExp`, or a string it contains), `toBeGreaterThan`, `toBeGreaterThanOrEqual`,
-  `toBeLessThan`, `toBeLessThanOrEqual` (a `Comparable` type: numbers, strings), and `toThrow` on
-  a function (`expect(() => parse("x")).toThrow("bad")`). `.not` checks the opposite. `await
+  `RegExp`, or a string it contains; a file without a regex doesn't compile velt:regex),
+  `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual` (a
+  `Comparable` type: numbers, strings), and `toThrow` on a function
+  (`expect(() => parse("x")).toThrow("bad")`). `.not` checks the opposite. `await
   expect(p).resolves` and `.rejects` check what a promise resolves to, or its error
   (`.rejects.toThrow("boom")`). Failure messages are Vitest's (`expected 2 to be 3 // Object.is
   equality`).

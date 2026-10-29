@@ -1,8 +1,10 @@
 // std/test/expect: `expect(actual)` and its matchers (docs/book/testing.md), as Vitest's. A
 // matcher that fails throws an `AssertionError`, which fails the test. `extend Expect<T>` adds
-// matchers, through `check` as the built-in ones do.
+// matchers, through `check` as the built-in ones do. The pattern matchers take a `Pattern`
+// (velt:regex/pattern), which `RegExp` implements, so a test file compiles std/regex only when it
+// has a regex.
 
-import { RegExp } from "velt:regex";
+import { Pattern } from "velt:regex/pattern";
 
 /** What `expect(actual)` returns: the matchers for `actual`. */
 export class Expect<T> {
@@ -104,7 +106,7 @@ function show<T>(value: T): string {
 }
 
 /** A string as the messages show it (`'x'`), a `RegExp` as written (`/x/i`). */
-function pattern(p: string | RegExp): string {
+function pattern(p: string | Pattern): string {
   return typeof p == "string" ? show(p) : `/${p.source}/${p.flags}`;
 }
 
@@ -154,7 +156,7 @@ extend Expect<string> {
   }
 
   /** `pattern` matches `actual` (a string: `actual` contains it). */
-  toMatch(expected: RegExp | string) {
+  toMatch(expected: string | Pattern) {
     const pass =
       typeof expected == "string" ? this.actual.includes(expected) : expected.test(this.actual);
     const a = show(this.actual);
@@ -211,7 +213,7 @@ extend<R, E> Expect<() => R throws E> {
    * Calling `actual` throws; with `expected`, an error whose message contains it (a string) or
    * matches it (a `RegExp`).
    */
-  toThrow(expected?: string | RegExp) {
+  toThrow(expected?: string | Pattern) {
     let thrown = false;
     let message = "";
     let text = "";
@@ -239,7 +241,7 @@ function thrownWhy(
   thrown: bool,
   message: string,
   text: string,
-  expected: string | RegExp | null | undefined,
+  expected: string | Pattern | null | undefined,
   negated: bool,
 ): string | null {
   const subject = "[Function]";
@@ -396,7 +398,7 @@ export class Rejects<V, E> {
    * The promise rejects; with `expected`, with an error whose message contains it (a string)
    * or matches it (a `RegExp`).
    */
-  async toThrow(expected?: string | RegExp): Promise<void, unknown> {
+  async toThrow(expected?: string | Pattern): Promise<void, unknown> {
     let rejected = false;
     let message = "";
     let text = "";

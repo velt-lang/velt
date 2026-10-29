@@ -449,7 +449,8 @@ fn test_filter_and_no_run() {
     assert_eq!(run.status.code(), Some(1));
     let out = String::from_utf8_lossy(&run.stdout);
     assert!(
-        out.contains("FAILED test_bad\n    AssertionError: assertEq failed at "),
+        out.contains("FAILED test_bad\n    AssertionError: assertEq failed\n")
+            && out.contains("     right: 2 at "),
         "{out}"
     );
     // In a directory of its own, so debugging it doesn't block the next run's link.

@@ -111,9 +111,9 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     assert_eq!(paths(&l), ["main"]);
 }
 
-/// The JSON modules of the repository's std a program loads (`JSON` and `JsonValue` are
-/// globals: std/prelude/global/json.vlt).
-fn json_modules(main: &str) -> Vec<String> {
+/// The modules of the repository's std a program loads whose paths start with one of
+/// `prefixes`.
+fn std_modules(main: &str, prefixes: &[&str]) -> Vec<String> {
     let t = Tree::new();
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     let root = t.write("p/main.vlt", main);
@@ -123,13 +123,17 @@ fn json_modules(main: &str) -> Vec<String> {
     };
     let (l, diags, _) = load(&root, opts);
     assert!(diags.is_empty(), "{:?}", messages(&diags));
-    let json = |p: &str| p.starts_with("std/json") || p.starts_with("std/prelude/json");
-    let paths = paths(&l);
-    paths
+    paths(&l)
         .into_iter()
-        .filter(|p| json(p))
+        .filter(|p| prefixes.iter().any(|x| p.starts_with(x)))
         .map(str::to_string)
         .collect()
+}
+
+/// The JSON modules of the repository's std a program loads (`JSON` and `JsonValue` are
+/// globals: std/prelude/global/json.vlt).
+fn json_modules(main: &str) -> Vec<String> {
+    std_modules(main, &["std/json", "std/prelude/json"])
 }
 
 #[test]
@@ -151,4 +155,17 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(typed).contains(&"std/prelude/json/json".to_string()));
     let csv = "import { parseCsv } from \"velt:csv\";\nconsole.log(parseCsv(\"a\").length);\n";
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
+}
+
+/// `expect`'s pattern matchers take a `Pattern` (std/regex/pattern), so a test file compiles the
+/// regex engine only when it has a regex (#1889).
+#[test]
+fn a_test_file_without_a_regex_loads_no_regex_engine() {
+    let plain = "import { expect, it } from \"velt:test\";\n\
+                 it(\"m\", () => expect(\"hello\").toMatch(\"ll\"));\n";
+    assert_eq!(std_modules(plain, &["std/regex"]), ["std/regex/pattern"]);
+    let literal = "import { expect, it } from \"velt:test\";\n\
+                   it(\"m\", () => expect(\"hello\").toMatch(/^h/));\n";
+    let loaded = std_modules(literal, &["std/regex"]);
+    assert!(loaded.contains(&"std/regex".to_string()), "{loaded:?}");
 }
