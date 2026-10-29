@@ -104,7 +104,7 @@ export const pkg: Package = {
   ```sh
   velt test                       # at the root: every member
   velt check --affected           # what this branch touched, and what uses it
-  velt build -p 'apps/*' -p cli   # some members
+  velt build -p 'server*' -p cli  # some members, by name
   velt run -p server              # one member's program
   ```
 - A package below the workspace that no glob lists stays on its own, with its own lockfile and
