@@ -29,8 +29,12 @@ for its bare columns.
   `string`, BLOB into `u8[]`, NULL into `T | null`. A row that doesn't fit throws
   `SQLITE_MISMATCH`.
 - **Parameters**: `?`, `?NNN`, `:name`, `@name` and `$name`, bound as in `velt:sqlite`: an
-  array (or a single value) by position, an object by name; integer → INTEGER, other numbers →
-  REAL, string → TEXT, bool → 0/1, null → NULL, an array of bytes → BLOB.
+  array (or a single value) by position, with one value for each parameter, an object by name,
+  with a field for each; an integer in i64's range (and an integral `f64` in it) → INTEGER,
+  other numbers → REAL, string → TEXT, bool → 0/1, null → NULL, an array of bytes → BLOB. A
+  wrong number of values, a missing field, a `?` in a statement bound by an object, or no
+  parameters at all for a statement that has some is `SQLITE_RANGE` with `velt:sqlite`'s
+  message.
 - `SqliteError { code, message }`: `SQLITE_ERROR` (unknown table, column or function, wrong
   arguments, an error while running such as `integer overflow` in `sum()`), `SQLITE_RANGE`,
   `SQLITE_MISMATCH`, `SQLITE_CORRUPT`, `SQLITE_CANTOPEN`. Messages are SQLite's

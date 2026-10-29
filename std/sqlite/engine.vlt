@@ -138,6 +138,7 @@ export class Statement {
 
   /** Every row. */
   all<T>(): T[] {
+    this.noParams();
     const p = this.query.pull;
     if (p != null) {
       return this.pullAll<T>(p!);
@@ -159,6 +160,7 @@ export class Statement {
 
   /** The first row, or null if there is none. */
   get<T>(): T | null {
+    this.noParams();
     const p = this.query.pull;
     if (p != null) {
       return this.pullFirst<T>(p!);
@@ -182,6 +184,7 @@ export class Statement {
    * query allows it (else as `values()`): for tests comparing the two paths.
    */
   pulledValues(): Val[] {
+    this.noParams();
     const p = this.query.pull;
     if (p == null) {
       return this.values();
@@ -261,6 +264,7 @@ export class Statement {
 
   /** Every row as values (velt:sqlite/exec/value's `Val`), `columns().length` a row. */
   values(): Val[] {
+    this.noParams();
     this.exec(-1);
     return this.query.out.vals;
   }
@@ -269,6 +273,16 @@ export class Statement {
     this.bind<P>(params);
     this.exec(-1);
     return this.query.out.vals;
+  }
+
+  // Without parameters given: velt:sqlite's error when the statement has any.
+  private noParams() {
+    if (this.count > 0) {
+      throw new SqliteError(
+        "SQLITE_RANGE",
+        `the statement has ${this.count} parameter(s) but none were given (use runWith / getWith / allWith)`,
+      );
+    }
   }
 
   private bind<P>(params: P) {

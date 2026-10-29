@@ -1,7 +1,7 @@
 // The statement API of the SQLite engine written in Velt (velt:sqlite/engine, #1720): typed rows
 // by column name, parameters by position and by name, column names, the plan cache, errors.
-import { open } from "velt:sqlite";
-import { openDatabase, SqliteError } from "velt:sqlite/engine";
+import { open, Database as CDatabase } from "velt:sqlite";
+import { openDatabase, Database, SqliteError } from "velt:sqlite/engine";
 import { quote } from "velt:sqlite/exec/func";
 import { tmpdir } from "velt:os";
 import { uuidv4 } from "velt:uuid";
@@ -21,6 +21,33 @@ struct Named {
 
 struct Count {
   n: i64;
+}
+
+struct Bound {
+  t: string;
+  q: string;
+}
+
+/** `params` bound to `sql` in the engine and in velt:sqlite: each row's `t|q`, or the error. */
+function both<P>(db: Database, c: CDatabase, sql: string, params: P) {
+  let mine = "";
+  try {
+    const rows: Bound[] = db.prepare(sql).allWith(params);
+    mine = rows.map((r) => `${r.t}|${r.q}`).join(" ");
+  } catch (e) {
+    mine = e.message;
+  }
+  let theirs = "";
+  try {
+    const rows: Bound[] = c.prepare(sql).allWith(params);
+    theirs = rows.map((r) => `${r.t}|${r.q}`).join(" ");
+  } catch (e) {
+    theirs = e.message;
+  }
+  const shown = JSON.stringify(params);
+  console.log(
+    mine == theirs ? `${shown}: ${mine}` : `${shown}: velt ${mine}, velt:sqlite ${theirs}`,
+  );
 }
 
 struct Bytes {
@@ -112,6 +139,50 @@ function main() {
     const all = st.values().map((v) => quote(v)).join(" ");
     console.log(pulled == all ? `pulled: ${pulled}` : `pulled ${pulled}, values() ${all}`);
   }
+
+  // Parameters as velt:sqlite binds them: every i64 exactly (past it, REAL), one value for each
+  // parameter, a field for each named one.
+  const mem = open(":memory:");
+  const one1 = "SELECT typeof(?1) AS t, quote(?1) AS q";
+  const big: i64[] = [1234567890123456789, 9223372036854775807, -9223372036854775807 - 1];
+  for (const n of big) {
+    both(db, mem, one1, [n]);
+  }
+  // Through the reader (a field that is no integer): a negative of 18 digits, i64's ends, past them.
+  const neg: i64 = -123456789012345678;
+  const top: i64 = 9223372036854775807;
+  const ab = "SELECT typeof(:a) AS t, quote(:a) || ' ' || quote(:b) || ' ' || quote(:c) AS q";
+  both(db, mem, ab, { a: neg, b: "x", c: top });
+  both(db, mem, ab, { a: -9223372036854775807 - 1, b: 1e20, c: "y" });
+  both(db, mem, one1, 99999999999999999999.0);
+  const noValues: i64[] = [];
+  both(db, mem, one1, noValues);
+  both(db, mem, one1, [1, 2]);
+  both(db, mem, one1, { a: 1 });
+  both(db, mem, "SELECT typeof(:a) AS t, quote(:b) AS q", { a: 1 });
+  both(db, mem, "SELECT typeof(:a) AS t, quote(:a) AS q", { a: 1, z: 2 });
+  for (const sql of [one1, "SELECT '1' AS t, '2' AS q"]) {
+    let mine = "";
+    try {
+      const rows: Bound[] = db.prepare(sql).all();
+      mine = `${rows.length} row(s)`;
+    } catch (e) {
+      mine = e.message;
+    }
+    let theirs = "";
+    try {
+      const rows: Bound[] = mem.prepare(sql).all();
+      theirs = `${rows.length} row(s)`;
+    } catch (e) {
+      theirs = e.message;
+    }
+    console.log(
+      mine == theirs
+        ? `no parameters: ${mine}`
+        : `no parameters: velt ${mine}, velt:sqlite ${theirs}`,
+    );
+  }
+  mem.close();
 
   // Errors: SQLite's codes and messages.
   for (const sql of [
