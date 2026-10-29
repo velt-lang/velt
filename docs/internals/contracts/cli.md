@@ -517,7 +517,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   disk and the corrected specifier); a file module that hides a folder module whose `index` has
   another extension gets a warning. Root files may be `.ts` or `.tsx` too; a package without
   `entry` uses `src/main.vlt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.vlt` is loaded implicitly before everything else.
-  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, …) join the prelude
+  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, `JSON`, …) join the prelude
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`

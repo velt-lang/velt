@@ -114,8 +114,16 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                     if let Some(v) = &d.version {
                         o.insert("version".into(), json!(v));
                     }
-                    if let Some(p) = &d.path {
-                        o.insert("path".into(), json!(p));
+                    for (key, value) in [
+                        ("path", &d.path),
+                        ("git", &d.git),
+                        ("branch", &d.branch),
+                        ("tag", &d.tag),
+                        ("rev", &d.rev),
+                    ] {
+                        if let Some(v) = value {
+                            o.insert(key.into(), json!(v));
+                        }
                     }
                     Value::Object(o)
                 }
@@ -179,8 +187,16 @@ pub(crate) fn dependency_lit(dep: &Dependency) -> String {
                 .version
                 .iter()
                 .map(|v| format!("version: {}", string_lit(v)));
-            let path = d.path.iter().map(|p| format!("path: {}", string_lit(p)));
-            inline_object(version.chain(path))
+            let rest = [
+                ("git", &d.git),
+                ("branch", &d.branch),
+                ("tag", &d.tag),
+                ("rev", &d.rev),
+                ("path", &d.path),
+            ]
+            .into_iter()
+            .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {}", string_lit(v))));
+            inline_object(version.chain(rest))
         }
     }
 }

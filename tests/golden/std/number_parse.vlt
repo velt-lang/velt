@@ -1,0 +1,318 @@
+// `Number(s)` and `parseFloat(s)` (velt:number/parse, #1658), checked against Node: the
+// grammar (whitespace, signs, `0x`/`0o`/`0b`, `Infinity`, the empty string, trailing garbage,
+// underscores), correct rounding (halfway cases, long mantissas, subnormals, the largest and
+// smallest values, neighbours of 2^53 and 2^64, radix 2/8/16 ties) and exponents balanced
+// against a million leading zeros. Each value is printed as its exact sign, odd significand and
+// power of two, so the output does not depend on Velt's number printing. The file is plain
+// TypeScript: the .out is Node's output
+// (`cp number_parse.vlt /tmp/n.ts && node --experimental-strip-types /tmp/n.ts`).
+
+// x = sign m * 2^e, m odd (or 0). Scaling by powers of two is exact.
+function bits(x: number): string {
+  if (x != x) {
+    return "NaN";
+  }
+  const sign = x < 0 || (x == 0 && 1 / x < 0) ? "-" : "+";
+  let a = Math.abs(x);
+  if (a == Infinity) {
+    return sign + "Infinity";
+  }
+  let e = 0;
+  if (a != 0) {
+    while (a != Math.floor(a)) {
+      a = a * 4294967296;
+      e -= 32;
+    }
+    while (a / 4294967296 == Math.floor(a / 4294967296)) {
+      a = a / 4294967296;
+      e += 32;
+    }
+    while (a / 2 == Math.floor(a / 2)) {
+      a = a / 2;
+      e += 1;
+    }
+  }
+  return sign + a + "p" + e;
+}
+
+function label(s: string): string {
+  return s.length <= 60
+    ? JSON.stringify(s)
+    : JSON.stringify(s.slice(0, 24)) + "...(" + s.length + ")";
+}
+
+function show(name: string, s: string): void {
+  console.log(name, bits(Number(s)), bits(parseFloat(s)));
+}
+
+function check(s: string): void {
+  show(label(s), s);
+}
+
+console.log("-- grammar");
+const bodies: string[] = [
+  "12",
+  "-12",
+  "+12",
+  "1.5",
+  ".5",
+  "5.",
+  "-.5",
+  "+.5e1",
+  "0x1F",
+  "0X1f",
+  "0o17",
+  "0O17",
+  "0b101",
+  "0B101",
+  "Infinity",
+  "-Infinity",
+  "+Infinity",
+  "1e5",
+  "12345678901234567890123",
+  "1234567890123456789012345e-5",
+  "0.000001",
+  "-0",
+  "0",
+  "0x",
+  "0b",
+  "0o",
+  "1_000",
+  "1__0",
+  "_1",
+  "1_",
+  "0x1_0",
+  "1e1_0",
+  "1.2.3",
+  "1e5.5",
+  "1e",
+  "1e+",
+  "1e-",
+  "1E5",
+  "00012",
+  "-00",
+  "0.0e0",
+  "e5",
+  ".",
+  "+",
+  "-",
+  "+-1",
+  "--1",
+  "-+1",
+  "1d",
+  "1f",
+  "1.0f",
+  "0x1p3",
+  "0x-1",
+  "-0x10",
+  "+0x10",
+  "0xg",
+  "0b2",
+  "0o8",
+  "0x1.8",
+  "infinity",
+  "INFINITY",
+  "Infinit",
+  "NaN",
+  "-NaN",
+  "nan",
+  "１",
+  "1\u0000",
+];
+const trailers: string[] = ["", "x", "1", ".", "e", " 2", "e5", "_", "abc", "Infinity", "\u0000"];
+for (const b of bodies) {
+  for (const t of trailers) {
+    check(b + t);
+  }
+}
+
+console.log("-- whitespace");
+// JavaScript's whitespace and line terminators, then four that are not (U+180E, U+200B, U+0085,
+// U+2060).
+const ws: string[] = [
+  " ",
+  "\t",
+  "\n",
+  "\r",
+  "\v",
+  "\f",
+  " ",
+  " ",
+  " ",
+  " ",
+  " ",
+  " ",
+  " ",
+  " ",
+  "　",
+  "﻿",
+  "᠎",
+  "​",
+  "\u0085",
+  "⁠",
+  " 　 \t",
+];
+const wsBodies: string[] = ["12", "-1.5e3", "0x1F", "Infinity", "12345678901234567890123", "1e"];
+for (let i = 0; i < ws.length; i++) {
+  const w = ws[i];
+  show("ws" + i, w);
+  show("ws" + i + " x2", w + w);
+  for (const b of wsBodies) {
+    show("ws" + i + " before " + label(b), w + b);
+    show("ws" + i + " after " + label(b), b + w);
+    show("ws" + i + " around " + label(b), w + b + w);
+  }
+}
+
+console.log("-- radix 2, 8 and 16");
+const radix: string[] = [
+  "0x" + "f".repeat(300),
+  "0x1" + "0".repeat(256),
+  "0x1" + "0".repeat(255),
+  "0x" + "f".repeat(256),
+  "0x" + "f".repeat(255) + "e",
+  "0b" + "1".repeat(54),
+  "0b1" + "0".repeat(52) + "1",
+  "0b1" + "0".repeat(52) + "11",
+  "0x20000000000001",
+  "0x20000000000003",
+  "0x20000000000002",
+  "0x200000000000010000001",
+  "0x20000000000001000000",
+  "0x2000000000000100000000000000000000000000001",
+  "0o" + "7".repeat(400),
+  "0o1" + "0".repeat(17) + "1",
+  "0o4" + "0".repeat(17) + "1",
+  "0o4" + "0".repeat(16) + "4",
+  "0o4" + "0".repeat(16) + "40",
+  "0o4" + "0".repeat(16) + "41",
+  "0xFFFFFFFFFFFFF800",
+  "0xFFFFFFFFFFFFFC00",
+  "0xFFFFFFFFFFFFFC01",
+  "0xFFFFFFFFFFFFFBFF",
+  "0x1FFFFFFFFFFFFF",
+  "0x3FFFFFFFFFFFFF",
+  "0x7FFFFFFFFFFFFE",
+  "0x1fffffffffffff8" + "0".repeat(240),
+  "0x1fffffffffffffc" + "0".repeat(240),
+  "0x1fffffffffffffbff" + "0".repeat(238),
+];
+for (const s of radix) {
+  check(s);
+}
+
+console.log("-- rounding");
+const hard: string[] = [
+  "2.2250738585072011e-308",
+  "2.2250738585072012e-308",
+  "2.2250738585072014e-308",
+  "2.2250738585072009e-308",
+  "2.225073858507201136057409796709131975934819546351645648e-308",
+  "4.9406564584124654e-324",
+  "2.4703282292062328e-324",
+  "2.4703282292062327e-324",
+  "2.47032822920623272e-324",
+  "2.4703282292062327208828439643411068618252990130716238221279284125033775364e-324",
+  "1.7976931348623157e308",
+  "1.7976931348623158e308",
+  "1.7976931348623159e308",
+  "1.797693134862315807e308",
+  "1797693134862315807937289714053034150799341327100378269361737789804449682927647509466490179775872070963302864166928879109465555478519404026306574886715058206819089020007083836762738548458177115317644757302700698555713669596228429148198608349364752927190741684443655107043427115596995080930428801779041744977919999999999999999999e-19",
+  "9007199254740993",
+  "9007199254740992.5",
+  "9007199254740993.0000000000000000001",
+  "9007199254740995",
+  "9007199254740991",
+  "-9007199254740993",
+  "18446744073709551615",
+  "18446744073709551616",
+  "18446744073709551617",
+  "9999999999999999999",
+  "99999999999999999999",
+  "10000000000000000000",
+  "1e-342",
+  "1e-343",
+  "1e-324",
+  "3e-324",
+  "2e-324",
+  "1e308",
+  "1e309",
+  "1e310",
+  "-0.0e5",
+  "0.1000000000000000055511151231257827",
+  "7.038531e-26",
+  "1e23",
+  "8.98846567431158e307",
+  "4.4501477170144023e-308",
+  "1.448997445238699e-305",
+  "2.0000000000000004",
+  "1.0000000000000002",
+  "1.00000000000000011102230246251565404236316680908203125",
+  "1.00000000000000011102230246251565404236316680908203124",
+  "1.00000000000000011102230246251565404236316680908203126",
+  "7.2057594037927933e16",
+  "9223372036854775807",
+  "9223372036854775808",
+  "0.30000000000000004",
+  "123456789012345678e-20",
+  "5e-324",
+  "0e999999999999",
+  "1e-99999999999999999999",
+  "1e99999999999999999999",
+  "-1e99999999999999999999",
+  "00000000000000000000000000000001",
+  "0.0000000000000000000000000001e28",
+  "1.e1",
+  ".1e1",
+  "3.0e-1",
+  "6.631236846766476e-316",
+  "3.2378839133029012e-319",
+  "6.953355807847677e-310",
+  "1.9156918820264798e-56",
+  "6.9294956446009195e15",
+  "5708990770823839524233143877797980545530986496",
+  "1.2345678901234567890123456789",
+  "4.9e-324",
+  "1.5e-323",
+  "2.5e-324",
+  "7.4e-324",
+  "7.5e-324",
+  "1e1000000000",
+  "1e-1000000000",
+  "1e2147483648",
+  "0.1e-2147483648",
+  "12345678901234567890e-1000000",
+  "1e" + "0".repeat(1000) + "1",
+  "1e-" + "0".repeat(1000) + "1",
+  // Exact halfway cases between adjacent doubles: odd 54-bit integers, times 10^q.
+  "9007199254740993e0",
+  "9007199254740995e0",
+  "18014398509481987e1",
+  "18014398509481985e-1",
+  "4503599627370496.5",
+  "4503599627370497.5",
+];
+for (const s of hard) {
+  check(s);
+}
+for (let k = -3; k <= 3; k++) {
+  check(String(9007199254740992 + k));
+  check("1844674407370955161" + (5 + k));
+  check("922337203685477580" + (7 + k));
+}
+
+console.log("-- leading zeros against the exponent");
+const zeros: number[] = [10, 25, 100, 400, 1000, 5000, 100000, 1000005];
+for (const z of zeros) {
+  check("0." + "0".repeat(z) + "1e" + (z + 1));
+  check("0." + "0".repeat(z) + "123456789e" + (z + 1));
+  check("0." + "0".repeat(z) + "1e" + z);
+  check("0".repeat(z) + "1.5");
+  check("1." + "0".repeat(z) + "1");
+  check("1." + "0".repeat(z));
+}
+check("0." + "0".repeat(1000000) + "1e1000001");
+check("-0." + "0".repeat(1000010) + "25e1000005");
+const big = "0." + "0".repeat(1000000) + "1e1000001";
+const v: number = JSON.parse(big);
+console.log("JSON.parse", bits(v));

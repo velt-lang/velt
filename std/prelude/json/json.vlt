@@ -1,4 +1,6 @@
-// Prelude: `JSON`, `JsonError` and `JsonValue` (rt_abi_async.md §12.3–12.5).
+// Prelude, loaded on use: `JSON`, `JsonError` and `JsonValue` (rt_abi_async.md §12.3–12.5). A
+// program loads this module when one of its modules names one of them (the global
+// std/prelude/global/json.vlt) or imports a std module that uses them.
 //
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
@@ -16,6 +18,9 @@
 // generated copy could not take a new reference).
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+// The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
+import "velt:json/reader";
 
 declare function velt_rt_json_parse_value(src: string, out: JsonHandleSlot, err: string): bool;
 declare function velt_rt_json_parse_value_with(

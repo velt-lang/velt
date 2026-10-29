@@ -194,9 +194,9 @@ fn keys_are_checked() {
     assert_eq!(message, "unknown key `import_source` in the manifest");
     assert_eq!(covered, "import_source");
     let (message, _) = error(&with(
-        "dependencies: { util: { path: \"../u\", git: \"x\" } }",
+        "dependencies: { util: { path: \"../u\", gitt: \"x\" } }",
     ));
-    assert_eq!(message, "unknown key `git` in the manifest");
+    assert_eq!(message, "unknown key `gitt` in the manifest");
 
     let (message, covered) = error(&with("entry: \"a\", entry: \"b\""));
     assert_eq!(message, "duplicate key `entry`");
@@ -235,7 +235,10 @@ fn field_rules_point_at_the_value() {
     assert_eq!(covered, "\"@app/*\": \"../x/*\"");
 
     let (message, covered) = error(&with("dependencies: { y: {} }"));
-    assert_eq!(message, "dependency `y` needs a `version` or a `path`");
+    assert_eq!(
+        message,
+        "dependency `y` needs a `version`, a `path` or a `git` repository"
+    );
     assert_eq!(covered, "{}");
     let (message, _) = error(&with("dependencies: { y: \"one\" }"));
     assert!(

@@ -1,0 +1,112 @@
+// JSON numbers parsed by velt:json/scan and velt:number/eisel_lemire (#1658), checked against
+// Node: known hard cases one per line, then a hash over 100,000 random 16- to 19-digit
+// mantissas at every decimal exponent (subnormals and the overflow edge included). Each value
+// is printed as its exact sign, odd significand and power of two, so the output does not
+// depend on Velt's number printing. The file is plain TypeScript: the .out is Node's output
+// (`cp json_float_parse.vlt /tmp/j.ts && node --experimental-strip-types /tmp/j.ts`).
+
+let seed: number = 1658;
+
+// Park-Miller: every product stays below 2^53, so it is exact in a double.
+function next(n: number): number {
+  seed = (seed * 48271) % 2147483647;
+  return seed % n;
+}
+
+// x = sign * m * 2^e, m odd (or 0). Scaling by powers of two is exact.
+let gm: number = 0;
+let ge: number = 0;
+
+function split(x: number): void {
+  let a = Math.abs(x);
+  let e = 0;
+  if (a == Infinity) {
+    a = 0;
+    e = 9999;
+  } else if (a != 0) {
+    while (a != Math.floor(a)) {
+      a = a * 4294967296;
+      e -= 32;
+    }
+    while (a / 4294967296 == Math.floor(a / 4294967296)) {
+      a = a / 4294967296;
+      e += 32;
+    }
+    while (a / 2 == Math.floor(a / 2)) {
+      a = a / 2;
+      e += 1;
+    }
+  }
+  gm = a;
+  ge = e;
+}
+
+function bits(x: number): string {
+  if (x != x) {
+    return "NaN";
+  }
+  const sign = x < 0 || (x == 0 && 1 / x < 0) ? "-" : "+";
+  if (x == Infinity || x == -Infinity) {
+    return sign + "Infinity";
+  }
+  split(x);
+  return sign + gm + "p" + ge;
+}
+
+const hard: string[] = [
+  "2.2250738585072011e-308",
+  "2.2250738585072012e-308",
+  "2.2250738585072014e-308",
+  "4.9406564584124654e-324",
+  "2.4703282292062328e-324",
+  "2.4703282292062327e-324",
+  "1.7976931348623157e308",
+  "1.7976931348623158e308",
+  "1.7976931348623159e308",
+  "9007199254740993",
+  "9007199254740992.5",
+  "18446744073709551615",
+  "1e-342",
+  "1e-343",
+  "1e308",
+  "1e309",
+  "-0.0e5",
+  "0.1000000000000000055511151231257827",
+  "123456789012345678e-20",
+  "7.2057594037927933e16",
+  "9223372036854775807",
+  "4.4501477170144023e-308",
+  "1.448997445238699e-305",
+  "2.0000000000000004",
+  "1.0000000000000002",
+  "8.98846567431158e307",
+  "7.038531e-26",
+  "1e23",
+  "6.631236846766476e-316",
+  "3.2378839133029012e-319",
+  "1.9156918820264798e-56",
+  "6.9294956446009195e15",
+];
+for (const h of hard) {
+  const v: number = JSON.parse(h);
+  console.log(h, bits(v));
+}
+
+let hash = 0;
+for (let k = 0; k < 100000; k++) {
+  const nd = 16 + next(4);
+  let digits = String(1 + next(9));
+  for (let i = 1; i < nd; i++) {
+    digits += String(next(10));
+  }
+  const point = next(nd);
+  const mantissa = point == 0 ? digits : digits.slice(0, point) + "." + digits.slice(point);
+  const e = next(670) - 345;
+  const text = (next(2) == 0 ? "-" : "") + mantissa + "e" + String(e);
+  const v: number = JSON.parse(text);
+  split(v);
+  const s = v < 0 || (v == 0 && 1 / v < 0) ? 1 : 0;
+  hash = (hash * 1000003 + (gm % 2147483647)) % 2147483647;
+  hash = (hash * 1000003 + ge + 2000 + s) % 2147483647;
+}
+console.log("random:", hash);

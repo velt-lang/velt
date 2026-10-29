@@ -396,6 +396,9 @@ struct Cx<'h> {
     native_inits: Vec<crate::NativeInit>,
     /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
     view_fn: Option<Option<DefId>>,
+    /// The standard library's functions by qualified name, built on the first lookup of the
+    /// JSON glue (json/reader.rs `json_std_fn`): one map, not a scan of every def per call.
+    std_fns: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).

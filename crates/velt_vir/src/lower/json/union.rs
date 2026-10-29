@@ -142,7 +142,7 @@ impl FnLower<'_, '_> {
         let blocks: Vec<BlockId> = (0..5).map(|_| self.new_block()).collect();
         let tok = self.temp(Ty::U32);
         let ro = Operand::Copy(Place::local(r));
-        self.call_rt(Rt::JsonPeek, vec![ro], Some(Place::local(tok)));
+        self.reader_rt(Rt::JsonPeek, vec![ro], Some(Place::local(tok)));
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(tok)),
             cases: vec![
@@ -329,7 +329,7 @@ impl FnLower<'_, '_> {
         // integer member needs the exact digits).
         let ro = Operand::Copy(Place::local(cx.r));
         let mark = self.temp(Ty::U64);
-        self.call_rt(Rt::JsonMark, vec![ro.clone()], Some(Place::local(mark)));
+        self.reader_rt(Rt::JsonMark, vec![ro.clone()], Some(Place::local(mark)));
         let f = self.temp(Ty::F64);
         let fa = self.addr(Place::local(f));
         self.json_expect(
@@ -358,7 +358,7 @@ impl FnLower<'_, '_> {
         }
         match member {
             Some(k) => {
-                self.call_rt(
+                self.reader_rt(
                     Rt::JsonReset,
                     vec![ro, Operand::Copy(Place::local(mark))],
                     None,

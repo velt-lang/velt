@@ -195,9 +195,22 @@ pub struct DetailedDependency {
     /// Semver requirement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Local package directory, relative to the depending manifest.
+    /// Local package directory, relative to the depending manifest; with `git`, the package's
+    /// directory in the repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// A git repository URL ([`crate::git`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+    /// With `git`: the branch to follow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// With `git`: the tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// With `git`: a full commit hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
 }
 
 impl Dependency {
@@ -209,14 +222,14 @@ impl Dependency {
         }
     }
 
-    /// The local path, if this is a path dependency.
+    /// The local path, if this is a path dependency (with `git`, the directory in the
+    /// repository).
     pub fn path(&self) -> Option<&str> {
         match self {
             Dependency::Version(_) => None,
             Dependency::Detailed(d) => d.path.as_deref(),
         }
     }
-
     /// Whether this is `"workspace"`: provided by the enclosing workspace.
     pub fn is_workspace(&self) -> bool {
         matches!(self, Dependency::Version(v) if v == WORKSPACE_REQUIREMENT)
@@ -468,10 +481,15 @@ pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), Strin
             "dependency `{name}`: `\"{WORKSPACE_REQUIREMENT}\"` is written as the whole value (`{name}: \"{WORKSPACE_REQUIREMENT}\"`), not as a `version`"
         ));
     }
-    if dep.version().is_none() && dep.path().is_none() {
-        return Err(format!("dependency `{name}` needs a `version` or a `path`"));
+    if let Dependency::Detailed(d) = dep {
+        crate::git::check_fields(name, d)?;
     }
-    if split_scoped(name).is_some() && dep.path().is_none() {
+    if dep.version().is_none() && dep.path().is_none() && dep.git().is_none() {
+        return Err(format!(
+            "dependency `{name}` needs a `version`, a `path` or a `git` repository"
+        ));
+    }
+    if split_scoped(name).is_some() && dep.path().is_none() && dep.git().is_none() {
         return Err(format!(
             "dependency `{name}` needs a `path`: registries hold unscoped packages only"
         ));

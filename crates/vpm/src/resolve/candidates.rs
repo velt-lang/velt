@@ -1,12 +1,13 @@
 //! Candidate versions for a requirement: registry index entries (cached per name) or the single
 //! package at a path, each with its own dependency requirements.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use semver::Version;
 
 use super::{dependency_requirements, parse_req, report, Requirement, Source, Want};
+use crate::git::{GitRef, GitSpec};
 use crate::locations::Locations;
 use crate::lockfile::{Lockfile, REGISTRY_SOURCE};
 use crate::manifest::Manifest;
@@ -27,6 +28,8 @@ pub(super) struct Provider<'a> {
     /// members, with `"workspace"` replaced.
     manifests: &'a BTreeMap<PathBuf, Manifest>,
     indexes: HashMap<String, Option<Index>>,
+    /// Warnings for the user, as candidates were made (`git::link_warnings`).
+    pub warnings: BTreeSet<String>,
 }
 
 impl<'a> Provider<'a> {
@@ -42,6 +45,7 @@ impl<'a> Provider<'a> {
             prefer,
             manifests,
             indexes: HashMap::new(),
+            warnings: BTreeSet::new(),
         }
     }
 
@@ -70,6 +74,18 @@ impl<'a> Provider<'a> {
                     .into_iter()
                     .map(|e| registry_candidate(&req.name, e))
                     .collect()
+            }
+            Want::Git {
+                spec,
+                req: version_req,
+            } => {
+                let cand = self.git_candidate(req, spec)?;
+                Ok(version_req
+                    .as_ref()
+                    .is_none_or(|r| r.matches(&cand.version))
+                    .then_some(cand)
+                    .into_iter()
+                    .collect())
             }
             Want::Path {
                 dir,
@@ -166,6 +182,105 @@ impl<'a> Provider<'a> {
             },
             dependencies,
         })
+    }
+}
+
+impl Provider<'_> {
+    /// The package of a git requirement: at the commit the lockfile records for the same spec
+    /// (no network), else at the commit its reference names now; checked out into the cache.
+    fn git_candidate(&mut self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
+        let named = |e: String| format!("git dependency `{}`: {e}", req.name);
+        let locked = self
+            .prefer
+            .and_then(|lock| lock.get(&req.name))
+            .and_then(|p| {
+                let (locked_spec, commit) = GitSpec::parse_source(&p.source)?;
+                (locked_spec == *spec).then(|| (commit, p.checksum.clone()))
+            });
+        let (commit, checksum) = match locked {
+            Some((commit, checksum)) => (commit, checksum),
+            None => (crate::git::resolve_ref(spec).map_err(named)?, None),
+        };
+        let checkout = crate::git::checkout(self.loc, &spec.url, &commit, checksum.as_deref())
+            .map_err(named)?;
+        let sub = spec.subdir.as_deref().unwrap_or(".");
+        let dir = match &spec.subdir {
+            Some(sub) => checkout.join(sub),
+            None => checkout.clone(),
+        };
+        let short = &commit[..12];
+        if !crate::probe::is_file(&dir.join(crate::manifest::MANIFEST_FILE)) {
+            return Err(named(format!(
+                "{} at commit {short} has no package at `{sub}` (no package.vlt there)",
+                spec.url
+            )));
+        }
+        if !inside(&dir, &checkout) {
+            return Err(named(format!(
+                "`{sub}` leads out of the repository (through a symbolic link)"
+            )));
+        }
+        let manifest = Manifest::from_dir(&dir).map_err(named)?;
+        let windows = cfg!(windows);
+        let warnings =
+            crate::git::link_warnings(&checkout, &spec.url, spec.subdir.as_deref(), windows);
+        self.warnings.extend(warnings);
+        if manifest.package.name != req.name {
+            return Err(named(format!(
+                "the package at `{sub}` of {} is `{}`",
+                spec.url, manifest.package.name
+            )));
+        }
+        let version = manifest.version();
+        let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
+        let mut dependencies = vec![];
+        for r in dependency_requirements(&manifest, &dir, &chain)? {
+            let want = match r.want {
+                // A path dependency of a git package is another package of the same commit,
+                // locked and verified as part of it, never a directory elsewhere (as in Cargo).
+                Want::Path { dir: path, req } => {
+                    if !path.starts_with(&checkout) || !inside(&path, &checkout) {
+                        return Err(named(format!(
+                            "its dependency `{}` has a `path` that leads out of the repository",
+                            r.name
+                        )));
+                    }
+                    let rel = crate::relpath::relative(&path, &checkout);
+                    let sibling = GitSpec {
+                        url: spec.url.clone(),
+                        reference: GitRef::Rev(commit.clone()),
+                        subdir: (rel != ".").then_some(rel),
+                    };
+                    Want::Git { spec: sibling, req }
+                }
+                want => want,
+            };
+            dependencies.push((r.name, want));
+        }
+        let checksum = match checksum {
+            Some(sum) => sum,
+            None => crate::git::tree_checksum(&checkout)?,
+        };
+        Ok(Candidate {
+            version,
+            source: Source::Git {
+                spec: spec.clone(),
+                commit,
+                checksum,
+                dir,
+            },
+            dependencies,
+        })
+    }
+}
+
+/// Whether `dir` is inside `checkout` once symbolic links are followed. A path that doesn't
+/// resolve (missing, or a dangling link) counts as inside: reading the package there reports it,
+/// and the checkout's links were already checked to point inside it (`git::check_links`).
+fn inside(dir: &Path, checkout: &Path) -> bool {
+    match (dir.canonicalize(), checkout.canonicalize()) {
+        (Ok(dir), Ok(checkout)) => dir.starts_with(checkout),
+        _ => true,
     }
 }
 

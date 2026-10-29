@@ -25,6 +25,7 @@ impl<'h> Cx<'h> {
             prelude_proxy: None,
             native_inits: vec![],
             view_fn: None,
+            std_fns: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
             target: String::new(),
