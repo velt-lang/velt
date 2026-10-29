@@ -50,7 +50,7 @@ fn cargo_target_dir(exe: &Path) -> Option<PathBuf> {
     cargo.then(|| target.to_path_buf())
 }
 
-fn is_off(v: &str) -> bool {
+pub fn is_off(v: &str) -> bool {
     matches!(
         v.trim().to_ascii_lowercase().as_str(),
         "off" | "0" | "false" | "no" | "none"

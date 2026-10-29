@@ -39,6 +39,10 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "how large the build cache may grow (default 2G)",
     ),
     (
+        "VELT_CACHE_WARM",
+        "`off`: installing a toolchain does not warm the build cache (nor does CI, `CI` set)",
+    ),
+    (
         "VELT_BUILD_STAMP",
         "`off`: compile even when nothing changed since the last build of the same output",
     ),

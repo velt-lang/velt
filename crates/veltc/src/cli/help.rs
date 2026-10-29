@@ -280,6 +280,20 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
     },
     CommandHelp {
+        name: "cache",
+        summary: "Compile the standard library into the build cache ahead of time",
+        usage: &["cache warm [--background]"],
+        about: "Compiles a set of programs that reach most of the standard library (shipped in \
+                share/velt/warm/), for this machine's CPU and the default one, so the first \
+                build of a project compiles little more than its own code. Runs once per \
+                toolchain; the installers start it after installing a version.",
+        options: &[(
+            "--background",
+            "start it detached at low priority and return at once",
+        )],
+        examples: &[("velt cache warm", "fill the build cache now")],
+    },
+    CommandHelp {
         name: "add",
         summary: "Add a dependency to package.vlt and install it",
         usage: &["add <pkg>[@<req>] [--path <dir>]"],
