@@ -151,6 +151,23 @@ workspace file's, with the lock beside the file that holds it. A build without `
 `<package of the input>/target/velt/` (relative when that is the current directory); its stamp
 records the workspace file, the globs' listings, the members' manifests and the root lockfile.
 
+## Git dependencies (additive, #1860)
+`vpm::git`. `DetailedDependency` gains `git`, `branch`, `tag`, `rev` (`Dependency::git` gives the
+`GitSpec`); `check_git`: `branch`/`tag`/`rev` need `git` and at most one is given, `rev` is a
+full commit hash (`git::is_commit`), `git` passes `git::check_url` (`https`, `http`, `ssh`, `git`,
+`file` URLs or `user@host:path`; no leading `-`, whitespace, `?` or `#`), and with `git` a `path`
+is a `/`-separated directory inside the repository. Resolution (`resolve::Want::Git`,
+`Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
+spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with
+`git::checkout` into `<cache>/git/<sha256(url)[..10] hex>/<commit>/` (a shallow fetch of the
+commit into a scratch bare repository, checked out into a staging directory, renamed into place;
+`GIT_TERMINAL_PROMPT=0`). The lock's `source` is `git+<url>[?branch=|tag=|rev=…][&path=…]#<commit>`
+(`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole
+checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
+verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
+into `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
+`git` (a `version` beside it is published as the requirement).
+
 ## Fields
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
   never do.

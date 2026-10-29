@@ -440,6 +440,10 @@ impl Reader<'_> {
                         let slot = match k.name.as_str() {
                             "version" => &mut detailed.version,
                             "path" => &mut detailed.path,
+                            "git" => &mut detailed.git,
+                            "branch" => &mut detailed.branch,
+                            "tag" => &mut detailed.tag,
+                            "rev" => &mut detailed.rev,
                             _ => {
                                 self.unknown_key(k, schema::DEPENDENCY);
                                 continue;

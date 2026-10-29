@@ -243,6 +243,20 @@ fn hover_on_a_dependency() {
 }
 
 #[test]
+fn a_git_dependency_is_not_asked_of_the_registry() {
+    let src = format!(
+        "{HEAD}{{ dependencies: {{ gone: {{ git: \"https://h/r\", version: \"1\" }} }} }};"
+    );
+    assert!(diagnostics(&src, "http://r", &mut lookup, &no_lock).is_empty());
+    let dep = dependency_at(&src, src.find("gone").unwrap() as u32 + 1).unwrap();
+    assert_eq!(dep.source, DependencySource::Git);
+    assert_eq!(
+        hover(&dep, None, None),
+        "**gone**  \nfrom a git repository (`git`)"
+    );
+}
+
+#[test]
 fn a_workspace_dependency_is_not_a_registry_requirement() {
     let src = format!("{HEAD}{{ dependencies: {{ core: \"workspace\" }} }};");
     let dep = dependency_at(&src, src.find("core").unwrap() as u32 + 1).unwrap();

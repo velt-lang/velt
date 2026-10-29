@@ -30,6 +30,43 @@ velt add textkit                    # the latest version, into package.vlt and v
 import { slugify } from "textkit";
 ```
 
+## Git dependencies
+
+A package can come from a git repository, at a branch, a tag or a commit, without a registry:
+
+```ts ignore
+dependencies: {
+  // sigx's Velt half, from the main branch of its monorepo.
+  sigx: { git: "https://github.com/signalxjs/core", branch: "main", path: "packages/velt/velt" },
+  json: { git: "https://github.com/acme/json", tag: "v1.2.0" },
+  http: { git: "git@github.com:acme/http.git", rev: "3f2c1a9e0b7d4c1a8e5f6b2d9c0a1e3f4b5c6d7e" },
+}
+```
+
+- `git` is the repository: `https://…`, `ssh://…`, `git@host:path` or `file://…`. `branch`, `tag`
+  or `rev` (a full commit hash) say which commit, at most one of them; without one, the
+  repository's default branch. `path` is the package's directory in the repository, for a
+  repository that holds several packages. A `version` beside them is a requirement the package
+  must meet.
+- **Locked.** The first install resolves the branch or tag to a commit and records it in
+  `velt.lock.json` with a checksum of the checkout
+  (`"source": "git+https://github.com/signalxjs/core?branch=main&path=packages/velt/velt#<commit>"`).
+  Builds use that commit without the network; `velt update` moves to the branch's newest commit,
+  and `--locked` fails rather than move it.
+- **Fetched once.** `velt` runs the `git` command, so your credentials and SSH keys work for
+  private repositories, and fetches just the commit, into `~/.velt/cache/git/`: each commit is
+  checked out once per machine and never changed, and every use is checked against the lock's
+  checksum.
+- **The whole repository is there.** The checksum covers every file of the commit, not only the
+  package's, because a package may import its repository's other packages: the TypeScript
+  packages of a pnpm, npm or Yarn workspace in the checkout compile from their sources
+  ([npm packages](#npm-packages)), with nothing installed into `node_modules`.
+- **Nothing runs.** Installing never runs code from the repository. A package with native code is
+  built from source with cargo only when you set `VELT_NATIVE_FROM_SOURCE=1`, since that runs its
+  build scripts.
+- **Publishing.** A registry package is built from the registry alone, so `velt publish` needs a
+  `version` beside `git`, which becomes the published requirement.
+
 ## Workspaces
 
 A repository with several Velt packages (an app, the libraries it shares with a CLI) is a

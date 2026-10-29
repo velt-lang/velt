@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 
 use super::{dependency_requirements, parse_req, report, Requirement, Source, Want};
+use crate::git::GitSpec;
 use crate::locations::Locations;
 use crate::lockfile::{Lockfile, REGISTRY_SOURCE};
 use crate::manifest::Manifest;
@@ -70,6 +71,18 @@ impl<'a> Provider<'a> {
                     .into_iter()
                     .map(|e| registry_candidate(&req.name, e))
                     .collect()
+            }
+            Want::Git {
+                spec,
+                req: version_req,
+            } => {
+                let cand = self.git_candidate(req, spec)?;
+                Ok(version_req
+                    .as_ref()
+                    .is_none_or(|r| r.matches(&cand.version))
+                    .then_some(cand)
+                    .into_iter()
+                    .collect())
             }
             Want::Path {
                 dir,
@@ -163,6 +176,65 @@ impl<'a> Provider<'a> {
             version,
             source: Source::Path {
                 dir: dir.to_path_buf(),
+            },
+            dependencies,
+        })
+    }
+}
+
+impl Provider<'_> {
+    /// The package of a git requirement: at the commit the lockfile records for the same spec
+    /// (no network), else at the commit its reference names now; checked out into the cache.
+    fn git_candidate(&self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
+        let locked = self
+            .prefer
+            .and_then(|lock| lock.get(&req.name))
+            .and_then(|p| {
+                let (locked_spec, commit) = GitSpec::parse_source(&p.source)?;
+                (locked_spec == *spec).then(|| (commit, p.checksum.clone()))
+            });
+        let (commit, checksum) = match locked {
+            Some((commit, checksum)) => (commit, checksum),
+            None => (crate::git::resolve_ref(spec)?, None),
+        };
+        let named = |e: String| format!("git dependency `{}`: {e}", req.name);
+        let checkout = crate::git::checkout(self.loc, &spec.url, &commit, checksum.as_deref())
+            .map_err(named)?;
+        let dir = match &spec.subdir {
+            Some(sub) => checkout.join(sub),
+            None => checkout.clone(),
+        };
+        let manifest = Manifest::from_dir(&dir).map_err(|e| {
+            named(format!(
+                "{} has no package at {}: {e}",
+                spec.describe(),
+                spec.subdir.as_deref().unwrap_or("its root")
+            ))
+        })?;
+        if manifest.package.name != req.name {
+            return Err(named(format!(
+                "the package at {} is `{}`",
+                spec.describe(),
+                manifest.package.name
+            )));
+        }
+        let version = manifest.version();
+        let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
+        let dependencies = dependency_requirements(&manifest, &dir, &chain)?
+            .into_iter()
+            .map(|r| (r.name, r.want))
+            .collect();
+        let checksum = match checksum {
+            Some(sum) => sum,
+            None => crate::git::tree_checksum(&checkout)?,
+        };
+        Ok(Candidate {
+            version,
+            source: Source::Git {
+                spec: spec.clone(),
+                commit,
+                checksum,
+                dir,
             },
             dependencies,
         })

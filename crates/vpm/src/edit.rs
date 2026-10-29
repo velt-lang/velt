@@ -36,6 +36,7 @@ pub fn add_dependency_text(
         (version, Some(path)) => Dependency::Detailed(DetailedDependency {
             version: version.clone(),
             path: Some(path.clone()),
+            ..Default::default()
         }),
     };
     // Checked before editing, so the error is not about the edited text.

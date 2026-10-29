@@ -15,6 +15,7 @@ pub mod cache;
 pub mod contents;
 pub mod credentials;
 pub mod edit;
+pub mod git;
 pub mod graph;
 pub mod install;
 pub mod json_file;

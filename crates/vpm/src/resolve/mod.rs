@@ -36,6 +36,16 @@ pub enum Source {
         /// Package root.
         dir: PathBuf,
     },
+    /// A commit of a git repository ([`crate::git`]).
+    Git {
+        spec: crate::git::GitSpec,
+        /// The commit.
+        commit: String,
+        /// [`crate::git::tree_checksum`] of the checkout.
+        checksum: String,
+        /// The package root: the checkout's `spec.subdir`.
+        dir: PathBuf,
+    },
 }
 
 /// One package in a resolution.
@@ -68,6 +78,10 @@ enum Want {
     Registry(VersionReq),
     Path {
         dir: PathBuf,
+        req: Option<VersionReq>,
+    },
+    Git {
+        spec: crate::git::GitSpec,
         req: Option<VersionReq>,
     },
 }
@@ -230,7 +244,10 @@ fn satisfies(pkg: &ResolvedPackage, want: &Want) -> bool {
         (Want::Path { dir, req }, Source::Path { dir: selected }) => {
             dir == selected && req.as_ref().is_none_or(|r| r.matches(&pkg.version))
         }
-        (Want::Path { .. }, Source::Registry { .. }) => false,
+        (Want::Git { spec, req }, Source::Git { spec: selected, .. }) => {
+            spec == selected && req.as_ref().is_none_or(|r| r.matches(&pkg.version))
+        }
+        (Want::Path { .. } | Want::Git { .. }, _) => false,
     }
 }
 
@@ -249,6 +266,14 @@ fn dependency_requirements(
             ));
         }
         let req = dep.version().map(parse_req).transpose()?;
+        if let Some(spec) = dep.git() {
+            out.push(Requirement {
+                name: name.clone(),
+                want: Want::Git { spec, req },
+                chain: chain.to_vec(),
+            });
+            continue;
+        }
         let want = match (dep.path(), req) {
             (Some(path), req) => Want::Path {
                 dir: crate::relpath::normalize(&dir.join(path)),
@@ -256,7 +281,9 @@ fn dependency_requirements(
             },
             (None, Some(req)) => Want::Registry(req),
             (None, None) => {
-                return Err(format!("dependency `{name}` needs a `version` or a `path`"))
+                return Err(format!(
+                    "dependency `{name}` needs a `version`, a `path` or a `git` repository"
+                ))
             }
         };
         out.push(Requirement {

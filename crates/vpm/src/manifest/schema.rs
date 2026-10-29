@@ -210,7 +210,38 @@ pub const DEPENDENCY: &[Field] = &[
         kind: Kind::Str,
         ty: "string",
         required: false,
-        doc: "A local package directory, relative to this manifest.",
+        doc: "A local package directory, relative to this manifest; with `git`, the \
+              package's directory in the repository.",
+    },
+    Field {
+        key: "git",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "A git repository URL (`https://…`, `ssh://…`, `git@host:path`): the package \
+              comes from it, at the commit `velt.lock.json` records.",
+    },
+    Field {
+        key: "branch",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: the branch to follow (default: the repository's default branch); \
+              `velt update` moves to its newest commit.",
+    },
+    Field {
+        key: "tag",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: a tag.",
+    },
+    Field {
+        key: "rev",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: a full commit hash.",
     },
 ];
 

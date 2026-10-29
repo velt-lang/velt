@@ -227,7 +227,8 @@ fn fetch<'r>(
             Source::Registry { checksum, .. } => {
                 cache::fetch(loc, &pkg.name, &pkg.version, checksum)?
             }
-            Source::Path { dir } => dir.clone(),
+            // Checked out, and verified against the lock, by the resolution.
+            Source::Path { dir } | Source::Git { dir, .. } => dir.clone(),
         };
         dirs.insert(pkg.name.clone(), dir);
     }
@@ -271,6 +272,22 @@ fn natives<'r>(
                 let m = Manifest::from_dir(dir)?;
                 native_from_source(dir, &m, target)?
             }
+            Source::Git {
+                dir, spec, commit, ..
+            } => {
+                let m = Manifest::from_dir(dir)?;
+                // As a registry package without a prebuilt library: building runs its build
+                // scripts, so only when the user asks for it.
+                if m.native.is_some() && !from_source_allowed() {
+                    return Err(format!(
+                        "`{}` from {} has native code, which a git dependency builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it",
+                        pkg.name,
+                        spec.describe()
+                    ));
+                }
+                let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
+                native_from_source_in(dir, &m, target, &work)?
+            }
         };
         if let Some(lib) = lib {
             natives.insert(pkg.name.clone(), lib);
@@ -304,6 +321,21 @@ fn native_from_source(
     manifest: &Manifest,
     target: &str,
 ) -> Result<Option<NativeLib>, String> {
+    native_from_source_in(
+        dir,
+        manifest,
+        target,
+        &dir.join("target").join("velt-native"),
+    )
+}
+
+/// [`native_from_source`], building in `work` (a git checkout in the cache stays as fetched).
+fn native_from_source_in(
+    dir: &Path,
+    manifest: &Manifest,
+    target: &str,
+    work: &Path,
+) -> Result<Option<NativeLib>, String> {
     if manifest.native.is_none() {
         return Ok(None);
     }
@@ -316,7 +348,6 @@ fn native_from_source(
             dir.display()
         ));
     }
-    let work = dir.join("target").join("velt-native");
     let out = work.join(target);
     build(BuildRequest {
         root: dir,
@@ -451,6 +482,12 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                     Some(checksum.clone()),
                     native.clone(),
                 ),
+                Source::Git {
+                    spec,
+                    commit,
+                    checksum,
+                    ..
+                } => (spec.source(commit), Some(checksum.clone()), BTreeMap::new()),
                 Source::Path { dir } => (
                     format!(
                         "{}+{}",

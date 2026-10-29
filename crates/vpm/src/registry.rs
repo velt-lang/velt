@@ -405,7 +405,8 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
             ));
         }
         let req = spec.version().ok_or_else(|| {
-            format!("cannot publish `{name}`: dependency `{dep}` has only a `path`; add a `version` requirement")
+            let source = if spec.git().is_some() { "a `git` repository" } else { "a `path`" };
+            format!("cannot publish `{name}`: dependency `{dep}` has only {source}; add a `version` requirement (a registry package is built from the registry alone)")
         })?;
         dependencies.insert(dep.clone(), req.to_string());
     }
