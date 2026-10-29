@@ -1,0 +1,108 @@
+// JSON.stringify with a replacer function and JsonValue.revive (step 11 of #1655), checked against
+// Node's JSON.stringify(x, fn, space) and JSON.parse(text, reviver): call order, members left
+// out, array elements as null, the root replaced. A callback written in place annotates its
+// value parameter `JsonValue` (#924). A root replaced by `undefined` throws a TypeError, where
+// Node returns `undefined`: Velt's `JSON.stringify` returns a string and `revive` a JsonValue.
+// The value parameter may name `JsonValue` through an alias (velt:json's `Value`, a local
+// type). Values nested deeper than the callbacks walk throw a RangeError, as Node runs out of
+// stack.
+import { Value } from "velt:json";
+
+type J = JsonValue;
+
+interface User {
+  name: string;
+  password: string;
+  age: i64;
+  tags: string[];
+}
+
+function hide(key: string, value: JsonValue): JsonValue | undefined {
+  return key == "password" ? undefined : value;
+}
+
+function replacers() {
+  const u: User = { name: "ada", password: "pw", age: 36, tags: ["a", "b"] };
+  console.log(JSON.stringify(u, hide));
+  console.log(
+    JSON.stringify(u, (k, v: JsonValue) => (v.isNumber() ? JsonValue.of(v.asNumber()! * 2) : v), 2),
+  );
+  console.log(JSON.stringify(u, (k, v: JsonValue) => (k == "1" ? undefined : v)));
+  try {
+    console.log(JSON.stringify(u, (k, v: JsonValue) => (k == "" ? undefined : v)));
+  } catch (e) {
+    console.log(e.name);
+  }
+  console.log(
+    JSON.stringify(
+      [1, "x"],
+      (k, v: JsonValue) => (k == "" ? JsonValue.from({ wrapped: true }) : v),
+    ),
+  );
+  console.log(
+    JSON.stringify([1, "x"], function (k: string, v: JsonValue) {
+      return v;
+    }),
+  );
+  console.log(JSON.stringify(u, ["name", "age"]), JSON.stringify(u, null, 1).length);
+  // Deeper than the default maxDepth (128): written as without a replacer.
+  let deep = JsonValue.array();
+  for (let i = 0; i < 200; i++) {
+    const outer = JsonValue.array();
+    outer.push(deep);
+    deep = outer;
+  }
+  console.log(JSON.stringify(deep, (k, v: JsonValue) => v).length);
+}
+
+function revivers() {
+  const text = `{"a":1,"b":[1,2,{"c":3}],"date":"2026-10-27","drop":true}`;
+  const order: string[] = [];
+  const v = JSON.parseValue(text).revive((k, v: JsonValue) => {
+    order.push(k);
+    if (k == "drop") {
+      return undefined;
+    }
+    if (v.isNumber()) {
+      return JsonValue.of(v.asNumber()! * 10);
+    }
+    if (k == "1") {
+      return undefined;
+    }
+    return v;
+  });
+  console.log(v.stringify(), order.join(","));
+  try {
+    JSON.parseValue("[1]").revive((k, v: JsonValue) => (k == "" ? undefined : v));
+  } catch (e) {
+    console.log(e.name);
+  }
+}
+
+function aliases() {
+  console.log(JSON.stringify([1, 2], (k: string, v: Value) => v));
+  console.log(JSON.parseValue("[3]").revive((k: string, v: J) => v).stringify());
+}
+
+function deep() {
+  const n = 100000;
+  const text = "[".repeat(n) + "]".repeat(n);
+  const v = JSON.parseValue(text, { maxDepth: 4294967295 });
+  try {
+    v.revive((k: string, x: JsonValue) => x);
+  } catch (e) {
+    console.log(e.name);
+  }
+  try {
+    JSON.stringify(v, (k: string, x: JsonValue) => x);
+  } catch (e) {
+    console.log(e.name);
+  }
+}
+
+function main() {
+  replacers();
+  revivers();
+  aliases();
+  deep();
+}

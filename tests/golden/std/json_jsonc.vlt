@@ -1,0 +1,74 @@
+// JSONC (step 11 of #1655): `comments: "skip"` reads line and block comments as whitespace,
+// `trailingCommas: true` a comma before `]` and `}`, in typed and dynamic parsing alike; strict
+// parsing is unchanged (Node's message), and each option alone still rejects the other.
+interface Cfg {
+  name: string;
+  strict: bool;
+  paths: string[];
+  nested: { a: i64 };
+}
+
+function main() {
+  const text = `// tsconfig-like
+{
+  /* the name */ "name": "app", // trailing comment
+  "strict": true,
+  "paths": ["src", "lib", /* last */ ],
+  "nested": { "a": 1, },
+  "ignored": [1, 2, {"x": [],},],
+}
+// end`;
+  const opts: JsonParseOptions = { comments: "skip", trailingCommas: true };
+  const c = JSON.parse<Cfg>(text, opts);
+  console.log(c.name, c.strict, c.paths.join("|"), c.nested.a);
+  const v = JSON.parseValue(text, opts);
+  console.log(v.stringify());
+  try {
+    JSON.parse<Cfg>(text);
+  } catch (e) {
+    console.log("strict:", e.message);
+  }
+  try {
+    JSON.parse<Cfg>(text, { comments: "skip" });
+  } catch (e) {
+    console.log("comments only:", e.message);
+  }
+  try {
+    JSON.parseValue(`[1, /* open`, opts);
+  } catch (e) {
+    console.log("unclosed:", e.message);
+  }
+  // An unclosed comment after a complete value is an error too, at the byte where it opens.
+  try {
+    JSON.parseValue(`1 /* open`, opts);
+  } catch (e) {
+    console.log("unclosed after:", e.message);
+  }
+  try {
+    JSON.parse<{ a: i64 }>(`{"a":1} /*`, opts);
+  } catch (e) {
+    console.log("unclosed typed:", e.message);
+  }
+  try {
+    JSON.parseValue(`[1,,]`, opts);
+  } catch (e) {
+    console.log("double comma:", e.message);
+  }
+  // The message names where, as the typed reader's does.
+  try {
+    JSON.parseValue(`[1, /* c */ x]`, opts);
+  } catch (e) {
+    console.log("after comment:", e.message);
+  }
+  try {
+    JSON.parseValue(`{"a": [1], "b": {"c" 2}}`, opts);
+  } catch (e) {
+    console.log("no colon:", e.message);
+  }
+  console.log(JSON.parse<i64[]>(`[1, 2, // x\n 3]`, { comments: "skip" }).length);
+  // Comment markers inside strings are text, also after an escaped quote.
+  const marks = `{"s": "q\\"//x", "t": "/* a */", "u": "*/", "n": [1] } // tail`;
+  const m = JSON.parse<{ s: string; t: string; u: string; n: i64[] }>(marks, opts);
+  console.log(m.s, m.t, m.u, m.n.length);
+  console.log(JSON.parseValue(marks, opts).stringify());
+}

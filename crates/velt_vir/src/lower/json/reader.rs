@@ -82,6 +82,14 @@ impl FnLower<'_, '_> {
         self.branch(eq, hit, miss);
     }
 
+    /// The prelude `JsonValue`'s method `name` (`pre`: the value first, then lowered arguments).
+    pub(in crate::lower) fn json_value_call(&mut self, name: &str, pre: Vec<Operand>) -> Operand {
+        let def = self
+            .cx
+            .json_std_fn(&format!("{}.{name}", super::PRELUDE_JSON_VALUE));
+        self.json_std_call(def, pre)
+    }
+
     /// `velt:json/writer`'s `name(pre...)` (lowered arguments; the builder first, by address).
     pub(super) fn writer_call(&mut self, name: &str, pre: Vec<Operand>) {
         let def = self.cx.json_std_fn(&format!("{WRITER}::{name}"));
@@ -89,7 +97,7 @@ impl FnLower<'_, '_> {
     }
 
     /// A call of `def`, a writer of the glue's string builder, passed at argument `at`
-    /// (`writeString(out, s)`). The builder is typed `string` in
+    /// (`writeString(out, s)`, `JsonValue.__writeJson(out)`). The builder is typed `string` in
     /// Velt but is no string: its parameter must borrow it, since an owned one would be cloned
     /// as a string here and corrupt the builder. Checked at every call, not left to a comment.
     pub(in crate::lower) fn builder_call(
@@ -163,7 +171,6 @@ impl FnLower<'_, '_> {
                 | Rt::JsonSkipUnknown
                 | Rt::JsonMark
                 | Rt::JsonReset
-                | Rt::JsonReadValue
                 | Rt::JsonEnd
                 | Rt::JsonNullAbsent
                 | Rt::JsonError
@@ -212,7 +219,6 @@ impl FnLower<'_, '_> {
             Rt::JsonReadF64 => self.read_out(&r, "readF64", "lastF64", &args[1], Ty::F64),
             Rt::JsonReadI64 => self.read_out(&r, "readI64", "lastI64", &args[1], Ty::I64),
             Rt::JsonReadBool => self.read_out(&r, "readBool", "lastI64", &args[1], Ty::U8),
-            Rt::JsonReadValue => self.read_out(&r, "readValue", "lastHandle", &args[1], Ty::U64),
             Rt::JsonError => {
                 // `*args[3] = r.message(*args[1], *args[2])`.
                 let m =

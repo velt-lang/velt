@@ -164,12 +164,12 @@ impl FnLower<'_, '_> {
                 }
             },
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
-                // The handle field is a `u64`, as the runtime takes it.
-                let h = self.field_place(place, ty, 0);
-                let hty = self.cx.adt_field_tys(ty)[0];
-                let ht = self.cx.ty(hty);
-                let h = self.cast_to(Operand::Copy(h), ht, Ty::U64);
-                self.call_rt(Rt::StrbufPushJsonValue, vec![b, h], None);
+                // A tape value writes itself in Velt; a runtime tree through its handle.
+                let v = Operand::Copy(place.clone());
+                let def = self
+                    .cx
+                    .json_std_fn(&format!("{}.__writeJson", super::PRELUDE_JSON_VALUE));
+                self.builder_call(def, vec![v, b], 1);
             }
             TyKind::Adt(..) if self.prelude_map(ty).is_some() => {
                 let kv = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));

@@ -53,6 +53,19 @@ const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
 /// or by a reference in checked code, not by a use of their type: nothing else calls them.
 const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
 
+/// Prelude classes whose methods are checked once the type is used, as a class outside the
+/// prelude's are: lowering looks up none of their methods by name except where it also has a
+/// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one,
+/// `__fromReader` decodes one: [`LAZY_PRELUDE_STATICS`]), and
+/// their code reaches large modules most programs never load (`JsonValue`'s the tape,
+/// velt:json/tape).
+const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json/json::JsonValue"];
+
+/// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
+/// used: `JsonValue.__fromReader`, which the decoder of a type holding a `JsonValue` calls by
+/// name (it parses the value into a tape, so a decoder of other types checks none of the tape).
+const LAZY_PRELUDE_STATICS: &[&str] = &["std/prelude/json/json::JsonValue.__fromReader"];
+
 /// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
 /// ([`JSON_GLUE_PRELUDE`]).
 fn json_glue_prelude(name: &str) -> Option<usize> {
@@ -230,7 +243,9 @@ pub(crate) fn plan(cx: &mut Ctx) {
                 cx.lazy.json.defs[k].push(d);
                 continue;
             }
-            if let (Some(o), FnKind::Method | FnKind::Ctor) = (f.owner, f.kind) {
+            let with_type = matches!(f.kind, FnKind::Method | FnKind::Ctor)
+                || LAZY_PRELUDE_STATICS.contains(&f.name.as_str());
+            if let (Some(o), true) = (f.owner, with_type) {
                 cx.lazy.methods.entry(o).or_default().push(d);
             }
         }
@@ -260,7 +275,11 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
             // keeps its methods checked).
             FnKind::Method | FnKind::Ctor => {
                 f.owner.is_some_and(|o| match &cx.info[o.0 as usize] {
-                    DefInfo::Adt(a) => cx.lazy.modules[a.module] == Mode::Lazy,
+                    DefInfo::Adt(a) => match cx.lazy.modules[a.module] {
+                        Mode::Lazy => true,
+                        Mode::Helpers => LAZY_PRELUDE_TYPES.contains(&a.qual_name.as_str()),
+                        Mode::Eager => false,
+                    },
                     _ => false,
                 })
             }
@@ -282,27 +301,35 @@ pub(crate) fn reach(cx: &mut Ctx) {
     if cx.lazy.modules.is_empty() {
         return;
     }
-    // Defaults of fields and parameters may refer to them too: scanned once, first.
+    // Defaults of fields and parameters may refer to them too: scanned once, first, except the
+    // field defaults of a class whose methods are deferred, scanned once the class is used (the
+    // type of `#tape: Tape | null = null` would make `Tape` used in every program).
     let mut sc = Scan::default();
-    for info in cx.info.iter_mut() {
-        match info {
-            DefInfo::Fn(f) => {
+    for i in 0..cx.info.len() {
+        let lazy_class = cx.lazy.methods.contains_key(&DefId(i as u32));
+        // A deferred function's parameter defaults are scanned with its body, once reached.
+        let deferred_fn = deferred(cx, DefId(i as u32));
+        match &mut cx.info[i] {
+            DefInfo::Fn(f) if !deferred_fn => {
                 for e in f.params.iter_mut().filter_map(|p| p.default.as_mut()) {
                     scan_expr(e, &mut sc);
                 }
             }
-            DefInfo::Adt(a) => {
-                for e in a.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
-                    scan_expr(e, &mut sc);
-                }
-                for e in a.redefined.iter_mut().filter_map(|r| r.init.as_mut()) {
-                    scan_expr(e, &mut sc);
-                }
-            }
+            DefInfo::Adt(a) if !lazy_class => scan_defaults(a, &mut sc),
             _ => {}
         }
     }
     loop {
+        let used: Vec<DefId> = (cx.lazy.used.iter())
+            .filter(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d))
+            .copied()
+            .collect();
+        for d in used {
+            cx.lazy.scanned.insert(d);
+            if let DefInfo::Adt(a) = &mut cx.info[d.0 as usize] {
+                scan_defaults(a, &mut sc);
+            }
+        }
         for i in 0..cx.info.len() {
             let d = DefId(i as u32);
             let done = match &cx.info[i] {
@@ -314,8 +341,14 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 continue;
             }
             sc.cur = Some(d);
+            let deferred_fn = deferred(cx, d);
             match (&mut cx.defs[i], &mut cx.info[i]) {
-                (Some(hir::Def::Fn(f)), _) => {
+                (Some(hir::Def::Fn(f)), info) => {
+                    if let (true, DefInfo::Fn(fi)) = (deferred_fn, info) {
+                        for e in fi.params.iter_mut().filter_map(|p| p.default.as_mut()) {
+                            scan_expr(e, &mut sc);
+                        }
+                    }
                     sc.types.extend(f.body.locals.iter().map(|l| l.ty));
                     sc.types.push(f.ret);
                     crate::visit::exprs_mut(&mut f.body.block, &mut |e| refs_of(e, &mut sc));
@@ -349,7 +382,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 _ => {}
             }
         }
-        if !checked {
+        // A class first used just now has its field defaults still to scan.
+        let pending = (cx.lazy.used.iter())
+            .any(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d));
+        if !checked && !pending {
             break;
         }
     }
@@ -387,6 +423,16 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
         }
         classes.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         found.extend(cx.lazy.methods.get(&d).into_iter().flatten().copied());
+    }
+}
+
+/// The field defaults and redefined initializers of class or struct `a`.
+fn scan_defaults(a: &mut crate::defs::AdtInfo<'_>, sc: &mut Scan) {
+    for e in a.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
+        scan_expr(e, sc);
+    }
+    for e in a.redefined.iter_mut().filter_map(|r| r.init.as_mut()) {
+        scan_expr(e, sc);
     }
 }
 

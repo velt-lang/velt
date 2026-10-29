@@ -103,6 +103,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep JSON decoding out of code shared with TypeScript",
     ),
     (
+        "JsonReplacer",
+        "keep replacer functions out of code shared with TypeScript (they take a `JsonValue`)",
+    ),
+    (
         "JsonValue",
         "keep dynamic JSON out of code shared with TypeScript, or pass typed values in",
     ),
@@ -563,6 +567,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("of", JSON_VALUE),
             ("parse", JSON_VALUE),
             ("push", JSON_VALUE),
+            ("revive", JSON_VALUE),
             ("set", JSON_VALUE),
             ("setAt", JSON_VALUE),
             ("stringify", JSON_VALUE),

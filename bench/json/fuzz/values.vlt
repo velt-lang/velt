@@ -1,0 +1,37 @@
+// JSON.parseValue of random documents (bench/json/fuzz/values_gen.py, one per line on stdin):
+// each line's value written back (`stringify`), and the keys of each object in it (checking that
+// `get` of each key is the member `at` gives). The output
+// must be bench/json/fuzz/values.js's under Node: `JSON.stringify(JSON.parse(line))` and
+// `Object.keys` (bench/json/fuzz/run.sh).
+import { readFileSync } from "velt:fs";
+
+function keysOf(v: JsonValue, out: string[]) {
+  if (v.isObject()) {
+    const keys = v.keys();
+    out.push(JSON.stringify(keys));
+    for (let i: i64 = 0; i < v.len(); i++) {
+      // `get` finds the member `at` gives (Node prints nothing here).
+      if (v.get(keys[i as usize])!.stringify() != v.at(i)!.stringify()) {
+        out.push(`get(${JSON.stringify(keys[i as usize])}) differs from at(${i})`);
+      }
+      keysOf(v.at(i)!, out);
+    }
+  } else if (v.isArray()) {
+    for (let i: i64 = 0; i < v.len(); i++) {
+      keysOf(v.at(i)!, out);
+    }
+  }
+}
+
+function main() {
+  const lines = readFileSync("values.txt").split("\n");
+  for (const line of lines) {
+    if (line.length == 0) {
+      continue;
+    }
+    const v = JSON.parseValue(line);
+    const keys: string[] = [];
+    keysOf(v, keys);
+    console.log(v.stringify(), keys.join(" "));
+  }
+}

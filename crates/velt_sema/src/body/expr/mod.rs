@@ -104,6 +104,7 @@ mod indexers;
 mod int32;
 mod intrinsics;
 mod js_list;
+mod json_callbacks;
 mod json_layout;
 pub(crate) mod jsx;
 mod key_index;

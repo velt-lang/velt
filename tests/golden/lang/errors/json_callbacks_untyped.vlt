@@ -1,0 +1,12 @@
+// Replacer and reviver callbacks (#1666): written in place, the value parameter must be
+// annotated `v: JsonValue` until #924, since code testing it as a JavaScript value would compile
+// and do less than in Node; `JSON.parse(text, reviver)` waits for #924 too.
+function main() {
+  const o = { a: 1, b: "x" };
+  console.log(JSON.stringify(o, (k, v) => (typeof v === "number" ? undefined : v)));
+  console.log(JSON.stringify([1], function (k, v) { return v; }));
+  const r = JSON.parseValue("[1]").revive((k, v) => v);
+  const p = JSON.parse<i64[]>("[1]", (k: string, v: JsonValue) => v);
+  // Accepted: the value parameter annotated, or no value parameter.
+  console.log(JSON.stringify(o, (k, v: JsonValue) => v), JSON.stringify(o, (k) => undefined));
+}

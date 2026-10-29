@@ -199,3 +199,52 @@ fn a_user_subclass_makes_the_std_subclasses_of_its_base_checked() {
         "{names:?}"
     );
 }
+
+#[test]
+fn the_defaults_of_an_unused_class_use_no_type() {
+    // `Holder` is never used, so neither the type of its field default (`Engine | null`) nor
+    // that of its constructor's parameter default makes `Engine` used: the prelude's
+    // `JsonValue` holds its tape this way, and a program that parses no JSON checks none of
+    // the tape's code.
+    let impl_src = format!(
+        "{PROBE_IMPL}\
+export class Engine {{ constructor() {{}} run(): number {{ return 1; }} }}
+export class Holder {{
+  e: Engine | null = null;
+  constructor(e: Engine | null = null) {{ this.e = e; }}
+  get(): number {{ return 0; }}
+}}
+"
+    );
+    let p = with_probe_std(
+        &impl_src,
+        "import { Gadget } from \"velt:zzprobe\";\n\
+         function main() { console.log(`${new Gadget()}`); }\n",
+    );
+    let names = unchecked(&p);
+    for f in [
+        "std/zzprobe/impl::Engine.run",
+        "std/zzprobe/impl::Holder.get",
+    ] {
+        assert!(names.contains(&f.to_string()), "{f}: {names:?}");
+    }
+    assert!(
+        !names.contains(&"std/zzprobe/impl::Gadget.toString".to_string()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
+    // The reader names no tape: `JsonValue.__fromReader` parses one, and is checked once the
+    // decoded type holds a `JsonValue` (it is a method of a used `JsonValue`).
+    let tape = "std/json/tape::parseWith";
+    let plain = ok_src(
+        "function main() {\n  const p = JSON.parse<{ x: i64 }>(\"{}\");\n  console.log(p.x);\n}\n",
+    );
+    assert!(unchecked(&plain).contains(&tape.to_string()));
+    let value = ok_src(
+        "function main() {\n  const p = JSON.parse<{ v: JsonValue }[]>(\"[]\");\n  console.log(p.length);\n}\n",
+    );
+    assert!(!unchecked(&value).contains(&tape.to_string()));
+}

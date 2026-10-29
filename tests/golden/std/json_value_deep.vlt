@@ -1,0 +1,17 @@
+// A parsed value nested 100,000 levels deep (the parser allows it with `maxDepth`) writes back
+// through every path that writes a tape: `stringify()`, `JSON.stringify` of a field holding it,
+// an edit (which turns it into the runtime's tree) and `console.log`. The writer keeps the open
+// containers on a stack of its own, not on the native one.
+function main() {
+  const n = 100000;
+  const text = "[".repeat(n) + "]".repeat(n);
+  const v = JSON.parseValue(text, { maxDepth: 4294967295 });
+  console.log(v.stringify().length);
+  console.log(JSON.stringify({ v }).length);
+  const w = v.clone();
+  w.push(JsonValue.of(1));
+  console.log(w.len(), w.stringify().length);
+  console.log(v);
+  const shallow = JSON.parseValue("[[1, [2]], {\"a\": [3]}]");
+  console.log(shallow);
+}

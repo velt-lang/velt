@@ -261,15 +261,21 @@ impl FnLower<'_, '_> {
         self.switch_to(next);
     }
 
-    /// A `JsonValue`: the object is allocated with a null handle, then the runtime builds the
-    /// tree into its handle field.
+    /// A `JsonValue`: the prelude's `__fromReader` reads the value (a tape over the reader's
+    /// source; a runtime tree from a driver's rows) and gives the `JsonValue | null` of it, null
+    /// (a null pointer, all-zero) when the reader failed.
     fn json_read_value(&mut self, r: Local, place: &Place, ctx: Local, ty: TyId, fail: BlockId) {
-        let obj = self.alloc_object_raw(ty);
-        self.assign(place.clone(), Rvalue::Use(Operand::Copy(obj)));
-        let h = self.field_place(place, ty, 0);
-        let ha = self.addr(h);
+        let _ = ty;
         let ro = Operand::Copy(Place::local(r));
-        self.json_expect(Rt::JsonReadValue, vec![ro, ha], ctx, "value", fail);
+        let v = self.json_value_call("__fromReader", vec![ro]);
+        let v = self.copy_to_temp(v, Ty::Ptr);
+        let vo = Operand::Copy(Place::local(v));
+        let ok = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, vo.clone(), cint(0, Ty::Ptr)),
+        );
+        self.json_ok_or_fail(ok, ctx, "value", fail);
+        self.assign(place.clone(), Rvalue::Use(vo));
     }
 
     /// Numbers, bools, strings, `void`, options, literal types, unions of literal types and
