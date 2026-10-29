@@ -215,7 +215,10 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   every element is moved into it in order. When the loop is left early (`break`, `return`, a
   throw) the elements not reached yet are dropped; then the buffer is freed without dropping the
   elements that were moved out. `consume: false` is the borrowing loop (elements borrowed, or
-  copied when Copy).
+  copied when Copy). `share_elems: true` (only with `consume: false`; set by the exclusive-access
+  check when the body may replace, remove or move what a borrowing binding refers to, such as
+  `xs[i] = …`): each `UseMode::Borrow` binding takes a share of the part it binds, owned by the
+  iteration, so the old element stays alive while the binding does, as in JS.
 - `for...of` over an iterable (a type with `[Symbol.iterator]()`, docs/internals/design/
   iteration.md) has no HIR form of its own: sema emits a `Block` with `let <iterator@N> =
   src[Symbol.iterator]()`, a `<open@N>` flag and a `Try { finally }` around a `While` that calls

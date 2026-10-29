@@ -1,0 +1,45 @@
+replaced 1 10 3
+replaced 2 10 3
+replaced 3 10 3
+field 1 9
+field 2 9
+nested 1
+nested 2
+nested 3
+through boxes 1 2
+through boxes 2 2
+through boxes 1 2
+through boxes 2 2
+pair 1 2
+pair 3 4
+tuple 7 8
+tuple 5 6
+pair part 7 8
+pair part 5 0
+array pattern 1 2
+array pattern 5 6
+object pattern 1
+object pattern 2
+object 9
+object 2
+nullable 1
+nullable -1
+closure 10
+closure 11
+closure 12
+closures 10,11,12
+string aaa xxxx bbb!
+string bbb! xxxx bbb!!
+returned 2
+in place 104
+in place 11
+in place 7
+generic 304
+generic 11
+generic 7
+generic xxxx
+generic bbb!!
+for await 1
+for await 2
+await in body 9
+await in body 8

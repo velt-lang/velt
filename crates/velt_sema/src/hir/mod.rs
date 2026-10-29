@@ -514,6 +514,11 @@ pub enum StmtKind {
         /// element is moved into `binding` (owned bindings, `UseMode::Move`); elements not yet
         /// visited when the loop is left early are dropped, then the buffer is freed.
         consume: bool,
+        /// A borrowing loop whose body may replace or remove (a part of) the element a binding
+        /// refers to (`xs[i] = …` on the iterated array): each borrowing binding takes a share
+        /// of what it binds, released with the iteration, as JS keeps the old element alive
+        /// (hir_encodings.md). Set by the exclusive-access check; `false` everywhere else.
+        share_elems: bool,
     },
     /// `try { body } catch (e) { handler } finally { fin }`: the catch local has the union `body`
     /// can throw (`None` / `Never`: nothing is caught; see hir_encodings.md "Errors").
