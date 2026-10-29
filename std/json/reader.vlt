@@ -27,7 +27,6 @@ import {
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
 import { decimalValue } from "velt:number/parse";
-import { parseWith, Tape, TapeError } from "velt:json/tape";
 
 declare function velt_rt_json_reader_free(r: u64);
 declare function velt_rt_json_reader_peek(r: u64): u32;
@@ -135,12 +134,12 @@ export class Reader extends Scanner {
   num: f64 = 0;
   int: i64 = 0;
   /**
-   * The value `readValue` read from a driver's rows: a runtime `JsonValue` handle. (A value
-   * read from text is the tape `readValue` returns: no field of the reader holds a tape, so a
-   * program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
+   * The value `valueLimit` read from a driver's rows: a runtime `JsonValue` handle. (A value
+   * read from text is the tape `JsonValue.__fromReader` parses: no field of the reader holds a
+   * tape, so a program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
    */
   handle: u64 = 0;
-  /** `readValue` read a value from a driver's rows (`handle`; 0 is JSON null). */
+  /** `valueLimit` read a value from a driver's rows (`handle`; 0 is JSON null). */
   rowsValue: bool = false;
   /**
    * The last key of `nextKey`: its raw bytes, or its text when it had escapes. Kept apart from
@@ -194,7 +193,7 @@ export class Reader extends Scanner {
     return this.int;
   }
 
-  /** The handle of the last `readValue` from rows. */
+  /** The handle of the last `valueLimit` from rows. */
   lastHandle(): u64 {
     return this.handle;
   }
@@ -543,11 +542,13 @@ export class Reader extends Scanner {
   }
 
   /**
-   * One complete value of any kind, for a `JsonValue`: a tape over this reader's source (its
-   * value 0). For a driver's rows, null with `rowsValue` set and the runtime tree in `handle`.
-   * Null on failure.
+   * The start of one complete value of any kind, for a `JsonValue` (`JsonValue.__fromReader`
+   * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
+   * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
+   * driver's rows, which set `rowsValue` and leave the runtime tree in `handle`. The tape is not
+   * named here, so a program that decodes no `JsonValue` checks none of its code.
    */
-  readValue(): Tape | null {
+  valueLimit(): i64 {
     // A failed read leaves `handle` 0 and `rowsValue` false: the value before is not the
     // decoder's to own (its out-parameter must own nothing on failure).
     this.handle = 0;
@@ -560,7 +561,7 @@ export class Reader extends Scanner {
           this.handle = out.v;
         }
       }
-      return null;
+      return -1;
     }
     const limit = this.depthLeft();
     if (limit == 0) {
@@ -569,15 +570,16 @@ export class Reader extends Scanner {
       if (c == 123 || c == 91) {
         this.fail(TOO_DEEP);
         this.syntaxFailed();
-        return null;
+        return -1;
       }
+      return 1;
     }
-    const r = parseWith(this, limit > 0xffffffff ? 0 : limit == 0 ? 1 : limit as u32, false);
-    if (r instanceof TapeError) {
-      this.syntaxFailed();
-      return null;
-    }
-    return r as Tape;
+    return limit > 0xffffffff ? 0 : limit as i64;
+  }
+
+  /** `parseWith` failed on the value `valueLimit` started: the reader fails as a syntax error. */
+  valueFailed(): void {
+    this.syntaxFailed();
   }
 
   /** Only whitespace may follow the top-level value. */

@@ -30,6 +30,7 @@ import "velt:json/writer";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
   parseTape,
+  parseWith,
   Tape,
   TapeError,
   T_NULL,
@@ -330,9 +331,14 @@ export class JsonValue {
    * reader failed. Private: the glue calls it by name.
    */
   private static __fromReader(r: Reader): JsonValue | null {
-    const t = r.readValue();
-    if (t != null) {
-      return JsonValue.onTape(t, 0);
+    const limit = r.valueLimit();
+    if (limit >= 0) {
+      const t = parseWith(r, limit as u32, false);
+      if (t instanceof TapeError) {
+        r.valueFailed();
+        return null;
+      }
+      return JsonValue.onTape(t as Tape, 0);
     }
     if (r.rowsValue) {
       return new JsonValue(r.lastHandle());

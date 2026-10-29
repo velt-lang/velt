@@ -233,3 +233,18 @@ export class Holder {{
         "{names:?}"
     );
 }
+
+#[test]
+fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
+    // The reader names no tape: `JsonValue.__fromReader` parses one, and is checked once the
+    // decoded type holds a `JsonValue` (it is a method of a used `JsonValue`).
+    let tape = "std/json/tape::parseWith";
+    let plain = ok_src(
+        "function main() {\n  const p = JSON.parse<{ x: i64 }>(\"{}\");\n  console.log(p.x);\n}\n",
+    );
+    assert!(unchecked(&plain).contains(&tape.to_string()));
+    let value = ok_src(
+        "function main() {\n  const p = JSON.parse<{ v: JsonValue }[]>(\"[]\");\n  console.log(p.length);\n}\n",
+    );
+    assert!(!unchecked(&value).contains(&tape.to_string()));
+}

@@ -51,14 +51,20 @@ const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
 /// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
 /// the reader's state). Deferred even when they are methods, and reached only with the module
 /// or by a reference in checked code, not by a use of their type: nothing else calls them.
-const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&["std/prelude/json/json::JsonValue.__fromReader"], &[]];
+const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
 
 /// Prelude classes whose methods are checked once the type is used, as a class outside the
 /// prelude's are: lowering looks up none of their methods by name except where it also has a
-/// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one), and
+/// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one,
+/// `__fromReader` decodes one: [`LAZY_PRELUDE_STATICS`]), and
 /// their code reaches large modules most programs never load (`JsonValue`'s the tape,
 /// velt:json/tape).
 const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json/json::JsonValue"];
+
+/// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
+/// used: `JsonValue.__fromReader`, which the decoder of a type holding a `JsonValue` calls by
+/// name (it parses the value into a tape, so a decoder of other types checks none of the tape).
+const LAZY_PRELUDE_STATICS: &[&str] = &["std/prelude/json/json::JsonValue.__fromReader"];
 
 /// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
 /// ([`JSON_GLUE_PRELUDE`]).
@@ -237,7 +243,9 @@ pub(crate) fn plan(cx: &mut Ctx) {
                 cx.lazy.json.defs[k].push(d);
                 continue;
             }
-            if let (Some(o), FnKind::Method | FnKind::Ctor) = (f.owner, f.kind) {
+            let with_type = matches!(f.kind, FnKind::Method | FnKind::Ctor)
+                || LAZY_PRELUDE_STATICS.contains(&f.name.as_str());
+            if let (Some(o), true) = (f.owner, with_type) {
                 cx.lazy.methods.entry(o).or_default().push(d);
             }
         }

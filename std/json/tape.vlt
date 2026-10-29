@@ -533,8 +533,9 @@ export function parseTape(src: string, maxDepth: u32, jsonc: u32 = 0): Tape | Ta
 }
 
 /**
- * Parses one value at `sc`'s position into a new tape over `sc.src` (the reader's `readValue`:
- * the value a decoder reads into a `JsonValue` field). With `whole`, only whitespace may follow.
+ * Parses one value at `sc`'s position into a new tape over `sc.src` (for a reader,
+ * `JsonValue.__fromReader`: the value a decoder reads into a `JsonValue` field). With `whole`,
+ * only whitespace may follow.
  */
 export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | TapeError {
   const t = new Tape(sc.src);
@@ -860,7 +861,7 @@ function tooDeep(
   pending: u32[],
   maxDepth: u32,
 ): TapeError {
-  // For a reader (`readValue`), whose message names the place itself.
+  // For a reader (`JsonValue.__fromReader`), whose message names the place itself.
   sc.fail(TOO_DEEP);
   const path = pathOf(t, open, from, pending, true);
   return new TapeError(

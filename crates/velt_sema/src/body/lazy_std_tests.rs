@@ -4,7 +4,7 @@ use super::*;
 
 /// The methods of [`LAZY_PRELUDE_TYPES`] lowering calls by name: each only where it has a value
 /// of the type, so its type is used and its methods are checked.
-const LAZY_PRELUDE_METHODS: &[&str] = &["__runtimeHandle", "__writeJson"];
+const LAZY_PRELUDE_METHODS: &[&str] = &["__fromReader", "__runtimeHandle", "__writeJson"];
 
 /// The `"__…"` names in the Rust sources under `dir` (string literals, with or without a module
 /// path or an owner before them: `"__x"`, `"…::__x"`, `"{}.__x"`).
