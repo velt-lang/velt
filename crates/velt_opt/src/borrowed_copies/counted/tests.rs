@@ -31,6 +31,13 @@ enum Between {
     Alloc,
     /// A call that never returns (the bounds check's report).
     NoReturn,
+    /// A Velt function that frees and never returns, on a path of its own, not handed `data`:
+    /// nothing uses `data` after it.
+    NoReturnFreeing,
+    /// The same handed `data`: it runs with `data` and may free it first.
+    NoReturnWithData,
+    /// A call through a function pointer (a closure), before the read.
+    ClosureCall,
 }
 
 struct Kit {
@@ -43,6 +50,7 @@ struct Kit {
     panic: ExternId,
     quiet: FuncId,
     freeing: FuncId,
+    stuck: FuncId,
 }
 
 fn kit() -> Kit {
@@ -74,6 +82,12 @@ fn kit() -> Kit {
     );
     fb.ret(n, Operand::Const(Const::Unit, Ty::Unit));
     let freeing = pb.add(fb.finish());
+    // stuck(a) { freeing(a); for (;;) {} }: no path returns.
+    let mut fb = FuncBuilder::internal("stuck", &[Ty::Ptr], Ty::Unit);
+    let (a, b) = (fb.param(0), fb.block());
+    let n = fb.call(b, Callee::Func(freeing), vec![copy_local(a)], None);
+    fb.goto(n, n);
+    let stuck = pb.add(fb.finish());
     Kit {
         pb,
         obj,
@@ -84,6 +98,7 @@ fn kit() -> Kit {
         panic,
         quiet,
         freeing,
+        stuck,
     }
 }
 
@@ -192,6 +207,26 @@ fn program(between: Between) -> (Program, FuncId) {
             fb.term(dead, Terminator::Unreachable);
             b = ok;
         }
+        Between::NoReturnFreeing | Between::NoReturnWithData => {
+            let (bad, report, ok) = (fb.local(Ty::Bool), fb.block(), fb.block());
+            fb.assign(b, bad, bin(BinOp::Eq, copy_local(this), int(0, Ty::Ptr)));
+            fb.branch(b, bad, report, ok);
+            let arg = match between {
+                Between::NoReturnWithData => v,
+                _ => this,
+            };
+            let after = call(&mut fb, report, Callee::Func(k.stuck), vec![copy_local(arg)]);
+            fb.term(after, Terminator::Unreachable);
+            b = ok;
+        }
+        Between::ClosureCall => {
+            let target = Callee::Ptr {
+                target: copy_local(this),
+                params: vec![Ty::Ptr],
+                ret: Ty::Unit,
+            };
+            b = call(&mut fb, b, target, vec![copy_local(this)])
+        }
         _ => {}
     }
     fb.assign(b, x, Rvalue::Use(copy_place(field_of(r, k.arr, 1))));
@@ -269,6 +304,7 @@ fn a_copy_only_read_borrows() {
         Between::QuietCallWithData,
         Between::Alloc,
         Between::NoReturn,
+        Between::NoReturnFreeing,
     ] {
         assert!(borrowed(b), "{b:?}");
     }
@@ -283,6 +319,8 @@ fn a_copy_something_may_free_or_take_keeps_its_count() {
         Between::Escapes,
         Between::ReturnsWithout,
         Between::SharedAgain,
+        Between::NoReturnWithData,
+        Between::ClosureCall,
     ] {
         assert!(!borrowed(b), "{b:?}");
     }

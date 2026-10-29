@@ -23,9 +23,11 @@
 //! - no call that may free a counted object runs while a member is still used after it. Only
 //!   calls free: a release that drops the last reference frees the object (a runtime call), and
 //!   so does drop glue. Calls that cannot: runtime functions that only read, allocation and
-//!   buffer reallocation (a buffer is never a counted object), calls that never return (the
-//!   family is not used after them), and Velt functions that make only such calls (`Frees`,
-//!   computed callees first, after their own families are borrowed).
+//!   buffer reallocation (a buffer is never a counted object), calls that never return and are
+//!   not handed a member (the family is not used after them; one that is handed a member runs
+//!   with it, so it counts as freeing when its body may free at all), and Velt functions that
+//!   make only such calls (`Frees`, computed callees first, after their own families are
+//!   borrowed).
 //!
 //! Then the increment and each release's decrement become `Nop`s and each release's count test
 //! goes straight to the decrement's block: the freeing path is no longer reached and
@@ -47,25 +49,39 @@ use crate::locals::Usage;
 /// Runtime functions that free no counted object, besides `super::READ_ONLY`.
 const NO_FREE: [&str; 2] = ["velt_rt_alloc", "velt_rt_realloc"];
 
-/// Whether a call of each callee may free a counted object before it returns normally.
+/// Whether a call of each callee may free a counted object.
 pub(crate) struct Frees {
+    /// Per function: whether its body makes a call that may free, on any path (also one that
+    /// then never returns).
     funcs: Vec<bool>,
+    /// Per function: whether some path through it returns (one imported from another unit,
+    /// with no body here, may).
+    returns: Vec<bool>,
     externs: Vec<bool>,
 }
 
 impl Frees {
-    fn may_free(&self, callee: &Callee) -> bool {
+    /// Whether a call of `callee` may free a counted object while the caller's family is used:
+    /// `handed` when the call is handed a member (the callee runs with it), else only when it
+    /// is used after the call. A callee that never returns may free only while it runs, so it
+    /// matters only when handed a member.
+    fn may_free(&self, callee: &Callee, handed: bool) -> bool {
         match callee {
-            Callee::Func(f) => self.funcs.get(f.0 as usize).copied().unwrap_or(true),
+            Callee::Func(f) => {
+                let i = f.0 as usize;
+                (handed || self.returns.get(i).copied().unwrap_or(true))
+                    && self.funcs.get(i).copied().unwrap_or(true)
+            }
             Callee::Extern(e) => self.externs.get(e.0 as usize).copied().unwrap_or(true),
             Callee::Ptr { .. } => true,
         }
     }
 
-    /// Whether `func` makes a call that may free (see the module doc).
+    /// Whether `func` makes a call that may free (see the module doc). Its callers may hand it
+    /// a member, which it may hand on: a callee that never returns counts here too.
     fn frees(&self, func: &Function) -> bool {
         func.blocks.iter().any(|b| match &b.term {
-            Terminator::Call { callee, .. } => self.may_free(callee),
+            Terminator::Call { callee, .. } => self.may_free(callee, true),
             _ => false,
         })
     }
@@ -87,8 +103,9 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
         })
         .collect();
     let n = program.funcs.len();
-    // A function that never returns frees nothing its callers could still use. One imported
-    // from another unit (no body here) may do anything.
+    // A call of a function that never returns frees nothing its caller uses after it, only
+    // what it is handed (`Frees::may_free`). One imported from another unit (no body here) may
+    // return and do anything.
     let returns: Vec<bool> = (program.funcs.iter())
         .map(|f| {
             f.blocks.is_empty()
@@ -99,13 +116,9 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
         .collect();
     let mut frees = Frees {
         funcs: vec![true; n],
+        returns,
         externs,
     };
-    for (f, r) in returns.iter().enumerate() {
-        if !r {
-            frees.funcs[f] = false;
-        }
-    }
     let mut changed = vec![false; n];
     for scc in CallGraph::of(program).sccs_bottom_up() {
         for &f in &scc {
@@ -124,7 +137,7 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
             let mut grew = false;
             for &f in &scc {
                 let i = f.0 as usize;
-                if returns[i] && !frees.funcs[i] && frees.frees(&program.funcs[i]) {
+                if !frees.funcs[i] && frees.frees(&program.funcs[i]) {
                     frees.funcs[i] = true;
                     grew = true;
                 }

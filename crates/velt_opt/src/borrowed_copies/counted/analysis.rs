@@ -390,8 +390,9 @@ impl Cx<'_> {
             let Terminator::Call { callee, next, .. } = &block.term else {
                 return true;
             };
-            let used = uses.contains(&(b, block.stmts.len())) || live_in[next.0 as usize];
-            !used || !self.frees.may_free(callee)
+            let handed = uses.contains(&(b, block.stmts.len()));
+            let used = handed || live_in[next.0 as usize];
+            !used || !self.frees.may_free(callee, handed)
         })
     }
 }
