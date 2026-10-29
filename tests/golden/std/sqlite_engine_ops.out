@@ -1,6 +1,8 @@
 binary operators: 7260 cases, all the same
 minus and CAST: 132 cases, all the same
-LIKE and GLOB: 360 cases, all the same
+LIKE and GLOB: 366 cases, all the same
+a pattern of 50000 bytes: velt integer:1, C integer:1
+a pattern of 50001 bytes: velt "LIKE or GLOB pattern too complex", C "LIKE or GLOB pattern too complex"
 real:0.0
 integer:0
 real:9.2233720368547758e+18

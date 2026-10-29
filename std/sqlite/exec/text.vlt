@@ -1,6 +1,7 @@
 // velt:sqlite/exec/text — text as SQLite handles it: on UTF-8 bytes, with case folded for ASCII
 // letters only (no ICU), and the LIKE and GLOB matchers (patternCompare in SQLite's func.c).
 
+import { SqlRunError } from "velt:sqlite/exec/errors";
 import { utf8Encode } from "velt:encoding";
 
 /** The byte length of `s`'s UTF-8. */
@@ -105,10 +106,8 @@ function upperC(c: i64): i64 {
   return c >= 97 && c <= 122 ? c - 32 : c;
 }
 
-/** Results of `patternCompare`. */
-const MATCH: i64 = 0;
-const NOMATCH: i64 = 1;
-const NOWILDCARD: i64 = 2;
+/** SQLITE_MAX_LIKE_PATTERN_LENGTH: a longer LIKE or GLOB pattern is an error, as in SQLite. */
+export const LIKE_PATTERN_LIMIT: usize = 50000;
 
 /** A LIKE or GLOB pattern's wildcards. */
 export class PatternInfo {
@@ -125,170 +124,163 @@ export class PatternInfo {
     this.one = glob ? 63 : 95;
     this.other = glob ? 91 : escape;
     this.noCase = !glob;
+    // An ESCAPE that is `%` or `_` turns that wildcard off (likeFunc in SQLite's func.c).
+    if (!glob && escape == this.all) {
+      this.all = -1;
+    }
+    if (!glob && escape == this.one) {
+      this.one = -1;
+    }
   }
 }
 
-/** Whether `str` matches `pat` (both UTF-8). */
-export function patternMatch(pat: u8[], str: u8[], info: PatternInfo): bool {
-  return compare(pat, 0, str, 0, info) == MATCH;
-}
+/** What one pattern element is: `%`, `_`, a character to match, a class, or one never matching. */
+const T_ALL: i64 = 0;
+const T_ONE: i64 = 1;
+const T_CHAR: i64 = 2;
+const T_CLASS: i64 = 3;
+const T_FAIL: i64 = 4;
 
-function compare(p: u8[], pi0: usize, s: u8[], si0: usize, info: PatternInfo): i64 {
-  let pi = pi0;
-  let si = si0;
-  let escaped: i64 = -1;
-  while (pi < p.length) {
-    const pc = charAt(p, pi);
-    let c = pc.c;
-    pi += pc.len;
-    if (c == info.all) {
-      // Skip further wildcards; each `_` must consume a character.
-      while (pi < p.length) {
-        const n = charAt(p, pi);
-        if (n.c == info.all) {
-          pi += n.len;
-        } else if (n.c == info.one) {
-          pi += n.len;
-          if (si >= s.length) {
-            return NOWILDCARD;
-          }
-          si += charAt(s, si).len;
-        } else {
-          break;
-        }
-      }
-      if (pi >= p.length) {
-        return MATCH;
-      }
-      const nx = charAt(p, pi);
-      c = nx.c;
-      if (c == info.other) {
+/**
+ * Whether `str` matches `pat` (both UTF-8), with SQLite's answers (patternCompare in func.c).
+ * Each element but `%` matches exactly one character, so on a mismatch it is enough to go back
+ * to the last `%` and let it take one more character: no recursion, so the depth does not grow
+ * with the pattern. Throws SQLite's error for a pattern longer than `LIKE_PATTERN_LIMIT` bytes.
+ */
+export function patternMatch(pat: u8[], str: u8[], info: PatternInfo): bool {
+  if (pat.length > LIKE_PATTERN_LIMIT) {
+    throw new SqlRunError("LIKE or GLOB pattern too complex");
+  }
+  let pi: usize = 0;
+  let si: usize = 0;
+  // Where the pattern goes on after the last `%`, and the string position it was tried at.
+  let starP: i64 = -1;
+  let starS: usize = 0;
+  // Right after a `%`, SQLite reads `_` before the ESCAPE character (and checks `%` first always).
+  let afterAll = false;
+  while (true) {
+    if (pi < pat.length) {
+      const pc = charAt(pat, pi);
+      let c = pc.c;
+      let next = pi + pc.len;
+      let kind = T_CHAR;
+      if (c == info.all) {
+        kind = T_ALL;
+      } else if (afterAll && c == info.one) {
+        kind = T_ONE;
+      } else if (c == info.other && info.other != 0) {
         if (info.glob) {
-          if (si >= s.length) {
-            return NOWILDCARD;
-          }
-          while (si < s.length) {
-            const r = compare(p, pi, s, si, info);
-            if (r != NOMATCH) {
-              return r;
-            }
-            si += charAt(s, si).len;
-          }
-          return NOWILDCARD;
+          kind = T_CLASS;
+        } else if (next >= pat.length) {
+          kind = T_FAIL;
+        } else {
+          const esc = charAt(pat, next);
+          c = esc.c;
+          next += esc.len;
         }
-        pi += nx.len;
-        if (pi >= p.length) {
-          return NOWILDCARD;
-        }
-        const esc = charAt(p, pi);
-        c = esc.c;
-        pi += esc.len;
-      } else {
-        pi += nx.len;
+      } else if (c == info.one) {
+        kind = T_ONE;
       }
-      // A literal: try each place it occurs in the rest of the string.
-      while (si < s.length) {
-        const sc = charAt(s, si);
-        si += sc.len;
-        if (sc.c == c || (info.noCase && c < 0x80 && lowerC(sc.c) == lowerC(c))) {
-          const r = compare(p, pi, s, si, info);
-          if (r != NOMATCH) {
-            return r;
-          }
+      if (kind == T_ALL) {
+        if (next >= pat.length) {
+          return true;
         }
-      }
-      return NOWILDCARD;
-    }
-    if (c == info.other && info.other != 0) {
-      if (!info.glob) {
-        if (pi >= p.length) {
-          return NOMATCH;
-        }
-        const esc = charAt(p, pi);
-        c = esc.c;
-        pi += esc.len;
-        escaped = pi as i64;
-      } else {
-        // A character class: [abc], [a-z], [^x], []x].
-        if (si >= s.length) {
-          return NOMATCH;
-        }
-        const sc = charAt(s, si);
-        si += sc.len;
-        let seen = false;
-        let invert = false;
-        let prior: i64 = 0;
-        if (pi >= p.length) {
-          return NOMATCH;
-        }
-        let c2 = charAt(p, pi);
-        pi += c2.len;
-        if (c2.c == 94) {
-          invert = true;
-          if (pi >= p.length) {
-            return NOMATCH;
-          }
-          c2 = charAt(p, pi);
-          pi += c2.len;
-        }
-        if (c2.c == 93) {
-          if (sc.c == 93) {
-            seen = true;
-          }
-          if (pi >= p.length) {
-            return NOMATCH;
-          }
-          c2 = charAt(p, pi);
-          pi += c2.len;
-        }
-        let closed = false;
-        while (true) {
-          if (c2.c == 93) {
-            closed = true;
-            break;
-          }
-          if (c2.c == 45 && pi < p.length && p[pi] != 93 && prior > 0) {
-            const hi = charAt(p, pi);
-            pi += hi.len;
-            if (sc.c >= prior && sc.c <= hi.c) {
-              seen = true;
-            }
-            prior = 0;
-          } else {
-            if (sc.c == c2.c) {
-              seen = true;
-            }
-            prior = c2.c;
-          }
-          if (pi >= p.length) {
-            break;
-          }
-          c2 = charAt(p, pi);
-          pi += c2.len;
-        }
-        if (!closed || seen == invert) {
-          return NOMATCH;
-        }
+        afterAll = true;
+        pi = next;
+        starP = next as i64;
+        starS = si;
         continue;
       }
+      afterAll = kind == T_ONE && afterAll;
+      if (si < str.length && kind != T_FAIL) {
+        const sc = charAt(str, si);
+        let ok = false;
+        if (kind == T_ONE) {
+          ok = true;
+        } else if (kind == T_CHAR) {
+          ok = c == sc.c || (info.noCase && c < 0x80 && sc.c < 0x80 && lowerC(c) == lowerC(sc.c));
+        } else {
+          const end = classEnd(pat, next, sc.c);
+          if (end > 0) {
+            next = end as usize;
+            ok = true;
+          }
+        }
+        if (ok) {
+          pi = next;
+          si += sc.len;
+          continue;
+        }
+      }
+    } else if (si >= str.length) {
+      return true;
     }
-    if (si >= s.length) {
-      return NOMATCH;
+    // A mismatch: the last `%` takes one more character, or there is no match.
+    if (starP < 0 || starS >= str.length) {
+      return false;
     }
-    const sc = charAt(s, si);
-    si += sc.len;
-    if (c == sc.c) {
-      continue;
-    }
-    if (info.noCase && c < 0x80 && sc.c < 0x80 && lowerC(c) == lowerC(sc.c)) {
-      continue;
-    }
-    if (c == info.one && (pi as i64) != escaped) {
-      continue;
-    }
-    return NOMATCH;
+    starS += charAt(str, starS).len;
+    si = starS;
+    pi = starP as usize;
+    afterAll = true;
   }
-  return si >= s.length ? MATCH : NOMATCH;
+}
+
+/**
+ * A GLOB class `[abc]`, `[a-z]`, `[^x]`, `[]x]` starting after its `[` at `at`: the position
+ * after its `]` when it holds `c`, else 0 (also for a class that is not closed).
+ */
+function classEnd(p: u8[], at: usize, c: i64): i64 {
+  let pi = at;
+  let seen = false;
+  let invert = false;
+  let prior: i64 = 0;
+  if (pi >= p.length) {
+    return 0;
+  }
+  let c2 = charAt(p, pi);
+  pi += c2.len;
+  if (c2.c == 94) {
+    invert = true;
+    if (pi >= p.length) {
+      return 0;
+    }
+    c2 = charAt(p, pi);
+    pi += c2.len;
+  }
+  if (c2.c == 93) {
+    if (c == 93) {
+      seen = true;
+    }
+    if (pi >= p.length) {
+      return 0;
+    }
+    c2 = charAt(p, pi);
+    pi += c2.len;
+  }
+  while (true) {
+    if (c2.c == 93) {
+      return seen == invert ? 0 : pi as i64;
+    }
+    if (c2.c == 45 && pi < p.length && p[pi] != 93 && prior > 0) {
+      const hi = charAt(p, pi);
+      pi += hi.len;
+      if (c >= prior && c <= hi.c) {
+        seen = true;
+      }
+      prior = 0;
+    } else {
+      if (c == c2.c) {
+        seen = true;
+      }
+      prior = c2.c;
+    }
+    if (pi >= p.length) {
+      return 0;
+    }
+    c2 = charAt(p, pi);
+    pi += c2.len;
+  }
 }
 
 /** Uppercase hex of bytes. */

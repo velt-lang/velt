@@ -186,7 +186,46 @@ function main() {
       );
     }
   }
+  // An ESCAPE that is `%` or `_` turns that wildcard off.
+  for (const [t, p, e] of [
+    ["abc", "%", "%"],
+    ["%", "%", "%"],
+    ["a%", "a%%", "%"],
+    ["ab", "a_", "_"],
+    ["a_", "a__", "_"],
+    ["abc", "%_", "_"],
+  ]) {
+    const tv = textVal(t);
+    const pv = textVal(p);
+    const ev = textVal(e);
+    check(
+      `'${t}' LIKE '${p}' ESCAPE '${e}'`,
+      compileLike(() => tv, () => pv, () => ev, false, false)(),
+    );
+  }
   console.log(`LIKE and GLOB: ${cases} cases, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  // A pattern of SQLite's longest length (50,000 bytes) whose every `%` must try many places: no
+  // recursion per `%`, so no stack overflow. One byte more is SQLite's error.
+  const many = textVal("a".repeat(25000));
+  const longest = "%a".repeat(25000);
+  const near = textVal(longest);
+  const nearSql = `'${"a".repeat(25000)}' LIKE '${longest}'`;
+  const nearGot = describe(compileLike(() => many, () => near, null, false, false)());
+  console.log(`a pattern of 50000 bytes: velt ${nearGot}, C ${cValue(db, nearSql)}`);
+  const over = textVal(longest + "a");
+  let mine = "no error";
+  try {
+    compileLike(() => many, () => over, null, true, false)();
+  } catch (e) {
+    mine = e.message;
+  }
+  let theirs = "no error";
+  try {
+    cValue(db, `'${"a".repeat(25000)}' GLOB '${longest}a'`);
+  } catch (e) {
+    theirs = e.message;
+  }
+  console.log(`a pattern of 50001 bytes: velt "${mine}", C "${theirs}"`);
 
   // A few results spelled out.
   console.log(describe(arithOp(OP_MUL, realVal(0.5), textVal("-0"))));
