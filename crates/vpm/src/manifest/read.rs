@@ -42,9 +42,22 @@ pub const MAX_BYTES: usize = 64 * 1024;
 pub const MAX_VALUES: usize = 10_000;
 
 const TYPES_MODULE: &str = "velt:package";
-const BINDING: &str = "pkg";
-const TYPE_NAME: &str = "Package";
-const SHAPE: &str = "the manifest must be one `export const pkg: Package = { … }`";
+
+/// What a data file declares: `package.vlt`'s `pkg`, or `velt.workspace.vlt`'s `workspace`.
+struct Shape {
+    file: &'static str,
+    binding: &'static str,
+    type_name: &'static str,
+    /// The message for a file of another shape.
+    message: &'static str,
+}
+
+const PACKAGE_SHAPE: Shape = Shape {
+    file: PACKAGE_FILE,
+    binding: "pkg",
+    type_name: "Package",
+    message: "the manifest must be one `export const pkg: Package = { … }`",
+};
 
 impl Manifest {
     /// Read and validate the text of a `package.vlt`. Every problem is a diagnostic in `file`.
@@ -56,6 +69,17 @@ impl Manifest {
 /// [`Manifest::read`], also returning the data the manifest was decoded from (for the checks
 /// that point at its values, like [`missing_ts_compat_dirs`]), from one parse.
 fn read_with_value(file: FileId, src: &str) -> Result<(Manifest, Value), Diagnostics> {
+    read_data(file, src, &PACKAGE_SHAPE, |r, v| r.manifest(v))
+}
+
+/// Parse `src`, check that it is one declaration of `shape` made of data, and decode the data
+/// with `decode`, which reports problems on the reader.
+fn read_data<T>(
+    file: FileId,
+    src: &str,
+    shape: &'static Shape,
+    decode: impl FnOnce(&mut Reader, &Value) -> T,
+) -> Result<(T, Value), Diagnostics> {
     if src.len() > MAX_BYTES {
         return Err(vec![Diagnostic::error(
             format!("the manifest is larger than {} KiB", MAX_BYTES / 1024),
@@ -68,6 +92,7 @@ fn read_with_value(file: FileId, src: &str) -> Result<(Manifest, Value), Diagnos
     }
     let mut reader = Reader {
         src,
+        shape,
         diags: Vec::new(),
         values: 0,
         too_many: false,
@@ -75,13 +100,15 @@ fn read_with_value(file: FileId, src: &str) -> Result<(Manifest, Value), Diagnos
     let init = reader.declaration(&module);
     let value = init.and_then(|e| reader.value(e));
     if let Some(value) = value {
-        let manifest = reader.manifest(&value);
+        let decoded = decode(&mut reader, &value);
         if reader.diags.is_empty() {
-            return Ok((manifest, value));
+            return Ok((decoded, value));
         }
     }
     if reader.diags.is_empty() {
-        reader.diags.push(Diagnostic::error(SHAPE, module.span));
+        reader
+            .diags
+            .push(Diagnostic::error(shape.message, module.span));
     }
     Err(reader.diags)
 }
@@ -114,6 +141,7 @@ impl ValueKind {
 
 struct Reader<'s> {
     src: &'s str,
+    shape: &'static Shape,
     diags: Diagnostics,
     values: usize,
     too_many: bool,
@@ -124,7 +152,8 @@ impl Reader<'_> {
         self.diags.push(Diagnostic::error(message, span));
     }
 
-    /// Check the file's items and return the initializer of `export const pkg: Package`.
+    /// Check the file's items and return the initializer of `export const pkg: Package` (or the
+    /// declaration of another [`Shape`]).
     fn declaration<'m>(&mut self, module: &'m ast::Module) -> Option<&'m ast::Expr> {
         let mut seen_import = false;
         let mut init = None;
@@ -139,25 +168,28 @@ impl Reader<'_> {
                         && import.names.iter().all(|n| n.type_only);
                     if !types_only {
                         self.error(
-                            format!("`{PACKAGE_FILE}` may only import types from `{TYPES_MODULE}`"),
+                            format!(
+                                "`{}` may only import types from `{TYPES_MODULE}`",
+                                self.shape.file
+                            ),
                             item.span,
                         );
                     }
                 }
                 ItemKind::Import(_) if !item.exported => {
                     self.error(
-                        format!("`{PACKAGE_FILE}` may have at most one import"),
+                        format!("`{}` may have at most one import", self.shape.file),
                         item.span,
                     );
                 }
-                ItemKind::Var(var) if init.is_none() && is_pkg_declaration(item, var) => {
+                ItemKind::Var(var) if init.is_none() && is_declaration(item, var, self.shape) => {
                     init = var.init.as_ref();
                 }
-                _ => self.error(SHAPE, item.span),
+                _ => self.error(self.shape.message, item.span),
             }
         }
         if init.is_none() && self.diags.is_empty() {
-            self.error(SHAPE, module.span);
+            self.error(self.shape.message, module.span);
         }
         init
     }
@@ -551,16 +583,16 @@ impl Reader<'_> {
     }
 }
 
-/// `export const pkg: Package = …`
-fn is_pkg_declaration(item: &ast::Item, var: &ast::VarDecl) -> bool {
-    let named_pkg = matches!(&var.pattern.kind, PatternKind::Ident(id) if id.name == BINDING);
+/// `export const pkg: Package = …` (the binding and type of `shape`).
+fn is_declaration(item: &ast::Item, var: &ast::VarDecl, shape: &Shape) -> bool {
+    let named = matches!(&var.pattern.kind, PatternKind::Ident(id) if id.name == shape.binding);
     let typed = matches!(
         var.ty.as_ref().map(|t| &t.kind),
         Some(TypeExprKind::Named { path, args }) if args.is_empty()
             && path.len() == 1
-            && path[0].name == TYPE_NAME
+            && path[0].name == shape.type_name
     );
-    item.exported && var.kind == ast::VarKind::Const && named_pkg && typed && var.init.is_some()
+    item.exported && var.kind == ast::VarKind::Const && named && typed && var.init.is_some()
 }
 
 /// What a non-data expression is, for "… not allowed".
@@ -586,7 +618,7 @@ fn not_data(kind: &ExprKind, regex: bool) -> &'static str {
 }
 
 /// Levenshtein distance, for "did you mean".
-fn edit_distance(a: &str, b: &str) -> usize {
+pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.chars().enumerate() {
@@ -605,5 +637,8 @@ mod native;
 #[cfg(test)]
 mod tests;
 mod ts_compat;
+mod workspace;
+
+pub use workspace::read_workspace;
 
 pub use ts_compat::missing_ts_compat_dirs;

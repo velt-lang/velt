@@ -30,6 +30,60 @@ velt add textkit                    # the latest version, into package.vlt and v
 import { slugify } from "textkit";
 ```
 
+## Workspaces
+
+A repository with several Velt packages (an app, the libraries it shares with a CLI) is a
+workspace: a `velt.workspace.vlt` at its root lists the member packages, which then share one
+`velt.lock.json`, one `velt` version and one registry, and depend on each other by name.
+
+```ts ignore
+// velt.workspace.vlt
+import type { Workspace } from "velt:package";
+
+export const workspace: Workspace = {
+  members: ["packages/*", "apps/*"],
+  velt: "0.2",                     // every member builds with this velt
+  dependencies: { json: "1.2" },   // requirements members share
+};
+```
+
+```ts ignore
+// apps/server/package.vlt
+export const pkg: Package = {
+  name: "server",
+  version: "0.4.0",
+  dependencies: {
+    core: "workspace",   // the member named `core`
+    json: "workspace",   // the workspace's requirement for `json`
+    log: "0.2",          // a requirement of this member's own
+  },
+};
+```
+
+- **Members** are the directories with a `package.vlt` that the `members` globs list: `*` matches
+  one directory name, `**` any number of them, a `!` in front excludes (`"!packages/old"`), and
+  `"."` is a `package.vlt` beside the workspace file. A glob that lists no package is an error, so
+  a typo never drops a member silently. Two members can't have the same name.
+- **`"workspace"`** names the member of that name, else the workspace's `dependencies` entry. A
+  member is always a `"workspace"` dependency: `core: "0.1"` or `core: { path: "../core" }` for a
+  member is an error that says to write `core: "workspace"`. Outside a workspace, `"workspace"`
+  is an error.
+- **One resolution, one lock.** `velt install`, `velt build` and the other commands resolve every
+  member's dependencies together, wherever in the workspace they run, into the `velt.lock.json`
+  beside the workspace file (members are listed as `"source": "workspace+packages/core"`). A
+  package name has one version in the whole workspace: two members whose requirements no version
+  meets is an error that names both. A member has no lockfile of its own. `velt install` at the
+  root installs every member.
+- **`velt` and `registry`** are the workspace's; a member that sets either is an error. The velt
+  launcher runs the version the workspace's lock records, as it does for a package.
+- **Builds.** A member's build sees only the packages it depends on, directly or not (its imports
+  resolve through its own `dependencies`, as always), and its programs go to its own
+  `target/velt/`, from the root or from the member. Every member's build stamp includes the
+  workspace file, what its globs list and the lockfile, and the machine's build cache shares
+  the code of a library every member uses: a second member compiles little more than its own
+  code.
+- A package below the workspace that no glob lists stays on its own, with its own lockfile.
+
 ## npm packages
 
 Velt compiles TypeScript packages from npm, and the packages of pnpm, npm and Yarn workspaces,

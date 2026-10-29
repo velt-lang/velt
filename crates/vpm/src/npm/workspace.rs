@@ -115,6 +115,12 @@ pub fn package_dirs(root: &Path, patterns: &[String]) -> Listing {
 
 /// [`package_dirs`], listing at most `max_dirs` directories.
 pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -> Listing {
+    dirs_with(root, patterns, "package.json", max_dirs)
+}
+
+/// The directories below `root` that `patterns` select, as [`package_dirs`] walks them, that hold
+/// a file named `marker` (`package.json`; `package.vlt` for Velt workspaces, `crate::workspace`).
+pub fn dirs_with(root: &Path, patterns: &[String], marker: &str, max_dirs: usize) -> Listing {
     let mut walk = Walk {
         out: vec![],
         seen: HashSet::new(),
@@ -139,7 +145,7 @@ pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -
             !glob_match(&parts, &segs)
         });
     }
-    out.retain(|d| crate::probe::is_file(&d.join("package.json")));
+    out.retain(|d| crate::probe::is_file(&d.join(marker)));
     Listing { dirs: out, cut }
 }
 

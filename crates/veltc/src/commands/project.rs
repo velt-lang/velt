@@ -49,7 +49,12 @@ impl Project {
     pub fn open(root: &Path, opts: InstallOptions) -> Result<Project, String> {
         let root = vpm::relpath::absolute(root);
         let manifest = Manifest::from_dir(&root)?;
-        warn_toolchain_mismatch(&manifest);
+        // A member's `velt` is its workspace's; a broken workspace is reported by the install.
+        let member = vpm::workspace::Workspace::find(&root)
+            .ok()
+            .flatten()
+            .and_then(|ws| ws.member_at(&root).map(|m| ws.effective_manifest(m)));
+        warn_toolchain_mismatch(member.as_ref().unwrap_or(&manifest));
         let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
         super::package::warn_yanked(&installed);
         Ok(Project {

@@ -1,6 +1,7 @@
-//! The `velt` field of the nearest `package.vlt`, read on its own: the launcher reads it before
-//! every command, so it does not decode (or check) the rest of the manifest. vpm's reader checks
-//! the whole manifest, this field included, when the selected toolchain runs.
+//! The `velt` field of the nearest `package.vlt`, or of the `velt.workspace.vlt` of its workspace,
+//! read on its own: the launcher reads it before every command, so it does not decode (or check)
+//! the rest of the file. vpm's reader checks the whole file, this field included, when the
+//! selected toolchain runs.
 
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,8 @@ use crate::requirement::Requirement;
 
 /// The manifest's file name (`vpm::manifest::MANIFEST_FILE`).
 pub const MANIFEST_FILE: &str = "package.vlt";
+/// The workspace file's name (`vpm::workspace::WORKSPACE_FILE`).
+pub const WORKSPACE_FILE: &str = "velt.workspace.vlt";
 /// The pinning field.
 pub const FIELD: &str = "velt";
 
@@ -18,7 +21,7 @@ pub const FIELD: &str = "velt";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pin {
     pub requirement: Requirement,
-    /// The `package.vlt` it is in.
+    /// The `package.vlt` or `velt.workspace.vlt` it is in.
     pub manifest: PathBuf,
     /// 1-based line of the value.
     pub line: usize,
@@ -44,17 +47,39 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The pin of the package enclosing `dir` (an absolute path). `None` outside a package, without
-/// a `velt` field, or when the manifest does not parse (the toolchain then reports why);
-/// an error when the field is there but is not a requirement.
+/// The pin of the package enclosing `dir` (an absolute path): its own `velt` field, or its
+/// workspace's (members leave it to `velt.workspace.vlt`), or the workspace's when `dir` is in a
+/// workspace but no package of it. `None` outside both, without a `velt` field, or when the file
+/// does not parse (the toolchain then reports why); an error when the field is there but is not
+/// a requirement.
 pub fn find_pin(dir: &Path) -> Result<Option<Pin>, String> {
-    let Some(root) = find_package_root(dir) else {
-        return Ok(None);
+    let package = find_package_root(dir);
+    let workspace = dir
+        .ancestors()
+        .find(|d| d.join(WORKSPACE_FILE).is_file())
+        .map(Path::to_path_buf);
+    let package_nearer = match (&package, &workspace) {
+        (Some(pkg), Some(ws)) => pkg.starts_with(ws),
+        (pkg, _) => pkg.is_some(),
     };
-    let manifest = root.join(MANIFEST_FILE);
+    if package_nearer {
+        let root = package.expect("ICE: a nearer package exists");
+        if let Some(pin) = pin_in(&root.join(MANIFEST_FILE), "pkg")? {
+            return Ok(Some(pin));
+        }
+    }
+    match workspace {
+        Some(ws) => pin_in(&ws.join(WORKSPACE_FILE), "workspace"),
+        None => Ok(None),
+    }
+}
+
+/// The `velt` field of the `binding` object of the file `path`.
+fn pin_in(path: &Path, binding: &str) -> Result<Option<Pin>, String> {
+    let manifest = path.to_path_buf();
     let src = std::fs::read_to_string(&manifest)
         .map_err(|e| format!("cannot read {}: {e}", manifest.display()))?;
-    read_pin(&src)
+    read_pin_of(&src, binding)
         .map(|found| {
             found.map(|(requirement, line)| Pin {
                 requirement,
@@ -67,6 +92,12 @@ pub fn find_pin(dir: &Path) -> Result<Option<Pin>, String> {
 
 /// The `velt` field of the manifest text `src`, with its line; the error carries its line too.
 pub fn read_pin(src: &str) -> Result<Option<(Requirement, usize)>, (String, usize)> {
+    read_pin_of(src, "pkg")
+}
+
+/// The `velt` field of the object `export const <binding>` in `src` (`pkg` in a `package.vlt`,
+/// `workspace` in a `velt.workspace.vlt`).
+fn read_pin_of(src: &str, binding: &str) -> Result<Option<(Requirement, usize)>, (String, usize)> {
     let (module, diags) = velt_syntax::parse_file(FileId(0), src);
     if diags.iter().any(velt_common::Diagnostic::is_error) {
         return Ok(None);
@@ -77,7 +108,7 @@ pub fn read_pin(src: &str) -> Result<Option<(Requirement, usize)>, (String, usiz
             continue;
         };
         if !item.exported
-            || !matches!(&var.pattern.kind, PatternKind::Ident(id) if id.name == "pkg")
+            || !matches!(&var.pattern.kind, PatternKind::Ident(id) if id.name == binding)
         {
             continue;
         }
@@ -161,6 +192,36 @@ mod tests {
         .unwrap();
         let err = find_pin(&pkg).unwrap_err();
         assert!(err.contains("package.vlt:1: `velt`"), "{err}");
+    }
+
+    #[test]
+    fn a_member_s_pin_is_its_workspace_s() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("repo");
+        let member = ws.join("packages/core");
+        std::fs::create_dir_all(member.join("src")).unwrap();
+        std::fs::write(
+            member.join(MANIFEST_FILE),
+            format!("{HEADER}export const pkg: Package = {{ name: \"core\" }};\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ws.join(WORKSPACE_FILE),
+            "export const workspace: Workspace = { members: [\"packages/*\"], velt: \"0.3\" };\n",
+        )
+        .unwrap();
+        for dir in [member.join("src"), ws.join("packages"), ws.clone()] {
+            let found = find_pin(&dir).unwrap().unwrap();
+            assert_eq!(found.requirement.as_str(), "0.3", "{}", dir.display());
+            assert_eq!(found.manifest, ws.join(WORKSPACE_FILE));
+        }
+        // The launcher reads the lock beside the file holding the pin: the workspace's.
+        std::fs::write(ws.join(LOCK_FILE), r#"{"version": 1, "velt": "0.3.1"}"#).unwrap();
+        let found = find_pin(&member).unwrap().unwrap();
+        assert_eq!(
+            locked_version(&found.manifest).unwrap().to_string(),
+            "0.3.1"
+        );
     }
 
     #[test]

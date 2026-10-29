@@ -34,7 +34,10 @@ prints every command's options and examples.
 Every build command works on a single file or on a package:
 
 - **A file**: `velt run hello.vlt` builds `./target/velt/hello` (`hello.exe` on Windows),
-  relative to the current directory, and runs it. The file, and the modules it imports, may also
+  relative to the current directory, and runs it; a file inside a package is built into that
+  package's `target/velt/`, wherever `velt` runs, so the members of a
+  [workspace](packages.md#workspaces) keep their programs (and [build stamps](#build-cache))
+  apart. The file, and the modules it imports, may also
   be `.ts` or `.tsx` files ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)). If the file is inside a package, the package's
   dependencies are installed first.
 - **A package**: without a file argument, `velt` searches upward from the current directory for

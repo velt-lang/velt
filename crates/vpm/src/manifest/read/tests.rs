@@ -161,7 +161,7 @@ fn the_file_holds_one_typed_pkg_constant() {
         format!("export const pkg: Package = {body};\nfunction f(): void {{}}"),
     ] {
         let (message, _) = error(&src);
-        assert_eq!(message, SHAPE, "{src}");
+        assert_eq!(message, PACKAGE_SHAPE.message, "{src}");
     }
     for import in [
         "import { Package } from \"velt:package\";",

@@ -103,8 +103,8 @@ copies.
 The lock lists members as `"source": "workspace+packages/core"` entries with their direct
 dependencies, and every other package as today. The format stays version 1: an older velt
 reading it is never chosen, since the lock's `velt` names the toolchain that wrote it. A member
-that still has a `velt.lock.json` of its own gets an error telling to delete it (its versions
-seed the first workspace resolution, so adopting a workspace changes no versions that still fit).
+that still has a `velt.lock.json` of its own gets an error telling to delete it, or to move it to
+the root when the workspace has no lockfile yet, which keeps its versions.
 
 A package outside every `members` glob, below a workspace file, stays on its own; `velt install`
 there notes that the workspace does not list it.
