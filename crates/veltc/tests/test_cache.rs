@@ -130,3 +130,25 @@ fn the_leak_check_runs_what_an_ordinary_run_kept() {
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(!out.contains("pure.test.vlt (cached)"), "{out}");
 }
+
+/// A system function is outside the program: what it reads isn't covered by the program's bytes.
+#[cfg(unix)]
+#[test]
+fn a_test_calling_a_system_function_runs_every_time() {
+    let p = package();
+    p.write(
+        "tests/sys.test.vlt",
+        "import { expect } from \"velt:test\";\n\ndeclare system function close(fd: i32): i32;\n\nexport function test_pid() {\n  expect(close(-1)).toBe(-1);\n}\n",
+    );
+    for _ in 0..2 {
+        let running = p.running(&[]);
+        // Also `__error` on macOS, where errno is read through it.
+        let sys = running.iter().find(|l| l.starts_with("tests/sys.test.vlt"));
+        assert!(
+            sys.is_some_and(
+                |l| l.contains("not cacheable") && l.contains("a system function `close`")
+            ),
+            "{running:?}"
+        );
+    }
+}

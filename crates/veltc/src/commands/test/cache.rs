@@ -106,12 +106,28 @@ fn results_path(exe: &Path) -> PathBuf {
     exe.with_file_name(name)
 }
 
-/// The reports kept at `path` under `key`.
+/// The reports kept at `path` under `key`: those shaped as the runner's `Ran` of a file whose
+/// tests all passed. Anything else is dropped, so a broken file means "not kept", never a run
+/// that fails on what it was handed.
 fn read(path: &Path, key: &str) -> Option<BTreeMap<String, Value>> {
     let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     (value.get("key")?.as_str()? == key).then_some(())?;
     let files = value.get("files")?.as_object()?;
-    Some(files.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    Some(
+        files
+            .iter()
+            .filter(|(_, v)| is_passed_report(v))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
+}
+
+/// Whether `v` is a `Ran` (`index`, `lines`, `passed`, `failed`) with no failures.
+fn is_passed_report(v: &Value) -> bool {
+    let lines = v["lines"]
+        .as_array()
+        .is_some_and(|l| l.iter().all(Value::is_string));
+    lines && v["index"].is_u64() && v["passed"].is_u64() && v["failed"].as_u64() == Some(0)
 }
 
 #[cfg(test)]
@@ -122,10 +138,30 @@ mod tests {
     fn kept_reports_are_read_back_under_their_key_only() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("h.test-results.json");
-        std::fs::write(&path, r#"{"key": "k1", "files": {"0": {"passed": 2}}}"#).unwrap();
+        let good = r#"{"index": 0, "lines": ["ok t"], "passed": 2, "failed": 0}"#;
+        std::fs::write(
+            &path,
+            format!(r#"{{"key": "k1", "files": {{"0": {good}}}}}"#),
+        )
+        .unwrap();
         let reports = read(&path, "k1").unwrap();
         assert_eq!(reports["0"]["passed"], 2);
         assert!(read(&path, "k2").is_none());
+        // Entries of the wrong shape, or with failures, are not kept: the tests just run.
+        let bad = [
+            r#"{"index": 0, "lines": 5, "passed": "x", "failed": 0}"#,
+            r#"{"index": 0, "lines": [1], "passed": 1, "failed": 0}"#,
+            r#"{"index": 0, "lines": [], "passed": 1, "failed": 1}"#,
+            r#"{"lines": [], "passed": 1, "failed": 0}"#,
+        ];
+        for entry in bad {
+            std::fs::write(
+                &path,
+                format!(r#"{{"key": "k1", "files": {{"0": {entry}}}}}"#),
+            )
+            .unwrap();
+            assert!(read(&path, "k1").unwrap().is_empty(), "{entry}");
+        }
         assert_eq!(
             results_path(Path::new("/t/h_1")),
             Path::new("/t/h_1.test-results.json")

@@ -228,8 +228,12 @@ above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#
 A test file whose program didn't change since its tests passed isn't run again: the runner prints
 its last report, marked `(cached)`. That holds only where the compiler can show the result can't
 change: the program reaches nothing outside itself, meaning no file system, network, clock
-(`Date.now()`, `performance.now()`), environment, child processes, random numbers, standard input
-or native code. A file whose tests do reach one runs every time, and says what it reaches:
+(`Date.now()`, `performance.now()`, the time zone), environment (`process.env`,
+`process.memoryUsage()`, the number of workers), child processes, random numbers, standard input,
+system functions (`declare system function`) or native code. Only what the compiler knows to be
+pure counts as inside: strings, collections, numbers, JSON, regular expressions, promises, timers,
+threads, channels, atomics and printing. A file whose tests reach anything else runs every time,
+and says what it reaches:
 
 ```text
 running tests/pure.test.vlt (cached)
@@ -241,7 +245,11 @@ ok test_clock
 "Its program" is everything the test file imports, so a change to the code under test runs its
 tests again. Only results where every test passed are kept, so a failing test always runs.
 `--no-cache` runs everything, as does `VELT_BUILD_STAMP=off`. What reaches outside is decided per
-test file, from what its tests call, not from the runner around them.
+test file, from what its tests call, not from the runner around them. Module initializers run for
+every file of a shared harness, so a module that reads a file at its top level makes all of them
+run every time. A test whose result depends on how threads interleave is pure by this rule, and a
+pass is kept: make such tests deterministic. A leak-checked run (`VELT_RC_STATS=1`, below) keeps
+its results apart from an ordinary run's, so a result kept without the check never skips it.
 
 ### Checking for leaks
 
