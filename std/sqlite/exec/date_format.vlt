@@ -6,9 +6,11 @@ import { FMT_FLOAT, FMT_GENERIC, formatReal } from "velt:sqlite/exec/fp";
 import { cBytes } from "velt:sqlite/exec/text";
 import { Val, nullVal, textVal } from "velt:sqlite/exec/value";
 
+// `v` as C's `%0<w>d` writes it: the sign counts in the width (-1 in four is `-001`).
 function pad(v: i64, w: usize): string {
   let s = String(v < 0 ? -v : v);
-  while (s.length < w) {
+  const digits = v < 0 && w > 0 ? w - 1 : w;
+  while (s.length < digits) {
     s = "0" + s;
   }
   return v < 0 ? "-" + s : s;

@@ -83,6 +83,11 @@ unixepoch('2024-01-01', 'subsec') = real:1704067200.0
 strftime('%Y-%m-%d %H:%M:%f %j %w %W %s', '2024-12-31 23:59:59.5') = text:2024-12-31 23:59:59.500 366 2 53 1735689599
 strftime('%J %e %k %l %p %I %u %G %V %g', '2021-01-03 07:08:09') = text:2459217.797326389  3  7  7 AM 07 7 2020 53 20
 date('2024-05-15', 'weekday 0') = text:2024-05-19
+date('2024-05-19', 'weekday 0') = text:2024-05-19
+strftime('%Y', '-0001-01-01') = text:-001
+strftime('%Y %F', '-0123-12-31') = text:-123 -123-12-31
+strftime('%G %g', '-0009-01-04', 'weekday 6') = text:-009 -9
+strftime('%Y-%m-%d', '0000-01-01', '-1 year') = text:-001-01-01
 date('2024-05-15', 'start of month', '+1 month', '-1 day') = text:2024-05-31
 date('not a date') = null:
 date('2024-02-30') = text:2024-03-01
@@ -90,4 +95,4 @@ datetime('2024-01-01T10:00:00+02:30') = text:2024-01-01 07:30:00
 time('24:00') = text:24:00:00
 printf('%.2147483647f', 1.0): velt text:100000002, C text:100000002
 printf('%999999986.3f', 1.5): velt text:999999986, C text:999999986
-92 calls, all the same
+97 calls, all the same
