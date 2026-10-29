@@ -1,0 +1,3 @@
+any_object_iface_copy_part_write.vlt:22:11: error: an object converted to an interface holds a `{ v: f64; deep: { w: f64 } }` that the interface reads as `Outer` by copying its fields, and this assigns field `v` of that copy, which the object would not see
+  = note: Node changes the object's own field; Velt's object types have fixed layouts, so each read of the field through the interface is a new `Outer` with the same field values
+  = note: give the object's field the interface's type (`Outer`), or assign the whole field through the interface
