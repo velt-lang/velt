@@ -627,6 +627,12 @@ SELECT id FROM users, posts
   error: ambiguous column name: id
 SELECT count(*) FROM users WHERE count(*) > 1
   error: misuse of aggregate: count()
+SELECT count(count(*)) FROM users
+  error: misuse of aggregate function count()
+SELECT max(count(*)) FROM users
+  error: misuse of aggregate function count()
+SELECT id FROM users WHERE count(*) > 1
+  error: misuse of aggregate function count()
 SELECT nosuchfn(1)
   error: no such function: nosuchfn
 SELECT substr('x')

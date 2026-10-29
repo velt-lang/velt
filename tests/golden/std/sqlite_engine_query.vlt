@@ -223,6 +223,10 @@ const QUERIES: string[] = [
   "SELECT * FROM nosuch",
   "SELECT id FROM users, posts",
   "SELECT count(*) FROM users WHERE count(*) > 1",
+  // Where name resolution allows no aggregate, SQLite's other message.
+  "SELECT count(count(*)) FROM users",
+  "SELECT max(count(*)) FROM users",
+  "SELECT id FROM users WHERE count(*) > 1",
   "SELECT nosuchfn(1)",
   "SELECT substr('x')",
   "SELECT 1 FROM users ORDER BY 5",

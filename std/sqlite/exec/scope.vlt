@@ -132,6 +132,8 @@ export class Scope {
   /** The core whose FROM items these are, and whether its result columns are being compiled. */
   core: SelectCore | null = null;
   output: bool = false;
+  /** Set while an aggregate's arguments compile: no aggregate is allowed there. */
+  inAggArgs: bool = false;
 
   /** The same sources in an aggregate query's output mode. */
   forOutput(agg: AggCtx): Scope {
