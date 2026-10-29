@@ -103,6 +103,38 @@ impl Ctx<'_> {
         })
     }
 
+    /// The getter of an optional interface field of a dynamic type `want` (`x?: any`) the
+    /// object lacks: the dynamic `undefined`.
+    pub(crate) fn absent_dynamic_getter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        fname: &str,
+        want: TyId,
+    ) -> DefId {
+        let nothing = self.dynamic_nothing_ty(hir::Nothing::Undefined);
+        let via = self.via_any_parts(nothing, want);
+        value_getter(self, d, self_ty, fname, want, |span| {
+            let none = hir::Expr {
+                kind: H::Lit(hir::Lit::Null),
+                ty: nothing,
+                span,
+            };
+            let boxed = hir::Expr {
+                kind: H::ToDyn {
+                    expr: Box::new(none),
+                    impl_index: via.imp,
+                },
+                ty: via.any,
+                span,
+            };
+            match boxed.ty == want {
+                true => boxed,
+                false => intrinsic(Intrinsic::AnyTo, boxed, want, span),
+            }
+        })
+    }
+
     /// How a value of type `from` becomes a `to` through `any` ([`via_any`]).
     fn via_any_parts(&mut self, from: TyId, to: TyId) -> ViaAny {
         let defs = self.any.expect("ICE: any");

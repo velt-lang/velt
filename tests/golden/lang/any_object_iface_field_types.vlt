@@ -4,6 +4,7 @@ interface Ctx {
   props: { a: number };
   emit: any;
   renderFn: (() => string) | null;
+  forwarded?: any;
   update(): void;
 }
 
@@ -19,7 +20,7 @@ const init = {
   update: () => console.log("update"),
 };
 const c = init as unknown as Ctx;
-console.log(c.props.a, c.renderFn === null);
+console.log(c.props.a, c.renderFn === null, c.forwarded === undefined);
 const emit = c.emit;
 emit();
 c.update();

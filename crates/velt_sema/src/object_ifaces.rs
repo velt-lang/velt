@@ -246,7 +246,8 @@ impl Ctx<'_> {
                     Fill::Field(i, fields[i].1, Some(want))
                 }
                 // Absent: a write stops with a `TypeError`, as one through `any` does.
-                None if f.optional && payload.is_some() => {
+                // (An optional `any` is `any`: absent, it holds `undefined`.)
+                None if f.optional && (payload.is_some() || self.dynamic(want).is_some()) => {
                     setters.push(Store::Absent(f.name.clone(), want));
                     Fill::Absent(f.name.clone(), want)
                 }
@@ -307,6 +308,9 @@ impl Ctx<'_> {
             defs.push(match fill {
                 Fill::Field(i, ty, None) => field_getter(self, d, self_ty, i, ty),
                 Fill::Field(i, ty, Some(want)) => field_getter_some(self, d, self_ty, i, ty, want),
+                Fill::Absent(name, want) if self.dynamic(want).is_some() => {
+                    self.absent_dynamic_getter(d, self_ty, &name, want)
+                }
                 Fill::Absent(name, want) => absent_getter(self, d, self_ty, &name, want),
                 Fill::Convert(i, ty, want) => self.convert_getter(d, self_ty, i, ty, want),
                 Fill::Setter(i, ty, borrowed) => {
