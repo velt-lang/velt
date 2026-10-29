@@ -4,9 +4,7 @@
 //! being compared on a per-thread stack (`velt_rt_deep_eq_enter` / `_leave`), with Vitest's
 //! rule: the same pair met again is equal (the same cycle on both sides), an object met again
 //! with another partner differs (a cycle on one side, rings of two lengths). Node's
-//! `isDeepStrictEqual` answers the same for rings and parent pointers; its memo also keeps
-//! objects compared in an earlier sibling field, so it calls some acyclic sharing unequal that
-//! the pair stack calls equal.
+//! `isDeepStrictEqual` answers the same (`lang/deep_equal_cycles`).
 
 use velt_sema::hir::{TyId, TyKind};
 

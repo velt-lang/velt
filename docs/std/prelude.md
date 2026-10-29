@@ -457,10 +457,7 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
   says `false`). Values that hold themselves stop at the cycle: an object met again while it
   is being compared is equal if it meets the same partner again (two rings of one length),
-  else different (rings of two lengths, a cycle on one side only), as Node answers. Node's
-  memo also remembers objects compared in an earlier field, so it calls `{ x: r, y: r }` and
-  `{ x: r1, y: r2 }` unequal when `r`, `r1` and `r2` are equal rings; `deepEqual` calls them
-  equal.
+  else different (rings of two lengths, a cycle on one side only), as Node answers.
 
 ```ts
 const a: Record<string, i64[]> = { x: [1], y: [2] };

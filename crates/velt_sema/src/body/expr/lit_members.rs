@@ -4,14 +4,17 @@
 //! A number literal against a union with several number members (`x === 1`, `case 1:` with
 //! `x: f64 | u8`, #1890). Every number is a number in TypeScript, so the literal equals each
 //! member whose type holds its value exactly: `1` tests the `f64` member and the `u8` one,
-//! `1.5` only the `f64` one, `300` only the `f64` one. Equality of two such union values is
-//! the lowering's (`velt_vir` `glue/eq_numbers.rs`); narrowing keeps every member tested.
+//! `1.5` only the `f64` one, `300` only the `f64` one. A literal-type member (`1` in
+//! `1 | 2 | u8`) is a number member too, holding its one value. When no member holds the value
+//! exactly, the float members take it rounded, as a plain float type does (`0.1` against
+//! `f32 | u8`, `2 ** 53 + 1` against `f64 | u8`). Equality of two such union values is the
+//! lowering's (`velt_vir` `glue/eq_numbers.rs`); narrowing keeps every member tested.
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::FnCx;
-use crate::hir::{self, FloatTy, PatKind as P, TyId, TyKind};
+use crate::hir::{self, FloatTy, LitValue, PatKind as P, TyId, TyKind};
 
 /// The value of a number literal: an integer, or a float that is not one.
 #[derive(Clone, Copy)]
@@ -20,8 +23,27 @@ enum Num {
     Float(f64),
 }
 
+/// A float value as a [`Num`]: a whole number other than zero is an integer.
+fn float_num(f: f64) -> Num {
+    if f.fract() == 0.0 && f.abs() < 1e38 && f != 0.0 {
+        Num::Int(f as i128)
+    } else {
+        Num::Float(f)
+    }
+}
+
+/// Two numbers are the same value (`0` and `-0` alike, as in `===`).
+fn same_num(a: Num, b: Num) -> bool {
+    match (a, b) {
+        (Num::Int(a), Num::Int(b)) => a == b,
+        (Num::Float(a), Num::Float(b)) => a == b,
+        (Num::Int(i), Num::Float(f)) | (Num::Float(f), Num::Int(i)) => i == 0 && f == 0.0,
+    }
+}
+
 impl FnCx<'_, '_> {
-    /// The member of union `u` a literal pattern / operand belongs to.
+    /// The member of union `u` a literal pattern / operand belongs to, or the note of the
+    /// mismatch (naming `u`).
     pub(crate) fn lit_member(
         &mut self,
         u: TyId,
@@ -31,7 +53,8 @@ impl FnCx<'_, '_> {
             .number_lit_members(u, lit)
             .is_some_and(|f| f.is_empty())
         {
-            return Err("this number literal is out of range for every number member".into());
+            let un = self.cx.display(u);
+            return Err(format!("no number member of `{un}` holds this value"));
         }
         let members = self.cx.union_members(u).unwrap_or_default();
         // A literal-type member with this value wins over its base type.
@@ -71,11 +94,15 @@ impl FnCx<'_, '_> {
             ast::Lit::Null => (vec![], "null"),
             ast::Lit::Undefined => (vec![], "undefined"),
         };
+        if let [i] = found[..] {
+            return Ok((i as u32, members[i]));
+        }
+        let un = self.cx.display(u);
         match found.as_slice() {
-            [i] => Ok((*i as u32, members[*i])),
-            [] => Err(format!("this {what} literal is not a member")),
+            [] => Err(format!("this {what} literal is not a member of `{un}`")),
             _ => Err(format!(
-                "this {what} literal could be several members (add a type suffix like `5i32`)"
+                "this {what} literal could be several members of `{un}` (add a type suffix like \
+                 `5i32`)"
             )),
         }
     }
@@ -86,34 +113,46 @@ impl FnCx<'_, '_> {
     }
 
     /// The number members of union `u` that number literal `lit` equals, each with the literal
-    /// as a value of that member's type. `None` when `u` has fewer than two number members, or
-    /// `lit` is not a number or names a literal-type member (`1 | f64`): the one-member rules
-    /// apply (`lit_member`).
+    /// as a value of that member's type (`None` for a literal-type member, which is that one
+    /// value). When none holds the value exactly, the float members, with the literal rounded to
+    /// their type. `None` when `u` has fewer than two number members, or only literal-type
+    /// ones, or `lit` is not a number: the one-member rules apply (`lit_member`).
     pub(crate) fn number_lit_members(
         &mut self,
         u: TyId,
         lit: &ast::SignedLit,
-    ) -> Option<Vec<(u32, TyId, hir::Lit)>> {
+    ) -> Option<Vec<(u32, TyId, Option<hir::Lit>)>> {
         let members = self.cx.union_members(u)?;
-        let exact = members.iter().any(|&m| {
-            self.cx
-                .lit_value(m)
-                .is_some_and(|v| crate::literals::lit_matches(&v, lit))
-        });
         let numbers: Vec<(u32, TyId)> = (0..members.len() as u32)
             .map(|i| (i, members[i as usize]))
-            .filter(|&(_, m)| self.cx.ty.is_numeric(m) && self.cx.lit_value(m).is_none())
+            .filter(|&(_, m)| self.cx.ty.is_numeric(m) || self.lit_num(m).is_some())
             .collect();
-        if exact || numbers.len() < 2 {
+        // A union of literal types only (`1 | 2 | 3`) holds each value once.
+        let plain = numbers.iter().any(|&(_, m)| self.cx.ty.is_numeric(m));
+        if numbers.len() < 2 || !plain {
             return None;
         }
         let n = self.lit_number(lit)?;
-        Some(
-            numbers
-                .into_iter()
-                .filter_map(|(v, m)| Some((v, m, self.number_as(n, m)?)))
-                .collect(),
-        )
+        let mut found = vec![];
+        for &(v, m) in &numbers {
+            match self.lit_num(m) {
+                Some(c) if same_num(c, n) => found.push((v, m, None)),
+                Some(_) => {}
+                None => {
+                    if let Some(l) = self.number_as(n, m) {
+                        found.push((v, m, Some(l)));
+                    }
+                }
+            }
+        }
+        if found.is_empty() {
+            for &(v, m) in &numbers {
+                if let Some(l) = self.number_rounded(n, m) {
+                    found.push((v, m, Some(l)));
+                }
+            }
+        }
+        Some(found)
     }
 
     /// The pattern of union `u` that number literal `lit` matches (an or-pattern over the number
@@ -131,7 +170,11 @@ impl FnCx<'_, '_> {
         let mut pats = vec![];
         let mut variants = vec![];
         for (variant, m, l) in found {
-            let lp = self.pat(P::Lit(l), m, lit_span);
+            let lp = match l {
+                Some(l) => self.pat(P::Lit(l), m, lit_span),
+                // A literal-type member is that one value.
+                None => self.pat(P::Wildcard, m, lit_span),
+            };
             let args = vec![lp];
             pats.push(self.pat(P::Variant { def, variant, args }, u, span));
             variants.push(variant);
@@ -170,11 +213,41 @@ impl FnCx<'_, '_> {
         } else {
             f
         };
-        Some(if f.fract() == 0.0 && f.abs() < 1e38 && f != 0.0 {
-            Num::Int(f as i128)
+        Some(float_num(f))
+    }
+
+    /// The value of numeric literal type `m` (`1` in `1 | u8`).
+    fn lit_num(&self, m: TyId) -> Option<Num> {
+        match self.cx.lit_value(m)? {
+            LitValue::Int(_, n) => Some(Num::Int(n)),
+            LitValue::Float(ft, bits) => {
+                let f = f64::from_bits(bits);
+                Some(float_num(if ft == FloatTy::F32 {
+                    f as f32 as f64
+                } else {
+                    f
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    /// `n` rounded to float type `m`, as a plain float type takes a literal it doesn't hold
+    /// exactly (`0.1` as an `f32`); `None` for other types and for a value out of `m`'s range.
+    fn number_rounded(&mut self, n: Num, m: TyId) -> Option<hir::Lit> {
+        let TyKind::Float(ft) = self.cx.ty.kind(m) else {
+            return None;
+        };
+        let f = match n {
+            Num::Int(n) => n as f64,
+            Num::Float(f) => f,
+        };
+        let r = if *ft == FloatTy::F32 {
+            f as f32 as f64
         } else {
-            Num::Float(f)
-        })
+            f
+        };
+        (r.is_finite() || !f.is_finite()).then_some(hir::Lit::Float(r))
     }
 
     /// `n` as a literal of number type `m`, when `m` holds it exactly.

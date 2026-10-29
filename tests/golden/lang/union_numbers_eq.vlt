@@ -2,8 +2,13 @@
 // in TypeScript (#1890): `1.0` equals `1u8` in `===`, `switch`, narrowing, `Map` and `Set`
 // keys, `indexOf` / `includes` and `deepEqual`. The comparison is exact: an `i64` above 2^53
 // equals no `f64` it rounds to. `-0` equals `0` in `===` and in keys; `NaN` equals itself only
-// in keys. A literal the `u8` member can't hold (`256`) is held by the `f64` member.
+// in keys. A literal the `u8` member can't hold (`256`) is held by the `f64` member; one no
+// member holds exactly (`0.1` against `f32 | u8`, 2^53 + 1) is rounded to the float member's
+// type. A number literal type (`1` in `1 | 2 | u8`) is a number member holding its value.
+// `includes` finds a `NaN` in a union array, `indexOf` doesn't.
 type N = f64 | u8;
+type K = 1 | 2 | u8;
+type L = 1 | 2 | number | u8;
 type W = i64 | f64 | u64 | i8 | f32;
 
 function eq(a: N, b: N): bool {
@@ -38,6 +43,48 @@ function narrowed(x: N): string {
   return `not ${x}`;
 }
 
+function ke(a: K, b: K): bool {
+  return a === b;
+}
+
+function kOne(a: K): bool {
+  return a === 1;
+}
+
+function kNarrowed(a: K): string {
+  if (a === 1) {
+    return `is ${a}`;
+  }
+  return `not ${a}`;
+}
+
+function kKind(a: K): string {
+  switch (a) {
+    case 1:
+      return "one";
+    case 2:
+      return "two";
+    default:
+      return "other";
+  }
+}
+
+function le(a: L, b: L): bool {
+  return a === b;
+}
+
+function lOne(a: L): bool {
+  return a === 1;
+}
+
+function tenth(x: f32 | u8): bool {
+  return x === 0.1;
+}
+
+function past53(x: f64 | u8): bool {
+  return x === 9007199254740993;
+}
+
 function weq(a: W, b: W): bool {
   return a === b;
 }
@@ -63,6 +110,19 @@ function main() {
   console.log(deepEqual([bytes[0], bytes.length], [7, 1]));
   const xs: N[] = [7.0, 300, 1u8];
   console.log(xs.indexOf(1.0), xs.includes(7u8), xs.lastIndexOf(1));
+
+  const k1: K = 1;
+  const k2: K = 1u8;
+  const k3: K = 2u8;
+  console.log(ke(k1, k2), kOne(k1), kOne(k2), deepEqual<K[]>([k1], [k2]), ke(k1, k3));
+  console.log(kNarrowed(k1), kNarrowed(k2), kNarrowed(k3), kKind(k1), kKind(k2), kKind(k3));
+  const ks = new Set<K>([k1, k2, 2, k3]);
+  console.log(ks.size, ks.has(1u8), ks.has(2));
+  console.log(le(1, 1u8), le(1, 1.0), le(1u8, 1.0), lOne(1u8), lOne(1.0), le(2, 1.0));
+  console.log(tenth(0.1f32), tenth(0u8), past53(9007199254740992.0), past53(1u8));
+  const nans: N[] = [NaN, 1u8];
+  const mixed: (f64 | string)[] = ["a", NaN];
+  console.log(nans.includes(NaN), mixed.includes(NaN), nans.indexOf(NaN), mixed.indexOf(NaN));
 
   console.log(
     weq(9007199254740993i64, 9007199254740992.0),

@@ -512,7 +512,7 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.several_numbers(ty) => {
                 self.for_each_variant(&place, ty, |lw, v, parts| {
-                    if let Some(n) = parts.first().and_then(|(x, _)| lw.number_hash(ty, v, x)) {
+                    if let Some(n) = lw.number_hash(ty, v, &parts) {
                         return add(lw, n);
                     }
                     add(lw, cint(v as i128, Ty::U64));

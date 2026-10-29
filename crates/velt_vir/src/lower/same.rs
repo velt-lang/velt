@@ -13,7 +13,7 @@ use velt_sema::hir::{self, TyId, TyKind};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{FnLower, Glue};
-use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, UnOp};
 
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
@@ -55,17 +55,32 @@ impl FnLower<'_, '_> {
 
     /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
     /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
-    /// types compare their parts as `===` does (Bool operand).
+    /// types compare their parts as `===` does; so does a union, whose `NaN`s are equal
+    /// (Bool operand).
     pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let keyed = match self.cx.kind(ty) {
             TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
             _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
         };
         if keyed {
-            self.key_same_values(a, b, ty)
-        } else {
-            self.same_values(a, b, ty)
+            return self.key_same_values(a, b, ty);
         }
+        let same = self.same_values(a, b, ty);
+        let inner = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => inner,
+            _ => ty,
+        };
+        if !self.is_enum(inner) {
+            return same;
+        }
+        // A union (`f64 | u8`, `f64 | string`): two values that are each not `===` themselves
+        // hold a `NaN`. Its other members compare as `===` does (an object by identity, where
+        // the key comparison would compare a `struct` by content).
+        let a_self = self.same_values(a, a, ty);
+        let b_self = self.same_values(b, b, ty);
+        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, a_self, b_self));
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Unary(UnOp::Not, both));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, nans))
     }
 
     /// `Object.is(a, b)` (`Intrinsic::SameValue`) for the values of concrete type `ty` at two

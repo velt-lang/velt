@@ -260,11 +260,8 @@ impl FnCx<'_, '_> {
         let (v, m) = match self.lit_member(inner, l) {
             Ok(x) => x,
             Err(msg) => {
-                let un = self.cx.display(inner);
-                self.cx.error(
-                    Diagnostic::error("mismatched types", span)
-                        .with_note(format!("{msg} of `{un}`")),
-                );
+                self.cx
+                    .error(Diagnostic::error("mismatched types", span).with_note(msg));
                 return self.never_sel(s, span);
             }
         };
