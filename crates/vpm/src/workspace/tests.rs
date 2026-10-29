@@ -95,6 +95,10 @@ fn members_share_one_lock_and_each_gets_its_own_graph() {
     let installed = e.install(&server).unwrap();
     assert!(installed.lock_changed);
     assert_eq!(graph_names(&installed), ["server", "core", "json"]);
+    // Only what `server` uses is fetched: `log` is another member's.
+    let cached = |name: &str, v: &str| e.loc.cached_package(name, &v.parse().unwrap()).is_dir();
+    assert!(cached("json", "1.2.3"));
+    assert!(!cached("log", "0.2.0"));
     let core = &installed.graph.packages()[0].dependencies["core"];
     assert_eq!(core, &e.root.join("packages/core"));
     assert!(!server.join(LOCK_FILE).exists());

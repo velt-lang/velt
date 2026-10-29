@@ -43,7 +43,8 @@ pub fn install(
         ws.file.toolchain.as_deref(),
         &opts,
     )?;
-    let dirs = fetch(&loc, resolution.packages.values())?;
+    // A member's install fetches (and verifies) only what the member uses, not the whole
+    // workspace's packages.
     let (root, packages) = match member.and_then(|dir| ws.member_at(dir)) {
         Some(m) => {
             let deps = &resolution.packages[m.name()].dependencies;
@@ -58,6 +59,11 @@ pub fn install(
         }
         None => (None, resolution.packages.values().collect()),
     };
+    let mut dirs = fetch(&loc, packages.iter().copied())?;
+    if let Some((manifest, dir, _)) = root {
+        // A package the member uses may depend back on it.
+        dirs.insert(manifest.package.name.clone(), dir.to_path_buf());
+    }
     let natives = natives(
         &loc,
         root.map(|(manifest, dir, _)| (dir, manifest)),
