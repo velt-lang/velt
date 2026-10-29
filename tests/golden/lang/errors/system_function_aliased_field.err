@@ -1,0 +1,2 @@
+system_function_aliased_field.vlt:11:45
+error: cannot use `h.b` here: this call may modify it through another argument

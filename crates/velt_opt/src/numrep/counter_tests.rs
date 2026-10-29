@@ -319,3 +319,38 @@ fn a_sum_of_bounded_values_is_capped_by_its_trips() {
     assert!(!assigned(&q.funcs[0], c));
     agree(&p, &q);
 }
+
+/// `nest`, with the counter started from another local plus 4 (`x = start; c = x + 4`), as
+/// `let q = at + 4` starts a varint's position before the loop reading it.
+fn nest_from_local(start: f64, levels: &[Level]) -> (Program, Local) {
+    let (mut p, c) = nest(start, 1.0, levels, true);
+    let f = &mut p.funcs[0];
+    let x = Local(f.locals.len() as u32);
+    f.locals.push(velt_vir::vir::LocalDecl::new(Ty::F64, None));
+    let at = f.blocks[0]
+        .stmts
+        .iter()
+        .position(|s| matches!(s, Stmt::Assign(d, _) if d.local == c))
+        .expect("the counter's start");
+    f.blocks[0].stmts[at] = Stmt::Assign(
+        Place::local(c),
+        bin(BinOp::Add, copy_local(x), float(4.0, Ty::F64)),
+    );
+    f.blocks[0].stmts.insert(
+        at,
+        Stmt::Assign(Place::local(x), Rvalue::Use(float(start, Ty::F64))),
+    );
+    if let Some(locs) = f.locs.get_mut(0) {
+        locs.insert(at.min(locs.len()), None);
+    }
+    (p, c)
+}
+
+#[test]
+fn a_counter_may_start_from_a_bounded_local() {
+    let (p, c) = nest_from_local(40.0, &f64_loops(&[1000.0]));
+    assert_eq!(cap_of(&p, c), Some(Fact::int(44, 44 + 1001)));
+    let q = narrowed(&p);
+    assert!(!assigned(&q.funcs[0], c), "the counter is narrowed");
+    agree(&p, &q);
+}

@@ -1,12 +1,13 @@
 //! Calls of system functions (`declare system function`, crate::system): the declaration's
 //! arguments become the C function's, as the table of the target states them. A buffer gives
-//! its data pointer and its length, a path is checked to end with 0, a struct goes through a
+//! its data pointer and its length (an array's, or a view's: system_views.rs), a path is checked to end with 0, a struct goes through a
 //! temporary of the C layout (copied back after the call), guarded integers are checked, and
 //! on Apple arm64 the variadic arguments go on the stack (see [`APPLE_VARIADIC_REGS`]).
 
 use velt_sema::hir::{self, DefId, TyId};
 
 use super::operand::proj;
+use super::sequence::Later;
 use super::{cint, ice, FnLower};
 use crate::system::{self, After, Func, Guard, Int, Param, Ret, Struct};
 use crate::tls::TlsCall;
@@ -22,10 +23,20 @@ const APPLE_VARIADIC_REGS: usize = 8;
 const ERROR_IO_PENDING: i128 = 997;
 
 /// A declaration's argument, lowered.
-enum Arg {
+pub(super) enum Arg {
     Scalar(Operand),
     /// The place of the array's or struct's inline value, and its type.
     Value(Place, TyId),
+    /// A view's bytes: their address and length (`u64`).
+    Bytes(Operand, Operand),
+    /// `xs.subarray(begin, end)` of a `u8[]`: the place of the array's value and its type, and
+    /// the two positions evaluated (with their types); the header is read at the call.
+    Sub {
+        place: Place,
+        t: TyId,
+        begin: (Operand, TyId),
+        end: (Operand, TyId),
+    },
 }
 
 impl FnLower<'_, '_> {
@@ -45,7 +56,7 @@ impl FnLower<'_, '_> {
                     .unavailable
                     .push((def, self.cx.cur_def, self.cx.user_site));
                 for a in args {
-                    self.expr(a);
+                    self.system_arg_effects(a);
                 }
                 return cint(0, ret);
             }
@@ -62,18 +73,31 @@ impl FnLower<'_, '_> {
             return self.rvalue_temp(ret, Rvalue::Cast(v, ret));
         }
         let mut vals = vec![];
-        for a in args {
-            let v = self.expr(a);
+        let declared: Vec<&Param> = func.params.iter().filter(|p| p.declared()).collect();
+        // What each argument's siblings after it do: a later one may free the buffer an earlier
+        // one names (through a module `let` it reassigns, or another reference), so a captured
+        // buffer or view is retained across them (`hold_buffer`, `system_view`).
+        let laters = self.later_each(args);
+        for ((a, p), later) in args.iter().zip(declared).zip(laters) {
+            let name = system::param_name(p);
+            if let Some(v) = self.system_view(func, name, a, later) {
+                vals.push(v);
+                continue;
+            }
             let t = self.sub(a.ty);
+            if !matches!(self.cx.kind(t), hir::TyKind::Int(_)) {
+                self.note_held_buffer(a, later);
+            }
+            let v = self.expr(a);
             vals.push(match self.cx.kind(t) {
                 hir::TyKind::Int(_) => Arg::Scalar(self.freeze(v, a.ty)),
                 _ => {
+                    let v = self.hold_buffer(v, a.ty, later);
                     let vt = self.cx.ty(t);
                     Arg::Value(self.operand_place(v, vt), t)
                 }
             });
         }
-        let ranged = system::ranged(func, args.len());
         let mut cargs: Vec<Operand> = vec![];
         let mut ctys: Vec<Ty> = vec![];
         let mut structs: Vec<(Place, TyId, Place, &'static Struct)> = vec![];
@@ -96,16 +120,8 @@ impl FnLower<'_, '_> {
                     self.guard(func, name, &v, ty.vir(), guard);
                     push(&mut cargs, &mut ctys, v, ty.vir());
                 }
-                Param::Buf { len, name, .. } => {
-                    let (mut ptr, mut n) = self.buffer(vals.next());
-                    if ranged {
-                        let (Some(Arg::Scalar(start)), Some(Arg::Scalar(end))) =
-                            (vals.next(), vals.next())
-                        else {
-                            ice("system call: a buffer range")
-                        };
-                        (ptr, n) = self.buffer_range(func, name, ptr, n, start, end);
-                    }
+                Param::Buf { len, .. } => {
+                    let (ptr, n) = self.buffer(vals.next());
                     push(&mut cargs, &mut ctys, ptr, Ty::Ptr);
                     let n = match len {
                         Int::U32 => self.clamp_u32(n),
@@ -199,6 +215,56 @@ impl FnLower<'_, '_> {
         ))
     }
 
+    /// Before the buffer `e` is evaluated: when a later argument may change memory, record the
+    /// path to its value as [`Self::expr_held`] does, so an array a later argument can free
+    /// through a module `let` or a closure's cell (`g = Buffer.alloc(1)`) has a counted type,
+    /// and [`Self::hold_buffer`] keeps the array the argument named (JS reads it first).
+    pub(super) fn note_held_buffer(&mut self, e: &hir::Expr, later: Later) {
+        if !later.memory || self.dead() {
+            return;
+        }
+        let ty = self.sub(e.ty);
+        if self.cx.needs_drop(ty) && !self.through_counted(e, ty) {
+            self.in_shared_cell(e);
+        }
+    }
+
+    /// Keep the buffer value `v` (of type `ty`) alive across the arguments after it: when one of
+    /// them may change memory (`later.memory`) it can free what `v` points to through another
+    /// reference (a module `let` it reassigns), so `v` is retained for the statement and released
+    /// after the call. A value nothing else reaches, or no later argument can free, is untouched.
+    pub(super) fn hold_buffer(
+        &mut self,
+        v: Operand,
+        ty: velt_sema::hir::TyId,
+        later: Later,
+    ) -> Operand {
+        let cty = self.sub(ty);
+        if !later.memory || !self.cx.counted(cty) {
+            return v;
+        }
+        let shared = self.share_value(v, cty);
+        self.own_value(shared, cty)
+    }
+
+    /// Evaluate a system-function argument for its side effects only, on a target that lacks the
+    /// function (the call is a compile error, reported once lowering is done). A view argument is
+    /// `Intrinsic::Subarray`, which only [`Self::system_view`] knows how to lower; here its
+    /// sub-expressions are evaluated (JS order) and the view itself is dropped.
+    fn system_arg_effects(&mut self, a: &hir::Expr) {
+        if let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Subarray),
+            args,
+        } = &a.kind
+        {
+            for sub in args {
+                self.expr(sub);
+            }
+        } else {
+            self.expr(a);
+        }
+    }
+
     /// Read `errno` of the calling thread now (`*__error()` / `*__errno_location()`) into the
     /// thread's errno slot, for a later `lastOsError()`, in this function or a caller. Does
     /// nothing on a target whose `lastOsError` is not an `errno` pointer.
@@ -260,53 +326,19 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The data pointer and length (`u64`) of a buffer argument.
+    /// The data pointer and length (`u64`) of a buffer argument: an array's or a view's.
     fn buffer(&mut self, arg: Option<Arg>) -> (Operand, Operand) {
-        let Some(Arg::Value(place, t)) = arg else {
-            ice("system call: a buffer argument")
-        };
-        let hdr = self.content(&place, t);
-        let ptr = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(0)))),
-        );
-        let len = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(1)))),
-        );
-        (ptr, len)
-    }
-
-    /// The bytes `start..end` of a buffer at `ptr` of `n` bytes: stops the program unless
-    /// `start <= end <= n`.
-    fn buffer_range(
-        &mut self,
-        func: &Func,
-        name: &str,
-        ptr: Operand,
-        n: Operand,
-        start: Operand,
-        end: Operand,
-    ) -> (Operand, Operand) {
-        let ordered = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Le, start.clone(), end.clone()),
-        );
-        let (inside, ok, bad) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(ordered, inside, bad);
-        self.switch_to(inside);
-        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, end.clone(), n));
-        self.branch(fits, ok, bad);
-        self.switch_to(bad);
-        self.panic_msg(&format!(
-            "system function `{}`: the range of `{name}` is outside the array",
-            func.name
-        ));
-        self.terminate(Terminator::Unreachable);
-        self.switch_to(ok);
-        let at = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, ptr, start.clone()));
-        let len = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, end, start));
-        (at, len)
+        match arg {
+            Some(Arg::Value(place, t)) => self.header_parts(&place, t),
+            Some(Arg::Bytes(ptr, n)) => (ptr, n),
+            Some(Arg::Sub {
+                place,
+                t,
+                begin,
+                end,
+            }) => self.subarray_bytes(&place, t, begin, end),
+            _ => ice("system call: a buffer argument"),
+        }
     }
 
     /// `min(n, u32::MAX)` as a `u32` (a Windows length: a shorter read or write is allowed).

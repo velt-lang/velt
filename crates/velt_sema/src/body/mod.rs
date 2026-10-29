@@ -324,6 +324,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
     /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
     pub weak_key_args: bool,
+    /// The call about to be checked is of a `declare system function`: its byte buffer
+    /// parameters take views too (`system_args.rs`).
+    pub system_args: bool,
     /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
     pub proxy_keys_inner: bool,
     /// The explicit type arguments of the call about to be checked (at the first span): the
@@ -422,6 +425,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             immediate_hint: None,
             collect_iterable_args: false,
             weak_key_args: false,
+            system_args: false,
             proxy_keys_inner: false,
             explicit_type_spans: None,
             optional_slots: vec![],

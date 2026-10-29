@@ -325,6 +325,14 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   A `declare system function` (`ExternFnDef::system`, per param whether it was written
   `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
   structs): callers pass those `BorrowMut`.
+  An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
+  of a class extending `std/typed_array/core::BufferView` (a typed array or `DataView`: the
+  argument keeps its class type, with no conversion), or `Intrinsic::Subarray(xs, begin,
+  end)` of type `u8[]` (`xs` a `u8[]` place; `begin` and `end` each an `i64`, or a `usize`
+  when never negative), which sema makes only there, from `xs.subarray(begin, end)`.
+  Lowering passes the bytes the view sees: for a `BufferView`, its fields `buf` (an
+  `ArrayBuffer`, field `bytes: u8[]`), `off` and the byte length std's `__viewBytes(v)` gives;
+  for `Subarray`, JS's `subarray` positions in `xs` (#1718).
 
 ## Generic methods
 - Generic interface methods: `InterfaceDef::methods[slot]` as usual; the method's own type

@@ -162,6 +162,19 @@ impl Collector<'_, '_> {
                 self.direct(then, direct, nested);
                 self.direct(els, direct, nested);
             }
+            // `xs.subarray(begin, end)` passed to a system function's buffer: the place is the
+            // receiver `xs`, used with the receiver's own mode (`BorrowMut` for a written
+            // buffer), and `begin` / `end` are evaluated while the argument is.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Subarray),
+                args,
+            } => {
+                if let Some((rest, [recv, begin])) = args.split_last_mut() {
+                    self.direct(recv, direct, nested);
+                    self.nested(begin, nested);
+                    self.nested(rest, nested);
+                }
+            }
             E::Closure(def) => self.captures(*def, e.span, false, direct),
             _ => self.nested(e, nested),
         }
@@ -189,6 +202,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::expr(e, &mut v);
     }
@@ -199,6 +213,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::block(b, &mut v);
     }
@@ -209,6 +224,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         for s in stmts {
             visit::stmt(s, &mut v);
@@ -261,6 +277,10 @@ struct Nested<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     out: &'c mut Vec<Use>,
     skip: FxHashSet<*const Expr>,
+    /// Temporaries holding another reference to a place (`let t = share(h.b)`, how a write
+    /// through a counted field is lowered: `h.b.length = 0`): a write through one is a write of
+    /// the place.
+    shares: FxHashMap<LocalId, (Place, String)>,
 }
 
 impl Nested<'_, '_, '_> {
@@ -275,8 +295,21 @@ impl Nested<'_, '_, '_> {
         }
     }
 
-    fn record(&mut self, e: &Expr, place: Place, access: Access) {
-        let text = self.col.text(e);
+    fn record(&mut self, e: &Expr, mut place: Place, access: Access) {
+        let mut text = self.col.text(e);
+        // A write through the other reference writes the place; moving the reference out
+        // takes only that reference.
+        let through = (access == Access::Unique)
+            .then(|| self.shares.get(&place.root))
+            .flatten();
+        if let Some((p, shown)) = through {
+            if place.proj.is_empty() {
+                text = shown.clone();
+            }
+            let mut full = p.clone();
+            full.proj.extend(place.proj);
+            place = full;
+        }
         self.out.push(Use {
             place,
             access,
@@ -289,6 +322,26 @@ impl Nested<'_, '_, '_> {
 }
 
 impl VisitMut for Nested<'_, '_, '_> {
+    fn stmt(&mut self, s: &mut Stmt) {
+        if let crate::hir::StmtKind::Let {
+            local,
+            init: Some(init),
+        } = &s.kind
+        {
+            if let E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } = &init.kind
+            {
+                if let Some(a) = args.first() {
+                    if let Some((p, _)) = self.col.place_of(a) {
+                        self.shares.insert(*local, (p, self.col.text(a)));
+                    }
+                }
+            }
+        }
+    }
+
     fn expr(&mut self, e: &mut Expr) {
         if self.skip.remove(&(e as *const Expr)) {
             return self.skip_bases(e);

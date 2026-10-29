@@ -244,6 +244,17 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.is_async_gen = sig.is_async && sig.is_generator;
     f.generics = generics;
     f.params = ps;
+    // A system function writes every buffer and struct not written `readonly`
+    // (docs/reference/system-functions.md): its argument is a mutable borrow from the start, so
+    // the call is checked as one (a read-only array is rejected, a module constant is not
+    // copied, another argument may not reach it) before ownership inference runs.
+    if let Some(readonly) = f.system.clone() {
+        for (p, ro) in f.params.iter_mut().zip(readonly) {
+            if p.mode == PassMode::Borrow && !ro {
+                p.mode = PassMode::BorrowMut;
+            }
+        }
+    }
     f.ret = ret;
     f.ret_span = ret_span;
     if inferred {

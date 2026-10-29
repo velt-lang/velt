@@ -1,0 +1,49 @@
+// requires: unix
+// A system function's buffer takes a view of bytes as well as a `u8[]`: a typed array, a
+// `DataView` (its bytes, whatever its element type), a `subarray` of either, and
+// `xs.subarray(begin, end)` of a `u8[]`, with JS's positions (negative counts from the end,
+// clamped). The call gets the address and length of those bytes: no copy.
+import { platform } from "velt:os";
+
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function close(fd: i32): i32;
+declare system function write(fd: i32, buf: readonly u8[]): isize;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+declare system function unlink(path: readonly u8[]): i32;
+
+function text(s: string): Uint8Array {
+  return new TextEncoder().encode(s);
+}
+
+function main() {
+  // Raw writes first, then `console.log`, which may buffer its output.
+  const out = text("[views]\n");
+  const bytes: u8[] = Buffer.alloc(8);
+  bytes.write("abcdefgh");
+  const counts = [
+    write(1, out.subarray(1)),
+    write(1, bytes.subarray(2, 4)),
+    write(1, bytes.subarray(-2)),
+    write(1, bytes.subarray(5, 2)),
+    write(1, bytes.subarray(-100, 1)),
+    write(1, bytes.subarray(6, 1000)),
+    write(1, out.subarray(-1)),
+  ];
+  console.log(counts.join(" "));
+
+  // A path as a view: one 0, its last.
+  const name = text("velt_system_function_views_tmp.bin\0");
+  const mac = platform() == "darwin";
+  const fd = open(name, 2 | (mac ? 0x200 | 0x400 : 0x40 | 0x200), 0o600);
+  console.log(fd >= 0);
+  const words = new Uint16Array([0x6948, 0x0a21]);
+  console.log(pwrite(fd, words, 0));
+  const dv = new DataView(new ArrayBuffer(8), 2, 4);
+  console.log(pread(fd, dv, 0), dv.getUint32(0, true).toString(16));
+  const back = new Uint8Array(6);
+  console.log(pread(fd, back.subarray(1, 4), 1), back.join(","));
+  const f64 = new Float64Array(1);
+  console.log(pread(fd, f64, 0));
+  console.log(close(fd), unlink(name));
+}

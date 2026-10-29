@@ -1,0 +1,76 @@
+// The pages every variant decodes: SQLite-like b-tree pages in one `Uint8Array`, built from
+// xorshift keys and children (the same bytes as rust/'s `build`). Per page: the cell count (2
+// bytes, big-endian) at 3, the cell pointers (2 bytes each, big-endian) from 12, and per cell a
+// 4-byte big-endian child page number and a varint key (SQLite's: 7 bits per byte, the high
+// bit set on all but the last, at most 9 bytes).
+
+export const PAGE = 4096;
+export const PAGES = 64;
+
+// The pages: xorshift-made keys and children, cells packed from the end of each page.
+export function build(): Uint8Array {
+  const all = new Uint8Array(PAGE * PAGES);
+  let x = 2463534242;
+  for (let p = 0; p < PAGES; p++) {
+    const base = p * PAGE;
+    let end = PAGE;
+    let n = 0;
+    let key = p * 100000;
+    while (true) {
+      x ^= (x << 13) >>> 0;
+      x >>>= 0;
+      x ^= x >>> 17;
+      x ^= (x << 5) >>> 0;
+      x >>>= 0;
+      key += (x & 0xffff) + 1;
+      const child = x >>> 3;
+      // The key's varint, most significant group first.
+      const groups: number[] = [];
+      let k = key;
+      do {
+        groups.unshift(k % 128);
+        k = Math.floor(k / 128);
+      } while (k > 0);
+      const size = 4 + groups.length;
+      const cellAt = end - size;
+      if (cellAt < 12 + 2 * (n + 1)) {
+        break;
+      }
+      all[base + cellAt] = child >>> 24;
+      all[base + cellAt + 1] = (child >>> 16) & 255;
+      all[base + cellAt + 2] = (child >>> 8) & 255;
+      all[base + cellAt + 3] = child & 255;
+      for (let g = 0; g < groups.length; g++) {
+        all[base + cellAt + 4 + g] = groups[g] | (g + 1 < groups.length ? 128 : 0);
+      }
+      all[base + 12 + 2 * n] = cellAt >>> 8;
+      all[base + 12 + 2 * n + 1] = cellAt & 255;
+      end = cellAt;
+      n++;
+    }
+    all[base] = 5;
+    all[base + 3] = n >>> 8;
+    all[base + 4] = n & 255;
+  }
+  return all;
+}
+
+/** The number of cells of all pages. */
+export function cellCount(all: Uint8Array): number {
+  let cells = 0;
+  for (let p = 0; p < PAGES; p++) {
+    cells += (all[p * PAGE + 3] << 8) | all[p * PAGE + 4];
+  }
+  return cells;
+}
+
+/** Runs `decode` `rounds` times (the first argument) and prints the cells and the checksum. */
+export function run(decode: (all: Uint8Array) => number) {
+  const rounds = Number(process.argv[2]);
+  const all = build();
+  let check = 0;
+  for (let r = 0; r < rounds; r++) {
+    check += decode(all);
+  }
+  console.log(cellCount(all), check);
+}

@@ -59,6 +59,8 @@ function main() {
   `getFloat64` / `setInt8` … `setFloat64` at any byte offset, big-endian unless the
   `littleEndian` argument is `true`. An access outside the view throws `RangeError`
   (`Offset is outside the bounds of the DataView`).
+  A big-endian `getUint16` / `getUint32` (and `getInt*`) checks its range and reads its bytes
+  as one load and a byte swap (`bench/typed_array/page_cells`).
 - **Errors** are `RangeError`s with V8's messages: `Invalid typed array length: -1`,
   `start offset of Uint16Array should be a multiple of 2`, `offset is out of bounds` (`set`),
   `Invalid array buffer length`, ….
@@ -72,6 +74,10 @@ function main() {
   keeps its length whatever happens to `b` afterwards), and `xs.toBytes()` copies a
   `Uint8Array`'s elements into a `u8[]`. An index may be an integer of any type (`xs[k]` with
   `k: usize`), as for arrays.
+- **To the system**: a typed array or a `DataView` passed to `velt:fs/fd`'s `readSync` /
+  `writeSync` or to a [system function](../reference/system-functions.md#views)'s buffer
+  parameter passes its bytes where they are, with no copy (`readSync(fd, page.subarray(0,
+  512))` reads into the page).
 - **Across tasks**: a typed array (or buffer) sent to `spawn` or over a channel is copied, with
   its buffer, as any value a task receives is ([Async](../reference/async.md)): the two tasks
   don't share its bytes. Views of one buffer stay views of one buffer within a task.

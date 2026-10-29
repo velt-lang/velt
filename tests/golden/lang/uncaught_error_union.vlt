@@ -1,0 +1,26 @@
+// An uncaught error of a union of `Error` classes is reported as the one it holds: its class's
+// name and message, a renamed class by its `name` (one report serves every member).
+class AppError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AppError";
+  }
+}
+
+function check(k: number): number throws RangeError | TypeError | AppError {
+  if (k == 1) {
+    throw new RangeError("range");
+  }
+  if (k == 2) {
+    throw new TypeError("type");
+  }
+  if (k == 3) {
+    throw new AppError("app");
+  }
+  return k;
+}
+
+function main() {
+  console.log(check(0));
+  console.log(check(3));
+}

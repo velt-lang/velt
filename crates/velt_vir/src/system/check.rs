@@ -69,19 +69,6 @@ pub fn match_decl(
     })
 }
 
-/// Does a declaration with `declared` parameters give `c`'s buffer as a range, `buf: u8[],
-/// start: usize, end: usize` (the bytes `start..end` of the array)? Only for functions with one
-/// buffer.
-pub fn ranged(c: &Func, declared: usize) -> bool {
-    let params = c.params.iter().filter(|p| p.declared()).count();
-    let bufs = c
-        .params
-        .iter()
-        .filter(|p| matches!(p, Param::Buf { .. }))
-        .count();
-    bufs == 1 && declared == params + 2
-}
-
 /// The declarations that bind `name` on `triple` (for documentation and messages).
 pub fn expected_decls(triple: &str, name: &str) -> Vec<String> {
     overloads(triple, name).map(velt_decl).collect()
@@ -187,10 +174,15 @@ fn shown(s: &Shape) -> String {
 fn fits(p: &hir::Program, f: &hir::ExternFnDef, c: &Func) -> Result<(), String> {
     let params: Vec<&Param> = c.params.iter().filter(|p| p.declared()).collect();
     let names: Vec<&str> = params.iter().map(|p| param_name(p)).collect();
-    let ranged = ranged(c, f.params.len());
-    if params.len() != f.params.len() && !ranged {
+    if params.len() != f.params.len() {
+        // The interim `buf, start, end` form of a buffer's range is gone: views replace it.
+        let buffer = params.iter().any(|p| matches!(p, Param::Buf { .. }));
+        let range = match buffer && f.params.len() == params.len() + 2 {
+            true => "; a part of a buffer is passed as a view: `buf.subarray(start, end)`",
+            false => "",
+        };
         return Err(format!(
-            "`{}` takes {} parameter{} ({}), not {}",
+            "`{}` takes {} parameter{} ({}), not {}{range}",
             c.name,
             params.len(),
             if params.len() == 1 { "" } else { "s" },
@@ -199,23 +191,9 @@ fn fits(p: &hir::Program, f: &hir::ExternFnDef, c: &Func) -> Result<(), String> 
         ));
     }
     let readonly = f.system.as_deref().unwrap_or(&[]);
-    let mut ti = 0;
-    for &want in &params {
+    for (ti, &want) in params.iter().enumerate() {
         let ro = readonly.get(ti).copied().unwrap_or(false);
         param_fits(p, c, want, f.params[ti], ro)?;
-        ti += 1;
-        if ranged && matches!(want, Param::Buf { .. }) {
-            for _ in 0..2 {
-                if !matches!(shape(p, f.params[ti]), Shape::Int(Int::USize)) {
-                    return Err(format!(
-                        "a range of the buffer `{}` is two `usize` parameters after it, `start` \
-                         and `end`",
-                        param_name(want)
-                    ));
-                }
-                ti += 1;
-            }
-        }
     }
     let want_ret = match c.ret {
         Ret::Int { ty, .. } => ty,
@@ -237,7 +215,8 @@ fn fits(p: &hir::Program, f: &hir::ExternFnDef, c: &Func) -> Result<(), String> 
     }
 }
 
-fn param_name(p: &Param) -> &'static str {
+/// The name the table gives a parameter.
+pub fn param_name(p: &Param) -> &'static str {
     match *p {
         Param::Int { name, .. }
         | Param::Buf { name, .. }

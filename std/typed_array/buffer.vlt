@@ -110,28 +110,57 @@ export function f64Bits(x: f64): u64 {
   return velt_simd_u64x2_lane(velt_simd_f64x2_as_u64x2(velt_simd_f64x2_splat(x)), 0);
 }
 
-// Little-endian loads and stores at byte offset `o` (in range: the caller checked), a 16-byte
-// vector access while 16 bytes are left (`wide`), byte by byte in the last 15.
+// Loads and stores at byte offset `o` (in range: the caller checked). A load of 2 or 4 bytes
+// checks its range once, so the compiler drops the byte reads' own checks and reads the bytes as
+// one load (and a byte swap for big-endian); the stores take a 16-byte vector access while 16
+// bytes are left (`wide`), byte by byte in the last 15.
 
 function wide(b: u8[], o: usize): bool {
   return o + 16 <= (b.length as usize);
 }
 
 export function load16(b: u8[], o: usize): u16 {
-  if (wide(b, o)) {
-    return velt_simd_u16x8_lane(velt_simd_u8x16_as_u16x8(velt_simd_u8x16_load(b, o as u64)), 0);
+  const n = b.length as usize;
+  if (n < 2 || o > n - 2) {
+    // Out of range: the last byte's index panics as any index does.
+    return b[o + 1] as u16;
   }
   return (b[o] as u16) | ((b[o + 1] as u16) << 8);
 }
 
 export function load32(b: u8[], o: usize): u32 {
-  if (wide(b, o)) {
-    return velt_simd_u32x4_lane(velt_simd_u8x16_as_u32x4(velt_simd_u8x16_load(b, o as u64)), 0);
+  const n = b.length as usize;
+  if (n < 4 || o > n - 4) {
+    // Out of range: the last byte's index panics as any index does.
+    return b[o + 3] as u32;
   }
   return (b[o] as u32) |
     ((b[o + 1] as u32) << 8) |
     ((b[o + 2] as u32) << 16) |
     ((b[o + 3] as u32) << 24);
+}
+
+/** The big-endian `u16` at `o`: one range check, then a load and a byte swap. */
+export function loadBE16(b: u8[], o: usize): u16 {
+  const n = b.length as usize;
+  if (n < 2 || o > n - 2) {
+    // Out of range: the last byte's index panics as any index does.
+    return b[o + 1] as u16;
+  }
+  return ((b[o] as u16) << 8) | (b[o + 1] as u16);
+}
+
+/** The big-endian `u32` at `o`: one range check, then a load and a byte swap. */
+export function loadBE32(b: u8[], o: usize): u32 {
+  const n = b.length as usize;
+  if (n < 4 || o > n - 4) {
+    // Out of range: the last byte's index panics as any index does.
+    return b[o + 3] as u32;
+  }
+  return ((b[o] as u32) << 24) |
+    ((b[o + 1] as u32) << 16) |
+    ((b[o + 2] as u32) << 8) |
+    (b[o + 3] as u32);
 }
 
 export function load64(b: u8[], o: usize): u64 {

@@ -1,0 +1,12 @@
+AAAAAAAA
+CCCCCCCC
+DDDDDDDD
+EE
+write 8 8 8 2 1
+replace 4096 1
+await 4096 1
+whole 4096 1
+grow 16 0 0 7 100016
+position replace 4096 1
+position grow 16 0 7 100016
+closure 64 1

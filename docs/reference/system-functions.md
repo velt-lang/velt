@@ -24,17 +24,19 @@ and `fstatSync` are Velt code over these declarations.
 | an integer (`int`, `off_t`, `size_t`, `DWORD`, `HANDLE`) | the integer type the table names (`i32`, `i64`, `usize`, ...) | passed as it is |
 | `void *buf, size_t len` that the function **writes** | one parameter `buf: u8[]` | the array's data and length |
 | `const void *buf, size_t len` that it only **reads** | one parameter `buf: readonly u8[]` | the array's data and length |
-| either, for part of an array | `buf: u8[], start: usize, end: usize` | bytes `start..end`; outside the array, the program stops |
+| either, given a view | the same parameter | the bytes the view sees ([below](#views)) |
 | `const char *path` | `path: readonly u8[]` | the array; unless its only 0 byte is its last, the program stops |
 | `LPCWSTR` (Windows) | `name: readonly u16[]` | the array; unless its only 0 element is its last, the program stops |
 | `struct flock *`, `struct stat *`, `OVERLAPPED *` | a `struct` of integers whose fields are named after the C struct's | copied into the C layout of the target, and back after the call |
 | a pointer the declaration leaves out (`CreateFileW`'s `lpSecurityAttributes`) | nothing | `NULL` |
 | the result | the integer type the table names | |
 
-The length always comes from the array, so no call reads or writes past its end. A buffer the
+The length always comes from the array or the view, so no call reads or writes past its end. A buffer the
 function writes is `u8[]` and one it only reads is `readonly u8[]` (TypeScript's `readonly`
 array type): the declaration must say which, so a reader sees it and the compiler knows the
-caller's array changes. A struct's fields may come in any order and may be a subset of the C
+caller's array changes. A read-only array (a variable, parameter, module constant or class field
+declared `readonly u8[]`, or a function's `readonly u8[]` result), whole or through `subarray`,
+cannot be passed for a buffer the function writes: it is a compile error. A struct's fields may come in any order and may be a subset of the C
 struct's (the others are 0 going in and ignored coming out); a C field narrower than the Velt
 type is converted (`st_mode` is a `u16` on macOS and a `u32` in Velt).
 
@@ -52,6 +54,45 @@ declare system function fcntl$lock(fd: i32, cmd: i32, lock: Lock): i32;
 A name may end in `$` and any suffix, which the table ignores: `fcntl$lock` binds `fcntl`. A
 module that needs two forms of a variadic function (`fcntl` with an `int` and with a
 `struct flock *`) declares them under two names; the parameter types choose the form.
+
+## Views
+
+A buffer parameter (`u8[]` or `readonly u8[]`, a path too) takes a view of bytes as well as an
+array, and the call gets the address and length of the bytes the view sees, with no copy:
+
+- a typed array (`Uint8Array`, `Float64Array`, ...) or a `DataView`: the bytes of its range of
+  its `ArrayBuffer`, whatever its element type;
+- a `subarray(begin, end)` of one;
+- `xs.subarray(begin, end)` of a `u8[]` `xs` (Node's `buf.subarray` of a `Buffer`), with JS's
+  positions: a negative one counts from the end, and both are clamped to the array. It borrows
+  `xs` for the call (written, for a buffer the function writes); no `Uint8Array` is made. A
+  `subarray` of a `u8[]` is a view only as such an argument: elsewhere a `u8[]` has no
+  `subarray` yet (`slice` copies).
+
+The array is the one `xs` holds when the argument is evaluated, before the positions and the
+later arguments, as in JS: a later argument that gives the variable another array leaves the
+call at the first one, which the call keeps alive until it returns. A whole array argument
+names its array the same way. The array's data and length are taken at the call, after every
+argument is evaluated, so an argument that grows the array (which moves its bytes) cannot leave
+the call at bytes that were freed, and the positions are clamped to the length the array has
+then.
+
+```ts
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+
+function readPage(fd: i32, cache: u8[], slot: usize, page: i64): isize {
+  // Page `page` of the file into slot `slot` of the cache: 4096 bytes, no copy.
+  return pread(fd, cache.subarray(slot * 4096, (slot + 1) * 4096), page * 4096);
+}
+
+function writeHeader(fd: i32, header: DataView): isize {
+  return pwrite(fd, header, 0);
+}
+```
+
+A view of a buffer whose `u8[]` has become shorter than the view's range (Velt's `ArrayBuffer`
+cannot shrink, but its owner can) stops the program rather than reach past the array.
 
 `lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. The compiler
 captures `errno` into a slot of the thread right after every system call, and `lastOsError()`
@@ -106,7 +147,7 @@ app.vlt:4:14: error: `openSync` (velt:fs/fd) is not available on x86_64-pc-windo
 
 Some arguments change how the C function uses memory, so the call checks them and stops the
 program (a panic) when they are wrong: a path without its 0 byte or with a 0 before it (C would end the path there: `"a.txt\0../b\0"`
-would reach C as `a.txt`), a range outside the array,
+would reach C as `a.txt`), a view outside its buffer,
 an `fcntl` command of the other form (a lock command with an `int` argument would make the kernel
 read a `struct flock` at that address), and `FILE_FLAG_OVERLAPPED` for `CreateFileW` (Windows
 would finish reads and writes after the call returned).

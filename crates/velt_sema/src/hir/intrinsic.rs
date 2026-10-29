@@ -86,6 +86,15 @@ pub enum Intrinsic {
     /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
     /// inner arrays, which one call may not otherwise change both of. Additive.
     ArraySwapNested,
+    /// `xs.subarray(begin, end)` of a `u8[]` as the argument of a `declare system function`'s
+    /// buffer parameter (docs/reference/system-functions.md): `(xs: u8[] (borrowed, modified
+    /// for a buffer the function writes), begin, end)`, of type `u8[]`, the bytes
+    /// `begin..end` of `xs` with JS's `subarray` positions (negative counts from the end,
+    /// clamped to the array); a position is an `i64`, or a `usize` when it is never negative.
+    /// A borrowed view: lowering passes the address and length of those
+    /// bytes, with no copy and no object. Sema makes it only there (`system_args.rs`); lowering
+    /// meets it only as such an argument. Additive (#1718).
+    Subarray,
     /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
     /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
     /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
