@@ -23,20 +23,27 @@ use super::{select, KIND};
 /// Compile each of `programs` (a function's program of its own, [`program_of`]) in parallel:
 /// its object, or why it could not be.
 pub(super) fn each(
-    programs: Vec<&vir::Program>,
+    programs: Vec<vir::Program>,
     cg: &velt_codegen_cl::CodegenOptions,
 ) -> Vec<Result<Vec<u8>, String>> {
     let next = AtomicUsize::new(0);
     let results = Mutex::new(vec![Err(String::new()); programs.len()]);
+    // Each worker takes the next program out (moved, not cloned).
+    let programs: Vec<Mutex<Option<vir::Program>>> =
+        programs.into_iter().map(|p| Mutex::new(Some(p))).collect();
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     std::thread::scope(|scope| {
         for _ in 0..workers.min(programs.len()) {
             scope.spawn(|| loop {
                 let n = next.fetch_add(1, Ordering::Relaxed);
-                let Some(&program) = programs.get(n) else {
+                let Some(slot) = programs.get(n) else {
                     return;
                 };
-                let object = alone(program.clone(), cg);
+                let program = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+                let Some(program) = program else {
+                    continue;
+                };
+                let object = alone(program, cg);
                 results.lock().unwrap_or_else(PoisonError::into_inner)[n] = object;
             });
         }

@@ -49,12 +49,19 @@ impl Code {
 impl Inputs {
     /// This velt building with `opts` for `cg`.
     pub fn of(opts: &BuildOptions, cg: &velt_codegen_cl::CodegenOptions) -> Inputs {
+        // clang's path, size and modification time (nanoseconds), as explicit fields.
         let clang = velt_codegen_llvm::find_clang();
         let meta = clang.as_ref().and_then(|c| std::fs::metadata(c).ok());
-        let stamp = meta.map(|m| (m.len(), m.modified().ok()));
+        let size = meta.as_ref().map_or(0, |m| m.len());
+        let time = (meta.and_then(|m| m.modified().ok()))
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        let path = clang
+            .map(|c| c.to_string_lossy().into_owned())
+            .unwrap_or_default();
         Inputs {
             compiler: crate::build_cache::compiler_identity(),
-            backend: format!("clang {clang:?} {stamp:?}"),
+            backend: format!("clang\0{path}\0{size}\0{time}"),
             target: cg.target.clone(),
             cpu: cg.cpu.clone(),
             optimize: opts.release,

@@ -203,7 +203,7 @@ fn check_symbols(p: &Program, errs: &mut Vec<String>) {
         Some(m) if m.params.is_empty() && m.ret == Ty::I32 && m.linkage == Linkage::Export => {}
         // Code compiled on its own to link into a program declares the entry (invariant 5).
         Some(m) if m.params.is_empty() && m.ret == Ty::I32 && m.linkage == Linkage::Import => {}
-        Some(_) => errs.push("velt_main must be `export velt_main() -> I32`".into()),
+        Some(_) => errs.push("velt_main must be `export velt_main() -> I32` (or `import`, in code compiled to link into a program)".into()),
         None => errs.push("missing exported entry `velt_main`".into()),
     }
 }

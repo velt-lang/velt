@@ -181,7 +181,8 @@ pub(super) fn link(
     }
     let called: HashSet<String> = needed.into_iter().map(str::to_string).collect();
     drop(by_symbol);
-    let mut compile = vec![];
+    let mut compile: Vec<(String, Key)> = vec![];
+    let mut programs: Vec<vir::Program> = vec![];
     for entry in plan.entries {
         if !called.contains(entry.symbol.as_str()) {
             out.dropped += 1;
@@ -192,11 +193,14 @@ pub(super) fn link(
                 out.objects.push(path);
                 out.hits += 1;
             }
-            Object::Compile(key, alone) => compile.push((entry.symbol, key, alone)),
+            Object::Compile(key, alone) => {
+                compile.push((entry.symbol, key));
+                programs.push(alone);
+            }
         }
     }
-    let compiled = compile::each(compile.iter().map(|(_, _, p)| p).collect(), cg);
-    for ((symbol, key, _), object) in compile.iter().zip(compiled) {
+    let compiled = compile::each(programs, cg);
+    for ((symbol, key), object) in compile.iter().zip(compiled) {
         let object = object.map_err(|e| format!("{symbol}: {e}"))?;
         let path = compile::store(cache, key, &object)
             .ok_or_else(|| format!("{symbol}: its object could not be stored"))?;
