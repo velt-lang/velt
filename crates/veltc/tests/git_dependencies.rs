@@ -221,3 +221,47 @@ fn walk(dir: &Path) -> usize {
         })
         .unwrap_or(0)
 }
+
+/// An npm package of a git monorepo, imported directly: no Velt package in between, nothing in
+/// `node_modules`; and the same dependency written once in a workspace for its members.
+#[test]
+fn npm_packages_come_straight_from_a_git_monorepo() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let root = tmp.path();
+    let home = root.join("home");
+    let repo = upstream(root, "hello");
+    let url = file_url(&repo);
+    let main = "import { greeting } from \"@demo/signals\";\n\nconsole.log(greeting(\"npm\"));\n";
+
+    let app = root.join("app");
+    write(
+        &app,
+        "package.vlt",
+        &format!("export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ \"@demo/signals\": {{ git: \"{url}\" }} }} }};\n"),
+    );
+    write(&app, "src/main.vlt", main);
+    let o = velt(&home, &app, &["run"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "hello npm\n");
+    assert!(!app.join("node_modules").exists());
+
+    // In a workspace: written once, used by a member as `"workspace"`.
+    let ws = root.join("ws");
+    write(
+        &ws,
+        "velt.workspace.vlt",
+        &format!("export const workspace: Workspace = {{ members: [\"app\"], dependencies: {{ \"@demo/signals\": {{ git: \"{url}\", branch: \"main\" }} }} }};\n"),
+    );
+    write(
+        &ws,
+        "app/package.vlt",
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\", dependencies: { \"@demo/signals\": \"workspace\" } };\n",
+    );
+    write(&ws, "app/src/main.vlt", main);
+    let o = velt(&home, &ws.join("app"), &["run"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "hello npm\n");
+    let lock = std::fs::read_to_string(ws.join("velt.lock.json")).unwrap();
+    assert!(lock.contains("?branch=main#"), "{lock}");
+}

@@ -23,6 +23,9 @@ pub struct GraphPackage {
     pub jsx_import_source: Option<String>,
     /// The package's `define` (name → literal source); the root package's apply to the build.
     pub define: BTreeMap<String, String>,
+    /// npm packages its git dependencies provide (`crate::npm::provided`): package name → its
+    /// directory in the checkout. Its imports of them resolve there, before `node_modules`.
+    pub npm: BTreeMap<String, PathBuf>,
     /// `root`, canonicalized, for matching importing files.
     key: PathBuf,
 }
@@ -70,9 +73,15 @@ impl PackageGraph {
             native: None,
             jsx_import_source: None,
             define: BTreeMap::new(),
+            npm: BTreeMap::new(),
             key,
         });
         self.packages.last_mut().expect("ICE: just pushed")
+    }
+
+    /// The package added last.
+    pub(crate) fn last_mut(&mut self) -> &mut GraphPackage {
+        self.packages.last_mut().expect("ICE: no package added yet")
     }
 
     /// The module path (absolute, no `.vlt` extension) that a `paths` alias of the package
@@ -128,6 +137,12 @@ impl PackageGraph {
             .iter()
             .filter(|p| file.starts_with(&p.key))
             .max_by_key(|p| p.key.components().count())
+    }
+
+    /// The directory of npm package `name` that a git dependency of the package containing
+    /// `importer` provides, if one does.
+    pub fn npm_package(&self, importer: &Path, name: &str) -> Option<PathBuf> {
+        self.package_of(importer)?.npm.get(name).cloned()
     }
 
     /// Root directory of dependency `name` as seen from the package containing `importer`.

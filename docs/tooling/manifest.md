@@ -107,7 +107,8 @@ import's files). Standard library imports (`"velt:x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
 a `path` or `git`). `{ git: "https://…", branch: "main", path: "packages/x" }` takes the package
-from a git repository ([git dependencies](packages.md#git-dependencies)). `velt add` edits this object and keeps your comments. In a member of a
+from a git repository ([git dependencies](packages.md#git-dependencies)): a Velt package, or an
+npm package (or a whole workspace of them) compiled from its TypeScript sources. `velt add` edits this object and keeps your comments. In a member of a
 [workspace](packages.md#workspaces), `name: "workspace"` depends on another member, or on the
 requirement the workspace writes for `name`. See
 [Packages](packages.md). A bare import that no dependency (and no `paths` alias) claims looks

@@ -50,6 +50,30 @@ dependencies: {
   repository's default branch. `path` is the package's directory in the repository, for a
   repository that holds several packages. A `version` beside them is a requirement the package
   must meet.
+- **npm packages too.** A target without a `package.vlt` but with a `package.json` is an npm
+  package, compiled from its TypeScript sources ([npm packages](#npm-packages)), as
+  `npm install git+…` takes it; a workspace's root (`pnpm-workspace.yaml`, or `workspaces` in its
+  `package.json`) provides every package of the workspace besides its own. As in npm, a
+  workspace package without a `name` is named after its directory, and two packages of one name
+  are an error; so is a `package.json` that can't be read or doesn't parse, naming the file.
+  Several dependencies can come from one repository (`sigx` and `@sigx/runtime` from its root);
+  two that provide the same package from different repositories or commits are an error. The dependency's name is one of those packages, and its `version`, if
+  written, is checked against that package's. So a framework can be tested straight from its
+  repository, with no `paths` alias and nothing installed into `node_modules`:
+
+  ```ts ignore
+  dependencies: {
+    // Every package of vuejs/core's workspace: `vue`, `@vue/runtime-core`, `@vue/server-renderer`, …
+    vue: { git: "https://github.com/vuejs/core", branch: "main" },
+    // One package of a repository.
+    "@sigx/reactivity": { git: "https://github.com/signalxjs/core", path: "packages/reactivity" },
+  }
+  ```
+
+  The packages' imports of each other resolve inside the checkout; an import of an npm package
+  the repository doesn't hold (a published dependency, such as Vue's compiler's `@babel/parser`)
+  needs that package from `node_modules` or another git dependency. A package written in
+  JavaScript without TypeScript sources (React's are Flow) can't be compiled yet.
 - **Locked.** The first install resolves the branch or tag to a commit and records it in
   `velt.lock.json` with a checksum of the checkout
   (`"source": "git+https://github.com/signalxjs/core?branch=main&path=packages/velt/velt#<commit>"`).

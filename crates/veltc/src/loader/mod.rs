@@ -691,6 +691,12 @@ fn npm_module(
     if !bare {
         return None;
     }
+    // A package a git dependency provides, before Node's search of `node_modules`.
+    let provided = vpm::npm::split_specifier(spec)
+        .and_then(|(name, _)| packages.and_then(|p| p.npm_package(importer, name)));
+    if let Some(dir) = provided {
+        return npm.resolve_in(&dir, spec);
+    }
     npm.resolve(importer, spec)
 }
 

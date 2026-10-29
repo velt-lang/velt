@@ -34,6 +34,7 @@
 
 pub mod exports;
 pub mod json;
+pub mod provided;
 pub mod workspace;
 
 use std::collections::HashMap;
@@ -137,6 +138,13 @@ impl NpmResolver {
         let (name, subpath) = split_specifier(spec)?;
         let dir = self.package_dir(importer, name)?;
         Some(self.module_in(&dir, name, &subpath, spec))
+    }
+
+    /// The source file that bare specifier `spec` names in the npm package at `dir` (one a git
+    /// dependency provides, `crate::git`); `None` when `spec` is not bare.
+    pub fn resolve_in(&mut self, dir: &Path, spec: &str) -> Option<Result<PathBuf, NpmError>> {
+        let (name, subpath) = split_specifier(spec)?;
+        Some(self.module_in(dir, name, &subpath, spec))
     }
 
     /// The directory of npm package `name` as seen from `importer` (see the module docs).
