@@ -49,9 +49,11 @@ fn files_where(dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<PathBuf>, 
 }
 
 fn collect(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    // Through `probe`, so a recording (`member_stamp`) notes each directory listed: a new test
+    // file is a change.
     let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
-    for entry in entries.flatten() {
+        vpm::probe::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
+    for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {

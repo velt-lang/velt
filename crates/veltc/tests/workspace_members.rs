@@ -271,3 +271,78 @@ fn a_scoped_member_is_selected_by_its_name_without_the_scope() {
     let (_, err) = r.ok(".", &["check", "-p", "serv*"]);
     assert_eq!(members(&err), ["@org/server"], "{err}");
 }
+
+/// The members a run started (`Member`/`Failed` lines) and those it found unchanged, by name.
+fn ran_and_unchanged(err: &str) -> (Vec<String>, Vec<String>) {
+    let name = |l: &str, prefix: &str| {
+        l.trim_start()
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.split([' ', ':']).next())
+            .map(str::to_string)
+    };
+    let ran = err
+        .lines()
+        .filter_map(|l| name(l, "Member ").or_else(|| name(l, "Failed ")))
+        .collect();
+    let unchanged = err.lines().filter_map(|l| name(l, "Unchanged ")).collect();
+    (ran, unchanged)
+}
+
+#[test]
+fn members_whose_tests_cannot_have_changed_are_not_started() {
+    let r = repo();
+    r.write(
+        "packages/core/tests/add.test.vlt",
+        "import { greet } from \"../src/lib\";\nimport { expect } from \"velt:test\";\n\nexport function test_greet() {\n  expect(greet(\"x\")).toBe(\"hello x\");\n}\n",
+    );
+    r.write(
+        "apps/a/tests/a.test.vlt",
+        "import { greet } from \"core\";\nimport { expect } from \"velt:test\";\n\nexport function test_a() {\n  expect(greet(\"a\")).toBe(\"hello a\");\n}\n",
+    );
+    r.write(
+        "apps/b/tests/b.test.vlt",
+        "import { expect } from \"velt:test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
+    );
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    // The first run makes each member's `target/`, which changes the directory discovery listed,
+    // so it leaves no member stamp; the second does.
+    for _ in 0..2 {
+        let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+        assert_eq!(
+            (sorted(ran), unchanged.len()),
+            (vec!["a".into(), "b".into(), "core".into()], 0)
+        );
+    }
+    // Nothing changed: `core` and `a` pass again without a `velt`; `b` reads the clock.
+    let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+    assert_eq!(ran, ["b"]);
+    assert_eq!(sorted(unchanged), ["a", "core"]);
+    // A change in `core` runs it and `a`, which imports it.
+    r.write(
+        "packages/core/src/lib.vlt",
+        "export function greet(who: string): string {\n  return \"hello \" + who;\n}\n",
+    );
+    let (ran, _) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+    assert_eq!(sorted(ran), ["a", "b", "core"]);
+    // A new test file is a change too.
+    r.write(
+        "apps/a/tests/more.test.vlt",
+        "import { expect } from \"velt:test\";\n\nexport function test_more() {\n  expect(1).toBe(1);\n}\n",
+    );
+    let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+    assert_eq!(sorted(ran), ["a", "b"]);
+    assert_eq!(unchanged, ["core"]);
+    // A failing member always runs.
+    r.write(
+        "apps/a/tests/more.test.vlt",
+        "import { expect } from \"velt:test\";\n\nexport function test_more() {\n  expect(1).toBe(2);\n}\n",
+    );
+    for _ in 0..2 {
+        let o = r.velt(".", &["test"], &[]);
+        let (ran, _) = ran_and_unchanged(&text(&o.stderr));
+        assert!(ran.contains(&"a".to_string()), "{}", text(&o.stderr));
+    }
+}

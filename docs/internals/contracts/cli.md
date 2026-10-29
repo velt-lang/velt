@@ -77,7 +77,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
   build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
-  `test --no-cache` (additive, #1855): runs every test file. Without it, a file whose harness is
+  `test --no-cache` (additive, #1855): runs every test file. A `velt test` in a package that
+  passed with every file kept writes `target/velt/test/member-stamp` (the build stamp's format;
+  key over the command line, the `velt` binary and the `VELT_*` environment; `objects` = tests
+  passed; entries = its harnesses' build-stamp entries and the directories discovery listed), and
+  removes it otherwise; `velt test` on several members doesn't start a member whose member stamp
+  for the same command is unchanged, printing `Unchanged <name> (<dir>): <n> passed`. Without it, a file whose harness is
   unchanged since all its tests passed, and whose tests reach nothing outside the program (the
   build stamp's `outside` record, per file of a harness), is not run: the runner prints its kept
   report after `running <path> (cached)`; a file whose tests do reach outside prints `running

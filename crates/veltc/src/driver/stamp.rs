@@ -37,7 +37,7 @@ use crate::backend::Backend;
 const HEADER: &str = "velt-build-stamp 4";
 
 /// `<exe>.build-stamp`.
-pub(super) fn path(exe: &Path) -> PathBuf {
+pub(crate) fn path(exe: &Path) -> PathBuf {
     let mut name = exe.file_name().unwrap_or_default().to_os_string();
     name.push(".build-stamp");
     exe.with_file_name(name)
@@ -78,17 +78,22 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         opts.has_line_info()
     );
     h.part(settings.as_bytes());
-    let mut env: Vec<(String, String)> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("VELT_") && !IGNORED_ENV.contains(&k.as_str()))
-        .collect();
-    env.sort();
-    h.part(format!("{env:?}").as_bytes());
+    h.part(format!("{:?}", velt_env()).as_bytes());
     if backend == Backend::Llvm {
         let clang = velt_codegen_llvm::find_clang();
         let time = clang.as_deref().and_then(probe::stat);
         h.part(format!("{clang:?} {time:?}").as_bytes());
     }
     h.finish()
+}
+
+/// The `VELT_*` environment that can change what a build produces, sorted.
+pub(crate) fn velt_env() -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("VELT_") && !IGNORED_ENV.contains(&k.as_str()))
+        .collect();
+    env.sort();
+    env
 }
 
 /// `VELT_*` variables that do not change what a build produces.
@@ -222,9 +227,43 @@ pub(crate) fn outside(exe: &Path) -> Option<String> {
     Some(lines.nth(2)?.strip_prefix("outside ")?.to_string())
 }
 
+/// The entries of stamp `text`: its lines between the header and `end`, as [`render`] writes
+/// them.
+pub(crate) fn entry_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .skip(4)
+        .take_while(|l| !l.starts_with("end "))
+        .collect()
+}
+
+/// A stamp of `key` with `objects` (a count its maker gives meaning to) and `entries` (lines as
+/// [`render`] writes them), which [`still_valid`] checks like a build's.
+pub(crate) fn compose(key: &Key, objects: usize, entries: &[String]) -> String {
+    let mut s = format!(
+        "{HEADER}\nkey {}\nobjects {objects}\noutside -\n",
+        key.hex()
+    );
+    for line in entries {
+        let _ = writeln!(s, "{line}");
+    }
+    let _ = writeln!(s, "end {}", entries.len());
+    s
+}
+
+/// The entry of a directory listed with names hashing to `hash` ([`vpm::probe::Seen::listed`]).
+pub(crate) fn dir_entry(dir: &Path, hash: &str) -> String {
+    format!("dir {hash}\t{}", dir.display())
+}
+
+/// The `objects` of the stamp at `path` when it is of `key` and everything it records is
+/// unchanged.
+pub(crate) fn still_valid(path: &Path, key: &Key) -> Option<usize> {
+    read(path, key).map(|(objects, _)| objects)
+}
+
 /// Write stamp `text` to `path` whole: into a temporary file renamed into place, so a build
 /// stopped half-way leaves the old stamp or none, never part of one.
-pub(super) fn write(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write(path: &Path, text: &str) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(format!(".{}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);

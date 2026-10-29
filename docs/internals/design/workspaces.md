@@ -232,8 +232,9 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
    workspace. Outputs per member, and the workspace's files in the build stamp.
 2. Member selection (`--workspace`, `-p`, `--affected`) for `check`, `test`, `build`, `fmt`,
    `doc`, run in dependency order and in parallel, one `velt` per member.
-3. Test results kept for test files that reach nothing outside the program (done), and the
-   stamps checked in the parent before any member's `velt` starts (next).
+3. Test results kept for test files that reach nothing outside the program, and a member stamp
+   the parent checks before starting a member's `velt` (done: an unchanged three-member workspace
+   tests in 0.06 s against 2.1 s cold, debug `velt` on macOS).
 4. `velt publish` of members; `velt add -p <member>` and `velt add --workspace` (into the
    workspace's `dependencies`).
 5. The language server's workspace graph and the workspace file's editor support.

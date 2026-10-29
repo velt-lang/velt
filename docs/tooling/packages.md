@@ -174,7 +174,12 @@ export const pkg: Package = {
   Members run in dependency order, several at once, each in its own `velt`; each member's output
   is printed in one piece when it finishes, and a summary names the members that failed. A failed
   member doesn't stop the others; `--fail-fast` starts no more. `--watch`, `-o` and `--json`
-  need one member; with one, a relative `-o` is a path from where you ran `velt`. `velt build`
+  need one member; with one, a relative `-o` is a path from where you ran `velt`. With
+  `velt test`, a member whose last run passed with every test file's result kept (none reaches
+  outside the program: [kept results](../book/testing.md#results-that-are-kept)) and of which
+  nothing changed isn't started at all: it is listed as `Unchanged core (packages/core): 3
+  passed`, so a workspace with nothing changed is tested in about the time it takes to start
+  `velt` once. `velt build`
   skips libraries (the programs that use them build them), and `velt run -p <member>` and
   `velt dev -p <member>` run one member's program from anywhere in the workspace; its arguments
   follow `--` (`velt run -p server -- --port 8080`).
