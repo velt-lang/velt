@@ -181,9 +181,14 @@ and memory where you want a fixed width; code shared with TypeScript never names
 
   Used as a value, the property read converts to the field's type, checked: an array's
   `undefined` read as a `string` field stops with `TypeError: the value is not a string (it is
-  undefined)`, where Node goes on with `undefined`. A method call `(u as A).m()` and a write
-  `(u as A).f = v` check the assertion as before (a call of what another member holds would
-  be a `TypeError` in Node too, unless it has a method of that name).
+  undefined)`, where Node goes on with `undefined`. An operand of `<`, `>`, `<=`, `>=`, `-`,
+  `*`, `/`, `%` and `**` is the exception: there a number field's `undefined` is `NaN`, which
+  gives Node's answer (`(c as A).count > 0` is `false`, `(c as A).count - 1` is `NaN`). A
+  method call `(u as A).m()` and a write `(u as A).f = v` check the assertion as before (a
+  call of what another member holds would be a `TypeError` in Node too, unless it has a
+  method of that name), and so does a member whose property needs a lookup at run time, also
+  under `typeof`: `typeof (c as A).at` of a string stops with `type assertion failed` (Node
+  answers `"function"`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
