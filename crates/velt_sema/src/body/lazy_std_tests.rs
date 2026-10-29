@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// The methods of [`LAZY_PRELUDE_TYPES`] lowering calls by name: each only where it has a value
+/// of the type, so its type is used and its methods are checked.
+const LAZY_PRELUDE_METHODS: &[&str] = &["__runtimeHandle", "__writeJson"];
+
 /// The `"__…"` names in the Rust sources under `dir` (string literals, with or without a module
 /// path or an owner before them: `"__x"`, `"…::__x"`, `"{}.__x"`).
 fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
@@ -70,6 +74,7 @@ fn every_name_lowering_looks_up_is_a_helper() {
         .filter(|n| !n.ends_with("__") && !n.starts_with("__DWARF") && !n.starts_with("__GCC"))
         .filter(|n| !C_SYMBOLS.contains(&n.as_str()))
         .filter(|n| !is_helper(n) && !in_json_glue_prelude(n))
+        .filter(|n| !LAZY_PRELUDE_METHODS.contains(&n.as_str()))
         .collect();
     assert!(
         missing.is_empty(),
