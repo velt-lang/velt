@@ -814,3 +814,29 @@ fn a_function_freeing_only_through_a_cycle_may_free() {
         );
     }
 }
+
+/// Every runtime function taken as freeing no counted object is a real `velt_rt` export: a
+/// rename cannot leave a stale name in the safe set while the new name is taken as freeing,
+/// nor move a freeing function into it unnoticed.
+#[test]
+fn every_function_taken_as_freeing_nothing_is_a_runtime_export() {
+    fn sources(dir: &std::path::Path, out: &mut String) {
+        for e in std::fs::read_dir(dir).expect("velt_rt sources").flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                sources(&path, out);
+            } else if path.extension().is_some_and(|x| x == "rs") {
+                out.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+    let mut rt = String::new();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../velt_rt/src");
+    sources(&dir, &mut rt);
+    for name in NO_FREE.iter().chain(super::super::READ_ONLY.iter()) {
+        assert!(
+            rt.contains(&format!("fn {name}(")),
+            "`{name}` is not defined in velt_rt"
+        );
+    }
+}
