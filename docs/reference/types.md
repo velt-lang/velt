@@ -3136,17 +3136,22 @@ An object literal converted to an interface with methods (`init as unknown as Ct
 `update`, and a write through the interface (`c.n = 5`) changes the object. The function may
 be an arrow, a `function` expression or a named function; it may take fewer parameters than
 the method (the call passes it only those, as JavaScript drops the extra arguments), and for a
-method returning `void` it may return anything. Its result may be one TypeScript assigns to
-the method's (`() => 1` for `get(): number | undefined`, `() => ({ v })` for `make(): Item`
-with `interface Item { v: number }`). A `function` expression using `this`
+method returning `void` it may return anything. Its result may be any value a plain assignment
+`const r: R = f()` takes as the method's result type `R`: the method's type, an optional of
+it (`() => 1` or `() => undefined` for `get(): number | undefined`, `() => (k > 0 ? { v: k } :
+undefined)` for `opt(): Item | undefined`), or an object of its layout, also nested
+(`() => ({ v })` for `make(): Item` with `interface Item { v: number }`, `() => ({ a: { v } })`
+for `pair(): { a: Item }`). An array of objects of another type (`list(): Item[]` from
+`() => [{ v: 1 }]`) and an `async` function whose result type is inferred don't fit yet, as
+they don't in a plain assignment; write the result type (`async (): Promise<Item> => …`). A `function` expression using `this`
 (`function (this: any, by: number) { this.n += by; }`) gets the object as `this`, as in
 `o.m()`; its arguments and result pass through `any`, so the method's parameters must be
 numbers, strings, booleans, objects, arrays, functions or dynamic values, and its result
 `void`, a number, a string, a boolean or a dynamic value (a union, an optional or a literal type
 there makes the conversion a `TypeError`). Each interface field is the object's field of that
-name. An object of the same layout as the field's type (`inner: { v: 1 }` for
-`inner: Inner` with `interface Inner { v: number }`) is that object, so `c.inner.v = 2` changes
-the literal's. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
+name. An object a plain assignment keeps as the field's type (`inner: { v: 1 }` for
+`inner: Inner` with `interface Inner { v: number }`, also with objects nested in it) is that
+object, so `c.inner.v = 2` changes the literal's. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
 `renderFn: any` for `renderFn: ViewFn | null`), it is converted through `any` at each read,
 and checked then as `x as T` is (a `TypeError` if it holds no such value), and a write
 converts the value back to the object's field type; changing a part of such a field
