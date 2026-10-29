@@ -156,6 +156,9 @@ function main() {
   const c = open(path);
   const schema = loadSchema(new DbFile(readFileBytesSync(path)));
   let differ = 0;
+  for (const v of schema.views) {
+    console.log(`${v.name} (view): ${v.select.cores.length} SELECT core`);
+  }
   for (const t of schema.tables) {
     if (t.name == "sqlite_schema") {
       continue;

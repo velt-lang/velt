@@ -1,0 +1,6 @@
+200 nested FROM subqueries: 201
+999 nested views: 1
+1000 nested views: error: VIEWs and/or subqueries nested too deep
+4096 FROM terms once flattened: error: too many FROM clause terms, max: 200
+65536 references: error: too many references to "t": max 65535
+endless recursion under LIMIT: 1 2 3

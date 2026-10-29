@@ -2,7 +2,16 @@
 // SQLite's grammar (parse.y), on the expression grammar of velt:sqlite/sql/expr.
 
 import { ExprParser } from "velt:sqlite/sql/expr";
-import { K_JOIN, SqlError, T_EOF, T_IDENT, T_OP, T_SEMI, Token } from "velt:sqlite/sql/lexer";
+import {
+  K_JOIN,
+  SqlError,
+  T_EOF,
+  T_IDENT,
+  T_OP,
+  T_SEMI,
+  Token,
+  byteSlice,
+} from "velt:sqlite/sql/lexer";
 import {
   C_EXCEPT,
   C_INTERSECT,
@@ -274,21 +283,27 @@ export class Parser extends ExprParser {
     const out: ResultColumn[] = [];
     while (true) {
       if (this.isOp("*")) {
-        out.push(ResultColumn { expr: new Expr(E_STAR, this.advance().start), alias: "" });
+        out.push(ResultColumn {
+          expr: new Expr(E_STAR, this.advance().start),
+          alias: "",
+          span: "*",
+        });
       } else if (this.isName() && this.isOpAt(1, ".") && this.isOpAt(2, "*")) {
         const star = new Expr(E_STAR, this.peek().start);
         star.table = this.advance().text;
         this.pos += 2;
-        out.push(ResultColumn { expr: star, alias: "" });
+        out.push(ResultColumn { expr: star, alias: "", span: `${star.table}.*` });
       } else {
+        const from = this.peek().start;
         const e = this.expr();
+        const span = byteSlice(this.sql, from, this.toks[this.pos - 1].end);
         let alias = "";
         if (this.eatKw("AS")) {
           alias = this.name();
         } else if (this.isAlias()) {
           alias = this.advance().text;
         }
-        out.push(ResultColumn { expr: e, alias: alias });
+        out.push(ResultColumn { expr: e, alias: alias, span: span });
       }
       if (!this.eatOp(",")) {
         return out;

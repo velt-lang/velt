@@ -1,0 +1,282 @@
+// The SQLite engine written in Velt (velt:sqlite/engine, #1720) on a database C SQLite writes
+// (through velt:sqlite): each query's rows, every value printed as SQLite's quote() prints it
+// (blobs as the sqlite3 shell's x'…'). The expected output is the sqlite3 shell's (`.mode quote`)
+// for the same queries on the same data; rows of a query without ORDER BY are sorted on both
+// sides, since their order is SQLite's choice.
+import { open } from "velt:sqlite";
+import { openDatabase, Database } from "velt:sqlite/engine";
+import { BLOB, REAL } from "velt:sqlite/btree";
+import { Val } from "velt:sqlite/exec/value";
+import { quote } from "velt:sqlite/exec/func";
+import { hexEncode } from "velt:encoding";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { removeSync } from "velt:fs";
+
+const SETUP = `
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INT, score REAL, note,
+  nick TEXT COLLATE NOCASE);
+CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT, body TEXT,
+  created TEXT NOT NULL, stars NUMERIC);
+CREATE INDEX posts_user ON posts (user_id);
+CREATE INDEX posts_created ON posts (created DESC, id DESC);
+CREATE TABLE tags (post_id INTEGER, tag TEXT, PRIMARY KEY (post_id, tag));
+CREATE INDEX tags_tag ON tags (tag);
+CREATE TABLE kv (k TEXT PRIMARY KEY, v);
+CREATE VIEW popular AS SELECT post_id, count(*) AS n FROM tags GROUP BY post_id HAVING count(*) > 1;
+INSERT INTO users VALUES
+  (1, 'alice', 30, 4.5, NULL, 'Al'), (2, 'bob', 25, 3.0, 'hi', 'BOBBY'), (3, 'carol', 35, NULL, 7, 'cc'),
+  (4, 'dave', 25, 2.25, x'00ff', 'Dave'), (5, 'eve', NULL, 5.0, 1.5, 'al'), (6, 'Frank', 41, -1.0, '12', NULL),
+  (7, 'grace', 30, 1e10, '', 'GRACE'), (8, 'héloïse', 28, 0.1, 'ü', 'h');
+INSERT INTO posts VALUES
+  (1, 1, 'Hello', 'first post', '2024-01-01', 5), (2, 1, 'Again', 'second', '2024-01-03', '7'),
+  (3, 2, 'Bob here', NULL, '2024-01-02', 2.5), (4, 3, 'x', 'carol''s', '2024-01-05', NULL),
+  (5, 3, 'y', 'more', '2024-01-04', 0), (6, 3, 'z', '', '2024-01-04', -3), (7, 9, 'orphan', 'no user', '2024-01-06', 1),
+  (8, 5, 'Eve', 'eve', '2024-01-07', '1e2'), (9, 7, 'Grace', 'g', '2024-01-02', 'abc'), (10, 2, 'Bob 2', 'b2', '2024-01-08', 4);
+INSERT INTO tags VALUES (1, 'intro'), (1, 'misc'), (2, 'misc'), (3, 'intro'), (4, 'Misc'),
+  (5, 'news'), (8, 'news'), (8, 'intro'), (9, 'misc'), (10, 'x');
+INSERT INTO kv VALUES ('a', 1), ('b', '2'), ('c', 3.5), ('d', NULL), ('e', x'41'), ('f', 'text'),
+  ('g', -9223372036854775808), ('h', 9223372036854775807), ('i', 1e300), ('j', 0.30000000000000004);
+`;
+
+const QUERIES: string[] = [
+  // Scans, lookups, ranges and index access.
+  "SELECT * FROM users",
+  "SELECT id, name FROM users WHERE id = 3",
+  "SELECT id FROM users WHERE id > 2 AND id <= 5",
+  "SELECT id FROM users WHERE id BETWEEN 2.5 AND 6",
+  "SELECT id FROM users WHERE id < '4'",
+  "SELECT id, title FROM posts WHERE user_id = 3 ORDER BY id",
+  "SELECT id FROM posts WHERE user_id = '2' ORDER BY id",
+  "SELECT id, created FROM posts ORDER BY created DESC, id DESC LIMIT 4",
+  "SELECT id, created FROM posts ORDER BY created DESC, id DESC LIMIT 3 OFFSET 2",
+  "SELECT id, created FROM posts WHERE created > '2024-01-03' ORDER BY created, id",
+  "SELECT post_id FROM tags WHERE tag = 'misc' ORDER BY post_id",
+  "SELECT k, v, typeof(v) FROM kv ORDER BY k",
+  "SELECT id, title FROM posts WHERE id IN (9, 2, 4, 2, NULL, '3')",
+  "SELECT id FROM posts WHERE user_id IN (3, 7) ORDER BY id",
+  "SELECT p.title, v.n FROM popular v JOIN posts p ON p.id = v.post_id ORDER BY 1",
+  "SELECT rowid, oid, _rowid_ FROM users WHERE rowid < 3",
+  // Expressions, NULL and affinity rules.
+  "SELECT 1 + 2, 7 / 2, 7.0 / 2, 7 % 3, -7 % 3, 7 % -3, 5 / 0, 5 % 0, 2.5 * 2",
+  "SELECT 9223372036854775807 + 1, -9223372036854775808 - 1, 3037000500 * 3037000500, -(-9223372036854775808)",
+  "SELECT 1 / 3.0, 2.0 / 3, 0.1 + 0.2, 1e300 * 1e10, -1e300 * 1e10, 100.0, 1e15, 1e16, 123456789012345678.0",
+  "SELECT 'abc' || 1 || 2.5 || NULL, 'x' || x'41'",
+  "SELECT 1 = 1, 1 = '1', '1' = 1, 1 < 'a', x'00' > 'z', NULL = NULL, NULL IS NULL, 1 IS NOT NULL",
+  "SELECT 1 AND NULL, 0 AND NULL, 1 OR NULL, 0 OR NULL, NOT NULL, NOT 0, NOT 'a', NOT '1x'",
+  "SELECT id, name FROM users WHERE age = '25' ORDER BY id",
+  "SELECT id FROM users WHERE note = 7",
+  "SELECT id FROM users WHERE note = '7'",
+  "SELECT id, nick FROM users WHERE nick = 'al' ORDER BY id",
+  "SELECT id FROM users WHERE nick = 'AL' COLLATE BINARY",
+  "SELECT id FROM users WHERE name > 'b' AND name < 'e' ORDER BY name",
+  "SELECT 5 & 3, 5 | 3, 1 << 62, 1 << 64, -8 >> 1, -8 >> 100, ~5, 1 << -1",
+  "SELECT 3 BETWEEN 1 AND 5, 3 NOT BETWEEN 4 AND 5, NULL BETWEEN 1 AND 2, 'b' BETWEEN 'a' AND 'c'",
+  "SELECT 2 IN (1, 2), 3 IN (1, 2), NULL IN (1), 3 IN (1, NULL), 3 NOT IN (1, NULL), 1 IN (), 1 NOT IN ()",
+  "SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'many' END, CASE WHEN NULL THEN 1 ELSE 0 END, CASE 1 WHEN NULL THEN 1 END",
+  "SELECT CAST('12abc' AS INTEGER), CAST('1e3' AS INTEGER), CAST(' 12 ' AS INTEGER), CAST(3.9 AS INTEGER), CAST(-3.9 AS INT)",
+  "SELECT CAST('1.5e3' AS REAL), CAST('abc' AS REAL), CAST(12 AS TEXT), CAST(1.5 AS TEXT), CAST('4.0' AS NUMERIC), CAST('x' AS NUMERIC)",
+  "SELECT CAST(x'616263' AS TEXT), CAST('abc' AS BLOB), CAST(NULL AS TEXT), typeof(CAST(1 AS BLOB))",
+  // Functions.
+  "SELECT length('héllo'), length(x'0102'), length(123), length(NULL), octet_length('héllo')",
+  "SELECT lower('ÀBC'), upper('héllo'), typeof(1), typeof(1.0), typeof('x'), typeof(x''), typeof(NULL)",
+  "SELECT substr('hello', 2), substr('hello', 2, 3), substr('hello', -3), substr('hello', -3, 2), substr('hello', 0, 2), substr('hello', 10), substr(x'010203', 2, 1)",
+  "SELECT substr('héllo', 2, 2), substr('hello', 3, -2), substr('hello', NULL), substr('hello', 2, NULL)",
+  "SELECT instr('hello', 'l'), instr('hello', 'z'), instr('héllo', 'l'), instr(x'0102', x'02'), instr('a', '')",
+  "SELECT replace('hello', 'l', 'L'), replace('aaa', 'a', 'bb'), replace('x', '', 'y'), replace(NULL, 'a', 'b')",
+  "SELECT trim('  x  '), ltrim('  x  '), rtrim('  x  '), trim('xxaxx', 'x'), ltrim('abcba', 'ab'), trim(NULL)",
+  "SELECT abs(-5), abs(5.5), abs(-0.0), abs('x'), abs(NULL), sign(-3), sign(0.0), sign('2'), sign('x')",
+  "SELECT round(2.5), round(-2.5), round(1.2345, 2), round(1.005, 2), round(123.456, -1), round(NULL), round(1e20, 2)",
+  "SELECT hex('abc'), hex(x'00ff'), hex(12), hex(NULL), quote('it''s'), quote(1.5), quote(x'0a'), quote(NULL)",
+  "SELECT coalesce(NULL, NULL, 3), ifnull(NULL, 'x'), nullif(1, 1), nullif(1, 2), iif(1, 'y', 'n'), iif(0, 'y', 'n')",
+  "SELECT min(3, 1, 2), max(3, 1, 2), max(1, NULL), min('b', 'a'), max(1, 'a', x'00')",
+  "SELECT 'abc' LIKE 'A%', 'abc' LIKE 'b%', 'a_c' LIKE 'a\\_c' ESCAPE '\\', 'abc' NOT LIKE '%z%', NULL LIKE 'a'",
+  "SELECT 'abc' GLOB 'a*', 'abc' GLOB 'A*', 'a1' GLOB 'a[0-9]', 'ab' GLOB 'a[^b]', 'a?' GLOB 'a?'",
+  "SELECT date('2024-02-29 13:45:12.345'), time('2024-02-29 13:45:12.345', 'subsec'), datetime(1700000000, 'unixepoch'), julianday('2000-01-01'), unixepoch('2024-03-31 23:59:59+02:00')",
+  "SELECT date('2024-01-31', '+1 month'), date('2024-01-31', '+1 month', 'floor'), date('2024-03-15', 'start of month', '-1 day'), date('2024-03-15', 'weekday 0'), datetime('2024-03-15', '+90 minutes')",
+  "SELECT strftime('%Y-%m-%d %H:%M:%S %j %w %W %V %G', '2024-12-30 08:05:09'), strftime('%s', '1970-01-02'), date('bad'), date(NULL), time('12:30')",
+  "SELECT printf('%d|%5.2f|%-4s|%q|%Q|%x|%,d|%e|%g|%c', 42, 3.14159, 'ab', 'it''s', NULL, 255, 1234567, 12345.678, 0.0001, 'xyz'), format('%s=%d', 'n', 7)",
+  "SELECT char(72, 105), unicode('é'), unicode(''), zeroblob(3), concat('a', NULL, 1), concat_ws('-', 'a', NULL, 'b')",
+  // Joins.
+  "SELECT u.name, p.title FROM users u JOIN posts p ON p.user_id = u.id ORDER BY p.id",
+  "SELECT u.name, p.title FROM users u, posts p WHERE p.user_id = u.id AND u.age > 28 ORDER BY u.id, p.id",
+  "SELECT u.name, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id ORDER BY u.id, p.id",
+  "SELECT u.name, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.id IS NULL ORDER BY u.id",
+  "SELECT p.id, u.name FROM posts p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id",
+  "SELECT p.title, t.tag FROM posts p JOIN tags t ON t.post_id = p.id WHERE t.tag = 'intro' ORDER BY p.id",
+  "SELECT a.id, b.id FROM users a JOIN users b ON a.age = b.age AND a.id < b.id ORDER BY 1, 2",
+  "SELECT * FROM tags JOIN posts ON posts.id = tags.post_id WHERE tags.tag = 'news' ORDER BY posts.id",
+  "SELECT id, name FROM users JOIN (SELECT user_id AS id, count(*) AS n FROM posts GROUP BY user_id) USING (id) ORDER BY id",
+  // Aggregates.
+  "SELECT count(*), count(age), sum(age), total(age), avg(age), min(age), max(age) FROM users",
+  "SELECT count(*), sum(age), avg(age), min(age) FROM users WHERE id > 100",
+  "SELECT age, count(*) FROM users GROUP BY age",
+  "SELECT age, count(*) AS n FROM users GROUP BY age HAVING n > 1 ORDER BY n DESC, age",
+  "SELECT user_id, count(*), max(created), min(title) FROM posts GROUP BY user_id ORDER BY user_id",
+  "SELECT count(DISTINCT age), count(DISTINCT nick), sum(DISTINCT age) FROM users",
+  "SELECT group_concat(name), group_concat(name, '; ') FROM users WHERE id < 5",
+  "SELECT sum(v), total(v), avg(v), count(v), min(v), max(v) FROM kv WHERE k < 'g'",
+  "SELECT sum(stars), avg(stars), max(stars), min(stars) FROM posts",
+  "SELECT nick, count(*) FROM users GROUP BY nick ORDER BY 1",
+  "SELECT name, max(score) FROM users",
+  "SELECT name, min(age) FROM users WHERE age IS NOT NULL",
+  "SELECT count(*) FILTER (WHERE age > 28), sum(age) FILTER (WHERE id % 2 = 0) FROM users",
+  "SELECT sum(9223372036854775807), 1",
+  // DISTINCT, ORDER BY, LIMIT.
+  "SELECT DISTINCT age FROM users ORDER BY age",
+  "SELECT DISTINCT user_id FROM posts ORDER BY 1 DESC",
+  "SELECT name FROM users ORDER BY age DESC, name LIMIT 3",
+  "SELECT name, age FROM users ORDER BY age NULLS LAST, name",
+  "SELECT name, age FROM users ORDER BY age DESC NULLS FIRST, name",
+  "SELECT name FROM users ORDER BY nick, id",
+  "SELECT name FROM users ORDER BY length(name), name LIMIT 2 OFFSET 1",
+  "SELECT id FROM users ORDER BY id LIMIT 2, 3",
+  "SELECT id FROM users ORDER BY id LIMIT -1 OFFSET 6",
+  "SELECT score FROM users ORDER BY score",
+  // Subqueries and CTEs.
+  "SELECT name FROM users WHERE id IN (SELECT user_id FROM posts) ORDER BY id",
+  "SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM posts) ORDER BY id",
+  "SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM posts p WHERE p.user_id = u.id AND p.stars > 3) ORDER BY id",
+  "SELECT name, (SELECT count(*) FROM posts p WHERE p.user_id = u.id) AS n FROM users u ORDER BY n DESC, id",
+  "SELECT p.id, p.title, u.name AS author, (SELECT count(*) FROM tags t WHERE t.post_id = p.id) AS tags FROM posts p JOIN users u ON u.id = p.user_id ORDER BY p.created DESC, p.id DESC LIMIT 5",
+  "SELECT (SELECT max(id) FROM users), (SELECT name FROM users WHERE id = 99), (SELECT 1 WHERE 0)",
+  "SELECT x, y FROM (SELECT id AS x, name AS y FROM users WHERE id < 3) ORDER BY x",
+  "WITH old AS (SELECT * FROM users WHERE age >= 30) SELECT name FROM old ORDER BY name",
+  "WITH a(n) AS (SELECT 1 UNION ALL SELECT 2), b AS (SELECT n * 10 AS m FROM a) SELECT n, m FROM a, b ORDER BY n, m",
+  "SELECT 1 IN (SELECT 1), 2 IN (SELECT 1), NULL IN (SELECT 1 WHERE 0), 3 IN (SELECT NULL)",
+  "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5) SELECT i, i * i FROM n",
+  "WITH RECURSIVE n(i) AS (SELECT 1 UNION SELECT (i * 3) % 7 FROM n) SELECT i FROM n",
+  "WITH RECURSIVE r(id, depth) AS (SELECT 1, 0 UNION ALL SELECT p.id, r.depth + 1 FROM posts p JOIN r ON p.user_id = r.id WHERE p.id != r.id) SELECT id, depth FROM r ORDER BY depth, id",
+  "SELECT id FROM posts ORDER BY id DESC LIMIT 3",
+  "SELECT id, created FROM posts WHERE created < '2024-01-05' ORDER BY created, id DESC",
+  "SELECT title FROM posts ORDER BY title DESC LIMIT 2",
+  // Compound selects and VALUES.
+  "SELECT age FROM users UNION SELECT user_id FROM posts",
+  "SELECT age FROM users UNION ALL SELECT user_id FROM posts ORDER BY 1",
+  "SELECT user_id FROM posts INTERSECT SELECT id FROM users",
+  "SELECT id FROM users EXCEPT SELECT user_id FROM posts ORDER BY 1 DESC",
+  "SELECT 1, 'a' UNION ALL SELECT 2, 'b' UNION SELECT 1, 'a'",
+  "VALUES (1, 'x'), (2, NULL), (3, 4.5)",
+  "SELECT * FROM (VALUES (2), (1), (3)) ORDER BY 1",
+  // Rowid bounds past the integers: a REAL of 2^63 or more is above every rowid, one under -2^63 below.
+  "SELECT id FROM users WHERE id < 1e19 AND id > -1e30 ORDER BY id",
+  "SELECT id FROM users WHERE id <= 9.2233720368547758e18 ORDER BY id DESC LIMIT 2",
+  "SELECT id FROM users WHERE id > 1e19 OR id < -1e30 OR id = 1e19",
+  // FROM subqueries and CTEs run as co-routines: a LIMIT outside stops them (an endless recursion too).
+  "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r LIMIT 3",
+  "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n * 2 FROM r WHERE n % 3 = 0 LIMIT 2 OFFSET 1",
+  "SELECT name FROM (SELECT name FROM users ORDER BY id) LIMIT 2",
+  "SELECT * FROM (SELECT id, abs(-9223372036854775807 - 1) FROM users) LIMIT 1",
+  "SELECT nick FROM users UNION SELECT name FROM users ORDER BY 1 COLLATE BINARY DESC LIMIT 4",
+  "SELECT tag FROM tags INTERSECT SELECT nick FROM users ORDER BY 1 COLLATE NOCASE",
+  "SELECT nick FROM users EXCEPT SELECT tag FROM tags ORDER BY nick COLLATE RTRIM",
+  // An aggregate whose arguments read only an enclosing query's columns belongs to that query (SQLite's rule).
+  "SELECT (SELECT sum(id)) FROM users",
+  "SELECT age, (SELECT sum(users.id)) FROM users GROUP BY age ORDER BY 1",
+  "SELECT age, count(*) FROM users GROUP BY age HAVING (SELECT count(users.id)) > 1 ORDER BY 1",
+  "SELECT (SELECT count(*) FROM posts WHERE posts.id = max(users.id)) FROM users",
+  "SELECT (SELECT max(id)), count(*) FROM users",
+  "SELECT id FROM users WHERE (SELECT sum(users.id)) > 1",
+  // min() or max() alone of an indexed column reads the index from that end (SQLite's min/max optimization): its bare columns are that entry's.
+  "SELECT max(tag), post_id FROM tags",
+  "SELECT min(tag), post_id FROM tags WHERE post_id > 3",
+  "SELECT max(tag COLLATE NOCASE), post_id FROM tags",
+  "SELECT min(tag), count(*) FROM tags",
+  // A CTE is compiled once and shared by its uses; each use counts its tables' references (SQLite's limit of 65535).
+  "WITH c0(x) AS (SELECT id FROM users), c1(x) AS (SELECT a.x FROM c0 a JOIN c0 b ON a.x = b.x), c2(x) AS (SELECT a.x FROM c1 a JOIN c1 b ON a.x = b.x), c3(x) AS (SELECT a.x FROM c2 a JOIN c2 b ON a.x = b.x), c4(x) AS (SELECT a.x FROM c3 a JOIN c3 b ON a.x = b.x), c5(x) AS (SELECT a.x FROM c4 a JOIN c4 b ON a.x = b.x), c6(x) AS (SELECT a.x FROM c5 a JOIN c5 b ON a.x = b.x), c7(x) AS (SELECT a.x FROM c6 a JOIN c6 b ON a.x = b.x), c8(x) AS (SELECT a.x FROM c7 a JOIN c7 b ON a.x = b.x), c9(x) AS (SELECT a.x FROM c8 a JOIN c8 b ON a.x = b.x), c10(x) AS (SELECT a.x FROM c9 a JOIN c9 b ON a.x = b.x), c11(x) AS (SELECT a.x FROM c10 a JOIN c10 b ON a.x = b.x), c12(x) AS (SELECT a.x FROM c11 a JOIN c11 b ON a.x = b.x), c13(x) AS (SELECT a.x FROM c12 a JOIN c12 b ON a.x = b.x), c14(x) AS (SELECT a.x FROM c13 a JOIN c13 b ON a.x = b.x), c15(x) AS (SELECT a.x FROM c14 a JOIN c14 b ON a.x = b.x), c16(x) AS (SELECT a.x FROM c15 a JOIN c15 b ON a.x = b.x) SELECT count(*) FROM c16",
+  "WITH c0(x) AS (SELECT id FROM users), c1(x) AS (SELECT a.x FROM c0 a JOIN c0 b ON a.x = b.x), c2(x) AS (SELECT a.x FROM c1 a JOIN c1 b ON a.x = b.x), c3(x) AS (SELECT a.x FROM c2 a JOIN c2 b ON a.x = b.x), c4(x) AS (SELECT a.x FROM c3 a JOIN c3 b ON a.x = b.x), c5(x) AS (SELECT a.x FROM c4 a JOIN c4 b ON a.x = b.x), c6(x) AS (SELECT a.x FROM c5 a JOIN c5 b ON a.x = b.x), c7(x) AS (SELECT a.x FROM c6 a JOIN c6 b ON a.x = b.x), c8(x) AS (SELECT a.x FROM c7 a JOIN c7 b ON a.x = b.x), c9(x) AS (SELECT a.x FROM c8 a JOIN c8 b ON a.x = b.x), c10(x) AS (SELECT a.x FROM c9 a JOIN c9 b ON a.x = b.x), c11(x) AS (SELECT a.x FROM c10 a JOIN c10 b ON a.x = b.x), c12(x) AS (SELECT a.x FROM c11 a JOIN c11 b ON a.x = b.x) SELECT count(*), sum(x) FROM c12",
+  "WITH c(x) AS (SELECT id FROM users) SELECT a.x, b.x FROM c a, c b WHERE a.x + 1 = b.x ORDER BY 1",
+  // Only GROUP BY or an aggregate result column makes a query an aggregate one: HAVING or ORDER BY aggregates alone are errors, as in SQLite.
+  "SELECT 1 FROM users HAVING count(*) > 3",
+  "SELECT id FROM users ORDER BY count(*)",
+  "SELECT count(*) FROM users ORDER BY sum(id)",
+  "SELECT count(*) FROM users HAVING sum(id) > 3",
+  // What SQLite rejects at prepare: likelihood() without a REAL literal of at most 1.0, INDEXED BY an unknown index, schemas other than main; printf() writing nothing is NULL, a final '%' itself; GROUP BY numbers count the columns * expands to.
+  "SELECT likelihood(id, 2) FROM users",
+  "SELECT likelihood(id, 0.5) FROM users WHERE id < 3",
+  "SELECT id FROM users INDEXED BY nope",
+  "SELECT tag FROM tags INDEXED BY tags_tag WHERE tag = 'misc' ORDER BY 1",
+  "SELECT id FROM nosuch.users",
+  "SELECT id FROM temp.users",
+  "SELECT id FROM main.users WHERE id = 2",
+  "SELECT printf(''), printf('%s', ''), printf('ab%'), printf('a%5'), printf('%5.2'), printf('%')",
+  "SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (1, 'c')) GROUP BY 1",
+  "SELECT *, length(tag) FROM tags GROUP BY 3 ORDER BY 3",
+  // IS and IS NULL look up an index as equalities (NULL finds NULL).
+  "SELECT post_id, tag FROM tags WHERE tag IS 'misc' ORDER BY 1",
+  "SELECT k FROM kv WHERE k IS NULL",
+  "SELECT p.id, t.tag FROM posts p JOIN tags t ON t.tag IS p.title ORDER BY 1",
+  // x = a OR x = b on an indexed column reads the index once per value, as x IN (a, b).
+  "SELECT post_id, tag FROM tags WHERE tag = 'news' OR tag = 'intro' ORDER BY 1, 2",
+  "SELECT DISTINCT tag FROM tags WHERE tag = 'x' OR 'misc' = tag",
+  "SELECT id FROM posts WHERE user_id = 3 OR user_id = 2",
+  // x IN (SELECT …) on an indexed column (or the rowid) reads it once per subquery value.
+  "SELECT post_id, tag FROM tags WHERE tag IN (SELECT title FROM posts)",
+  "SELECT id, name FROM users WHERE id IN (SELECT user_id FROM posts WHERE stars > 2)",
+  "SELECT DISTINCT tag FROM tags WHERE tag IN (SELECT tag FROM tags WHERE post_id > 4)",
+  // count(*) alone counts the loops' rows (LIMIT and OFFSET still apply to its one row).
+  "SELECT count(*) FROM posts WHERE user_id = 3",
+  "SELECT count(*) FROM posts LIMIT 1 OFFSET 1",
+  "SELECT id, (SELECT count(*) FROM tags WHERE tags.post_id = posts.id) FROM posts ORDER BY id",
+  // Errors.
+  "SELECT nosuch FROM users",
+  "SELECT * FROM nosuch",
+  "SELECT id FROM users, posts",
+  "SELECT count(*) FROM users WHERE count(*) > 1",
+  "SELECT nosuchfn(1)",
+  "SELECT substr('x')",
+  "SELECT 1 FROM users ORDER BY 5",
+  "SELECT 1 UNION SELECT 1, 2",
+];
+
+/** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */
+function shown(v: Val): string {
+  if (v.t == BLOB) {
+    return `x'${hexEncode(v.b)}'`;
+  }
+  if (v.t == REAL && (v.r == Infinity || v.r == -Infinity)) {
+    return v.r > 0 ? "Inf" : "-Inf";
+  }
+  return quote(v);
+}
+
+/** The rows of a query: each value as the shell's quote mode prints it, or the error. */
+function rows(db: Database, sql: string): string[] {
+  const out: string[] = [];
+  try {
+    const st = db.prepare(sql);
+    const vals = st.values();
+    const n = st.columns().length as usize;
+    const count: usize = n == 0 ? 0 : (vals.length as usize) / n;
+    for (let r: usize = 0; r < count; r++) {
+      const parts: string[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        const v = vals[r * n + i];
+        parts.push(shown(v));
+      }
+      out.push(parts.join(","));
+    }
+  } catch (e) {
+    return [`error: ${e.message}`];
+  }
+  return out;
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-engine-query-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  c.close();
+  const db = openDatabase(path);
+  for (const q of QUERIES) {
+    let r = rows(db, q);
+    if (!q.includes("ORDER BY")) {
+      r = r.toSorted();
+    }
+    console.log(q);
+    for (const line of r) {
+      console.log(`  ${line}`);
+    }
+  }
+  removeSync(path);
+}
