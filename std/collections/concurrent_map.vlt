@@ -35,15 +35,17 @@
 // in its parent at `node * SKEYS + FENCE` (the node's fence: separator i of an inner node is the
 // fence of its child i + 1, so separators move between slots without their strings). Words that
 // tie are told apart by the strings: an inner node's separators with the key's word that are
-// greater than the key send it left of them (`backTies`), and a leaf slot whose tag and word
-// match is the key's only if its string is (`sameKey`). Tags and home slots hash the whole
-// string, so keys that share a prefix do not share tags. A reader reads the strings as it reads
-// the words, optimistically: borrowed, inside the epoch section the compiler opens around the
-// function that loads them, so one that a writer replaces meanwhile stays readable until the
-// section ends, and the node's version check after says whether what it compared was the node's
-// (a fence is read through the parent's child word, and changes only while its node is unlinked
-// from every parent). A writer changes strings only while it holds their node (or before the
-// node is linked), and moves as few as it can: each one replaced is retired to the epoch.
+// greater than the key send it left of them (`backTies`, a binary search over the tied run), and
+// a leaf slot whose tag and word match is the key's only if its string is (`sameKey`). Tags and
+// home slots hash the whole string, so keys that share a prefix do not share tags. A reader reads
+// the strings as it reads the words, optimistically: borrowed, inside the epoch section the
+// compiler opens around the function that loads them, so one that a writer replaces meanwhile
+// stays readable until the section ends, and the node's version check after says whether what it
+// compared was the node's (a fence is read through the parent's child word, and changes only
+// while the parent is held: set before its node is linked, cleared when the node is unlinked or
+// becomes its parent's first child, whose fence is never read). A writer changes strings only
+// while it holds their node (or before the node is linked), and moves as few as it can: each one
+// replaced is retired to the epoch.
 
 import { InlineKey } from "velt:collections/btree/inline_key";
 import { utf8Length } from "velt:encoding";
@@ -716,23 +718,41 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
     return this.backTiesSlow(base, at, k, key);
   }
 
-  /** `backTies` where the separator before `at` ties with `k`. */
+  /**
+   * `backTies` where the separator before `at` ties with `k`: a binary search over the
+   * separators before `at` (their words at most `k`), ordered by word and then string (as the
+   * keys they separate), for the first greater than `key`. Only the separators whose word ties
+   * have their strings read (each the fence of a child: its `skeys` line and the string), about
+   * log2 of the run of ties.
+   */
   private backTiesSlow(base: u64, at: u64, k: u64, key: string): u64 {
-    let p = at;
-    while (p > 0 && this.w[base + keyAt(p - 1)].load("relaxed") == k) {
-      // Separator p - 1's string: the fence of child p. A child out of range or a `null` fence
-      // only while a writer changes the node: the version check after fails.
-      const c = this.w[base + childAt(p)].load("relaxed");
+    let lo: u64 = 0;
+    let hi = at;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      // A word other than `k` is below it.
+      if (this.w[base + keyAt(m)].load("relaxed") != k) {
+        lo = m + 1;
+        continue;
+      }
+      // Separator m's string: the fence of child m + 1. Words that disagree, a child out of
+      // range or a `null` fence only while a writer changes the node: any answer will do then,
+      // the version check after fails.
+      const c = this.w[base + childAt(m + 1)].load("relaxed");
       if (c >= this.nodes) {
-        break;
+        return m;
       }
       const s = this.skeys[c * SKEYS + FENCE].load("acquire");
-      if (s == null || strOrder(s, key) <= 0) {
-        break;
+      if (s == null) {
+        return m;
       }
-      p--;
+      if (strOrder(s, key) > 0) {
+        hi = m;
+      } else {
+        lo = m + 1;
+      }
     }
-    return p;
+    return lo;
   }
 
   /** The slot of `key` (word `k`) in the leaf at `base`, or `LEAF_CAP`. */
@@ -1291,10 +1311,20 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
       i = this.position(b, k);
     }
     // Child i lies between keys i - 1 and i: the first child goes with the key after it, any
-    // other with the key before it.
-    // (For string keys, separator i - 1's string goes with child i, its fence; separator 0 with
-    // child 0 leaves child 1's fence unread, as the first child's.)
+    // other with the key before it. (For string keys, separator i - 1's string goes with child
+    // i, its fence, cleared as the child is freed.)
     const sep = i > 0 ? i - 1 : 0;
+    if (typeIs<K, string>()) {
+      // Separator 0 goes with child 0: its string is the fence of child 1, which becomes the
+      // first child, whose fence is never read. Cleared (retired to the epoch: a reader of the
+      // version before may still read it), so it keeps no deleted key's string alive.
+      if (i == 0) {
+        const c = this.w[b + childAt(1)].load("relaxed");
+        if (c < this.nodes) {
+          this.skeys[c * SKEYS + FENCE].store(null, "release");
+        }
+      }
+    }
     for (let j = sep; j + 1 < len; j++) {
       this.w[b + keyAt(j)].store(this.w[b + keyAt(j + 1)].load("relaxed"), "relaxed");
     }
@@ -1572,11 +1602,16 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
 
   /**
    * `splitInner` for string keys: the middle separator, which goes up, is the fence of child
-   * `keep + 1`, which becomes `r`'s first child; it is `r`'s fence now.
+   * `keep + 1`, which becomes `r`'s first child, whose fence is never read: the string moves to
+   * `r`'s fence (no copy, nothing retired; a reader of `n` that reads the child's fence `null`
+   * meanwhile fails `n`'s version check).
    */
   private splitInnerKeyed(n: u64, r: u64): u64 {
     const c = this.w[n * NODE + childAt(INNER_CAP / 2 + 1)].load("relaxed");
-    this.skeys[r * SKEYS + FENCE].store(this.skeys[c * SKEYS + FENCE].load("acquire"), "release");
+    this.skeys[r * SKEYS + FENCE].store(
+      this.skeys[c * SKEYS + FENCE].exchange(null, "acquire"),
+      "release",
+    );
     return this.splitInner(n, r);
   }
 }

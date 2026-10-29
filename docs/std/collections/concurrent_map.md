@@ -67,11 +67,12 @@ the order of `<`), a word that sits where a `u64` key would, and kept whole besi
 it. Keys whose first 8 bytes are the same (`"user:000123"` and `"user:000456"`) tie on that
 word, and the map tells them apart by comparing the strings: in a leaf, the slot whose tag (a
 hash of the whole string, so keys with a common prefix do not share tags) and word match is
-compared in full; in an inner node, the separators that tie with the key are compared, from the
-last, until one is not greater. So a lookup of a string key costs a hash of the key, its first 8
+compared in full; in an inner node, a binary search over the strings of the separators that tie
+with the key finds its child. So a lookup of a string key costs a hash of the key, its first 8
 bytes and one string compare in the leaf, which reads the kept string (a few cache lines more
-than a `u64` key's lookup), and inner nodes read strings only where words tie: keys sharing
-long prefixes cost more compares, as in any ordered map.
+than a `u64` key's lookup), and inner nodes read strings only where words tie: keys that share
+their first 8 bytes (URLs that all start `https://`) cost up to 6 string compares more per inner
+node, as in any ordered map.
 
 Each call is atomic on its own: a `get` sees a `set` of the same key either wholly or not at
 all. A sequence of calls is not one step: `m.set(k, (m.get(k) ?? 0) + 1)` can lose another
