@@ -167,10 +167,14 @@ The runtime sees unboxed layouts. A top-level boxed argument is passed as its po
 an argument or result whose layout contains boxed parts crosses as an unboxed *view*
 (arguments, owning nothing) or is boxed after the call (results, `adopt_foreign`), also for the
 result slot of an awaited runtime leaf future. Arrays of boxed elements in extern signatures are
-not supported (none exist). The `velt_simd_*` helpers, which are inlined and only read an
-array's header, get a boxed array's header in place instead of a view: after inlining, a copy
-would be read again after every element store (the LLVM backend's alias tags describe headers
-and elements, not copies of them).
+not supported (none exist). A synchronous extern gets a boxed array whose elements need no
+converting in place instead of a view: the box's own header, so an extern that writes it (an
+out parameter, such as `velt_rt_regex_exec`'s offsets, which it replaces with a new buffer)
+changes the array itself, not a copy that is then dropped (#1831). When the array's type is an
+array-view type (array_view.rs) and the box holds a view, the extern gets the view's mirror,
+synced first and written back to the original after the call. For the inlined `velt_simd_*`
+helpers this also matters for speed: after inlining, a copy would be read again after every
+element store (the LLVM backend's alias tags describe headers and elements, not copies of them).
 
 ## 4. `.clone()`
 `x.clone()` is a deep copy of any value (structuredClone-like): fresh boxes all the way down

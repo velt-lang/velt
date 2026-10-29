@@ -3237,7 +3237,10 @@ function main(): void {
 }
 ```
 
-A member the value's fixed shape does not have reads as `undefined`, as in Node. A `null` or
+A member the value's fixed shape does not have reads as `undefined`, as in Node. A class's
+`private` members are members through `any` too (TypeScript checks `private`, Node doesn't),
+except a standard-library class's, which implement it and which Node's built-ins don't have
+(`re.matchAt(…)` on a `RegExp` is `TypeError: re.matchAt is not a function`). A `null` or
 `undefined` receiver stops with Node's `TypeError: Cannot read properties of undefined (reading
 'f')` before the call's arguments are evaluated, calling something that is not a function with
 `TypeError: x.f is not a function`, and an argument of the wrong type with the conversion's

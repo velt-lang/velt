@@ -5,6 +5,7 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
+use super::foreign::ForeignBuf;
 use super::operand::proj;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
@@ -252,12 +253,8 @@ impl FnLower<'_, '_> {
                 s => Some(s),
             })
             .collect();
-        // The SIMD helpers are inlined, synchronous, and only read an array's header: they get
-        // the header where it is instead of a copy, so after inlining nothing reads the copy
-        // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
-        let in_place = x.symbol.starts_with("velt_simd_");
         let mut bufs = vec![];
-        let mut argv = self.foreign_args(&x.params, args, in_place, &mut bufs);
+        let mut argv = self.foreign_args(&x.params, args, true, &mut bufs);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -282,14 +279,21 @@ impl FnLower<'_, '_> {
     }
 
     /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership); the
-    /// buffers of array views go to `bufs`, to free once the extern returned. `in_place`: an
-    /// array is passed as its own header rather than a view of it.
+    /// buffers of array views go to `bufs`, to free once the extern returned.
+    ///
+    /// `in_place` (a synchronous extern): an array whose elements need no converting is passed
+    /// as its own header (the box's, when its type is boxed), not a copy, so an extern that
+    /// writes it (an out parameter, `velt_rt_regex_exec`'s offsets; `velt_rt_bytes_fill`'s
+    /// elements) changes the array itself (#1831). A view (array_view.rs) passes its mirror,
+    /// written back to the original after the call. It also keeps the inlined SIMD helpers
+    /// from reading a copy (which LLVM would redo after every element store, tbaa.rs in
+    /// velt_codegen_llvm).
     fn foreign_args(
         &mut self,
         params: &[TyId],
         args: &[hir::Expr],
         in_place: bool,
-        bufs: &mut Vec<super::foreign::ForeignBuf>,
+        bufs: &mut Vec<ForeignBuf>,
     ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
@@ -299,9 +303,14 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     let vt = self.cx.ty(p);
                     let place = self.operand_place(v, vt);
-                    let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
-                        true => self.content(&place, p),
-                        false => self.foreign_view(&place, p, bufs),
+                    let view = match self.cx.kind(p) {
+                        TyKind::Array(e) if in_place && !self.cx.foreign_differs(e) => {
+                            if self.cx.array_view(p) {
+                                bufs.push(ForeignBuf::flush(Operand::Copy(place.clone()), p));
+                            }
+                            self.content(&place, p)
+                        }
+                        _ => self.foreign_view(&place, p, bufs),
                     };
                     argv.push(self.addr(view));
                 }
