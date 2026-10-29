@@ -3141,16 +3141,22 @@ method returning `void` it may return anything. A `function` expression using `t
 `o.m()`; its arguments and result pass through `any`, so the method's parameters must be
 numbers, strings, booleans, objects, arrays, functions or dynamic values, and its result
 `void`, a number, a string, a boolean or a dynamic value (a union, an optional or a literal type
-there makes the conversion a `TypeError`). Each interface field must be a field of the object of the same type;
-an optional one (`label?: string`, also an optional method `done?(): string`) may be missing,
-and then reads `undefined`, where writing it stops with a `TypeError` (an object of a fixed
-shape gets no new properties, #924; Node adds the property). A literal whose methods use
-`this`, or with getters, converts as its own interface does
+there makes the conversion a `TypeError`). Each interface field is the object's field of that
+name. Of another type (`props: Record<string, any>` for `props: PropsAccessor<{}>`, a
+`renderFn: any` for `renderFn: ViewFn | null`), it is converted through `any` at each read,
+and checked then as `x as T` is (a `TypeError` if it holds no such value), and a write
+converts the value back to the object's field type; an optional field type is not written
+back, so writing such a field through the interface makes the conversion a `TypeError`. A
+plain conversion without `any` (`const c: Ctx = init`) takes fields of the same type only. An
+optional interface field (`label?: string`, also an optional method `done?(): string`) may be
+missing from the object, and then reads `undefined`, where writing it stops with a
+`TypeError` (an object of a fixed shape gets no new properties, #924; Node adds the property).
+A literal whose methods use `this`, or with getters, converts as its own interface does
 ([above](#this-in-object-literal-methods)). Differences from Node: the conversion checks the
-whole object, so a member the interface has that the object lacks, holds another type, or
-holds no function for a method stops there with a `TypeError` (Node throws only once the
-member is called: `c.update is not a function`); and an object built in a generic function, of
-a type with a type parameter, does not convert yet.
+object's members, so a member the interface requires that the object lacks, or a method the
+object holds no function for, stops there with a `TypeError` (Node throws only once the member
+is called: `c.update is not a function`); and an object built in a generic function, of a
+type with a type parameter, does not convert yet.
 
 ```ts
 interface Ctx {
