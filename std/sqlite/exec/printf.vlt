@@ -90,8 +90,8 @@ export function printf(vals: Val[]): Val {
   let out = "";
   let i: usize = 0;
   while (i < f.length) {
-    // The bytes the result can still take.
-    const room = (MAX_LENGTH as i64) - (__intrinsic_str_byte_len(out) as i64);
+    // The bytes the result can still take: SQLite's StrAccum keeps one of MAX_LENGTH for the NUL.
+    const room = (MAX_LENGTH as i64) - 1 - (__intrinsic_str_byte_len(out) as i64);
     if (f[i] != 37) {
       let j = i;
       while (j < f.length && f[j] != 37) {

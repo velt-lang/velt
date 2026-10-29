@@ -58,6 +58,7 @@ format('%lld%%', 9223372036854775807) = text:9223372036854775807%
 replace(hex(zeroblob(100000)), '0', hex(zeroblob(10000))) = error: string or blob too big
 zeroblob(1000000001) = error: string or blob too big
 printf('%2147483647d', 1) = error: string or blob too big
+printf('%1000000000d', 1) = error: string or blob too big
 printf('%.*c', 1500000000, 'x') = error: string or blob too big
 printf('%.999999995d', 1) = error: string or blob too big
 printf('%,.900000000d', 1) = error: string or blob too big
@@ -70,4 +71,4 @@ printf('%5.3c|', 'é') = text:  ééé|
 like(NULL, 1, 12) = error: ESCAPE expression must be a single character
 like(1, NULL, 12) = error: ESCAPE expression must be a single character
 printf('%.2147483647f', 1.0): velt text:100000002, C text:100000002
-72 calls, all the same
+73 calls, all the same

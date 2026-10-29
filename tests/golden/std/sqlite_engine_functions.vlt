@@ -164,6 +164,7 @@ const CALLS: Call[] = [
   call("replace", ["hex(zeroblob(100000))", "'0'", "hex(zeroblob(10000))"]),
   call("zeroblob", ["1000000001"]),
   call("printf", ["'%2147483647d'", "1"]),
+  call("printf", ["'%1000000000d'", "1"]),
   call("printf", ["'%.*c'", "1500000000", "'x'"]),
   call("printf", ["'%.999999995d'", "1"]),
   call("printf", ["'%,.900000000d'", "1"]),
