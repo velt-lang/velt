@@ -35,6 +35,9 @@ type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
 #[derive(Default)]
 struct Unit {
     convs: Vec<(TyId, Span)>,
+    /// The parameter types of the functions converted to `any` with type parameters in them,
+    /// which a call through `any` converts its arguments to.
+    held: Vec<TyId>,
     sites: Vec<(DefId, Vec<TyId>, Span)>,
     bounds: Vec<(TyId, DefId, u32, Span)>,
 }
@@ -53,15 +56,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let units = collect(cx);
-    let mut callers: Callers = FxHashMap::default();
-    for (d, u) in &units {
-        for (g, targs, span) in &u.sites {
-            callers
-                .entry(*g)
-                .or_default()
-                .push((*d, targs.clone(), *span));
-        }
-    }
+    let callers = callers_of(&units);
     // A generic method called through a bound runs the method of the type the bound's parameter
     // is given; it goes through the interface's table only where that is an interface value.
     let mut names: Vec<String> = vec![];
@@ -93,6 +88,41 @@ pub(crate) fn check(cx: &mut Ctx) {
     carry(cx, &callers, convs, &mut |cx, t, _, span| {
         report(cx, t, span, &mut reported, &mut checked)
     });
+}
+
+/// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) written with type
+/// parameters, as each site instantiating their definitions makes them (substituted, through the
+/// generic definitions in between): the interfaces such a conversion reaches at run time
+/// (`object_ifaces::make_dynamic_object_impls`, #1909).
+pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
+    let units = collect(cx);
+    let callers = callers_of(&units);
+    let convs = (units.iter())
+        .flat_map(|(d, u)| {
+            let held = u.held.iter().map(move |t| (*d, *t, 0, Span::DUMMY));
+            (u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span))).chain(held)
+        })
+        .filter(|(_, t, ..)| cx.has_type_params(*t))
+        .collect();
+    let mut out = vec![];
+    carry(cx, &callers, convs, &mut |_, t, _, _| out.push(t));
+    out.sort_unstable_by_key(|t| t.0);
+    out.dedup();
+    out
+}
+
+/// The sites instantiating each definition, in `units`.
+fn callers_of(units: &[(DefId, Unit)]) -> Callers {
+    let mut callers: Callers = FxHashMap::default();
+    for (d, u) in units {
+        for (g, targs, span) in &u.sites {
+            callers
+                .entry(*g)
+                .or_default()
+                .push((*d, targs.clone(), *span));
+        }
+    }
+    callers
 }
 
 /// Carries each of `start` (a unit, a type in its terms, a tag, where) to the sites instantiating
@@ -172,6 +202,11 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } => u.convs.push((e.ty, e.span)),
+        E::ToDyn { expr, .. } => {
+            if let TyKind::FnPtr { params, .. } = tys.kind(expr.ty) {
+                u.held.extend(params.iter().copied());
+            }
+        }
         E::Call {
             callee:
                 Callee::Dyn {

@@ -1,0 +1,88 @@
+// An object literal converted through `any` to an interface written with the type parameters of
+// a generic function (#1909): the function called at several type arguments converts the same
+// shape of object to each instance of the interface, methods and fields alike, as in Node.
+interface Box<T> {
+  label: string;
+  value: T;
+  show(x: T): string;
+  bump(): void;
+}
+
+function view<T>(o: unknown): Box<T> {
+  return o as Box<T>;
+}
+
+function viaAny<T>(o: any): Box<T> {
+  const b: Box<T> = o;
+  return b;
+}
+
+let bumps = 0;
+const num = {
+  label: "num",
+  value: 41,
+  show: (x: number) => `n=${x + 1}`,
+  bump: () => {
+    bumps++;
+  },
+};
+const str = {
+  label: "str",
+  value: "hi",
+  show: (x: string) => `s=${x.toUpperCase()}`,
+  bump: () => {
+    bumps += 10;
+  },
+};
+
+const a = view<number>(num as unknown);
+console.log(a.label, a.value, a.show(a.value));
+a.bump();
+const b = view<string>(str as unknown);
+console.log(b.label, b.value, b.show(b.value));
+b.bump();
+const c = viaAny<number>(num);
+c.value = 7;
+console.log(c.show(c.value), num.value, bumps);
+
+// Sigx's shape: a component's setup takes a context at its props type; the renderer holds the
+// setup through `any` and calls it with a context object made from a literal.
+interface SetupCtx<P> {
+  props: P;
+  emit(name: string): void;
+}
+
+function component<P>(setup: (ctx: SetupCtx<P>) => string): any {
+  const run = (ctx: any) => setup(ctx as SetupCtx<P>);
+  return run;
+}
+
+// The setup itself held through `any` (`(factory as any).__setup = setup as any`): the call
+// converts its argument to the parameter's interface at the component's props type.
+function held<P>(setup: (ctx: SetupCtx<P>) => string): any {
+  return setup as any;
+}
+
+const Title = component<{ title: string }>((ctx) => `<h1>${ctx.props.title}</h1>`);
+const Count = component<{ n: number }>((ctx) => {
+  ctx.emit("counted");
+  return `<p>${ctx.props.n * 2}</p>`;
+});
+
+const emitted: string[] = [];
+const make = (props: any) => ({
+  props: props,
+  emit: (name: string) => {
+    emitted.push(name);
+  },
+});
+console.log(Title(make({ title: "Hello" })));
+console.log(Count(make({ n: 21 })));
+const Name = held<{ name: string }>((ctx) => `<b>${ctx.props.name}</b>`);
+const Twice = held<{ k: number }>((ctx) => {
+  ctx.emit("twice");
+  return `<i>${ctx.props.k + ctx.props.k}</i>`;
+});
+console.log(Name(make({ name: "Velt" })));
+console.log(Twice(make({ k: 4 })));
+console.log(emitted.join(","));

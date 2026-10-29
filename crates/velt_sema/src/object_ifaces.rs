@@ -46,6 +46,9 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
+    /// Is one of them written with type parameters (`o as Box<T>` in `view<T>`)? Then the
+    /// targets are also those it becomes where its definition is instantiated (#1909).
+    generic_targets: bool,
     /// The setters of fields read and written as a plain assignment converts them
     /// (`Ctx::assign_setter`).
     pub assign_setters: FxHashSet<DefId>,
@@ -114,6 +117,13 @@ impl Ctx<'_> {
                 }
                 TyKind::Array(e) | TyKind::Option(e, _) => todo.push(e),
                 TyKind::Map(k, v) => todo.extend([k, v]),
+                // A function called through `any` converts each argument to its parameter's
+                // type, as `x as T` does.
+                TyKind::FnPtr { params, .. } => {
+                    for p in params {
+                        self.note_dyn_object_target(p);
+                    }
+                }
                 _ => {}
             }
         }
@@ -121,6 +131,8 @@ impl Ctx<'_> {
 
     /// A dynamic value converted to `t` (module docs): recorded when it is an interface type,
     /// or an option or array of one (whose elements a view converts, `array_view_cast.rs`).
+    /// One written with type parameters is carried to its instantiations once every body is
+    /// checked ([`make_dynamic_object_impls`]).
     pub(crate) fn note_dyn_object_target(&mut self, t: TyId) {
         let mut t = self.ty.opt_payload(t).unwrap_or(t);
         if let TyKind::Array(e) = *self.ty.kind(t) {
@@ -129,7 +141,11 @@ impl Ctx<'_> {
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
             return;
         };
-        if self.dynamic(t).is_some() || args.iter().any(|a| self.has_type_params(*a)) {
+        if self.dynamic(t).is_some() {
+            return;
+        }
+        if args.iter().any(|a| self.has_type_params(*a)) {
+            self.object_impls.generic_targets = true;
             return;
         }
         let known = &self.object_impls.targets;
@@ -482,6 +498,13 @@ impl Ctx<'_> {
 /// Once every body is checked: the implementation of each interface a dynamic value is
 /// converted to for each object type converted to `any` that fits (module docs).
 pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
+    // A target written with type parameters is each one it becomes at the sites instantiating
+    // its definition (`view<number>` converts to `Box<number>`), as lowering converts there.
+    if std::mem::take(&mut cx.object_impls.generic_targets) && !cx.object_impls.sources.is_empty() {
+        for t in crate::any_iface_sites::instantiated_conversions(cx) {
+            cx.note_dyn_object_target(t);
+        }
+    }
     let targets = std::mem::take(&mut cx.object_impls.targets);
     if targets.is_empty() {
         return;

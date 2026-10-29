@@ -1,0 +1,59 @@
+// A function held through `any` and called with an object literal converts the argument to its
+// parameter's interface (#1909): a function type, a closure, an optional function, a generic
+// class's method and a generic function calling another, each at its type arguments.
+interface SetupCtx {
+  props: any;
+  emit(name: string): void;
+}
+
+interface Box<T> {
+  value: T;
+  show(): string;
+}
+
+function held(setup: (ctx: SetupCtx) => string): any {
+  return setup as any;
+}
+
+const emitted: string[] = [];
+const Name = held((ctx) => {
+  ctx.emit("name");
+  return `<b>${ctx.props.name}</b>`;
+});
+console.log(Name({ props: { name: "V" }, emit: (n: string) => emitted.push(n) }));
+
+let hits = 0;
+const f = (c: Box<number>) => {
+  hits++;
+  return c.value + 1;
+};
+const closure: any = f;
+console.log(closure({ value: 3, show: () => "three" }), hits);
+
+function opt<P>(setup?: (c: Box<P>) => string): any {
+  return setup as any;
+}
+const g = opt<number>((b) => `b=${b.value} ${b.show()}`);
+console.log(g({ value: 9, show: () => "nine" }));
+
+class Reader<T> {
+  read(o: unknown): Box<T> {
+    return o as Box<T>;
+  }
+}
+const r = new Reader<number>().read({ value: 5, show: () => "five" } as unknown);
+const s = new Reader<string>().read({ value: "x", show: () => "ex" } as unknown);
+console.log(r.value, r.show(), s.value, s.show());
+
+function inner<U>(o: unknown): Box<U> {
+  return o as Box<U>;
+}
+function outer<V>(o: unknown): string {
+  return inner<V>(o).show();
+}
+function list<T>(o: unknown): Box<T>[] {
+  return o as Box<T>[];
+}
+console.log(outer<boolean>({ value: true, show: () => "yes" } as unknown));
+const l = list<number>([{ value: 1, show: () => "one" }] as unknown);
+console.log(l[0].value, l[0].show(), emitted.join(","));
