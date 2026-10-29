@@ -594,8 +594,9 @@ fn hooks_and_groups_as_in_vitest() {
 
 /// `toEqual` as Vitest's: class instances by their fields (also inside a `Map` and through a
 /// nullable field), a `Date` by its time, a `Set` by its members in any order, `0` unequal to
-/// `-0` and `NaN` equal to itself, a cycle (a pair met again while compared) equal; `toBe` still
-/// compares identity.
+/// `-0` and `NaN` equal to itself; cycles by Vitest's rule (the same pair met again is equal, an
+/// object met again with another partner differs: rings of two lengths), through classes and
+/// object literals; `toBe` still compares identity.
 const TO_EQUAL: &str = r#"import { expect, it } from "velt:test";
 
 class P {
@@ -672,6 +673,29 @@ it("cycles differ", () => {
   b.next.next = b;
   expect(a).toEqual(b);
 });
+
+function ring(len: number): Ring {
+  const first = new Ring(1);
+  let last = first;
+  for (let i = 1; i < len; i++) {
+    const n = new Ring(1);
+    last.next = n;
+    last = n;
+  }
+  last.next = first;
+  return first;
+}
+it("rings of two lengths differ", () => expect(ring(1)).toEqual(ring(2)));
+it("rings of two lengths differ either way", () => expect(ring(3)).toEqual(ring(2)));
+it("rings of one length", () => expect(ring(3)).toEqual(ring(3)));
+type L = { v: number; next: L | null };
+it("object literal cycles", () => {
+  const a: L = { v: 1, next: null };
+  a.next = a;
+  const b: L = { v: 1, next: null };
+  b.next = b;
+  expect(a).toEqual(b);
+});
 "#;
 
 #[test]
@@ -710,6 +734,15 @@ fn to_equal_compares_as_vitest_does() {
             r#"ok rings equal"#,
             r#"FAILED cycles differ"#,
             r#"    AssertionError: expected <ref *1> Ring { v: 1, next: [Circular *1] } to deeply equal <ref *1> Ring { v: 1, next: Ring { v: 2, next: [Circular *1] } }"#,
+            r#"FAILED rings of two lengths differ"#,
+            r#"    AssertionError: expected <ref *1> Ring { v: 1, next: [Circular *1] } to deeply equal <ref *1> Ring { v: 1, next: Ring { v: 1, next: [Circular *1] } }"#,
+            r#"FAILED rings of two lengths differ either way"#,
+            r#"    AssertionError: expected <ref *1> Ring {"#,
+            r#"      v: 1,"#,
+            r#"      next: Ring { v: 1, next: Ring { v: 1, next: [Circular *1] } }"#,
+            r#"    } to deeply equal <ref *1> Ring { v: 1, next: Ring { v: 1, next: [Circular *1] } }"#,
+            r#"ok rings of one length"#,
+            r#"ok object literal cycles"#,
         ],
         "{stdout}"
     );

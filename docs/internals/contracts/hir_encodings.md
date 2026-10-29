@@ -680,8 +680,8 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
   only: `velt:test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
   same object compares by its fields, floats with SameValue (`NaN` equal to itself, `0` unequal
-  to `-0`), and a pair of instances met again while its fields are being compared (a cycle)
-  counts as equal. The prelude `Map`'s content comparison, `Map.__deepEquals(other, deep)`, takes
+  to `-0`), and cycles go by Vitest's rule: a class instance or object value met again while its
+  fields are being compared is equal if it meets the same partner again, else different. The prelude `Map`'s content comparison, `Map.__deepEquals(other, deep)`, takes
   `deep = true` under it, so a `Map`'s (and a `Set`'s, a `Record`'s) values compare the same way. `Map` and `Set` keys compare with
   `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
