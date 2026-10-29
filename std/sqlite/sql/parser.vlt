@@ -415,12 +415,10 @@ export class Parser extends ExprParser {
     let kind: u8 = BOUND_CURRENT;
     let e: Expr | null = null;
     if (this.eatKw("UNBOUNDED")) {
-      if (this.eatKw("PRECEDING")) {
-        kind = BOUND_UNBOUNDED_PRECEDING;
-      } else {
-        this.expectKw("FOLLOWING");
-        kind = BOUND_UNBOUNDED_FOLLOWING;
-      }
+      // SQLite's grammar: a frame starts UNBOUNDED PRECEDING and ends UNBOUNDED FOLLOWING only
+      // (the other is a syntax error at that keyword).
+      this.expectKw(start ? "PRECEDING" : "FOLLOWING");
+      kind = start ? BOUND_UNBOUNDED_PRECEDING : BOUND_UNBOUNDED_FOLLOWING;
     } else if (this.eatKw("CURRENT")) {
       this.expectKw("ROW");
     } else {

@@ -139,6 +139,14 @@ SELECT id FROM users WHERE rank() OVER () > 1
   error: misuse of window function rank()
 SELECT sum(id) OVER w FROM users
   error: no such window: w
+SELECT sum(id) OVER (ROWS BETWEEN UNBOUNDED FOLLOWING AND CURRENT ROW) FROM users
+  error: near "FOLLOWING": syntax error
+SELECT sum(id) OVER (ROWS BETWEEN CURRENT ROW AND UNBOUNDED PRECEDING) FROM users
+  error: near "PRECEDING": syntax error
+SELECT sum(id) OVER (ROWS UNBOUNDED FOLLOWING) FROM users
+  error: near "FOLLOWING": syntax error
+SELECT sum(id) OVER (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW) FROM users
+  error: unsupported frame specification
 SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id
   1,'h',NULL
   2,'Dave',NULL

@@ -59,6 +59,11 @@ const QUERIES: string[] = [
   "SELECT row_number() FROM users",
   "SELECT id FROM users WHERE rank() OVER () > 1",
   "SELECT sum(id) OVER w FROM users",
+  // Bounds SQLite's grammar does not have, and a frame it rejects after parsing.
+  "SELECT sum(id) OVER (ROWS BETWEEN UNBOUNDED FOLLOWING AND CURRENT ROW) FROM users",
+  "SELECT sum(id) OVER (ROWS BETWEEN CURRENT ROW AND UNBOUNDED PRECEDING) FROM users",
+  "SELECT sum(id) OVER (ROWS UNBOUNDED FOLLOWING) FROM users",
+  "SELECT sum(id) OVER (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW) FROM users",
   // min()/max() from the partition's first row, and first/last/nth_value, read as the frame
   // grows or at a position in it: ties under NOCASE, FILTER, frames empty at first or past N.
   "SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id",
