@@ -37,6 +37,12 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
   variable again hands it over for free, one that does shares it. Returning a field of a class
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
+  Passing a field of an object other variables also refer to (`decode(this.db.data, out)`)
+  borrows it for free when the callee runs no code that could replace it while reading it
+  (it reads, computes, pushes plain values onto arrays it is given, and throws through a
+  `never` function such as `corrupt("bad header")`; a method called on it, `this.db.header(n)`,
+  counts as such a callee too); a callee that may (it calls a callback or a method a subclass
+  overrides) gets the field shared for the call, so it stays alive whatever the callee does.
 - A **promise** is shared like an object: every holder may `await` it and gets the result
   ([Async](async.md#promises)).
 - Dropping a long chain of objects never overflows the stack, however it is linked: a

@@ -3,7 +3,8 @@
 //! anything. That is what a runtime extern guarantees too (`Stabilize::No` in call.rs).
 //!
 //! A function is quiet when its body runs no user code and drops nothing it did not make: it
-//! is not generic, a method, a closure, async or a generator; its statements are `let`s,
+//! is not generic, a closure, async or a generator (a method is asked about at a direct call,
+//! where its own body runs: `this.db.header(page)` borrows `this.db`); its statements are `let`s,
 //! assignments, `if`, `while`, `return`, `break` and `continue`, and expressions; it only
 //! assigns values that need no drop, to locals or through its params (elements and fields);
 //! and it only calls quiet functions, `velt_simd_*` externs and intrinsics that run no user
@@ -13,116 +14,185 @@
 //! (proxy_typed.rs): it may run a `get` or `set` trap, which is user code. Std's byte readers
 //! and writers (`loadF64(this.buf.bytes, o)` in a typed array's element access) are quiet, so
 //! the access counts no reference per element.
+//!
+//! A function is *quiet for borrows* ([`Quiet::Borrows`]) when the same holds while it can
+//! still read through what it was lent, which allows two more things, so that a reader such as
+//! a record decoder (`decodeHeader(this.db.data, …, this.types, this.offsets)`) borrows its
+//! arguments for free too:
+//! - `push` of a value that needs no drop onto an array it reaches from a param or local: it
+//!   runs no user code and drops nothing, but may move the array's buffer, so a caller still
+//!   shares a borrow of an element (an argument held in an array's buffer, `in_array_buffer`);
+//! - a call of a function whose result is `never` (`corrupt("record header size")`) given only
+//!   literals and quiet values that need no drop (so it is lent none of the borrows): whatever
+//!   it runs (an error's constructor) runs after the last read through the borrows, since
+//!   nothing after the call runs but the way out of every quiet caller (quiet functions have
+//!   no `try`), which drops nothing that needs a drop. Not quiet in the strict sense: that call
+//!   may write memory (view_unswitch_plain.rs relies on a quiet call not writing any).
 
 use velt_sema::hir::{self, DefId, ExprKind as H, StmtKind as S};
 
 use super::Cx;
 
+/// How quiet a function is asked to be (module docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Quiet {
+    /// Runs no user code and writes only through its params and locals.
+    Strict,
+    /// Runs no user code that could replace or free what it was lent while it reads through it.
+    Borrows,
+}
+
 impl Cx<'_> {
-    /// Is `def` a quiet function (module docs)? Memoized; a function reached again while it is
-    /// being decided (recursion) counts as not quiet.
+    /// Is `def` a quiet function (module docs)?
     pub(super) fn quiet(&mut self, def: DefId) -> bool {
-        if let Some(&q) = self.quiet.get(&def) {
+        self.quiet_as(def, Quiet::Strict)
+    }
+
+    /// Is `def` quiet for borrows (module docs)? A strictly quiet function is.
+    pub(super) fn quiet_for_borrows(&mut self, def: DefId) -> bool {
+        self.quiet_as(def, Quiet::Borrows)
+    }
+
+    /// Memoized; a function reached again while it is being decided (recursion) counts as not
+    /// quiet. So does every function decided while a cycle is open, even one that would be
+    /// quiet once the cycle resolves: its `false` is memoized too. That is conservative (a
+    /// call shares where it could have borrowed), never unsound.
+    fn quiet_as(&mut self, def: DefId, level: Quiet) -> bool {
+        if let Some(&q) = self.quiet.get(&(def, level)) {
             return q;
         }
-        self.quiet.insert(def, false);
+        self.quiet.insert((def, level), false);
         let hir::Def::Fn(f) = self.hir.def(def) else {
             return false;
         };
+        // A method is asked about only at a direct call (`call_def`), where its body is the one
+        // that runs; `this` is a param like any other.
         let q = f.generics == 0
             && !f.is_async
             && !f.is_generator
-            && f.self_ty.is_none()
             && f.captures.is_empty()
-            && self.quiet_block(&f.body.block);
-        self.quiet.insert(def, q);
+            && self.quiet_block(&f.body.block, level);
+        self.quiet.insert((def, level), q);
         q
     }
 
-    fn quiet_block(&mut self, b: &hir::Block) -> bool {
-        b.stmts.iter().all(|s| self.quiet_stmt(s))
-            && b.value.as_deref().is_none_or(|v| self.quiet_expr(v))
+    fn quiet_block(&mut self, b: &hir::Block, level: Quiet) -> bool {
+        b.stmts.iter().all(|s| self.quiet_stmt(s, level))
+            && b.value.as_deref().is_none_or(|v| self.quiet_expr(v, level))
     }
 
-    fn quiet_stmt(&mut self, s: &hir::Stmt) -> bool {
+    fn quiet_stmt(&mut self, s: &hir::Stmt, level: Quiet) -> bool {
         match &s.kind {
-            S::Let { local: _, init } => init.as_ref().is_none_or(|e| self.quiet_value(e)),
-            S::Expr(e) => self.quiet_expr(e),
-            S::Return(e) => e.as_ref().is_none_or(|e| self.quiet_expr(e)),
+            S::Let { local: _, init } => init.as_ref().is_none_or(|e| self.quiet_value(e, level)),
+            S::Expr(e) => self.quiet_expr(e, level),
+            S::Return(e) => e.as_ref().is_none_or(|e| self.quiet_expr(e, level)),
             S::If { cond, then, els } => {
-                self.quiet_expr(cond)
-                    && self.quiet_block(then)
-                    && els.as_ref().is_none_or(|b| self.quiet_block(b))
+                self.quiet_expr(cond, level)
+                    && self.quiet_block(then, level)
+                    && els.as_ref().is_none_or(|b| self.quiet_block(b, level))
             }
             S::While {
                 cond, body, step, ..
             } => {
-                self.quiet_expr(cond)
-                    && self.quiet_block(body)
-                    && step.as_ref().is_none_or(|e| self.quiet_expr(e))
+                self.quiet_expr(cond, level)
+                    && self.quiet_block(body, level)
+                    && step.as_ref().is_none_or(|e| self.quiet_expr(e, level))
             }
             S::Break(_) | S::Continue(_) => true,
-            S::Block(b) => self.quiet_block(b),
+            S::Block(b) => self.quiet_block(b, level),
             S::LetPat { .. } | S::ForOf { .. } | S::Try { .. } => false,
         }
     }
 
     /// A quiet expression whose value needs no drop (stored in a local or a place).
-    fn quiet_value(&mut self, e: &hir::Expr) -> bool {
-        !self.needs_drop(e.ty) && self.quiet_expr(e)
+    fn quiet_value(&mut self, e: &hir::Expr, level: Quiet) -> bool {
+        !self.needs_drop(e.ty) && self.quiet_expr(e, level)
     }
 
-    fn quiet_expr(&mut self, e: &hir::Expr) -> bool {
+    fn quiet_expr(&mut self, e: &hir::Expr, level: Quiet) -> bool {
         match &e.kind {
             H::Lit(_) | H::Local(..) => true,
-            H::Unary { expr: x, .. } | H::Cast(x) => self.quiet_expr(x),
+            H::Unary { expr: x, .. } | H::Cast(x) => self.quiet_expr(x, level),
             H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
-                self.quiet_expr(lhs) && self.quiet_expr(rhs)
+                self.quiet_expr(lhs, level) && self.quiet_expr(rhs, level)
             }
             H::Assign { place, value } | H::CompoundAssign { place, value, .. } => {
                 // The old value is dropped too: neither may need a drop.
-                !self.needs_drop(place.ty) && self.quiet_place(place) && self.quiet_value(value)
+                !self.needs_drop(place.ty)
+                    && self.quiet_place(place, level)
+                    && self.quiet_value(value, level)
             }
             H::If { cond, then, els } => {
-                self.quiet_expr(cond) && self.quiet_expr(then) && self.quiet_expr(els)
+                self.quiet_expr(cond, level)
+                    && self.quiet_expr(then, level)
+                    && self.quiet_expr(els, level)
             }
-            H::Block(b) => self.quiet_block(b),
+            H::Block(b) => self.quiet_block(b, level),
             H::Field { base, mode, .. } => {
                 *mode != hir::UseMode::Move
                     && !self.needs_drop(e.ty)
                     && !self.proxiable(base.ty)
-                    && self.quiet_expr(base)
+                    && self.quiet_expr(base, level)
             }
             H::Index { base, index, mode } => {
                 *mode != hir::UseMode::Move
                     && !self.needs_drop(e.ty)
-                    && self.quiet_expr(base)
-                    && self.quiet_expr(index)
+                    && self.quiet_expr(base, level)
+                    && self.quiet_expr(index, level)
+            }
+            // A struct of plain values (`Varint { value, len }`): it lives in the function's
+            // own memory.
+            H::AdtLit {
+                fields, converted, ..
+            } => {
+                *converted == hir::Conversion::No
+                    && !self.needs_drop(e.ty)
+                    && fields.iter().all(|f| self.quiet_value(f, level))
             }
             H::Call { callee, args } => {
                 let callee_quiet = match callee {
                     hir::Callee::Def(def, targs) => match self.hir.def(*def) {
-                        hir::Def::Fn(_) => targs.is_empty() && self.quiet(*def),
+                        // Whatever a call that never returns runs, runs after the borrows'
+                        // last use (module docs), if it is lent none of them.
+                        hir::Def::Fn(f) if level == Quiet::Borrows && self.is_never(f.ret) => {
+                            return args.iter().all(|a| {
+                                matches!(a.kind, H::Lit(_)) || self.quiet_value(a, level)
+                            });
+                        }
+                        hir::Def::Fn(_) => targs.is_empty() && self.quiet_as(*def, level),
                         hir::Def::ExternFn(x) => !x.is_async && x.symbol.starts_with("velt_simd_"),
                         _ => false,
                     },
+                    // Onto an array the function reaches itself, a value that needs no drop.
+                    hir::Callee::Intrinsic(hir::Intrinsic::ArrayPush)
+                        if level == Quiet::Borrows =>
+                    {
+                        return match args.as_slice() {
+                            [array, value] => {
+                                self.quiet_place(array, level) && self.quiet_value(value, level)
+                            }
+                            _ => false,
+                        };
+                    }
                     hir::Callee::Intrinsic(i) => {
                         pure_intrinsic(*i) && !args.iter().any(velt_sema::effects::writes_place)
                     }
                     _ => false,
                 };
-                callee_quiet && args.iter().all(|a| self.quiet_expr(a))
+                callee_quiet && args.iter().all(|a| self.quiet_expr(a, level))
             }
             _ => false,
         }
     }
 
     /// The target of an assignment: a local, or an element or field reached from one.
-    fn quiet_place(&mut self, p: &hir::Expr) -> bool {
+    fn quiet_place(&mut self, p: &hir::Expr, level: Quiet) -> bool {
         match &p.kind {
             H::Local(..) => true,
-            H::Field { base, .. } => !self.proxiable(base.ty) && self.quiet_place(base),
-            H::Index { base, index, .. } => self.quiet_place(base) && self.quiet_expr(index),
+            H::Field { base, .. } => !self.proxiable(base.ty) && self.quiet_place(base, level),
+            H::Index { base, index, .. } => {
+                self.quiet_place(base, level) && self.quiet_expr(index, level)
+            }
             _ => false,
         }
     }

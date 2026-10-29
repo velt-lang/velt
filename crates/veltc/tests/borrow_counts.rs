@@ -1,8 +1,9 @@
 //! Reference counts a borrow does not need: a typed array element write on a `const` receiver
 //! (no `<receiver>` temporary, sema `accessor_rmw.rs`), and a borrow through a counted object
-//! passed to a quiet callee (no stabilizing share, velt_vir `lower/quiet.rs`), while a callee
-//! that may replace what the borrow goes through still gets one. A call of a `never` function
-//! that throws has no Ok path after it (`Function::cold`).
+//! passed to a quiet callee (no stabilizing share, velt_vir `lower/quiet.rs`) or to one quiet for
+//! borrows (it pushes onto an array and throws through a `never` helper), while a callee that may
+//! replace what the borrow goes through still gets one. A call of a `never` function that throws
+//! has no Ok path after it (`Function::cold`).
 
 use std::path::Path;
 
@@ -59,9 +60,30 @@ fn quiet_callees_get_borrows_without_counts() {
 }
 
 #[test]
+fn callees_quiet_for_borrows_get_borrows_without_counts() {
+    let vir = vir("borrows");
+    let quiet = function(&vir, "_V9viaDecode(");
+    assert!(
+        !quiet.contains("_Gdrop_8u8_5b_5d") && !quiet.contains(", 1_u64\n"),
+        "{quiet}"
+    );
+    // The `never` helper is lent the borrow: it may run after the helper replaced it.
+    let lending = function(&vir, "viaDecodeLending");
+    assert!(lending.contains("_Gdrop_8u8_5b_5d"), "{lending}");
+}
+
+#[test]
 fn a_throwing_never_call_has_no_ok_path() {
     let vir = vir("never");
     let check = function(&vir, "_V5check(");
     // The branch on the result's tag: the error goes on, the Ok side is unreachable.
     assert!(check.contains("unreachable"), "{check}");
+}
+
+#[test]
+fn quiet_methods_get_borrowed_receivers() {
+    let vir = vir("method");
+    let at = function(&vir, "CursorM2at(");
+    // `this.db` is lent to `offset` without a share and its release.
+    assert!(!at.contains("_Gdrop_") && !at.contains("-8_i64"), "{at}");
 }
