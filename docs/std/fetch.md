@@ -74,10 +74,15 @@ the one sent. Responses are read as strictly as Node reads them: a status below 
 name that is not a token, a control character in a header value or the reason phrase, both
 `transfer-encoding` and `content-length`, or a chunked trailer larger than a head may be (400
 KiB) fail with `IoError` "EPROTO". A connection taken from the pool is checked first, so a
-request never goes out on one the server has closed meanwhile; a request that may not be sent
-twice (a POST) takes only one idle for at least 5 ms, by when a close the server sent shortly
-after its last response (at once, or a timer turn or a few milliseconds later) has arrived (a
-new connection otherwise), as Node in effect does.
+request does not go out on one whose close has arrived. A request that may not be sent twice (a
+POST) takes only one idle for at least 5 ms, by when a close the server sent shortly after its
+last response (at once, on its next turn or a few milliseconds later) has usually arrived; it
+gets a new connection otherwise. This narrows the race every HTTP/1.1 client has, but does not
+rule it out: a server that closes an idle connection later than that, or one slowed by load, can
+still close it just as a POST goes out, and the POST then fails with `IoError` "ECONNRESET"
+(`other side closed`) after it reached the server. `fetch` never sends a POST again, as Node does
+not (Node waits two event-loop turns before it reuses a connection, and has the same residual
+race): retry a POST yourself only if it is idempotent for your server.
 
 HTTPS trusts Mozilla's root certificates (compiled in, so the result does not depend on the
 machine) plus `ca`. An untrusted certificate fails with `IoError`.

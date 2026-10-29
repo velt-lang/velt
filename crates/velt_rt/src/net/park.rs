@@ -13,8 +13,12 @@
 //! the stream (the server closed it), unexpected bytes or an error closes it instead. A server
 //! that closes a connection right after its response sends the end a moment after the response,
 //! which a check right away cannot see yet: a request that may not be sent twice (a POST) is
-//! handed only a stream idle for at least [`SETTLED`], by when that end has arrived; the newer
-//! streams stay parked (it gets a new connection if there is none). The rule is time, not turns of
+//! handed only a stream idle for at least [`SETTLED`], by when such an end has usually arrived;
+//! the newer streams stay parked (it gets a new connection if there is none). This narrows the
+//! race, it does not rule it out: a server that closes later than that, or a loaded one, can still
+//! close a stream as a POST goes out on it, which then fails after reaching the server (the
+//! client never sends it again, as Node's does not; Node waits two event-loop turns before reusing
+//! a socket and has the same residual race). The rule is time, not turns of
 //! the event loop as in undici: a Velt request takes tens of microseconds, so a turn (a yield) is
 //! far too short for a close a server sends on its own next turn or a timer later, which Node's
 //! slower requests happen to outwait. Against a server farther away than [`SETTLED`], every
@@ -33,9 +37,9 @@ use std::time::{Duration, Instant};
 const MAX_PER_KEY: usize = 512;
 /// A stream idle this long is closed rather than reused.
 const MAX_IDLE: Duration = Duration::from_secs(60);
-/// A stream idle this long has received a close its server sent shortly after the response: at
-/// once, on its next event-loop turn or a timer of a few milliseconds (Windows' timers among
-/// them), which 1 ms did not cover.
+/// A stream idle this long has usually received a close its server sent shortly after the
+/// response: at once, on its next event-loop turn or a timer of a few milliseconds (Windows'
+/// timers among them), which 1 ms did not cover.
 const SETTLED: Duration = Duration::from_millis(5);
 
 /// FNV-1a over the key's bytes: keys are a handful of origins the program chose, so a seeded
