@@ -71,6 +71,23 @@ printf('%y') = null:
 printf('%5.3c|', 'é') = text:  ééé|
 like(NULL, 1, 12) = error: ESCAPE expression must be a single character
 like(1, NULL, 12) = error: ESCAPE expression must be a single character
+date('2024-02-29', '+1 year') = text:2025-03-01
+date('2024-01-31', '+1 month') = text:2024-03-02
+time('12:34:56.789') = text:12:34:56
+datetime(1700000000, 'unixepoch') = text:2023-11-14 22:13:20
+datetime('2024-03-10 12:00', '-36 hours', 'start of day') = text:2024-03-09 00:00:00
+datetime(2460000.5) = text:2023-02-25 00:00:00
+julianday('2000-01-01 12:00:00') = real:2451545.0
+unixepoch('2038-01-19 03:14:08') = integer:2147483648
+unixepoch('2024-01-01', 'subsec') = real:1704067200.0
+strftime('%Y-%m-%d %H:%M:%f %j %w %W %s', '2024-12-31 23:59:59.5') = text:2024-12-31 23:59:59.500 366 2 53 1735689599
+strftime('%J %e %k %l %p %I %u %G %V %g', '2021-01-03 07:08:09') = text:2459217.797326389  3  7  7 AM 07 7 2020 53 20
+date('2024-05-15', 'weekday 0') = text:2024-05-19
+date('2024-05-15', 'start of month', '+1 month', '-1 day') = text:2024-05-31
+date('not a date') = null:
+date('2024-02-30') = text:2024-03-01
+datetime('2024-01-01T10:00:00+02:30') = text:2024-01-01 07:30:00
+time('24:00') = text:24:00:00
 printf('%.2147483647f', 1.0): velt text:100000002, C text:100000002
 printf('%999999986.3f', 1.5): velt text:999999986, C text:999999986
-75 calls, all the same
+92 calls, all the same

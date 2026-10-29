@@ -1,0 +1,662 @@
+// velt:sqlite/exec/date — SQLite's date and time functions (date, time, datetime, julianday,
+// unixepoch, strftime), ported from its date.c: times are a julian day number in milliseconds,
+// parsed from `YYYY-MM-DD HH:MM:SS.SSS[+HH:MM]`, `HH:MM[:SS]`, a number or 'now', and changed by
+// modifiers ('+N days', 'start of month', 'weekday N', 'unixepoch', 'subsec', ...).
+// 'localtime' and 'utc' need the system's time zone rules and fail for now.
+
+import { NULL, INTEGER, REAL } from "velt:sqlite/btree";
+import { SqlRunError } from "velt:sqlite/exec/errors";
+import { atof } from "velt:sqlite/exec/fp";
+import { cBytes } from "velt:sqlite/exec/text";
+import { hmsText, strftime, ymdText } from "velt:sqlite/exec/date_format";
+import { Val, nullVal, intVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
+
+/**
+ * A time as date.c's DateTime: a julian day in milliseconds (`iJD`) and/or its year, month,
+ * day, hour, minute and seconds, each part valid once computed, plus the modifiers' state.
+ */
+export class DateTime {
+  iJD: i64 = 0;
+  Y: i64 = 0;
+  M: i64 = 0;
+  D: i64 = 0;
+  h: i64 = 0;
+  m: i64 = 0;
+  tz: i64 = 0;
+  s: f64 = 0;
+  validJD: bool = false;
+  validYMD: bool = false;
+  validHMS: bool = false;
+  nFloor: i64 = 0;
+  rawS: bool = false;
+  isError: bool = false;
+  useSubsec: bool = false;
+}
+
+const MAX_JD: i64 = 464269060799999;
+
+function isDigit(c: u8): bool {
+  return c >= 48 && c <= 57;
+}
+
+function isSpace(c: u8): bool {
+  return c == 32 || (c >= 9 && c <= 13);
+}
+
+/** Byte `i` of `b`, or 0 past its end (a C string's terminator). */
+export function at(b: u8[], i: usize): u8 {
+  return i < b.length ? b[i] : 0;
+}
+
+// `n` digits at `i` between `min` and `max`, followed by `next` (0: anything): the value, or -1.
+function digits(b: u8[], i: usize, n: usize, min: i64, max: i64, next: u8): i64 {
+  let v: i64 = 0;
+  for (let k: usize = 0; k < n; k++) {
+    const c = at(b, i + k);
+    if (!isDigit(c)) {
+      return -1;
+    }
+    v = v * 10 + ((c - 48) as i64);
+  }
+  if (v < min || v > max || (next != 0 && at(b, i + n) != next)) {
+    return -1;
+  }
+  return v;
+}
+
+function parseTimezone(b: u8[], i0: usize, p: DateTime): bool {
+  let i = i0;
+  while (isSpace(at(b, i))) {
+    i++;
+  }
+  p.tz = 0;
+  const c = at(b, i);
+  let sgn: i64 = 0;
+  if (c == 45) {
+    sgn = -1;
+  } else if (c == 43) {
+    sgn = 1;
+  } else if (c == 90 || c == 122) {
+    i++;
+    while (isSpace(at(b, i))) {
+      i++;
+    }
+    return at(b, i) != 0;
+  } else {
+    return c != 0;
+  }
+  i++;
+  const hr = digits(b, i, 2, 0, 14, 58);
+  const mn = hr < 0 ? -1 : digits(b, i + 3, 2, 0, 59, 0);
+  if (mn < 0) {
+    return true;
+  }
+  i += 5;
+  p.tz = sgn * (mn + hr * 60);
+  while (isSpace(at(b, i))) {
+    i++;
+  }
+  return at(b, i) != 0;
+}
+
+// HH:MM[:SS[.FFF]]: true on an error.
+function parseHhMmSs(b: u8[], i0: usize, p: DateTime): bool {
+  let i = i0;
+  const h = digits(b, i, 2, 0, 24, 58);
+  const m = h < 0 ? -1 : digits(b, i + 3, 2, 0, 59, 0);
+  if (m < 0) {
+    return true;
+  }
+  i += 5;
+  let s: i64 = 0;
+  let ms: f64 = 0;
+  if (at(b, i) == 58) {
+    i++;
+    s = digits(b, i, 2, 0, 59, 0);
+    if (s < 0) {
+      return true;
+    }
+    i += 2;
+    if (at(b, i) == 46 && isDigit(at(b, i + 1))) {
+      let scale: f64 = 1;
+      i++;
+      while (isDigit(at(b, i))) {
+        ms = ms * 10 + ((b[i] - 48) as f64);
+        scale *= 10;
+        i++;
+      }
+      ms /= scale;
+      if (ms > 0.999) {
+        ms = 0.999;
+      }
+    }
+  }
+  p.validJD = false;
+  p.rawS = false;
+  p.validHMS = true;
+  p.h = h;
+  p.m = m;
+  p.s = (s as f64) + ms;
+  return parseTimezone(b, i, p);
+}
+
+/** Makes `p.iJD` valid from its date and time parts (date.c's computeJD). */
+export function computeJD(p: DateTime) {
+  if (p.validJD) {
+    return;
+  }
+  let Y: i64 = 2000;
+  let M: i64 = 1;
+  let D: i64 = 1;
+  if (p.validYMD) {
+    Y = p.Y;
+    M = p.M;
+    D = p.D;
+  }
+  if (Y < -4713 || Y > 9999 || p.rawS) {
+    p.isError = true;
+    p.validJD = false;
+    return;
+  }
+  if (M <= 2) {
+    Y--;
+    M += 12;
+  }
+  const A = (Y + 4800) / 100;
+  const B = 38 - A + A / 4;
+  const X1 = 36525 * (Y + 4716) / 100;
+  const X2 = 306001 * (M + 1) / 10000;
+  p.iJD = (((X1 + X2 + D + B) as f64 - 1524.5) * 86400000) as i64;
+  p.validJD = true;
+  if (p.validHMS) {
+    const ms = (p.s * 1000.0 + 0.5) as i64;
+    p.iJD += p.h * 3600000 + p.m * 60000 + ms;
+    if (p.tz != 0) {
+      p.iJD -= p.tz * 60000;
+      p.validYMD = false;
+      p.validHMS = false;
+      p.tz = 0;
+    }
+  }
+}
+
+function computeFloor(p: DateTime) {
+  if (p.D <= 28) {
+    p.nFloor = 0;
+  } else if (((1 << (p.M as u64)) & 0x15aa) != 0) {
+    p.nFloor = 0;
+  } else if (p.M != 2) {
+    p.nFloor = p.D == 31 ? 1 : 0;
+  } else if (p.Y % 4 != 0 || (p.Y % 100 == 0 && p.Y % 400 != 0)) {
+    p.nFloor = p.D - 28;
+  } else {
+    p.nFloor = p.D - 29;
+  }
+}
+
+// YYYY-MM-DD [HH:MM[:SS[.FFF]]]: true on an error.
+function parseYyyyMmDd(b: u8[], p: DateTime): bool {
+  let i: usize = 0;
+  let neg = false;
+  if (at(b, 0) == 45) {
+    i = 1;
+    neg = true;
+  }
+  const Y = digits(b, i, 4, 0, 9999, 45);
+  const M = Y < 0 ? -1 : digits(b, i + 5, 2, 1, 12, 45);
+  const D = M < 0 ? -1 : digits(b, i + 8, 2, 1, 31, 0);
+  if (D < 0) {
+    return true;
+  }
+  i += 10;
+  while (isSpace(at(b, i)) || at(b, i) == 84) {
+    i++;
+  }
+  if (!parseHhMmSs(b, i, p)) {
+    // got the time
+  } else if (at(b, i) == 0) {
+    p.validHMS = false;
+  } else {
+    return true;
+  }
+  p.validJD = false;
+  p.validYMD = true;
+  p.Y = neg ? -Y : Y;
+  p.M = M;
+  p.D = D;
+  computeFloor(p);
+  if (p.tz != 0) {
+    computeJD(p);
+  }
+  return false;
+}
+
+function setNow(p: DateTime) {
+  p.iJD = Date.now() as i64 + 210866760000000;
+  p.validJD = true;
+  clearYMDHMS(p);
+}
+
+function setRawNumber(p: DateTime, r: f64) {
+  p.s = r;
+  p.rawS = true;
+  if (r >= 0 && r < 5373484.5) {
+    p.iJD = (r * 86400000 + 0.5) as i64;
+    p.validJD = true;
+  }
+}
+
+function iequals(b: u8[], s: string): bool {
+  if (b.length != s.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < b.length; i++) {
+    const c = b[i] >= 65 && b[i] <= 90 ? b[i] + 32 : b[i];
+    if (c != (s.charCodeAt(i as i64) as u8)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The time a string names: true on an error.
+function parseDateOrTime(b: u8[], p: DateTime): bool {
+  if (!parseYyyyMmDd(b, p)) {
+    return false;
+  }
+  if (!parseHhMmSs(b, 0, p)) {
+    return false;
+  }
+  if (iequals(b, "now")) {
+    setNow(p);
+    return false;
+  }
+  const r = atof(b, 0);
+  if (r.whole && r.state > 0 && r.end > 0) {
+    setRawNumber(p, r.value);
+    return false;
+  }
+  if (iequals(b, "subsec") || iequals(b, "subsecond")) {
+    p.useSubsec = true;
+    setNow(p);
+    return false;
+  }
+  return true;
+}
+
+function validJulianDay(j: i64): bool {
+  return j >= 0 && j <= MAX_JD;
+}
+
+/** Makes the year, month and day of `p` valid from its julian day (date.c's computeYMD). */
+export function computeYMD(p: DateTime) {
+  if (p.validYMD) {
+    return;
+  }
+  if (!p.validJD) {
+    p.Y = 2000;
+    p.M = 1;
+    p.D = 1;
+  } else if (!validJulianDay(p.iJD)) {
+    p.isError = true;
+    return;
+  } else {
+    const Z = (p.iJD + 43200000) / 86400000;
+    const alpha = (((Z as f64) + 32044.75) / 36524.25) as i64 - 52;
+    const A = Z + 1 + alpha - (alpha + 100) / 4 + 25;
+    const B = A + 1524;
+    const C = (((B as f64) - 122.1) / 365.25) as i64;
+    const D = (36525 * (C & 32767)) / 100;
+    const E = (((B - D) as f64) / 30.6001) as i64;
+    const X1 = (30.6001 * (E as f64)) as i64;
+    p.D = B - D - X1;
+    p.M = E < 14 ? E - 1 : E - 13;
+    p.Y = p.M > 2 ? C - 4716 : C - 4715;
+  }
+  p.validYMD = true;
+}
+
+/** Makes the hour, minute and seconds of `p` valid from its julian day (computeHMS). */
+export function computeHMS(p: DateTime) {
+  if (p.validHMS) {
+    return;
+  }
+  computeJD(p);
+  const dayMs = (p.iJD + 43200000) % 86400000;
+  p.s = ((dayMs % 60000) as f64) / 1000;
+  const dayMin = dayMs / 60000;
+  p.m = dayMin % 60;
+  p.h = dayMin / 60;
+  p.rawS = false;
+  p.validHMS = true;
+}
+
+function clearYMDHMS(p: DateTime) {
+  p.validYMD = false;
+  p.validHMS = false;
+  p.tz = 0;
+}
+
+function autoAdjust(p: DateTime) {
+  if (!p.rawS || p.validJD) {
+    p.rawS = false;
+  } else if (p.s >= -210866760000.0 && p.s <= 253402300799.0) {
+    const r = p.s * 1000 + 210866760000000.0;
+    clearYMDHMS(p);
+    p.iJD = (r + 0.5) as i64;
+    p.validJD = true;
+    p.rawS = false;
+  }
+}
+
+/** A modifier: false when it applies, true when it is not one (the result is NULL). */
+function parseModifier(b: u8[], p: DateTime, idx: usize): bool {
+  const z = b.utf8Slice(0, b.length as i64).toLowerCase();
+  if (z == "auto") {
+    if (idx > 1) {
+      return true;
+    }
+    autoAdjust(p);
+    return false;
+  }
+  if (z == "ceiling") {
+    computeJD(p);
+    clearYMDHMS(p);
+    p.nFloor = 0;
+    return false;
+  }
+  if (z == "floor") {
+    computeJD(p);
+    p.iJD -= p.nFloor * 86400000;
+    clearYMDHMS(p);
+    return false;
+  }
+  if (z == "julianday") {
+    if (idx > 1) {
+      return true;
+    }
+    if (p.validJD && p.rawS) {
+      p.rawS = false;
+      return false;
+    }
+    return true;
+  }
+  if (z == "unixepoch") {
+    if (idx > 1 || !p.rawS) {
+      return true;
+    }
+    const r = p.s * 1000 + 210866760000000.0;
+    if (r >= 0 && r < 464269060800000.0) {
+      clearYMDHMS(p);
+      p.iJD = (r + 0.5) as i64;
+      p.validJD = true;
+      p.rawS = false;
+      return false;
+    }
+    return true;
+  }
+  if (z == "localtime" || z == "utc") {
+    throw new SqlRunError(`the ${z} modifier is not supported yet`);
+  }
+  if (z == "subsec" || z == "subsecond") {
+    p.useSubsec = true;
+    return false;
+  }
+  if (z.startsWith("weekday ")) {
+    const r = atof(b, 8);
+    if (
+      !(r.whole && r.state > 0) || r.value < 0 || r.value >= 7 || r.value != Math.trunc(r.value)
+    ) {
+      return true;
+    }
+    const n = r.value as i64;
+    computeYMD(p);
+    computeHMS(p);
+    p.tz = 0;
+    p.validJD = false;
+    computeJD(p);
+    let Z = ((p.iJD + 129600000) / 86400000) % 7;
+    if (Z > n) {
+      Z -= 7;
+    }
+    p.iJD += (n - Z) * 86400000;
+    clearYMDHMS(p);
+    return false;
+  }
+  if (z.startsWith("start of ")) {
+    if (!p.validJD && !p.validYMD && !p.validHMS) {
+      return true;
+    }
+    const what = z.slice(9);
+    computeYMD(p);
+    p.validHMS = true;
+    p.h = 0;
+    p.m = 0;
+    p.s = 0;
+    p.rawS = false;
+    p.tz = 0;
+    p.validJD = false;
+    if (what == "month") {
+      p.D = 1;
+      return false;
+    }
+    if (what == "year") {
+      p.M = 1;
+      p.D = 1;
+      return false;
+    }
+    return what != "day";
+  }
+  const c0 = at(b, 0);
+  if (c0 == 43 || c0 == 45 || isDigit(c0)) {
+    return shift(b, p);
+  }
+  return true;
+}
+
+// `[+-]N unit`, `[+-]HH:MM[:SS]`, `[+-]YYYY-MM-DD[ HH:MM]`.
+function shift(b: u8[], p: DateTime): bool {
+  const c0 = b[0];
+  let n: usize = 1;
+  while (n < b.length) {
+    const c = b[n];
+    if (c == 58 || isSpace(c)) {
+      break;
+    }
+    if (
+      c == 45 &&
+      (
+        (n == 5 && digits(b, 1, 4, 0, 9999, 0) >= 0) ||
+        (n == 6 && digits(b, 1, 5, 0, 14712, 0) >= 0)
+      )
+    ) {
+      break;
+    }
+    n++;
+  }
+  const num = atof(b.slice(0, n as i64), 0);
+  if (!(num.whole && num.state > 0)) {
+    return true;
+  }
+  let r = num.value;
+  if (at(b, n) == 45) {
+    // (+|-)YYYY-MM-DD
+    if (c0 != 43 && c0 != 45) {
+      return true;
+    }
+    const yw: usize = n == 5 ? 4 : 5;
+    const Y = digits(b, 1, yw, 0, yw == 4 ? 9999 : 14712, 45);
+    const M = Y < 0 ? -1 : digits(b, 2 + yw, 2, 0, 12, 45);
+    let D = M < 0 ? -1 : digits(b, 5 + yw, 2, 0, 31, 0);
+    if (D < 0 || M >= 12 || D >= 31) {
+      return true;
+    }
+    computeYMD(p);
+    computeHMS(p);
+    p.validJD = false;
+    if (c0 == 45) {
+      p.Y -= Y;
+      p.M -= M;
+      D = -D;
+    } else {
+      p.Y += Y;
+      p.M += M;
+    }
+    const x = p.M > 0 ? (p.M - 1) / 12 : (p.M - 12) / 12;
+    p.Y += x;
+    p.M -= x * 12;
+    computeFloor(p);
+    computeJD(p);
+    p.validHMS = false;
+    p.validYMD = false;
+    p.iJD += D * 86400000;
+    const end = 7 + yw;
+    if (end >= b.length) {
+      return false;
+    }
+    if (isSpace(b[end]) && digits(b, end + 1, 2, 0, 24, 58) >= 0) {
+      return hhmm(b, end + 1, c0, p);
+    }
+    return true;
+  }
+  if (at(b, n) == 58) {
+    return hhmm(b, isDigit(c0) ? 0 : 1, c0, p);
+  }
+  // N unit(s)
+  let i = n;
+  while (i < b.length && isSpace(b[i])) {
+    i++;
+  }
+  let unit = b.utf8Slice(i as i64, b.length as i64).toLowerCase();
+  if (unit.length < 3 || unit.length > 10) {
+    return true;
+  }
+  if (unit.endsWith("s")) {
+    unit = unit.slice(0, (unit.length as i64) - 1);
+  }
+  computeJD(p);
+  const rounder = r < 0 ? -0.5 : 0.5;
+  p.nFloor = 0;
+  const names = ["second", "minute", "hour", "day", "month", "year"];
+  const limits = [4.6427e14, 7.7379e12, 1.2897e11, 5373485.0, 176546.0, 14713.0];
+  const scale = [1.0, 60.0, 3600.0, 86400.0, 2592000.0, 31536000.0];
+  for (let k: usize = 0; k < 6; k++) {
+    if (unit != names[k] || !(r > -limits[k] && r < limits[k])) {
+      continue;
+    }
+    if (k == 4) {
+      computeYMD(p);
+      computeHMS(p);
+      p.M += r as i64;
+      const x = p.M > 0 ? (p.M - 1) / 12 : (p.M - 12) / 12;
+      p.Y += x;
+      p.M -= x * 12;
+      computeFloor(p);
+      p.validJD = false;
+      r -= Math.trunc(r);
+    } else if (k == 5) {
+      computeYMD(p);
+      computeHMS(p);
+      p.Y += r as i64;
+      computeFloor(p);
+      p.validJD = false;
+      r -= Math.trunc(r);
+    }
+    computeJD(p);
+    p.iJD += (r * 1000 * scale[k] + rounder) as i64;
+    clearYMDHMS(p);
+    return false;
+  }
+  clearYMDHMS(p);
+  return true;
+}
+
+function hhmm(b: u8[], from: usize, c0: u8, p: DateTime): bool {
+  const tx = new DateTime();
+  if (parseHhMmSs(b, from, tx)) {
+    return true;
+  }
+  computeJD(tx);
+  tx.iJD -= 43200000;
+  const day = tx.iJD / 86400000;
+  tx.iJD -= day * 86400000;
+  if (c0 == 45) {
+    tx.iJD = -tx.iJD;
+  }
+  computeJD(p);
+  clearYMDHMS(p);
+  p.iJD += tx.iJD;
+  return false;
+}
+
+/** The time of a date function's arguments, or null (the result is NULL). */
+function isDate(args: Val[]): DateTime | null {
+  const p = new DateTime();
+  if (args.length == 0) {
+    setNow(p);
+  } else {
+    const v = args[0];
+    if (v.t == REAL || v.t == INTEGER) {
+      setRawNumber(p, v.t == REAL ? v.r : v.i as f64);
+    } else if (v.t == NULL || parseDateOrTime(cBytes(toText(v)), p)) {
+      return null;
+    }
+  }
+  for (let i: usize = 1; i < args.length; i++) {
+    if (args[i].t == NULL || parseModifier(cBytes(toText(args[i])), p, i)) {
+      return null;
+    }
+  }
+  computeJD(p);
+  if (p.isError || !validJulianDay(p.iJD)) {
+    return null;
+  }
+  if (args.length == 1 && p.validYMD && p.D > 28) {
+    p.validYMD = false;
+  }
+  return p;
+}
+
+/** A date function (upper-case name) over its argument values, or null if it is none. */
+export function dateFunction(name: string, args: Val[]): Val {
+  if (name == "STRFTIME") {
+    if (args.length == 0 || args[0].t == NULL) {
+      return nullVal();
+    }
+    const p = isDate(args.slice(1));
+    return p == null ? nullVal() : strftime(toText(args[0]), p!);
+  }
+  const p0 = isDate(args);
+  if (p0 == null) {
+    return nullVal();
+  }
+  const p = p0!;
+  if (name == "JULIANDAY") {
+    return realVal((p.iJD as f64) / 86400000.0);
+  }
+  if (name == "UNIXEPOCH") {
+    if (p.useSubsec) {
+      return realVal(((p.iJD - 210866760000000) as f64) / 1000.0);
+    }
+    return intVal(p.iJD / 1000 - 210866760000);
+  }
+  computeYMD(p);
+  computeHMS(p);
+  if (name == "DATE") {
+    return textVal(ymdText(p));
+  }
+  if (name == "TIME") {
+    return textVal(hmsText(p));
+  }
+  return textVal(ymdText(p) + " " + hmsText(p));
+}
+
+/** Whether `name` (upper case) is a date function. */
+export function isDateFunction(name: string): bool {
+  return name == "DATE" ||
+    name == "TIME" ||
+    name == "DATETIME" ||
+    name == "JULIANDAY" ||
+    name == "UNIXEPOCH" ||
+    name == "STRFTIME";
+}

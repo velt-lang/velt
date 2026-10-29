@@ -6,6 +6,7 @@ import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
 import { SqlRunError, prepareError } from "velt:sqlite/exec/errors";
 import { FMT_FLOAT, atof, formatReal } from "velt:sqlite/exec/fp";
 import { realToI64, toF64, toI64, truth } from "velt:sqlite/exec/ops";
+import { dateFunction, isDateFunction } from "velt:sqlite/exec/date";
 import { printf } from "velt:sqlite/exec/printf";
 import { likeValue } from "velt:sqlite/exec/like";
 import {
@@ -62,6 +63,28 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
         vals.push(f());
       }
       return printf(vals);
+    };
+  }
+  if (isDateFunction(name) || name.startsWith("CURRENT_")) {
+    let fn = name;
+    if (name == "CURRENT_DATE") {
+      fn = "DATE";
+    } else if (name == "CURRENT_TIME") {
+      fn = "TIME";
+    } else if (name == "CURRENT_TIMESTAMP") {
+      fn = "DATETIME";
+    } else if (!isDateFunction(name)) {
+      return null;
+    }
+    if (fn != name && n != 0) {
+      prepareError(`wrong number of arguments to function ${shown}()`);
+    }
+    return () => {
+      const vals: Val[] = [];
+      for (const f of a) {
+        vals.push(f());
+      }
+      return dateFunction(fn, vals);
     };
   }
   if (name == "LENGTH" || name == "OCTET_LENGTH") {
