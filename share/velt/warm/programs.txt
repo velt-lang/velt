@@ -1,15 +1,16 @@
 # The programs `velt cache warm` compiles std into the build cache with (paths relative to this
 # file; scripts/package.sh and package.ps1 copy them into the toolchain's share/velt/warm/).
 #
-# Std goldens chosen to cover the most code that programs share, greedily: each adds the most
-# compiled functions also used by another golden that the ones before it did not cover. These 20
-# cover about 58% of the functions of the example apps (examples/apps); all std goldens, 67%; the
-# rest is each app's own code. A golden listed here must build on its own (no relative imports).
-../../../tests/golden/std/http_server_stream.vlt
+# Std goldens (two of them now std's `velt test` files, tests/std) chosen to cover the most code
+# that programs share, greedily: each adds the most compiled functions also used by another
+# golden that the ones before it did not cover. These 20 cover about 58% of the functions of the
+# example apps (examples/apps); all std goldens, 67%; the rest is each app's own code. A program
+# listed here must build on its own (no relative imports).
+../../../tests/std/http/streams.test.vlt
 ../../../tests/golden/std/handle_after_close.vlt
 ../../../tests/golden/std/btree_invariants.vlt
 ../../../tests/golden/std/fetch_decode.vlt
-../../../tests/golden/std/http_server_websocket.vlt
+../../../tests/std/http/websocket.test.vlt
 ../../../tests/golden/std/streams_basic.vlt
 ../../../tests/golden/std/object_create_null_dict.vlt
 ../../../tests/golden/std/sqlite_sql_parse.vlt

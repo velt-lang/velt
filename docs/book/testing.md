@@ -186,6 +186,10 @@ it("checks a reply", () => {
 });
 ```
 
+`velt:test/http` has matchers for a `Response`: `import "velt:test/http"`, then
+`expect(res).toHaveStatus(204)` and `expect(res).toHaveHeader("etag", "\"v1\"")` (without the
+value: that the header is there; with `.not`: that it isn't).
+
 The calls are direct, so a custom matcher costs what a built-in one does. An `extend` block
 applies wherever its module is loaded, so a library of matchers is a module that test files
 import (`import "./matchers"`). A custom matcher's failure is located at its `check` call;
@@ -215,6 +219,14 @@ test program by hand (`velt test --no-run` prints its path) and it runs its test
 `--watch` reruns the tests whenever a file they import, a test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
 above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
+
+### Checking for leaks
+
+`VELT_RC_STATS=1 velt test` also checks that each test file's process frees every block it
+allocates (debug builds; the standard library's own tests run this way). A file whose tests leave
+something allocated fails with `FAILED <file> (N blocks not freed)`. Close every server and
+connection a test opens: one still running 120 s after the file's tests fails the file as
+`still running … after its tests`.
 
 ## How tests are built
 

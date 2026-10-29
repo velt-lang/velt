@@ -1,0 +1,342 @@
+// velt:http's responses as the client sees them: status, headers and body.
+import { serve, ServeInfo } from "velt:http";
+import { HttpRequest, HttpResponse, serve as serveRaw } from "velt:http/server";
+import { connect } from "velt:net";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+
+// What the server answers `raw`, sent on a connection of its own, as one string.
+async function exchange(port: number, raw: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(raw);
+  c.shutdown();
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all;
+}
+
+describe("a response without a body", () => {
+  // 204 and 304 have no body, so no body headers: no default `content-type` is added (Node and
+  // the Fetch API do the same), also when a handler passes on a fetched one. Other statuses keep
+  // them. (Was the golden std/http_no_content.)
+  let base = "";
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const url = new URL(req.url);
+      if (url.pathname == "/none") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname == "/cached") {
+        return new Response(null, { status: 304, headers: { etag: "\"v1\"" } });
+      }
+      if (url.pathname == "/proxied") {
+        return await fetch(`${url.origin}/none`);
+      }
+      return new Response("hello");
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("204 has no content-type or content-length", async () => {
+    const r = await fetch(`${base}/none`);
+    expect(r).toHaveStatus(204);
+    expect(r).not.toHaveHeader("content-type");
+    expect(r).not.toHaveHeader("content-length");
+    expect(await r.text()).toBe("");
+  });
+
+  it("304 keeps its own headers only", async () => {
+    const r = await fetch(`${base}/cached`);
+    expect(r).toHaveStatus(304);
+    expect(r).not.toHaveHeader("content-type");
+    expect(r).not.toHaveHeader("content-length");
+    expect(r).toHaveHeader("etag", "\"v1\"");
+    expect(await r.text()).toBe("");
+  });
+
+  it("a passed-on 204 stays without body headers", async () => {
+    const r = await fetch(`${base}/proxied`);
+    expect(r).toHaveStatus(204);
+    expect(r).not.toHaveHeader("content-type");
+    expect(r).not.toHaveHeader("content-length");
+  });
+
+  it("200 gets the default content-type and its length", async () => {
+    const r = await fetch(`${base}/ok`);
+    expect(r).toHaveStatus(200);
+    expect(r).toHaveHeader("content-type", "text/plain;charset=UTF-8");
+    expect(r).toHaveHeader("content-length", "5");
+    expect(await r.text()).toBe("hello");
+  });
+});
+
+describe("number fields", () => {
+  // The HTTP server's port and a response's status are numbers, as in TypeScript: a `number`
+  // goes in without a cast (`{ port }`, `{ status }`), and `server.port` and
+  // `info.remoteAddr.port` read as numbers. (Was the golden std/http_number_fields.)
+  const codes: number[] = [201, 404, 503];
+  let listening = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const port = Number("0");
+    const server = await serve({ port }, async (
+      req: Request,
+      info: ServeInfo,
+    ): Promise<Response> => {
+      const i = Number(new URL(req.url).searchParams.get("i") ?? "0");
+      const from: number = info.remoteAddr.port;
+      return new Response(`status ${codes[i]} from a port: ${from > 0}`, { status: codes[i] });
+    });
+    const p: number = server.port;
+    listening = p;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  it("a number status goes out and reads back as a number", async () => {
+    const oks = [true, false, false];
+    for (let i = 0; i < codes.length; i++) {
+      const res = await fetch(`http://127.0.0.1:${listening}/?i=${i}`);
+      const status: number = res.status;
+      expect(status).toBe(codes[i]);
+      expect(res.ok).toBe(oks[i]);
+      expect(await res.text()).toBe(`status ${codes[i]} from a port: true`);
+    }
+  });
+
+  it("Response.redirect takes a number status", () => {
+    const status: number = Response.redirect("http://x/", 307).status;
+    expect(status).toBe(307);
+  });
+});
+
+// The response's lines but Date and Server, joined by " / ".
+function show(text: string): string {
+  return text
+    .split("\r\n")
+    .filter((l) => !l.startsWith("Date:") && !l.startsWith("Server:"))
+    .join(" / ");
+}
+
+function attempt(label: string, f: () => void throws Error): string {
+  try {
+    f();
+    return `${label}: ok`;
+  } catch (e) {
+    return `${label}: ${e.name}: ${e.message}`;
+  }
+}
+
+describe("velt:http/server's response checks", () => {
+  // velt:http/server's response checks, as Node's: a header name must be a token and a value
+  // must not hold CR, LF or NUL (TypeError: a value from the client cannot add a header), the
+  // status must be 100–999 (RangeError) and gets Node's reason phrase. Content-Length and
+  // Transfer-Encoding are the server's: a handler's are not sent, except a Content-Length for
+  // the response to HEAD. (Was the golden std/http_server_response.)
+  let port = 0;
+  let close = () => {};
+  // The body of /checks: one line per `attempt`.
+  let checks: string[] = [];
+  beforeAll(async () => {
+    const server = await serveRaw({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      if (req.pathIs("/checks")) {
+        const out = [
+          attempt("CR LF in a value", () => res.header("X-A", "a\r\nX-Injected: 1")),
+          attempt("LF in a value", () => res.header("X-A", "a\nb")),
+          attempt("NUL in a value", () => res.header("X-A", "a\0b")),
+          attempt("space in a name", () => res.header("X A", "a")),
+          attempt("empty name", () => res.header("", "a")),
+          attempt("tab and UTF-8", () => res.header("X-Ok", "a\tb é")),
+          attempt("status 7", () => res.status(7)),
+          attempt("status -5", () => res.status(-5)),
+          attempt("status 1000", () => res.status(1000)),
+          attempt("status 200.5", () => res.status(200.5)),
+          attempt("bad Content-Length", () => res.header("Content-Length", "2x")),
+        ];
+        res.send(out.join("\n"));
+      } else if (req.pathIs("/length")) {
+        res.header("Content-Length", "2");
+        res.header("Transfer-Encoding", "chunked");
+        res.send("abcdef");
+      } else if (req.pathIs("/upgrade")) {
+        // A value from the request in an upgrade header: refused, and nothing of it is sent.
+        try {
+          res.upgrade("x", [["A", "b\r\nC: d"]]);
+        } catch (e) {
+          res.send(`refused: ${e.name}`);
+        }
+      } else if (req.pathIs("/head")) {
+        res.header("Content-Length", "1000");
+        res.send("");
+      } else {
+        res.status(parseInt(req.query(), 10));
+        res.send("");
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+    const text = await exchange(
+      port,
+      "GET /checks HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    checks = text.substring(text.indexOf("\r\n\r\n") + 4).split("\n");
+  });
+  afterAll(() => close());
+
+  it("refuses CR, LF and NUL in a header value", () => {
+    expect(checks[0]).toBe("CR LF in a value: TypeError: invalid character in header X-A");
+    expect(checks[1]).toBe("LF in a value: TypeError: invalid character in header X-A");
+    expect(checks[2]).toBe("NUL in a value: TypeError: invalid character in header X-A");
+  });
+
+  it("refuses a header name that is not a token", () => {
+    expect(checks[3]).toBe("space in a name: TypeError: invalid header name: X A");
+    expect(checks[4]).toBe("empty name: TypeError: a header name must not be empty");
+  });
+
+  it("takes a tab and UTF-8 in a header value", () => {
+    expect(checks[5]).toBe("tab and UTF-8: ok");
+  });
+
+  it("refuses a status outside 100–999 or not an integer", () => {
+    expect(checks[6]).toBe("status 7: RangeError: invalid status code: 7");
+    expect(checks[7]).toBe("status -5: RangeError: invalid status code: -5");
+    expect(checks[8]).toBe("status 1000: RangeError: invalid status code: 1000");
+    expect(checks[9]).toBe("status 200.5: RangeError: invalid status code: 200.5");
+  });
+
+  it("refuses a Content-Length that is not a number", () => {
+    expect(checks[10]).toBe("bad Content-Length: TypeError: invalid Content-Length: 2x");
+    expect(checks).toHaveLength(11);
+  });
+
+  it("sends its own Content-Length, not the handler's or its Transfer-Encoding", async () => {
+    const text = await exchange(
+      port,
+      "GET /length HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(show(text)).toBe(
+      "HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 6 / Connection: close /  / abcdef",
+    );
+  });
+
+  it("sends the handler's Content-Length for HEAD", async () => {
+    const text = await exchange(
+      port,
+      "HEAD /head HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(show(text)).toBe(
+      "HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 1000 / Connection: close /  / ",
+    );
+  });
+
+  it("refuses CR LF in an upgrade header and sends none of it", async () => {
+    const text = await exchange(
+      port,
+      "GET /upgrade HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(show(text)).toBe(
+      "HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 18 / Connection: close /  / refused: TypeError",
+    );
+  });
+
+  const reasons: [number, string][] = [
+    [418, "I'm a Teapot"],
+    [422, "Unprocessable Entity"],
+    [429, "Too Many Requests"],
+    [409, "Conflict"],
+    [410, "Gone"],
+    [502, "Bad Gateway"],
+    [504, "Gateway Timeout"],
+    [599, "Unknown"],
+  ];
+  for (const [code, reason] of reasons) {
+    it(`status ${code} gets Node's reason phrase`, async () => {
+      const text = await exchange(
+        port,
+        `GET /s?${code} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
+      );
+      expect(text.split("\r\n")[0]).toBe(`HTTP/1.1 ${code} ${reason}`);
+    });
+  }
+});
+
+describe("HEAD, 204 and 304", () => {
+  // velt:http/server: a HEAD request gets the head a GET would (Content-Length included) and no
+  // body, for plain and streamed responses; 204 and 304 responses have no body and 204 no
+  // Content-Length. The connection goes on after each (pipelined requests answered in order).
+  // (Was the golden std/http_server_head.)
+  let port = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serveRaw({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      if (req.pathIs("/page")) {
+        res.html("<p>hello</p>");
+      } else if (req.pathIs("/stream")) {
+        const s = await res.stream();
+        await s.write("one ");
+        await s.write("two");
+        await s.end();
+      } else if (req.pathIs("/gone")) {
+        res.status(204);
+        res.send("ignored");
+      } else if (req.pathIs("/same")) {
+        res.status(304);
+        res.send("ignored too");
+      } else {
+        res.status(404);
+        res.send("no");
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  // The answer to `raw` with its lines joined by "|", without the Date header (it changes every
+  // second).
+  async function lines(raw: string): Promise<string> {
+    const text = await exchange(port, raw);
+    return text.replace(/Date: [^\r]*\r\n/g, "").replaceAll("\r\n", "|");
+  }
+
+  it("HEAD of a page gets GET's head and no body", async () => {
+    const got = await lines(
+      "HEAD /page HTTP/1.1\r\nHost: x\r\n\r\nGET /page HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/html; charset=utf-8|Content-Length: 12||" +
+        "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/html; charset=utf-8|Content-Length: 12|Connection: close||<p>hello</p>",
+    );
+  });
+
+  it("HEAD of a stream gets GET's head and no chunks", async () => {
+    const got = await lines(
+      "HEAD /stream HTTP/1.1\r\nHost: x\r\n\r\nGET /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/plain; charset=utf-8|Transfer-Encoding: chunked||" +
+        "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/plain; charset=utf-8|Transfer-Encoding: chunked|Connection: close||4|one |3|two|0||",
+    );
+  });
+
+  it("204 and 304 have no body, then a HEAD on the same connection", async () => {
+    const got = await lines(
+      "GET /gone HTTP/1.1\r\nHost: x\r\n\r\nGET /same HTTP/1.1\r\nHost: x\r\n\r\nHEAD /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(got).toBe(
+      "HTTP/1.1 204 No Content|Server: Velt||HTTP/1.1 304 Not Modified|Server: Velt||" +
+        "HTTP/1.1 404 Not Found|Server: Velt|Content-Type: text/plain; charset=utf-8|Content-Length: 2|Connection: close||",
+    );
+  });
+});

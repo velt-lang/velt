@@ -36,6 +36,7 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
 | `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
+| `cargo test -p veltc --test std_tests` | the standard library's behaviour tests: `velt test` over each `tests/std/<module>/`, in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
@@ -118,6 +119,21 @@ the commits being pushed: uncommitted and untracked files count, so commit or st
 progress first, or a scratch file can block an unrelated push and an uncommitted fix can hide a
 bad commit. (With a relative `core.hooksPath`, git looks for hooks in each worktree, so install
 them in each.)
+
+### Golden or `velt test`?
+
+- **A golden** (`tests/golden/**`) when the program's output is the specification: the language
+  (`m1`–`m4`, `lang`), compile errors (`.err`), exit codes and panic messages (`.code`,
+  `.stderr`), and runtime or ownership cases where the exact order of what is printed (across
+  tasks, callbacks, drops) is what's being tested.
+- **`velt test`** (`tests/std/<module>/*.test.vlt`) for the standard library's behaviour: a
+  `describe` per subject, an `it` per case, `expect` checks instead of printed text, so a
+  failure names the case and its line. They run with `cargo test -p veltc --test std_tests`
+  (`VELT_STD_TESTS=http` for one module), in debug mode and in release mode. The debug run checks
+  that each test file's process frees every block it allocates (`VELT_RC_STATS=1`, the goldens'
+  `// check: no leaks`) and uses the checking allocator as the goldens' debug runs do, so close
+  every server and connection a test opens. Matchers for one
+  module's types go in `std/test/<module>.vlt` (`velt:test/http`'s `toHaveStatus`).
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is

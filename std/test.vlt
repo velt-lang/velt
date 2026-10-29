@@ -15,7 +15,7 @@
 // - Started without either (a test program run by hand or under a debugger), it runs every file's
 //   tests in this process and prints the report itself.
 
-import { exec, ExecResult } from "velt:child_process";
+import { exec, ExecResult, spawn } from "velt:child_process";
 import { readFileSync } from "velt:fs";
 import { __claim, Body, Case, collect, Step, Suite } from "velt:test/suite";
 
@@ -160,6 +160,12 @@ export async function __run() {
     const from = Number(process.env.VELT_TEST_FROM ?? "0");
     const mark = `${MARK}${process.env.VELT_TEST_MARK ?? ""}:: `;
     const result = await runTests(files[Number(file) as usize], from as usize, mark);
+    // Counting blocks (`VELT_RC_STATS=1`, debug runtime): `main` returns, so the runtime frees
+    // the module state and reports what is left (`blocks=A/F`), which the runner checks. A test
+    // that left a timer or a server running then keeps the process alive (a leak).
+    if ((process.env.VELT_RC_STATS ?? "") == "1" && !result.teardownFailed) {
+      return;
+    }
     process.exit(result.teardownFailed ? 1 : 0);
   } else if (plan != null) {
     const ok = await runPlan(JSON.parse<Plan>(readFileSync(plan)));
@@ -427,9 +433,19 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
     env.set("VELT_TEST_FILTER", filter);
     env.set("VELT_TEST_EXACT", run.plan.exact ? "1" : "0");
   }
+  // Counting blocks, the process returns from `main` after its tests and waits for what is
+  // still running, as Node does: one that is still running after `LEAK_WAIT` is ended.
+  const counting = (process.env.VELT_RC_STATS ?? "") == "1";
   let r: ExecResult;
+  let ended = false;
   try {
-    r = await exec(run.exe, [], { env: env });
+    if (counting) {
+      const timed = await runTimed(run.exe, env, LEAK_WAIT);
+      r = timed.result;
+      ended = timed.ended;
+    } else {
+      r = await exec(run.exe, [], { env: env });
+    }
   } catch (e) {
     const text = __intrinsic_error_text(e);
     report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
@@ -485,6 +501,18 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   }
   const tests = run.tests ?? listed;
   run.tests = tests;
+  if (ended) {
+    report.lines.push(
+      `${paint.failed()} ${f.path} (still running ${LEAK_WAIT / 1000} s after its tests: a server, a connection or a timer left open)`,
+    );
+    report.failed++;
+    return tests.length;
+  }
+  const leaked = leakedBlocks(r.stderr);
+  if (leaked > 0) {
+    report.lines.push(`${paint.failed()} ${f.path} (${leaked} blocks not freed)`);
+    report.failed++;
+  }
   if (next >= tests.length) {
     if (r.code != 0) {
       report.lines.push(
@@ -499,6 +527,59 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   pushStderr(report, r.stderr);
   report.failed++;
   return next + 1;
+}
+
+/** How long a test process counting blocks may keep running after its tests (ms). */
+const LEAK_WAIT = 120000;
+
+/** What `runTimed` ran: as `exec` returns it, and whether it was ended for taking too long. */
+struct Timed {
+  result: ExecResult;
+  ended: bool;
+}
+
+/** Run `exe` with `env` to its end, as `exec` does, but end it after `limit` ms. */
+async function runTimed(exe: string, env: Map<string, string>, limit: number): Promise<Timed> {
+  const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const ended = shared(0 as i64);
+  const timer = setTimeout(
+    () => {
+      ended.set(1);
+      child.kill("SIGKILL");
+    },
+    limit as i64,
+  );
+  const out = await Promise.all([drain(() => child.readStdout()), drain(() => child.readStderr())]);
+  const code = await child.wait();
+  clearTimeout(timer);
+  child.close();
+  return { result: new ExecResult(code as number, out[0], out[1]), ended: ended.get() == 1 };
+}
+
+/** Everything `read` gives until it gives `""` (the end of the output). */
+async function drain(read: () => Promise<string, unknown>): Promise<string, unknown> {
+  let all = "";
+  while (true) {
+    const chunk = await read();
+    if (chunk == "") {
+      return all;
+    }
+    all += chunk;
+  }
+}
+
+/**
+ * The blocks a test process allocated and didn't free, from the runtime's report on its stderr
+ * (`rc stats: … blocks=A/F …`, `VELT_RC_STATS=1` with the debug runtime); `0` without one.
+ */
+function leakedBlocks(stderr: string): number {
+  const at = stderr.lastIndexOf(" blocks=");
+  if (at < 0 || !stderr.includes("rc stats:")) {
+    return 0;
+  }
+  const field = stderr.slice(at + 8).split(" ")[0];
+  const counts = field.split("/");
+  return counts.length == 2 ? Number(counts[0]) - Number(counts[1]) : 0;
 }
 
 function pushStderr(report: Report, stderr: string) {
