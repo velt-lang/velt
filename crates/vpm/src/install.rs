@@ -41,18 +41,22 @@ pub struct Installed {
     pub lock_changed: bool,
     /// Installed registry versions that are yanked (pinned by `velt.lock.json`); callers warn.
     pub yanked: Vec<(String, semver::Version)>,
+    /// Warnings of the resolution, printed with the yanked versions ([`Installed::yank_warnings`]).
+    pub warnings: Vec<String>,
     /// Things `velt install` tells the user (a package below a workspace that doesn't list it).
     pub notes: Vec<String>,
 }
 
 impl Installed {
-    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version.
+    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version, then
+    /// the resolution's other warnings (a git package's links on Windows).
     pub fn yank_warnings(&self) -> Vec<String> {
         self.yanked
             .iter()
             .map(|(name, version)| {
                 format!("`{name}` {version} is yanked (pinned by velt.lock.json)")
             })
+            .chain(self.warnings.iter().cloned())
             .collect()
     }
 }
@@ -172,6 +176,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
+        warnings: resolution.warnings.clone(),
         notes,
     })
 }
@@ -227,7 +232,8 @@ fn fetch<'r>(
             Source::Registry { checksum, .. } => {
                 cache::fetch(loc, &pkg.name, &pkg.version, checksum)?
             }
-            Source::Path { dir } => dir.clone(),
+            // Checked out, and verified against the lock, by the resolution.
+            Source::Path { dir } | Source::Git { dir, .. } => dir.clone(),
         };
         dirs.insert(pkg.name.clone(), dir);
     }
@@ -271,6 +277,28 @@ fn natives<'r>(
                 let m = Manifest::from_dir(dir)?;
                 native_from_source(dir, &m, target)?
             }
+            Source::Git {
+                dir, spec, commit, ..
+            } => {
+                let m = Manifest::from_dir(dir)?;
+                // As a registry package without a prebuilt library: building runs its build
+                // scripts, so only when the user asks for it.
+                if m.native.is_some() && !from_source_allowed() {
+                    return Err(format!(
+                        "`{}` from {} has native code, which a git dependency builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it",
+                        pkg.name,
+                        spec.describe()
+                    ));
+                }
+                // Built from a copy: cargo writes `Cargo.lock` beside the crate, and the checkout
+                // must stay as fetched (its checksum is verified on every use).
+                let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
+                let copy = work.join("package");
+                if m.native.is_some() && !copy.is_dir() {
+                    crate::contents::copy_package(dir, &copy)?;
+                }
+                native_from_source_in(&copy, &m, target, &work)?
+            }
         };
         if let Some(lib) = lib {
             natives.insert(pkg.name.clone(), lib);
@@ -304,6 +332,21 @@ fn native_from_source(
     manifest: &Manifest,
     target: &str,
 ) -> Result<Option<NativeLib>, String> {
+    native_from_source_in(
+        dir,
+        manifest,
+        target,
+        &dir.join("target").join("velt-native"),
+    )
+}
+
+/// [`native_from_source`], building in `work` (a git checkout in the cache stays as fetched).
+fn native_from_source_in(
+    dir: &Path,
+    manifest: &Manifest,
+    target: &str,
+    work: &Path,
+) -> Result<Option<NativeLib>, String> {
     if manifest.native.is_none() {
         return Ok(None);
     }
@@ -316,7 +359,6 @@ fn native_from_source(
             dir.display()
         ));
     }
-    let work = dir.join("target").join("velt-native");
     let out = work.join(target);
     build(BuildRequest {
         root: dir,
@@ -451,6 +493,12 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                     Some(checksum.clone()),
                     native.clone(),
                 ),
+                Source::Git {
+                    spec,
+                    commit,
+                    checksum,
+                    ..
+                } => (spec.source(commit), Some(checksum.clone()), BTreeMap::new()),
                 Source::Path { dir } => (
                     format!(
                         "{}+{}",

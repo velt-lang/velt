@@ -56,12 +56,24 @@ export type Package = {
 /// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
 export type Dependency = string | DependencySource;
 
-/// Where a dependency comes from: a registry version, a local directory, or both.
+/// Where a dependency comes from: a registry version, a local directory, a git repository, or a
+/// version and one of the others.
 export type DependencySource = {
   /// A semver requirement.
   version?: string;
-  /// A local package directory, relative to this manifest.
+  /// A local package directory, relative to this manifest; with `git`, the package's directory in
+  /// the repository.
   path?: string;
+  /// A git repository URL (`https://…`, `ssh://…`, `git@host:path`): the package comes from it,
+  /// at the commit `velt.lock.json` records.
+  git?: string;
+  /// With `git`: the branch to follow (default: the repository's default branch); `velt update`
+  /// moves to its newest commit.
+  branch?: string;
+  /// With `git`: a tag.
+  tag?: string;
+  /// With `git`: a full commit hash.
+  rev?: string;
 };
 
 /// JSX settings of a package.

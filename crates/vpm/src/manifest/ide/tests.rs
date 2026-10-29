@@ -68,7 +68,7 @@ fn nested_objects_complete_their_own_fields() {
     assert_eq!(labels("{ native: { targets: [], | } }"), ["path", "wasm"]);
     assert_eq!(
         labels("{ dependencies: { util: { path: \"../u\", | } } }"),
-        ["version"]
+        ["version", "git", "branch", "tag", "rev"]
     );
     // The keys of `dependencies` and `paths` are the user's.
     assert!(labels("{ dependencies: { | } }").is_empty());

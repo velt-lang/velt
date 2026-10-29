@@ -84,6 +84,7 @@ pub fn install(
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
+        warnings: resolution.warnings.clone(),
         notes: vec![],
     })
 }

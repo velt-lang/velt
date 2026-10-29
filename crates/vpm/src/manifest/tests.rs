@@ -65,6 +65,7 @@ fn strings_are_escaped() {
         Dependency::Detailed(DetailedDependency {
             version: None,
             path: Some(path.into()),
+            ..Default::default()
         }),
     );
     let text = m.to_vlt();

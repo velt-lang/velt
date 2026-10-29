@@ -36,8 +36,8 @@ pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &Pa
             req.name,
             describe_want(&req.name, &req.want)
         ),
-        (Want::Path { .. }, _) => format!(
-            "the package at the path does not match {} (required by {by})",
+        (Want::Path { .. } | Want::Git { .. }, _) => format!(
+            "the package there does not match {} (required by {by})",
             describe_want(&req.name, &req.want)
         ),
     }
@@ -51,6 +51,11 @@ fn describe_want(name: &str, want: &Want) -> String {
             req: Some(req),
         } => format!("`{name} {req}` at path `{}`", dir.display()),
         Want::Path { dir, req: None } => format!("`{name}` at path `{}`", dir.display()),
+        Want::Git {
+            spec,
+            req: Some(req),
+        } => format!("`{name} {req}` from {}", spec.describe()),
+        Want::Git { spec, req: None } => format!("`{name}` from {}", spec.describe()),
     }
 }
 
@@ -58,5 +63,11 @@ fn describe_selected(sel: &Selected) -> String {
     match &sel.pkg.source {
         Source::Registry { .. } => sel.pkg.version.to_string(),
         Source::Path { dir } => format!("{} at path `{}`", sel.pkg.version, dir.display()),
+        Source::Git { spec, commit, .. } => format!(
+            "{} from {} at commit {}",
+            sel.pkg.version,
+            spec.describe(),
+            &commit[..12]
+        ),
     }
 }
