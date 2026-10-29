@@ -10,6 +10,7 @@
 // its handler settles (the server then releases the runtime request); what was read stays
 // readable.
 
+import { JSON, JsonError } from "velt:prelude/json/json";
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";

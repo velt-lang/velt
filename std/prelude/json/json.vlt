@@ -1,4 +1,6 @@
-// Prelude: `JSON`, `JsonError` and `JsonValue` (rt_abi_async.md §12.3–12.5).
+// Prelude, loaded on use: `JSON`, `JsonError` and `JsonValue` (rt_abi_async.md §12.3–12.5). A
+// program loads this module when one of its modules names one of them (the global
+// std/prelude/global/json.vlt) or imports a std module that uses them.
 //
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures

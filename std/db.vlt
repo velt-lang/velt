@@ -11,6 +11,8 @@
 // copy beyond the values kept. Any other row type is read through the JSON text of the rows
 // (`rowsJson`), with the same result.
 
+import { JSON } from "velt:prelude/json/json";
+
 /** What a column of the current row holds. */
 export enum CellKind {
   Null,

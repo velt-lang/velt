@@ -1,7 +1,9 @@
 # velt:json
 
-`import { Value } from "velt:json"`. `JSON` itself is in the prelude. This module only exports
-`Value`, the dynamic JSON value (an alias of the prelude's `JsonValue`).
+`import { Value } from "velt:json"`. `JSON` itself is a global, like the prelude's names: it needs
+no import, and a program whose code never names `JSON`, `JsonValue`, `JsonError` or
+`JsonParseOptions` doesn't load it, so it costs that program no compile time. This module only
+exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`).
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
