@@ -93,8 +93,9 @@ impl Ctx<'_> {
             match self.ty.kind(t).clone() {
                 TyKind::Adt(d, a) if a.is_empty() && self.is_object_type(t) => {
                     self.object_impls.sources.push(t);
-                    let fields = self.adt(d).map(|a| a.fields.iter().map(|f| f.ty).collect());
-                    todo.extend(fields.unwrap_or_else(Vec::new));
+                    let fields: Option<Vec<TyId>> =
+                        self.adt(d).map(|a| a.fields.iter().map(|f| f.ty).collect());
+                    todo.extend(fields.unwrap_or_default());
                 }
                 TyKind::Dyn(i, _) if self.literal_ifaces.contains(&i) => {
                     self.object_impls.sources.push(t);
