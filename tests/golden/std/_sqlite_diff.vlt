@@ -139,6 +139,6 @@ export function checkAll(label: string, c: CDatabase, v: Database, queries: stri
     }
   }
   console.log(
-    `${label}: ${queries.length} queries, ${bad == 0 ? "all the same" : `${bad} differ`}`,
+    `${label}: ${queries.length} queries, ${bad == 0 ? "all the same" : bad + " differ"}`,
   );
 }
