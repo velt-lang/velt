@@ -2,7 +2,7 @@
 // `key in x` through `any` (#379, #823): standard library classes answer as the JavaScript
 // built-ins they stand for (an `Error`, a `DataView`, an `ArrayBuffer`), not with their private
 // fields; a class has every field it declares; an object type its optional fields while
-// present; tuples, proxies of arrays and generic code.
+// present; tuples, proxies of arrays, generic code and functions with properties.
 class Base {
   base = 1;
   hello(): string {
@@ -56,6 +56,12 @@ function main(): void {
   console.log("weakmap", "get" in wm, "size" in wm);
   const arrow: any = (x: number): number => x + 1;
   console.log("arrow", "call" in arrow, "bind" in arrow, "foo" in arrow);
+  // A function given a property through `any` (#1772) has it.
+  const g: any = function tagged(): number {
+    return 1;
+  };
+  g.tag = 1;
+  console.log("fnprops", "tag" in g, "call" in g, "other" in g, Symbol.hasInstance in g);
   const lit: any = {
     get g(): number {
       return 1;

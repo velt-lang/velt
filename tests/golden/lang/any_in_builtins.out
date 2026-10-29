@@ -5,6 +5,7 @@ apperror true true true false
 tuple true true false true true
 weakmap true false
 arrow true true false
+fnprops true true false true
 literal true true false
 proxy true false true true
 trap false true

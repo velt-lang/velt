@@ -192,11 +192,8 @@ impl FnLower<'_, '_> {
         let (_, absent) = self.fn_prop_find(data, key, ty);
         self.ret_status(yes);
         self.switch_to(absent);
-        for name in FN_PROTO.iter().chain(OBJECT_PROTO.iter()) {
-            let next = self.on_key(key, name);
-            self.ret_status(yes);
-            self.switch_to(next);
-        }
+        self.has_names(key, super::any_has_builtin::FN_PROTO_NAMES, yes);
+        self.has_names(key, &OBJECT_PROTO, yes);
         self.ret_status(no);
     }
 
