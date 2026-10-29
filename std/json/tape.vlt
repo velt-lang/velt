@@ -27,7 +27,6 @@ import {
   nextEscape,
   putDecimal,
   shortNumber,
-  writeF64,
   writeString,
 } from "velt:json/writer";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader";
@@ -35,8 +34,6 @@ import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
-declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
-declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_bytes_put_f64(bytes: u8[], at: u64, v: f64): u64;
 declare function velt_rt_strbuf_finish(buf: string, out: string);
@@ -293,105 +290,193 @@ export class Tape {
    * that takes `out` gets no argument that is itself a call (it would make a copy of `out`
    * first, and the text would go to the copy): such arguments are made into locals before.
    * Iterative, with the open containers on a stack of its own, so a value nested as deeply as
-   * the parser allowed writes without running out of native stack. The text goes through a byte
-   * buffer (`ByteOut`) handed to the builder in chunks: punctuation, strings and short numbers
-   * cost a store, not a call each.
+   * the parser allowed writes without running out of native stack. The text is gathered in a
+   * byte array handed to the builder in chunks: punctuation, strings and numbers cost stores,
+   * not a call each.
    */
   write(out: string, v: u32): void {
-    // The open containers, innermost last, two words each: the container's position, with
-    // bit 32 set for an object and bit 33 when its members are listed in `ordered` (read
-    // through `member`, else they follow its start in `kids`); then its member count, with the
-    // member it writes next from bit 32.
-    const open: u64[] = [];
-    const o = new ByteOut();
+    const words = this.words;
+    const kids = this.kids;
+    const src = this.src;
+    const srcLen = __intrinsic_str_byte_len(src);
+    // The text so far: `n` bytes of `buf`, `extra` of them beyond their UTF-16 units (non-ASCII
+    // text copied in). Each round of the loop starts at most `OUT_CAP` bytes in and writes at
+    // most `OUT_ROOM` more, but for strings, which check their own length.
+    const buf: u8[] = __intrinsic_array_with_capacity(OUT_CAP + OUT_ROOM);
+    __intrinsic_array_set_len(buf, OUT_CAP + OUT_ROOM);
+    let n: usize = 0;
+    let extra: u64 = 0;
+    // The innermost open container: `info` (its position, `IS_OPEN`, `IS_OBJECT`,
+    // `IS_ORDERED`; 0 while none is open), its next member `cur` and its end `end`: positions
+    // in `kids`, or in its member list (`member`) when it is ordered. The containers around it
+    // wait on `stack`, two words each (`cur | end << 32`, then `info`), the outermost first.
+    let info: u64 = 0;
+    let cur: u64 = 0;
+    let end: u64 = 0;
+    const stack: u64[] = [];
+    let sp: usize = 0;
+    // 1, or 0 right after a container opens: whether a comma goes before the next member.
+    let comma: usize = 1;
     let at = v;
     while (true) {
-      const k = this.kind(at);
-      if (k == T_ARRAY || k == T_OBJECT) {
+      if (n > OUT_CAP) {
+        const len = n as u64;
+        const units = len - extra;
+        velt_rt_strbuf_push_u8s(out, buf, len, units);
+        n = 0;
+        extra = 0;
+      }
+      const w = words[2 * (at as usize)];
+      const k = w & 0xff;
+      if (k == T_NUMBER) {
+        const x = f64.fromBits(words[2 * (at as usize) + 1]);
+        n = putNumber(buf, n, x);
+      } else if (k == T_STRING) {
+        const p = words[2 * (at as usize) + 1];
+        let to = putText(buf, n, src, srcLen, w, p);
+        if (to == NO_ROOM) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+          to = this.textAfterFlush(out, buf, src, srcLen, w, p, at);
+        }
+        extra += textExtra(w, p, to - n);
+        n = to;
+      } else if (k >= T_ARRAY) {
         const object = k == T_OBJECT;
-        o.byte(out, object ? 123 : 91);
-        const n = this.count(at);
-        if (n > 0) {
-          const ordered = (this.words[2 * (at as usize)] & ORDERED) != 0;
-          open.push((at as u64) | (object ? 1 << 32 : 0) | (ordered ? 1 << 33 : 0));
-          open.push(n as u64);
+        const count = w >> 32;
+        buf[n] = object ? 123 : 91;
+        n++;
+        if (count == 0) {
+          buf[n] = object ? 125 : 93;
+          n++;
         } else {
-          o.byte(out, object ? 125 : 93);
+          if (info != 0) {
+            if (sp == stack.length) {
+              stack.push(0);
+              stack.push(0);
+            }
+            stack[sp] = cur | (end << 32);
+            stack[sp + 1] = info;
+            sp += 2;
+          }
+          if ((w & ORDERED) != 0) {
+            info = (at as u64) | IS_OPEN | IS_OBJECT | IS_ORDERED;
+            cur = 0;
+            end = this.count(at) as u64;
+          } else {
+            info = (at as u64) | IS_OPEN | (object ? IS_OBJECT : 0);
+            cur = words[2 * (at as usize) + 1];
+            end = cur + count;
+          }
+          comma = 0;
         }
       } else {
-        this.writeScalar(o, out, at, k);
+        n = putLiteral(buf, n, k);
       }
-      // The next value to write: the next member of the innermost open container, closing the
-      // containers that have none left.
-      let found = false;
-      while (open.length > 0) {
-        const top = open.length - 1;
-        const info = open[top - 1];
-        const pos = open[top];
-        const i = (pos >> 32) as i64;
-        const object = (info & (1 << 32)) != 0;
-        if (i >= ((pos & 0xffffffff) as i64)) {
-          open.pop();
-          open.pop();
-          o.byte(out, object ? 125 : 93);
-          continue;
+      // An array's numbers in a row, each with its comma (none right after the bracket).
+      if ((info & (IS_OBJECT | IS_ORDERED)) == 0) {
+        while (cur < end) {
+          const m = kids[cur as usize];
+          const wm = words[2 * (m as usize)];
+          if ((wm & 0xff) != T_NUMBER) {
+            break;
+          }
+          if (n > OUT_CAP) {
+            const len = n as u64;
+            const units = len - extra;
+            velt_rt_strbuf_push_u8s(out, buf, len, units);
+            n = 0;
+            extra = 0;
+          }
+          buf[n] = 44;
+          const x = f64.fromBits(words[2 * (m as usize) + 1]);
+          n = putNumber(buf, n + comma, x);
+          comma = 1;
+          cur++;
         }
-        if (i > 0) {
-          o.byte(out, 44);
+      }
+      // Close the containers that are complete, then the next member.
+      while (cur == end) {
+        if (info == 0) {
+          // The last container closed (or the value was no container): the rest of the text.
+          const len = n as u64;
+          const units = len - extra;
+          if (len > 0) {
+            velt_rt_strbuf_push_u8s(out, buf, len, units);
+          }
+          return;
         }
-        open[top] = pos + (1 << 32);
-        const c = (info & 0xffffffff) as u32;
-        const m =
-          (info & (1 << 33)) != 0
-            ? this.member(c, i) as u32
-            : this.kids[(this.words[2 * (c as usize) + 1] + (i as u64)) as usize];
-        if (object) {
-          this.writeText(o, out, m);
-          o.byte(out, 58);
-          at = m + 1;
+        buf[n] = (info & IS_OBJECT) != 0 ? 125 : 93;
+        n++;
+        if (n > OUT_CAP) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+        }
+        if (sp == 0) {
+          info = 0;
+          cur = 0;
+          end = 0;
         } else {
-          at = m;
+          sp -= 2;
+          const e = stack[sp];
+          cur = e & 0xffffffff;
+          end = e >> 32;
+          info = stack[sp + 1];
         }
-        found = true;
-        break;
       }
-      if (!found) {
-        o.flush(out);
-        return;
+      buf[n] = 44;
+      n += comma;
+      comma = 1;
+      const c = (info & 0xffffffff) as u32;
+      const m = (info & IS_ORDERED) != 0 ? this.member(c, cur as i64) as u32 : kids[cur as usize];
+      cur++;
+      if ((info & IS_OBJECT) != 0) {
+        // The key, its colon, then its value next round.
+        const kw = words[2 * (m as usize)];
+        const kp = words[2 * (m as usize) + 1];
+        let to = putText(buf, n, src, srcLen, kw, kp);
+        if (to == NO_ROOM) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+          to = this.textAfterFlush(out, buf, src, srcLen, kw, kp, m);
+        }
+        extra += textExtra(kw, kp, to - n);
+        buf[to] = 58;
+        n = to + 1;
+        at = m + 1;
+      } else {
+        at = m;
       }
     }
   }
 
-  // A value that is no container, of kind `k`, into `o`.
-  private writeScalar(o: ByteOut, out: string, v: u32, k: u64): void {
-    if (k == T_NULL) {
-      o.ascii(out, "null");
-    } else if (k == T_TRUE) {
-      o.ascii(out, "true");
-    } else if (k == T_FALSE) {
-      o.ascii(out, "false");
-    } else if (k == T_NUMBER) {
-      const x = this.number(v);
-      o.number(out, x);
-    } else {
-      this.writeText(o, out, v);
+  // String `v` (words `w`, `p`) once `write`'s buffer `buf` is flushed: into `buf` from 0 when it
+  // fits (the position after it), else straight to the builder with its escapes (0).
+  private textAfterFlush(
+    out: string,
+    buf: u8[],
+    src: string,
+    srcLen: usize,
+    w: u64,
+    p: u64,
+    v: u32,
+  ): usize {
+    const to = putText(buf, 0, src, srcLen, w, p);
+    if (to != NO_ROOM) {
+      return to;
     }
-  }
-
-  // String or key `v`, quoted: its source text copied when it had no escapes.
-  private writeText(o: ByteOut, out: string, v: u32): void {
-    const w = this.words[2 * (v as usize)];
-    const p = this.words[2 * (v as usize) + 1];
-    if ((w & ESCAPED) != 0) {
-      o.flush(out);
-      const s = this.decoded[p as usize];
-      writeString(out, s);
-      return;
-    }
-    const start = (p & 0xffffffff) as usize;
-    const end = (p >> 32) as usize;
-    const units = w >> 32;
-    o.source(out, this.src, start, end, units);
+    const s = this.text(v);
+    writeString(out, s);
+    return 0;
   }
 
   /** Value `v` as compact JSON text. */
@@ -405,109 +490,86 @@ export class Tape {
   }
 }
 
-// Room in `ByteOut`'s buffer before it goes to the builder; 32 more bytes take a 16-byte block
-// copied past a run's end (`copyRun`) and a number's digits.
-const OUT_CAP: usize = 8192;
+// `Tape.write`'s byte buffer: it goes to the builder once a round of the walk starts past
+// `OUT_CAP` bytes, and a round writes at most `OUT_ROOM` bytes (a number takes 32 for the
+// runtime's printer), but for strings, which check their own length.
+const OUT_CAP: usize = 2048;
+const OUT_ROOM: usize = 64;
+// The innermost open container's flags in `Tape.write` (above its position).
+const IS_OBJECT: u64 = 1 << 32;
+const IS_ORDERED: u64 = 1 << 33;
+const IS_OPEN: u64 = 1 << 34;
+// `putText`: the string needs escapes, or doesn't fit.
+const NO_ROOM: usize = ~(0 as usize);
 
-// JSON text for a builder, gathered in a byte array and handed over in chunks
-// (`velt_rt_strbuf_push_u8s`), with its UTF-16 count kept as it fills. Whoever writes to the
-// builder directly flushes first, so the text stays in order.
-class ByteOut {
-  buf: u8[];
-  n: usize = 0;
-  // Bytes in `buf` beyond their UTF-16 units (non-ASCII text copied in).
-  extra: u64 = 0;
-
-  constructor() {
-    this.buf = __intrinsic_array_with_capacity(OUT_CAP + 32);
-    __intrinsic_array_set_len(this.buf, OUT_CAP + 32);
+// String `w`, `p` (a tape string's words) quoted into `buf` at `o`, copied from `src`
+// (`srcLen` bytes); the position after it. `NO_ROOM` when it had escapes or needs some (only
+// non-ASCII text can, for a lone surrogate), or when it doesn't fit with a colon and the 15
+// bytes `copyRun` may write past its end.
+function putText(buf: u8[], o: usize, src: string, srcLen: usize, w: u64, p: u64): usize {
+  if ((w & ESCAPED) != 0) {
+    return NO_ROOM;
   }
-
-  flush(out: string): void {
-    if (this.n > 0) {
-      const len = this.n as u64;
-      const units = len - this.extra;
-      velt_rt_strbuf_push_u8s(out, this.buf, len, units);
-      this.n = 0;
-      this.extra = 0;
-    }
+  const start = (p & 0xffffffff) as usize;
+  const stop = (p >> 32) as usize;
+  if (o + (stop - start) + 18 > OUT_CAP + OUT_ROOM) {
+    return NO_ROOM;
   }
-
-  byte(out: string, b: u8): void {
-    if (this.n >= OUT_CAP) {
-      this.flush(out);
-    }
-    this.buf[this.n] = b;
-    this.n++;
+  if ((w >> 32) != ((stop - start) as u64) && nextEscape(src, start, stop) < stop) {
+    return NO_ROOM;
   }
-
-  ascii(out: string, s: string): void {
-    const len = __intrinsic_str_byte_len(s);
-    if (this.n + len > OUT_CAP) {
-      this.flush(out);
-    }
-    for (let i: usize = 0; i < len; i++) {
-      this.buf[this.n + i] = __intrinsic_str_byte_at(s, i as u64);
-    }
-    this.n += len;
-  }
-
-  // A number as `JSON.stringify` writes it: from its digits when it has at most 15, else by the
-  // runtime's general printer, which writes into the buffer too.
-  number(out: string, x: f64): void {
-    if (x != x || x == Infinity || x == -Infinity) {
-      this.ascii(out, "null");
-      return;
-    }
-    const d = shortNumber(x);
-    if (!d.ok) {
-      // More than 15 digits, or out of the plain range: the general printer (not 0, which is
-      // an integer), into the buffer (the array has 32 bytes past `OUT_CAP`).
-      if (this.n > OUT_CAP) {
-        this.flush(out);
-      }
-      this.n = velt_rt_bytes_put_f64(this.buf, this.n as u64, x) as usize;
-      return;
-    }
-    if (this.n + 18 > OUT_CAP) {
-      this.flush(out);
-    }
-    this.n = putDecimal(this.buf, this.n, d.neg, d.m, d.k);
-  }
-
-  // Bytes `start` to `end` of `src` quoted: a string's text that had no escapes (no quote,
-  // backslash or control character; whole characters), `units` UTF-16 units. Copied as they are
-  // unless a byte needs an escape (a lone surrogate, which only non-ASCII text can have).
-  source(out: string, src: string, start: usize, end: usize, units: u64): void {
-    const len = end - start;
-    if (units != (len as u64) && nextEscape(src, start, end) < end) {
-      this.flush(out);
-      const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
-      writeString(out, s);
-      return;
-    }
-    if (this.n + len + 2 > OUT_CAP) {
-      this.flush(out);
-      if (len + 2 > OUT_CAP) {
-        // Longer than the buffer: straight to the builder.
-        const s = velt_rt_str_byte_slice(src, start as u64, end as u64);
-        velt_rt_strbuf_push_byte(out, 34);
-        velt_rt_strbuf_push_str(out, s);
-        velt_rt_strbuf_push_byte(out, 34);
-        return;
-      }
-    }
-    const srcLen = __intrinsic_str_byte_len(src);
-    this.buf[this.n] = 34;
-    const at = copyRun(this.buf, this.n + 1, src, start, end, srcLen);
-    this.buf[at] = 34;
-    this.n = at + 1;
-    this.extra += (len as u64) - units;
-  }
+  buf[o] = 34;
+  const at = copyRun(buf, o + 1, src, start, stop, srcLen);
+  buf[at] = 34;
+  return at + 1;
 }
 
-function pushAscii(out: string, s: string) {
-  velt_rt_strbuf_push_str(out, s);
+// The bytes beyond their UTF-16 units of string `w`, `p` written as `len` bytes into the
+// buffer (none when it went to the builder).
+function textExtra(w: u64, p: u64, len: usize): u64 {
+  if (len == 0) {
+    return 0;
+  }
+  return ((p >> 32) - (p & 0xffffffff)) - (w >> 32);
+}
+
+// A number as `JSON.stringify` writes it, into `buf` at `o` (32 bytes of room); the position
+// after it. From its digits when it has at most 15, else by the runtime's general printer.
+function putNumber(buf: u8[], o: usize, x: f64): usize {
+  if (x != x || x == Infinity || x == -Infinity) {
+    return putLiteral(buf, o, T_NULL);
+  }
+  const d = shortNumber(x);
+  if (!d.ok) {
+    // More than 15 digits, or out of the plain range: the general printer (not 0, which is an
+    // integer).
+    return velt_rt_bytes_put_f64(buf, o as u64, x) as usize;
+  }
+  return putDecimal(buf, o, d.neg, d.m, d.k);
+}
+
+// `null`, `true` or `false` (kind `k`) into `buf` at `o`; the position after it.
+function putLiteral(buf: u8[], o: usize, k: u64): usize {
+  if (k == T_TRUE) {
+    buf[o] = 116;
+    buf[o + 1] = 114;
+    buf[o + 2] = 117;
+    buf[o + 3] = 101;
+    return o + 4;
+  }
+  if (k == T_FALSE) {
+    buf[o] = 102;
+    buf[o + 1] = 97;
+    buf[o + 2] = 108;
+    buf[o + 3] = 115;
+    buf[o + 4] = 101;
+    return o + 5;
+  }
+  buf[o] = 110;
+  buf[o + 1] = 117;
+  buf[o + 2] = 108;
+  buf[o + 3] = 108;
+  return o + 4;
 }
 
 /** Why `parseTape` failed: the message `JSON.parseValue` throws. */
