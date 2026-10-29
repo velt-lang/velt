@@ -285,8 +285,14 @@ fn natives<'r>(
                         spec.describe()
                     ));
                 }
+                // Built from a copy: cargo writes `Cargo.lock` beside the crate, and the checkout
+                // must stay as fetched (its checksum is verified on every use).
                 let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
-                native_from_source_in(dir, &m, target, &work)?
+                let copy = work.join("package");
+                if m.native.is_some() && !copy.is_dir() {
+                    crate::contents::copy_package(dir, &copy)?;
+                }
+                native_from_source_in(&copy, &m, target, &work)?
             }
         };
         if let Some(lib) = lib {

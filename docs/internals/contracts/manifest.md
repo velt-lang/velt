@@ -153,10 +153,17 @@ records the workspace file, the globs' listings, the members' manifests and the 
 
 ## Git dependencies (additive, #1860)
 `vpm::git`. `DetailedDependency` gains `git`, `branch`, `tag`, `rev` (`Dependency::git` gives the
-`GitSpec`); `check_git`: `branch`/`tag`/`rev` need `git` and at most one is given, `rev` is a
-full commit hash (`git::is_commit`), `git` passes `git::check_url` (`https`, `http`, `ssh`, `git`,
-`file` URLs or `user@host:path`; no leading `-`, whitespace, `?` or `#`), and with `git` a `path`
-is a `/`-separated directory inside the repository. Resolution (`resolve::Want::Git`,
+`GitSpec`); `git::check_fields`: `branch`/`tag`/`rev` need `git` and at most one is given, `rev`
+is a full lowercase commit hash (`git::is_commit`, 40 or 64 digits), `git` passes
+`git::check_url` (`https`, `http`, `ssh`, `git`, `file` URLs or `user@host:path`; no leading `-`,
+whitespace, `?` or `#`; no password, and no user at all in `http(s)`), and with `git` a `path` is
+`/`-separated plain directory names (no `..`, root, drive or `:`). A git package's own `path`
+dependencies become `Want::Git` of the same URL at `GitRef::Rev(<commit>)` with their directory
+relative to the checkout, and must stay inside it (lexically and through symbolic links); so must
+the package's directory. git runs without `git rev-parse --local-env-vars`'s variables and never
+prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
+`core.autocrlf=false`, `core.eol=lf`, `core.symlinks=true` and `core.longpaths=true`. Lock query
+values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
 `Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
 spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with
 `git::checkout` into `<cache>/git/<sha256(url)[..10] hex>/<commit>/` (a shallow fetch of the
@@ -165,7 +172,7 @@ commit into a scratch bare repository, checked out into a staging directory, ren
 (`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole
 checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
 verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
-into `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
+from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
 `git` (a `version` beside it is published as the requirement).
 
 ## Fields

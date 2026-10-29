@@ -40,14 +40,49 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn velt(home: &Path, cwd: &Path, args: &[&str]) -> Output {
-    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(args)
+    velt_with(home, cwd, args, &[])
+}
+
+fn velt_with(home: &Path, cwd: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(args)
         .current_dir(cwd)
         .env("VELT_HOME", home)
         .env_remove("VELT_REGISTRY")
-        .env_remove("VELT_LAUNCHER")
-        .output()
-        .unwrap()
+        .env_remove("VELT_LAUNCHER");
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
+    cmd.output().unwrap()
+}
+
+/// `file:///…` for `path`, with `/` separators (`file:///C:/…` on Windows), so it can be written
+/// in a string literal of a manifest.
+fn file_url(path: &Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    match path.starts_with('/') {
+        true => format!("file://{path}"),
+        false => format!("file:///{path}"),
+    }
+}
+
+/// An app depending on the `demo` package of `repo` at its main branch.
+fn app(root: &Path, repo: &Path) -> PathBuf {
+    let app = root.join("app");
+    write(
+        &app,
+        "package.vlt",
+        &format!(
+            "export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ demo: {{ git: \"{}\", branch: \"main\", path: \"packages/velt\" }} }} }};\n",
+            file_url(repo)
+        ),
+    );
+    write(
+        &app,
+        "src/main.vlt",
+        "import { hello } from \"demo\";\n\nconsole.log(hello(\"velt\"));\n",
+    );
+    app
 }
 
 /// The upstream repository: `packages/signals` (TypeScript, `@demo/signals`) and
@@ -99,20 +134,7 @@ fn an_app_builds_against_a_package_of_a_git_monorepo() {
     let root = tmp.path();
     let home = root.join("home");
     let repo = upstream(root, "hello");
-    let app = root.join("app");
-    write(
-        &app,
-        "package.vlt",
-        &format!(
-            "export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ demo: {{ git: \"file://{}\", branch: \"main\", path: \"packages/velt\" }} }} }};\n",
-            repo.display()
-        ),
-    );
-    write(
-        &app,
-        "src/main.vlt",
-        "import { hello } from \"demo\";\n\nconsole.log(hello(\"velt\"));\n",
-    );
+    let app = app(root, &repo);
     let run = || {
         let o = velt(&home, &app, &["run"]);
         let err = String::from_utf8_lossy(&o.stderr).into_owned();
@@ -133,4 +155,69 @@ fn an_app_builds_against_a_package_of_a_git_monorepo() {
     let o = velt(&home, &app, &["update"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(run(), "hi velt\n");
+}
+
+/// The checkout, and so the lock's checksum, is the same whatever the machine's git configuration
+/// does to line endings (Git for Windows sets `core.autocrlf`), and the variables a git hook sets
+/// never send velt's git commands into the user's repository.
+#[test]
+fn git_configuration_and_hooks_change_nothing() {
+    let tmp = test_dir::TestDir::new();
+    let root = tmp.path();
+    let home = root.join("home");
+    let repo = upstream(root, "hello");
+    let app = app(root, &repo);
+    let o = velt(&home, &app, &["install"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+
+    // As on a machine whose configuration converts line endings: the lock still matches.
+    std::fs::remove_dir_all(home.join("cache/git")).unwrap();
+    let config = root.join("crlf.gitconfig");
+    std::fs::write(&config, "[core]\n\tautocrlf = true\n").unwrap();
+    let o = velt_with(
+        &home,
+        &app,
+        &["install", "--locked"],
+        &[("GIT_CONFIG_GLOBAL", &config)],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+
+    // As inside a `pre-commit` hook of another repository.
+    let victim = root.join("victim");
+    std::fs::create_dir_all(&victim).unwrap();
+    git(&victim, &["init", "-q"]);
+    write(&victim, "mine.txt", "mine\n");
+    git(&victim, &["add", "mine.txt"]);
+    let objects = |dir: &Path| walk(&dir.join(".git/objects"));
+    let before = objects(&victim);
+    std::fs::remove_dir_all(home.join("cache/git")).unwrap();
+    let git_dir = victim.join(".git");
+    let index = git_dir.join("index");
+    let env = [
+        ("GIT_DIR", git_dir.as_path()),
+        ("GIT_INDEX_FILE", &index),
+        ("GIT_WORK_TREE", &victim),
+    ];
+    let o = velt_with(&home, &app, &["install", "--locked"], &env);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(objects(&victim), before);
+    assert_eq!(git(&victim, &["status", "--porcelain"]), "A  mine.txt");
+}
+
+/// The files below `dir`, recursively.
+fn walk(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    if e.path().is_dir() {
+                        walk(&e.path())
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
 }

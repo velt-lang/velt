@@ -43,7 +43,9 @@ dependencies: {
 }
 ```
 
-- `git` is the repository: `https://…`, `ssh://…`, `git@host:path` or `file://…`. `branch`, `tag`
+- `git` is the repository: `https://…`, `ssh://…`, `git@host:path` or `file://…`, without
+  credentials in it (they would end up in `velt.lock.json`): git supplies them from your
+  credential helper or SSH keys. `branch`, `tag`
   or `rev` (a full commit hash) say which commit, at most one of them; without one, the
   repository's default branch. `path` is the package's directory in the repository, for a
   repository that holds several packages. A `version` beside them is a requirement the package
@@ -56,7 +58,15 @@ dependencies: {
 - **Fetched once.** `velt` runs the `git` command, so your credentials and SSH keys work for
   private repositories, and fetches just the commit, into `~/.velt/cache/git/`: each commit is
   checked out once per machine and never changed, and every use is checked against the lock's
-  checksum.
+  checksum. The checkout ignores your git configuration (`core.autocrlf`, filters), so it, and
+  the checksum, are the same on every machine, and the variables a git hook sets (`GIT_DIR`)
+  never redirect it.
+- **Packages of the same repository.** A `path` dependency of a package from git is another
+  package of the same commit, locked with it; a `path` that leads out of the repository (or a
+  symbolic link that does) is an error. A package from git can't be a workspace member: its
+  `"workspace"` dependencies are errors. A registry requirement on the same name (another
+  package's `json: "1.2"`) is met by the git package when its version matches, as by a `path`
+  package.
 - **The whole repository is there.** The checksum covers every file of the commit, not only the
   package's, because a package may import its repository's other packages: the TypeScript
   packages of a pnpm, npm or Yarn workspace in the checkout compile from their sources

@@ -55,12 +55,12 @@ impl GitSpec {
         let mut query = vec![];
         match &self.reference {
             GitRef::Default => {}
-            GitRef::Branch(b) => query.push(format!("branch={b}")),
-            GitRef::Tag(t) => query.push(format!("tag={t}")),
+            GitRef::Branch(b) => query.push(format!("branch={}", encode(b))),
+            GitRef::Tag(t) => query.push(format!("tag={}", encode(t))),
             GitRef::Rev(r) => query.push(format!("rev={r}")),
         }
         if let Some(dir) = &self.subdir {
-            query.push(format!("path={dir}"));
+            query.push(format!("path={}", encode(dir)));
         }
         let query = match query.is_empty() {
             true => String::new(),
@@ -84,7 +84,7 @@ impl GitSpec {
         };
         for pair in query.split('&').filter(|p| !p.is_empty()) {
             let (key, value) = pair.split_once('=')?;
-            let value = value.to_string();
+            let value = decode(value)?;
             match key {
                 "branch" => spec.reference = GitRef::Branch(value),
                 "tag" => spec.reference = GitRef::Tag(value),
@@ -113,6 +113,34 @@ impl GitSpec {
     }
 }
 
+/// `value` with the characters a lockfile source uses as delimiters (`&`, `=`, `#`, `?`) and `%`
+/// percent-encoded: git allows them in branch and directory names.
+fn encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '%' | '&' | '=' | '#' | '?' => out.push_str(&format!("%{:02X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// [`encode`] undone; `None` for a malformed escape.
+fn decode(value: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut bytes = value.bytes();
+    while let Some(b) = bytes.next() {
+        if b != b'%' {
+            out.push(b);
+            continue;
+        }
+        let hex = [bytes.next()?, bytes.next()?];
+        out.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+    }
+    String::from_utf8(out).ok()
+}
+
 /// Whether `s` is a full commit hash (SHA-1 or SHA-256, lowercase hex).
 pub fn is_commit(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
@@ -131,12 +159,25 @@ pub fn check_url(url: &str) -> Result<(), String> {
         && !url
             .chars()
             .any(|c| c.is_whitespace() || c.is_control() || c == '#' || c == '?');
-    match ok {
-        true => Ok(()),
-        false => Err(format!(
+    if !ok {
+        return Err(format!(
             "`{url}` is not a git repository URL (https://…, ssh://…, git@host:path or file://…, without `?` or `#`)"
-        )),
+        ));
     }
+    // A token in the URL would be printed in messages and written to `velt.lock.json`, which is
+    // committed. `ssh://git@host/…` names a user, not a secret.
+    let userinfo = url.split_once("://").and_then(|(scheme, rest)| {
+        let authority = rest.split('/').next().unwrap_or("");
+        authority.rsplit_once('@').map(|(info, _)| (scheme, info))
+    });
+    if let Some((scheme, info)) = userinfo {
+        if info.contains(':') || scheme.starts_with("http") {
+            return Err(
+                "a git URL can't hold credentials (they would be printed and written to velt.lock.json); let git supply them with a credential helper (`git config credential.helper`) or use an SSH URL".to_string(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The commit `spec`'s reference names now, asked of the repository.
@@ -229,7 +270,8 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
     )
     .map_err(|e| format!("cannot fetch commit {commit} of {url}: {e}"))?;
     let work_tree = format!("--work-tree={}", tree.display());
-    git(
+    git_with(
+        Config::Own,
         Some(&repo),
         &[&work_tree, "checkout", "-q", "-f", commit, "--", "."],
     )
@@ -254,10 +296,56 @@ impl Drop for Scratch {
     }
 }
 
-/// Run git (in `dir`, when given) without prompting for credentials; its stdout, or its stderr
-/// as the error.
+/// Git's variables that point it at a repository (`git rev-parse --local-env-vars`): set inside a
+/// git hook (a `pre-commit` running `velt test`), they would send velt's commands into the user's
+/// own repository.
+const LOCAL_ENV: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+];
+
+/// Which configuration git reads: the user's (credential helpers, `insteadOf`, SSH commands: for
+/// talking to a repository), or velt's alone (checking a commit out of velt's scratch repository,
+/// so the files, and the lock's checksum, are the same on every machine, whatever `core.autocrlf`
+/// or filters the user's configuration sets).
+#[derive(Clone, Copy, PartialEq)]
+enum Config {
+    User,
+    Own,
+}
+
+/// Run git (in `dir`, when given) without prompting for credentials and without the
+/// environment's repository ([`LOCAL_ENV`]); its stdout, or git's error as the error.
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    git_with(Config::User, dir, args)
+}
+
+fn git_with(config: Config, dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
+    for var in LOCAL_ENV {
+        cmd.env_remove(var);
+    }
+    if config == Config::Own {
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", null)
+            .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
+            .args(["-c", "core.symlinks=true", "-c", "core.longpaths=true"]);
+    }
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
     }
@@ -273,13 +361,20 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
+        // git's own `fatal:` line says what went wrong; what ssh printed before it doesn't.
         let err = String::from_utf8_lossy(&out.stderr);
-        Err(err
-            .trim()
+        let lines: Vec<&str> = err
             .lines()
-            .last()
-            .unwrap_or("git failed")
-            .to_string())
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with("fatal:"))
+            .or(lines.last())
+            .copied()
+            .unwrap_or("git failed");
+        Err(line.to_string())
     }
 }
 
@@ -382,7 +477,7 @@ pub(crate) fn check_fields(name: &str, d: &DetailedDependency) -> Result<(), Str
     if let Some(rev) = &d.rev {
         if !is_commit(rev) {
             return Err(format!(
-                "dependency `{name}`: `rev` must be a full commit hash (40 hex digits), not `{rev}`"
+                "dependency `{name}`: `rev` must be a full commit hash in lowercase hex (40 digits, or 64 for SHA-256), not `{rev}`"
             ));
         }
     }
@@ -396,12 +491,13 @@ pub(crate) fn check_fields(name: &str, d: &DetailedDependency) -> Result<(), Str
         }
     }
     if let Some(path) = &d.path {
-        let inside = !path.is_empty()
-            && !path.starts_with('/')
-            && !path.contains('\\')
-            && path
-                .split('/')
-                .all(|s| !s.is_empty() && s != "." && s != "..");
+        // Plain directory names on every OS: no `C:` drive, no root, no `..`.
+        let inside = path
+            .split('/')
+            .all(|s| !s.is_empty() && s != "." && s != ".." && !s.contains(['\\', ':']))
+            && Path::new(path)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)));
         if !inside {
             return Err(format!(
                 "dependency `{name}`: with `git`, `path` is a `/`-separated directory inside the repository, not `{path}`"

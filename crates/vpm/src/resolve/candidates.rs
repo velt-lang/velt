@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 
 use super::{dependency_requirements, parse_req, report, Requirement, Source, Want};
-use crate::git::GitSpec;
+use crate::git::{GitRef, GitSpec};
 use crate::locations::Locations;
 use crate::lockfile::{Lockfile, REGISTRY_SOURCE};
 use crate::manifest::Manifest;
@@ -186,6 +186,7 @@ impl Provider<'_> {
     /// The package of a git requirement: at the commit the lockfile records for the same spec
     /// (no network), else at the commit its reference names now; checked out into the cache.
     fn git_candidate(&self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
+        let named = |e: String| format!("git dependency `{}`: {e}", req.name);
         let locked = self
             .prefer
             .and_then(|lock| lock.get(&req.name))
@@ -195,35 +196,60 @@ impl Provider<'_> {
             });
         let (commit, checksum) = match locked {
             Some((commit, checksum)) => (commit, checksum),
-            None => (crate::git::resolve_ref(spec)?, None),
+            None => (crate::git::resolve_ref(spec).map_err(named)?, None),
         };
-        let named = |e: String| format!("git dependency `{}`: {e}", req.name);
         let checkout = crate::git::checkout(self.loc, &spec.url, &commit, checksum.as_deref())
             .map_err(named)?;
+        let sub = spec.subdir.as_deref().unwrap_or(".");
         let dir = match &spec.subdir {
             Some(sub) => checkout.join(sub),
             None => checkout.clone(),
         };
-        let manifest = Manifest::from_dir(&dir).map_err(|e| {
-            named(format!(
-                "{} has no package at {}: {e}",
-                spec.describe(),
-                spec.subdir.as_deref().unwrap_or("its root")
-            ))
-        })?;
+        let short = &commit[..12];
+        if !crate::probe::is_file(&dir.join(crate::manifest::MANIFEST_FILE)) {
+            return Err(named(format!(
+                "{} at commit {short} has no package at `{sub}` (no package.vlt there)",
+                spec.url
+            )));
+        }
+        if !inside(&dir, &checkout) {
+            return Err(named(format!(
+                "`{sub}` leads out of the repository (through a symbolic link)"
+            )));
+        }
+        let manifest = Manifest::from_dir(&dir).map_err(named)?;
         if manifest.package.name != req.name {
             return Err(named(format!(
-                "the package at {} is `{}`",
-                spec.describe(),
-                manifest.package.name
+                "the package at `{sub}` of {} is `{}`",
+                spec.url, manifest.package.name
             )));
         }
         let version = manifest.version();
         let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
-        let dependencies = dependency_requirements(&manifest, &dir, &chain)?
-            .into_iter()
-            .map(|r| (r.name, r.want))
-            .collect();
+        let mut dependencies = vec![];
+        for r in dependency_requirements(&manifest, &dir, &chain)? {
+            let want = match r.want {
+                // A path dependency of a git package is another package of the same commit,
+                // locked and verified as part of it, never a directory elsewhere (as in Cargo).
+                Want::Path { dir: path, req } => {
+                    if !path.starts_with(&checkout) || !inside(&path, &checkout) {
+                        return Err(named(format!(
+                            "its dependency `{}` has a `path` that leads out of the repository",
+                            r.name
+                        )));
+                    }
+                    let rel = crate::relpath::relative(&path, &checkout);
+                    let sibling = GitSpec {
+                        url: spec.url.clone(),
+                        reference: GitRef::Rev(commit.clone()),
+                        subdir: (rel != ".").then_some(rel),
+                    };
+                    Want::Git { spec: sibling, req }
+                }
+                want => want,
+            };
+            dependencies.push((r.name, want));
+        }
         let checksum = match checksum {
             Some(sum) => sum,
             None => crate::git::tree_checksum(&checkout)?,
@@ -238,6 +264,15 @@ impl Provider<'_> {
             },
             dependencies,
         })
+    }
+}
+
+/// Whether `dir` is inside `checkout` once symbolic links are followed. A path that doesn't exist
+/// counts as inside: reading it reports it.
+fn inside(dir: &Path, checkout: &Path) -> bool {
+    match (dir.canonicalize(), checkout.canonicalize()) {
+        (Ok(dir), Ok(checkout)) => dir.starts_with(checkout),
+        _ => true,
     }
 }
 

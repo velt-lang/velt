@@ -31,6 +31,12 @@ fn sources_round_trip_through_the_lockfile() {
             None,
         ),
         spec("file:///tmp/repo", GitRef::Rev(COMMIT.into()), Some("lib")),
+        // Git allows the lock's delimiters in branch and directory names.
+        spec(
+            "https://h/r",
+            GitRef::Branch("feat&path=x#1%".into()),
+            Some("a=b/c?d"),
+        ),
     ] {
         let source = s.source(COMMIT);
         assert_eq!(
@@ -47,6 +53,10 @@ fn sources_round_trip_through_the_lockfile() {
     assert_eq!(GitSpec::parse_source("git+https://h/r#main"), None);
     assert_eq!(
         GitSpec::parse_source(&format!("git+https://h/r?x=1#{COMMIT}")),
+        None
+    );
+    assert_eq!(
+        GitSpec::parse_source(&format!("git+https://h/r?branch=a%2#{COMMIT}")),
         None
     );
 }
@@ -72,6 +82,16 @@ fn urls_and_commits_are_checked() {
     ] {
         assert!(check_url(bad).is_err(), "{bad}");
     }
+    // Credentials would be printed and written to the lock.
+    for secret in [
+        "https://user:s3cretTOKEN@github.com/a/b",
+        "https://ghp_TOKEN@github.com/a/b",
+        "ssh://git:pw@host/a/b",
+    ] {
+        let err = check_url(secret).unwrap_err();
+        assert!(err.contains("can't hold credentials"), "{secret}: {err}");
+    }
+    assert!(check_url("ssh://git@github.com/a/b").is_ok());
     assert!(is_commit(COMMIT));
     assert!(!is_commit("0123456"));
     assert!(!is_commit(&COMMIT.to_uppercase()));
@@ -107,6 +127,14 @@ fn manifests_check_the_git_fields() {
             r#"{ git: "https://h/r", path: "../x" }"#,
             "with `git`, `path` is a `/`-separated directory inside the repository",
         ),
+        (
+            r#"{ git: "https://h/r", path: "C:/x" }"#,
+            "with `git`, `path` is a `/`-separated directory inside the repository",
+        ),
+        (
+            r#"{ git: "https://h/r", rev: "0123456789ABCDEF0123456789abcdef01234567" }"#,
+            "in lowercase hex (40 digits, or 64 for SHA-256)",
+        ),
         (r#"{ git: "h/r" }"#, "is not a git repository URL"),
     ] {
         let err = read(dep).unwrap_err();
@@ -119,6 +147,16 @@ fn manifests_check_the_git_fields() {
         "{text}"
     );
     assert_eq!(ok.to_json()["dependencies"]["x"]["branch"], "main");
+}
+
+/// `file:///…` for `path`, with `/` separators (`file:///C:/…` on Windows), so it can be written
+/// in a string literal of a manifest.
+fn file_url(path: &Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    match path.starts_with('/') {
+        true => format!("file://{path}"),
+        false => format!("file:///{path}"),
+    }
 }
 
 /// A repository made with the `git` command, in a temporary directory.
@@ -180,7 +218,7 @@ impl Repo {
     }
 
     fn url(&self) -> String {
-        format!("file://{}", self.dir.display())
+        file_url(&self.dir)
     }
 }
 
@@ -324,4 +362,113 @@ fn a_git_dependency_needs_a_version_to_be_published() {
         err.contains("dependency `lib` has only a `git` repository"),
         "{err}"
     );
+}
+
+#[test]
+fn a_path_dependency_of_a_git_package_is_locked_with_it() {
+    let e = env();
+    e.upstream.commit_package("sib", "sib", "sibling");
+    let lib = e.upstream.dir.join("lib");
+    std::fs::create_dir_all(lib.join("src")).unwrap();
+    std::fs::write(
+        lib.join("package.vlt"),
+        "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { sib: { path: \"../sib\" } } };",
+    )
+    .unwrap();
+    std::fs::write(lib.join("src/lib.vlt"), "\n").unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "lib"]);
+    let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+    let url = e.upstream.url();
+    let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
+    e.install(&app, false).unwrap();
+    let lock = Lockfile::read(&app).unwrap().unwrap();
+    let sib = lock.get("sib").unwrap();
+    assert_eq!(
+        sib.source,
+        format!("git+{url}?rev={commit}&path=sib#{commit}")
+    );
+    assert!(sib.checksum.is_some());
+    // Without the repository, the lock still holds.
+    std::fs::rename(&e.upstream.dir, e.root.join("gone")).unwrap();
+    assert!(!e.install(&app, false).unwrap().lock_changed);
+}
+
+#[test]
+fn native_code_from_a_repository_is_not_built_unasked() {
+    let e = env();
+    let sib = e.upstream.dir.join("sib");
+    std::fs::create_dir_all(sib.join("src")).unwrap();
+    std::fs::create_dir_all(sib.join("native/src")).unwrap();
+    std::fs::write(
+        sib.join("package.vlt"),
+        "export const pkg: Package = { name: \"sib\", version: \"0.1.0\", native: {} };",
+    )
+    .unwrap();
+    std::fs::write(sib.join("src/lib.vlt"), "\n").unwrap();
+    // Never run: the install must refuse before cargo would.
+    std::fs::write(sib.join("native/build.rs"), "fn main() {}").unwrap();
+    e.upstream.commit_package("lib", "lib", "x");
+    std::fs::write(
+        e.upstream.dir.join("lib/package.vlt"),
+        "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { sib: { path: \"../sib\" } } };",
+    )
+    .unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "native"]);
+    let app = e.app(&format!(
+        "lib: {{ git: \"{}\", path: \"lib\" }}",
+        e.upstream.url()
+    ));
+    let opts = InstallOptions {
+        target: Some("x86_64-unknown-linux-gnu".into()),
+        ..Default::default()
+    };
+    let err = install(&app, &e.loc, opts).unwrap_err();
+    assert!(
+        err.contains("`sib` from") && err.contains("VELT_NATIVE_FROM_SOURCE=1"),
+        "{err}"
+    );
+}
+
+#[test]
+fn paths_never_lead_out_of_the_repository() {
+    let e = env();
+    e.upstream.commit_package("lib", "lib", "x");
+    std::fs::write(
+        e.upstream.dir.join("lib/package.vlt"),
+        "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { out: { path: \"../../outside\" } } };",
+    )
+    .unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "out"]);
+    let url = e.upstream.url();
+    let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
+    let err = e.install(&app, false).unwrap_err();
+    assert!(
+        err.contains("its dependency `out` has a `path` that leads out of the repository"),
+        "{err}"
+    );
+
+    // A symbolic link in the repository to a package elsewhere is refused too.
+    #[cfg(unix)]
+    {
+        let elsewhere = e.root.join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("src")).unwrap();
+        std::fs::write(
+            elsewhere.join("package.vlt"),
+            "export const pkg: Package = { name: \"link\", version: \"0.1.0\" };",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&elsewhere, e.upstream.dir.join("link")).unwrap();
+        e.upstream.git(&["add", "-A"]);
+        e.upstream.git(&["commit", "-q", "-m", "link"]);
+        let app = e.app(&format!("link: {{ git: \"{url}\", path: \"link\" }}"));
+        let _ = std::fs::remove_file(app.join("velt.lock.json"));
+        let err = e.install(&app, false).unwrap_err();
+        assert!(
+            err.contains("leads out of the repository (through a symbolic link)"),
+            "{err}"
+        );
+    }
 }
