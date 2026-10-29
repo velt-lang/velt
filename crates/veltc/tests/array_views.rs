@@ -137,3 +137,75 @@ fn#",
     let past = total[0].lines().filter(|l| l.contains("= &(*(*")).count();
     assert_eq!(past, 2, "{}", total[0]);
 }
+
+/// The lines of the function in `vir` whose signature line contains `name`.
+fn fn_lines<'a>(vir: &'a str, name: &str) -> Vec<&'a str> {
+    let fns: Vec<&str> = vir
+        .split("\nfn#")
+        .filter(|f| f.lines().next().is_some_and(|l| l.contains(name)))
+        .collect();
+    assert_eq!(fns.len(), 1, "no single `{name}` in the VIR:\n{vir}");
+    fns[0].lines().collect()
+}
+
+/// Is `rhs` a copy of a whole array header held in a box (`(*_3 as agg#5)`)?
+fn whole_header_copy(rhs: &str) -> bool {
+    rhs.starts_with("(*_") && rhs.ends_with(')') && rhs.contains(" as agg#")
+}
+
+#[test]
+fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
+    // #1831: `i64[]` is a view type here, so its arrays are boxed. `RegExp.execAt` passes its
+    // offsets array to `velt_rt_regex_exec`, which writes the header (a new buffer and length):
+    // the extern gets the box's own header, not a copy of it in a temporary (whose writes would
+    // be lost), and the view's mirror is written back after the call.
+    let vir = vir_of(
+        "const ns: any = [1];\nconst is = ns as i64[];\nconsole.log(is.length, /a/.exec(\"ba\")?.index);\n",
+    );
+    let exec = fn_lines(&vir, "6RegExpM6execAt(");
+    let call = exec
+        .iter()
+        .position(|l| l.contains("call extern#") && l.contains("velt_rt_regex_exec("))
+        .unwrap_or_else(|| panic!("no call of `velt_rt_regex_exec`:\n{}", exec.join("\n")));
+    let arg = exec[call]
+        .rsplit_once(", ")
+        .and_then(|(_, a)| a.split_once(')'))
+        .map(|(a, _)| a.trim())
+        .unwrap_or_else(|| panic!("cannot read the last argument of {}", exec[call]));
+    let def = |local: &str| -> Vec<&str> {
+        let lhs = format!("{local} = ");
+        (exec.iter())
+            .filter_map(|l| l.trim().strip_prefix(lhs.as_str()))
+            .collect()
+    };
+    for rhs in def(arg) {
+        if let Some(tmp) = rhs.strip_prefix('&') {
+            assert!(
+                !def(tmp).into_iter().any(whole_header_copy),
+                "the offsets argument `{arg}` is a copy of the header:\n{}",
+                exec.join("\n")
+            );
+        }
+    }
+    let flush = exec[call..]
+        .iter()
+        .any(|l| l.contains("call fn#") && l.contains("arrayViewFlush"));
+    assert!(
+        flush,
+        "no write-back of a view after the call:\n{}",
+        exec.join("\n")
+    );
+}
+
+#[test]
+fn a_standard_library_class_has_no_any_glue_for_its_private_methods() {
+    // #1831: a `RegExp` method called through `any` builds the class's call glue, which once
+    // had a case for the private `matchAt(s, offsets: i64[], at)` too, converting an argument to
+    // `i64[]` (so making it a view type for the whole program). No program can name it.
+    let vir = vir_of("const a: any = /b/;\nconsole.log(a.test(\"abc\"));\n");
+    let views = vir
+        .lines()
+        .filter(|l| l.starts_with("fn#") && l.contains("arrayView") && l.contains("_T3i64"))
+        .count();
+    assert_eq!(views, 0, "`i64[]` is a view type");
+}

@@ -306,10 +306,16 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
         let (mut cur, mut cur_args) = (d, args);
         for _ in 0..64 {
             let Some(a) = cx.adt(cur) else { break };
+            // A standard-library class's `private` members are not in its `any` table: no
+            // program can name them (Node's `RegExp` has no `matchAt`), and their glue would only
+            // cost code, and make the types it converts arguments to view types (#1831). A
+            // program's own `private` members stay, as in Node.
+            let std = cx.scopes[a.module].is_std;
             let mut own: Vec<(String, DefId)> = a
                 .methods
                 .iter()
                 .filter(|(k, m)| !m.is_static && !is_private_key(k))
+                .filter(|(_, m)| !(std && cx.fn_info(m.def).is_private))
                 .map(|(k, m)| (k.clone(), m.def))
                 .collect();
             own.sort();

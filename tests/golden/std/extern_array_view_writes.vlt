@@ -1,0 +1,24 @@
+// An array of an array-view type given to a runtime function (#1831): the function gets the
+// array's own header, not a copy of it, so what it writes stays written, and a view passes its
+// mirror, written back to the original afterwards.
+
+// `i64[]` is a view type here (the program converts an `any` to it): `exec` still gets the
+// offsets its runtime function writes into an `i64[]`.
+const xs: i64[] = [1, 2, 3];
+const ns: any = xs;
+const is = ns as i64[];
+console.log(is.length, is[2]);
+const m = /(\d+)-(\d+)/.exec("a 12-345 b");
+console.log(m?.index, m?.[1], m?.[2]);
+
+// `string[]` is a view type: `join` (a runtime function) of a view of a `(string | number)[]`
+// reads the original's elements, also after a change through the view, and of a plain array.
+const parts: (string | number)[] = ["a", "b", "c"];
+const k: any = parts;
+const v = k as string[];
+console.log(v.join("-"), v.length);
+v.push("d");
+v[0] = "z";
+console.log(v.join(), parts.join("/"), parts);
+const plain: string[] = ["p", "q"];
+console.log(plain.join("+"));
