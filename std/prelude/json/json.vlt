@@ -21,6 +21,8 @@
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
 import "velt:json/reader";
+// What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
+import "velt:json/writer";
 
 declare function velt_rt_json_parse_value(src: string, out: JsonHandleSlot, err: string): bool;
 declare function velt_rt_json_parse_value_with(

@@ -8,8 +8,8 @@ use velt_syntax::ast::{self, ItemKind as I, TypeExprKind as T};
 
 use super::{TS_GLOBALS, TS_MEMBERS, VELT_GLOBALS, VELT_MEMBERS};
 
-/// The prelude's exports and its `(owner, member)` pairs, from `std/prelude` and the JSON
-/// module its global loads on use (`std/prelude/json`).
+/// The prelude's exports and its `(owner, member)` pairs, from `std/prelude`, its global
+/// modules (`std/prelude/global`) and the JSON module its global loads (`std/prelude/json`).
 fn prelude() -> (BTreeSet<String>, BTreeSet<(String, String)>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
     let vlt = |d: &Path| {
@@ -20,6 +20,7 @@ fn prelude() -> (BTreeSet<String>, BTreeSet<(String, String)>) {
             .collect::<Vec<_>>()
     };
     let mut files = vlt(&dir);
+    files.extend(vlt(&dir.join("global")));
     files.extend(vlt(&dir.join("json")));
     files.sort();
     let (mut exports, mut members) = (BTreeSet::new(), BTreeSet::new());

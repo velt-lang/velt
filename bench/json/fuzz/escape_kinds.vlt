@@ -1,0 +1,219 @@
+// JSON string escaping by kind of string: `JSON.stringify` of an array of ten equal strings of
+// one kind, many times. The kinds are the ones a change to the escaping (velt:json/writer;
+// from #1066) must not make slower: short strings, escape-dense strings, text that is not
+// ASCII. Prints the bytes written, so runs can be compared. Usage: kinds [kind|all] [rounds]
+
+import { args } from "velt:process";
+
+function kinds(): string[] {
+  return [
+    "empty",
+    "ascii1",
+    "ascii5",
+    "ascii7",
+    "ascii8",
+    "ascii9",
+    "ascii12",
+    "winpath15",
+    "quote16",
+    "nl32",
+    "sentence44",
+    "quotes49",
+    "url56",
+    "nl64",
+    "ascii200",
+    "twobyte198",
+    "quote4th200",
+    "nl76x3",
+    "korean200",
+    "korean_in_ascii207",
+    "japanese198",
+    "emoji11",
+    "quote_every1_64",
+    "quote_every2_32",
+    "quote_every4_16",
+    "quote_every8_64",
+    "ctrl_every1_64",
+    "ctrl_every2_16",
+    "ctrl_every4_32",
+    "ctrl_every8_64",
+    "tab_every3_48",
+    "hangul_spaces200",
+    "latin1_200",
+    "chinese200",
+    "lone_surrogates60",
+    "d7ff_d000_mixed60",
+    "mixed_json200",
+    "ascii16",
+    "ascii24",
+    "ascii40",
+    "p8_ctrl56",
+    "p8_d7ff52",
+    "p8_lone52",
+    "p8_quote_every2_56",
+    "p8_mixed_json200",
+    "p8_quote4th192",
+    "key_value60",
+  ];
+}
+
+// The first `n` characters of `unit` repeated (every character of `unit` one UTF-16 unit).
+function cut(unit: string, n: i64): string {
+  const len = unit.length as i64;
+  return unit.repeat((n + len - 1) / len).slice(0, n);
+}
+
+function sample(kind: string): string {
+  if (kind == "empty") {
+    return "";
+  }
+  if (kind == "ascii1") {
+    return "a";
+  }
+  if (kind == "ascii5") {
+    return "hello";
+  }
+  if (kind == "ascii7") {
+    return "example";
+  }
+  if (kind == "ascii8") {
+    return "examples";
+  }
+  if (kind == "ascii9") {
+    return "something";
+  }
+  if (kind == "ascii12") {
+    return "twelve chars";
+  }
+  if (kind == "winpath15") {
+    return "C:\\Win\\Sys\\x\\yz";
+  }
+  if (kind == "quote16") {
+    return "she said \"hi\" ok";
+  }
+  if (kind == "nl32") {
+    return cut("line of text ", 31) + "\n";
+  }
+  if (kind == "sentence44") {
+    return "The quick brown fox jumps over the lazy dog.";
+  }
+  if (kind == "quotes49") {
+    return "A title with \"one quoted phrase\" in the middle.";
+  }
+  if (kind == "url56") {
+    return "https://example.com/users/12345/posts?page=2&sort=recent";
+  }
+  if (kind == "nl64") {
+    return cut("line of text ", 63) + "\n";
+  }
+  if (kind == "ascii200") {
+    return cut("lorem ipsum dolor sit amet ", 200);
+  }
+  if (kind == "twobyte198") {
+    return cut("éàüöñ ", 198);
+  }
+  if (kind == "quote4th200") {
+    return cut("abc\"", 200);
+  }
+  if (kind == "nl76x3") {
+    return (cut("a line of a longer text ", 75) + "\n").repeat(3);
+  }
+  if (kind == "korean200") {
+    return cut("다람쥐 헌 쳇바퀴에 타고파 동해물과 백두산이 마르고 닳도록 ", 200);
+  }
+  if (kind == "korean_in_ascii207") {
+    return cut("the word 안녕하세요 means hello and 감사합니다 means thank you; ", 207);
+  }
+  if (kind == "japanese198") {
+    return cut("いろはにほへとちりぬるをわかよたれそつねならむ", 198);
+  }
+  if (kind == "emoji11") {
+    return "plain text 🙂".repeat(15) + "plain text";
+  }
+  if (
+    kind.startsWith("quote_every") || kind.startsWith("ctrl_every") || kind.startsWith("tab_every")
+  ) {
+    // `<what>_every<k>_<n>`: n characters, every k-th of them the escaped one.
+    const parts = kind.split("_");
+    const k = parseInt(parts[1].slice(5), 10) as i64;
+    const n = parseInt(parts[2], 10) as i64;
+    const special = parts[0] == "quote" ? "\"" : parts[0] == "ctrl" ? "\u0001" : "\t";
+    return cut("abcdefg".slice(0, k - 1) + special, n);
+  }
+  if (kind == "hangul_spaces200") {
+    return cut("한 글 자 모 음 ", 200);
+  }
+  if (kind == "latin1_200") {
+    return cut("Größe Ärger über Çà déjà vu ñandú ", 200);
+  }
+  if (kind == "chinese200") {
+    return cut("天地玄黃宇宙洪荒日月盈昃辰宿列張寒來暑往秋收冬藏", 200);
+  }
+  if (kind == "lone_surrogates60") {
+    const hi = String.fromCharCode(0xD800);
+    const lo = String.fromCharCode(0xDC00);
+    return cut(`ab${hi}cd${lo}`, 60);
+  }
+  if (kind == "d7ff_d000_mixed60") {
+    return cut("\uD7FFa\uD000", 60);
+  }
+  if (kind == "mixed_json200") {
+    return cut(
+      "{\"name\": \"Zoë\", \"tags\": [\"a\tb\"], \"note\": \"line\nnext\", \"n\": 3} ",
+      200,
+    );
+  }
+  if (kind == "ascii16") {
+    return "sixteen chars ok";
+  }
+  if (kind == "ascii24") {
+    return "twenty-four characters!!";
+  }
+  if (kind == "ascii40") {
+    return cut("forty characters of plain text ", 40);
+  }
+  if (kind.startsWith("p8_")) {
+    // Eight plain bytes, then a string of another kind (the ones the review of #1066 measured).
+    const rest = kind.slice(3);
+    let tail = "";
+    if (rest == "ctrl56") {
+      tail = cut("\u0001", 56);
+    } else if (rest == "d7ff52") {
+      tail = cut("\uD7FFa\uD000", 52);
+    } else if (rest == "lone52") {
+      tail = cut(`ab${String.fromCharCode(0xD800)}cd${String.fromCharCode(0xDC00)}`, 52);
+    } else if (rest == "quote_every2_56") {
+      tail = cut("a\"", 56);
+    } else if (rest == "quote4th192") {
+      tail = cut("abc\"", 192);
+    } else {
+      tail = sample(rest);
+    }
+    return "abcdefgh" + tail;
+  }
+  if (kind == "key_value60") {
+    return "level=info msg=\"request done\" path=\"/api/users\" status=200";
+  }
+  return "?";
+}
+
+function main() {
+  const argv = args();
+  const which = argv.length > 0 ? argv[0] : "all";
+  const rounds = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 20000;
+  let bytes: i64 = 0;
+  for (const kind of kinds()) {
+    if (which != "all" && which != kind) {
+      continue;
+    }
+    const s = sample(kind);
+    const ten: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      ten.push(s);
+    }
+    for (let i: i64 = 0; i < rounds; i++) {
+      bytes += JSON.stringify(ten).length as i64;
+    }
+  }
+  console.log(bytes);
+}

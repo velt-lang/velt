@@ -53,7 +53,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`; `velt:sync/epoch`) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
-| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
+| Language | [string_builder](string_builder.md) (global `StringBuilder`) · [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Testing | [test](test.md) (the runner `velt test` builds into test programs) |
 | Packages | [package](package.md) (the type of `package.vlt`) |

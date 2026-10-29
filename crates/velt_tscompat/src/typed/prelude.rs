@@ -139,6 +139,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep thread-shared state out of code shared with TypeScript",
     ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
+    (
+        "StringBuilder",
+        "collect the parts in a `string[]` and `join(\"\")` them, or append with `+=`",
+    ),
     // TypeScript's has one type argument; Velt's two.
     (
         "PromiseSettledResult",

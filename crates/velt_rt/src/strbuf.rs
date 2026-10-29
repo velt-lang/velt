@@ -103,6 +103,32 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_bytes(buf: *mut VeltStrBuf, ptr: *c
     }
 }
 
+/// Append the first `len` bytes of the `u8[]` `bytes`: canonical WTF-8 text that Velt code
+/// built in a byte array (std/json/writer.vlt's escaped string literals). `units` is their
+/// UTF-16 length: equal to `len` for ASCII text, any other count for text with no lone
+/// surrogates (escaped JSON strings: the escaper knows the count, so nothing is scanned), and
+/// `u64::MAX` when unknown (counted).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_u8s(
+    buf: *mut VeltStrBuf,
+    bytes: *const crate::bytes::VeltBytes,
+    len: u64,
+    units: u64,
+) {
+    let text = &(*bytes).as_bytes()[..len as usize];
+    if units == len {
+        push_ascii(buf, text);
+    } else if units != u64::MAX {
+        let sum = crate::str::Summary {
+            units: units as _,
+            lone: 0,
+        };
+        (*buf).push_wtf8(text, Some(sum));
+    } else {
+        push_counted(buf, text);
+    }
+}
+
 /// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
 #[inline(never)]
 unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {

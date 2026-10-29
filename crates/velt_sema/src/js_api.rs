@@ -11,6 +11,11 @@ use crate::ctx::Ctx;
 /// one of them, or in a new module listed here.
 const VELT_PRELUDE: &[&str] = &["std/prelude/compare", "std/prelude/bits"];
 
+/// The modules of Velt-only globals (no JavaScript counterpart): like `VELT_PRELUDE`, their
+/// integer parameters and results stay integers (`StringBuilder.appendInt` takes an `i64`, so a
+/// `number` with a fraction is an error, not truncated).
+const VELT_GLOBAL_MODULES: &[&str] = &["std/string_builder"];
+
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
     /// library provides? Everything in a prelude module is, but for `VELT_PRELUDE`. In a module the prelude's globals
@@ -53,7 +58,7 @@ impl<'m> Ctx<'m> {
             }
             let mut out = FxHashMap::default();
             for (i, m) in modules.iter().enumerate() {
-                if !m.is_std {
+                if !m.is_std || VELT_GLOBAL_MODULES.contains(&m.path.trim_end_matches(".vlt")) {
                     continue;
                 }
                 if m.path.starts_with("std/prelude/") {

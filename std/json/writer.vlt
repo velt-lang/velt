@@ -1,0 +1,472 @@
+// velt:json/writer — what `JSON.stringify<T>` writes for numbers and strings, in Velt (#1668).
+//
+// The writers append to the string builder of the glue the compiler generates (`out`, a
+// `VeltStrBuf` the functions only pass on to the builder's primitives, never read: every call
+// passes it first, with no argument after it that is a call) and write
+// exactly what `JSON.stringify` writes: numbers as JavaScript prints them (`null` for NaN and
+// the infinities), strings quoted, with `"`, `\`, control characters and lone surrogates
+// escaped (well-formed `JSON.stringify`).
+//
+// Port of velt_text's json_escape.rs and the JSON number path of fmt.rs.
+
+declare function velt_rt_strbuf_push_str(out: string, s: string);
+declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
+declare function velt_rt_strbuf_push_u64(out: string, v: u64);
+declare function velt_rt_strbuf_push_f64(out: string, v: f64);
+declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
+
+const QUOTE: u8 = 34;
+const BACKSLASH: u8 = 92;
+/** `ESCAPE` mark of 0xED, the lead byte of a lone surrogate (and of U+D000–U+D7FF). */
+const LONE_LEAD: u8 = 1;
+
+// For each byte: 0 = copied as it is, otherwise the letter after the backslash (`u`: `\u00xx`),
+// or `LONE_LEAD`; one character per byte value, read with `__intrinsic_str_byte_at` (a string
+// literal is static data: an array constant would be built at each use).
+const ESCAPE =
+  "\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0062\u0074\u006e\u0075\u0066\u0072\u0075\u0075" +
+  "\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075" +
+  "\u0000\u0000\u0022\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u005c\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0000" +
+  "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000";
+
+// 10^0 to 10^22, each exact in f64.
+const POW10: f64[] = [
+  1e0,
+  1e1,
+  1e2,
+  1e3,
+  1e4,
+  1e5,
+  1e6,
+  1e7,
+  1e8,
+  1e9,
+  1e10,
+  1e11,
+  1e12,
+  1e13,
+  1e14,
+  1e15,
+  1e16,
+  1e17,
+  1e18,
+  1e19,
+  1e20,
+  1e21,
+  1e22,
+];
+// 10^0 to 10^15 as integers.
+const POW10_U: u64[] = [
+  1,
+  10,
+  100,
+  1000,
+  10000,
+  100000,
+  1000000,
+  10000000,
+  100000000,
+  1000000000,
+  10000000000,
+  100000000000,
+  1000000000000,
+  10000000000000,
+  100000000000000,
+  1000000000000000,
+];
+
+/** Appends the number `x` as `JSON.stringify` writes it. */
+export function writeF64(out: string, x: f64): void {
+  if (x != x || x == Infinity || x == -Infinity) {
+    writeAscii(out, "null");
+    return;
+  }
+  // A short decimal: a scale `k` (at most 15) for which `x * 10^k` is an integer `m` below
+  // 10^15 that divides back to exactly `x` (a correctly rounded division of two exact values:
+  // what parsing the digits gives). At most 15 significant digits name a single double, so
+  // these digits, without trailing zeros, are JavaScript's shortest; at 10^-6 and above
+  // JavaScript writes them without an exponent.
+  const a = x < 0 ? -x : x;
+  if (a >= 1e-6 && a < 1e15) {
+    if (a == Math.trunc(a)) {
+      // An integer: its digits (citm_catalog.json's ids), without the tests below.
+      writeDecimal(out, x < 0, a as u64, 0);
+      return;
+    }
+    // Quick reject (most doubles of 16 or 17 digits, canada.json's coordinates): at the largest
+    // scale below 10^15, `a * 10^k` of a decimal of at most 15 digits is within 0.18 of an
+    // integer (`a`'s own rounding, below 2^-53 of it, is at most 0.111 there, and the product's
+    // half an ulp at most 0.0625). Farther off, no scale can pass the test below.
+    let n: usize = 0;
+    while (n < 15 && a >= POW10[n]) {
+      n++;
+    }
+    const top = n == 0 ? 15 : 15 - n;
+    const t0 = a * POW10[top];
+    const frac = t0 - Math.trunc(t0);
+    if (frac > 0.18 && frac < 0.82) {
+      velt_rt_strbuf_push_f64(out, x);
+      return;
+    }
+    for (let k: usize = 0; k <= 15; k++) {
+      const t = a * POW10[k];
+      if (t >= 1e15) {
+        break;
+      }
+      if (t == Math.trunc(t) && t / POW10[k] == a) {
+        // `a * 10^k` may round onto an integer only at a larger `k` than the digits need
+        // (4.35 * 100 is 434.99999999999994, 4.35 * 1000 is 4350): the trailing zeros go, which
+        // leaves the decimal value, and so the double it names, unchanged.
+        let m = t as u64;
+        let f = k;
+        while (f > 0 && m % 10 == 0) {
+          m = m / 10;
+          f--;
+        }
+        writeDecimal(out, x < 0, m, f);
+        return;
+      }
+    }
+  }
+  // Anything else: JavaScript's general number printing (`-0` included, which JSON writes as 0).
+  velt_rt_strbuf_push_f64(out, x == 0 ? 0 : x);
+}
+
+// `m / 10^k` with an optional minus: the integer part, then `k` fraction digits (leading
+// zeros included). `m` has no trailing zero when `k > 0`.
+function writeDecimal(out: string, neg: bool, m: u64, k: usize) {
+  if (neg && m != 0) {
+    velt_rt_strbuf_push_byte(out, 45);
+  }
+  if (k == 0) {
+    velt_rt_strbuf_push_u64(out, m);
+    return;
+  }
+  const p = POW10_U[k];
+  velt_rt_strbuf_push_u64(out, m / p);
+  velt_rt_strbuf_push_byte(out, 46);
+  const frac = m % p;
+  // Leading zeros of the fraction: its digits are fewer than `k`.
+  let width: usize = 1;
+  while (width < k && frac >= POW10_U[width]) {
+    width++;
+  }
+  for (let z = width; z < k; z++) {
+    velt_rt_strbuf_push_byte(out, 48);
+  }
+  velt_rt_strbuf_push_u64(out, frac);
+}
+
+// Appends ASCII text `s` byte by byte.
+function writeAscii(out: string, s: string) {
+  const n = __intrinsic_str_byte_len(s);
+  for (let i: usize = 0; i < n; i++) {
+    velt_rt_strbuf_push_byte(out, __intrinsic_str_byte_at(s, i as u64));
+  }
+}
+
+/** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */
+export function writeString(out: string, s: string): void {
+  const n = __intrinsic_str_byte_len(s);
+  const i = nextEscape(s, 0, n);
+  if (i == n) {
+    velt_rt_strbuf_push_byte(out, QUOTE);
+    velt_rt_strbuf_push_str(out, s);
+    velt_rt_strbuf_push_byte(out, QUOTE);
+    return;
+  }
+  writeEscaped(out, s, i, n);
+}
+
+// The first byte of `s` (`n` bytes) from `from` that needs escaping, or `n`. Sixteen bytes at
+// a time: a block stops the scan at its first byte below 0x20, `"` or `\`, or 0xED (the lead
+// byte of U+D000–U+DFFF) with 0xA0 or above next (the bytes after the block's as a second
+// vector), so Hangul and the rest of U+D000–U+D7FF stay in the vector loop and only a lone
+// surrogate stops it. The bytes after the last whole block are read as the string's last
+// sixteen (those already checked are clean); in that block, 0xED is checked byte by byte.
+// Shorter strings are checked byte by byte. (The 0xED check and the last block come from
+// #1066.)
+function nextEscape(s: string, from: usize, n: usize): usize {
+  let i = from;
+  if (n - from >= 16) {
+    while (i + 16 <= n) {
+      const v = __intrinsic_str_load_u8x16(s, i as u64);
+      if (velt_simd_mask8x16_any(marks(v))) {
+        const j = blockEscape(s, i, i, n, v);
+        if (j < n) {
+          return j;
+        }
+      }
+      i += 16;
+    }
+    if (i < n) {
+      // The bytes after the last whole block, as the string's last sixteen.
+      const v = __intrinsic_str_load_u8x16(s, (n - 16) as u64);
+      if (velt_simd_mask8x16_any(marks(v))) {
+        return blockEscape(s, n - 16, i, n, v);
+      }
+    }
+    return n;
+  }
+  // Shorter than a block: by the table, the next byte checked only after 0xED.
+  while (i < n) {
+    const e = __intrinsic_str_byte_at(ESCAPE, __intrinsic_str_byte_at(s, i as u64) as u64);
+    if (e != 0 && (e != LONE_LEAD || escapes(s, i, n))) {
+      return i;
+    }
+    i++;
+  }
+  return n;
+}
+
+// The lanes of the block `v` with a byte below 0x20, `"`, `\` or 0xED: the bytes that may need
+// escaping (0xED is the lead byte of U+D000–U+DFFF).
+function marks(v: u8x16): mask8x16 {
+  return velt_simd_mask8x16_or(
+    velt_simd_mask8x16_or(
+      velt_simd_u8x16_lt(v, velt_simd_u8x16_splat(32)),
+      velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(0xed)),
+    ),
+    velt_simd_mask8x16_or(
+      velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(QUOTE)),
+      velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(BACKSLASH)),
+    ),
+  );
+}
+
+// The lanes of the block `v` (the bytes of `s`, `n` bytes, at `at`) that need escaping, where
+// `marks(v)` has some: an 0xED only where a lone surrogate starts (0xA0 or above next, read as
+// a second vector), except where the block ends the string (every 0xED). None, when the
+// marks were all U+D000–U+D7FF.
+function stops(s: string, at: usize, n: usize, v: u8x16): mask8x16 {
+  const eds = velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(0xed));
+  if (at + 17 > n || !velt_simd_mask8x16_any(eds)) {
+    return marks(v);
+  }
+  const special = velt_simd_mask8x16_or(
+    velt_simd_u8x16_lt(v, velt_simd_u8x16_splat(32)),
+    velt_simd_mask8x16_or(
+      velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(QUOTE)),
+      velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(BACKSLASH)),
+    ),
+  );
+  const next = __intrinsic_str_load_u8x16(s, (at + 1) as u64);
+  return velt_simd_mask8x16_or(
+    special,
+    velt_simd_mask8x16_and(eds, velt_simd_u8x16_ge(next, velt_simd_u8x16_splat(0xa0))),
+  );
+}
+
+// The first byte of the block `v` (of `s`, `n` bytes, at `at`) from `from` that needs escaping,
+// or `n`. Lanes before `from` were checked; a marked 0xED (where the block ends the string) may
+// be no lone surrogate: from the first mark on, byte by byte.
+function blockEscape(s: string, at: usize, from: usize, n: usize, v: u8x16): usize {
+  let j = at + firstLane(stops(s, at, n, v));
+  if (j < from) {
+    j = from;
+  }
+  while (j < at + 16) {
+    if (escapes(s, j, n)) {
+      return j;
+    }
+    j++;
+  }
+  return n;
+}
+
+// Whether byte `i` of `s` (`n` bytes) starts something to escape.
+function escapes(s: string, i: usize, n: usize): bool {
+  const b = __intrinsic_str_byte_at(s, i as u64);
+  if (b == 0xed) {
+    return i + 1 < n && __intrinsic_str_byte_at(s, (i + 1) as u64) >= 0xa0;
+  }
+  return b < 32 || b == QUOTE || b == BACKSLASH;
+}
+
+// `s` from its first byte that needs escaping, `first`: the literal is written into a byte
+// array and appended to `out` once. After each escape comes the plain run up to the next one,
+// as the Rust escaper this replaced (velt_text's json_escape.rs) scans it a block at a time and
+// copies it with memcpy: its first four bytes one at a time (escapes come close together in
+// text that has them), then sixteen at a time, each block tested and stored whole. The block
+// with the next escape is stored whole too when four or more of its bytes are plain (the bytes
+// past them are overwritten next); fewer are copied one at a time, since byte stores into a
+// block just stored and the next block's store over them stall (twice the time for runs of
+// three bytes, measured on Apple M-series). Fewer than sixteen bytes before the end are copied
+// one at a time.
+function writeEscaped(out: string, s: string, first: usize, n: usize) {
+  // At most six bytes per byte (`\u00xx`), and the quotes: a block stored at `o` while
+  // sixteen bytes of `s` are left (at most `6 * (n - 16) + 1 + 16` bytes written) fits.
+  const buf: u8[] = __intrinsic_array_with_capacity(n * 6 + 2);
+  __intrinsic_array_set_len(buf, n * 6 + 2);
+  buf[0] = QUOTE;
+  let o = copyRun(buf, 1, s, 0, first, n);
+  let i = first;
+  let lone: usize = 0;
+  while (i < n) {
+    // `i` is at a byte with an `ESCAPE` mark.
+    const b = __intrinsic_str_byte_at(s, i as u64);
+    const e = __intrinsic_str_byte_at(ESCAPE, b as u64);
+    if (e == LONE_LEAD) {
+      if (escapes(s, i, n)) {
+        // A lone surrogate: `\udxxx`.
+        const unit: u32 =
+          0xd000 |
+          (((__intrinsic_str_byte_at(s, (i + 1) as u64) & 0x3f) as u32) << 6) |
+          ((__intrinsic_str_byte_at(s, (i + 2) as u64) & 0x3f) as u32);
+        buf[o] = BACKSLASH;
+        buf[o + 1] = 117;
+        putHex4(buf, o + 2, unit);
+        o += 6;
+        i += 3;
+        lone++;
+      } else {
+        // U+D000–U+D7FF.
+        buf[o] = b;
+        o++;
+        i++;
+      }
+    } else if (e == 117) {
+      buf[o] = BACKSLASH;
+      buf[o + 1] = 117;
+      buf[o + 2] = 48;
+      buf[o + 3] = 48;
+      // `b` is below 0x20: its high digit is 0 or 1.
+      buf[o + 4] = 48 + (b >> 4);
+      buf[o + 5] = hexDigit(b & 0xf);
+      o += 6;
+      i++;
+    } else {
+      buf[o] = BACKSLASH;
+      buf[o + 1] = e;
+      o += 2;
+      i++;
+    }
+    // The plain run after it, up to the next byte with a mark (0xED only where a lone
+    // surrogate starts, as `stops` finds it).
+    let found = false;
+    const scalarEnd = i + 4 < n ? i + 4 : n;
+    while (i < scalarEnd) {
+      const c = __intrinsic_str_byte_at(s, i as u64);
+      if (__intrinsic_str_byte_at(ESCAPE, c as u64) != 0) {
+        found = true;
+        break;
+      }
+      buf[o] = c;
+      o++;
+      i++;
+    }
+    while (!found && i + 16 <= n) {
+      const v = __intrinsic_str_load_u8x16(s, i as u64);
+      const k = velt_simd_mask8x16_any(marks(v)) ? firstLane(stops(s, i, n, v)) : 16;
+      if (k < 16) {
+        if (k >= 4) {
+          velt_simd_u8x16_store(v, buf, o as u64);
+          i += k;
+          o += k;
+        } else {
+          for (let j: usize = 0; j < k; j++) {
+            buf[o] = __intrinsic_str_byte_at(s, i as u64);
+            o++;
+            i++;
+          }
+        }
+        found = true;
+        break;
+      }
+      velt_simd_u8x16_store(v, buf, o as u64);
+      i += 16;
+      o += 16;
+    }
+    if (!found) {
+      while (i < n) {
+        const c = __intrinsic_str_byte_at(s, i as u64);
+        if (__intrinsic_str_byte_at(ESCAPE, c as u64) != 0) {
+          break;
+        }
+        buf[o] = c;
+        o++;
+        i++;
+      }
+    }
+  }
+  buf[o] = QUOTE;
+  // Only ASCII is escaped, into ASCII (a byte and a unit become as many of each), and lone
+  // surrogates (3 bytes and 1 unit become 6 of each): the literal has the units of `s`, one
+  // per byte added and two more per lone surrogate. The literal has no lone surrogates (they are
+  // escaped), so the builder takes this count as it is and scans nothing.
+  const len = (o + 1) as u64;
+  const units = (__intrinsic_str_len(s) + (o + 1 - n) + 2 * lone) as u64;
+  velt_rt_strbuf_push_u8s(out, buf, len, units);
+}
+
+// The index of the first set lane of `m`, 16 if none is: the mask's two halves as integers, one
+// byte per lane, and the trailing zeros of the first that is not zero (a bitmask of the lanes
+// takes several instructions on NEON).
+function firstLane(m: mask8x16): usize {
+  const halves = velt_simd_u8x16_as_u64x2(
+    velt_simd_u8x16_select(m, velt_simd_u8x16_splat(0xff), velt_simd_u8x16_splat(0)),
+  );
+  const low = velt_simd_u64x2_lane(halves, 0);
+  if (low != 0) {
+    return low.trailingZeros() >> 3;
+  }
+  return 8 + (velt_simd_u64x2_lane(halves, 1).trailingZeros() >> 3);
+}
+
+// Copies bytes `start` to `end` of `s` (`n` bytes) to `buf` at `o`; the position after them.
+// Whole blocks while sixteen bytes of `s` are left (the last may run past `end`: the bytes
+// past it are overwritten later), then byte by byte.
+function copyRun(buf: u8[], o: usize, s: string, start: usize, end: usize, n: usize): usize {
+  let i = start;
+  while (i < end && i + 16 <= n) {
+    velt_simd_u8x16_store(__intrinsic_str_load_u8x16(s, i as u64), buf, (o + i - start) as u64);
+    i += 16;
+  }
+  if (i >= end) {
+    return o + end - start;
+  }
+  let at = o + i - start;
+  while (i < end) {
+    buf[at] = __intrinsic_str_byte_at(s, i as u64);
+    i++;
+    at++;
+  }
+  return at;
+}
+
+// The lowercase hex digit of `d` (below 16).
+function hexDigit(d: u8): u8 {
+  return d < 10 ? 48 + d : 87 + d;
+}
+
+// Four lowercase hex digits of `unit` at `buf[o]`.
+function putHex4(buf: u8[], o: usize, unit: u32) {
+  for (let k: usize = 0; k < 4; k++) {
+    const d = ((unit >> (12 - 4 * k as u32)) & 0xf) as u8;
+    buf[o + k] = d < 10 ? 48 + d : 87 + d;
+  }
+}
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
