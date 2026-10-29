@@ -34,7 +34,7 @@ import {
 } from "velt:sqlite/exec/result";
 export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
 import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
-import { describe, outerOrEmpty } from "velt:sqlite/exec/core_plan";
+import { describe } from "velt:sqlite/exec/core_plan";
 import { Emitter, limitValue } from "velt:sqlite/exec/emit";
 import { KeySet } from "velt:sqlite/exec/keys";
 import { Access, Term, chooseAccess, levelOf } from "velt:sqlite/exec/plan";
@@ -219,8 +219,10 @@ function compileCoreOnce(
   if (tail.orderBy.length > 0) {
     orderKeys(c, tail.orderBy, osc, q, em);
   }
-  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, outerOrEmpty(outer));
-  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, outerOrEmpty(outer));
+  // LIMIT and OFFSET name no column, not even an enclosing query's (SQLite resolves them in an
+  // empty name context).
+  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
   // Terms that read no level of this core run once, before the loops.
   const pre: Pred[] = [];
   for (const t of terms) {
@@ -424,8 +426,8 @@ function valuesCore(
     em.results.push(() => nullVal());
     em.colls.push(BINARY);
   }
-  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, sc);
-  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, sc);
+  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
   const need = q;
   q.body = () => {
     let limit = limitValue(limitEv, -1);

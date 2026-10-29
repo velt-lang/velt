@@ -649,6 +649,18 @@ SELECT id FROM users WHERE count(*) > 1
   error: misuse of aggregate function count()
 SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)
   error: misuse of aggregate: count()
+SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users
+  error: no such column: users.id
+SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))
+  error: no such column: users.id
+SELECT id FROM users LIMIT (SELECT count(users.id) FROM posts)
+  error: no such column: users.id
+SELECT (SELECT 1 FROM posts LIMIT 1 OFFSET users.id) FROM users
+  error: no such column: users.id
+SELECT (SELECT 1 UNION SELECT 2 LIMIT users.id) FROM users
+  error: no such column: users.id
+SELECT (WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r LIMIT users.id) SELECT count(*) FROM r) FROM users
+  error: no such column: users.id
 SELECT nosuchfn(1)
   error: no such function: nosuchfn
 SELECT substr('x')

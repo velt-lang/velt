@@ -42,7 +42,7 @@ import {
 import { ROWID, Source } from "velt:sqlite/exec/source";
 import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt:sqlite/exec/scope";
 import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
-import { aggOwner, ownsAggregate } from "velt:sqlite/exec/agg_owner";
+import { aggMisuse, aggOwner } from "velt:sqlite/exec/agg_owner";
 import { prepareError } from "velt:sqlite/exec/errors";
 import { scalarFunction } from "velt:sqlite/exec/func";
 import { compileLike } from "velt:sqlite/exec/like";
@@ -675,7 +675,7 @@ export abstract class ExprCompiler {
           owner.core!.aggFromInner = true;
           throw new AggRestart(owner.core!);
         }
-        aggMisuse(this, sc, lname);
+        aggMisuse(this, e, sc, lname);
       }
       // The queries in between read the owner's values: they run again for each of its rows.
       let between: Scope | null = sc;
@@ -758,34 +758,4 @@ export abstract class ExprCompiler {
     }
     return plain(f!);
   }
-}
-
-/**
- * An aggregate where its query cannot have one, with SQLite's two messages. Where name
- * resolution allows no aggregate (another aggregate's arguments, LIMIT, and WHERE or ON of a
- * query that is no aggregate query; `sc` is where the call is written, as SQLite's name context)
- * it is `misuse of aggregate function f()`; elsewhere (WHERE of an aggregate query, ORDER BY of
- * one that is not, a subquery's result column owned by a query that cannot take it) it is the
- * code generator's `misuse of aggregate: f()`.
- */
-function aggMisuse(c: ExprCompiler, sc: Scope, name: string): never {
-  if (sc.inAggArgs || sc.core == null || (!sc.output && !aggregateCore(c, sc))) {
-    prepareError(`misuse of aggregate function ${name}()`);
-  }
-  prepareError(`misuse of aggregate: ${name}()`);
-}
-
-// Whether the core whose FROM items `sc` holds is an aggregate query: GROUP BY, or an aggregate
-// of its own among the result columns.
-function aggregateCore(c: ExprCompiler, sc: Scope): bool {
-  const core = sc.core!;
-  if (core.groupBy.length > 0 || core.aggFromInner) {
-    return true;
-  }
-  for (const rc of core.columns) {
-    if (ownsAggregate(c, rc.expr, sc)) {
-      return true;
-    }
-  }
-  return false;
 }

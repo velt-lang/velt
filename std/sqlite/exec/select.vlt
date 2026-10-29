@@ -448,9 +448,9 @@ export class SelectCompiler extends ExprCompiler {
       q.refSrc.push(null);
       q.refCol.push(-2);
     }
-    const sc = def.outer != null ? def.outer! : new Scope();
-    const limitEv: Ev | null = s.limit == null ? null : this.ev(s.limit!, sc);
-    const offsetEv: Ev | null = s.offset == null ? null : this.ev(s.offset!, sc);
+    // LIMIT and OFFSET name no column (SQLite's empty name context).
+    const limitEv: Ev | null = s.limit == null ? null : this.ev(s.limit!, new Scope());
+    const offsetEv: Ev | null = s.offset == null ? null : this.ev(s.offset!, new Scope());
     const distinct = op == C_UNION;
     const colls: u8[] = [];
     for (const c of qi.colls) {
@@ -674,9 +674,9 @@ export class SelectCompiler extends ExprCompiler {
         t.expr.kind == E_COLLATE ? collationOf(t.expr.name) as u8 : colls[i as usize];
       sort.push(new SortKey(i, null, t.desc, t.nulls, coll));
     }
-    const sc = outer != null ? outer! : new Scope();
-    const limitEv: Ev | null = s.limit == null ? null : this.ev(s.limit!, sc);
-    const offsetEv: Ev | null = s.offset == null ? null : this.ev(s.offset!, sc);
+    // LIMIT and OFFSET name no column (SQLite's empty name context).
+    const limitEv: Ev | null = s.limit == null ? null : this.ev(s.limit!, new Scope());
+    const offsetEv: Ev | null = s.offset == null ? null : this.ev(s.offset!, new Scope());
     const ops: u8[] = [];
     for (const core of s.cores) {
       ops.push(core.op);

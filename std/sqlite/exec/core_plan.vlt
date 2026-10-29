@@ -2,15 +2,7 @@
 // plan's description in EXPLAIN QUERY PLAN's words.
 
 import { SRC_TABLE, Source } from "velt:sqlite/exec/source";
-import { Scope } from "velt:sqlite/exec/scope";
 import { Access } from "velt:sqlite/exec/plan";
-
-export function outerOrEmpty(outer: Scope | null): Scope {
-  if (outer != null) {
-    return outer!;
-  }
-  return new Scope();
-}
 
 /** One level's access path, in the words of SQLite's EXPLAIN QUERY PLAN. */
 export function describe(src: Source, a: Access): string {

@@ -237,6 +237,13 @@ const QUERIES: string[] = [
   "SELECT id FROM users WHERE count(*) > 1",
   // An outer query's aggregate in a subquery in ORDER BY: too late to make it an aggregate query.
   "SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)",
+  // LIMIT and OFFSET name no column, not even an enclosing query's.
+  "SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users",
+  "SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))",
+  "SELECT id FROM users LIMIT (SELECT count(users.id) FROM posts)",
+  "SELECT (SELECT 1 FROM posts LIMIT 1 OFFSET users.id) FROM users",
+  "SELECT (SELECT 1 UNION SELECT 2 LIMIT users.id) FROM users",
+  "SELECT (WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r LIMIT users.id) SELECT count(*) FROM r) FROM users",
   "SELECT nosuchfn(1)",
   "SELECT substr('x')",
   "SELECT 1 FROM users ORDER BY 5",
