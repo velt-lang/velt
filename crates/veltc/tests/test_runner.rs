@@ -338,3 +338,49 @@ fn what_a_test_does_cannot_break_the_run() {
     assert_eq!(s.last(), Some(&"ok test_after"), "{stdout}");
     assert!(stdout.contains("7 passed; 4 failed"), "{stdout}");
 }
+
+/// `VELT_RC_STATS=1` asks for the leak check: a file whose process reports no block counts
+/// (here its stderr is closed, so the report goes nowhere; a release runtime has no counters)
+/// fails instead of passing as leak-free (#1892). A file that reports them passes.
+#[cfg(unix)]
+#[test]
+fn a_leak_check_without_block_counts_fails_the_file() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "t/counted.test.vlt",
+        "export function test_counted() {}\n",
+    );
+    write(
+        dir,
+        "t/silent.test.vlt",
+        "declare system function close(fd: i32): i32;\n\n\
+         export function test_closes_stderr() {\n  close(2);\n}\n",
+    );
+    let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = command
+        .args(["test", "t"])
+        .current_dir(dir)
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_RC_STATS", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+    assert_eq!(
+        block(&stdout, "counted.test.vlt")[1..],
+        ["ok test_counted"],
+        "{stdout}"
+    );
+    assert_eq!(
+        block(&stdout, "silent.test.vlt")[1..],
+        [
+            "ok test_closes_stderr",
+            "FAILED t/silent.test.vlt (no block counts on its stderr; VELT_RC_STATS=1 counts \
+             blocks in debug builds)",
+        ],
+        "{stdout}"
+    );
+}

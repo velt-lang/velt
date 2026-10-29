@@ -1,5 +1,6 @@
 // Streamed bodies: a response written while the client reads it (velt:http's `BodyStream`, and
 // velt:http/server's `res.stream()` and Server-Sent Events), and an upload read piece by piece.
+import { channel } from "velt:channel";
 import { utf8Encode } from "velt:encoding";
 import { BodyStream } from "velt:fetch";
 import { serve } from "velt:http";
@@ -110,22 +111,18 @@ async function raw(port: number, text: string): Promise<string> {
   return all.replace(/Date: [^\r]*\r\n/g, "");
 }
 
-class Gone {
-  what: string = "not yet";
-}
-
 describe("velt:http/server streaming", () => {
   // velt:http/server streaming: a response written piece by piece (chunked; to an HTTP/1.0
   // client up to the connection's end), Server-Sent Events, a proxy piping an upstream body
   // through, an upload read piece by piece (chunked or Content-Length, 100 Continue), an unread
   // body skipped before the next request, and a client that goes away mid-stream (the write
   // throws and the request's signal aborts). (Was the golden std/http_server_stream.)
-  const gone = shared(new Mutex<Gone>(new Gone()));
+  // What the `/forever` handler saw when its client went away.
+  const gone = channel<string>();
   let port = 0;
   let base = "";
   let close = () => {};
   beforeAll(async () => {
-    const seen = gone.clone();
     const server = await serveRaw({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
       if (req.pathIs("/count")) {
         const s = await res.stream();
@@ -160,10 +157,7 @@ describe("velt:http/server streaming", () => {
             await s.write(block);
           }
         } catch (e) {
-          const what = `write failed, signal aborted: ${signal.aborted}`;
-          seen.with((g) => {
-            g.what = what;
-          });
+          gone.trySend(`write failed, signal aborted: ${signal.aborted}`);
         }
       } else if (req.pathIs("/proxy")) {
         const upstream = await fetch(`http://127.0.0.1:${req.query()}/count`);
@@ -181,7 +175,10 @@ describe("velt:http/server streaming", () => {
     base = `http://127.0.0.1:${port}`;
     close = () => server.close();
   });
-  afterAll(() => close());
+  afterAll(() => {
+    close();
+    gone.close();
+  });
 
   it("pieces arrive as they are written", async () => {
     const r = await fetch(`${base}/count`);
@@ -273,11 +270,11 @@ describe("velt:http/server streaming", () => {
     await f.read();
     f.abort();
     f.close();
-    let state = "not yet";
-    for (let i = 0; i < 200 && state == "not yet"; i++) {
-      await sleep(10);
-      state = gone.with((g) => g.what);
-    }
+    // A hang guard, not a wait: the handler reports as soon as its write fails, and a closed
+    // channel gives `null`.
+    const guard = setTimeout(() => gone.close(), 60000);
+    const state = await gone.receive();
+    clearTimeout(guard);
     expect(state).toBe("write failed, signal aborted: true");
   });
 });

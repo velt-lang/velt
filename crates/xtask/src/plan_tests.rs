@@ -314,6 +314,8 @@ fn os_specific_changes_check_windows_and_macos_in_the_queue() {
         "crates/vpm/src/json_file.rs",
         "std/fs.vlt",
         "tests/golden/lang/foo.out",
+        // The standard library's `velt test` suites run servers, sockets and files (#1892).
+        "tests/std/http/responses.test.vlt",
         "Cargo.lock",
         ".github/workflows/ci.yml",
     ] {

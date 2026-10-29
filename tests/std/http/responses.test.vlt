@@ -26,6 +26,7 @@ describe("a response without a body", () => {
   // 204 and 304 have no body, so no body headers: no default `content-type` is added (Node and
   // the Fetch API do the same), also when a handler passes on a fetched one. Other statuses keep
   // them. (Was the golden std/http_no_content.)
+  let port = 0;
   let base = "";
   let close = () => {};
   beforeAll(async () => {
@@ -42,7 +43,8 @@ describe("a response without a body", () => {
       }
       return new Response("hello");
     });
-    base = `http://127.0.0.1:${server.port}`;
+    port = server.port;
+    base = `http://127.0.0.1:${port}`;
     close = () => server.close();
   });
   afterAll(() => close());
@@ -52,6 +54,7 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(204);
     expect(r).not.toHaveHeader("content-type");
     expect(r).not.toHaveHeader("content-length");
+    expect(r).not.toHaveHeader("etag");
     expect(await r.text()).toBe("");
   });
 
@@ -69,6 +72,21 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(204);
     expect(r).not.toHaveHeader("content-type");
     expect(r).not.toHaveHeader("content-length");
+    expect(r).not.toHaveHeader("etag");
+  });
+
+  it("a passed-on 204 sends nothing after its head", async () => {
+    // On the wire: `fetch` ignores a body after a 204, so it could not see one leak through.
+    const text = await exchange(
+      port,
+      // The handler fetches `/none` from the request's own origin.
+      `GET /proxied HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    const head = text.toLowerCase();
+    expect(text.split("\r\n")[0]).toBe("HTTP/1.1 204 No Content");
+    expect(text.substring(text.indexOf("\r\n\r\n") + 4)).toBe("");
+    expect(head).not.toContain("content-length");
+    expect(head).not.toContain("transfer-encoding");
   });
 
   it("200 gets the default content-type and its length", async () => {
@@ -76,6 +94,7 @@ describe("a response without a body", () => {
     expect(r).toHaveStatus(200);
     expect(r).toHaveHeader("content-type", "text/plain;charset=UTF-8");
     expect(r).toHaveHeader("content-length", "5");
+    expect(r).not.toHaveHeader("etag");
     expect(await r.text()).toBe("hello");
   });
 });
