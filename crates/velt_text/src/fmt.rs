@@ -66,7 +66,23 @@ pub fn push_f64(out: &mut (impl Out + ?Sized), v: f64) {
     if v < 0.0 {
         out.push(b'-');
     }
-    let (digits, k, n) = shortest_digits(v.abs());
+    let mut buf = ryu::Buffer::new();
+    let text = buf.format_finite(v.abs()).as_bytes();
+    // ryu's plain forms, `12.34` (a point inside the digits) and `0.001234` (at most four zeros
+    // after the point), are the shortest digits laid out as JS lays them out, so they are the
+    // answer as they are. Its other forms differ from JS's: an integer ends in `.0`, and its
+    // exponent form starts at other bounds and has no `+`. Those are laid out from the digits.
+    if !text.ends_with(b".0") && !text.contains(&b'e') {
+        out.extend(text);
+        return;
+    }
+    let (digits, k, n) = digits_of(text);
+    lay_out(out, &digits, k, n);
+}
+
+/// Append the shortest digits `digits[..k]` of a positive value `0.d1..dk * 10^n` with the JS
+/// rules of `Number::toString`.
+fn lay_out(out: &mut (impl Out + ?Sized), digits: &[u8; 20], k: usize, n: i32) {
     let digits = &digits[..k];
     // Value = 0.d1d2..dk * 10^n  (i.e. digits * 10^(n-k)); JS spec names: k, n.
     if k as i32 <= n && n <= 21 {
@@ -97,10 +113,16 @@ pub fn push_f64(out: &mut (impl Out + ?Sized), v: f64) {
 
 /// Shortest round-trip decimal digits of a finite, positive `v`.
 /// Returns `(digits, k, n)` with `v == 0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`.
+#[cfg(test)]
 fn shortest_digits(v: f64) -> ([u8; 20], usize, i32) {
     let mut buf = ryu::Buffer::new();
-    // ryu prints e.g. "1.0", "0.3", "1e21", "1.5e-7", "1.2345678901234568e20", "0.0001".
-    let s = buf.format_finite(v).as_bytes();
+    digits_of(buf.format_finite(v).as_bytes())
+}
+
+/// The shortest digits in ryu's text for a finite, positive value (e.g. "1.0", "0.3", "1e21",
+/// "1.5e-7", "1.2345678901234568e20", "0.0001"): `(digits, k, n)` with the value
+/// `0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`.
+fn digits_of(s: &[u8]) -> ([u8; 20], usize, i32) {
     let (mantissa, exp) = match s.iter().position(|&c| c == b'e') {
         Some(i) => (&s[..i], parse_exp(&s[i + 1..])),
         None => (s, 0),
@@ -280,6 +302,84 @@ mod tests {
         }
         assert!(n > 0);
         eprintln!("checked {n} values");
+    }
+
+    /// What `push_f64` printed before ryu's plain forms were taken as they are: every value laid
+    /// out from its digits.
+    fn by_digits(v: f64) -> String {
+        if let Some(i) = whole(v) {
+            return i.to_string();
+        }
+        if !v.is_finite() || v == 0.0 {
+            return js(v);
+        }
+        let mut o = Vec::new();
+        if v < 0.0 {
+            o.push(b'-');
+        }
+        let (d, k, n) = shortest_digits(v.abs());
+        lay_out(&mut o, &d, k, n);
+        String::from_utf8(o).unwrap()
+    }
+
+    /// The text is byte for byte what laying out the digits gives, for every form ryu writes:
+    /// random bit patterns, random values at every decimal scale, and the bounds of ryu's and
+    /// JS's plain forms.
+    #[test]
+    #[allow(clippy::excessive_precision)] // literals are deliberate
+    fn plain_forms_are_the_digits_laid_out() {
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut values: Vec<f64> = vec![];
+        for _ in 0..300_000 {
+            values.push(f64::from_bits(next()));
+        }
+        for e in -330..=310 {
+            let scale = 10f64.powi(e);
+            for _ in 0..200 {
+                let m = (next() >> 11) as f64 / (1u64 << 53) as f64;
+                values.push(m * scale);
+                values.push(-(m + 1.0) * scale);
+            }
+            values.extend([
+                scale,
+                scale * 0.999_999_999_999_999_9,
+                scale * 1.000_000_000_000_000_2,
+            ]);
+        }
+        values.extend([
+            1e-5,
+            9.99999e-6,
+            1.0000000000000002e-5,
+            1e-4,
+            0.00009999999999999999,
+            1e15,
+            1e16,
+            9999999999999998.0,
+            9007199254740993.0,
+            9007199254740994.0,
+            1e21,
+            9.999999999999999e20,
+            1e-7,
+            1e-6,
+            0.000001234,
+            5e-324,
+            2.2250738585072014e-308,
+            1.7976931348623157e308,
+            0.1,
+            0.30000000000000004,
+            1658206780088562.25,
+            4.35,
+            123456789012345680.0,
+        ]);
+        for v in values {
+            assert_eq!(js(v), by_digits(v), "formatting {v:e} ({:#x})", v.to_bits());
+        }
     }
 
     #[test]
