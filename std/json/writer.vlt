@@ -225,36 +225,24 @@ function putDigits(buf: u8[], o: usize, v: u64): usize {
   return o + w;
 }
 
-// The last `w` digits of `v`, leading zeros included, into `buf` from `o`: two per step.
+// The last `w` digits of `v`, leading zeros included, into `buf` from `o`: two per division by
+// 100.
 function putFixed(buf: u8[], o: usize, v: u64, w: usize) {
   let pos = o + w;
   let r = v;
   while (pos >= o + 2) {
     const q = r / 100;
-    const d = ((r - q * 100) * 2) as usize;
+    const d = (r - q * 100) as u32;
+    const tens = d / 10;
     pos -= 2;
-    buf[pos] = DIGIT_PAIRS[d];
-    buf[pos + 1] = DIGIT_PAIRS[d + 1];
+    buf[pos] = 48 + (tens as u8);
+    buf[pos + 1] = 48 + ((d - tens * 10) as u8);
     r = q;
   }
   if (pos > o) {
     buf[o] = 48 + ((r % 10) as u8);
   }
 }
-
-// The digits of 0 to 99, two each (an array literal of numbers is static data).
-const DIGIT_PAIRS: u8[] = [
-  48, 48, 48, 49, 48, 50, 48, 51, 48, 52, 48, 53, 48, 54, 48, 55, 48, 56, 48, 57,
-  49, 48, 49, 49, 49, 50, 49, 51, 49, 52, 49, 53, 49, 54, 49, 55, 49, 56, 49, 57,
-  50, 48, 50, 49, 50, 50, 50, 51, 50, 52, 50, 53, 50, 54, 50, 55, 50, 56, 50, 57,
-  51, 48, 51, 49, 51, 50, 51, 51, 51, 52, 51, 53, 51, 54, 51, 55, 51, 56, 51, 57,
-  52, 48, 52, 49, 52, 50, 52, 51, 52, 52, 52, 53, 52, 54, 52, 55, 52, 56, 52, 57,
-  53, 48, 53, 49, 53, 50, 53, 51, 53, 52, 53, 53, 53, 54, 53, 55, 53, 56, 53, 57,
-  54, 48, 54, 49, 54, 50, 54, 51, 54, 52, 54, 53, 54, 54, 54, 55, 54, 56, 54, 57,
-  55, 48, 55, 49, 55, 50, 55, 51, 55, 52, 55, 53, 55, 54, 55, 55, 55, 56, 55, 57,
-  56, 48, 56, 49, 56, 50, 56, 51, 56, 52, 56, 53, 56, 54, 56, 55, 56, 56, 56, 57,
-  57, 48, 57, 49, 57, 50, 57, 51, 57, 52, 57, 53, 57, 54, 57, 55, 57, 56, 57, 57,
-];
 
 /** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */
 export function writeString(out: string, s: string): void {

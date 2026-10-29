@@ -22,13 +22,7 @@ import {
   detailText,
 } from "velt:json/scan";
 import { utf8Substring } from "velt:encoding";
-import {
-  copyRun,
-  nextEscape,
-  putDecimal,
-  shortNumber,
-  writeString,
-} from "velt:json/writer";
+import { copyRun, nextEscape, putDecimal, shortNumber, writeString } from "velt:json/writer";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt:json/reader";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
