@@ -40,3 +40,35 @@ fn a_large_caller_tracking_function_has_one_instance_for_all_call_sites() {
     assert_eq!(inserts.len(), 1, "{inserts:#?}");
     assert!(inserts[0].contains("_LA("), "{}", inserts[0]);
 }
+
+#[test]
+fn an_internal_error_does_not_track_the_caller() {
+    // `Uint8Array.subarray` can only panic with an internal error (`panic(`ICE: …`)`): that is
+    // std's bug, reported where it is, so the method keeps one instance with no location.
+    let dir = test_dir::TestDir::new();
+    let main = dir.path().join("main.vlt");
+    std::fs::write(
+        &main,
+        "function main() {\n\
+           const b = new Uint8Array([1, 2, 3]);\n\
+           console.log(b.subarray(1, 2).length, b.subarray(0).length);\n\
+         }\n",
+    )
+    .unwrap();
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--emit", "vir", main.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let vir = String::from_utf8_lossy(&out.stdout);
+    let subarrays: Vec<&str> = vir
+        .lines()
+        .filter(|l| l.starts_with("fn#") && l.contains("M8subarray"))
+        .collect();
+    assert_eq!(subarrays.len(), 1, "{subarrays:#?}");
+    assert!(!subarrays[0].contains("_L"), "{}", subarrays[0]);
+}

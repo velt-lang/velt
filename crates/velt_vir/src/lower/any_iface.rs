@@ -247,16 +247,16 @@ impl Cx<'_> {
         let mut built = false;
         loop {
             let held = self.facts.dyn_types.len();
-            let stale: Vec<(vir::FuncId, TyId)> = (self.iface_glues.iter())
+            let stale: Vec<(vir::FuncId, Work)> = (self.iface_glues.iter())
                 .filter(|g| g.2 != Some(held))
-                .map(|g| (g.0, g.1))
+                .map(|g| (g.0, g.1.clone()))
                 .collect();
             if stale.is_empty() {
                 return built;
             }
-            for (fid, ty) in stale {
+            for (fid, work) in stale {
                 self.funcs[fid.0 as usize] = None;
-                self.build_now(fid, &Work::Glue(Glue::AnyIface, ty));
+                self.build_now(fid, &work);
                 if let Some(g) = self.iface_glues.iter_mut().find(|g| g.0 == fid) {
                     g.2 = Some(held);
                 }
@@ -280,7 +280,7 @@ impl FnLower<'_, '_> {
         {
             return;
         }
-        let f = self.cx.iface_glue(ty);
+        let f = self.cx.late_glue(Glue::AnyIface, ty);
         let vt = self.cx.ty(ty);
         let slot = Place::local(self.temp(vt));
         let ok = Place::local(self.temp(Ty::Bool));
@@ -349,16 +349,17 @@ impl FnLower<'_, '_> {
 }
 
 impl Cx<'_> {
-    /// The `AnyIface` glue of the interface type `ty`, built last ([`Cx::build_iface_glues`]).
-    fn iface_glue(&mut self, ty: TyId) -> vir::FuncId {
-        let work = Work::Glue(Glue::AnyIface, ty);
+    /// The glue `g` of `ty` that depends on the types `any` values hold (`AnyIface`,
+    /// `AnyNumeric`), built last ([`Cx::build_iface_glues`]).
+    pub(super) fn late_glue(&mut self, g: Glue, ty: TyId) -> vir::FuncId {
+        let work = Work::Glue(g, ty);
         if let Some(&f) = self.work_map.get(&work) {
             return f;
         }
         let f = vir::FuncId(self.funcs.len() as u32);
         self.funcs.push(None);
-        self.work_map.insert(work, f);
-        self.iface_glues.push((f, ty, None));
+        self.work_map.insert(work.clone(), f);
+        self.iface_glues.push((f, work, None));
         f
     }
 }

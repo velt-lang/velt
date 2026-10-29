@@ -73,6 +73,13 @@ pub(super) struct Use {
     pub text: String,
     pub captured: bool,
     pub capture: Option<(DefId, LocalId)>,
+    /// A value JavaScript holds by reference (a class instance or an array) handed to the
+    /// callee: what another argument changes inside it while being evaluated is what
+    /// JavaScript's callee sees too.
+    pub identity: bool,
+    /// A write through another reference to the place (a share temporary: `h.vs.length = 0`):
+    /// it changes the value the place holds, never which value that is.
+    pub inside: bool,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
@@ -149,6 +156,8 @@ impl Collector<'_, '_> {
                     text,
                     captured: false,
                     capture: None,
+                    identity: super::conflict::by_reference(self.cx, e.ty),
+                    inside: false,
                 });
             }
             return self.index_operands(e, nested);
@@ -266,6 +275,8 @@ impl Collector<'_, '_> {
                 text: self.locals[cap.outer.0 as usize].name.clone(),
                 captured: true,
                 capture: Some((def, cap.outer)),
+                identity: false,
+                inside: false,
             });
         }
     }
@@ -302,6 +313,9 @@ impl Nested<'_, '_, '_> {
         let through = (access == Access::Unique)
             .then(|| self.shares.get(&place.root))
             .flatten();
+        // Only a write to the shared value itself (`t.length = 0`) changes what it holds; a write
+        // to a place under it (`t.vs = mk()`) replaces that place, as a plain write does.
+        let inside = through.is_some() && place.proj.is_empty();
         if let Some((p, shown)) = through {
             if place.proj.is_empty() {
                 text = shown.clone();
@@ -317,6 +331,8 @@ impl Nested<'_, '_, '_> {
             text,
             captured: false,
             capture: None,
+            identity: false,
+            inside,
         });
     }
 }

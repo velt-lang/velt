@@ -3082,7 +3082,9 @@ union or a literal type such as `"red" | "green"` the value takes the first memb
 `instanceof` for a class, `===` for a literal, `Array.isArray` for the union's one array member;
 a value that passes none of them converts to the union's one interface or object type member
 when it has one, checked as `x as VNode` is: `VNode | string | number` from an `any`),
-`typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`typeof` (narrowing to `number`, `string` and `boolean`), a number of any numeric type into
+any other (`const a: any = 5 as i64; a as number`, `a as u8`: there is one JavaScript number, so
+it converts as a `number` would with `as`, exactly up to 2^53), `instanceof`, truthiness,
 `===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
