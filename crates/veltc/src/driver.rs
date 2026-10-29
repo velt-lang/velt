@@ -463,6 +463,12 @@ fn build_on_current_thread(
         sess.record("stamp", t);
         (key, paths, stamp_path, objects)
     });
+    // A build that writes the executable without a stamp (`VELT_BUILD_STAMP=off`, `--report`)
+    // leaves no stamp of an earlier one beside it.
+    if stamped.is_none() && opts.emit == Emit::Exe {
+        let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
+        let _ = std::fs::remove_file(stamp::path(&paths.executable));
+    }
     if let Some((_, paths, _, Some(objects))) = &stamped {
         link_stage(sess, opts, &target, objects, paths)?;
         return Ok(Artifact::Executable(paths.executable.clone()));
@@ -542,11 +548,15 @@ fn build_on_current_thread(
     // Warnings are shown by every build, so a build with diagnostics gets no stamp.
     if let Some((key, _, stamp_path, _)) = stamped.filter(|_| sess.diagnostics.is_empty()) {
         let generated = opts.root_source.as_ref().map(|_| opts.input.as_path());
+        // The outputs too: another build or tool that rewrites them (`--emit obj` onto a unit
+        // object, an older velt) makes this stamp stale.
+        let mut outputs = object_paths.clone();
+        outputs.push(paths.executable.clone());
         let built = stamp::Built {
             seen: &seen,
             virtual_root: generated,
             objects: object_paths.len(),
-            link_inputs: &[],
+            link_inputs: &outputs,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));

@@ -299,6 +299,62 @@ fn a_package_nearer_the_importer_is_a_change() {
     assert_eq!(run(), "a\nINNER b\n");
 }
 
+/// A build that writes the program or its object without a stamp (the stamp off, `--report`,
+/// `--emit obj` onto the stamped object) leaves no stamp the next build could trust: the
+/// program must always be built from the sources as they are.
+#[test]
+fn outputs_written_without_a_stamp_are_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { word } from \"./lib\";\nfunction main() {\n  console.log(word());\n}\n";
+    std::fs::write(dir.join("main.vlt"), main).unwrap();
+    let lib = |w: &str| {
+        let src = format!("export function word(): string {{\n  return \"{w}\";\n}}\n");
+        std::fs::write(dir.join("lib.vlt"), src).unwrap();
+    };
+    let build = |args: &[&str], env: &[(&str, &str)]| {
+        let o = velt(dir, args, env);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+    };
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "main.exe" } else { "main" });
+    let object = || {
+        let entries = std::fs::read_dir(dir.join("target/velt")).unwrap();
+        (entries.flatten().map(|e| e.path()))
+            .find(|p| {
+                let ext = p.extension().unwrap_or_default();
+                p.file_stem().unwrap_or_default() == "main" && (ext == "o" || ext == "obj")
+            })
+            .unwrap()
+    };
+    type Build<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+    let middle: [Build; 2] = [
+        (&["build", "main.vlt"], &[("VELT_BUILD_STAMP", "off")]),
+        (&["build", "main.vlt", "--report", "numbers"], &[]),
+    ];
+    for (i, (args, env)) in middle.iter().enumerate() {
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        lib("AAAA");
+        build(args, env);
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        let out = run_copy(&exe, &format!("case{i}"));
+        assert_eq!(text(&out.stdout), "BBBB\n", "case {i}");
+    }
+    // An object written by `--emit obj` where the stamped build keeps its own.
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    let obj = object();
+    lib("AAAA");
+    let obj_arg = obj.to_str().unwrap();
+    build(&["build", "main.vlt", "--emit", "obj", "-o", obj_arg], &[]);
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    assert_eq!(text(&run_copy(&exe, "obj").stdout), "BBBB\n");
+}
+
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
 /// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
 /// locked for a moment (an antivirus scan), so the relink must never target a file that ran.

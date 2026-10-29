@@ -248,13 +248,16 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
   `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
   session's source map and the configuration files module resolution read) by content hash (the
-  size and time it had when it was read first, not trusted when not older than the stamp), what
+  size and time it had when it was read first, not recorded when it was modified less than 2 s
+  before it was read, and not trusted when not older than the stamp), what
   module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
   missing as it was, every directory listed has the same entries), the manifests and lockfile
-  of the package graph, and extra link inputs by size and time. The objects it names must
+  of the package graph, and by size and time the unit objects and the executable it wrote (so
+  an output another build or tool rewrote is a change) and extra link inputs. The objects it names must
   exist; the link step then runs (and checks its own stamp). The stamp ends with `end <entries>`
   and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
-  does not match removes it first. `VELT_BUILD_STAMP=off|0` disables it.
+  does not match removes it first, as does a build of the executable that writes none
+  (`VELT_BUILD_STAMP=off`, `--report`). `VELT_BUILD_STAMP=off|0` disables it.
   Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
   `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
   profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from

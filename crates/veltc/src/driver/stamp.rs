@@ -136,7 +136,9 @@ pub(super) struct Built<'a> {
     pub virtual_root: Option<&'a Path>,
     /// How many objects the build made.
     pub objects: usize,
-    /// Further files the link reads, whose size and time must stay as they are.
+    /// Files whose size and time must stay as they are: the objects the link reads and the
+    /// executable it writes (outputs some other build may have rewritten), and later further
+    /// link inputs.
     pub link_inputs: &'a [PathBuf],
 }
 

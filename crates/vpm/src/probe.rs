@@ -151,7 +151,7 @@ pub fn read_to_string(path: &Path) -> std::io::Result<String> {
     if !recording() {
         return std::fs::read_to_string(path);
     }
-    let before = stat(path);
+    let before = stat(path).filter(|&(_, time)| settled(time));
     let read = std::fs::read_to_string(path);
     match &read {
         Ok(text) => {
@@ -165,6 +165,19 @@ pub fn read_to_string(path: &Path) -> std::io::Result<String> {
         }
     }
     read
+}
+
+/// Whether a file last modified at `time` (nanoseconds since 1970) was modified long enough
+/// before now that a write in the same tick of the file system's clock is over: git's "racily
+/// clean" rule, applied when the file is read. A file modified just before (an editor saving as
+/// a watcher starts the build) is recorded without its size and time, so its contents are
+/// hashed whenever they are checked.
+fn settled(time: u128) -> bool {
+    const TICK: u128 = 2_000_000_000; // FAT's 2 s, the coarsest time a file system keeps.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    time + TICK < now
 }
 
 /// `std::fs::canonicalize(path)`, noted.
@@ -252,7 +265,18 @@ mod tests {
         assert_eq!(seen.listed[&abs("")], listing_hash(dir).unwrap());
         let read = &seen.read[&abs("a.ts")];
         assert_eq!(read.hash, content_hash(b"a"));
-        assert_eq!(read.stat, stat(&dir.join("a.ts")));
+        // Just written: its size and time are not to be trusted (racily clean).
+        assert_eq!(read.stat, None);
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dir.join("a.ts"))
+            .unwrap();
+        f.set_modified(old).unwrap();
+        let ((), settled) = record(|| {
+            read_to_string(&dir.join("a.ts")).unwrap();
+        });
+        assert_eq!(settled.read[&abs("a.ts")].stat, stat(&dir.join("a.ts")));
         let ((), linked) = record(|| {
             canonicalize(&dir.join("a.ts")).unwrap();
         });
