@@ -1,0 +1,57 @@
+// Through an interface bound, a type parameter instantiated with a `Promise` gets the most
+// specific `extend … implements` block, as a direct call does, not the blanket `extend<T> T`
+// (#1854).
+
+interface Kind {
+  kind(): string;
+}
+
+extend<T> T implements Kind {
+  kind(): string {
+    return "anything";
+  }
+}
+
+extend<V, E> Promise<V, E> implements Kind {
+  kind(): string {
+    return "promise";
+  }
+}
+
+function viaBound<T extends Kind>(x: T): string {
+  return x.kind();
+}
+
+const p = Promise.resolve(1);
+console.log(p.kind(), viaBound(p));
+console.log((3).kind(), viaBound(3));
+
+// What `velt:test`'s `it` needs: await what a callback returns when it is a promise.
+interface Settles {
+  settle(): Promise<void, unknown>;
+}
+
+extend<T> T implements Settles {
+  async settle(): Promise<void, unknown> {}
+}
+
+extend<V, E> Promise<V, E> implements Settles {
+  async settle(): Promise<void, unknown> {
+    await this;
+  }
+}
+
+async function run<R extends Settles>(name: string, body: () => R throws unknown) {
+  try {
+    await body().settle();
+    console.log(`${name}: ok`);
+  } catch (e) {
+    console.log(`${name}: ${e}`);
+  }
+}
+
+await run("sync", () => {});
+await run("async", async () => {});
+await run("async rejects", async () => {
+  throw new Error("rejected");
+});
