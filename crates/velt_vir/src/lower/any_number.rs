@@ -17,8 +17,8 @@
 use velt_sema::hir::{self, FloatTy, IntTy, TyId, TyKind};
 
 use super::any::{SLOT_NUMBER, TAG_NUMBER};
-use super::glue::{Glue, VtableKey};
-use super::{cint, FnLower, Work};
+use super::glue::{Glue, VtableKey, SLOT_DROP};
+use super::{cint, FnLower};
 use crate::vir::{
     BinOp, BlockId, Callee, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
 };
@@ -59,74 +59,118 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// Where `any_unbox` found no value of the numeric type `ty` in the `any` at `p` (of type
-    /// `from`, descriptor `desc`): a number of another numeric type converts (module docs) into
-    /// `out`, going on to `done`; anything else continues here, to the `TypeError`. The
-    /// conversion is a call of `Glue::AnyNumeric`, one per numeric type: every `any` member
-    /// read or argument converted to a number has this path, and inline it made the code
-    /// around such conversions (`Ganycall` glue) a fifth larger.
+    /// Where `any_unbox` found no value of the numeric type `ty` in the `any` at `p`
+    /// (descriptor `desc`): a number of another numeric type converts (module docs) into `out`,
+    /// going on to `done`. Returns whether the `TypeError` of anything else is raised here too;
+    /// otherwise the code goes on in the current block, to the caller's.
+    ///
+    /// Every `any` member read or argument converted to a number has this path, so it costs one
+    /// call per site: a glue per numeric type that converts and drops the `any`
+    /// (`Glue::AnyNumericOrError`), and whose `TypeError` is a call that never returns
+    /// (`Glue::AnyNumberError`), so that the optimizer keeps it cold when it inlines the glue
+    /// into a loop. (Inline at every site, the conversion made the `Ganycall` glue a fifth
+    /// larger; with a branch per site and the error in the glue, compiling
+    /// `tests/golden/lang/any_view_object.vlt` took 16% more instructions.) A site that names
+    /// what it converts (`any_context`) has its own message: it calls `Glue::AnyNumeric` and
+    /// branches to it on `false`.
     pub(super) fn any_number_convert(
         &mut self,
         p: &Place,
-        from: TyId,
         ty: TyId,
         desc: Operand,
         out: &Place,
         done: BlockId,
-    ) {
+    ) -> bool {
         let vt = match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) => self.cx.ty(ty),
-            _ => return,
+            _ => return false,
         };
-        let f = self.cx.func(Work::Glue(Glue::AnyNumeric, ty));
+        let stops = self.any_context.is_none();
+        let g = match stops {
+            true => Glue::AnyNumericOrError,
+            false => Glue::AnyNumeric,
+        };
+        let f = self.cx.late_glue(g, ty);
         let slot = Place::local(self.temp(vt));
-        let ok = Place::local(self.temp(Ty::Bool));
         let args = vec![
             Operand::Copy(super::operand::proj(p, Proj::Field(0))),
             desc,
             self.rvalue_temp(Ty::Ptr, Rvalue::AddrOf(slot.clone())),
         ];
-        self.call(Callee::Func(f), args, Some(ok.clone()), false);
-        let (yes, no) = (self.new_block(), self.new_block());
-        self.branch(Operand::Copy(ok), yes, no);
-        self.switch_to(yes);
-        self.drop_glue(p.clone(), from);
+        let no = match stops {
+            true => {
+                self.call(Callee::Func(f), args, None, false);
+                None
+            }
+            false => {
+                let ok = Place::local(self.temp(Ty::Bool));
+                self.call(Callee::Func(f), args, Some(ok.clone()), false);
+                let (yes, no) = (self.new_block(), self.new_block());
+                self.branch(Operand::Copy(ok), yes, no);
+                self.switch_to(yes);
+                Some(no)
+            }
+        };
         self.assign(out.clone(), Rvalue::Use(Operand::Copy(slot)));
         self.goto(done);
-        self.switch_to(no);
+        if let Some(no) = no {
+            self.switch_to(no);
+        }
+        stops
     }
 
     /// `Glue::AnyNumeric` of the numeric type `ty`: the number of another numeric type held by
     /// the `any` of data `data` and descriptor `desc`, converted to `ty` (module docs) and
-    /// written to `out`, and `true`; `false` for a value that is not a number.
-    pub(super) fn any_numeric_body(&mut self, data: Local, desc: Local, out: Local, ty: TyId) {
+    /// written to `out`, and `true`, the `any` dropped; `false` for a value that is not a
+    /// number, the `any` kept. With `stops` (`Glue::AnyNumericOrError`), nothing is returned
+    /// and a value that is not a number stops with the `TypeError`.
+    pub(super) fn any_numeric_body(
+        &mut self,
+        data: Local,
+        desc: Local,
+        out: Local,
+        ty: TyId,
+        stops: bool,
+    ) {
         let vt = self.cx.ty(ty);
         let dest = self.deref_param(out, ty);
         let (data, desc) = (
             Operand::Copy(Place::local(data)),
             Operand::Copy(Place::local(desc)),
         );
-        let yes = Operand::Const(Const::Bool(true), Ty::Bool);
+        // Every conversion ends here: the box is dropped (through its descriptor) and `true`.
+        let yes = self.new_block();
         let tag = self.any_tag_of(desc.clone());
         let num = cint(TAG_NUMBER as i128, Ty::U64);
         let is_num = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, num));
         let (conv, other) = (self.new_block(), self.new_block());
         self.branch(is_num, conv, other);
         self.switch_to(other);
-        self.terminate(Terminator::Return(Operand::Const(
-            Const::Bool(false),
-            Ty::Bool,
-        )));
+        match stops {
+            true => {
+                // Out of line, where it never returns: the optimizer keeps such calls cold
+                // and does not inline them with this glue into a loop.
+                let f = self.cx.func(super::Work::Glue(Glue::AnyNumberError, ty));
+                self.call(Callee::Func(f), vec![desc.clone()], None, true);
+            }
+            false => self.terminate(Terminator::Return(Operand::Const(
+                Const::Bool(false),
+                Ty::Bool,
+            ))),
+        }
         self.switch_to(conv);
         let imp = self.cx.hir.any_impl.unwrap_or(0);
+        // Only the numeric types `any` values hold have a descriptor to compare with (naming
+        // another's would make its table and glue): the glue is built last, and again when
+        // more appear (`Cx::late_glue`).
+        let held = |lw: &Self, k: TyKind| {
+            (lw.cx.types.get(&k)).filter(|t| *t != ty && lw.cx.facts.dyn_types.contains(t))
+        };
         // A 64-bit integer: its value, exact past 2^53, wrapping as `as` wraps.
         for k in [IntTy::I64, IntTy::U64, IntTy::ISize, IntTy::USize] {
-            let Some(t) = self.cx.types.get(&TyKind::Int(k)) else {
+            let Some(t) = held(self, TyKind::Int(k)) else {
                 continue;
             };
-            if t == ty {
-                continue;
-            }
             let want = self.vtable_addr(VtableKey::Impl(imp, t));
             let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
             let (hit, miss) = (self.new_block(), self.new_block());
@@ -143,10 +187,10 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(vt, Rvalue::Cast(i, vt))
             };
             self.assign(dest.clone(), Rvalue::Use(v));
-            self.terminate(Terminator::Return(yes.clone()));
+            self.goto(yes);
             self.switch_to(miss);
         }
-        let f = self.any_slot_call(desc.clone(), SLOT_NUMBER, vec![data], Ty::F64);
+        let f = self.any_slot_call(desc.clone(), SLOT_NUMBER, vec![data.clone()], Ty::F64);
         let v = match vt {
             Ty::F64 => f,
             Ty::F32 => self.rvalue_temp(vt, Rvalue::Cast(f, vt)),
@@ -155,7 +199,7 @@ impl FnLower<'_, '_> {
                 // narrower integer goes through `i64` (exact), so that it wraps as `300 as u8`.
                 let fl = self.new_block();
                 for k in [FloatTy::F64, FloatTy::F32] {
-                    let Some(t) = self.cx.types.get(&TyKind::Float(k)) else {
+                    let Some(t) = held(self, TyKind::Float(k)) else {
                         continue;
                     };
                     let want = self.vtable_addr(VtableKey::Impl(imp, t));
@@ -168,12 +212,20 @@ impl FnLower<'_, '_> {
                 let i = self.rvalue_temp(Ty::I64, Rvalue::Cast(f.clone(), Ty::I64));
                 let c = self.rvalue_temp(vt, Rvalue::Cast(i, vt));
                 self.assign(dest.clone(), Rvalue::Use(c));
-                self.terminate(Terminator::Return(yes.clone()));
+                self.goto(yes);
                 self.switch_to(fl);
                 self.rvalue_temp(vt, Rvalue::Cast(f, vt))
             }
         };
         self.assign(dest, Rvalue::Use(v));
-        self.terminate(Terminator::Return(yes));
+        self.goto(yes);
+        self.switch_to(yes);
+        let drop = self.dispatch(desc, SLOT_DROP);
+        self.call_entry(drop, vec![data], vec![Ty::Ptr], Ty::Unit);
+        let r = match stops {
+            true => Operand::Const(Const::Unit, Ty::Unit),
+            false => Operand::Const(Const::Bool(true), Ty::Bool),
+        };
+        self.terminate(Terminator::Return(r));
     }
 }

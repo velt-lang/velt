@@ -445,9 +445,10 @@ struct Cx<'h> {
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
-    /// The `AnyIface` glues, built last (any_iface.rs): each with the number of types `any`
-    /// values held when it was built.
-    iface_glues: Vec<(FuncId, TyId, Option<usize>)>,
+    /// The glues that depend on the types `any` values hold (`AnyIface`, any_iface.rs, and
+    /// `AnyNumeric`, any_number.rs), built last: each with the number of such types when it
+    /// was built.
+    iface_glues: Vec<(FuncId, Work, Option<usize>)>,
     /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
     /// (boxing/module_reach.rs); those of the function being declared until it is built.
     unique_params: Vec<(FuncId, u32, TyId)>,

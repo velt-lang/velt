@@ -134,6 +134,12 @@ pub(crate) enum Glue {
     /// `(data, desc, out) -> bool`: a number of another numeric type in an `any`, converted
     /// (any_number.rs).
     AnyNumeric,
+    /// `(data, desc, out)`: as `AnyNumeric`, stopping with the `TypeError` on a value that is
+    /// not a number (any_number.rs).
+    AnyNumericOrError,
+    /// `(desc)`, never returning: the `TypeError` of a value that is not a number, for
+    /// `AnyNumericOrError` (any_number.rs).
+    AnyNumberError,
     JsText,
     ViewDrop,
     MirrorDrop,
@@ -207,6 +213,8 @@ impl Glue {
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
             Glue::AnyNumeric => "anynumeric",
+            Glue::AnyNumericOrError => "anynumericorerror",
+            Glue::AnyNumberError => "anynumbererror",
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
             Glue::MirrorDrop => "mirrordrop",
@@ -261,6 +269,8 @@ impl Glue {
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::AnyNumericOrError => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::AnyNumberError => (vec![Ptr], Unit),
             Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
     }
@@ -327,7 +337,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
-            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty),
+            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, false),
+            Glue::AnyNumericOrError => lw.any_numeric_body(args[0], args[1], args[2], ty, true),
+            Glue::AnyNumberError => lw.any_type_error(a(0), ty),
             Glue::JsText => lw.js_text_body(args[0], a(1), ty),
             Glue::ViewDrop => lw.view_drop_body(args[0], ty),
             Glue::MirrorDrop => {
