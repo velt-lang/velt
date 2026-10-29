@@ -1,5 +1,7 @@
-// An `as` assertion of a union as one of its members is checked (#893): the value must be that
-// member, where Node goes on with the other one (and here would print `undefined`).
+// An `as` assertion of a union as one of its members, used as a value, is checked (#893): the
+// value must be that member, where Node goes on with the other one (and here would print
+// `undefined`). A field read of the assertion itself, `(o as Ctx).name`, reads as in Node
+// instead (cast_member_read.vlt).
 interface Ctx {
   name: string;
 }
@@ -9,7 +11,8 @@ interface Options {
 }
 
 function nameOf(o: Ctx | Options): string {
-  return (o as Ctx).name;
+  const c = o as Ctx;
+  return c.name;
 }
 
 function main() {
