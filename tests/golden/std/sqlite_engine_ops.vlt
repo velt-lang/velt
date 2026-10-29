@@ -7,7 +7,17 @@ import { open, Database } from "velt:sqlite";
 import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
 import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
 import { BINARY } from "velt:sqlite/record";
-import { Val, blobVal, intVal, nullVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
+import {
+  Val,
+  blobVal,
+  checkLength,
+  concatOp,
+  intVal,
+  nullVal,
+  realVal,
+  textVal,
+  toText,
+} from "velt:sqlite/exec/value";
 import {
   BIT_AND,
   BIT_OR,
@@ -278,6 +288,22 @@ function main() {
   );
   likeBoth(db, nothing, one, twelve);
   likeBoth(db, one, nothing, twelve);
+
+  // SQLite's length limit (SQLITE_MAX_LENGTH, 1,000,000,000 bytes), checked before a value is
+  // built; `||` checks it on the two texts' lengths.
+  for (const n of [1000000000, 1000000001]) {
+    let r = "ok";
+    try {
+      checkLength(n as u64);
+    } catch (e) {
+      r = e.message;
+    }
+    console.log(`a value of ${n} bytes: ${r}`);
+  }
+  console.log(
+    describe(concatOp(textVal("ab"), intVal(12))),
+    describe(concatOp(nullVal(), textVal("x"))),
+  );
 
   // A few results spelled out.
   console.log(describe(arithOp(OP_MUL, realVal(0.5), textVal("-0"))));

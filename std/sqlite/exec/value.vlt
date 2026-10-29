@@ -8,6 +8,7 @@ import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
 import { realText } from "velt:sqlite/real";
 import { utf8Encode, utf8DecodeLossy } from "velt:encoding";
 import { atof } from "velt:sqlite/exec/fp";
+import { SqlRunError } from "velt:sqlite/exec/errors";
 
 /** A BLOB's bytes, boxed: a value that is no BLOB holds none (no empty array to make). */
 export class Blob {
@@ -95,6 +96,49 @@ export function toBlob(v: Val): u8[] {
     return [];
   }
   return utf8Encode(toText(v));
+}
+
+/** SQLITE_MAX_LENGTH: the most bytes a TEXT or BLOB value can have (1,000,000,000). */
+export const MAX_LENGTH: u64 = 1000000000;
+
+/** SQLite's `string or blob too big` (SQLITE_TOOBIG). */
+export function tooBig(): never {
+  throw new SqlRunError("string or blob too big");
+}
+
+/**
+ * Throws SQLite's `string or blob too big` when a value of `n` bytes is over `MAX_LENGTH`. Every
+ * function whose result size the SQL controls calls it before it builds the value.
+ */
+export function checkLength(n: u64) {
+  if (n > MAX_LENGTH) {
+    tooBig();
+  }
+}
+
+/** A value's size in bytes as `sqlite3_value_bytes` counts it: its text's UTF-8, or a blob's. */
+export function valueBytes(v: Val): usize {
+  if (v.t == TEXT) {
+    return __intrinsic_str_byte_len(v.s);
+  }
+  if (v.t == BLOB) {
+    return v.b.length;
+  }
+  if (v.t == NULL) {
+    return 0;
+  }
+  return __intrinsic_str_byte_len(toText(v));
+}
+
+/** `x || y`: the texts joined, NULL if either is NULL, an error past `MAX_LENGTH`. */
+export function concatOp(x: Val, y: Val): Val {
+  if (x.t == NULL || y.t == NULL) {
+    return nullVal();
+  }
+  const a = toText(x);
+  const b = toText(y);
+  checkLength((__intrinsic_str_byte_len(a) + __intrinsic_str_byte_len(b)) as u64);
+  return textVal(a + b);
 }
 
 /** A number read from text: its value, and whether the whole text (but spaces) was the number. */
