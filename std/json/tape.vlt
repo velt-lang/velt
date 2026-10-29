@@ -326,13 +326,13 @@ export class Tape {
         n = 0;
         extra = 0;
       }
+      // The second word first: its bounds check covers the first's.
+      const p = words[2 * (at as usize) + 1];
       const w = words[2 * (at as usize)];
       const k = w & 0xff;
       if (k == T_NUMBER) {
-        const x = f64.fromBits(words[2 * (at as usize) + 1]);
-        n = putNumber(buf, n, x);
+        n = putNumber(buf, n, f64.fromBits(p));
       } else if (k == T_STRING) {
-        const p = words[2 * (at as usize) + 1];
         let to = putText(buf, n, src, srcLen, w, p);
         if (to == NO_ROOM) {
           const len = n as u64;
@@ -368,7 +368,7 @@ export class Tape {
             end = this.count(at) as u64;
           } else {
             info = (at as u64) | IS_OPEN | (object ? IS_OBJECT : 0);
-            cur = words[2 * (at as usize) + 1];
+            cur = p;
             end = cur + count;
           }
           comma = 0;
@@ -380,8 +380,8 @@ export class Tape {
       if ((info & (IS_OBJECT | IS_ORDERED)) == 0) {
         while (cur < end) {
           const m = kids[cur as usize];
-          const wm = words[2 * (m as usize)];
-          if ((wm & 0xff) != T_NUMBER) {
+          const pm = words[2 * (m as usize) + 1];
+          if ((words[2 * (m as usize)] & 0xff) != T_NUMBER) {
             break;
           }
           if (n > OUT_CAP) {
@@ -392,8 +392,7 @@ export class Tape {
             extra = 0;
           }
           buf[n] = 44;
-          const x = f64.fromBits(words[2 * (m as usize) + 1]);
-          n = putNumber(buf, n + comma, x);
+          n = putNumber(buf, n + comma, f64.fromBits(pm));
           comma = 1;
           cur++;
         }
@@ -438,8 +437,8 @@ export class Tape {
       cur++;
       if ((info & IS_OBJECT) != 0) {
         // The key, its colon, then its value next round.
-        const kw = words[2 * (m as usize)];
         const kp = words[2 * (m as usize) + 1];
+        const kw = words[2 * (m as usize)];
         let to = putText(buf, n, src, srcLen, kw, kp);
         if (to == NO_ROOM) {
           const len = n as u64;
