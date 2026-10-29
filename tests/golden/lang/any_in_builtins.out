@@ -1,0 +1,19 @@
+kept true true true true true
+error true true true true false
+typeerror true true false
+apperror true true true false
+tuple true true false true true
+weakmap true false
+arrow true true false
+literal true true false
+proxy true false true true
+trap false true
+opt false true false true true
+generic true true true false
+dataview true true false
+buffer true true false
+f64 true false false true
+nested true true true false
+big true false false false false
+weakset true false
+wk true false true false

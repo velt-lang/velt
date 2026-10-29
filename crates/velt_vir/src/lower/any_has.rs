@@ -5,17 +5,21 @@
 //!
 //! - a proxy: its `has` trap (`Proxy.__has`, std/proxy.vlt), or the target's answer;
 //! - class instances and object types: their fields, methods and accessors, and what every
-//!   object has from `Object.prototype` (an optional field with a presence flag, `a?: T |
-//!   null`, by its flag; another optional field, which cannot tell "absent" from a present
-//!   `undefined`, comes later);
+//!   object has from `Object.prototype` (an optional field of an object type by its presence
+//!   flag, `a?: T | null`, or while it holds a value; a class declares every field it has);
+//! - a standard library class: the JavaScript built-in it stands for (`Map.prototype`, a typed
+//!   array's indexes; any_has_builtin.rs), not its implementation's private fields;
 //! - a `Record<string, V>`: its keys, and what every object has from `Object.prototype` (unless
 //!   `Object.create(null)` made it);
-//! - arrays: `length` (indexes come later).
+//! - arrays and tuples: their indexes, `length` and `Array.prototype`; functions what
+//!   `Function.prototype` has; a promise `Promise.prototype`;
+//! - strings, numbers, booleans and symbols: Node's `TypeError` (the glue stops the program).
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
 use super::any::{TAG_NULL, TAG_NUMBER, TAG_STRING, TAG_UNDEFINED};
 use super::any_glue::OBJECT_PROTO;
+use super::any_has_builtin::{ARRAY_PROTO, FN_PROTO_NAMES, PROMISE_PROTO};
 use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
@@ -153,61 +157,129 @@ impl FnLower<'_, '_> {
         }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyHas, ty, d, &[data, key]);
-            let fields: Vec<(String, bool)> = self
-                .cx
-                .adt_def(d)
-                .fields
-                .iter()
-                .map(|f| (f.name.clone(), f.optional))
-                .collect();
-            for (i, (name, optional)) in fields.iter().enumerate() {
-                if name.starts_with('#') {
-                    continue;
-                }
-                let next = self.on_key(key, name);
-                match self.cx.presence_slot(ty, i as u32) {
-                    // An optional field that keeps "absent" apart: its presence flag.
-                    Some(slot) if *optional => {
-                        let vp = self.any_value_place(data, ty);
-                        let mut flag = self.field_place(&vp, ty, i as u32);
-                        if let Some(Proj::Field(x)) = flag.proj.last_mut() {
-                            *x = slot;
-                        }
-                        let st =
-                            self.rvalue_temp(Ty::U8, Rvalue::Cast(Operand::Copy(flag), Ty::U8));
-                        self.terminate(Terminator::Return(st));
-                    }
-                    // Another optional field cannot tell "absent" from a present `undefined`.
-                    _ => self.ret_status(if *optional { HAS_UNSUPPORTED } else { HAS_YES }),
-                }
-                self.switch_to(next);
-            }
-            for m in self.dyn_members_of(d) {
-                if m.kind == DynMemberKind::ReadonlyField
-                    || fields.iter().any(|(n, _)| *n == m.name)
-                {
-                    continue;
-                }
-                let next = self.on_key(key, &m.name);
-                self.ret_status(HAS_YES);
-                self.switch_to(next);
-            }
-            for name in OBJECT_PROTO {
-                let next = self.on_key(key, name);
-                self.ret_status(HAS_YES);
-                self.switch_to(next);
-            }
-            return self.ret_status(HAS_NO);
+            return self.any_has_adt(data, key, ty, d);
         }
         match self.cx.kind(ty) {
             TyKind::Array(_) => {
-                let next = self.on_key(key, "length");
-                self.ret_status(HAS_YES);
-                self.switch_to(next);
-                self.ret_status(HAS_UNSUPPORTED);
+                let vp = self.any_value_place(data, ty);
+                let arr = self.content(&vp, ty);
+                let n = Operand::Copy(proj(&arr, Proj::Field(1)));
+                let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
+                self.has_index_key(key, n, HAS_YES, HAS_NO);
+                self.has_names(key, ARRAY_PROTO, HAS_YES);
+                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.ret_status(HAS_NO);
+            }
+            TyKind::Tuple(es) => {
+                self.has_index_key(key, cint(es.len() as i128, Ty::U64), HAS_YES, HAS_NO);
+                self.has_names(key, ARRAY_PROTO, HAS_YES);
+                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.ret_status(HAS_NO);
+            }
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => {
+                self.has_names(key, FN_PROTO_NAMES, HAS_YES);
+                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.ret_status(HAS_NO);
+            }
+            TyKind::Promise(..) => {
+                self.has_names(key, PROMISE_PROTO, HAS_YES);
+                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.ret_status(HAS_NO);
+            }
+            TyKind::Str | TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Symbol => {
+                self.has_primitive_error(data, key, ty)
             }
             _ => self.ret_status(HAS_UNSUPPORTED),
         }
+    }
+
+    /// `key in o` for a struct, class or object value: its fields, methods and accessors; for a
+    /// standard library class, the JavaScript built-in it stands for (`Map.prototype`) instead
+    /// of its implementation's private fields and members; and what every object has.
+    fn any_has_adt(&mut self, data: vir::Local, key: vir::Local, ty: TyId, d: hir::DefId) {
+        let builtin = self.class_builtin(d);
+        let std_self = self.std_class(d);
+        let std_prefix = if std_self {
+            self.cx.adt_def(d).fields.len()
+        } else {
+            self.std_base_fields(d)
+        };
+        // A class declares its fields on every object, optional ones too (`undefined` until
+        // set), as JavaScript's class fields do.
+        let class = self.cx.adt_def(d).kind == hir::AdtKind::Class;
+        let fields: Vec<(String, bool, bool)> = (self.cx.adt_def(d).fields.iter())
+            .enumerate()
+            .map(|(i, f)| (f.name.clone(), f.optional && !class, f.private && i < std_prefix))
+            .collect();
+        for (i, (name, optional, internal)) in fields.iter().enumerate() {
+            if name.starts_with('#') || *internal {
+                continue;
+            }
+            // An object literal's accessor stands for its property; the setter beside a getter
+            // is no property of its own.
+            let Some(prop) = self.field_prop(d, name) else {
+                continue;
+            };
+            let next = self.on_key(key, &prop);
+            match self.cx.presence_slot(ty, i as u32) {
+                // An optional field that keeps "absent" apart: its presence flag.
+                Some(slot) if *optional => {
+                    let vp = self.any_value_place(data, ty);
+                    let mut flag = self.field_place(&vp, ty, i as u32);
+                    if let Some(Proj::Field(x)) = flag.proj.last_mut() {
+                        *x = slot;
+                    }
+                    let st = self.rvalue_temp(Ty::U8, Rvalue::Cast(Operand::Copy(flag), Ty::U8));
+                    self.terminate(Terminator::Return(st));
+                }
+                // Another optional field is there while it holds a value, as `Object.keys`
+                // lists it (it cannot tell "absent" from a present `undefined`).
+                _ if *optional => {
+                    let vp = self.any_value_place(data, ty);
+                    let fp = self.field_place(&vp, ty, i as u32);
+                    let fty = self.cx.member_ty(ty, i as u32);
+                    let present = if self.cx.is_dynamic(fty) {
+                        self.any_defined(&fp)
+                    } else if matches!(self.cx.kind(fty), TyKind::Option(..)) {
+                        self.option_is_some(&fp, fty)
+                    } else {
+                        cint(1, Ty::Bool)
+                    };
+                    let st = self.rvalue_temp(Ty::U8, Rvalue::Cast(present, Ty::U8));
+                    self.terminate(Terminator::Return(st));
+                }
+                _ => self.ret_status(HAS_YES),
+            }
+            self.switch_to(next);
+        }
+        for m in self.dyn_members_of(d) {
+            if m.kind == DynMemberKind::ReadonlyField || fields.iter().any(|(n, ..)| *n == m.name) {
+                continue;
+            }
+            // A standard library class's own members are its implementation: the built-in it
+            // stands for answers, and the library's internal (`__`) names are no property.
+            let std_owner = match self.cx.kind(m.owner) {
+                TyKind::Adt(o, _) => self.std_class(o),
+                _ => false,
+            };
+            if std_owner && (builtin.is_some() || m.name.starts_with("__")) {
+                continue;
+            }
+            let next = self.on_key(key, &m.name);
+            self.ret_status(HAS_YES);
+            self.switch_to(next);
+        }
+        if let Some(b) = builtin {
+            if let Some(len) = b.typed_len {
+                let vp = self.any_value_place(data, ty);
+                let n = self.field_place(&vp, ty, len);
+                let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(Operand::Copy(n), Ty::U64));
+                self.has_index_key(key, n, HAS_YES, HAS_NO);
+            }
+            self.has_names(key, b.names, HAS_YES);
+        }
+        self.has_names(key, &OBJECT_PROTO, HAS_YES);
+        self.ret_status(HAS_NO)
     }
 
     /// `key in r` for a `Record<string, V>`: its `__inAny` (its entries, and what it inherits
