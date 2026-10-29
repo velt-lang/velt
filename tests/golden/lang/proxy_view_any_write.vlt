@@ -1,0 +1,17 @@
+// A value written through `any` into a field of a view (#379): the view's object stores it as
+// Node does, whatever the field's type (`factory.__props = null as any` in sigx's
+// `component()`), and a read of the field checks it.
+type Brands = { __props: { a: number }; __name?: string };
+const f: any = function (props: any) {
+  return props;
+};
+const b = f as Brands;
+b.__props = null as any;
+b.__name = "F";
+console.log(f.__props === null, f.__name);
+b.__props = { a: 2 };
+console.log(f.__props.a, b.__props.a);
+
+// The program makes proxies, so `f as Brands` is a view of the function.
+const p = new Proxy({ a: 1 }, {});
+console.log(p.a);

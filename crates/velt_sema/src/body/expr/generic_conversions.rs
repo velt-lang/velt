@@ -42,6 +42,110 @@ impl FnCx<'_, '_> {
         Ok(g)
     }
 
+    /// A function held as `any` / `unknown` as a value of function type `exp` (of `n`
+    /// parameters, none of them a rest parameter): the closure `(a0, …) => f(a0, …)` over `f`, a
+    /// local holding the value, whose call goes through `any` (the arguments converted to the
+    /// held function's parameter types, a `TypeError` for one that doesn't convert, or for a
+    /// value that is no function) and whose result converts to `exp`'s, as JavaScript calls the
+    /// function whatever its declared types. Node checks nothing at the conversion either.
+    /// Checked as a trial: `Err` (`h` as it was) when an argument or the result has no
+    /// conversion through `any` (a result of `Promise<T>`), for the caller's checked
+    /// conversion to the exact type.
+    pub(super) fn dynamic_as_fn(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        n: usize,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let g = self.exact_or_forwarding(h.clone(), exp, n);
+        if self.cx.diags.len() == diags {
+            return Ok(g);
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        Err(h)
+    }
+
+    /// The dynamic `h` as the function type `exp`: the function it holds when that is of
+    /// exactly `exp` (`Intrinsic::AnyToExact`: the one value, so `===`, `Set` and `Map` keys
+    /// see it, a round trip through `any` adds nothing, and a call costs what a call of the
+    /// function costs), else the closure calling it through `any` (`dynamic_as_fn`). A
+    /// variable is read in place, and only the closure takes a share of it.
+    fn exact_or_forwarding(&mut self, h: hir::Expr, exp: TyId, n: usize) -> hir::Expr {
+        use crate::body::places::{is_place, set_place_mode};
+        let (dty, span) = (h.ty, h.span);
+        let mut stmts = vec![];
+        let (read, held) = if is_place(&h) {
+            let mut read = h.clone();
+            set_place_mode(&mut read, hir::UseMode::Borrow);
+            (read, self.share_if_place(h))
+        } else {
+            let tmp = self.new_local("<any>", dty, false, span, crate::body::LocalKind::Temp);
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(h),
+                },
+                span,
+            });
+            let read = self.mk(H::Local(tmp, hir::UseMode::Borrow), dty, span);
+            (read, self.mk(H::Local(tmp, hir::UseMode::Move), dty, span))
+        };
+        // Called as an `any` (an `unknown` would have to be narrowed first).
+        let held = match self.any_ty() {
+            Some(any) if held.ty != any => {
+                self.intrinsic(hir::Intrinsic::AnyTo, vec![held], any, span)
+            }
+            _ => held,
+        };
+        let opt = self.cx.ty.option_of(exp, hir::Nothing::Undefined);
+        let exact = self.intrinsic(hir::Intrinsic::AnyToExact, vec![read], opt, span);
+        let b = self.new_local("<exact>", exp, false, span, crate::body::LocalKind::Bind);
+        let adapter = self.forwarding(held, exp, (n, false), |s, arrow, exp| {
+            s.closure(arrow, Some(exp), true)
+        });
+        let pat = |kind| hir::Pat {
+            kind,
+            ty: opt,
+            span,
+        };
+        let bind = hir::Pat {
+            kind: hir::PatKind::Binding(b, hir::UseMode::Move),
+            ty: exp,
+            span,
+        };
+        let arms = vec![
+            hir::Arm {
+                pat: pat(hir::PatKind::Some(Box::new(bind))),
+                guard: None,
+                body: self.mk(H::Local(b, hir::UseMode::Move), exp, span),
+            },
+            hir::Arm {
+                pat: pat(hir::PatKind::None),
+                guard: None,
+                body: adapter,
+            },
+        ];
+        let m = H::Match {
+            scrutinee: Box::new(exact),
+            arms,
+        };
+        let value = self.mk(m, exp, span);
+        if stmts.is_empty() {
+            return value;
+        }
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(value)),
+            span,
+        };
+        self.mk(H::Block(block), exp, span)
+    }
+
     /// `const g = <name>` of a named generic function (`const g: G = id`), or of a constant
     /// holding one: recorded, so a use of `g` as a function of fixed types is that function
     /// (`named_fn_of`).
@@ -177,18 +281,24 @@ impl FnCx<'_, '_> {
         (n, rest): (usize, bool),
         make: impl FnOnce(&mut Self, &ast::Expr, TyId) -> hir::Expr,
     ) -> hir::Expr {
+        // A dynamic value (`dynamic_as_fn`) takes what it is called with.
         let takes = self
             .cx
             .generic_sig(h.ty)
-            .map_or(0, |g| g.method.params.len());
+            .map_or(n, |g| g.method.params.len());
         let rest = rest && takes >= n;
         let n = n.min(takes);
         let span = h.span;
         self.push_scope();
         let (ty, at) = (h.ty, h.span);
-        let l = self.new_local(HELD, ty, false, at, crate::body::LocalKind::Temp);
+        // A dynamic value's local names it in a call's `TypeError` (`dynamic_as_fn`).
+        let held_name = match self.cx.generic_sig(ty) {
+            Some(_) => HELD.to_string(),
+            None => "the value converted to a function type".to_string(),
+        };
+        let l = self.new_local(&held_name, ty, false, at, crate::body::LocalKind::Temp);
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
-        scope.names.insert(HELD.to_string(), l);
+        scope.names.insert(held_name.clone(), l);
         let mut h = h;
         crate::body::places::set_place_mode(&mut h, hir::UseMode::Move);
         let stmts = vec![hir::Stmt {
@@ -226,7 +336,7 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let held = ast::Ident {
-            name: HELD.into(),
+            name: held_name,
             span,
         };
         let call = mk(ast::ExprKind::Call {

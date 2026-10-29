@@ -3071,6 +3071,30 @@ with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
 function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
+An `any` or `unknown` converted to a function type (`f as (c: Ctx<any>) => string`, also
+`T | undefined` of one) is not checked against the type the function was made with, as Node
+calls a function whatever its declared types: the result is a function of the target type that
+calls the value through `any`, converting each argument to the held function's parameter type
+and the result to the target's result type, each checked as above. A value that is no function
+converts too, and calling the result stops with `TypeError: the value converted to a function
+type is not a function` (Node's `TypeError: f is not a function`; `typeof` of the result is
+`"function"`, where Node gives the held value's). A function of exactly the target type is
+that function itself, so `===`, `indexOf`, `Set` and `Map` see the one value, as in Node. Only
+a function of another type gives a new function, at each conversion, and that one is not `===`
+the function held (Node keeps the one function). In a union (`ViewFn | Promise<ViewFn>`), the
+one function type member is told from the others by `typeof` and converted the same way; a
+`Promise` member needs no test, as a promise is never held as `any` (a function called through
+`any` that returns one stops with ``TypeError: a promise cannot be held as `any` yet``).
+
+```ts
+interface Ctx<T> {
+  v: T;
+}
+const setup: any = (c: Ctx<number>) => "x" + c.v;
+const s = setup as (c: Ctx<any>) => string;
+console.log(s({ v: 1 })); // x1
+```
+
 An object of another type converted to an object type (`a as Item` where `a` holds a class
 instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
 that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
@@ -3079,6 +3103,10 @@ and checked then as the field's type, so a field the object lacks stops with a `
 that read (Node reads `undefined`). A write goes to the object for the fields the object has;
 writing an optional field the object lacks (`item.note = "hi"` on a class instance without
 `note`) stops with the `TypeError` of a fixed-shape object (#924), where Node adds the property.
+An `any` written to a field of a view (`brands.__props = null as any`) goes to the object as it
+is, without the check as the field's type, as Node stores any value: an object that holds its
+properties as `any` (a function with properties) keeps it, and a read of the field checks it
+then; an object of a fixed layout checks it as its own field's type.
 Converting the object again while a view of it lives gives that view (an object has one view at
 a time, whatever object type it is converted to), so `===`, `Map`, `Set` and `indexOf` see one
 value. Back in an `any` (and for `WeakMap`, `WeakSet` and `WeakRef`, `in`, `Object.keys`,
