@@ -59,6 +59,8 @@ const QUERIES: string[] = [
   "SELECT row_number() FROM users",
   "SELECT id FROM users WHERE rank() OVER () > 1",
   "SELECT sum(id) OVER w FROM users",
+  // A subquery's aggregate of a query with window functions does not make it an aggregate query.
+  "SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users",
 ];
 
 /** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */

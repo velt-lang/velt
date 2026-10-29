@@ -139,3 +139,5 @@ SELECT id FROM users WHERE rank() OVER () > 1
   error: misuse of window function rank()
 SELECT sum(id) OVER w FROM users
   error: no such window: w
+SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users
+  error: misuse of aggregate: count()

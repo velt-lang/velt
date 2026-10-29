@@ -265,7 +265,9 @@ function compileCoreOnce(
   const em = new Emitter(q.out);
   em.distinct = core.distinct;
   sc.output = !isAgg;
-  sc.results = !isAgg;
+  // With window functions SQLite does not make it an aggregate query from a subquery's
+  // aggregate (that is its misuse error).
+  sc.results = !isAgg && !hasWin;
   resultColumns(c, core.columns, osc, q, em);
   sc.results = false;
   q.out.width = q.names.length;
