@@ -48,6 +48,11 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             rel: rel.to_string(),
         });
     }
+    // Vitest's module is `velt:test`, which has its API (`describe`, `it`, `expect`), so a test
+    // file written for Vitest runs as it is.
+    if spec == "vitest" {
+        return Ok(ModuleRef::Std { rel: "test".into() });
+    }
     if spec.starts_with("./") || spec.starts_with("../") {
         if spec.ends_with('/') || spec.contains('\\') {
             return Err(format!("invalid module specifier `{spec}`"));
@@ -165,6 +170,10 @@ mod tests {
         assert_eq!(
             resolve_spec("velt:fs", dir).unwrap(),
             ModuleRef::Std { rel: "fs".into() }
+        );
+        assert_eq!(
+            resolve_spec("vitest", dir).unwrap(),
+            ModuleRef::Std { rel: "test".into() }
         );
         assert_eq!(
             resolve_spec("velt:collections/map", dir).unwrap(),

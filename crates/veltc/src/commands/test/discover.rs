@@ -4,7 +4,8 @@
 //! A test is a top-level `export function test_*()` (or `export async function test_*()`) with no
 //! parameters and no generics. Tests must be exported because the generated harness imports them
 //! from a separate module; a `test_*` function that is not exported (or takes parameters) is
-//! reported and skipped.
+//! reported and skipped. Tests registered with `describe`, `it` and `test` (`velt:test`, or
+//! `vitest`) are known only when the program runs; here they are counted ([`TestFunctions`]).
 
 use std::path::{Path, PathBuf};
 
@@ -76,18 +77,96 @@ pub struct TestFunctions {
     /// The module runs code when it is evaluated ([`runs_code`]), so it gets a harness of its
     /// own instead of sharing one with the other test files.
     pub runs_code: bool,
+    /// Its top-level statements that are `describe`, `it`, `test` and hook calls, each of
+    /// which queues one registration (`velt:test/suite`); they don't count as running code.
+    pub queued: usize,
+    /// It imports `describe`, `it`, `test` or a hook, so it may have tests that only running it
+    /// lists (`--filter` can't rule it out).
+    pub registers: bool,
 }
 
-/// Collect `test_*` functions from a parsed test module.
-pub fn test_functions(module: &ast::Module) -> TestFunctions {
-    let mut found = TestFunctions {
-        runs_code: runs_code(module),
-        ..Default::default()
-    };
+/// The functions of `velt:test` that register tests and hooks.
+const REGISTERING: [&str; 7] = [
+    "describe",
+    "it",
+    "test",
+    "beforeAll",
+    "afterAll",
+    "beforeEach",
+    "afterEach",
+];
+
+/// The modules that export them.
+const TEST_MODULES: [&str; 2] = ["velt:test", "vitest"];
+
+/// The local names `module` imports the [`REGISTERING`] functions under.
+fn registering_names(module: &ast::Module) -> Vec<String> {
+    let mut names = vec![];
     for item in &module.items {
-        let ast::ItemKind::Function(f) = &item.kind else {
+        let ast::ItemKind::Import(i) = &item.kind else {
             continue;
         };
+        if !TEST_MODULES.contains(&i.from.as_str()) {
+            continue;
+        }
+        for n in &i.names {
+            if !n.type_only && REGISTERING.contains(&n.name.name.as_str()) {
+                names.push(n.alias.as_ref().unwrap_or(&n.name).name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// How many of `stmts` (a file's top-level statements) are calls of one of `names` with inert
+/// arguments (a name, a callback); `None` if a statement among them runs other code. A variable
+/// initialized with an inert value is among them when only the statements use it (the parser
+/// moves it into them, `velt_syntax` `parser/script.rs`), and doesn't count.
+fn registrations(stmts: &[ast::Stmt], names: &[String]) -> Option<usize> {
+    let mut count = 0;
+    for stmt in stmts {
+        match &stmt.kind {
+            ast::StmtKind::Var(v)
+                if matches!(v.kind, ast::VarKind::Const | ast::VarKind::Let)
+                    && v.init.as_ref().is_none_or(inert) => {}
+            ast::StmtKind::Expr(e) => {
+                let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
+                    return None;
+                };
+                let registering =
+                    matches!(&callee.kind, ast::ExprKind::Ident(id) if names.contains(&id.name));
+                if !registering || !args.iter().all(inert) {
+                    return None;
+                }
+                count += 1;
+            }
+            _ => return None,
+        }
+    }
+    Some(count)
+}
+
+/// Collect `test_*` functions from a parsed test module, and count its top-level registrations.
+pub fn test_functions(module: &ast::Module) -> TestFunctions {
+    let names = registering_names(module);
+    let mut found = TestFunctions {
+        registers: !names.is_empty(),
+        ..Default::default()
+    };
+    // Top-level statements that only register leave the module as one that only declares.
+    let mut other_code = false;
+    for item in &module.items {
+        let ast::ItemKind::Function(f) = &item.kind else {
+            other_code = other_code || item_runs_code(item);
+            continue;
+        };
+        if velt_syntax::is_script_main(&f.sig.name) {
+            match registrations(&f.body.stmts, &names) {
+                Some(n) => found.queued = n,
+                None => other_code = true,
+            }
+            continue;
+        }
         let name = &f.sig.name.name;
         if !name.starts_with("test_") {
             continue;
@@ -109,6 +188,7 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
             }
         }
     }
+    found.runs_code = other_code;
     found
 }
 
@@ -129,6 +209,12 @@ pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned
             };
             if !seen.insert(path.clone()) {
                 continue;
+            }
+            // Another test file: its top-level registrations would run before this file's and
+            // be taken for them.
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            if name.is_some_and(|n| is_test_file(&n)) {
+                return true;
             }
             let Some(imports) = scanned
                 .modules
@@ -212,7 +298,12 @@ fn resolve(base: &Path) -> Option<PathBuf> {
 /// and a variable or static field initialized with a call (`const C = component(...)`), run code;
 /// literals, names, operators and functions do not.
 pub fn runs_code(module: &ast::Module) -> bool {
-    module.items.iter().any(|item| match &item.kind {
+    module.items.iter().any(item_runs_code)
+}
+
+/// Does evaluating `item` run code ([`runs_code`])?
+fn item_runs_code(item: &ast::Item) -> bool {
+    match &item.kind {
         ast::ItemKind::Function(f) => velt_syntax::is_script_main(&f.sig.name),
         ast::ItemKind::Var(v) => v.init.as_ref().is_some_and(|e| !inert(e)),
         ast::ItemKind::Class(t) | ast::ItemKind::Struct(t) => t
@@ -220,7 +311,7 @@ pub fn runs_code(module: &ast::Module) -> bool {
             .iter()
             .any(|f| f.is_static && f.default.as_ref().is_some_and(|e| !inert(e))),
         _ => false,
-    })
+    }
 }
 
 /// Does evaluating `e` only make a value, without calling anything or failing? `n!`, a cast of a
@@ -406,6 +497,39 @@ mod tests {
     }
 
     #[test]
+    fn top_level_registrations_are_counted_not_run() {
+        let found = |src: &str| {
+            let (module, diags) = velt_syntax::parse_file(FileId(0), src);
+            assert!(diags.is_empty(), "{diags:?}");
+            test_functions(&module)
+        };
+        let f = found(
+            "import { describe, it as spec } from \"velt:test\";\n\
+             const log: string[] = [];\n\
+             describe(`a ${1}`, () => { spec(\"x\", () => { log.push(\"x\"); }); });\n\
+             spec(\"y\", async () => {});\n\
+             export function test_z() {}\n",
+        );
+        assert_eq!((f.queued, f.registers, f.runs_code), (2, true, false));
+        assert_eq!(f.tests, ["test_z"]);
+        // Vitest's module is `velt:test`.
+        let f = found("import { test } from \"vitest\";\ntest(\"t\", () => {});\n");
+        assert_eq!((f.queued, f.registers, f.runs_code), (1, true, false));
+        // Anything else at the top level runs code, and so does a registration whose arguments
+        // do (or a `using`).
+        for src in [
+            "import { it } from \"velt:test\";\nit(\"a\", () => {});\nconsole.log(1);\n",
+            "import { it } from \"velt:test\";\nit(name(), () => {});\nfunction name(): string { return \"a\"; }\n",
+            "import { it } from \"./mine\";\nit(\"a\", () => {});\n",
+        ] {
+            let f = found(src);
+            assert!(f.runs_code, "{src}");
+        }
+        let f = found("export function test_a() {}\n");
+        assert_eq!((f.queued, f.registers, f.runs_code), (0, false, false));
+    }
+
+    #[test]
     fn code_run_by_what_a_test_file_imports() {
         let tmp = tempfile::tempdir().unwrap();
         let d = tmp.path();
@@ -447,6 +571,9 @@ mod tests {
             "import { a } from \"./c1\";\nexport const b = 2;\n",
         );
         assert!(!imports("import { a } from \"../lib/c1\";\n"));
+        // Another test file: its top-level registrations would be taken for this file's.
+        write("t/other.test.vlt", "export function test_o() {}\n");
+        assert!(imports("import { x } from \"./other.test\";\n"));
 
         // One scan for a run's test files: a module they share is read once (here, before it
         // changes on disk), and what it imports is still followed.

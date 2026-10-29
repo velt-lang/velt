@@ -1,7 +1,8 @@
 # Testing
 
 `velt test` finds every `*.test.vlt` file (and `*.test.ts`, `*.test.tsx`) and runs every exported function whose name starts
-with `test_`. There is no framework to install and no configuration.
+with `test_`, and the tests registered with `describe` and `it`
+([below](#describe-it-and-expect)). There is no framework to install and no configuration.
 
 ```ts ignore
 // tests/greet.test.vlt
@@ -71,6 +72,117 @@ FAILED test_uncaught
 FAILED test_out_of_range (exit code 101)
     panic: index out of bounds: the len is 1 but the index is 3 at tests/port.test.vlt:20:15
 ```
+
+## `describe`, `it` and `expect`
+
+Tests can also be written as in Vitest, with `describe`, `it` (or `test`) and `expect` from
+`velt:test`. A file written for Vitest imports them from `"vitest"`, which is `velt:test` in
+Velt, and runs as it is:
+
+```ts
+import { beforeEach, describe, expect, it } from "velt:test";
+
+class Cart {
+  items: string[] = [];
+  add(item: string) {
+    this.items.push(item);
+  }
+}
+
+describe("cart", () => {
+  let cart = new Cart();
+  beforeEach(() => {
+    cart = new Cart();
+  });
+
+  it("starts empty", () => {
+    expect(cart.items).toHaveLength(0);
+  });
+
+  it("adds items", () => {
+    cart.add("tea");
+    expect(cart.items).toEqual(["tea"]);
+    expect(cart.items).not.toContain("coffee");
+  });
+
+  describe("async", () => {
+    it("waits", async () => {
+      await expect(Promise.resolve(cart.items.length)).resolves.toBe(0);
+    });
+  });
+});
+```
+
+```
+running tests/cart.test.vlt
+ok cart > starts empty
+ok cart > adds items
+ok cart > async > waits
+```
+
+- A test's name is its groups' names and its own, joined by ` > ` as Vitest prints them;
+  `--filter` and `--exact` match that full name.
+- A callback may be `async`; it is awaited, and a rejection fails the test as a throw does.
+- `beforeAll` and `afterAll` run once around a group's tests (or a file's, at the top level),
+  `beforeEach` and `afterEach` around each of them: the outer groups' `beforeEach` first, the
+  inner groups' `afterEach` first, and `afterEach` also after a failure. A `beforeAll` that
+  throws fails the group's tests with its error.
+- A `describe` callback runs when the file's tests are collected, before the first test runs.
+  If it throws, a test named as the group fails with the error.
+- Matchers: `toBe` (`Object.is`), `toEqual` (deep equality, as `assertEq`), `toBeNull`,
+  `toBeUndefined`, `toBeDefined`, `toBeTruthy`, `toBeFalsy`, `toContain` and `toHaveLength` (an
+  array or a string), `toMatch` (a string: a `RegExp`, or a string it contains),
+  `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual` (a
+  `Comparable` type: numbers, strings), and `toThrow` on a function (`expect(() => parse("x"))
+  .toThrow("bad")`). `.not` checks the opposite. `await expect(p).resolves` and `.rejects` check
+  what a promise resolves to, or its error (`.rejects.toThrow("boom")`).
+- A matcher only fits the types it checks: `expect(1).toContain(1)` is a compile error.
+- `export function test_*` and `describe`/`it` can be in one file: the functions run first.
+- When a test ends its process (a panic), the runner starts the file again from the next test.
+  The new process collects the tests again and runs the `beforeAll` hooks of the groups that
+  are left.
+
+### Custom matchers
+
+A matcher is a method of `Expect<T>`, so an `extend` block adds one: for every type a bound
+allows, or for one type, where a call on any other type is a compile error. It checks with
+`this.check(pass, message)`, as the built-in matchers do; `.not` turns it round, writing the
+message's first ` to ` as ` not to ` (or pass the message for `.not` as a third argument).
+
+```ts
+import { Expect, expect, it } from "velt:test";
+
+extend<T extends Comparable<T>> Expect<T> {
+  toBeWithin(lo: T, hi: T) {
+    this.check(
+      this.actual >= lo && this.actual <= hi,
+      `expected ${this.actual} to be within ${lo}..${hi}`,
+    );
+  }
+}
+
+class Reply {
+  status: i64 = 204;
+}
+
+// Only for a `Reply`: `expect(42).toHaveStatus(204)` doesn't compile.
+extend Expect<Reply> {
+  toHaveStatus(status: i64) {
+    this.check(this.actual.status == status, `expected status ${status}, got ${this.actual.status}`);
+  }
+}
+
+it("checks a reply", () => {
+  expect(new Reply()).toHaveStatus(204);
+  expect(7).toBeWithin(1, 9);
+  expect(12).not.toBeWithin(1, 9);
+});
+```
+
+The calls are direct, so a custom matcher costs what a built-in one does. An `extend` block
+applies wherever its module is loaded, so a library of matchers is a module that test files
+import (`import "./matchers"`). A custom matcher's failure is located at its `check` call;
+the built-in matchers' at the `expect` in the test.
 
 ## Running tests
 

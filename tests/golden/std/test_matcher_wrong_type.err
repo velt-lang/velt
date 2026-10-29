@@ -1,0 +1,3 @@
+test_matcher_wrong_type.vlt:16:12: error: no method named `toHaveStatus` found for type `Expect<f64>`
+test_matcher_wrong_type.vlt:17:11: error: no method named `toContain` found for type `Expect<f64>`
+test_matcher_wrong_type.vlt:18:29: error: mismatched types

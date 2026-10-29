@@ -23,6 +23,32 @@ control; everything after that happens here:
   `FAILED test_x` with the error), without the `running` lines and the summary.
 
 The runner is a program of its own, without test files, so no test file's code runs in it.
-Its exports (`__file`, `__test`, `__testAsync`, `__run`) are for the generated `main` only.
-`describe`, `it` and `expect` will be added here
-([#928](https://github.com/velt-lang/velt/issues/928)).
+
+## `describe`, `it` and `expect`
+
+`describe`, `it`, `test`, `beforeAll`, `afterAll`, `beforeEach`, `afterEach`, `expect` and
+`Expect` are Vitest's API ([Testing](../book/testing.md#describe-it-and-expect)); `"vitest"`
+imports this module. How they run:
+
+- Called at a test file's top level, `describe`, `it` and the hooks only queue what they
+  register. A test program may hold several test files, and every module it imports is
+  evaluated when it starts, so this is all their top level does in each process; such a file
+  still counts as one that only declares and shares a program with the others. The generated
+  `main` gives each file the registrations its top level queued, in import order (`__file(n)`).
+- In the process for one file, its tests are collected: its `test_*` functions, then what its
+  queued calls register, running the `describe` callbacks, whose calls register into their
+  group at once. The process lists the tests to the runner (their full names, `group > test`)
+  and runs them from the one the runner asks for, with the hooks of their groups. `--filter`
+  is applied to the full names here.
+- A `describe` callback that throws is reported as a failed test named as its group. An
+  `afterAll` that throws is printed where it ran and fails the run.
+
+`expect(actual)` returns an `Expect<T>`: `actual`, whether `.not` was used (`negated`) and the
+matchers, which are methods (the generic ones) and `extend` blocks (those for arrays, strings,
+`Comparable` types, functions and promises). `check(pass, message, notMessage?)` throws the
+`AssertionError` of a failed matcher; custom matchers call it too. `.resolves` and `.rejects`
+return a `Resolves<V, E>` or `Rejects<V, E>`, whose matchers are `async`; their `settled()` is
+the `Expect` of the value or the error, for a custom matcher that awaits.
+
+The other exports (`__file`, `__test`, `__testAsync`, `__run`, `__claim`) are for the generated
+`main` only.
