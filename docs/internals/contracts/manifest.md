@@ -165,7 +165,9 @@ checkout (followed through the checkout's own links, at most 40, its missing par
 written; `git::check_links`) is refused before it enters the cache. The scratch repository is
 made with `--template=`, and the checkout runs with `core.hooksPath` at an empty directory. git
 runs without `git rev-parse --local-env-vars`'s variables and never prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
-`core.autocrlf=false`, `core.eol=lf`, `core.symlinks=true` and `core.longpaths=true`. Lock query
+`core.autocrlf=false`, `core.eol=lf`, `core.longpaths=true`, and `core.symlinks=true`
+(`false` on Windows: links are files holding the stored text, which hash as a link's text does
+elsewhere; Git for Windows would write link targets with `\`). Lock query
 values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
 `Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
 spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with

@@ -506,9 +506,11 @@ fn links_must_resolve_inside_the_checkout() {
     // alone (`d/up/../x`) looks as if it stays inside.
     symlink("..", tree.join("d/up")).unwrap();
     refused("chain", "d/up/../x");
-    // A loop never ends inside.
+    // A loop never ends.
     symlink("loop2", tree.join("loop1")).unwrap();
-    refused("loop2", "loop1");
+    symlink("loop1", tree.join("loop2")).unwrap();
+    let err = check_links(&tree).unwrap_err();
+    assert!(err.contains("that loops"), "{err}");
 }
 
 #[cfg(unix)]
@@ -535,4 +537,53 @@ fn a_repository_with_a_link_out_of_it_is_refused() {
     assert!(!repository_dir(&e.loc, &e.upstream.url())
         .join(commit)
         .exists());
+}
+
+/// A copy of `from` in `to` with every symbolic link replaced by a file holding its text.
+fn copy_with_links_as_files(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let (src, dest) = (entry.path(), to.join(entry.file_name()));
+        let kind = entry.file_type().unwrap();
+        if kind.is_symlink() {
+            let text = std::fs::read_link(&src).unwrap();
+            std::fs::write(&dest, text.to_string_lossy().as_bytes()).unwrap();
+        } else if kind.is_dir() {
+            copy_with_links_as_files(&src, &dest);
+        } else {
+            std::fs::copy(&src, &dest).unwrap();
+        }
+    }
+}
+
+/// A link's text is hashed as git stores it, on every OS: Git for Windows would write
+/// `../lib/src` as `..\lib\src`, so there links are checked out as files holding the text.
+#[test]
+fn a_link_hashes_as_the_repository_stores_it() {
+    let e = env();
+    e.upstream.commit_package("lib", "lib", "x");
+    let text = e.root.join("link-text");
+    std::fs::write(&text, "../lib/src").unwrap();
+    let blob = e
+        .upstream
+        .git(&["hash-object", "-w", &text.to_string_lossy()]);
+    let entry = format!("120000,{blob},lib/alias");
+    e.upstream
+        .git(&["update-index", "--add", "--cacheinfo", &entry]);
+    e.upstream.git(&["commit", "-q", "-m", "link"]);
+    let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+    let url = e.upstream.url();
+    let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
+    e.install(&app, false).unwrap();
+    let locked = Lockfile::read(&app).unwrap().unwrap();
+    let checksum = locked.get("lib").unwrap().checksum.clone().unwrap();
+    let checkout = repository_dir(&e.loc, &url).join(&commit);
+    if cfg!(windows) {
+        let alias = std::fs::symlink_metadata(checkout.join("lib/alias")).unwrap();
+        assert!(alias.is_file(), "a file holding the link's text on Windows");
+    }
+    let copy = e.root.join("as-stored");
+    copy_with_links_as_files(&checkout, &copy);
+    assert_eq!(tree_checksum(&copy).unwrap(), checksum);
 }

@@ -221,7 +221,9 @@ fn describe_ref(reference: &GitRef) -> String {
 }
 
 /// The checkout of `commit` of the repository at `url`: from the cache, else fetched into it.
-/// When `checksum` is given (from the lockfile), the checkout must hash to it.
+/// When `checksum` is given (from the lockfile), the checkout must hash to it. A fetched commit's
+/// links are checked once, before it enters the cache ([`check_links`]); a checkout already in the
+/// cache is trusted as it is (only this velt writes `<cache>/git`).
 pub fn checkout(
     loc: &Locations,
     url: &str,
@@ -311,9 +313,13 @@ fn check_links(tree: &Path) -> Result<(), String> {
             .map_err(|e| format!("has a symbolic link `{rel}` that can't be read: {e}"))?;
         let dir: Vec<OsString> = rel.split('/').map(OsString::from).collect();
         let dir = dir[..dir.len() - 1].to_vec();
-        if resolve_inside(tree, dir, &target, &mut 0).is_none() {
+        if let Err(why) = resolve_inside(tree, dir, &target, &mut 0) {
+            let what = match why {
+                Unresolved::Out => "points out of the repository",
+                Unresolved::Loop => "loops",
+            };
             return Err(format!(
-                "has a symbolic link `{rel}` that points out of the repository (`{}`)",
+                "has a symbolic link `{rel}` that {what} (`{}`)",
                 target.display()
             ));
         }
@@ -321,15 +327,21 @@ fn check_links(tree: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a link doesn't resolve inside the checkout.
+enum Unresolved {
+    Out,
+    /// More than 40 links followed.
+    Loop,
+}
+
 /// Where `target`, a link's text in the checkout's directory `at` (its components), leads inside
-/// the checkout at `tree`, following the checkout's links (at most 40 of them); `None` when it
-/// leaves the checkout or loops.
+/// the checkout at `tree`, following the checkout's links (at most 40 of them).
 fn resolve_inside(
     tree: &Path,
     mut at: Vec<OsString>,
     target: &Path,
     hops: &mut u32,
-) -> Option<Vec<OsString>> {
+) -> Result<Vec<OsString>, Unresolved> {
     use std::path::Component;
     for c in target.components() {
         match c {
@@ -341,21 +353,21 @@ fn resolve_inside(
                 if is_link {
                     *hops += 1;
                     if *hops > 40 {
-                        return None;
+                        return Err(Unresolved::Loop);
                     }
-                    let next = std::fs::read_link(&path).ok()?;
+                    let next = std::fs::read_link(&path).map_err(|_| Unresolved::Out)?;
                     at.pop();
                     at = resolve_inside(tree, at, &next, hops)?;
                 }
             }
             Component::CurDir => {}
             Component::ParentDir => {
-                at.pop()?;
+                at.pop().ok_or(Unresolved::Out)?;
             }
-            Component::RootDir | Component::Prefix(_) => return None,
+            Component::RootDir | Component::Prefix(_) => return Err(Unresolved::Out),
         }
     }
-    Some(at)
+    Ok(at)
 }
 
 /// A directory removed when dropped.
@@ -399,6 +411,16 @@ enum Config {
     Own,
 }
 
+/// How the checkout writes symbolic links. On Windows, as plain files holding the text git stores
+/// (as git does where links can't be made): Git for Windows would write their targets with `\`,
+/// which the checksum would see, so a lock made there would not match one made elsewhere, and
+/// making links needs a permission many Windows machines don't grant.
+const SYMLINKS: &str = if cfg!(windows) {
+    "core.symlinks=false"
+} else {
+    "core.symlinks=true"
+};
+
 /// Run git (in `dir`, when given) without prompting for credentials and without the
 /// environment's repository ([`LOCAL_ENV`]); its stdout, or git's error as the error.
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
@@ -415,7 +437,7 @@ fn git_with(config: Config, dir: Option<&Path>, args: &[&str]) -> Result<String,
         cmd.env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", null)
             .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
-            .args(["-c", "core.symlinks=true", "-c", "core.longpaths=true"]);
+            .args(["-c", SYMLINKS, "-c", "core.longpaths=true"]);
     }
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);

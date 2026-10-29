@@ -64,7 +64,9 @@ dependencies: {
 - **Packages of the same repository.** A `path` dependency of a package from git is another
   package of the same commit, locked with it; a `path` that leads out of the repository is an
   error, and so is a commit with a symbolic link that points out of it (the lock pins the
-  repository's files, not what such a link reaches). A package from git can't be a workspace member: its
+  repository's files, not what such a link reaches). On Windows, a repository's symbolic links
+  are checked out as plain files holding their target, as git does where it can't make links,
+  so the checkout hashes the same as on Linux and macOS. A package from git can't be a workspace member: its
   `"workspace"` dependencies are errors. A registry requirement on the same name (another
   package's `json: "1.2"`) is met by the git package when its version matches, as by a `path`
   package.
