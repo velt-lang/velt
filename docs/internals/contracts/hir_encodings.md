@@ -1187,6 +1187,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
   the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
   Lowering reads the text while compiling; it is never evaluated.
+- `Intrinsic::AnyToExact` (`(x: borrow any) -> T | undefined`, `Expr::ty` an option of the
+  function type `T`; made by sema only, additive): the function `x` holds, as a new reference,
+  when its table is `T`'s (one comparison), else `undefined`. Sema converts an `any` or
+  `unknown` to a function type `T` as
+  `match AnyToExact(x) { Some(f) => f, None => <closure calling x through any> }`, so a
+  function of exactly `T` stays the one value (identity, `Set` / `Map` keys, round trips) and
+  costs no call through `any`.
 - A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
   `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
   still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a

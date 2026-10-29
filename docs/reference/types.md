@@ -3078,8 +3078,10 @@ calls the value through `any`, converting each argument to the held function's p
 and the result to the target's result type, each checked as above. A value that is no function
 converts too, and calling the result stops with `TypeError: the value converted to a function
 type is not a function` (Node's `TypeError: f is not a function`; `typeof` of the result is
-`"function"`, where Node gives the held value's). The result is a new function at each
-conversion, so it is not `===` the function held. In a union (`ViewFn | Promise<ViewFn>`), the
+`"function"`, where Node gives the held value's). A function of exactly the target type is
+that function itself, so `===`, `indexOf`, `Set` and `Map` see the one value, as in Node. Only
+a function of another type gives a new function, at each conversion, and that one is not `===`
+the function held (Node keeps the one function). In a union (`ViewFn | Promise<ViewFn>`), the
 one function type member is told from the others by `typeof` and converted the same way; a
 `Promise` member needs no test, as a promise is never held as `any` (a function called through
 `any` that returns one stops with ``TypeError: a promise cannot be held as `any` yet``).
