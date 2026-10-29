@@ -9,7 +9,8 @@ import { ConcurrentMap } from "velt:collections/concurrent_map";
 const N: u64 = 20000;
 
 function key(i: u64): string {
-  return `user:${`${i}`.padStart(6, "0")}:${i % 7 == 0 ? "tail" : ""}`;
+  const digits = String(i).padStart(6, "0");
+  return `user:${digits}:${i % 7 == 0 ? "tail" : ""}`;
 }
 
 async function writer(m: shared<ConcurrentMap<string, string>>, t: u64) {
