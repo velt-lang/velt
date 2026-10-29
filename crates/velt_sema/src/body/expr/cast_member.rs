@@ -36,6 +36,9 @@ pub(crate) enum CastTest {
     Truthy,
     /// A nullish test, `??`, `?.` or `typeof`: the value as it is, `undefined` included.
     AsIs,
+    /// An operand of `<`, `>`, `<=`, `>=`, `-`, `*`, `/`, `%` or `**`: of the field's type, with
+    /// a number field's `undefined` as `NaN`, which every such operator treats the same way.
+    Number,
 }
 
 /// What a member of the union gives for the property read.
@@ -57,6 +60,16 @@ pub(crate) fn is_cast_member(e: &ast::Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// The spans of `lhs` and `rhs` (parentheses stripped) that are `(x as M).f` reads.
+pub(super) fn number_operands(lhs: &ast::Expr, rhs: &ast::Expr) -> Vec<Span> {
+    [lhs, rhs]
+        .into_iter()
+        .map(strip_parens)
+        .filter(|e| is_cast_member(e))
+        .map(|e| e.span)
+        .collect()
 }
 
 impl FnCx<'_, '_> {
@@ -86,6 +99,7 @@ impl FnCx<'_, '_> {
         let reads = self.cast_member_reads(union, target, &prop.name)?;
         let mode = match self.cast_member_test {
             Some((s, m)) if s == span => Some(m),
+            _ if self.cast_member_numbers.contains(&span) => Some(CastTest::Number),
             _ => None,
         };
         if optional {
@@ -173,7 +187,7 @@ impl FnCx<'_, '_> {
         let ty = match mode {
             Some(CastTest::Truthy) => self.cx.ty.bool_,
             Some(CastTest::AsIs) => self.as_is_ty(t),
-            None => t,
+            Some(CastTest::Number) | None => t,
         };
         let kind = H::Match {
             scrutinee: Box::new(h),
@@ -204,7 +218,11 @@ impl FnCx<'_, '_> {
                     None => nothing(self, t),
                 }
             }
-            (None, Some(v)) => self.fit(v, t),
+            (Some(CastTest::Number) | None, Some(v)) => self.fit(v, t),
+            (Some(CastTest::Number), None) if self.cx.ty.is_float(t) => {
+                self.mk(H::Lit(hir::Lit::Float(f64::NAN)), t, span)
+            }
+            (Some(CastTest::Number), None) => self.cast_member_value(None, t, None, span),
             (None, None) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
                 nothing(self, t)
             }

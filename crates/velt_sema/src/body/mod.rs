@@ -344,6 +344,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A member read of an assertion, `(u as M).f`, that is only tested (a condition, a
     /// nullish or `typeof` test): the value read is tested as it is (`expr/cast_member.rs`).
     pub cast_member_test: Option<(Span, expr::CastTest)>,
+    /// Operands of a relational or arithmetic operator (not `+`) that are `(u as M).f` reads:
+    /// a number field a member lacks reads as `NaN` there, which gives what Node's `undefined`
+    /// gives (`expr/cast_member.rs`).
+    pub cast_member_numbers: Vec<Span>,
     /// Reads that need the payload of a narrowed module variable, field path or checked copy:
     /// receivers, callees, operands of arithmetic and comparisons, spreads (`global_narrow`).
     pub payload_spans: Vec<Span>,
@@ -435,6 +439,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             refused_reads: vec![],
             raw_read: None,
             cast_member_test: None,
+            cast_member_numbers: vec![],
             payload_spans: vec![],
             as_is_spans: vec![],
             field_test: None,
