@@ -29,7 +29,7 @@ struct Entry {
 }
 
 function verdict(label: string, n: i64, bad: i64) {
-  console.log(`${label}: ${n} checks, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+  console.log(`${label}: ${n} checks, ${bad == 0 ? "all the same" : bad + " differ"}`);
 }
 
 // The index entry under the cursor, as "<key>/<rowid>" (an integer key or a text key).
