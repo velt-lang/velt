@@ -90,7 +90,7 @@ function columnRefs(e: Expr | null, out: Expr[]) {
 
 /**
  * An aggregate call `e` where it cannot be, with one of SQLite's two messages. Where name
- * resolution allows no aggregate (another aggregate's arguments, LIMIT, and WHERE or
+ * resolution allows no aggregate (another aggregate's arguments or FILTER, LIMIT, and WHERE or
  * ON of a query that is no aggregate query; `sc` is where the call is written, as SQLite's name
  * context, whichever query the aggregate belongs to) it is `misuse of aggregate function f()`;
  * elsewhere (WHERE of an aggregate query, ORDER BY of one that is not, a subquery's result

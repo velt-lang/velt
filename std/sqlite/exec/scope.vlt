@@ -134,7 +134,7 @@ export class Scope {
   output: bool = false;
   /** Set while the result columns of a core that is not (yet) an aggregate query compile. */
   results: bool = false;
-  /** Set while an aggregate's arguments compile: no aggregate is allowed there. */
+  /** Set while an aggregate's arguments or FILTER compile: no aggregate is allowed there. */
   inAggArgs: bool = false;
   /**
    * Set while the core's WHERE and ON terms compile: an aggregate is allowed there only when

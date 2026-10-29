@@ -252,6 +252,11 @@ const QUERIES: string[] = [
   "SELECT (SELECT max(posts.id) FROM posts WHERE count(users.id) > 0) FROM users",
   "SELECT (SELECT 1 FROM posts ORDER BY count(users.id)) FROM users",
   "SELECT (SELECT count(*) FROM posts HAVING count(users.id) > 0) FROM users",
+  // FILTER allows no aggregate.
+  "SELECT count(*) FILTER (WHERE count(*) > 0) FROM users",
+  "SELECT sum(id) FILTER (WHERE max(id) > 0) FROM users",
+  "SELECT id FROM users WHERE id IN (SELECT sum(1) FILTER (WHERE count(*) > 0) FROM posts)",
+  "SELECT (SELECT sum(1) FILTER (WHERE count(users.id) > 0) FROM posts) FROM users",
   // LIMIT and OFFSET name no column, not even an enclosing query's.
   "SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users",
   "SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))",

@@ -707,15 +707,15 @@ export abstract class ExprCompiler {
           }
           f.args.push(c.ev);
         }
+        if (e.filter != null) {
+          f.filter = this.pred(e.filter!, base);
+        }
       } finally {
         base.inAggArgs = was;
       }
       f.distinct = e.distinct;
       if (e.distinct && e.args.length != 1) {
         prepareError("DISTINCT aggregates must have exactly one argument");
-      }
-      if (e.filter != null) {
-        f.filter = this.pred(e.filter!, base);
       }
       agg.fns.push(f);
       const slot = agg.fns.length - 1;

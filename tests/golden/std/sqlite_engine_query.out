@@ -673,6 +673,14 @@ SELECT (SELECT 1 FROM posts ORDER BY count(users.id)) FROM users
   1
 SELECT (SELECT count(*) FROM posts HAVING count(users.id) > 0) FROM users
   10
+SELECT count(*) FILTER (WHERE count(*) > 0) FROM users
+  error: misuse of aggregate function count()
+SELECT sum(id) FILTER (WHERE max(id) > 0) FROM users
+  error: misuse of aggregate function max()
+SELECT id FROM users WHERE id IN (SELECT sum(1) FILTER (WHERE count(*) > 0) FROM posts)
+  error: misuse of aggregate function count()
+SELECT (SELECT sum(1) FILTER (WHERE count(users.id) > 0) FROM posts) FROM users
+  error: misuse of aggregate function count()
 SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users
   error: no such column: users.id
 SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))
