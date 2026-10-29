@@ -594,10 +594,22 @@ impl Ctx<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
             ) || self.atomic_ref(ty);
         }
+        // The prelude's `Frozen`: a type `frozen_readable` takes (type parameters through their
+        // own `Frozen` bounds).
+        if Some(b.iface) == self.prelude_iface("Frozen")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return self.frozen_readable_under(bounds, ty);
+        }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            // Only a direct `T extends AtomicValue`: nothing else can stand for the compiler's.
-            if Some(b.iface) == self.prelude_iface("AtomicValue") {
+            // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
+            // compiler's.
+            let known = [
+                self.prelude_iface("AtomicValue"),
+                self.prelude_iface("Frozen"),
+            ];
+            if known.contains(&Some(b.iface)) {
                 return declared.contains(b);
             }
             if declared
@@ -643,6 +655,16 @@ impl Ctx<'_> {
             .is_some_and(|args| args == b.args);
         self.impl_scope = saved;
         ok
+    }
+
+    /// `frozen_readable` of `t` with the type parameters bounded by the prelude's `Frozen` in
+    /// `bounds` taken as readable (checked where the generic is instantiated).
+    pub(crate) fn frozen_readable_under(&mut self, bounds: &[Vec<Bound>], t: TyId) -> bool {
+        let frozen = self.prelude_iface("Frozen");
+        let params: Vec<u32> = (0..bounds.len() as u32)
+            .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
+            .collect();
+        self.frozen_readable_in(t, &params, &mut rustc_hash::FxHashSet::default())
     }
 
     /// Does interface `b`, or one it extends, declare a generic method?

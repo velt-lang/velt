@@ -19,7 +19,7 @@ use velt_common::{Diagnostic, Span};
 use crate::body::places::{is_place, place_root, set_place_mode};
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
+use crate::defs::{BodyState, DefInfo};
 use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, PassMode, Pat,
     PatKind, Stmt, StmtKind, UseMode,
@@ -128,7 +128,14 @@ pub(super) fn with_body(
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
         return false;
     };
+    // Diagnostics name the body's type parameters as written, not `T0`.
+    let names = match &cx.info[d.0 as usize] {
+        DefInfo::Fn(i) => i.generics.names.clone(),
+        _ => vec![],
+    };
+    let saved = std::mem::replace(&mut cx.display_params, names);
     let r = op(cx, &mut f);
+    cx.display_params = saved;
     cx.defs[d.0 as usize] = Some(Def::Fn(f));
     r
 }

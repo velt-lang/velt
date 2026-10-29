@@ -102,7 +102,7 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
             args.first().iter().for_each(|a| go(a, r, holds))
         }
         E::Call {
-            callee: Callee::Virtual { .. } | Callee::Dyn { .. },
+            callee: Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. },
             args,
         } => args.first().iter().for_each(|a| go(a, r, holds)),
         _ => {}
