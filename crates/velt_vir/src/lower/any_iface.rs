@@ -35,8 +35,13 @@ impl Cx<'_> {
     /// it is for, and the interface's arguments.
     /// An `extend … implements` block's impl comes after those, as in a direct conversion
     /// (impl_lookup.rs).
-    fn iface_impl_of(&mut self, t: TyId, iface: DefId) -> Option<(u32, TyId, Vec<TyId>)> {
-        if let Some(found) = self.own_iface_impl_of(t, iface) {
+    fn iface_impl_of(
+        &mut self,
+        t: TyId,
+        iface: DefId,
+        to: &[TyId],
+    ) -> Option<(u32, TyId, Vec<TyId>)> {
+        if let Some(found) = self.own_iface_impl_of(t, iface, to) {
             return Some(found);
         }
         if self.hir.extension_impls.is_empty() {
@@ -52,10 +57,18 @@ impl Cx<'_> {
             .then_some((fit.index, fit.ty, from))
     }
 
-    /// [`Self::iface_impl_of`] among the impls of the type and its base classes.
-    fn own_iface_impl_of(&mut self, t: TyId, iface: DefId) -> Option<(u32, TyId, Vec<TyId>)> {
+    /// [`Self::iface_impl_of`] among the impls of the type and its base classes: the first one,
+    /// or one at the arguments `to` when the type has several (an object type converted to the
+    /// interface at several arguments, velt_sema `object_ifaces.rs`).
+    fn own_iface_impl_of(
+        &mut self,
+        t: TyId,
+        iface: DefId,
+        to: &[TyId],
+    ) -> Option<(u32, TyId, Vec<TyId>)> {
         let mut cur = t;
         let impls = self.impls_of(iface);
+        let mut first = None;
         for _ in 0..64 {
             for &j in impls.iter() {
                 if self.hir.extension_impls.contains_key(&j) {
@@ -68,9 +81,15 @@ impl Cx<'_> {
                 }
                 let (ty, n, args) = (imp.ty, imp.generics, imp.iface_args.clone());
                 if n == 0 {
-                    if ty == cur {
+                    if ty == cur && args.as_slice() == to {
                         return Some((j as u32, cur, args));
                     }
+                    if ty == cur && first.is_none() {
+                        first = Some((j as u32, cur, args));
+                    }
+                    continue;
+                }
+                if first.is_some() {
                     continue;
                 }
                 if let Some(xs) = self.identity_instance(ty, n, cur) {
@@ -79,6 +98,9 @@ impl Cx<'_> {
                         return Some((j as u32, cur, from));
                     }
                 }
+            }
+            if first.is_some() {
+                return first;
             }
             let TyKind::Adt(d, xs) = self.kind(cur) else {
                 return None;
@@ -219,7 +241,7 @@ impl Cx<'_> {
             if self.is_adapter(t) || self.is_dynamic(t) || !self.closed(t, 0) {
                 continue;
             }
-            let Some((imp, imp_ty, from)) = self.iface_impl_of(t, iface) else {
+            let Some((imp, imp_ty, from)) = self.iface_impl_of(t, iface, &to) else {
                 continue;
             };
             let adapter = match (from == to, adapter) {
