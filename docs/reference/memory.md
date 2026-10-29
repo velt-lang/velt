@@ -194,7 +194,8 @@ replace that object first (it calls a function value that replaces the field pas
 evaluated, as in JS: the object's type is then reference-counted. A later argument that cannot reach
 the object does not do that: a literal, a standard-library call on numbers and strings
 (`Math.sqrt(4)`, `x.toFixed(2)`); nor does any later argument when the object is a variable of the
-caller's own that nothing there assigns (`hooks[0](acc, Date.now())`).
+caller's own that no closure assigns and the call's arguments do not assign: a function value called
+there cannot replace it (`hooks[0](acc, nums[0]())`).
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A

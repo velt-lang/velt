@@ -236,6 +236,7 @@ fn a_changed_argument_is_counted_only_when_a_later_argument_may_replace_it() {
              const hooks: ((v: V, t: number) => void)[] = [(v, t) => {{ v.x += t; }}];
              const pushes: ((xs: number[], n: number) => void)[] = [(xs, n) => {{ xs.push(n); }}];
              const swaps: ((b: N) => number)[] = [(b) => {{ b.log = [7]; return 1; }}];
+             const nums: (() => number)[] = [() => 5];
              function main() {{
                const acc: V = {{ x: 1, y: 2 }};
                const box = {{ v: {{ x: 3, y: 4 }}, n: 1 }};
@@ -247,6 +248,8 @@ fn a_changed_argument_is_counted_only_when_a_later_argument_may_replace_it() {
     };
     for call in [
         "hooks[0](acc, Math.sqrt(4))",
+        // A call through a function value can't assign the caller's own variable.
+        "hooks[0](acc, nums[0]())",
         "hooks[0](box.v, Math.sqrt(4))",
         "hooks[0](box.v, Number(box.v.x.toFixed(2)))",
         "hooks[0](box.v, String(Math.max(1, 2)).length)",

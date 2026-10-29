@@ -90,10 +90,38 @@ pub(super) fn root_local(e: &hir::Expr) -> Option<hir::LocalId> {
 /// listed may.
 pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
     use hir::ExprKind as K;
-    let any = |es: &[hir::Expr]| es.iter().any(|x| may_move_local(x, l));
     match &e.kind {
         K::Lit(_) | K::Global(_) | K::FnRef(..) => false,
         K::Local(x, mode) => *x == l && *mode == hir::UseMode::Move,
+        _ => any_operand(e, &mut |x| may_move_local(x, l)).unwrap_or(true),
+    }
+}
+
+/// Can evaluating `e` assign local `l` in this function's own code (`l = …`, `l += …`)? A
+/// call is followed into its arguments only, as no callee assigns a variable of the caller
+/// that is not in a shared cell. This is weaker than [`written_local`], which takes any call
+/// that may run a closure as writing locals (`writes_local`: a closure called through a value
+/// may write those in cells); `changed_hold` asks it only of a variable outside a cell, where
+/// a call through a function value (`hooks[0](acc, nums[0]())`) cannot assign it.
+/// Conservative: shapes not listed may.
+fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(_) | K::Global(_) | K::FnRef(..) | K::Local(..) | K::Closure(_) => false,
+        K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
+            root_local(place) == Some(l) || assigns_local(place, l) || assigns_local(value, l)
+        }
+        _ => any_operand(e, &mut |x| assigns_local(x, l)).unwrap_or(true),
+    }
+}
+
+/// Does `f` hold for an operand of `e`, for the shapes whose operands are all the evaluation
+/// does ([`may_move_local`], [`assigns_local`]): unary and binary operators, casts and wraps,
+/// field and index reads, conditionals, array literals and calls (their arguments, and the
+/// function value of an indirect call)? `None` for any other shape.
+fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
+    use hir::ExprKind as K;
+    Some(match &e.kind {
         K::Unary { expr: x, .. }
         | K::Cast(x)
         | K::Upcast(x)
@@ -101,20 +129,16 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
         | K::WrapSome(x)
         | K::UnwrapSome(x, _)
         | K::UnwrapVariant { expr: x, .. }
-        | K::Field { base: x, .. } => may_move_local(x, l),
-        K::Index { base, index, .. } => may_move_local(base, l) || may_move_local(index, l),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            may_move_local(lhs, l) || may_move_local(rhs, l)
-        }
-        K::If { cond, then, els } => {
-            may_move_local(cond, l) || may_move_local(then, l) || may_move_local(els, l)
-        }
+        | K::Field { base: x, .. } => f(x),
+        K::Index { base, index, .. } => f(base) || f(index),
+        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => f(lhs) || f(rhs),
+        K::If { cond, then, els } => f(cond) || f(then) || f(els),
         K::Call { callee, args } => {
-            any(args) || matches!(callee, hir::Callee::Indirect(f) if may_move_local(f, l))
+            args.iter().any(&mut *f) || matches!(callee, hir::Callee::Indirect(c) if f(c))
         }
-        K::ArrayLit(xs) => any(xs),
-        _ => true,
-    }
+        K::ArrayLit(xs) => xs.iter().any(f),
+        _ => return None,
+    })
 }
 
 /// The locals evaluating `e` may write, as far as `written_local` tells them apart.
@@ -379,7 +403,7 @@ impl FnLower<'_, '_> {
         let Some(obj) = self.inline_object(args[i].ty) else {
             return Some(later);
         };
-        if !later.memory || (!later.locals && self.own_variable(&args[i])) {
+        if !later.memory || self.own_variable(&args[i], &args[i + 1..]) {
             return None;
         }
         if !args[i + 1..].iter().any(|e| self.reaches_objects(e)) {
@@ -390,8 +414,12 @@ impl FnLower<'_, '_> {
     }
 
     /// Is `e` a variable whose value this function holds itself (not a param or binding that
-    /// points elsewhere, nor one in a shared cell a closure may assign)?
-    fn own_variable(&self, e: &hir::Expr) -> bool {
+    /// points elsewhere, nor one in a shared cell a closure may assign) that none of `later`
+    /// assigns? Only this function's code can assign such a variable: a closure that stays in
+    /// the function borrows it (sema reports a call that borrows it while such a closure
+    /// assigns it), and one that may be stored or called through a value keeps it in a cell.
+    /// So a call through a function value (`hooks[0](acc, nums[0]())`) cannot replace it.
+    fn own_variable(&self, e: &hir::Expr, later: &[hir::Expr]) -> bool {
         use hir::ExprKind as K;
         let mut e = e;
         while let K::Cast(x) | K::Upcast(x) | K::Downcast(x) = &e.kind {
@@ -401,7 +429,7 @@ impl FnLower<'_, '_> {
             return false;
         };
         let info = &self.info[l.0 as usize];
-        !info.indirect && !info.cell && !info.in_cell
+        !info.indirect && !info.cell && !info.in_cell && !later.iter().any(|x| assigns_local(x, l))
     }
 
     /// Can evaluating `e` change an object stored inline that an earlier operand passes? As
