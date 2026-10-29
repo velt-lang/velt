@@ -545,9 +545,6 @@ impl Run<'_> {
     }
 }
 
-/// Which files of `planned` share a harness: those that only declare, in one; each other one
-/// alone. Of two files with the same module path (`a.test.ts` and `a.test.vlt` side by side,
-/// which one program cannot import both of), the second is alone too.
 /// Keep the reports in the runner's `results` file (`Ran[]`) of the files whose tests all passed,
 /// for the harnesses whose results may be kept (`cache`), then remove the file.
 fn keep_passed(
@@ -575,6 +572,9 @@ fn keep_passed(
     }
 }
 
+/// Which files of `planned` share a harness: those that only declare, in one; each other one
+/// alone. Of two files with the same module path (`a.test.ts` and `a.test.vlt` side by side,
+/// which one program cannot import both of), the second is alone too.
 fn groups(planned: &[Planned]) -> Vec<Vec<usize>> {
     let mut shared = vec![];
     let mut alone = vec![];

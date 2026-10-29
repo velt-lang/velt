@@ -5,8 +5,8 @@
 //! the runner prints the kept report instead of running them. A program that does reach out runs
 //! every time, and its file says what it reaches.
 //!
-//! `<harness>.test-results.json` beside each harness holds, under a key over the harness's bytes
-//! and `--filter`/`--exact`, the reports of its files that passed. `--no-cache`, and
+//! `<harness>.test-results.json` beside each harness holds, under a key over the harness's bytes,
+//! `--filter`/`--exact` and the leak check (`VELT_RC_STATS`), the reports of its files that passed. `--no-cache`, and
 //! `VELT_BUILD_STAMP=off` (no stamp knows what a program reaches), run everything.
 
 use std::collections::BTreeMap;
@@ -35,7 +35,11 @@ impl Harness {
             .flatten();
         let key = match (&record, std::fs::read(exe)) {
             (Some(_), Ok(bytes)) => {
-                format!("{} {filter:?} {exact}", vpm::probe::content_hash(&bytes))
+                // `VELT_RC_STATS=1` makes the runner fail a file that leaks: a result kept
+                // without that check doesn't stand for one with it.
+                let leaks = std::env::var("VELT_RC_STATS").unwrap_or_default();
+                let hash = vpm::probe::content_hash(&bytes);
+                format!("{hash} {filter:?} {exact} {leaks:?}")
             }
             _ => String::new(),
         };

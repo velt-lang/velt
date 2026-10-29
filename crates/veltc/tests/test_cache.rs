@@ -51,14 +51,21 @@ impl Package {
     }
 
     fn test(&self, args: &[&str]) -> Output {
-        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-            .arg("test")
+        self.test_with(args, &[])
+    }
+
+    fn test_with(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.arg("test")
             .args(args)
             .current_dir(&self.dir)
             .env("VELT_HOME", self.dir.join("home"))
             .env_remove("VELT_LAUNCHER")
-            .output()
-            .unwrap()
+            .env_remove("VELT_RC_STATS");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.output().unwrap()
     }
 
     /// The `running` lines of a `velt test` that must pass, paths relative to the package.
@@ -111,4 +118,15 @@ fn a_failure_is_never_kept() {
             "{out}"
         );
     }
+}
+
+/// A result kept without the leak check (`VELT_RC_STATS=1`) doesn't stand for a run with it.
+#[test]
+fn the_leak_check_runs_what_an_ordinary_run_kept() {
+    let p = package();
+    assert!(p.test(&[]).status.success());
+    assert!(String::from_utf8_lossy(&p.test(&[]).stdout).contains("pure.test.vlt (cached)"));
+    let o = p.test_with(&[], &[("VELT_RC_STATS", "1")]);
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(!out.contains("pure.test.vlt (cached)"), "{out}");
 }
