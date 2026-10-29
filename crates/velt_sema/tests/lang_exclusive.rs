@@ -267,6 +267,27 @@ fn an_argument_may_not_change_an_inline_object_another_one_passes() {
     assert!(r.contains("o.pt"), "{r}");
 }
 
+#[test]
+fn an_argument_may_change_the_inside_of_an_array_another_one_passes() {
+    // `grow` pushes onto `g[1]` while the argument is evaluated: `g` is passed by reference, so
+    // `h` sees the longer row, as Node's does.
+    ok_src(
+        "function grow(a: i64[]): i64 { a.push(7); return 1; }
+         function h(g: i64[][], n: i64): i64 { return g[1].length as i64 + n; }
+         function main() { const g: i64[][] = [[1], [2]]; console.log(h(g, grow(g[1]))); }",
+    );
+    // A change through the passed value itself, or replacing it, is still a conflict.
+    let r = err_src(
+        "class B { items: i64[] = [1]; }
+         function setFirst(b: B): i64 { b.items[0] = 8; return 0; }
+         function show(b: B, n: i64): i64 { return b.items[0] + n; }
+         function main() { const b = new B(); console.log(show(b, setFirst(b))); }",
+    );
+    assert!(r.contains("`b`"), "{r}");
+    let r = err_main("const b = new Box(); fill(b.items, [(b.items = []).length as i64]);");
+    assert!(r.contains("b.items"), "{r}");
+}
+
 /// A renderer whose nested functions are closures that call each other: `mount` passes its
 /// params on to `mountComponent` (`call`), which modifies the vnode.
 fn renderer(call: &str) -> String {
