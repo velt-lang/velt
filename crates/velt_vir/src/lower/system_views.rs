@@ -23,10 +23,11 @@ impl FnLower<'_, '_> {
     /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).
     ///
     /// `xs.subarray(begin, end)` evaluates `xs`, `begin` and `end` in that order and keeps the
-    /// array and the two positions ([`Arg::Sub`]): its header is read and the positions are
-    /// clamped only when the C arguments are assembled ([`Self::subarray_bytes`]), after every
-    /// argument, so a later one (or a position) that grows the array or replaces the variable
-    /// owning it cannot leave the pointer at freed bytes.
+    /// array and the two positions ([`Arg::Sub`]). The array is the one `xs` held then (JS
+    /// order), retained when a later operand could replace it; its header is read and the
+    /// positions are clamped only when the C arguments are assembled ([`Self::subarray_bytes`]),
+    /// after every argument, so a later one (or a position) that grows the array cannot leave
+    /// the pointer at freed bytes.
     pub(super) fn system_view(
         &mut self,
         func: &Func,
@@ -45,6 +46,7 @@ impl FnLower<'_, '_> {
             // Retain the array across the positions and the later arguments: one that
             // reassigns a module `let` (or otherwise drops the owner) must not free it.
             let after = later.or(self.later_of(begin)).or(self.later_of(end));
+            self.note_held_buffer(xs, after);
             let v = self.expr(xs);
             let v = self.hold_buffer(v, xs.ty, after);
             let t = self.sub(xs.ty);
@@ -67,6 +69,7 @@ impl FnLower<'_, '_> {
         }
         // Retain the view (which holds its `ArrayBuffer`, and so the `u8[]`) across later
         // arguments that may free it.
+        self.note_held_buffer(a, later);
         let v = self.expr(a);
         let v = self.hold_buffer(v, a.ty, later);
         let place = self.operand_place(v.clone(), Ty::Ptr);

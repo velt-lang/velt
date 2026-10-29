@@ -69,10 +69,13 @@ array, and the call gets the address and length of the bytes the view sees, with
   `subarray` of a `u8[]` is a view only as such an argument: elsewhere a `u8[]` has no
   `subarray` yet (`slice` copies).
 
-The array's data and length are taken at the call, after every argument (the positions of a
-`subarray` too) is evaluated, as for a whole array: an argument that grows the array or gives
-its variable another array cannot leave the call at bytes that were freed, and the bytes are
-those of the array the variable holds then.
+The array is the one `xs` holds when the argument is evaluated, before the positions and the
+later arguments, as in JS: a later argument that gives the variable another array leaves the
+call at the first one, which the call keeps alive until it returns. A whole array argument
+names its array the same way. The array's data and length are taken at the call, after every
+argument is evaluated, so an argument that grows the array (which moves its bytes) cannot leave
+the call at bytes that were freed, and the positions are clamped to the length the array has
+then.
 
 ```ts
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;

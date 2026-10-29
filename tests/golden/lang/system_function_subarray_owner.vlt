@@ -1,9 +1,11 @@
 // requires: unix
-// `xs.subarray(begin, end)` of a `u8[]` passed as a system function's buffer takes the array's
-// data pointer and length at the call, after its positions and every later argument (as a
-// whole `u8[]` does): one that replaces the variable owning the array, or grows the array
-// (which moves its bytes), cannot leave the call reading or writing freed memory. The bytes
-// are those of the array the variable holds at the call, clamped to its length then.
+// `xs.subarray(begin, end)` of a `u8[]` passed as a system function's buffer names the array
+// `xs` holds when the argument is evaluated, before its positions and the later arguments (JS
+// order), whatever the rest of the program does with the array: one that gives the variable
+// another array leaves the call at the first one, which the call keeps alive. Its data pointer
+// and length are read at the call, after every argument, so one that grows that array (which
+// moves its bytes) cannot leave the call reading or writing freed memory. A whole `u8[]` names
+// its array the same way.
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
 declare system function write(fd: i32, buf: readonly u8[]): isize;
@@ -21,6 +23,11 @@ function replace(n: i64): i64 {
   return n;
 }
 
+function replaceEmpty(n: i64): i64 {
+  g = Buffer.alloc(1);
+  return n;
+}
+
 function grow(): i64 {
   for (let i = 0; i < 100000; i++) g.push(7);
   return 0;
@@ -32,21 +39,33 @@ async function later(): Promise<i64> {
 }
 
 async function main() {
-  // The read side: the bytes written are those of the array `g` holds at the call (raw writes
-  // come first, as `console.log` may buffer its output).
-  g = filled(8, 65);
+  // The read side: the bytes written are those of the array `g` held before the end position
+  // replaced it, clamped to its length (raw writes come first, as `console.log` may buffer its
+  // output).
   const nl: u8[] = [10];
+  g = filled(8, 65);
   const w = write(1, g.subarray(0, replace(8)));
+  write(1, nl);
+  g = filled(8, 67);
+  const w2 = write(1, g.subarray(0, replaceEmpty(8)));
+  write(1, nl);
+  g = filled(8, 68);
+  const w3 = write(1, g.subarray(0, replace(100)));
+  write(1, nl);
+  g = filled(4, 69);
+  const w4 = write(1, g.subarray(replace(-2)));
   write(1, nl);
 
   const name: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // /dev/zero
   const fd = open(name, 0, 0);
-  console.log("write", w, g.length);
-  // A later argument replaces the module variable.
+  console.log("write", w, w2, w3, w4, g.length);
+  // A later argument replaces the module variable: the call writes the first array.
   g = filled(4096, 1);
   console.log("replace", pread(fd, g.subarray(0, 4096), replace(0)), g.length);
   g = filled(4096, 1);
   console.log("await", pread(fd, g.subarray(0, 4096), await later()), g.length);
+  g = filled(4096, 1);
+  console.log("whole", pread(fd, g, replace(0)), g.length);
   // A later argument grows the array: the call writes the grown array's bytes.
   g = filled(16, 9);
   console.log("grow", pread(fd, g.subarray(0, 16), grow()), g[0], g[15], g[16], g.length);

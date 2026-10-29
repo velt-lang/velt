@@ -84,8 +84,11 @@ impl FnLower<'_, '_> {
                 vals.push(v);
                 continue;
             }
-            let v = self.expr(a);
             let t = self.sub(a.ty);
+            if !matches!(self.cx.kind(t), hir::TyKind::Int(_)) {
+                self.note_held_buffer(a, later);
+            }
+            let v = self.expr(a);
             vals.push(match self.cx.kind(t) {
                 hir::TyKind::Int(_) => Arg::Scalar(self.freeze(v, a.ty)),
                 _ => {
@@ -210,6 +213,20 @@ impl FnLower<'_, '_> {
             TlsCall::Get { id, bits, init },
             TlsCall::Set { id, bits, init },
         ))
+    }
+
+    /// Before the buffer `e` is evaluated: when a later argument may change memory, record the
+    /// path to its value as [`Self::expr_held`] does, so an array a later argument can free
+    /// through a module `let` or a closure's cell (`g = Buffer.alloc(1)`) has a counted type,
+    /// and [`Self::hold_buffer`] keeps the array the argument named (JS reads it first).
+    pub(super) fn note_held_buffer(&mut self, e: &hir::Expr, later: Later) {
+        if !later.memory || self.dead() {
+            return;
+        }
+        let ty = self.sub(e.ty);
+        if self.cx.needs_drop(ty) && !self.through_counted(e, ty) {
+            self.in_shared_cell(e);
+        }
     }
 
     /// Keep the buffer value `v` (of type `ty`) alive across the arguments after it: when one of
