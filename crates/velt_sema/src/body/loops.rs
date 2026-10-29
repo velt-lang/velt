@@ -388,6 +388,7 @@ impl FnCx<'_, '_> {
             iter: it,
             body: b,
             consume,
+            share_elems: false,
         };
         Self::push(out, f, p.span);
     }

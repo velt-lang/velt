@@ -642,6 +642,7 @@ impl VisitMut for Checker<'_, '_> {
                 iter,
                 body,
                 consume,
+                share_elems,
                 ..
             } => {
                 if let Some((mut p, _)) = self.collector().place_of(iter) {
@@ -649,9 +650,10 @@ impl VisitMut for Checker<'_, '_> {
                         let text = place_text(self.cx, self.locals, iter);
                         let col = self.collector();
                         iteration::share_moved_iterated(&col, &p, self.soft, body);
-                        let hit =
-                            iteration::modified_while_iterating(&col, &p, &text, iter.span, body);
+                        let uses = iteration::body_uses(&col, body);
+                        let hit = iteration::modified_while_iterating(&uses, &p, &text, iter.span);
                         self.errors.extend(hit);
+                        *share_elems = iteration::replaces_bound(&uses, &p, binding);
                     }
                     p.proj.push(Proj::Index);
                     self.bind(binding, &p);

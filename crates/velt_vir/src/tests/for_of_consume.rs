@@ -17,6 +17,7 @@ fn consume_loop(binding: Pat, iter: Expr, body: Vec<Stmt>) -> Stmt {
         iter,
         body: block(body),
         consume: true,
+        share_elems: false,
     })
 }
 

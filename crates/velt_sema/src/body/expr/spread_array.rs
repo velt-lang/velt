@@ -436,6 +436,7 @@ impl FnCx<'_, '_> {
                     span,
                 },
                 consume: false,
+                share_elems: false,
             },
             span,
         }

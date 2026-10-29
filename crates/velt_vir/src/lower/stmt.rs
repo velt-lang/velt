@@ -69,7 +69,8 @@ impl FnLower<'_, '_> {
                 iter,
                 body,
                 consume,
-            } => self.for_of(label, binding, iter, body, *consume),
+                share_elems,
+            } => self.for_of(label, binding, iter, body, *consume, *share_elems),
             S::Try {
                 body,
                 catch,
