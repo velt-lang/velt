@@ -53,6 +53,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_swap_nested" => I::ArraySwapNested,
         "hash" => I::Hash,
         "eq" => I::Eq,
+        "deep_eq" => I::DeepEq,
         "key_eq" => I::KeyEq,
         "includes_eq" => I::IncludesEq,
         "same" => I::Same,
@@ -219,7 +220,7 @@ impl FnCx<'_, '_> {
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue | I::LooseEq => {
+            I::Eq | I::DeepEq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue | I::LooseEq => {
                 (vec![(t, B), (t, B)], bool_, true)
             }
             I::Clone | I::Share => (vec![(t, B)], t, true),

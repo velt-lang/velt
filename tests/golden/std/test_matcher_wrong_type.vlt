@@ -1,0 +1,18 @@
+// A matcher only fits the types it checks, built-in or added with `extend`: on any other type
+// its call is a compile error (#1778).
+import { Expect, expect } from "velt:test";
+
+class Reply {
+  status: i64 = 204;
+}
+
+extend Expect<Reply> {
+  toHaveStatus(status: i64) {
+    this.check(this.actual.status == status, `expected status ${status}`);
+  }
+}
+
+expect(new Reply()).toHaveStatus(204);
+expect(42).toHaveStatus(204);
+expect(1).toContain(1);
+expect("a").toBeGreaterThan(1);

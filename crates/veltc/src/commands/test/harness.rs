@@ -6,11 +6,11 @@
 //! import * as __velt_t0 from "./math.test.vlt";
 //! import * as __velt_t1 from "./io.test.vlt";
 //! function __velt_r0() {
-//!   __file();
+//!   __file(0);
 //!   __test("test_add", __velt_t0.test_add);
 //! }
 //! function __velt_r1() {
-//!   __file();
+//!   __file(2);
 //!   __testAsync("test_read", __velt_t1.test_read);
 //! }
 //! async function main() {
@@ -19,6 +19,9 @@
 //!   await __run();
 //! }
 //! ```
+//! `__file(n)` gives the file the next `n` registrations its top level queued (`io.test.vlt` has
+//! two top-level `describe` or `it` calls): the test files are evaluated in import order, before
+//! `main`. A file alone in its harness takes them all (`-1`), whatever its top level does.
 //! A function per file keeps `main` small whatever the number of tests: an `async` function's
 //! lowering (saving its locals across `await`s) grows with the square of its size, and a `main`
 //! registering 1,000 tests took seconds to compile.
@@ -31,7 +34,13 @@ use std::fmt::Write;
 pub const PLAN_VAR: &str = "VELT_TEST_PLAN";
 
 /// Variables `velt:test` reads that a run's runner must not inherit.
-pub const CHILD_VARS: [&str; 2] = ["VELT_TEST_FILE", "VELT_TEST_FROM"];
+pub const CHILD_VARS: [&str; 5] = [
+    "VELT_TEST_FILE",
+    "VELT_TEST_FROM",
+    "VELT_TEST_MARK",
+    "VELT_TEST_FILTER",
+    "VELT_TEST_EXACT",
+];
 
 /// One test file of a harness.
 pub struct HarnessFile<'a> {
@@ -41,6 +50,8 @@ pub struct HarnessFile<'a> {
     pub tests: &'a [String],
     /// Those of `tests` that are `async`.
     pub async_tests: &'a [String],
+    /// How many registrations its top level queues; `None`: all there are.
+    pub queued: Option<usize>,
 }
 
 /// Velt source of a harness registering the tests of `files`, in order.
@@ -52,7 +63,8 @@ pub fn harness_source(files: &[HarnessFile]) -> String {
         let _ = writeln!(src, "import * as __velt_t{i} from \"{}\";", f.import_spec);
     }
     for (i, f) in files.iter().enumerate() {
-        let _ = writeln!(src, "\nfunction __velt_r{i}() {{\n  __file();");
+        let queued = f.queued.map_or(-1, |n| n as i64);
+        let _ = writeln!(src, "\nfunction __velt_r{i}() {{\n  __file({queued});");
         for t in f.tests {
             let register = match f.async_tests.contains(t) {
                 true => "__testAsync",
@@ -83,6 +95,7 @@ mod tests {
             import_spec: spec.to_string(),
             tests,
             async_tests,
+            queued: Some(0),
         }
     }
 
@@ -95,17 +108,20 @@ mod tests {
         );
         let src = harness_source(&[
             file("./a.test.vlt", &a, &[]),
-            file("./sub/b.test.ts", &b, &b_async),
+            HarnessFile {
+                queued: Some(2),
+                ..file("./sub/b.test.ts", &b, &b_async)
+            },
         ]);
         assert!(
             src.contains("import * as __velt_t1 from \"./sub/b.test.ts\";"),
             "{src}"
         );
         // The same test name in two files: each is reached through its own namespace.
-        let want = "function __velt_r0() {\n  __file();\n  \
+        let want = "function __velt_r0() {\n  __file(0);\n  \
                     __test(\"test_x\", __velt_t0.test_x);\n  \
                     __test(\"test_y\", __velt_t0.test_y);\n}\n\n\
-                    function __velt_r1() {\n  __file();\n  \
+                    function __velt_r1() {\n  __file(2);\n  \
                     __test(\"test_x\", __velt_t1.test_x);\n  \
                     __testAsync(\"test_z\", __velt_t1.test_z);\n}\n\n\
                     async function main() {\n  __velt_r0();\n  __velt_r1();\n  \

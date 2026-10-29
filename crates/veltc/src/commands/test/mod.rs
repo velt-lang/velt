@@ -69,6 +69,8 @@ struct Run<'o> {
     builds: usize,
     /// Tests that matched the filter.
     selected: usize,
+    /// A planned file registers tests at run time, which the filter is applied to there.
+    registers: bool,
     /// `--no-run`: the harnesses built (`{"file", "executable", "tests", "env"}`), and the
     /// diagnostics of their builds.
     harnesses: Vec<Value>,
@@ -176,6 +178,7 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         watched,
         builds: 0,
         selected: 0,
+        registers: false,
         harnesses: vec![],
         diagnostics: vec![],
         scanned: discover::Scanned::default(),
@@ -184,7 +187,7 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
     for file in &files {
         planned.extend(run.plan(file)?);
     }
-    if let (Some(filter), 0) = (&opts.filter, run.selected) {
+    if let (Some(filter), 0, false) = (&opts.filter, run.selected, run.registers) {
         if !opts.json {
             eprintln!("no tests match `{filter}`");
         }
@@ -254,11 +257,13 @@ impl Run<'_> {
             found.tests.retain(|t| self.selects(t));
             found.async_tests.retain(|t| self.selects(t));
             found.skipped.retain(|(t, _)| self.selects(t));
-            if found.tests.is_empty() {
+            // Tests registered at run time are filtered there.
+            if found.tests.is_empty() && !found.registers {
                 return Ok(None);
             }
         }
         self.selected += found.tests.len();
+        self.registers = self.registers || found.registers;
         Ok(Some(Planned {
             file: file.to_path_buf(),
             module_name: module_name.to_string(),
@@ -295,6 +300,7 @@ impl Run<'_> {
                     "exe": b.as_ref().map(|(exe, _)| exe.to_string_lossy().into_owned()),
                     "index": b.as_ref().map_or(0, |(_, i)| *i),
                     "tests": p.found.tests,
+                    "registers": p.found.registers,
                     "skipped": skipped,
                 })
             })
@@ -307,6 +313,8 @@ impl Run<'_> {
             "colorOut": crate::style::enabled(Stream::Stdout),
             "colorErr": crate::style::enabled(Stream::Stderr),
             "failed": self.failed,
+            "filter": self.opts.filter,
+            "exact": self.opts.exact,
             "files": files,
         });
         // One per run: two runs in a package at once must not read each other's.
@@ -489,6 +497,8 @@ impl Run<'_> {
                 import_spec: import_spec(&dir, &p.file),
                 tests: &p.found.tests,
                 async_tests: &p.found.async_tests,
+                // Alone, it takes every registration queued, whatever ran them.
+                queued: (files.len() > 1).then_some(p.found.queued),
             })
             .collect();
         // `--no-run` harnesses get a directory of their own: one being debugged must not keep

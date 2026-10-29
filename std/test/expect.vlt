@@ -1,0 +1,427 @@
+// std/test/expect: `expect(actual)` and its matchers (docs/book/testing.md), as Vitest's. A
+// matcher that fails throws an `AssertionError`, which fails the test. `extend Expect<T>` adds
+// matchers, through `check` as the built-in ones do.
+
+import { RegExp } from "velt:regex";
+
+/** What `expect(actual)` returns: the matchers for `actual`. */
+export class Expect<T> {
+  /** The value under test. */
+  readonly actual: T;
+  /** After `.not`: every matcher checks the opposite. */
+  readonly negated: bool;
+
+  constructor(actual: T, negated: bool) {
+    this.actual = actual;
+    this.negated = negated;
+  }
+
+  /** The same matchers, each checking the opposite. */
+  get not(): Expect<T> {
+    return new Expect<T>(this.actual, !this.negated);
+  }
+
+  /**
+   * Fails the test with `message` unless `pass`. After `.not`, fails if `pass`, with
+   * `notMessage` (by default `message` with its first ` to ` written ` not to `). Every matcher,
+   * built-in or added with `extend`, checks through this.
+   */
+  check(pass: bool, message: string, notMessage?: string) {
+    if (pass == this.negated) {
+      throw new AssertionError(this.negated ? (notMessage ?? negate(message)) : message);
+    }
+  }
+
+  /** `Object.is(actual, expected)`: the same value (`NaN` is `NaN`, `0` isn't `-0`). */
+  toBe(expected: T) {
+    this.check(
+      Object.is(this.actual, expected),
+      `expected ${show(this.actual)} to be ${show(expected)} // Object.is equality`,
+      `expected ${show(this.actual)} not to be ${show(expected)} // Object.is equality`,
+    );
+  }
+
+  /**
+   * Deep equality, as Vitest's: contents, recursively, class instances by their fields (a `Date`
+   * by its time, a `Set` by its members in any order), numbers with `Object.is` (`NaN` equals
+   * itself, `0` doesn't equal `-0`).
+   */
+  toEqual(expected: T) {
+    this.check(
+      __intrinsic_deep_eq(this.actual, expected),
+      `expected ${show(this.actual)} to deeply equal ${show(expected)}`,
+      `expected ${show(this.actual)} to not deeply equal ${show(expected)}`,
+    );
+  }
+
+  /** `actual` is `null`. */
+  toBeNull() {
+    const a = show(this.actual);
+    this.check(this.actual === null, `expected ${a} to be null`, `expected ${a} not to be null`);
+  }
+
+  /** `actual` is `undefined`. */
+  toBeUndefined() {
+    const a = show(this.actual);
+    this.check(
+      this.actual === undefined,
+      `expected ${a} to be undefined`,
+      `expected ${a} not to be undefined`,
+    );
+  }
+
+  /** `actual` is not `undefined`. */
+  toBeDefined() {
+    const a = show(this.actual);
+    this.check(
+      this.actual !== undefined,
+      `expected ${a} to be defined`,
+      `expected ${a} to be undefined`,
+    );
+  }
+
+  /** `Boolean(actual)` is `true`. */
+  toBeTruthy() {
+    const a = show(this.actual);
+    this.check(!!this.actual, `expected ${a} to be truthy`, `expected ${a} to not be truthy`);
+  }
+
+  /** `Boolean(actual)` is `false`. */
+  toBeFalsy() {
+    const a = show(this.actual);
+    this.check(!this.actual, `expected ${a} to be falsy`, `expected ${a} to not be falsy`);
+  }
+}
+
+/** The matchers for `actual`. */
+export function expect<T>(actual: T): Expect<T> {
+  return new Expect<T>(actual, false);
+}
+
+/** `value` as the messages show it (Node's `util.inspect`). */
+function show<T>(value: T): string {
+  return __intrinsic_inspect(value);
+}
+
+/** A string as the messages show it (`'x'`), a `RegExp` as written (`/x/i`). */
+function pattern(p: string | RegExp): string {
+  return typeof p == "string" ? show(p) : `/${p.source}/${p.flags}`;
+}
+
+/** A matcher's message for `.not`: its first ` to ` written ` not to `. */
+function negate(message: string): string {
+  const at = message.indexOf(" to ");
+  return at < 0 ? `not: ${message}` : `${message.slice(0, at)} not to ${message.slice(at + 4)}`;
+}
+
+extend<E> Expect<E[]> {
+  /** `actual.length` is `n`. */
+  toHaveLength(n: number) {
+    this.check(
+      this.actual.length == n,
+      `expected ${show(this.actual)} to have a length of ${n} but got ${this.actual.length}`,
+      `expected ${show(this.actual)} to not have a length of ${n}`,
+    );
+  }
+
+  /** `actual.includes(item)`. */
+  toContain(item: E) {
+    this.check(
+      this.actual.includes(item),
+      `expected ${show(this.actual)} to include ${show(item)}`,
+      `expected ${show(this.actual)} to not include ${show(item)}`,
+    );
+  }
+}
+
+extend Expect<string> {
+  /** `actual.length` is `n`. */
+  toHaveLength(n: number) {
+    this.check(
+      this.actual.length == n,
+      `expected ${show(this.actual)} to have a length of ${n} but got ${this.actual.length}`,
+      `expected ${show(this.actual)} to not have a length of ${n}`,
+    );
+  }
+
+  /** `actual.includes(part)`. */
+  toContain(part: string) {
+    this.check(
+      this.actual.includes(part),
+      `expected ${show(this.actual)} to contain ${show(part)}`,
+      `expected ${show(this.actual)} not to contain ${show(part)}`,
+    );
+  }
+
+  /** `pattern` matches `actual` (a string: `actual` contains it). */
+  toMatch(expected: RegExp | string) {
+    const pass =
+      typeof expected == "string" ? this.actual.includes(expected) : expected.test(this.actual);
+    const a = show(this.actual);
+    this.check(
+      pass,
+      `expected ${a} to match ${pattern(expected)}`,
+      `expected ${a} not to match ${pattern(expected)}`,
+    );
+  }
+}
+
+extend<N extends Comparable<N>> Expect<N> {
+  /** `actual > n`. */
+  toBeGreaterThan(n: N) {
+    const a = show(this.actual);
+    this.check(
+      this.actual > n,
+      `expected ${a} to be greater than ${show(n)}`,
+      `expected ${a} to be not greater than ${show(n)}`,
+    );
+  }
+
+  /** `actual >= n`. */
+  toBeGreaterThanOrEqual(n: N) {
+    this.check(
+      this.actual >= n,
+      `expected ${show(this.actual)} to be greater than or equal to ${show(n)}`,
+      `expected ${show(this.actual)} to be not greater than or equal to ${show(n)}`,
+    );
+  }
+
+  /** `actual < n`. */
+  toBeLessThan(n: N) {
+    const a = show(this.actual);
+    this.check(
+      this.actual < n,
+      `expected ${a} to be less than ${show(n)}`,
+      `expected ${a} to be not less than ${show(n)}`,
+    );
+  }
+
+  /** `actual <= n`. */
+  toBeLessThanOrEqual(n: N) {
+    this.check(
+      this.actual <= n,
+      `expected ${show(this.actual)} to be less than or equal to ${show(n)}`,
+      `expected ${show(this.actual)} to be not less than or equal to ${show(n)}`,
+    );
+  }
+}
+
+extend<R, E> Expect<() => R throws E> {
+  /**
+   * Calling `actual` throws; with `expected`, an error whose message contains it (a string) or
+   * matches it (a `RegExp`).
+   */
+  toThrow(expected?: string | RegExp) {
+    let thrown = false;
+    let message = "";
+    let text = "";
+    try {
+      this.actual();
+    } catch (e) {
+      thrown = true;
+      message = errorMessage(e);
+      text = __intrinsic_error_text(e);
+    }
+    const why = thrownWhy(thrown, message, text, expected, this.negated);
+    if (why != null) {
+      throw new AssertionError(why);
+    }
+  }
+}
+
+/**
+ * Why a `toThrow` check fails, in Vitest's words (which it uses for `.rejects` too); `null` if it
+ * passes. `thrown`: whether it threw (or the promise rejected), with an error whose message is
+ * `message` and whose text (`Name: message`) is `text`; `expected`: what the message must
+ * include or match.
+ */
+function thrownWhy(
+  thrown: bool,
+  message: string,
+  text: string,
+  expected: string | RegExp | null | undefined,
+  negated: bool,
+): string | null {
+  const subject = "[Function]";
+  const verb = "throw";
+  if (expected == null) {
+    if (thrown == negated) {
+      return negated
+        ? `expected ${subject} to not ${verb} an error but ${show(text)} was thrown`
+        : `expected ${subject} to ${verb} an error`;
+    }
+    return null;
+  }
+  const what =
+    typeof expected == "string"
+      ? `error including ${show(expected)}`
+      : `error matching ${pattern(expected)}`;
+  if (!thrown) {
+    // `.not`: it was not to throw that error, and threw none.
+    return negated ? null : `expected ${subject} to ${verb} an error`;
+  }
+  const matches = typeof expected == "string" ? message.includes(expected) : expected.test(message);
+  if (matches == negated) {
+    return negated
+      ? `expected ${subject} to ${verb} ${what.replace("error ", "error not ")}`
+      : `expected ${subject} to ${verb} ${what} but got ${show(message)}`;
+  }
+  return null;
+}
+
+/**
+ * The message of a thrown value: an `Error`'s `message` (the error's text after its name), a
+ * string or a number as it is, anything else as `console.log` writes it.
+ */
+function errorMessage<E>(e: E): string {
+  const text = __intrinsic_error_text(e);
+  if (typeof e != "object") {
+    return text;
+  }
+  // `Name: message`, the text of an `Error` (and of its subclasses).
+  const colon = text.indexOf(": ");
+  return colon > 0 && isName(text.slice(0, colon)) ? text.slice(colon + 2) : text;
+}
+
+/** Whether `s` is an identifier (an error's name). */
+function isName(s: string): bool {
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s[i];
+    const letter = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || c == "$";
+    if (!letter && !(i > 0 && c >= "0" && c <= "9")) {
+      return false;
+    }
+  }
+  return s.length > 0;
+}
+
+extend<V, E> Expect<Promise<V, E>> {
+  /** The matchers for what the promise resolves to: `await expect(p).resolves.toBe(1)`. */
+  get resolves(): Resolves<V, E> {
+    return new Resolves<V, E>(this.actual, this.negated);
+  }
+
+  /** The matchers for the promise's error: `await expect(p).rejects.toThrow("boom")`. */
+  get rejects(): Rejects<V, E> {
+    return new Rejects<V, E>(this.actual, this.negated);
+  }
+}
+
+/** `expect(p).resolves`: each matcher awaits `p` and checks its value; fails if it rejects. */
+export class Resolves<V, E> {
+  readonly promise: Promise<V, E>;
+  readonly negated: bool;
+
+  constructor(promise: Promise<V, E>, negated: bool) {
+    this.promise = promise;
+    this.negated = negated;
+  }
+
+  /** The same matchers, each checking the opposite. */
+  get not(): Resolves<V, E> {
+    return new Resolves<V, E>(this.promise, !this.negated);
+  }
+
+  /** The matchers for the value, once the promise resolves (for matchers added with `extend`). */
+  async settled(): Promise<Expect<V>, unknown> {
+    let value: V;
+    try {
+      value = await this.promise;
+    } catch (e) {
+      throw new AssertionError(
+        `promise rejected "${__intrinsic_error_text(e)}" instead of resolving`,
+      );
+    }
+    return new Expect<V>(value, this.negated);
+  }
+
+  async toBe(expected: V): Promise<void, unknown> {
+    (await this.settled()).toBe(expected);
+  }
+
+  async toEqual(expected: V): Promise<void, unknown> {
+    (await this.settled()).toEqual(expected);
+  }
+
+  async toBeNull(): Promise<void, unknown> {
+    (await this.settled()).toBeNull();
+  }
+
+  async toBeUndefined(): Promise<void, unknown> {
+    (await this.settled()).toBeUndefined();
+  }
+
+  async toBeDefined(): Promise<void, unknown> {
+    (await this.settled()).toBeDefined();
+  }
+
+  async toBeTruthy(): Promise<void, unknown> {
+    (await this.settled()).toBeTruthy();
+  }
+
+  async toBeFalsy(): Promise<void, unknown> {
+    (await this.settled()).toBeFalsy();
+  }
+}
+
+/** `expect(p).rejects`: each matcher awaits `p` and checks its error; fails if it resolves. */
+export class Rejects<V, E> {
+  readonly promise: Promise<V, E>;
+  readonly negated: bool;
+
+  constructor(promise: Promise<V, E>, negated: bool) {
+    this.promise = promise;
+    this.negated = negated;
+  }
+
+  /** The same matchers, each checking the opposite. */
+  get not(): Rejects<V, E> {
+    return new Rejects<V, E>(this.promise, !this.negated);
+  }
+
+  /** The matchers for the error, once the promise rejects (for matchers added with `extend`). */
+  async settled(): Promise<Expect<E>, unknown> {
+    let value: V;
+    try {
+      value = await this.promise;
+    } catch (e) {
+      return new Expect<E>(e, this.negated);
+    }
+    throw new AssertionError(
+      `promise resolved "${__intrinsic_error_text(value)}" instead of rejecting`,
+    );
+  }
+
+  /**
+   * The promise rejects; with `expected`, with an error whose message contains it (a string)
+   * or matches it (a `RegExp`).
+   */
+  async toThrow(expected?: string | RegExp): Promise<void, unknown> {
+    let rejected = false;
+    let message = "";
+    let text = "";
+    let value = "";
+    try {
+      value = __intrinsic_error_text(await this.promise);
+    } catch (e) {
+      rejected = true;
+      message = errorMessage(e);
+      text = __intrinsic_error_text(e);
+    }
+    if (!rejected && !this.negated) {
+      throw new AssertionError(`promise resolved "${value}" instead of rejecting`);
+    }
+    const why = thrownWhy(rejected, message, text, expected, this.negated);
+    if (why != null) {
+      throw new AssertionError(why);
+    }
+  }
+
+  async toBe(expected: E): Promise<void, unknown> {
+    (await this.settled()).toBe(expected);
+  }
+
+  async toEqual(expected: E): Promise<void, unknown> {
+    (await this.settled()).toEqual(expected);
+  }
+}

@@ -689,6 +689,8 @@ object compiled against them no longer links.
 | `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
 | `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
 | `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
+| `velt_rt_deep_eq_enter` | `(const void* a, const void* b) -> u8` | `Intrinsic::DeepEq`'s cycle guard: 1 if this thread is comparing `a` with `b` already (equal), 2 if it is comparing `a` or `b` with another object (different), else 0 and the pair is being compared until `velt_rt_deep_eq_leave` [additive, #1869] |
+| `velt_rt_deep_eq_leave` | `() -> ()` | the pair `velt_rt_deep_eq_enter` last took on is compared [additive, #1869] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |

@@ -85,6 +85,9 @@ pub(crate) enum Glue {
     SameValue,
     KeyEq,
     KeySame,
+    /// Vitest's `toEqual` (`Intrinsic::DeepEq`): `Eq`, but a class instance compares by its
+    /// fields when it isn't the same object, and floats with SameValue (glue/eq.rs).
+    DeepEq,
     Hash,
     ObjDrop,
     QueuedDrop,
@@ -157,6 +160,7 @@ impl Glue {
             Glue::SameValue => "samevalue",
             Glue::KeyEq => "keyeq",
             Glue::KeySame => "keysame",
+            Glue::DeepEq => "deepeq",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::QueuedDrop => "queueddrop",
@@ -225,9 +229,12 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame => {
-                (vec![Ptr, Ptr], Bool)
-            }
+            Glue::Eq
+            | Glue::Same
+            | Glue::SameValue
+            | Glue::KeyEq
+            | Glue::KeySame
+            | Glue::DeepEq => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
             Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
@@ -273,6 +280,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
             Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
+            Glue::DeepEq => lw.deep_eq_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
@@ -357,7 +365,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
         if matches!(
             g,
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame | Glue::Hash
+            Glue::Eq
+                | Glue::Same
+                | Glue::SameValue
+                | Glue::KeyEq
+                | Glue::KeySame
+                | Glue::DeepEq
+                | Glue::Hash
         ) {
             self.note_fn_compared_in(ty);
         }

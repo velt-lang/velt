@@ -747,6 +747,9 @@ struct FnLower<'c, 'h> {
     /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
     /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Comparing as Vitest's `toEqual` (`Intrinsic::DeepEq`, `Glue::DeepEq`): as `Intrinsic::Eq`,
+    /// but class instances by their fields and floats with SameValue (glue/eq.rs).
+    deep_mode: bool,
     /// Lowering an expression checked outside any body (module_state.rs): the module state's
     /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
     /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`

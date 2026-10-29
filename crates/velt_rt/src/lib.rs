@@ -24,6 +24,7 @@ pub mod db_params;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
+pub mod deep_eq;
 pub mod dev;
 pub mod drop_depth;
 pub mod entry;

@@ -100,6 +100,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             same_mode: false,
             value_mode: false,
             key_mode: false,
+            deep_mode: false,
             init_locals: None,
             ctor_self: None,
             init_stack: vec![],

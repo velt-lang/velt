@@ -295,6 +295,11 @@ impl FnLower<'_, '_> {
                 let (pa, pb) = self.two_places(a, b);
                 self.key_eq_values(&pa, &pb, t)
             }
+            (I::DeepEq, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.deep_eq_values(&pa, &pb, t)
+            }
             (I::Same, [a, b]) => {
                 let t = self.sub(a.ty);
                 let (pa, pb) = self.two_places(a, b);

@@ -17,55 +17,86 @@
 
 import { exec, ExecResult } from "velt:child_process";
 import { readFileSync } from "velt:fs";
+import { __claim, Body, Case, collect, Step, Suite } from "velt:test/suite";
+
+export { Expect, expect } from "velt:test/expect";
+export {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  Settles,
+  test,
+} from "velt:test/suite";
 
 declare function velt_rt_clear_throw_loc(): void;
 declare function velt_rt_flush(): void;
 
-/** One registered test. */
-class Test {
-  readonly name: string;
-  readonly run: () => Promise<void, unknown>;
-
-  constructor(name: string, run: () => Promise<void, unknown>) {
-    this.name = name;
-    this.run = run;
-  }
-}
-
-/** The tests of one test file, in the order they run. */
+/** The tests of one test file: its `test_*` functions and what its top level registered. */
 class TestFile {
-  readonly tests: Test[] = [];
+  /** Its top-level suite, which the `test_*` functions are in too. */
+  readonly root: Suite = new Suite("", null);
+  /** Its `export function test_*`, in source order. */
+  readonly functions: Case[] = [];
+  /** What its top-level `describe`, `it` and hook calls queued. */
+  readonly steps: Step[];
+
+  constructor(steps: Step[]) {
+    this.steps = steps;
+  }
+
+  /** Every test, collected (`velt:test/suite`): the `test_*` functions first. */
+  tests(): Case[] {
+    return collect(this.functions, this.root, this.steps);
+  }
 }
 
 /** The test files of this program, in the order `__file` registered them. */
 let files: TestFile[] = [];
 
-/** `__file()`: the tests registered from now on are those of the next test file. */
-export function __file() {
-  files.push(new TestFile());
+/**
+ * `__file(queued)`: the tests registered from now on are those of the next test file, and so
+ * are the next `queued` registrations its top level made (`-1`: all that are left).
+ */
+export function __file(queued: i64) {
+  files.push(new TestFile(__claim(queued)));
 }
 
-/** Registers a test of the current file. */
+/** Registers a test function of the current file. */
 export function __test(name: string, run: () => void throws unknown) {
-  current().tests.push(
-    new Test(name, async (): Promise<void, unknown> => {
-      run();
-    }),
+  const f = current();
+  f.functions.push(
+    new Case(
+      name,
+      async (): Promise<void, unknown> => {
+        run();
+      },
+      f.root,
+      null,
+    ),
   );
 }
 
-/** Registers an `async` test of the current file; what its promise holds is not looked at. */
+/** Registers an `async` test function of the current file; what its promise holds is not looked at. */
 export function __testAsync<T>(name: string, run: () => Promise<T, unknown>) {
-  current().tests.push(
-    new Test(name, async (): Promise<void, unknown> => {
-      await run();
-    }),
+  const f = current();
+  f.functions.push(
+    new Case(
+      name,
+      async (): Promise<void, unknown> => {
+        await run();
+      },
+      f.root,
+      null,
+    ),
   );
 }
 
 function current(): TestFile {
   if (files.length == 0) {
-    files.push(new TestFile());
+    files.push(new TestFile(__claim(-1)));
   }
   return files[files.length - 1];
 }
@@ -79,6 +110,9 @@ struct Plan {
   colorErr: bool;
   /** Tests that failed before anything ran (files that do not parse). */
   failed: number;
+  /** `--filter`, and whether it names a test exactly (`--exact`): for the tests registered at run time. */
+  filter: string | null;
+  exact: bool;
   files: PlanFile[];
 }
 
@@ -92,7 +126,10 @@ struct PlanFile {
   exe: string | null;
   /** Its index among that program's files. */
   index: number;
+  /** Its `test_*` functions (the process lists every test it runs, these and the others). */
   tests: string[];
+  /** Whether its top level calls `describe`, `it`, `test` or a hook. */
+  registers: bool;
   /** `test_*` functions that cannot run, with the reason. */
   skipped: Skipped[];
 }
@@ -122,62 +159,152 @@ export async function __run() {
   if (file != null) {
     const from = Number(process.env.VELT_TEST_FROM ?? "0");
     const mark = `${MARK}${process.env.VELT_TEST_MARK ?? ""}:: `;
-    console.log(`${mark}start`);
-    // Stdout to the runner is a pipe, so buffered: a crash (a stack overflow, a segfault) would
-    // lose what is still in the buffer. Each marker is written out before what comes next runs.
-    velt_rt_flush();
-    await runTests(files[Number(file) as usize], from as usize, mark);
-    process.exit(0);
+    const result = await runTests(files[Number(file) as usize], from as usize, mark);
+    process.exit(result.teardownFailed ? 1 : 0);
   } else if (plan != null) {
     const ok = await runPlan(JSON.parse<Plan>(readFileSync(plan)));
     process.exit(ok ? 0 : 1);
   } else {
-    let failed: usize = 0;
+    let failed = false;
     for (const f of files) {
-      failed += await runTests(f, 0, null);
+      const result = await runTests(f, 0, null);
+      failed = failed || result.failed > 0 || result.teardownFailed;
     }
-    process.exit(failed > 0 ? 1 : 0);
+    process.exit(failed ? 1 : 0);
   }
+}
+
+/** How the tests of a file went in one process. */
+struct Outcome {
+  /** How many failed. */
+  failed: usize;
+  /** Whether an `afterAll` hook threw (reported where it ran). */
+  teardownFailed: bool;
 }
 
 /**
  * Run the tests of `file` from `from` on, reporting each: in lines starting with `mark` for the
- * runner, else (`null`) as the runner shows them. Returns how many failed.
+ * runner, after the list of every test of the file, else (`null`) as the runner shows them.
  */
-async function runTests(file: TestFile, from: usize, mark: string | null): Promise<usize> {
+async function runTests(file: TestFile, from: usize, mark: string | null): Promise<Outcome> {
+  const filter = process.env.VELT_TEST_FILTER;
+  const exact = (process.env.VELT_TEST_EXACT ?? "") == "1";
+  const tests = file
+    .tests()
+    .filter((t) => filter == null || (exact ? t.name == filter : t.name.includes(filter)));
+  if (mark != null) {
+    // Collected (the `describe` callbacks ran): the list, then `start`. Stdout to the runner is
+    // a pipe, so buffered: a crash (a stack overflow, a segfault) would lose what is still in
+    // the buffer, so each marker is written out before what comes next runs.
+    for (const t of tests) {
+      console.log(`${mark}test ${escapeName(t.name)}`);
+    }
+    console.log(`${mark}start`);
+    velt_rt_flush();
+  }
   let failed: usize = 0;
-  for (let i = from; i < file.tests.length; i++) {
-    const t = file.tests[i];
-    let error: string | null = null;
+  let teardownFailed = false;
+  // The suites whose `beforeAll` hooks ran, outermost first.
+  const entered: Suite[] = [];
+  for (let i = from; i < tests.length; i++) {
+    const t = tests[i];
+    const chain = t.suite.chain();
+    while (entered.length > 0 && !chain.includes(entered[entered.length - 1])) {
+      teardownFailed = (await leave(entered.pop()!)) || teardownFailed;
+    }
+    for (const s of chain) {
+      if (!entered.includes(s)) {
+        entered.push(s);
+        // An outer group whose `beforeAll` threw: this group's hooks don't run, as in Vitest.
+        const outer = s.parent;
+        if (outer != null && outer.setupError != null) {
+          s.setupError = outer.setupError;
+          s.blocked = true;
+        } else {
+          s.setupError = await attempt(s.beforeAll);
+        }
+      }
+    }
+    let error = t.error;
+    for (const s of chain) {
+      error = error ?? s.setupError;
+    }
+    if (error == null) {
+      for (const s of chain) {
+        error = error ?? (await attempt(s.beforeEach));
+      }
+      error = error ?? (await attempt([t.run]));
+      for (const s of chain.toReversed()) {
+        const after = await attempt(s.afterEach);
+        error = error ?? after;
+      }
+    }
+    report(t.name, error, mark);
+    if (error != null) {
+      failed++;
+    }
+  }
+  while (entered.length > 0) {
+    teardownFailed = (await leave(entered.pop()!)) || teardownFailed;
+  }
+  return { failed: failed, teardownFailed: teardownFailed };
+}
+
+/** Run `bodies` in order until one throws: its error, located; `null` if none does. */
+async function attempt(bodies: Body[]): Promise<string | null> {
+  for (const run of bodies) {
     // An error that is never thrown here (a rejection) has no location of its own.
     velt_rt_clear_throw_loc();
     try {
-      await t.run();
+      await run();
     } catch (e) {
       // Where it was thrown, before anything else throws.
       const at = __intrinsic_throw_loc();
-      error = located(__intrinsic_error_text(e), at);
+      return located(__intrinsic_error_text(e), at);
     }
-    if (error == null) {
-      console.log(mark != null ? `${mark}ok ${t.name}` : `ok ${t.name}`);
-      velt_rt_flush();
-      continue;
-    }
-    failed++;
-    if (mark != null) {
-      console.log(`${mark}fail ${t.name}`);
-      for (const line of error.split("\n")) {
-        console.log(`${mark}| ${line}`);
-      }
-    } else {
-      console.log(`FAILED ${t.name}`);
-      for (const line of error.split("\n")) {
-        console.log(`    ${line}`);
-      }
-    }
-    velt_rt_flush();
   }
-  return failed;
+  return null;
+}
+
+/** Run the `afterAll` hooks of `suite`, printing what one threw; whether one did. */
+async function leave(suite: Suite): Promise<bool> {
+  if (suite.blocked) {
+    return false;
+  }
+  const error = await attempt(suite.afterAll);
+  if (error == null) {
+    return false;
+  }
+  const name = suite.name == "" ? "the file" : `\`${suite.name}\``;
+  console.log(`afterAll of ${name} failed: ${error}`);
+  return true;
+}
+
+/**
+ * A test's name as the report lines carry it, on one line: a line break and a backslash escaped
+ * (`\n`, `\\`), as a string literal writes them.
+ */
+function escapeName(name: string): string {
+  return name.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll("\r", "\\r");
+}
+
+/** Report how the test `name` went: for the runner after `mark`, else as the runner shows it. */
+function report(raw: string, error: string | null, mark: string | null) {
+  const name = escapeName(raw);
+  if (error == null) {
+    console.log(mark != null ? `${mark}ok ${name}` : `ok ${name}`);
+  } else if (mark != null) {
+    console.log(`${mark}fail ${name}`);
+    for (const line of error.split("\n")) {
+      console.log(`${mark}| ${line}`);
+    }
+  } else {
+    console.log(`FAILED ${name}`);
+    for (const line of error.split("\n")) {
+      console.log(`    ${line}`);
+    }
+  }
+  velt_rt_flush();
 }
 
 /** `text` with the location `at` (` at <path>:<line>:<col>`) after its first line. */
@@ -198,10 +325,15 @@ async function runPlan(plan: Plan): Promise<bool> {
     while (started < plan.files.length) {
       const i = started;
       started++;
-      reports[i] = await runFile(plan.files[i], paint);
+      reports[i] = await runFile(plan.files[i], plan, paint);
       while (printed < reports.length && reports[printed] != null) {
         const f = plan.files[printed];
         const r = reports[printed]!;
+        // With a filter, a file none of whose tests it selected says nothing.
+        if (plan.filter != null && r.passed + r.failed == 0 && r.lines.length == 0) {
+          printed++;
+          continue;
+        }
         console.log(`running ${f.path}`);
         for (const s of f.skipped) {
           console.error(
@@ -223,28 +355,56 @@ async function runPlan(plan: Plan): Promise<bool> {
     workers.push(worker());
   }
   await Promise.all(workers);
+  // Files that register their tests at run time list them only here (`velt test` says this
+  // itself when no file does).
+  const filter = plan.filter;
+  if (filter != null && passed + failed == 0) {
+    console.error(`no tests match \`${filter}\``);
+  }
   const verdict = failed == 0 ? paint.good("ok") : paint.failed();
   console.log(`\ntest result: ${verdict}. ${passed} passed; ${failed} failed`);
   return failed == 0;
 }
 
 /** Run the tests of `f`, starting its program again after each test that ends the process. */
-async function runFile(f: PlanFile, paint: Paint): Promise<Report> {
+async function runFile(f: PlanFile, plan: Plan, paint: Paint): Promise<Report> {
   const report = new Report();
   const exe = f.exe;
   if (exe == null) {
     for (const t of f.tests) {
       report.lines.push(`${paint.failed()} ${t} (build failed)`);
     }
-    report.failed = f.tests.length;
+    if (f.registers) {
+      report.lines.push(`${paint.failed()} ${f.path} (build failed)`);
+    }
+    report.failed = f.tests.length + (f.registers ? 1 : 0);
     return report;
   }
   const mark = `${MARK}${token()}:: `;
+  const run = new FileRun(f, exe, plan, mark);
   let from: usize = 0;
-  while (from < f.tests.length) {
-    from = await runFrom(f, exe, from, mark, report, paint);
+  // Until a process lists the file's tests, there is one to start.
+  while (from < (run.tests?.length ?? from + 1)) {
+    from = await runFrom(run, from, report, paint);
   }
   return report;
+}
+
+/** What the processes running one file's tests share. */
+class FileRun {
+  readonly f: PlanFile;
+  readonly exe: string;
+  readonly plan: Plan;
+  readonly mark: string;
+  /** The file's tests, as its first process listed them; `null` before. */
+  tests: string[] | null = null;
+
+  constructor(f: PlanFile, exe: string, plan: Plan, mark: string) {
+    this.f = f;
+    this.exe = exe;
+    this.plan = plan;
+    this.mark = mark;
+  }
 }
 
 /** A token no test is likely to print, different in each run. */
@@ -252,32 +412,35 @@ function token(): string {
   return Math.floor(Math.random() * 1e15).toString(36);
 }
 
-/** One process running the tests of `f` from `from` on; returns where the next one starts. */
-async function runFrom(
-  f: PlanFile,
-  exe: string,
-  from: usize,
-  mark: string,
-  report: Report,
-  paint: Paint,
-): Promise<usize> {
+/** One process running the tests of the file from `from` on; returns where the next one starts. */
+async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint): Promise<usize> {
+  const f = run.f;
+  const mark = run.mark;
   const env = new Map<string, string>([
     ["VELT_SCRIPT", f.script],
     ["VELT_TEST_FILE", String(f.index)],
     ["VELT_TEST_FROM", String(from)],
     ["VELT_TEST_MARK", mark.slice(MARK.length as i64, (mark.length as i64) - 3)],
   ]);
+  const filter = run.plan.filter;
+  if (filter != null) {
+    env.set("VELT_TEST_FILTER", filter);
+    env.set("VELT_TEST_EXACT", run.plan.exact ? "1" : "0");
+  }
   let r: ExecResult;
   try {
-    r = await exec(exe, [], { env: env });
+    r = await exec(run.exe, [], { env: env });
   } catch (e) {
     const text = __intrinsic_error_text(e);
-    report.lines.push(`${paint.error("error:")} cannot run \`${exe}\`: ${text}`);
-    report.failed += f.tests.length - from;
-    return f.tests.length;
+    report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
+    const left = (run.tests?.length ?? f.tests.length) - from;
+    report.failed += left > 0 ? left : 1;
+    run.tests = run.tests ?? [];
+    return run.tests.length;
   }
   let next = from;
   let started = false;
+  const listed: string[] = [];
   const lines = r.stdout.split("\n");
   if (lines.length > 0 && lines[lines.length - 1] == "") {
     lines.pop();
@@ -293,9 +456,12 @@ async function runFrom(
       report.lines.push(line.slice(0, at));
     }
     const rest = line.slice(at + (mark.length as i64));
-    const name = next < f.tests.length ? f.tests[next] : null;
+    const known = run.tests ?? listed;
+    const name = next < known.length ? known[next] : null;
     if (rest == "start") {
       started = true;
+    } else if (rest.startsWith("test ")) {
+      listed.push(rest.slice(5));
     } else if (rest == `ok ${name}`) {
       report.lines.push(`${paint.good("ok")} ${name}`);
       report.passed++;
@@ -309,23 +475,27 @@ async function runFrom(
     }
   }
   if (!started) {
-    // It ended before running a test: in a module's top-level code.
+    // It ended before running a test: in a module's top-level code, or collecting the tests.
     report.lines.push(`${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`);
     pushStderr(report, r.stderr);
-    report.failed += f.tests.length - from;
-    return f.tests.length;
+    const left = (run.tests?.length ?? f.tests.length) - from;
+    report.failed += left > 0 ? left : 1;
+    run.tests = run.tests ?? [];
+    return run.tests.length;
   }
-  if (next >= f.tests.length) {
+  const tests = run.tests ?? listed;
+  run.tests = tests;
+  if (next >= tests.length) {
     if (r.code != 0) {
       report.lines.push(
         `${paint.failed()} (test harness exited with code ${r.code} after all tests ran)`,
       );
       report.failed++;
     }
-    return f.tests.length;
+    return tests.length;
   }
   // The process ended inside test `next`.
-  report.lines.push(`${paint.failed()} ${f.tests[next]} (exit code ${r.code})`);
+  report.lines.push(`${paint.failed()} ${tests[next]} (exit code ${r.code})`);
   pushStderr(report, r.stderr);
   report.failed++;
   return next + 1;
