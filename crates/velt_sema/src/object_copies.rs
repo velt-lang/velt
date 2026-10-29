@@ -463,7 +463,7 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
     let d = match c.span == Span::DUMMY {
         true => Diagnostic::error(
             format!(
-                "{GETTER_COPY} a `{from}` that the interface reads as a `{to}` by copying its fields, and this assigns {field} of that copy, which the object would not see"
+                "{GETTER_COPY} a `{from}` that the interface reads as `{to}` by copying its fields, and this assigns {field} of that copy, which the object would not see"
             ),
             w.span,
         ),
@@ -475,7 +475,12 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
         )
         .with_label(w.span, label),
     };
-    let d = with_notes(cx, d, c);
+    let d = match c.span == Span::DUMMY {
+        true => d
+            .with_note(format!("Node changes the object's own field; Velt's object types have fixed layouts, so each read of the field through the interface is a new `{to}` with the same field values"))
+            .with_note(format!("give the object's field the interface's type (`{to}`), or assign the whole field through the interface")),
+        false => with_notes(cx, d, c),
+    };
     let d = cx.with_layout_note(d, c.to);
     cx.error(d);
 }
