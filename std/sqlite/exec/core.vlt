@@ -171,7 +171,13 @@ function compileCoreOnce(
   }
   for (let i: usize = 0; i < onExprs.length; i++) {
     const mark = c.track();
-    const pred = c.pred(onExprs[i], sc);
+    sc.where = true;
+    let pred: Pred = () => false;
+    try {
+      pred = c.pred(onExprs[i], sc);
+    } finally {
+      sc.where = false;
+    }
     let level = levelOf(c.touched, mark, sc.sources);
     if (onLevel[i] > level) {
       level = onLevel[i];

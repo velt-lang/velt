@@ -42,7 +42,7 @@ import {
 import { ROWID, Source } from "velt:sqlite/exec/source";
 import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt:sqlite/exec/scope";
 import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
-import { aggMisuse, aggOwner } from "velt:sqlite/exec/agg_owner";
+import { aggMisuse, aggOwner, aggregateCore } from "velt:sqlite/exec/agg_owner";
 import { prepareError } from "velt:sqlite/exec/errors";
 import { scalarFunction } from "velt:sqlite/exec/func";
 import { compileLike } from "velt:sqlite/exec/like";
@@ -667,6 +667,11 @@ export abstract class ExprCompiler {
     const lname = this.written(e);
     const kind = aggregateKind(e.name, e.args.length, e.star);
     if (kind >= 0) {
+      // Where the call is written must allow an aggregate (SQLite's name context), even one
+      // that belongs to an enclosing query.
+      if (sc.inAggArgs || sc.core == null || (sc.where && !aggregateCore(this, sc))) {
+        aggMisuse(this, e, sc, `misuse of aggregate function ${lname}()`);
+      }
       // An aggregate reading only an enclosing query's columns is that query's.
       const owner = aggOwner(this, e, sc);
       if (owner.agg == null) {
@@ -675,7 +680,13 @@ export abstract class ExprCompiler {
           owner.core!.aggFromInner = true;
           throw new AggRestart(owner.core!);
         }
-        aggMisuse(this, e, sc, lname);
+        const resolving = !sc.output && !aggregateCore(this, sc);
+        aggMisuse(
+          this,
+          e,
+          sc,
+          resolving ? `misuse of aggregate function ${lname}()` : `misuse of aggregate: ${lname}()`,
+        );
       }
       // The queries in between read the owner's values: they run again for each of its rows.
       let between: Scope | null = sc;

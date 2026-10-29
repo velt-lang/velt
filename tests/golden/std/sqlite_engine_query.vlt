@@ -237,6 +237,21 @@ const QUERIES: string[] = [
   "SELECT id FROM users WHERE count(*) > 1",
   // An outer query's aggregate in a subquery in ORDER BY: too late to make it an aggregate query.
   "SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)",
+  // Where the call is written must allow an aggregate, even one of an enclosing query: not in
+  // a subquery's WHERE or ON unless the subquery is an aggregate query; in its ORDER BY or HAVING
+  // it may be.
+  "SELECT (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users",
+  "SELECT count(*), (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users",
+  "SELECT (SELECT 1 FROM posts JOIN posts AS q ON count(users.id) > 0) FROM users",
+  "SELECT (SELECT 1 FROM posts WHERE count(users.id) > 0 LIMIT 1) FROM users",
+  "SELECT (SELECT 1 WHERE count(users.id) > 0) FROM users",
+  "SELECT (SELECT 1 FROM posts WHERE posts.user_id IN (SELECT 1 WHERE count(users.id) > 0)) FROM users",
+  "SELECT age, (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users GROUP BY age",
+  "SELECT id FROM users WHERE (SELECT 1 FROM posts WHERE count(users.id) > 0)",
+  "SELECT (SELECT count(*) FROM posts WHERE count(users.id) > 0) FROM users",
+  "SELECT (SELECT max(posts.id) FROM posts WHERE count(users.id) > 0) FROM users",
+  "SELECT (SELECT 1 FROM posts ORDER BY count(users.id)) FROM users",
+  "SELECT (SELECT count(*) FROM posts HAVING count(users.id) > 0) FROM users",
   // LIMIT and OFFSET name no column, not even an enclosing query's.
   "SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users",
   "SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))",
