@@ -139,6 +139,7 @@ import * as std_redis_pipeline from "velt:redis/pipeline";
 import * as std_redis_pubsub from "velt:redis/pubsub";
 import * as std_redis_reply from "velt:redis/reply";
 import * as std_regex from "velt:regex";
+import * as std_regex_pattern from "velt:regex/pattern";
 import * as std_simd from "velt:simd";
 import * as std_simd_bytes from "velt:simd/bytes";
 import * as std_simd_clmul from "velt:simd/clmul";
