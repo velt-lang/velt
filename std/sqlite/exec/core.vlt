@@ -334,7 +334,9 @@ function compileCoreOnce(
     }
   }
   for (let lv: usize = 0; lv < sc.sources.length; lv++) {
-    q.plan.push(describe(sc.sources[lv], access[lv]));
+    const line = describe(sc.sources[lv], access[lv]);
+    // min() or max() read at one end of the index: SQLite calls that a search.
+    q.plan.push(lv == 0 && minmax && line.startsWith("SCAN ") ? "SEARCH " + line.slice(5) : line);
   }
   if (em.sorting) {
     const rest = em.sort.length - sortedTerms;

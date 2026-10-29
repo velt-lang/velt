@@ -316,13 +316,13 @@ export function orderJoins(c: ExprCompiler, terms: Term[], sc: Scope) {
 
 /** One level's access path, in the words of SQLite's EXPLAIN QUERY PLAN. */
 export function describe(src: Source, a: Access): string {
-  const t = src.kind == SRC_TABLE ? src.table!.name : src.name;
-  const name = src.name.toUpperCase() != t.toUpperCase() ? `${t} AS ${src.name}` : t;
+  // The name as the statement writes it (an alias alone), as SQLite shows it.
+  const name = src.name;
   if (a.kind == ACC_ROWID_EQ || a.kind == ACC_ROWID_IN) {
     return `SEARCH ${name} USING INTEGER PRIMARY KEY (rowid=?)`;
   }
   if (a.kind == ACC_ROWID_RANGE) {
-    return `SEARCH ${name} USING INTEGER PRIMARY KEY (${rangeWords("rowid", a)})`;
+    return `SEARCH ${name} USING INTEGER PRIMARY KEY (${rangeWords("rowid", a, false)})`;
   }
   if (a.kind == ACC_INDEX) {
     const ix = a.index!;
@@ -337,7 +337,7 @@ export function describe(src: Source, a: Access): string {
       parts.push(`${indexColumnName(src, ix, k)}=?`);
     }
     if (a.lo != null || a.hi != null) {
-      parts.push(rangeWords(indexColumnName(src, ix, n), a));
+      parts.push(rangeWords(indexColumnName(src, ix, n), a, n < ix.desc.length && ix.desc[n]));
     }
     return `SEARCH ${name} USING ${how} ${ix.name} (${parts.join(" AND ")})`;
   }
@@ -442,11 +442,12 @@ export function coveringLike(src: Source, a: Access): Index | null {
 }
 
 // `c>?`, `c<?` or `c>? AND c<?` for a range access on `c`.
-export function rangeWords(col: string, a: Access): string {
+export function rangeWords(col: string, a: Access, desc: bool): string {
   if (a.lo != null && a.hi != null) {
     return `${col}>? AND ${col}<?`;
   }
-  return a.lo != null ? `${col}>?` : `${col}<?`;
+  // `lo` and `hi` are in the index's order: on a DESC column `lo` is the SQL's upper bound.
+  return (a.lo != null) != desc ? `${col}>?` : `${col}<?`;
 }
 
 // The name of key column `k` of `ix` (the rowid after the key columns, "<expr>" an expression).

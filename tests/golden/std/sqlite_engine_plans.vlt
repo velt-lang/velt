@@ -1,7 +1,8 @@
 // Queries whose answer depends on the plan the SQLite engine written in Velt (velt:sqlite/engine)
 // picks, against C SQLite (velt:sqlite) on the same file: which row of a DISTINCT or GROUP BY
 // group shows a column that only compares equal (NOCASE), and which index gives the order. The
-// rows must be the same as C SQLite's; the queries that differ are printed.
+// rows must be the same as C SQLite's; the queries that differ are printed. Then plan()'s words
+// against EXPLAIN QUERY PLAN's.
 import { open } from "velt:sqlite";
 import { openDatabase } from "velt:sqlite/engine";
 import { checkAll } from "./_sqlite_diff";
@@ -37,12 +38,59 @@ const QUERIES = [
   "SELECT -('0' || c), -('0.0'), -(e), -(-9223372036854775807 - 1) FROM t1 ORDER BY id",
 ];
 
+// plan() against C SQLite's EXPLAIN QUERY PLAN: the same words (index ranges, covering
+// indexes, names as written), for queries where both pick the same plan.
+const PLAN_QUERIES = [
+  "SELECT * FROM t1 WHERE a = 5",
+  "SELECT a FROM t1 WHERE a = 5",
+  "SELECT id FROM t1 WHERE a > 3",
+  "SELECT * FROM t1 WHERE a > 3 AND a < 7",
+  "SELECT * FROM t1 WHERE a IN (1, 5)",
+  "SELECT a, b FROM t1 WHERE b = '2'",
+  "SELECT * FROM t1 WHERE b = '2' AND a > 1",
+  "SELECT * FROM t1 WHERE b = '2' AND a = 7",
+  "SELECT * FROM t1 WHERE c < 3",
+  "SELECT c FROM t1 WHERE c > 1",
+  "SELECT * FROM t1 WHERE e = 'abc'",
+  "SELECT * FROM T1 AS x WHERE id = 3",
+  "SELECT * FROM t1 WHERE id > 3",
+  "SELECT * FROM t1 ORDER BY a",
+  "SELECT * FROM t1 ORDER BY b DESC",
+  "SELECT a FROM t1 WHERE a >= 2 AND a <= 6",
+  "SELECT * FROM t1 WHERE a < 3",
+  "SELECT b FROM t1 WHERE b > '1'",
+  "SELECT * FROM t1 WHERE a = 5 ORDER BY id",
+  "SELECT count(*) FROM t1 WHERE a > 2",
+  "SELECT max(a) FROM t1",
+  "SELECT DISTINCT b FROM t1",
+  "SELECT b, count(*) FROM t1 GROUP BY b",
+];
+
+struct Eqp {
+  detail: string;
+}
+
 function main() {
   const path = `${tmpdir()}/velt-engine-plans-${uuidv4()}.db`;
   const c = open(path);
   c.exec(SETUP);
   const v = openDatabase(path);
   checkAll("plans", c, v, QUERIES);
+  let bad = 0;
+  for (const q of PLAN_QUERIES) {
+    const rows: Eqp[] = c.prepare(`EXPLAIN QUERY PLAN ${q}`).all();
+    const want = rows.map((r) => r.detail).join(" ; ");
+    const mine = v.prepare(q).plan().join(" ; ");
+    if (mine != want) {
+      bad++;
+      console.log(`${q}: velt ${mine}, C ${want}`);
+    } else {
+      console.log(`${q}: ${mine}`);
+    }
+  }
+  console.log(
+    `plan(): ${PLAN_QUERIES.length} queries, ${bad == 0 ? "all the same" : bad + " differ"}`,
+  );
   c.close();
   removeSync(path);
 }
