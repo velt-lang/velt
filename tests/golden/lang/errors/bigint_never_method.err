@@ -1,2 +1,2 @@
-bigint_never_method.vlt:4:16: error: no method named `find` found for type `never[]`
+bigint_never_method.vlt:6:16: error: no method named `nope` found for type `never[]`
   = note: a `bigint` is a `never` too: it has no values in Velt yet (#1088)
