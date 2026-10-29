@@ -2957,8 +2957,8 @@ console.log(app, router.installs); // [ 'router' ] 1
   expected). An interface with only fields is an object type, which such a value does not
   convert to yet (#1510). A plain literal, with no getters or setters and no method using
   `this` (`const p = { x: 1, show() { return "p"; } }`), is an object of its own type, which
-  does not convert to an interface with methods once stored: write it where the interface is
-  expected (`const p: P = { … }`).
+  converts to an interface with methods once stored too (`const q: P = p`, `p as unknown as
+  P`), as the same object ([any and unknown](#any-and-unknown)).
 - Not supported yet: `this` in a method of a literal whose expected type is an object type
   (`{ x: number; norm(): number }`, whose fields hold plain functions) or `any`; declare an
   interface instead. Calling such a method with another `this` (`.call`, `.apply`, `.bind`) is
@@ -3127,8 +3127,54 @@ copy of the object's members, each read and checked as the field's type when the
 runs: an optional field the object lacks is absent (`const e: G = { name: "e" } as any` with
 `interface G { name: string; tag?: string }` reads `e.tag` as `undefined`, as in Node), a
 literal-typed field (`kind: "a"`) is checked against its literal, and a required field the object
-lacks stops with a `TypeError`; a later write to the copy does not reach the object. Into a class
-or an interface with methods, an object of another type stays a `TypeError`.
+lacks stops with a `TypeError`; a later write to the copy does not reach the object. Into a
+class, an object of another type stays a `TypeError`.
+
+An object literal converted to an interface with methods (`init as unknown as Ctx` with
+`interface Ctx { n: number; update(): void }`, in every program) is that object, as in Node
+(#1886): a property holding a function fills a method, so `c.update()` calls the object's
+`update`, and a write through the interface (`c.n = 5`) changes the object. The function may
+be an arrow, a `function` expression or a named function; it may take fewer parameters than
+the method (the call passes it only those, as JavaScript drops the extra arguments), and for a
+method returning `void` it may return anything. A `function` expression using `this`
+(`function (this: any, by: number) { this.n += by; }`) gets the object as `this`, as in
+`o.m()`; its arguments and result pass through `any`, so the method's parameters must be
+numbers, strings, booleans, objects, arrays, functions or dynamic values, and its result
+`void`, a number, a string, a boolean or a dynamic value (a union, an optional or a literal type
+there makes the conversion a `TypeError`). Each interface field must be a field of the object of the same type;
+an optional one (`label?: string`, also an optional method `done?(): string`) may be missing,
+and then reads `undefined`, where writing it stops with a `TypeError` (an object of a fixed
+shape gets no new properties, #924; Node adds the property). A literal whose methods use
+`this`, or with getters, converts as its own interface does
+([above](#this-in-object-literal-methods)). Differences from Node: the conversion checks the
+whole object, so a member the interface has that the object lacks, holds another type, or
+holds no function for a method stops there with a `TypeError` (Node throws only once the
+member is called: `c.update is not a function`); and an object built in a generic function, of
+a type with a type parameter, does not convert yet.
+
+```ts
+interface Ctx {
+  n: number;
+  label?: string;
+  update(): void;
+  add(k: number): number;
+}
+
+function main(): void {
+  const init = {
+    n: 1,
+    update: () => console.log("update"),
+    add: function (k: number) {
+      return k * 3;
+    },
+  };
+  const c = init as unknown as Ctx;
+  c.update(); // update
+  console.log(c.add(4), c.label); // 12 undefined
+  c.n = 5;
+  console.log(init.n); // 5
+}
+```
 
 An object literal with a getter (`{ get value() { … } }`, the value of its own interface)
 asserted to an object type that declares only fields (`obj as Computed<T>` with

@@ -90,7 +90,9 @@ mod module_state;
 mod moves;
 mod namespaces;
 mod nested_closures;
+mod object_call_on;
 mod object_copies;
+mod object_ifaces;
 mod overload_adapter;
 mod overloads;
 mod ownership;
@@ -531,6 +533,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
     timings::pass("make_dynamic_iface_adapters", || {
         body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx)
+    });
+    timings::pass("make_dynamic_object_impls", || {
+        object_ifaces::make_dynamic_object_impls(cx)
     });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {

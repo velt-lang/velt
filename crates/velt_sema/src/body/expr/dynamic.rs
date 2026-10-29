@@ -249,6 +249,7 @@ impl FnCx<'_, '_> {
         let Some(imp) = self.cx.any_impl() else {
             return Err(h);
         };
+        self.cx.note_dyn_object_source(h.ty);
         let mut h = h;
         self.force_move(&mut h);
         Ok(self.mk(
@@ -463,6 +464,7 @@ impl FnCx<'_, '_> {
         }
         self.note_dynamic_iface(exp, span);
         self.note_object_fill(exp);
+        self.cx.note_dyn_object_target(exp);
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
     }
