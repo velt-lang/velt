@@ -96,13 +96,14 @@ fn take_program_args(
 }
 
 /// The arguments of `velt run` that are Velt's: those before the file (or before `--`).
-pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
+pub(crate) fn run_options(args: &[OsString]) -> &[OsString] {
     let mut i = 0;
     while let Some(arg) = args.get(i) {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--cpu" | "--backend" | "--report") => i += 2,
+            // `-p <member>` is read before parsing (`commands::members`).
+            Some("--target" | "--cpu" | "--backend" | "--report" | "-p" | "--package") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }

@@ -92,12 +92,13 @@ export const pkg: Package = {
   | Selection | Members |
   |---|---|
   | `--workspace` | all of them |
-  | `-p <glob>` (repeatable) | those whose name matches (`-p 'server*'`) |
+  | `-p <glob>` (repeatable) | those whose name matches (`-p 'server*'`); a scoped name matches whole or without its scope (`-p 'server*'` and `-p '@org/*'` both select `@org/server`) |
   | `--affected [<base>]` | those with a file changed since `<base>` (committed or not), and every member that uses them; without a base, the merge base with the upstream branch (in CI, name it: `--affected origin/main`). A change to `velt.workspace.vlt` or `velt.lock.json` affects all |
 
   Members run in dependency order, several at once, each in its own `velt`; each member's output
   is printed in one piece when it finishes, and a summary names the members that failed. A failed
-  member doesn't stop the others; `--fail-fast` starts no more. `velt build` skips libraries
+  member doesn't stop the others; `--fail-fast` starts no more. `--watch`, `-o` and `--json`
+  need one member; with one, a relative `-o` is a path from where you ran `velt`. `velt build` skips libraries
   (the programs that use them build them), and `velt run -p <member>` and `velt dev -p <member>`
   run one member's program from anywhere in the workspace.
 

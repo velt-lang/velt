@@ -47,17 +47,23 @@ pub(super) fn members<'w>(
     Ok(out)
 }
 
-/// The innermost member whose directory holds `file` (relative to the workspace root).
+/// The innermost member whose directory holds `file` (relative to the workspace root), unless it
+/// is in that member's `target/`: build output is velt's, not the member's sources.
 fn owner<'w>(ws: &'w Workspace, file: &str) -> Option<&'w Member> {
-    ws.members
+    let (rel, m) = ws
+        .members
         .iter()
         .filter_map(|m| {
             let rel = shown(ws, &m.dir);
-            let inside = rel == "." || file.starts_with(&format!("{rel}/"));
-            inside.then_some((rel.len(), m))
+            let prefix = if rel == "." {
+                String::new()
+            } else {
+                format!("{rel}/")
+            };
+            file.starts_with(&prefix).then_some((prefix, m))
         })
-        .max_by_key(|(len, _)| *len)
-        .map(|(_, m)| m)
+        .max_by_key(|(prefix, _)| prefix.len())?;
+    (!file[rel.len()..].starts_with("target/")).then_some(m)
 }
 
 /// The merge base of `HEAD` and its upstream branch.

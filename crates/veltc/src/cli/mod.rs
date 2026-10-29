@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use crate::backend::Backend;
 use crate::playground::PlaygroundArgs;
 use crate::templates::{Editor, Template};
+pub(crate) use build::run_options;
 pub use check::CheckArgs;
 use completions::Shell;
 

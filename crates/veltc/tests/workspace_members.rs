@@ -159,24 +159,53 @@ fn programs_build_and_run_by_member() {
         assert!(path.is_file(), "{err}");
     }
     assert_eq!(r.ok(".", &["run", "-p", "b"]).0, "hello b\n");
-    let o = r.velt(".", &["run", "--workspace"], &[]);
-    let err = text(&o.stderr);
-    assert!(
-        err.contains("runs one member's program") && err.contains("runnable members: a, b"),
-        "{err}"
+    for args in [&["run", "--workspace"][..], &["run"], &["dev"]] {
+        let o = r.velt(".", args, &[]);
+        let err = text(&o.stderr);
+        assert!(
+            err.contains("runs one member's program") && err.contains("runnable members: a, b"),
+            "{args:?}: {err}"
+        );
+    }
+    // A relative `-o` is a path from where velt started, not from the member.
+    r.ok(".", &["build", "-p", "a", "-o", "dist/a"]);
+    let exe = if cfg!(windows) {
+        "dist/a.exe"
+    } else {
+        "dist/a"
+    };
+    assert!(r.dir.join(exe).is_file());
+    // Options that can't serve several members.
+    for args in [
+        &["build", "--workspace", "-o", "x"][..],
+        &["test", "--workspace", "--watch"],
+        &["check", "--workspace", "--json"],
+    ] {
+        let o = r.velt(".", args, &[]);
+        let err = text(&o.stderr);
+        assert!(err.contains("with several members"), "{args:?}: {err}");
+    }
+    // `velt run <file> <program args>`: the program's `-p` and `--workspace` are its own.
+    r.write(
+        "loose/s.vlt",
+        "console.log(process.argv.slice(2).join(\",\"));\n",
     );
+    std::fs::remove_file(r.dir.join("velt.workspace.vlt")).unwrap();
+    let (out, _) = r.ok("loose", &["run", "s.vlt", "-p", "8080", "--workspace"]);
+    assert_eq!(out, "-p,8080,--workspace\n");
 }
 
 #[test]
 fn affected_members_are_the_changed_ones_and_their_dependents() {
     let r = repo();
-    // As a repository keeps them: build output ignored, the lockfile committed.
-    r.write(".gitignore", "target/\nhome/\n");
+    // The lockfile committed; build output in `target/` not ignored, which must not count.
+    r.write(".gitignore", "home/\n");
     r.ok(".", &["install"]);
     r.git(&["init", "-q"]);
     r.git(&["add", "-A"]);
     r.git(&["commit", "-q", "-m", "start"]);
-    // Nothing changed.
+    // Nothing changed but build output.
+    r.write("apps/a/target/velt/a.o", "object");
     let (_, err) = r.ok(".", &["check", "--affected", "HEAD"]);
     assert!(err.contains("no selected member to check"), "{err}");
     // A library: it and every member that uses it.
@@ -217,4 +246,28 @@ fn a_selection_outside_a_workspace_or_with_a_file_is_an_error() {
         "{}",
         text(&o.stderr)
     );
+}
+
+#[test]
+fn formatting_members_needs_no_registry() {
+    let r = repo();
+    r.write(
+        "apps/b/package.vlt",
+        "export const pkg: Package = { name: \"b\", version: \"0.1.0\", dependencies: { core: \"workspace\", nosuchpkg: \"1\" } };\n",
+    );
+    let o = r.velt(".", &["fmt"], &[("VELT_REGISTRY", "http://127.0.0.1:9")]);
+    let err = text(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(err.contains("`velt fmt` on 3 members: 3 passed"), "{err}");
+}
+
+#[test]
+fn a_scoped_member_is_selected_by_its_name_without_the_scope() {
+    let r = repo();
+    r.write(
+        "apps/a/package.vlt",
+        "export const pkg: Package = { name: \"@org/server\", version: \"0.1.0\", dependencies: { core: \"workspace\" } };\n",
+    );
+    let (_, err) = r.ok(".", &["check", "-p", "serv*"]);
+    assert_eq!(members(&err), ["@org/server"], "{err}");
 }

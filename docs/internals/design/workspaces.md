@@ -200,8 +200,10 @@ promise is speed of the tools, and these numbers come with the steps that make t
   cold and warm install, a no-op install, `test --workspace` cold, with one leaf changed, and with
   nothing changed.
 - Targets: a no-op `velt install` under 50 ms; `velt test --workspace` with nothing changed under
-  100 ms (stamps and test stamps only, no parsing).
-- Build time and IR size for the members' builds in one process versus one process per member.
+  100 ms (stamps and test stamps only, no parsing). With one `velt` per member (step 2), process
+  start alone exceeds that at 50 members, so step 3 checks the build and test stamps in the
+  parent and starts a member's `velt` only when one misses.
+- Build time and IR size for the members' builds as one process per member.
 
 ## Diagnostics
 
@@ -223,8 +225,9 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
    dependencies, one resolution and one lock; `velt install` and builds of one member inside a
    workspace. Outputs per member, and the workspace's files in the build stamp.
 2. Member selection (`--workspace`, `-p`, `--affected`) for `check`, `test`, `build`, `fmt`,
-   `doc`, run in dependency order and in parallel in one process.
-3. Test results from the test stamp.
+   `doc`, run in dependency order and in parallel, one `velt` per member.
+3. Test results from the test stamp, and the stamps checked in the parent before any member's
+   `velt` starts.
 4. `velt publish` of members; `velt add -p <member>` and `velt add --workspace` (into the
    workspace's `dependencies`).
 5. The language server's workspace graph and the workspace file's editor support.

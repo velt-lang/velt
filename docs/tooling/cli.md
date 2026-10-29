@@ -47,7 +47,8 @@ Every build command works on a single file or on a package:
 ### Workspaces
 
 In a [workspace](packages.md#workspaces), `velt check`, `test`, `build`, `fmt` and `doc` take
-`--workspace`, `-p <glob>` (repeatable) and `--affected [<base>]` to run on several members, and
+`--workspace`, `-p <glob>` (repeatable; a member's name, or a scoped name without its scope) and
+`--affected [<base>]` to run on several members, and
 run on every member at the workspace's root outside its packages; `--fail-fast` starts no more
 members after a failure. `velt run -p <member>` and `velt dev -p <member>` run one member's
 program. A file argument doesn't go with a selection.

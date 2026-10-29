@@ -116,3 +116,46 @@ fn dependents_are_found_through_other_members() {
     assert_eq!(deps["util"], BTreeSet::from(["app"]));
     assert!(deps["tool"].is_empty());
 }
+
+#[test]
+fn a_scoped_name_matches_without_its_scope_too() {
+    assert!(name_matches("server*", "@org/server"));
+    assert!(name_matches("@org/*", "@org/server"));
+    assert!(name_matches("*", "@org/server"));
+    assert!(!name_matches("org*", "@org/server"));
+    assert!(name_matches("core", "core"));
+}
+
+#[test]
+fn some_options_need_one_member() {
+    assert!(one_member_only(&os(&["--watch"]))
+        .unwrap()
+        .contains("until it is stopped"));
+    assert!(one_member_only(&os(&["-o", "x"]))
+        .unwrap()
+        .contains("same file"));
+    assert!(one_member_only(&os(&["--output=x"])).is_some());
+    assert!(one_member_only(&os(&["--json"])).is_some());
+    assert_eq!(one_member_only(&os(&["--release", "-v"])), None);
+}
+
+#[test]
+fn a_relative_output_stays_relative_to_where_velt_started() {
+    let cwd = Path::new("/work/repo");
+    let args = absolute_output(
+        os(&["-o", "dist/a", "--release", "--output=x", "--", "-o", "y"]),
+        cwd,
+    );
+    assert_eq!(
+        args,
+        vec![
+            OsString::from("-o"),
+            cwd.join("dist/a").into_os_string(),
+            OsString::from("--release"),
+            OsString::from(format!("--output={}", cwd.join("x").display())),
+            OsString::from("--"),
+            OsString::from("-o"),
+            OsString::from("y"),
+        ]
+    );
+}

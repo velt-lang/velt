@@ -48,11 +48,14 @@ pub(super) fn run(
         style::status("Finished", &format!("no selected member to {cmd}"));
         return ExitCode::SUCCESS;
     }
-    // Installed once here, so the members find the lock up to date and none of them writes it.
+    // Installed once here, so the members find the lock up to date and none of them writes it;
+    // formatting resolves nothing, so it doesn't need the registry.
     let locked = args.iter().any(|a| a == "--locked");
-    if let Err(e) = install(ws, locked) {
-        style::error(&e);
-        return ExitCode::from(1);
+    if cmd != "fmt" {
+        if let Err(e) = install(ws, locked) {
+            style::error(&e);
+            return ExitCode::from(1);
+        }
     }
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,

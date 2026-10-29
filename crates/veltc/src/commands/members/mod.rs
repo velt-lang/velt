@@ -155,16 +155,31 @@ fn try_intercept(args: &[OsString]) -> Result<Option<Intercept>, String> {
     if !multi && !single {
         return Ok(None);
     }
-    let (mut sel, rest) = extract(&args[1..])?;
+    // `velt run <file> <program args>`: only the options before the file (or `--`) are velt's.
+    let (mut sel, rest) = if cmd == "run" {
+        let options = crate::cli::run_options(&args[1..]);
+        let (sel, mut rest) = extract(options)?;
+        rest.extend(args[1 + options.len()..].iter().cloned());
+        (sel, rest)
+    } else {
+        extract(&args[1..])?
+    };
     let cwd =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
     let ws_root = vpm::workspace::find_root(&cwd);
     if sel.is_empty() {
-        // At a workspace's root, or between it and its members: every member.
+        // At a workspace's root, or between it and its members: every member (`run` and `dev`
+        // need one named).
         let in_package = vpm::manifest::find_package_root(&cwd)
             .is_some_and(|pkg| ws_root.as_ref().is_none_or(|ws| pkg.starts_with(ws)));
-        if !multi || ws_root.is_none() || in_package || positional(&rest).is_some() {
+        let Some(root) = ws_root
+            .as_ref()
+            .filter(|_| !in_package && positional(&rest).is_none())
+        else {
             return Ok(None);
+        };
+        if single {
+            return Err(one_member(cmd, &Workspace::load(root)?, None));
         }
         sel.workspace = true;
     }
@@ -202,8 +217,10 @@ fn try_intercept(args: &[OsString]) -> Result<Option<Intercept>, String> {
     // One member (always, for `run` and `dev`): the command runs here, in its directory.
     if single || selected.len() == 1 {
         let [member] = selected.as_slice() else {
-            return Err(one_member(cmd, &ws, &selected));
+            return Err(one_member(cmd, &ws, Some(selected.len())));
         };
+        // A relative `-o` still means a path from where `velt` was started.
+        let rest = absolute_output(rest, &cwd);
         std::env::set_current_dir(&member.dir)
             .map_err(|e| format!("cannot enter `{}`: {e}", member.dir.display()))?;
         if multi {
@@ -216,25 +233,75 @@ fn try_intercept(args: &[OsString]) -> Result<Option<Intercept>, String> {
         args.extend(rest);
         return Ok(Some(Intercept::Continue(args)));
     }
+    if let Some(why) = one_member_only(&rest) {
+        return Err(format!(
+            "{why} with several members ({} selected); select one with `-p <member>`",
+            selected.len()
+        ));
+    }
     let code = run::run(cmd, &rest, &ws, &selected, sel.fail_fast);
     Ok(Some(Intercept::Done(code)))
 }
 
-/// The error for `velt run`/`dev` without exactly one member.
-fn one_member(cmd: &str, ws: &Workspace, selected: &[&Member]) -> String {
+/// Why an option of `args` can't go with several members, if one can't.
+fn one_member_only(args: &[OsString]) -> Option<&'static str> {
+    args.iter().find_map(|a| match a.to_str()? {
+        "--watch" => Some("`--watch` runs until it is stopped, so it can't run"),
+        "-o" | "--output" => Some("`-o` would have every member write the same file"),
+        s if s.starts_with("--output=") => Some("`-o` would have every member write the same file"),
+        "--json" => Some("`--json` prints one document, not one per member, so it can't run"),
+        _ => None,
+    })
+}
+
+/// `args` with the value of `-o`/`--output` made absolute against `cwd`.
+fn absolute_output(args: Vec<OsString>, cwd: &Path) -> Vec<OsString> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let text = arg.to_string_lossy().into_owned();
+        if text == "--" {
+            out.push(arg);
+            out.extend(iter.by_ref());
+            break;
+        }
+        if text == "-o" || text == "--output" {
+            out.push(arg);
+            if let Some(value) = iter.next() {
+                out.push(cwd.join(value).into_os_string());
+            }
+        } else if let Some(value) = text.strip_prefix("--output=") {
+            out.push(format!("--output={}", cwd.join(value).display()).into());
+        } else {
+            out.push(arg);
+        }
+    }
+    out
+}
+
+/// The error for `velt run`/`dev` without exactly one member: `selected` members, or `None`
+/// at a workspace's root without a selection.
+fn one_member(cmd: &str, ws: &Workspace, selected: Option<usize>) -> String {
     let runnable: Vec<&str> = ws
         .members
         .iter()
         .filter(|m| runnable(m))
         .map(Member::name)
         .collect();
-    let what = match selected.len() {
-        0 => "no member".to_string(),
-        n => format!("{n} members"),
+    let runnable = match runnable.is_empty() {
+        true => "none".to_string(),
+        false => runnable.join(", "),
+    };
+    let what = match selected {
+        None => format!(
+            "this is a workspace's root (`{}`)",
+            vpm::workspace::WORKSPACE_FILE
+        ),
+        Some(0) => "the selection names no member".to_string(),
+        Some(n) => format!("the selection names {n} members"),
     };
     format!(
-        "`velt {cmd}` runs one member's program, and the selection names {what}; name one with `-p <member>` (runnable members: {})",
-        if runnable.is_empty() { "none".to_string() } else { runnable.join(", ") }
+        "`velt {cmd}` runs one member's program, and {what}; name one with `-p <member>` (runnable members: {runnable})"
     )
 }
 
@@ -259,7 +326,7 @@ pub fn select<'w>(ws: &'w Workspace, sel: &Selection) -> Result<Vec<&'w Member>,
             .members
             .iter()
             .map(Member::name)
-            .filter(|n| velt_toolchain::members::segment_match(glob, n))
+            .filter(|n| name_matches(glob, n))
             .collect();
         if matched.is_empty() {
             let all: Vec<&str> = ws.members.iter().map(Member::name).collect();
@@ -278,6 +345,14 @@ pub fn select<'w>(ws: &'w Workspace, sel: &Selection) -> Result<Vec<&'w Member>,
         .into_iter()
         .filter(|m| names.contains(m.name()))
         .collect())
+}
+
+/// Whether `-p <glob>` names the member `name`: its whole name, or for a scoped name
+/// (`@org/server`) also the part after the scope (`-p 'server*'`).
+fn name_matches(glob: &str, name: &str) -> bool {
+    use velt_toolchain::members::segment_match;
+    segment_match(glob, name)
+        || vpm::manifest::split_scoped(name).is_some_and(|(_, bare)| segment_match(glob, bare))
 }
 
 /// The members of `ws` that member `name` depends on with `"workspace"`.
