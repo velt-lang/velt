@@ -155,12 +155,17 @@ and memory where you want a fixed width; code shared with TypeScript never names
   is the same object in both).
   A field read of such an assertion, `(u as A).f` with `u` a variable or a field path (outside
   generic code) whose union has as a member the object type `A`, which has the field `f`,
-  reads as JavaScript does instead of checking the assertion: an `A` gives its field, a value of another member gives its property `f` as
-  through `any` (`undefined` for an array, a string or a number, which have no such property,
-  and another object's own `f`), and `null` or `undefined` stops with Node's `TypeError:
-  Cannot read properties of null (reading 'f')`. The read has the field's type. Where it is
-  only tested (the condition of `if`, a loop or `?:`, the operand of `!`, `&&` and `||` there),
-  the value read is tested as it is, so the common test of one member's field works as in Node:
+  reads as JavaScript does instead of checking the assertion. An `A` gives its field, and a
+  value of another member gives its own property `f`: another object type's field `f`, the
+  `length` of an array or a string, and `undefined` for an array, a string, a number, a boolean
+  or an object type that has no such property. `null` or `undefined` stops with Node's
+  `TypeError: Cannot read properties of null (reading 'f')` (`(u as A)?.f` is `undefined`
+  there). A member whose property needs a lookup at run time (a class instance, which may be
+  of a subclass, or a member of a prototype such as an array's `map`) checks the assertion as
+  before. The read has the field's type. Where it is only tested, the value read is tested as
+  it is: in a condition (of `if`, a loop or `?:`, and the operands of `!`, `&&` and `||` there)
+  its truthiness, and in `=== undefined`, `== null`, `??`, `?.` and `typeof` its value,
+  `undefined` included. So the common test of one member's field works as in Node:
 
   ```ts
   type VNode = { type: string; props: number };

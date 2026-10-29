@@ -341,9 +341,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
-    /// A member read of an assertion, `(u as M).f`, that is only tested (a condition): the
-    /// value read is tested as it is (`expr/cast_member.rs`).
-    pub cast_member_test: Option<Span>,
+    /// A member read of an assertion, `(u as M).f`, that is only tested (a condition, a
+    /// nullish or `typeof` test): the value read is tested as it is (`expr/cast_member.rs`).
+    pub cast_member_test: Option<(Span, expr::CastTest)>,
     /// Reads that need the payload of a narrowed module variable, field path or checked copy:
     /// receivers, callees, operands of arithmetic and comparisons, spreads (`global_narrow`).
     pub payload_spans: Vec<Span>,

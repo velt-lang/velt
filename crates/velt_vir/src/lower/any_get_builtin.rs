@@ -8,68 +8,11 @@
 
 use velt_sema::hir::{Nothing, TyId, TyKind};
 
-use super::any_glue::OBJECT_PROTO;
-use super::any_has_builtin::ARRAY_PROTO;
 use super::any_member::ST_UNSUPPORTED;
 use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
-
-/// `String.prototype`.
-const STRING_PROTO: &[&str] = &[
-    "anchor",
-    "at",
-    "big",
-    "blink",
-    "bold",
-    "charAt",
-    "charCodeAt",
-    "codePointAt",
-    "concat",
-    "endsWith",
-    "fontcolor",
-    "fontsize",
-    "fixed",
-    "includes",
-    "indexOf",
-    "isWellFormed",
-    "italics",
-    "lastIndexOf",
-    "link",
-    "localeCompare",
-    "match",
-    "matchAll",
-    "normalize",
-    "padEnd",
-    "padStart",
-    "repeat",
-    "replace",
-    "replaceAll",
-    "search",
-    "slice",
-    "small",
-    "split",
-    "strike",
-    "sub",
-    "substr",
-    "substring",
-    "sup",
-    "startsWith",
-    "toWellFormed",
-    "trim",
-    "trimStart",
-    "trimLeft",
-    "trimEnd",
-    "trimRight",
-    "toLocaleLowerCase",
-    "toLocaleUpperCase",
-    "toLowerCase",
-    "toUpperCase",
-    "[Symbol.iterator]",
-];
-
-/// `Number.prototype`.
-const NUMBER_PROTO: &[&str] = &["toExponential", "toFixed", "toPrecision"];
+use velt_sema::js_protos::{ARRAY_PROTO, NUMBER_PROTO, OBJECT_PROTO, STRING_PROTO};
 
 /// The names of an array, string, number or boolean of type `ty` that a read through `any`
 /// does not reach yet, and whether its element indexes are among them; `None` for other types.

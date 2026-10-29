@@ -10,47 +10,7 @@ use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
-/// `Array.prototype`, besides `length` and `Object.prototype`'s names.
-pub(super) const ARRAY_PROTO: &[&str] = &[
-    "at",
-    "concat",
-    "copyWithin",
-    "fill",
-    "find",
-    "findIndex",
-    "findLast",
-    "findLastIndex",
-    "lastIndexOf",
-    "pop",
-    "push",
-    "reverse",
-    "shift",
-    "unshift",
-    "slice",
-    "sort",
-    "splice",
-    "includes",
-    "indexOf",
-    "join",
-    "keys",
-    "entries",
-    "values",
-    "forEach",
-    "filter",
-    "flat",
-    "flatMap",
-    "map",
-    "every",
-    "some",
-    "reduce",
-    "reduceRight",
-    "toReversed",
-    "toSorted",
-    "toSpliced",
-    "with",
-    "[Symbol.iterator]",
-    "[Symbol.unscopables]",
-];
+pub(super) use velt_sema::js_protos::ARRAY_PROTO;
 
 /// `%TypedArray%.prototype` and a kind's own prototype (`Uint8Array.prototype`).
 const TYPED_ARRAY_PROTO: &[&str] = &[

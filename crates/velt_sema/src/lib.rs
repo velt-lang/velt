@@ -25,6 +25,7 @@
 //! Semantic decisions other stages rely on are documented on [`body`] and the modules above.
 
 pub mod hir;
+pub mod js_protos;
 
 mod absent_fields;
 mod alias_expand;

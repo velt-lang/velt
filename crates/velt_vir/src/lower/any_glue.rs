@@ -14,22 +14,7 @@ use super::rt::Rt;
 use super::{cint, FnLower, Work};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
-/// Members every JavaScript object has through `Object.prototype`: reading one through `any`
-/// must not answer `undefined`.
-pub(super) const OBJECT_PROTO: [&str; 12] = [
-    "constructor",
-    "toString",
-    "toLocaleString",
-    "valueOf",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "__proto__",
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-];
+pub(super) use velt_sema::js_protos::OBJECT_PROTO;
 
 /// A method or getter ready to call (only a `Proxy` method throws: proxy_throws.rs).
 pub(super) struct Ready {

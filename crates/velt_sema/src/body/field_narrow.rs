@@ -166,8 +166,11 @@ impl FnCx<'_, '_> {
             inner = x;
         }
         let outer = self.field_test.replace(inner.span);
+        let test =
+            super::expr::is_cast_member(inner).then_some((inner.span, super::expr::CastTest::AsIs));
+        let cast = std::mem::replace(&mut self.cast_member_test, test);
         let h = self.expr(e, None, Want::Borrow);
-        self.field_test = outer;
+        (self.field_test, self.cast_member_test) = (outer, cast);
         h
     }
 

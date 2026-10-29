@@ -138,8 +138,14 @@ impl FnCx<'_, '_> {
         ) {
             self.raw_read = Some(inner.span);
         }
-        let test = exp == Some(self.cx.ty.bool_) && crate::body::expr::is_cast_member(inner);
-        let outer = std::mem::replace(&mut self.cast_member_test, test.then_some(inner.span));
+        // A test of `(u as M).f`: its truthiness where a `bool` is expected, else its value as
+        // it is (`x == null`, `x ?? y`, `x?.f`).
+        let test = match exp == Some(self.cx.ty.bool_) {
+            true => crate::body::expr::CastTest::Truthy,
+            false => crate::body::expr::CastTest::AsIs,
+        };
+        let test = crate::body::expr::is_cast_member(inner).then_some((inner.span, test));
+        let outer = std::mem::replace(&mut self.cast_member_test, test);
         let h = self.expr(e, exp, want);
         self.cast_member_test = outer;
         self.raw_read = None;
