@@ -128,8 +128,10 @@ export function termNumber(e: Expr): i64 {
   return NOT_A_NUMBER;
 }
 
-// The integer 0 as the parser leaves it (EP_IsFalse): the literal, a folded `literal IS NULL`,
-// or `x AND y` with such a side and no function call on either (sqlite3ExprAnd).
+/**
+ * The integer 0 as the parser leaves it (EP_IsFalse): the literal, a folded `literal IS NULL`,
+ * or `x AND y` with such a side and no function call on either (sqlite3ExprAnd).
+ */
 export function foldsToFalse(e: Expr): bool {
   if (e.kind == E_INT && e.text == "" && e.ival == 0) {
     return true;
@@ -143,7 +145,7 @@ export function foldsToFalse(e: Expr): bool {
   return false;
 }
 
-// Whether a function is called anywhere in `e` (outside subqueries).
+/** Whether a function is called anywhere in `e` (outside subqueries). */
 export function hasCall(e: Expr | null): bool {
   if (e == null) {
     return false;
@@ -164,12 +166,12 @@ export function hasCall(e: Expr | null): bool {
   return false;
 }
 
-// `x IS NULL`, `x ISNULL`, `x NOTNULL`, `x IS NOT NULL`.
+/** `x IS NULL`, `x ISNULL`, `x NOTNULL`, `x IS NOT NULL`. */
 export function isNullTest(e: Expr): bool {
   return e.kind == E_ISNULL || (e.kind == E_IS && e.b!.kind == E_NULL);
 }
 
-// Whether the parser makes `e` (signs aside) a non-NULL literal (sqlite3PExprIsNull).
+/** Whether the parser makes `e` (signs aside) a non-NULL literal (sqlite3PExprIsNull). */
 export function foldsToLiteral(e0: Expr): bool {
   let e = e0;
   while (e.kind == E_UNARY && (e.op == "-" || e.op == "+")) {

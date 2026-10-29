@@ -338,7 +338,7 @@ export class SelectCompiler extends ExprCompiler {
     return this.rowsSource(q, name, def.cols);
   }
 
-  // The references a CTE's compile counted (from `from` on), summed per table.
+  /** The references a CTE's compile counted (from `from` on), summed per table. */
   countCteRefs(def: CteDef, from: usize) {
     for (let r = from; r < this.refNames.length; r++) {
       const n = this.refNames[r];
