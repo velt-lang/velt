@@ -403,7 +403,12 @@ fn a_copy_something_may_free_or_take_keeps_its_count() {
 
 /// `_Gdrop_Db(slot)`: the release of the pointer in `*slot` (glue.rs).
 fn release_glue(k: &mut Kit) -> FuncId {
-    let mut fb = FuncBuilder::internal("_Gdrop_Db", &[Ty::Ptr], Ty::Unit);
+    release_fn(k, "_Gdrop_Db")
+}
+
+/// A function named `name` with drop glue's body: the release of the pointer in `*slot`.
+fn release_fn(k: &mut Kit, name: &str) -> FuncId {
+    let mut fb = FuncBuilder::internal(name, &[Ty::Ptr], Ty::Unit);
     let slot = fb.param(0);
     let [x, c, q, n, t, m] =
         [Ty::Ptr, Ty::Bool, Ty::Ptr, Ty::U64, Ty::Bool, Ty::U64].map(|t| fb.local(t));
@@ -431,49 +436,108 @@ fn a_release_through_drop_glue_borrows_too() {
     for escapes in [false, true] {
         let mut k = kit();
         let glue = release_glue(&mut k);
-        let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
-        let this = fb.param(0);
-        let [v, r, q, n, x, a] =
-            [Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::U64, Ty::U64, Ty::Ptr].map(|t| fb.local(t));
-        let entry = fb.block();
-        fb.assign(entry, v, Rvalue::Use(int(0, Ty::Ptr)));
-        fb.assign(entry, r, Rvalue::Use(copy_place(field_of(this, k.obj, 0))));
-        fb.assign(
-            entry,
-            q,
-            bin(BinOp::PtrAdd, copy_local(r), int(-8, Ty::I64)),
-        );
-        fb.assign(
-            entry,
-            n,
-            bin(BinOp::Add, copy_place(count(q)), int(1, Ty::U64)),
-        );
-        fb.push(entry, Stmt::Assign(count(q), Rvalue::Use(copy_local(n))));
-        fb.assign(entry, v, Rvalue::Use(copy_local(r)));
-        fb.assign(entry, x, Rvalue::Use(copy_place(field_of(v, k.arr, 1))));
-        fb.assign(entry, a, Rvalue::AddrOf(Place::local(v)));
-        let mut b = fb.call(entry, Callee::Func(glue), vec![copy_local(a)], None);
-        if escapes {
-            // The address also goes to a function that may keep it.
-            b = fb.call(
-                b,
-                Callee::Extern(k.other),
-                vec![copy_local(a), copy_local(a)],
-                None,
-            );
-        }
-        fb.ret(b, copy_local(x));
-        let f = k.pb.add(fb.finish());
-        let mut p = k.pb.finish();
-        let changed = run(&mut p)[f.0 as usize];
-        assert_valid(&p);
-        let calls_glue = p.funcs[f.0 as usize].blocks.iter().any(
-            |b| matches!(&b.term, Terminator::Call { callee: Callee::Func(g), .. } if *g == glue),
-        );
+        let (changed, calls_glue) = released_through(k, glue, escapes);
         assert_eq!(
             (changed, calls_glue),
             (!escapes, escapes),
             "escapes: {escapes}"
+        );
+    }
+}
+
+#[test]
+fn a_member_address_handed_to_a_function_that_is_not_glue_keeps_the_count() {
+    // The same with `release_db(&v)`, a Velt function with glue's body that is not drop glue:
+    // only glue is known to be the release, so the address taken counts as escaping.
+    let mut k = kit();
+    let other = release_fn(&mut k, "release_db");
+    assert_eq!(released_through(k, other, false), (false, true));
+}
+
+/// `v = this.data; v.count++; x = v.len; glue(&v); [other(&v, &v)]; return x`: whether the pass
+/// changed `f`, and whether `f` still calls `glue`.
+fn released_through(mut k: Kit, glue: FuncId, escapes: bool) -> (bool, bool) {
+    let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
+    let this = fb.param(0);
+    let [v, r, q, n, x, a] =
+        [Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::U64, Ty::U64, Ty::Ptr].map(|t| fb.local(t));
+    let entry = fb.block();
+    fb.assign(entry, v, Rvalue::Use(int(0, Ty::Ptr)));
+    fb.assign(entry, r, Rvalue::Use(copy_place(field_of(this, k.obj, 0))));
+    fb.assign(
+        entry,
+        q,
+        bin(BinOp::PtrAdd, copy_local(r), int(-8, Ty::I64)),
+    );
+    fb.assign(
+        entry,
+        n,
+        bin(BinOp::Add, copy_place(count(q)), int(1, Ty::U64)),
+    );
+    fb.push(entry, Stmt::Assign(count(q), Rvalue::Use(copy_local(n))));
+    fb.assign(entry, v, Rvalue::Use(copy_local(r)));
+    fb.assign(entry, x, Rvalue::Use(copy_place(field_of(v, k.arr, 1))));
+    fb.assign(entry, a, Rvalue::AddrOf(Place::local(v)));
+    let mut b = fb.call(entry, Callee::Func(glue), vec![copy_local(a)], None);
+    if escapes {
+        // The address also goes to a function that may keep it.
+        b = fb.call(
+            b,
+            Callee::Extern(k.other),
+            vec![copy_local(a), copy_local(a)],
+            None,
+        );
+    }
+    fb.ret(b, copy_local(x));
+    let f = k.pb.add(fb.finish());
+    let mut p = k.pb.finish();
+    let changed = run(&mut p)[f.0 as usize];
+    assert_valid(&p);
+    let calls_glue = p.funcs[f.0 as usize]
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.term, Terminator::Call { callee: Callee::Func(g), .. } if *g == glue));
+    (changed, calls_glue)
+}
+
+#[test]
+fn a_pointer_into_the_object_read_after_a_freeing_call_keeps_the_count() {
+    // `r = this.data; r.count++; ip = &r.len; [freeing(this)]; y = *ip; release r; return y`:
+    // the read through `ip` is a use of the object, so a call that may free before it keeps
+    // the count.
+    for (free, write, borrows) in [
+        (false, false, true),
+        (true, false, false),
+        (false, true, true),
+        (true, true, false),
+    ] {
+        let mut k = kit();
+        let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
+        let this = fb.param(0);
+        let [ip, y] = [Ty::Ptr, Ty::U64].map(|t| fb.local(t));
+        let mut b = fb.block();
+        let (r, q) = share(&mut fb, b, field_of(this, k.obj, 0));
+        fb.assign(b, ip, Rvalue::AddrOf(field_of(r, k.arr, 1)));
+        if free {
+            b = fb.call(b, Callee::Func(k.freeing), vec![copy_local(this)], None);
+        }
+        if write {
+            fb.push(
+                b,
+                Stmt::Assign(deref(ip, Ty::U64), Rvalue::Use(int(5, Ty::U64))),
+            );
+            fb.assign(b, y, Rvalue::Use(int(0, Ty::U64)));
+        } else {
+            fb.assign(b, y, Rvalue::Use(copy_place(deref(ip, Ty::U64))));
+        }
+        let (exit, q2) = release(&mut fb, b, r, k.free);
+        fb.ret(exit, copy_local(y));
+        let f = k.pb.add(fb.finish());
+        let p = k.pb.finish();
+        assert_eq!(
+            decide(p, f, &[[q, q2]]),
+            [borrows],
+            "free: {free}, write: {write}"
         );
     }
 }

@@ -319,6 +319,10 @@ impl Cx<'_> {
                 Some(_) => w.bail = true,
             }
         }
+        if fam.derived.contains(&d) && !dst.proj.is_empty() {
+            // A write through a pointer into the object: a use of it.
+            w.uses.insert(at);
+        }
         if let Rvalue::AddrOf(p) = rv {
             // The address release glue is given, or a pointer into the object (a use).
             let glue = fam.glue_addrs.contains(&d) && fam.members.contains(&p.local);
