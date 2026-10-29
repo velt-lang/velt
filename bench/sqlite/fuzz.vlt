@@ -18,7 +18,7 @@ import { args } from "velt:process";
 import { tmpdir } from "velt:os";
 import { removeSync } from "velt:fs";
 import { execSync } from "velt:child_process";
-import { Gen, generateSchema, generateQuery } from "./fuzz_gen.vlt";
+import { Gen, generateSchema, generateQuery } from "./_fuzz_gen.vlt";
 
 /** The Velt engine's rows, each as the shell's quote mode prints it, or ["error: …"]. */
 function veltRows(db: Database, sql: string): string[] {
@@ -118,6 +118,17 @@ function main() {
   const seed = argv.length > 0 ? parseInt(argv[0], 10) as i64 : 1;
   const n = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 500;
   const shell = process.env.SQLITE3 ?? "/usr/bin/sqlite3";
+  // Without the shell every query would differ: say so once instead.
+  let found = false;
+  try {
+    found = execSync(shell, ["-version"]).code == 0;
+  } catch (e) {
+    found = false;
+  }
+  if (!found) {
+    console.error(`fuzz: cannot run the sqlite3 shell at ${shell} (set SQLITE3)`);
+    process.exit(2);
+  }
   const g = new Gen(seed);
   const path = `${tmpdir()}/velt-sqlite-fuzz-${seed}-${Date.now()}.db`;
   const c = open(path);
