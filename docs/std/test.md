@@ -59,7 +59,8 @@ the `Expect` of the value or the error, for a custom matcher that awaits.
 
 With `VELT_RC_STATS=1` (the debug runtime's block counters), the process for a file returns from
 `main` after its tests instead of exiting at once, so the runtime frees the module state and
-reports the blocks left (`rc stats: … blocks=A/F`); the runner fails the file if A ≠ F. Such a
+reports the blocks left (`rc stats: … blocks=A/F`); the runner fails the file if A ≠ F, or if
+its process reported no counts (a runtime without the debug counters). Such a
 process waits for what is still running, as a program does after `main`: the runner ends one
 still running 120 s after its tests and fails the file.
 

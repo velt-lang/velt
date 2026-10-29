@@ -509,8 +509,8 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
     report.failed++;
     return tests.length;
   }
-  const leaked = leakedBlocks(r.stderr);
-  if (leaked > 0) {
+  const leaked = counting ? leakedBlocks(r.stderr) : 0;
+  if (leaked != null && leaked > 0) {
     report.lines.push(`${paint.failed()} ${f.path} (${leaked} blocks not freed)`);
     report.failed++;
   }
@@ -518,6 +518,12 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
     if (r.code != 0) {
       report.lines.push(
         `${paint.failed()} (test harness exited with code ${r.code} after all tests ran)`,
+      );
+      report.failed++;
+    } else if (leaked == null) {
+      // As the goldens' leak check: a file whose process reported no counts is not leak-free.
+      report.lines.push(
+        `${paint.failed()} ${f.path} (no block counts on its stderr; VELT_RC_STATS=1 counts blocks in debug builds)`,
       );
       report.failed++;
     }
@@ -571,16 +577,21 @@ async function drain(read: () => Promise<string, unknown>): Promise<string, unkn
 
 /**
  * The blocks a test process allocated and didn't free, from the runtime's report on its stderr
- * (`rc stats: … blocks=A/F …`, `VELT_RC_STATS=1` with the debug runtime); `0` without one.
+ * (`rc stats: … blocks=A/F …`, `VELT_RC_STATS=1` with the debug runtime); `null` without one.
  */
-function leakedBlocks(stderr: string): number {
+function leakedBlocks(stderr: string): number | null {
   const at = stderr.lastIndexOf(" blocks=");
   if (at < 0 || !stderr.includes("rc stats:")) {
-    return 0;
+    return null;
   }
   const field = stderr.slice(at + 8).split(" ")[0];
   const counts = field.split("/");
-  return counts.length == 2 ? Number(counts[0]) - Number(counts[1]) : 0;
+  if (counts.length != 2) {
+    return null;
+  }
+  const allocated = Number(counts[0]);
+  const freed = Number(counts[1]);
+  return Number.isNaN(allocated) || Number.isNaN(freed) ? null : allocated - freed;
 }
 
 function pushStderr(report: Report, stderr: string) {

@@ -224,7 +224,9 @@ above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#
 
 `VELT_RC_STATS=1 velt test` also checks that each test file's process frees every block it
 allocates (debug builds; the standard library's own tests run this way). A file whose tests leave
-something allocated fails with `FAILED <file> (N blocks not freed)`. Close every server and
+something allocated fails with `FAILED <file> (N blocks not freed)`, and one whose process
+reported no counts (a runtime without the debug counters) with `no block counts on its stderr`.
+Close every server and
 connection a test opens: one still running 120 s after the file's tests fails the file as
 `still running … after its tests`.
 
