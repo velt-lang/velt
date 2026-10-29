@@ -1515,14 +1515,14 @@ converted to a double and back in the `Uint8Array` programs; and the key and the
 A `u8[]`'s `subarray` is now a `Uint8Array` over the array itself, which can become shorter, so
 a typed array's `length` is the elements its buffer still has in its range and every access is
 checked against it. The same programs, user-space instructions per cell (macOS arm64, LLVM
-release; the base is the table above's "after"):
+release; the base is `main` at cb434f935; differences under 0.5 are noise):
 
 | program | before | after |
 |---|---:|---:|
-| `DataView` | 67.9 | 68.3 |
-| `subarray` per page | 108.9 | 70.4 |
-| whole `Uint8Array` | 105.6 | 68.8 |
-| `u8[]`, integer types | 60.9 | 60.8 |
+| `DataView` | 69.9 | 70.1 |
+| `subarray` per page | 109.3 | 70.4 |
+| whole `Uint8Array` | 105.6 | 68.2 |
+| `u8[]`, integer types | 60.2 | 60.5 |
 | Rust `&[u8]` | 40.8 | 40.8 |
 
 What changed: a byte's `xs[i]` tests that it is inside the view and inside the buffer in one
@@ -1530,9 +1530,16 @@ integer test, which the byte read's own check follows from; and the varint's pos
 at + 4`, then `page[q++]`) stays an integer through the inlined `xs[i]` (numrep tracks the tests
 of the loops around an integer counter, which its cap needs). The views of other element types
 test `i < length`, the same as a loop up to `length` does, so such a loop still drops it and
-vectorizes. `bench/typed_array/loops.ts`, instructions against the base: `u8`, `axpy`, `xor`,
-`nested` within 0.1%, `i32` -17.7% (a value is converted before it is stored, so the buffer is no
-longer counted around the conversion), and `dot` +199%: `main` inlines all six kernels there, and
-LLVM no longer takes the bound check of the second array out of the dot product's loop, because
-that array's length is now read from its buffer; `dot` alone, or with up to three other kernels,
-is 1% faster than the base.
+vectorizes. `bench/typed_array/loops.ts`, instructions against the base (the same compiler with
+the base's std): `u8`, `axpy`, `i32`, `xor`, `nested` within 0.3%, and `dot` -1.1%. (A value is
+converted before it is stored, so the buffer is not counted around the conversion; since #1850
+`main`'s std no longer counts it there either, so `i32` is the same.)
+`dot` needed a compiler change: `main` inlines all six kernels, and LLVM kept the bound check of
+the second array in the dot product's loop (+199.7%), because that array's length is now read
+from its buffer through two pointers LLVM cannot prove valid when the inner loop runs no
+iteration, so the length stayed inside the outer loop (with `dot` alone, LLVM unswitches the outer
+loop instead; with six kernels in one function its cost limit turns that off). `opt`'s
+`invariant_reads` now reads such a chain once in front of the loop nest, each pointer tested for
+null first, when the loops write no memory and call nothing. Against `main`'s own compiler the
+kernels take 37-80% fewer instructions (`nested` the same): there `numrep` skips this `main`,
+which has grown past its size limit, and the counters stay doubles.
