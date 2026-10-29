@@ -1,0 +1,39 @@
+// velt:sqlite/exec/like — the LIKE and GLOB operators, compiled: `x LIKE p [ESCAPE e]`.
+
+import { NULL } from "velt:sqlite/btree";
+import { SqlRunError } from "velt:sqlite/exec/errors";
+import { PatternInfo, cBytes, chars, patternMatch } from "velt:sqlite/exec/text";
+import { Val, intVal, nullVal, toText } from "velt:sqlite/exec/value";
+import { utf8Encode } from "velt:encoding";
+
+/** `x [NOT] LIKE p [ESCAPE esc]` (or GLOB): 1, 0, or NULL when an operand is NULL. */
+export function compileLike(
+  x: () => Val throws Error,
+  p: () => Val throws Error,
+  esc: (() => Val throws Error) | null,
+  glob: bool,
+  not: bool,
+): () => Val throws Error {
+  const plainInfo = new PatternInfo(glob, 0);
+  return () => {
+    const s = x();
+    const pt = p();
+    if (s.t == NULL || pt.t == NULL) {
+      return nullVal();
+    }
+    let info = plainInfo;
+    if (esc != null) {
+      const e = esc!();
+      if (e.t == NULL) {
+        return nullVal();
+      }
+      const cs = chars(utf8Encode(toText(e)));
+      if (cs.length != 1) {
+        throw new SqlRunError("ESCAPE expression must be a single character");
+      }
+      info = new PatternInfo(glob, cs[0]);
+    }
+    const m = patternMatch(cBytes(toText(pt)), cBytes(toText(s)), info);
+    return intVal(m != not ? 1 : 0);
+  };
+}

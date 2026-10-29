@@ -108,7 +108,7 @@ struct Wide {
 }
 
 /** a * b as 128 bits. */
-function mul128(a: u64, b: u64): Wide {
+export function mul128(a: u64, b: u64): Wide {
   const a0 = a & M32;
   const a1 = a >> 32;
   const b0 = b & M32;
@@ -144,7 +144,7 @@ function mul160(a: u64, aLo: u64, b: u64): Wide {
 }
 
 /** The top 64 bits of pow(10, p) (and the next 32 in `lo`), p in -348..347. */
-function powerOfTen(p: i64): Wide {
+export function powerOfTen(p: i64): Wide {
   let g: i64 = 0;
   let n: i64 = 0;
   if (p < 0) {
@@ -177,15 +177,15 @@ function powerOfTen(p: i64): Wide {
 }
 
 /** floor(log2(10^p)) and floor(log10(2^p)), as util.c approximates them. */
-function pwr10to2(p: i64): i64 {
+export function pwr10to2(p: i64): i64 {
   return (p * 108853) >> 15;
 }
 
-function pwr2to10(p: i64): i64 {
+export function pwr2to10(p: i64): i64 {
   return (p * 78913) >> 18;
 }
 
-function leadingZeros(m: u64): i64 {
+export function leadingZeros(m: u64): i64 {
   let n: i64 = 0;
   let x = m;
   if (x <= 0x00000000ffffffff) {
@@ -228,7 +228,7 @@ function toDecimal(m: u64, e: i64): Decimal {
 }
 
 /** The double nearest d * 10^p (sqlite3Fp10Convert2, after Russ Cox's fpfmt). */
-function toDouble(d: u64, p: i64): f64 {
+export function toDouble(d: u64, p: i64): f64 {
   if (p < -348) {
     return 0;
   }

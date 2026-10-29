@@ -1,0 +1,341 @@
+// velt:sqlite/exec/text — text as SQLite handles it: on UTF-8 bytes, with case folded for ASCII
+// letters only (no ICU), and the LIKE and GLOB matchers (patternCompare in SQLite's func.c).
+
+import { utf8Encode } from "velt:encoding";
+
+/** The byte length of `s`'s UTF-8. */
+export function byteLen(s: string): usize {
+  return __intrinsic_str_byte_len(s);
+}
+
+/** Byte `i` of `s`'s UTF-8 (in range). */
+export function byteAt(s: string, i: usize): u8 {
+  return __intrinsic_str_byte_at(s, i as u64);
+}
+
+/** `s` with ASCII letters in lower case. */
+export function asciiLower(s: string): string {
+  return mapAscii(s, 65, 90, 32);
+}
+
+/** `s` with ASCII letters in upper case. */
+export function asciiUpper(s: string): string {
+  return mapAscii(s, 97, 122, -32);
+}
+
+function mapAscii(s: string, lo: u8, hi: u8, delta: i64): string {
+  const n = byteLen(s);
+  let first: usize = n;
+  for (let i: usize = 0; i < n; i++) {
+    const c = byteAt(s, i);
+    if (c >= lo && c <= hi) {
+      first = i;
+      break;
+    }
+  }
+  if (first == n) {
+    return s;
+  }
+  const b = utf8Encode(s);
+  for (let i = first; i < n; i++) {
+    const c = b[i];
+    if (c >= lo && c <= hi) {
+      b[i] = ((c as i64) + delta) as u8;
+    }
+  }
+  return b.utf8Slice(0, n as i64);
+}
+
+/** The number of characters of `s` before its first NUL (SQLite's length() of text). */
+export function charLength(s: string): i64 {
+  const n = byteLen(s);
+  let k: i64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const c = byteAt(s, i);
+    if (c == 0) {
+      break;
+    }
+    if ((c & 0xc0) != 0x80) {
+      k++;
+    }
+  }
+  return k;
+}
+
+/** The byte offset of character `k` of `b` (or `b.length` past the end). */
+export function charOffset(b: u8[], k: i64): usize {
+  let i: usize = 0;
+  let seen: i64 = 0;
+  while (i < b.length && seen < k) {
+    i++;
+    while (i < b.length && (b[i] & 0xc0) == 0x80) {
+      i++;
+    }
+    seen++;
+  }
+  return i;
+}
+
+/** The character starting at byte `at` of `b`, as a code point, and its length in bytes. */
+export struct Char {
+  c: i64;
+  len: usize;
+}
+
+export function charAt(b: u8[], at: usize): Char {
+  const b0 = b[at] as i64;
+  if (b0 < 0xc0) {
+    return Char { c: b0, len: 1 };
+  }
+  let n: usize = b0 >= 0xf0 ? 4 : b0 >= 0xe0 ? 3 : 2;
+  let c = b0 & (n == 4 ? 0x07 : n == 3 ? 0x0f : 0x1f);
+  let k: usize = 1;
+  while (k < n && at + k < b.length && (b[at + k] & 0xc0) == 0x80) {
+    c = (c << 6) | ((b[at + k] & 0x3f) as i64);
+    k++;
+  }
+  return Char { c: c, len: k };
+}
+
+function lowerC(c: i64): i64 {
+  return c >= 65 && c <= 90 ? c + 32 : c;
+}
+
+function upperC(c: i64): i64 {
+  return c >= 97 && c <= 122 ? c - 32 : c;
+}
+
+/** Results of `patternCompare`. */
+const MATCH: i64 = 0;
+const NOMATCH: i64 = 1;
+const NOWILDCARD: i64 = 2;
+
+/** A LIKE or GLOB pattern's wildcards. */
+export class PatternInfo {
+  all: i64;
+  one: i64;
+  /** The ESCAPE character for LIKE, `[` for GLOB, or 0. */
+  other: i64;
+  noCase: bool;
+  glob: bool;
+
+  constructor(glob: bool, escape: i64) {
+    this.glob = glob;
+    this.all = glob ? 42 : 37;
+    this.one = glob ? 63 : 95;
+    this.other = glob ? 91 : escape;
+    this.noCase = !glob;
+  }
+}
+
+/** Whether `str` matches `pat` (both UTF-8). */
+export function patternMatch(pat: u8[], str: u8[], info: PatternInfo): bool {
+  return compare(pat, 0, str, 0, info) == MATCH;
+}
+
+function compare(p: u8[], pi0: usize, s: u8[], si0: usize, info: PatternInfo): i64 {
+  let pi = pi0;
+  let si = si0;
+  let escaped: i64 = -1;
+  while (pi < p.length) {
+    const pc = charAt(p, pi);
+    let c = pc.c;
+    pi += pc.len;
+    if (c == info.all) {
+      // Skip further wildcards; each `_` must consume a character.
+      while (pi < p.length) {
+        const n = charAt(p, pi);
+        if (n.c == info.all) {
+          pi += n.len;
+        } else if (n.c == info.one) {
+          pi += n.len;
+          if (si >= s.length) {
+            return NOWILDCARD;
+          }
+          si += charAt(s, si).len;
+        } else {
+          break;
+        }
+      }
+      if (pi >= p.length) {
+        return MATCH;
+      }
+      const nx = charAt(p, pi);
+      c = nx.c;
+      if (c == info.other) {
+        if (info.glob) {
+          if (si >= s.length) {
+            return NOWILDCARD;
+          }
+          while (si < s.length) {
+            const r = compare(p, pi, s, si, info);
+            if (r != NOMATCH) {
+              return r;
+            }
+            si += charAt(s, si).len;
+          }
+          return NOWILDCARD;
+        }
+        pi += nx.len;
+        if (pi >= p.length) {
+          return NOWILDCARD;
+        }
+        const esc = charAt(p, pi);
+        c = esc.c;
+        pi += esc.len;
+      } else {
+        pi += nx.len;
+      }
+      // A literal: try each place it occurs in the rest of the string.
+      while (si < s.length) {
+        const sc = charAt(s, si);
+        si += sc.len;
+        if (sc.c == c || (info.noCase && c < 0x80 && lowerC(sc.c) == lowerC(c))) {
+          const r = compare(p, pi, s, si, info);
+          if (r != NOMATCH) {
+            return r;
+          }
+        }
+      }
+      return NOWILDCARD;
+    }
+    if (c == info.other && info.other != 0) {
+      if (!info.glob) {
+        if (pi >= p.length) {
+          return NOMATCH;
+        }
+        const esc = charAt(p, pi);
+        c = esc.c;
+        pi += esc.len;
+        escaped = pi as i64;
+      } else {
+        // A character class: [abc], [a-z], [^x], []x].
+        if (si >= s.length) {
+          return NOMATCH;
+        }
+        const sc = charAt(s, si);
+        si += sc.len;
+        let seen = false;
+        let invert = false;
+        let prior: i64 = 0;
+        if (pi >= p.length) {
+          return NOMATCH;
+        }
+        let c2 = charAt(p, pi);
+        pi += c2.len;
+        if (c2.c == 94) {
+          invert = true;
+          if (pi >= p.length) {
+            return NOMATCH;
+          }
+          c2 = charAt(p, pi);
+          pi += c2.len;
+        }
+        if (c2.c == 93) {
+          if (sc.c == 93) {
+            seen = true;
+          }
+          if (pi >= p.length) {
+            return NOMATCH;
+          }
+          c2 = charAt(p, pi);
+          pi += c2.len;
+        }
+        let closed = false;
+        while (true) {
+          if (c2.c == 93) {
+            closed = true;
+            break;
+          }
+          if (c2.c == 45 && pi < p.length && p[pi] != 93 && prior > 0) {
+            const hi = charAt(p, pi);
+            pi += hi.len;
+            if (sc.c >= prior && sc.c <= hi.c) {
+              seen = true;
+            }
+            prior = 0;
+          } else {
+            if (sc.c == c2.c) {
+              seen = true;
+            }
+            prior = c2.c;
+          }
+          if (pi >= p.length) {
+            break;
+          }
+          c2 = charAt(p, pi);
+          pi += c2.len;
+        }
+        if (!closed || seen == invert) {
+          return NOMATCH;
+        }
+        continue;
+      }
+    }
+    if (si >= s.length) {
+      return NOMATCH;
+    }
+    const sc = charAt(s, si);
+    si += sc.len;
+    if (c == sc.c) {
+      continue;
+    }
+    if (info.noCase && c < 0x80 && sc.c < 0x80 && lowerC(c) == lowerC(sc.c)) {
+      continue;
+    }
+    if (c == info.one && (pi as i64) != escaped) {
+      continue;
+    }
+    return NOMATCH;
+  }
+  return si >= s.length ? MATCH : NOMATCH;
+}
+
+/** Uppercase hex of bytes. */
+export function hexUpper(b: u8[]): string {
+  const digits = "0123456789ABCDEF";
+  const out: u8[] = __intrinsic_array_with_capacity(b.length * 2);
+  for (const x of b) {
+    out.push(byteAt(digits, (x >> 4) as usize));
+    out.push(byteAt(digits, (x & 15) as usize));
+  }
+  return out.utf8Slice(0, out.length as i64);
+}
+
+/** Whether character `c` is in `set` (code points). */
+export function inSet(set: i64[], c: i64): bool {
+  for (const x of set) {
+    if (x == c) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The code points of `b`. */
+export function chars(b: u8[]): i64[] {
+  const out: i64[] = [];
+  let i: usize = 0;
+  while (i < b.length) {
+    const ch = charAt(b, i);
+    out.push(ch.c);
+    i += ch.len;
+  }
+  return out;
+}
+
+export function upperChar(c: i64): i64 {
+  return upperC(c);
+}
+
+/** The UTF-8 of `s` up to its first NUL (functions read text as a C string). */
+export function cBytes(s: string): u8[] {
+  const b = utf8Encode(s);
+  for (let i: usize = 0; i < b.length; i++) {
+    if (b[i] == 0) {
+      __intrinsic_array_truncate(b, i);
+      break;
+    }
+  }
+  return b;
+}

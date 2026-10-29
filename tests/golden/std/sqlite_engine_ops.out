@@ -1,0 +1,8 @@
+binary operators: 7260 cases, all the same
+minus and CAST: 132 cases, all the same
+LIKE and GLOB: 360 cases, all the same
+real:0.0
+integer:0
+real:9.2233720368547758e+18
+real:0.0
+real:9.2233720368547758e+18
