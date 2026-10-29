@@ -64,6 +64,34 @@ function cValue(db: Database, expr: string): string {
   return rows[0].d;
 }
 
+// `s LIKE p [ESCAPE e]` in the engine and in C SQLite, printed as the value or the error; a long
+// operand is shown by its length.
+function likeBoth(db: Database, s: Operand, p: Operand, e: Operand | null) {
+  const short = (o: Operand) => (o.sql.length > 40 ? `<${o.sql.length} chars of SQL>` : o.sql);
+  let sql = `${s.sql} LIKE ${p.sql}`;
+  let shown = `${short(s)} LIKE ${short(p)}`;
+  if (e != null) {
+    sql = `${sql} ESCAPE ${e!.sql}`;
+    shown = `${shown} ESCAPE ${e!.sql}`;
+  }
+  let mine = "";
+  try {
+    const ev = e != null ? e!.v : null;
+    mine = describe(
+      compileLike(() => s.v, () => p.v, ev != null ? () => ev! : null, false, false)(),
+    );
+  } catch (err) {
+    mine = `error "${err.message}"`;
+  }
+  let theirs = "";
+  try {
+    theirs = cValue(db, sql);
+  } catch (err) {
+    theirs = `error "${err.message}"`;
+  }
+  console.log(`${shown}: velt ${mine}, C ${theirs}`);
+}
+
 const OPERANDS: Operand[] = [
   Operand { sql: "NULL", v: nullVal() },
   Operand { sql: "0", v: intVal(0) },
@@ -226,6 +254,30 @@ function main() {
     theirs = e.message;
   }
   console.log(`a pattern of 50001 bytes: velt "${mine}", C "${theirs}"`);
+  // SQLite checks in likeFunc's order: the pattern's bytes (those after a NUL too) even when the
+  // string is NULL, then the ESCAPE (a NULL one gives NULL), and only then NULL operands.
+  const tooLong = "a".repeat(50001);
+  const afterNul = "a\u0000" + "b".repeat(50000);
+  const sqlNul = `'a' || char(0) || '${"b".repeat(50000)}'`;
+  const one = Operand { sql: "1", v: intVal(1) };
+  const twelve = Operand { sql: "12", v: intVal(12) };
+  const nothing = Operand { sql: "NULL", v: nullVal() };
+  likeBoth(db, nothing, Operand { sql: `'${tooLong}'`, v: textVal(tooLong) }, null);
+  const ab = Operand { sql: "'ab'", v: textVal("ab") };
+  likeBoth(
+    db,
+    Operand { sql: "'a'", v: textVal("a") },
+    Operand { sql: `'${tooLong}'`, v: textVal(tooLong) },
+    ab,
+  );
+  likeBoth(
+    db,
+    Operand { sql: "'a'", v: textVal("a") },
+    Operand { sql: sqlNul, v: textVal(afterNul) },
+    null,
+  );
+  likeBoth(db, nothing, one, twelve);
+  likeBoth(db, one, nothing, twelve);
 
   // A few results spelled out.
   console.log(describe(arithOp(OP_MUL, realVal(0.5), textVal("-0"))));

@@ -1,9 +1,10 @@
 // velt:sqlite/exec/fp — SQLite's own conversions between doubles and decimal text, ported from
 // its util.c and printf.c (3.53): `sqlite3FpDecode` (a double's significant digits, rounded as
 // printf asks), `sqlite3AtoF` (decimal text to a double), and the `%g`, `%f` and `%e` renderings
-// with the `!` flag. The powers of ten and `sqlite3Fp10Convert2` are velt:sqlite/real's. REAL values print and parse exactly as C SQLite's, which
-// does not always agree with the shortest round-trip form (`1.0/3` is 0.33333333333333331 in
-// C's printf and 0.33333333333333332 in SQLite).
+// with the `!` flag. The powers of ten and `sqlite3Fp10Convert2` are velt:sqlite/real's. REAL
+// values print and parse exactly as C SQLite's, which does not always agree with the shortest
+// round-trip form (`1.0/3` is 0.33333333333333331 in C's printf and 0.33333333333333332 in
+// SQLite).
 
 import { leadingZeros, mul128, powerOfTen, pwr10to2, pwr2to10, toDouble } from "velt:sqlite/real";
 
