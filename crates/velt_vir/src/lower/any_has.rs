@@ -19,7 +19,7 @@ use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
 use super::any::{TAG_NULL, TAG_NUMBER, TAG_STRING, TAG_UNDEFINED};
 use super::any_glue::OBJECT_PROTO;
-use super::any_has_builtin::{ARRAY_PROTO, FN_PROTO_NAMES, PROMISE_PROTO};
+use super::any_has_builtin::{ARRAY_PROTO, FN_OWN_UNKNOWN, FN_PROTO_NAMES, PROMISE_PROTO};
 use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
@@ -31,7 +31,7 @@ pub(super) const SLOT_HAS: i128 = 11;
 
 const HAS_NO: i128 = 0;
 pub(super) const HAS_YES: i128 = 1;
-const HAS_UNSUPPORTED: i128 = 2;
+pub(super) const HAS_UNSUPPORTED: i128 = 2;
 
 impl FnLower<'_, '_> {
     /// `AnyHas`: `k in o` with a string key, or an `any` key (a number names an element by its
@@ -131,9 +131,7 @@ impl FnLower<'_, '_> {
         self.branch(is_undef, u, n);
         for (b, word) in [(u, "undefined"), (n, "null")] {
             self.switch_to(b);
-            let head = "TypeError: Cannot use 'in' operator to search for '";
-            self.panic_with_key(head, key, &format!("' in {word}"));
-            self.terminate(Terminator::Unreachable);
+            self.in_type_error(key, |lw, bp| lw.push_text(bp, word));
         }
         self.switch_to(ok);
     }
@@ -181,6 +179,7 @@ impl FnLower<'_, '_> {
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.has_names(key, FN_PROTO_NAMES, HAS_YES);
+                self.has_names(key, FN_OWN_UNKNOWN, HAS_UNSUPPORTED);
                 self.has_names(key, &OBJECT_PROTO, HAS_YES);
                 self.ret_status(HAS_NO);
             }
@@ -286,6 +285,7 @@ impl FnLower<'_, '_> {
                 self.has_index_key(key, n, HAS_YES, HAS_NO);
             }
             self.has_names(key, b.names, HAS_YES);
+            self.has_names(key, b.extra, HAS_YES);
         }
         self.has_names(key, &OBJECT_PROTO, HAS_YES);
         self.ret_status(HAS_NO)

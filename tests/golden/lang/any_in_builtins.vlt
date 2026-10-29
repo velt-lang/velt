@@ -33,6 +33,10 @@ function lengthIn<T>(x: T): boolean {
   return "length" in x;
 }
 
+function declaredFn(x: number): number {
+  return x;
+}
+
 function main(): void {
   const k: any = new Kept();
   console.log("kept", "q" in k, "base" in k, "hello" in k, "label" in k, "valueOf" in k);
@@ -56,6 +60,12 @@ function main(): void {
   console.log("weakmap", "get" in wm, "size" in wm);
   const arrow: any = (x: number): number => x + 1;
   console.log("arrow", "call" in arrow, "bind" in arrow, "foo" in arrow);
+  const asyncArrow: any = async (): Promise<number> => 1;
+  const method: any = new Base().hello;
+  const declared: any = declaredFn;
+  console.log("async arrow", "call" in asyncArrow, "name" in asyncArrow, "foo" in asyncArrow);
+  console.log("method", "apply" in method, "length" in method, "foo" in method);
+  console.log("declared", "bind" in declared, "caller" in declared, "foo" in declared);
   // A function given a property through `any` (#1772) has it.
   const g: any = function tagged(): number {
     return 1;
@@ -93,11 +103,22 @@ function main(): void {
     lengthIn(new Set<number>()),
   );
   const dv: any = new DataView(new ArrayBuffer(4));
-  console.log("dataview", "getInt8" in dv, "byteLength" in dv, "foo" in dv);
+  console.log("dataview", "getInt8" in dv, "byteLength" in dv, "foo" in dv, "at" in dv);
+  console.log(
+    "dataview",
+    "getFloat16" in dv,
+    "setFloat16" in dv,
+    "getBigInt64" in dv,
+    "setBigInt64" in dv,
+  );
+  console.log("dataview", "getBigUint64" in dv, "setBigUint64" in dv, Symbol.toStringTag in dv);
   const ab: any = new ArrayBuffer(4);
   console.log("buffer", "byteLength" in ab, "slice" in ab, "len" in ab);
   const f64: any = new Float64Array([1, 2, 3]);
   console.log("f64", 2 in f64, 3 in f64, "1.0" in f64, "map" in f64);
+  const u8: any = new Uint8Array(2);
+  console.log("u8", "toBase64" in u8, "toHex" in u8, "setFromBase64" in u8, "setFromHex" in u8);
+  console.log("f64 base64", "toBase64" in f64, "toHex" in f64, "setFromHex" in f64);
   const nested: any = [[1], [2, 3]];
   console.log("nested", 1 in nested, 0 in nested[1], 1 in nested[1], 2 in nested[1]);
   const big: any = new Array<number>(5).fill(0);

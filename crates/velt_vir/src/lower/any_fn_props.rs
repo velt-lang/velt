@@ -17,24 +17,12 @@
 use velt_sema::hir::{Nothing, TyId, TyKind};
 
 use super::any_glue::OBJECT_PROTO;
+use super::any_has_builtin::{FN_OWN_UNKNOWN, FN_PROTO_NAMES};
 use super::any_member::{SLOT_APPLY, ST_OK, ST_UNSUPPORTED};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
-
-/// What every function has from JavaScript itself or `Function.prototype`, not supported
-/// through `any` yet.
-const FN_PROTO: [&str; 8] = [
-    "name",
-    "length",
-    "prototype",
-    "call",
-    "apply",
-    "bind",
-    "caller",
-    "arguments",
-];
 
 impl FnLower<'_, '_> {
     /// Is `ty` a function type whose values may carry properties (a program with writes
@@ -111,11 +99,11 @@ impl FnLower<'_, '_> {
         self.store(out.clone(), v);
         self.ret_status(ST_OK);
         self.switch_to(absent);
-        for name in FN_PROTO.iter().chain(OBJECT_PROTO.iter()) {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        // What every function has from JavaScript itself or `Function.prototype`, not
+        // supported through `any` yet.
+        self.has_names(key, FN_PROTO_NAMES, ST_UNSUPPORTED);
+        self.has_names(key, FN_OWN_UNKNOWN, ST_UNSUPPORTED);
+        self.has_names(key, &OBJECT_PROTO, ST_UNSUPPORTED);
         self.any_nothing_into(Nothing::Undefined, out);
         self.ret_status(ST_OK);
     }
@@ -192,7 +180,9 @@ impl FnLower<'_, '_> {
         let (_, absent) = self.fn_prop_find(data, key, ty);
         self.ret_status(yes);
         self.switch_to(absent);
-        self.has_names(key, super::any_has_builtin::FN_PROTO_NAMES, yes);
+        self.has_names(key, FN_PROTO_NAMES, yes);
+        // A declared function's own `prototype` or an arrow's none: not known here.
+        self.has_names(key, FN_OWN_UNKNOWN, super::any_has::HAS_UNSUPPORTED);
         self.has_names(key, &OBJECT_PROTO, yes);
         self.ret_status(no);
     }

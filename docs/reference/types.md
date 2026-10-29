@@ -3483,15 +3483,18 @@ its fields, methods and accessors (a class's inherited ones too) and what every 
 `Object.prototype` (`toString`), a `Record<string, V>` its keys and, unless `Object.create(null)`
 made it, what every object has. An array (or a tuple) has its element indexes (`0 in xs`,
 `"1" in xs`; not `"01"`), `length` and `Array.prototype`'s methods (`"push" in xs`,
-`Symbol.iterator in xs`); a typed array its indexes and `%TypedArray%.prototype`'s members; a
-function `call`, `apply`, `bind`, `name` and `length`; a `Map`, `Set`, `WeakMap`, `WeakSet`,
-`Date`, `RegExp`, `Error`, `ArrayBuffer` or `Promise` what its JavaScript prototype has
-(`"size" in map`, never a map's entries). A string, number, boolean or symbol stops with Node's
-`TypeError: Cannot use 'in' operator to search for 'k' in str`, and a `null` or `undefined`
-value with `... in undefined`. An optional field of a nullable type in an object type
+`Symbol.iterator in xs`); a typed array its indexes and `%TypedArray%.prototype`'s members (a
+`Uint8Array` also `toBase64`, `toHex`, `setFromBase64` and `setFromHex`); a function `call`,
+`apply`, `bind`, `name` and `length`; a `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`,
+`Error`, `ArrayBuffer`, `DataView` or `Promise` what its JavaScript prototype has (`"size" in
+map`, never a map's entries). A function's `prototype` (which a declared function has and an
+arrow or a method has not) stops with a `TypeError` naming #823 for now. A string, number,
+boolean or symbol stops with Node's `TypeError: Cannot use 'in' operator to search for 'k' in
+str`, and a `null` or `undefined` value with `... in undefined` (a symbol key shown as Node
+shows it, `'Symbol(Symbol.iterator)'`). An optional field of a nullable type in an object type
 (`a?: T | null`), which keeps "absent" apart, is there while present; another optional field
-of an object type (which cannot tell "absent" from a present `undefined`) stops with a
-`TypeError` naming #823 for now.
+of an object type is there while it holds a value, so `{ a: undefined }` given to an
+`a?: number` field reads as absent.
 
 ```ts
 const C = Symbol("computed");

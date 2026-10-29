@@ -5,9 +5,10 @@
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
+use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
+use crate::vir::{self, BinOp, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
 /// `Array.prototype`, besides `length` and `Object.prototype`'s names.
 pub(super) const ARRAY_PROTO: &[&str] = &[
@@ -229,11 +230,44 @@ const ARRAY_BUFFER_PROTO: &[&str] = &[
     "[Symbol.toStringTag]",
 ];
 
-/// What `Function.prototype` has besides `Object.prototype`'s names.
+/// `Uint8Array.prototype`'s own names besides those every kind's prototype has.
+const UINT8_ARRAY_PROTO: &[&str] = &["toBase64", "setFromBase64", "toHex", "setFromHex"];
+
+const DATA_VIEW_PROTO: &[&str] = &[
+    "buffer",
+    "byteLength",
+    "byteOffset",
+    "getInt8",
+    "setInt8",
+    "getUint8",
+    "setUint8",
+    "getInt16",
+    "setInt16",
+    "getUint16",
+    "setUint16",
+    "getInt32",
+    "setInt32",
+    "getUint32",
+    "setUint32",
+    "getFloat16",
+    "setFloat16",
+    "getFloat32",
+    "setFloat32",
+    "getFloat64",
+    "setFloat64",
+    "getBigInt64",
+    "setBigInt64",
+    "getBigUint64",
+    "setBigUint64",
+    "[Symbol.toStringTag]",
+];
+
+/// What `Function.prototype` has besides `Object.prototype`'s names. A function's own
+/// `prototype` is not among them: a declared function or a class has one, an arrow or a method
+/// has none, and the value held does not say which it is (`FN_OWN_UNKNOWN`).
 pub(super) const FN_PROTO_NAMES: &[&str] = &[
     "name",
     "length",
-    "prototype",
     "call",
     "apply",
     "bind",
@@ -241,6 +275,9 @@ pub(super) const FN_PROTO_NAMES: &[&str] = &[
     "arguments",
     "[Symbol.hasInstance]",
 ];
+
+/// The own properties some functions have and others do not (`FN_PROTO_NAMES`).
+pub(super) const FN_OWN_UNKNOWN: &[&str] = &["prototype"];
 
 /// The JavaScript built-in a standard library class stands for, by its name.
 fn builtin_proto(short: &str) -> Option<&'static [&'static str]> {
@@ -253,6 +290,7 @@ fn builtin_proto(short: &str) -> Option<&'static [&'static str]> {
         "RegExp" => REGEXP_PROTO,
         "Error" => ERROR_PROTO,
         "ArrayBuffer" => ARRAY_BUFFER_PROTO,
+        "DataView" => DATA_VIEW_PROTO,
         "TypedArray" => TYPED_ARRAY_PROTO,
         _ => return None,
     })
@@ -262,6 +300,8 @@ fn builtin_proto(short: &str) -> Option<&'static [&'static str]> {
 /// built-in's prototype, the standard library class (or base class) standing for it.
 pub(super) struct Builtin {
     pub(super) names: &'static [&'static str],
+    /// The names one kind adds to its family's (a `Uint8Array`'s base64 and hex methods).
+    pub(super) extra: &'static [&'static str],
     /// A typed array: its element indexes, up to the `len` field at this index.
     pub(super) typed_len: Option<u32>,
 }
@@ -287,7 +327,16 @@ impl FnLower<'_, '_> {
                             .unwrap_or_else(|| super::ice("TypedArray without len"))
                             as u32
                     });
-                    return Some(Builtin { names, typed_len });
+                    let own = self.cx.adt_def(d).name.rsplit("::").next();
+                    let extra = match own {
+                        Some("Uint8Array") if typed_len.is_some() => UINT8_ARRAY_PROTO,
+                        _ => &[],
+                    };
+                    return Some(Builtin {
+                        names,
+                        extra,
+                        typed_len,
+                    });
                 }
             }
             cur = match a.base.map(|b| self.cx.kind(b)) {
@@ -358,26 +407,124 @@ impl FnLower<'_, '_> {
     /// type `ty` (a string, number, boolean or symbol) at the data pointer `data`.
     pub(super) fn has_primitive_error(&mut self, data: vir::Local, key: vir::Local, ty: TyId) {
         let vp = self.any_value_place(data, ty);
+        self.in_type_error(&Operand::Copy(Place::local(key)), |lw, bp| {
+            match lw.cx.kind(ty) {
+                TyKind::Str => {
+                    let a = lw.addr(vp);
+                    lw.push_str(bp, a);
+                }
+                TyKind::Symbol => lw.call_rt(
+                    Rt::StrbufPushSymbol,
+                    vec![bp.clone(), Operand::Copy(vp)],
+                    None,
+                ),
+                _ => lw.push_scalar(bp, Operand::Copy(vp), ty),
+            }
+        });
+    }
+
+    /// Stop with Node's `TypeError: Cannot use 'in' operator to search for 'k' in <value>`: the
+    /// key at address `key` as Node shows it, then what `value` appends.
+    pub(super) fn in_type_error(&mut self, key: &Operand, value: impl FnOnce(&mut Self, &Operand)) {
         let (_, bp) = self.new_strbuf(0);
         self.push_text(&bp, "TypeError: Cannot use 'in' operator to search for '");
-        self.push_str(&bp, Operand::Copy(Place::local(key)));
+        self.push_key_text(&bp, key);
         self.push_text(&bp, "' in ");
-        match self.cx.kind(ty) {
-            TyKind::Str => {
-                let a = self.addr(vp);
-                self.push_str(&bp, a);
-            }
-            TyKind::Symbol => self.call_rt(
-                Rt::StrbufPushSymbol,
-                vec![bp.clone(), Operand::Copy(vp)],
-                None,
-            ),
-            _ => self.push_scalar(&bp, Operand::Copy(vp), ty),
-        }
+        value(self, &bp);
         let text = self.temp(Ty::Agg(STR_AGG));
         let tp = self.addr(Place::local(text));
         self.call_rt(Rt::StrbufFinish, vec![bp, tp.clone()], None);
         self.call_rt(Rt::Panic, vec![tp], None);
         self.terminate(Terminator::Unreachable);
+    }
+
+    /// Append the key at address `key` as Node shows a property key: a well-known symbol's key
+    /// name (`[Symbol.iterator]`) as `Symbol(Symbol.iterator)`, a symbol constant's (U+FFFF
+    /// first, sema's `symbol_key_name`) without that mark, any other key as it is.
+    fn push_key_text(&mut self, bp: &Operand, key: &Operand) {
+        const WELL_KNOWN: &[u8] = b"[Symbol.";
+        const MARK: &[u8] = "\u{FFFF}".as_bytes();
+        let kp = self.operand_place(key.clone(), Ty::Ptr);
+        let kp = proj(&kp, Proj::Deref(Ty::Agg(STR_AGG)));
+        let n = self.str_bytes(&kp);
+        let units = self.str_len(Operand::Copy(kp.clone()));
+        let (done, wk, other) = (self.new_block(), self.new_block(), self.new_block());
+        // `[Symbol.x]`: ASCII (as many bytes as units), longer than the prefix, `]` last.
+        let long = Rvalue::Binary(
+            BinOp::Gt,
+            n.clone(),
+            cint(WELL_KNOWN.len() as i128, Ty::U64),
+        );
+        let long = self.rvalue_temp(Ty::Bool, long);
+        let ascii = Rvalue::Binary(BinOp::Eq, n.clone(), units.clone());
+        let ascii = self.rvalue_temp(Ty::Bool, ascii);
+        let (tail, checks) = (self.new_block(), self.new_block());
+        self.branch(long, tail, other);
+        self.switch_to(tail);
+        self.branch(ascii, checks, other);
+        self.switch_to(checks);
+        let last = self.u64_op(BinOp::Sub, n.clone(), cint(1, Ty::U64));
+        let mut want: Vec<(Operand, u8)> = (WELL_KNOWN.iter().enumerate())
+            .map(|(i, b)| (cint(i as i128, Ty::U64), *b))
+            .collect();
+        want.push((last, b']'));
+        self.bytes_or(&kp, &want, wk, other);
+        self.switch_to(wk);
+        self.push_text(bp, "Symbol(");
+        let inner = self.u64_op(BinOp::Sub, n.clone(), cint(2, Ty::U64));
+        self.push_key_bytes(bp, &kp, 1, inner.clone(), inner);
+        self.push_text(bp, ")");
+        self.goto(done);
+        // A symbol constant's key: U+FFFF (three bytes, one unit), then `Symbol(desc)`.
+        self.switch_to(other);
+        let (mark, plain, marked) = (self.new_block(), self.new_block(), self.new_block());
+        let room = Rvalue::Binary(BinOp::Ge, n.clone(), cint(MARK.len() as i128, Ty::U64));
+        let room = self.rvalue_temp(Ty::Bool, room);
+        self.branch(room, mark, plain);
+        self.switch_to(mark);
+        let want: Vec<(Operand, u8)> = (MARK.iter().enumerate())
+            .map(|(i, b)| (cint(i as i128, Ty::U64), *b))
+            .collect();
+        self.bytes_or(&kp, &want, marked, plain);
+        self.switch_to(marked);
+        let bytes = self.u64_op(BinOp::Sub, n, cint(MARK.len() as i128, Ty::U64));
+        let units = self.u64_op(BinOp::Sub, units, cint(1, Ty::U64));
+        self.push_key_bytes(bp, &kp, MARK.len() as i128, bytes, units);
+        self.goto(done);
+        self.switch_to(plain);
+        self.push_str(bp, key.clone());
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// Branch to `yes` when each byte of the string at `p` at the given offset (all in range)
+    /// is the one given, else to `no`.
+    fn bytes_or(&mut self, p: &Place, want: &[(Operand, u8)], yes: BlockId, no: BlockId) {
+        for (i, b) in want {
+            let got = self.str_byte_at(Operand::Copy(p.clone()), i.clone());
+            let eq = Rvalue::Binary(BinOp::Eq, got, cint(*b as i128, Ty::U8));
+            let eq = self.rvalue_temp(Ty::Bool, eq);
+            let next = self.new_block();
+            self.branch(eq, next, no);
+            self.switch_to(next);
+        }
+        self.goto(yes);
+    }
+
+    /// Append `bytes` bytes (`units` UTF-16 units) of the string at `p` from byte `from`.
+    fn push_key_bytes(
+        &mut self,
+        bp: &Operand,
+        p: &Place,
+        from: i128,
+        bytes: Operand,
+        units: Operand,
+    ) {
+        let data = self.str_data(p);
+        let at = Rvalue::Binary(BinOp::PtrAdd, data, cint(from, Ty::U64));
+        let at = self.rvalue_temp(Ty::Ptr, at);
+        let hi = self.u64_op(BinOp::Shl, units, cint(32, Ty::U64));
+        let w1 = self.u64_op(BinOp::BitOr, hi, bytes);
+        self.call_rt(Rt::StrbufPushBytes, vec![bp.clone(), at, w1], None);
     }
 }

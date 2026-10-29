@@ -158,7 +158,7 @@ impl FnLower<'_, '_> {
 
     /// Where the UTF-8 bytes of the string at `p` are (a `Ptr`): inside the value for an inline
     /// string, else its pointer. No branch.
-    fn str_data(&mut self, p: &Place) -> Operand {
+    pub(super) fn str_data(&mut self, p: &Place) -> Operand {
         let w2 = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(2)))));
         let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
         let fill = self.rvalue_temp(
