@@ -1,5 +1,0 @@
-page: text/html; charset=utf-8 true
-<html><head><title>News &amp; posts</title></head><body><h1>Today</h1><section><p class="note">ready</p><ul><li id="post-1">Velt &lt;3 HTTP</li><li id="post-2">Streaming &amp; SSR</li></ul></section><footer>end</footer></body></html>
-head first, posts not yet: true
-chunked: true complete: true late: true
-same as renderToString: true chunked

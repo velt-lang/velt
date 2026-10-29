@@ -1,0 +1,87 @@
+// TSX pages (velt:jsx) served by velt:http/server.
+import { channel } from "velt:channel";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { renderToStream, renderToString } from "velt:jsx";
+import { connect } from "velt:net";
+import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import "velt:test/http";
+import { page, Post } from "./_jsx_page";
+
+function posts(): Post[] {
+  return [new Post(1, "Velt <3 HTTP"), new Post(2, "Streaming & SSR")];
+}
+
+const PAGE =
+  '<html><head><title>News &amp; posts</title></head><body><h1>Today</h1><section><p class="note">ready</p>' +
+  '<ul><li id="post-1">Velt &lt;3 HTTP</li><li id="post-2">Streaming &amp; SSR</li></ul></section>' +
+  "<footer>end</footer></body></html>";
+
+describe("TSX pages", () => {
+  // `renderToString` sent whole, and `renderToStream` streamed with `sendStream`: the markup
+  // above a pending async component reaches the client before the component loads (it loads
+  // only once the client has seen the head), and the streamed page is byte-identical to
+  // `renderToString` of the same tree. Text is escaped. (Was the golden std/http_server_jsx.)
+  const gate = channel<string>();
+  let port = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      if (req.pathIs("/page")) {
+        const html = await renderToString(page(null, posts()));
+        res.html(html);
+      } else if (req.pathIs("/stream")) {
+        await res.sendStream(renderToStream(page(gate.clone(), posts())));
+      } else if (req.pathIs("/stream-now")) {
+        await res.sendStream(renderToStream(page(null, posts())));
+      } else {
+        res.status(404);
+        res.send("no");
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => {
+    close();
+    gate.close();
+  });
+
+  it("renderToString is sent whole, escaped, with a length", async () => {
+    const whole = await fetch(`http://127.0.0.1:${port}/page`);
+    expect(whole).toHaveHeader("content-type", "text/html; charset=utf-8");
+    expect(whole).toHaveHeader("content-length");
+    expect(await whole.text()).toBe(PAGE);
+  });
+
+  it("renderToStream sends the head before a pending component loads", async () => {
+    const c = await connect(`127.0.0.1:${port}`);
+    await c.write("GET /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let received = "";
+    let told = false;
+    let postsBeforeGate = true;
+    while (true) {
+      const chunk = await c.readString();
+      if (chunk == "") {
+        break;
+      }
+      received += chunk;
+      if (!told && received.includes("<h1>Today</h1>")) {
+        told = true;
+        postsBeforeGate = received.includes("post-1");
+        await gate.send("loaded late");
+      }
+    }
+    c.close();
+    expect(told).toBe(true);
+    expect(postsBeforeGate).toBe(false);
+    expect(received).toContain("Transfer-Encoding: chunked");
+    expect(received).toContain("<footer>end</footer>");
+    expect(received).toContain("loaded late");
+  });
+
+  it("renderToStream sends the same bytes as renderToString, chunked", async () => {
+    const streamed = await fetch(`http://127.0.0.1:${port}/stream-now`);
+    expect(streamed).toHaveHeader("transfer-encoding", "chunked");
+    expect(await streamed.text()).toBe(PAGE);
+  });
+});

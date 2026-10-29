@@ -1,4 +1,4 @@
-// A page in TSX for `http_server_jsx.vlt`: a layout component, a list, escaped text and an async
+// A page in TSX for `jsx.test.vlt`: a layout component, a list, escaped text and an async
 // component that loads when told to (`gate`), so the test can see the markup above it arrive
 // first.
 
