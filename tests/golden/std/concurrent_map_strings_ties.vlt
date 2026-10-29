@@ -17,12 +17,12 @@ const N: u64 = 12000;
 
 /** Tied key `j` (all "https://"), in key order as `j` grows. */
 function url(j: u64): string {
-  return `https://example.com/items/${`${j}`.padStart(6, "0")}`;
+  return `https://example.com/items/${String(j).padStart(6, "0")}`;
 }
 
 /** Key `j` in groups of 100 that share their first 8 bytes ("g000::::" and on), in key order. */
 function grouped(j: u64): string {
-  return `g${`${j / 100}`.padStart(3, "0")}::::${`${j}`.padStart(6, "0")}`;
+  return `g${String(j / 100).padStart(3, "0")}::::${String(j).padStart(6, "0")}`;
 }
 
 /** Key `j` in a scrambled order (7919 is prime, so this visits every `j` below `N` once). */
