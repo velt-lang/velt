@@ -257,6 +257,10 @@ expressions (exported ones too):
   converts to any function type with its parameters (`() => void`, `() => number`);
 - `Promise<T>` for an `async` function, `T` from its returns.
 
+A function declared to return `never` must not reach its end, as in TypeScript (TS2534): every
+path throws, loops forever or calls another `never` function. `function f(x: number): never {
+if (x > 0) { throw new Error("p"); } }` is an error.
+
 Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
 a narrowed `T | null` result divide like `number`s, and a method returning integers that a
 subclass overrides returns `number` (`f64`), so an override may return `2.5`.

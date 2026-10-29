@@ -734,6 +734,25 @@ impl FnCx<'_, '_> {
         block: &mut hir::Block,
         from_context: bool,
     ) {
+        // A function declared to return `never` must not reach its end (TS2534): its callers
+        // take it as never returning, so a reachable end would return where nothing follows.
+        if ret == self.cx.ty.never
+            && !self.f.is_async
+            && self.f.yield_ty.is_none()
+            && !crate::flow::block_diverges(block, &self.cx.ty)
+        {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "function `{short}` returns `never`, so it cannot have a reachable end point"
+                    ),
+                    span,
+                )
+                .with_note("throw, loop forever or call a `never` function on every path"),
+            );
+            return;
+        }
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
             && !crate::flow::block_diverges(block, &self.cx.ty)
