@@ -34,13 +34,15 @@ use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::defs::FnKind;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, Pat, PatKind,
-    Stmt, StmtKind as S, TyKind, UseMode,
+    Callee, Capture, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId,
+    PassMode, Pat, PatKind, Stmt, StmtKind as S, TyKind, UseMode,
 };
 use crate::ownership::validate::place_text;
 use crate::visit::{self, VisitMut};
 
-use uses::{Access, Aliases, Collector, Place, Proj, Use};
+use uses::{shown, Access, Aliases, Collector, Place, Proj, Use};
+
+use super::closure_names::Closures;
 
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
     let fns: Vec<DefId> = cx
@@ -49,7 +51,14 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
+    // Which closure a local names, for the closures and functions used as values of the
+    // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
+    // every body is in place.
+    let mut closures: Option<Closures> = None;
     for d in fns {
+        if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
+            closures = Some(Closures::of(cx));
+        }
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
@@ -79,11 +88,15 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
+        let params: Vec<(LocalId, LocalId)> = aliases.iter().map(|(l, p)| (*l, p.root)).collect();
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
             locals: &f.body.locals,
             aliases,
+            params,
+            at: (d, &f.captures),
+            closures: closures.as_ref(),
             held: &held,
             soft: &soft,
             errors: vec![],
@@ -319,11 +332,24 @@ fn share_capture(cx: &mut Ctx, c: DefId, outer: LocalId) {
 /// so they all stand for the first one.
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     let mut out = Aliases::default();
-    let info = cx.fn_info(d);
-    let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
-    if !as_value {
+    if !as_value(cx, d) {
         return out;
     }
+    for (l, root) in alias_groups(cx, f) {
+        out.insert(l, Place { root, proj: vec![] });
+    }
+    out
+}
+
+/// Is `d` a closure or a function used as a value?
+fn as_value(cx: &Ctx, d: DefId) -> bool {
+    cx.fn_info(d).kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d)
+}
+
+/// The non-Copy declared params of `f`, each with the first param it may be the same value as
+/// (itself if none).
+fn alias_groups(cx: &mut Ctx, f: &FnDef) -> FxHashMap<LocalId, LocalId> {
+    let mut out = FxHashMap::default();
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
     // Params that may be the same value (directly or through another, `any`) are one place.
     let params: Vec<(LocalId, crate::hir::TyId)> = f.params[first..]
@@ -350,7 +376,7 @@ fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     }
     for i in 0..params.len() {
         let root = params[find(&mut set, i)].0;
-        out.insert(params[i].0, Place { root, proj: vec![] });
+        out.insert(params[i].0, root);
     }
     out
 }
@@ -376,6 +402,12 @@ struct Checker<'a, 'm> {
     cx: &'a Ctx<'m>,
     locals: &'a [LocalDef],
     aliases: Aliases,
+    /// The params `aliases` makes one place ([`aliasing_params`]), each with that place.
+    params: Vec<(LocalId, LocalId)>,
+    /// The function checked, and its captures.
+    at: (DefId, &'a [Capture]),
+    /// Which closure a local names; `None` before a program's closure is checked.
+    closures: Option<&'a Closures>,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
     held: &'a FxHashMap<LocalId, DefId>,
     /// The function's soft moves (`FnInfo::soft_moves`).
@@ -426,6 +458,7 @@ impl Checker<'_, '_> {
         mutex_with: bool,
         held: Option<(DefId, Span)>,
         key_only: bool,
+        callee: Option<&Callee>,
     ) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
@@ -457,19 +490,79 @@ impl Checker<'_, '_> {
             drop_key_through_receiver(&mut uses);
         }
         let shared = share_borrowed_captures(&mut uses);
-        if let Some(d) = first_conflict(&uses) {
+        // Two whole params passed on to a callee checked with its params as one place
+        // (`relaxed_callee`) are what it was checked for. Only such a pair of direct uses: a
+        // nested use (a param changed while another argument is evaluated) keeps its conflict.
+        let whole = |u: &Use| {
+            u.place.proj.is_empty()
+                && !u.captured
+                && (self.params.iter()).any(|(l, root)| {
+                    *root == u.place.root && self.locals[l.0 as usize].name == u.text
+                })
+        };
+        let relaxed = std::cell::OnceCell::new();
+        let skip = |u: &Use, w: &Use| {
+            whole(u)
+                && whole(w)
+                && u.text != w.text
+                && *relaxed.get_or_init(|| callee.is_some_and(|c| self.relaxed_callee(c)))
+        };
+        if let Some(d) = first_conflict(&uses, &skip) {
             self.errors.push(d);
         } else if !shared.is_empty() {
             // The conflict the shares resolve, for a closure that turns out to modify.
             for &(i, k, ..) in &shared {
                 uses[i].0[k].access = Access::Move;
             }
-            if let Some(err) = first_conflict(&uses) {
+            if let Some(err) = first_conflict(&uses, &skip) {
                 for (_, _, c, outer) in shared {
                     self.shares.push((c, outer, err.clone()));
                 }
             }
         }
+    }
+}
+
+impl Checker<'_, '_> {
+    /// Is `callee` a function checked as if its params may be one value, which assumes no
+    /// exclusive access for any of them (a closure, or a function used as a value, whose
+    /// modified params are `Borrow`, `finish::demote_fn_values`)? Two whole params of this
+    /// function that may be one value (`mount(vnode, container)` passing both on, in a renderer
+    /// whose nested functions are closures) are then what that callee was checked for (#1383),
+    /// as in JavaScript, where they are one object. Not a part of one with the other (`(a.log,
+    /// b)`: the callee was checked with an array and an object it can't contain), nor a param
+    /// changed while another argument is evaluated, nor a named function that takes one of them
+    /// `BorrowMut`: its body assumes they are not one value.
+    fn relaxed_callee(&self, callee: &Callee) -> bool {
+        if self.params.is_empty() {
+            return false;
+        }
+        let h = match callee {
+            Callee::Def(h, _) => *h,
+            Callee::Indirect(c) => match c.kind {
+                E::Local(l, _) => {
+                    let cx = self.cx;
+                    let caps_of = |g: DefId| -> &[Capture] {
+                        match &cx.defs[g.0 as usize] {
+                            Some(Def::Fn(p)) => &p.captures,
+                            _ => &[],
+                        }
+                    };
+                    let Some(closures) = self.closures else {
+                        return false;
+                    };
+                    match closures.resolve(self.at.0, self.at.1, l, caps_of) {
+                        Some(h) => h,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let info = self.cx.fn_info(h);
+        let loose = info.kind == FnKind::Closure || self.cx.fn_values.iter().any(|(v, ..)| *v == h);
+        loose && info.this.is_none() && info.params.iter().all(|p| p.mode != PassMode::BorrowMut)
     }
 }
 
@@ -559,7 +652,8 @@ fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, Loca
     out
 }
 
-fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
+/// `skip`: a pair of direct uses that is no conflict.
+fn first_conflict(uses: &ArgUses, skip: &dyn Fn(&Use, &Use) -> bool) -> Option<Diagnostic> {
     for (i, (direct_i, _)) in uses.iter().enumerate() {
         for (j, (direct_j, nested_j)) in uses.iter().enumerate() {
             if i == j {
@@ -567,7 +661,7 @@ fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
             }
             for u in direct_i {
                 if i < j {
-                    let hit = direct_j.iter().find(|w| clash(u, w));
+                    let hit = direct_j.iter().find(|w| clash(u, w) && !skip(u, w));
                     if let Some(w) = hit {
                         return Some(report_direct(u, w));
                     }
@@ -608,22 +702,22 @@ fn report(held: &Use, other: &Use) -> Diagnostic {
     let it = if held.text == other.text {
         "it".to_string()
     } else {
-        format!("`{}`", held.text)
+        shown(&held.text)
     };
-    let name = &other.text;
+    let name = shown(&other.text);
     let msg = match (held.access, other.access) {
         (Access::Unique, _) => {
-            format!("cannot use `{name}` here: this call may modify {it} through another argument")
+            format!("cannot use {name} here: this call may modify {it} through another argument")
         }
         (_, Access::Move) => {
-            format!("cannot move `{name}` here: {it} is already borrowed by this call")
+            format!("cannot move {name} here: {it} is already borrowed by this call")
         }
-        _ => format!("cannot modify `{name}` here: {it} is already borrowed by this call"),
+        _ => format!("cannot modify {name} here: {it} is already borrowed by this call"),
     };
     let label = match (held.access, held.captured) {
-        (Access::Unique, true) => format!("`{}` is modified by this closure", held.text),
+        (Access::Unique, true) => format!("{} is modified by this closure", shown(&held.text)),
         (Access::Unique, false) => "may be modified through this argument".to_string(),
-        (_, true) => format!("`{}` is captured by this closure", held.text),
+        (_, true) => format!("{} is captured by this closure", shown(&held.text)),
         (_, false) => "borrowed here".to_string(),
     };
     Diagnostic::error(msg, other.span)
@@ -686,9 +780,9 @@ impl VisitMut for Checker<'_, '_> {
                 let key_only = args.len() == 2
                     && by_identity(self.cx, args[1].ty)
                     && identity_key_call(self.cx, callee);
-                self.check_call(args, mutex_with, held, key_only);
+                self.check_call(args, mutex_with, held, key_only, Some(callee));
             }
-            E::New { args, .. } => self.check_call(args, false, None, false),
+            E::New { args, .. } => self.check_call(args, false, None, false, None),
             _ => {}
         }
     }

@@ -179,6 +179,23 @@ variables that refer to the same object (`const ys = xs; append(xs, ys)`) are al
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 So is a closure argument that takes over a variable another argument only borrows
 (`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
+The parameters of a closure (or of a function used as a value) may be one object, since a call
+through a function value can pass the same object twice. Such a closure may pass two of them on
+whole to another closure, which is checked the same way (`mount(vnode, container)` calling
+`mountComponent(vnode, container)` in a renderer whose nested functions use its variables). Passing
+them to a named function that modifies one of them is still an error. So is a part of one with
+another when the check sees the callee modify one (`mountComponent(vnode.kids[0], container)`). When
+it does not (a closure or function value whose modified parameters are borrowed: `work(a, b.log)`
+where `work` replaces `x.log` and fills `ys`), the call compiles, and with `a === b` the callee
+fills the array that replaced the one it was given, unlike JS (#1801). A function that modifies a
+parameter and is also used as a value gets the caller's object for it. When a later argument may
+replace that object first (it calls a function value that replaces the field passed first, as in
+`pushes[0](p.log, swaps[0](p))`), the parameter is the object the argument was when it was
+evaluated, as in JS: the object's type is then reference-counted. A later argument that cannot reach
+the object does not do that: a literal, a standard-library call on numbers and strings
+(`Math.sqrt(4)`, `x.toFixed(2)`); nor does any later argument when the object is a variable of the
+caller's own that no closure assigns and the call's arguments do not assign: a function value called
+there cannot replace it (`hooks[0](acc, nums[0]())`).
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A

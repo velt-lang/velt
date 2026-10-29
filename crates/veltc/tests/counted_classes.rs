@@ -223,3 +223,42 @@ fn proxy_hooks_leave_a_plain_object_type_uncounted() {
         "{c:?}"
     );
 }
+
+/// An object passed to a function value that may change it is counted only when a later
+/// argument may replace it (`lang/fn_value_changed_arg_shared`): counting is for the whole
+/// program, and a pure call or a variable of the caller's own costs a hot loop nothing.
+#[test]
+fn a_changed_argument_is_counted_only_when_a_later_argument_may_replace_it() {
+    let program = |call: &str| {
+        format!(
+            "type V = {{ x: number; y: number }};
+             type N = {{ log: number[] }};
+             const hooks: ((v: V, t: number) => void)[] = [(v, t) => {{ v.x += t; }}];
+             const pushes: ((xs: number[], n: number) => void)[] = [(xs, n) => {{ xs.push(n); }}];
+             const swaps: ((b: N) => number)[] = [(b) => {{ b.log = [7]; return 1; }}];
+             const nums: (() => number)[] = [() => 5];
+             function main() {{
+               const acc: V = {{ x: 1, y: 2 }};
+               const box = {{ v: {{ x: 3, y: 4 }}, n: 1 }};
+               const p: N = {{ log: [1] }};
+               {call};
+               console.log(acc.x, box.v.x, p.log.length);
+             }}"
+        )
+    };
+    for call in [
+        "hooks[0](acc, Math.sqrt(4))",
+        // A call through a function value can't assign the caller's own variable.
+        "hooks[0](acc, nums[0]())",
+        "hooks[0](box.v, Math.sqrt(4))",
+        "hooks[0](box.v, Number(box.v.x.toFixed(2)))",
+        "hooks[0](box.v, String(Math.max(1, 2)).length)",
+        "hooks[0](box.v, [1, 2].length)",
+        "pushes[0](p.log, Math.floor(p.log.length / 2))",
+    ] {
+        let c = counted(&program(call));
+        assert!(c.is_empty(), "{call}: {c:?}");
+    }
+    let c = counted(&program("pushes[0](p.log, swaps[0](p))"));
+    assert!(c.iter().any(|t| t == "f64[]"), "{c:?}");
+}

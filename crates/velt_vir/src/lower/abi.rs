@@ -81,6 +81,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             own_captures: false,
             args_to_caller: false,
             kept_args: 0,
+            changed_args: 0,
             kept_handed: vec![],
             kept_drops: vec![],
             caller_aliases: None,

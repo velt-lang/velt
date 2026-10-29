@@ -700,6 +700,10 @@ struct FnLower<'c, 'h> {
     /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
     /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
     kept_args: u64,
+    /// The arguments being lowered (bit `i`: `args[i]`) the callee may change although they are
+    /// passed `Borrow` (a modified param of a function also used as a value, call.rs
+    /// `call_def`): they stay where they are, not held against later arguments.
+    changed_args: u64,
     /// Those arguments as passed, handed back to the reader after the call (with whether each
     /// was the reader's own, referenced once: caller_stores.rs `hand_back`).
     kept_handed: Vec<(Operand, TyId, Option<Local>)>,
