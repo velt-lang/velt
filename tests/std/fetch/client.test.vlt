@@ -128,8 +128,7 @@ describe("fetch", () => {
     expect(req.headers.get("content-type")).toBe("text/plain;charset=UTF-8");
     expect(await (await fetch(req)).text()).toBe("PATCH text/plain;charset=UTF-8 - from a request");
     const bytes = await (await fetch(`${base}/json`)).bytes();
-    expect(bytes.length).toBe(32);
-    expect(bytes[0]).toBe(123);
+    expect([bytes.length, bytes[0]]).toEqual([32, 123]);
   });
 
   it("follows, returns or refuses a redirect", async () => {
@@ -255,13 +254,10 @@ describe("fetch", () => {
     const res = await fetch(`${base}/bytes`);
     expect(res).toHaveHeader("x-kept", "20");
     const got = await res.bytes();
-    expect(got.length).toBe(20);
-    expect(got[0]).toBe(1);
-    expect(got[19]).toBe(20);
+    expect([got.length, got[0], got[19]]).toEqual([20, 1, 20]);
     const sent = await fetch(`${base}/got`, { method: "POST", body: payload });
     expect(await sent.text()).toBe("got hi!");
-    expect(payload.length).toBe(3);
-    expect(payload[0]).toBe(104);
+    expect([payload.length, payload[0]]).toEqual([3, 104]);
     const req = new Request(`${base}/got`, { method: "PUT", body: payload });
     expect(await (await fetch(req)).text()).toBe("got hi!");
     // A byte body's leading byte order mark is not text, as in JS.
