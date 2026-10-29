@@ -77,6 +77,9 @@ pub(super) struct Use {
     /// callee: what another argument changes inside it while being evaluated is what
     /// JavaScript's callee sees too.
     pub identity: bool,
+    /// A write through another reference to the place (a share temporary: `h.vs.length = 0`):
+    /// it changes the value the place holds, never which value that is.
+    pub inside: bool,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
@@ -153,7 +156,8 @@ impl Collector<'_, '_> {
                     text,
                     captured: false,
                     capture: None,
-                    identity: super::by_reference(self.cx, e.ty),
+                    identity: super::conflict::by_reference(self.cx, e.ty),
+                    inside: false,
                 });
             }
             return self.index_operands(e, nested);
@@ -272,6 +276,7 @@ impl Collector<'_, '_> {
                 captured: true,
                 capture: Some((def, cap.outer)),
                 identity: false,
+                inside: false,
             });
         }
     }
@@ -308,6 +313,7 @@ impl Nested<'_, '_, '_> {
         let through = (access == Access::Unique)
             .then(|| self.shares.get(&place.root))
             .flatten();
+        let inside = through.is_some();
         if let Some((p, shown)) = through {
             if place.proj.is_empty() {
                 text = shown.clone();
@@ -324,6 +330,7 @@ impl Nested<'_, '_, '_> {
             captured: false,
             capture: None,
             identity: false,
+            inside,
         });
     }
 }

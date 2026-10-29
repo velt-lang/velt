@@ -22,6 +22,7 @@
 //! captures of a closure argument), and `Borrow` parameters may alias each other but never a
 //! `BorrowMut` or `Owned` one.
 
+mod conflict;
 mod iteration;
 mod let_borrow;
 mod this_alias;
@@ -41,7 +42,8 @@ use crate::hir::{
 use crate::ownership::validate::place_text;
 use crate::visit::{self, VisitMut};
 
-use uses::{shown, Access, Aliases, Collector, Place, Proj, Use};
+use conflict::first_conflict;
+use uses::{Access, Aliases, Collector, Place, Proj, Use};
 
 use super::closure_names::Closures;
 
@@ -471,9 +473,17 @@ impl Checker<'_, '_> {
         if args.len() + uses.len() < 2 {
             return;
         }
+        // A system function's buffer is a view of bytes, not a value held by reference: a later
+        // argument that changes the array (`h.b.length = 0` beside `h.b.subarray(0, 8)`) would
+        // free bytes the view covers, so its arguments keep the strict rule.
+        let system = matches!(callee, Some(Callee::Def(d, _))
+            if self.cx.try_fn(*d).is_some_and(|f| f.system.is_some()));
         for a in args.iter_mut() {
             let (mut direct, mut nested) = (vec![], vec![]);
             col.direct(a, &mut direct, &mut nested);
+            if system {
+                direct.iter_mut().for_each(|u| u.identity = false);
+            }
             uses.push((direct, nested));
         }
         // `m.with(f)`: the callback gets the lock, i.e. mutable access to `m`'s value. Behind a
@@ -651,104 +661,6 @@ fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, Loca
         }
     }
     out
-}
-
-/// `skip`: a pair of direct uses that is no conflict.
-fn first_conflict(uses: &ArgUses, skip: &dyn Fn(&Use, &Use) -> bool) -> Option<Diagnostic> {
-    for (i, (direct_i, _)) in uses.iter().enumerate() {
-        for (j, (direct_j, nested_j)) in uses.iter().enumerate() {
-            if i == j {
-                continue;
-            }
-            for u in direct_i {
-                if i < j {
-                    let hit = direct_j.iter().find(|w| clash(u, w) && !skip(u, w));
-                    if let Some(w) = hit {
-                        return Some(report_direct(u, w));
-                    }
-                }
-                let by_ref = matches!(u.access, Access::Shared | Access::Unique);
-                let hit = nested_j
-                    .iter()
-                    .find(|w| by_ref && u.place.overlaps(&w.place) && !changes_inside(u, w));
-                if let Some(w) = hit {
-                    return Some(report(u, w));
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Does `w`, a change made while another argument is evaluated, only change the inside of
-/// the value `u` hands to the callee by reference (`this.set(this.src.get(1))`, `get`
-/// modifying `this.src`)? JavaScript's callee then sees the change too: no conflict. Replacing
-/// the value or a place on its way (`f(x.arr, reset(x))`) still is one.
-fn changes_inside(u: &Use, w: &Use) -> bool {
-    u.identity && w.access == Access::Unique && w.place.proj.len() > u.place.proj.len()
-}
-
-/// Whether Velt, as JavaScript, passes values of type `t` by reference: class instances and
-/// arrays. An object type (`{ x: number }`) or a `struct` is inline: the call gets a copy made
-/// when its argument is evaluated, so a later argument's change to it would not reach the
-/// callee, as it does in JavaScript.
-pub(super) fn by_reference(cx: &Ctx, t: crate::hir::TyId) -> bool {
-    match cx.ty.kind(t) {
-        TyKind::Adt(d, _) => cx
-            .adt(*d)
-            .is_some_and(|a| a.kind == crate::hir::AdtKind::Class),
-        TyKind::Array(_) => true,
-        _ => false,
-    }
-}
-
-/// Do two argument uses (`u` evaluated before `w`) conflict? Two moves, or a move followed
-/// by a use, are left to the move analysis ("use of moved value").
-fn clash(u: &Use, w: &Use) -> bool {
-    if u.access == Access::Move || !u.place.overlaps(&w.place) {
-        return false;
-    }
-    u.access == Access::Unique || w.access != Access::Shared
-}
-
-/// The mutable borrow is reported as the one the call holds, the other use as the error.
-fn report_direct(u: &Use, w: &Use) -> Diagnostic {
-    if w.access == Access::Unique && u.access != Access::Unique {
-        report(w, u)
-    } else {
-        report(u, w)
-    }
-}
-
-/// `held` is what the call keeps borrowed (label), `other` the conflicting use (primary span).
-fn report(held: &Use, other: &Use) -> Diagnostic {
-    let it = if held.text == other.text {
-        "it".to_string()
-    } else {
-        shown(&held.text)
-    };
-    let name = shown(&other.text);
-    let msg = match (held.access, other.access) {
-        (Access::Unique, _) => {
-            format!("cannot use {name} here: this call may modify {it} through another argument")
-        }
-        (_, Access::Move) => {
-            format!("cannot move {name} here: {it} is already borrowed by this call")
-        }
-        _ => format!("cannot modify {name} here: {it} is already borrowed by this call"),
-    };
-    let label = match (held.access, held.captured) {
-        (Access::Unique, true) => format!("{} is modified by this closure", shown(&held.text)),
-        (Access::Unique, false) => "may be modified through this argument".to_string(),
-        (_, true) => format!("{} is captured by this closure", shown(&held.text)),
-        (_, false) => "borrowed here".to_string(),
-    };
-    Diagnostic::error(msg, other.span)
-        .with_label(held.span, label)
-        .with_note(
-            "a value the callee may modify must not be reachable through another argument \
-             of the same call; use a separate variable or `.clone()`",
-        )
 }
 
 impl VisitMut for Checker<'_, '_> {

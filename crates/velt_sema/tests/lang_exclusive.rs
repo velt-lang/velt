@@ -288,6 +288,43 @@ fn an_argument_may_change_the_inside_of_an_array_another_one_passes() {
     assert!(r.contains("b.items"), "{r}");
 }
 
+#[test]
+fn an_argument_may_shorten_a_field_array_another_one_passes() {
+    // `h.vs.length = 0` writes through a share of `h.vs`: it changes the array `h.vs` holds,
+    // which `g` then sees, as Node's does.
+    let h = "class V { s: string = \"y\"; }
+             class H { vs: V[] = [new V(), new V()]; }
+             function g(vs: V[], n: number): number { return vs.length + n; }
+             function k(v: V, n: number): number { return v.s.length + n; }";
+    ok_src(&format!(
+        "{h} function main() {{ const h = new H(); console.log(g(h.vs, (h.vs.length = 0))); }}"
+    ));
+    // An element passed while the array is shortened would be freed under the callee.
+    let r = err_src(&format!(
+        "{h} function main() {{ const h = new H(); console.log(k(h.vs[0], (h.vs.length = 0))); }}"
+    ));
+    assert!(r.contains("cannot modify `h.vs` here"), "{r}");
+}
+
+#[test]
+fn a_system_function_buffer_is_not_shortened_by_another_argument() {
+    // A system function's buffer is a view of bytes: a later argument shortening the array
+    // would free bytes it covers, read or written.
+    let decl = "declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+                declare system function write(fd: i32, buf: readonly u8[], n: usize): isize;
+                class Holder { b: u8[] = Buffer.alloc(16); }";
+    for call in [
+        "pread(0, h.b, (h.b.length = 0) as i64)",
+        "write(1, h.b, (h.b.length = 0) as usize)",
+        "write(1, h.b.subarray(0, 8), (h.b.length = 0) as usize)",
+    ] {
+        let r = err_src(&format!(
+            "{decl} function main() {{ const h = new Holder(); console.log({call}); }}"
+        ));
+        assert!(r.contains("`h.b` here"), "{call}: {r}");
+    }
+}
+
 /// A renderer whose nested functions are closures that call each other: `mount` passes its
 /// params on to `mountComponent` (`call`), which modifies the vnode.
 fn renderer(call: &str) -> String {

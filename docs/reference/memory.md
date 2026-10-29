@@ -177,10 +177,13 @@ is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, thi
 argument may change the inside of a class instance or an array another argument passes while it
 is evaluated, before the call starts (`this.set(this.src.get(1))` with `get` changing
 `this.src`): JavaScript's callee sees that change too. The change must be to a place inside the
-passed value (`show(b, (b.items[0] = 8))` is allowed). A change through the passed value itself
-is still an error: an argument that hands `xs` or `b` to a modifying call (`xs.push(popIt(xs))`,
-or `show(b, setFirst(b))` where `setFirst` only sets `b.items[0]`), and so is replacing it or a
-place on its way (`f(x.arr, (x.arr = []))`). Changing an object of an object type or a `struct`
+passed value (`show(b, (b.items[0] = 8))` is allowed), or set the length of an array a field
+holds (`g(h.vs, (h.vs.length = 0))`: `g` sees the shorter array). A system function's buffer is
+not passed so: it is a view of the array's bytes, which a later argument may not change at all
+(`pread(fd, h.b.subarray(0, 8), (h.b.length = 0) as i64)` is an error). A change through the
+passed value itself is still an error: an argument that hands `xs` or `b` to a modifying call
+(`xs.push(popIt(xs))`, or `show(b, setFirst(b))` where `setFirst` only sets `b.items[0]`), and
+so is replacing it or a place on its way (`f(x.arr, (x.arr = []))`). Changing an object of an object type or a `struct`
 another argument passes (`f(o.pt, (o.pt.x = 5))` with `pt: { x: number; y: number }`) is an
 error too: Velt holds those inline and passes a copy, which would miss the change. This rule
 is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
