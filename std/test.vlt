@@ -265,9 +265,10 @@ async function attempt(bodies: Body[]): Promise<string | null> {
     try {
       await run();
     } catch (e) {
-      // Where it was thrown, before anything else throws.
+      // Where it was thrown, before anything else throws: after the whole message, on its last
+      // line, as Vitest puts the location after a message of several lines.
       const at = __intrinsic_throw_loc();
-      return located(__intrinsic_error_text(e), at);
+      return `${__intrinsic_error_text(e)}${at}`;
     }
   }
   return null;
@@ -312,12 +313,6 @@ function report(raw: string, error: string | null, mark: string | null) {
     }
   }
   velt_rt_flush();
-}
-
-/** `text` with the location `at` (` at <path>:<line>:<col>`) after its first line. */
-function located(text: string, at: string): string {
-  const nl = text.indexOf("\n");
-  return nl < 0 ? `${text}${at}` : `${text.slice(0, nl)}${at}${text.slice(nl)}`;
 }
 
 /** Run every file of `plan`, `plan.workers` at once, printing each report in file order. */

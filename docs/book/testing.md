@@ -60,13 +60,14 @@ export function test_parses() {
 }
 ```
 
-When a test fails, the runner shows why and where:
+When a test fails, the runner shows why and then where (after the last line of a message of
+several lines, as Vitest shows the location after the message):
 
 ```
 FAILED test_parses_twice
-    AssertionError: assertEq failed at tests/port.test.vlt:14:3
+    AssertionError: assertEq failed
       left: 2
-     right: 3
+     right: 3 at tests/port.test.vlt:14:3
 FAILED test_uncaught
     ParseError: bad port: x at tests/port.test.vlt:5:15
 FAILED test_out_of_range (exit code 101)

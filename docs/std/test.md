@@ -11,8 +11,9 @@ control; everything after that happens here:
 - **For one file** (in a process the runner started), it runs the file's tests one after
   another. A test fails when it throws: a failed `assert`, `assertEq` or `assertThrows` throws an
   `AssertionError`, and any other error it doesn't catch counts the same. The error is reported
-  with where it was thrown, as an uncaught error would be (`AssertionError: assertEq failed at
-  tests/a.test.vlt:6:3`), and the next test runs. A test that ends the process (a panic,
+  with where it was thrown, as an uncaught error would be (`Error: boom at
+  tests/a.test.vlt:6:3`), after the last line of a message of several lines (as Vitest shows
+  the location after the message), and the next test runs. A test that ends the process (a panic,
   `process.exit`) is reported with its exit code and stderr, and the runner starts the file
   again from the next test.
   After the last test the process exits, also when a failed test left a timer or a server
