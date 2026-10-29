@@ -138,14 +138,15 @@ impl Ctx<'_> {
         if let TyKind::Array(e) = *self.ty.kind(t) {
             t = self.ty.opt_payload(e).unwrap_or(e);
         }
+        // A type parameter (`o as T` in `conv<T>`) or an interface given one (`o as Box<T>`).
+        if self.has_type_params(t) {
+            self.object_impls.generic_targets = true;
+            return;
+        }
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
             return;
         };
         if self.dynamic(t).is_some() {
-            return;
-        }
-        if args.iter().any(|a| self.has_type_params(*a)) {
-            self.object_impls.generic_targets = true;
             return;
         }
         let known = &self.object_impls.targets;

@@ -14,6 +14,9 @@
 //! constructor), closures, a class's `extends` clause (its base's initializers and constructor),
 //! and a generic interface method called through an interface value or a bound (the method of
 //! each implementing class).
+//!
+//! The same carrying gives the interfaces an object literal held by an `any` may be converted to
+//! at run time ([`instantiated_conversions`], `object_ifaces.rs`, #1909).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
