@@ -199,8 +199,21 @@ impl FnCx<'_, '_> {
         let label = lp.hir_label();
         let c = self.cond(cond);
         let cspan = c.span;
-        let brk = self.break_unless(c);
         let t = self.true_lit(span);
+        if matches!(cond.kind, ast::ExprKind::Lit(ast::Lit::Bool(true))) {
+            // `do … while (true)` loops like `while (true)`: no test that can leave it, so
+            // `flow::block_diverges` sees it never ends without a `break`, as TypeScript does
+            // (for the literal only: `while ((true))` can end there).
+            let w = S::While {
+                label,
+                cond: t,
+                body: b,
+                step: None,
+            };
+            Self::push(out, w, span);
+            return;
+        }
+        let brk = self.break_unless(c);
         if lp.has_continue {
             // `continue` must still evaluate the condition: put the check into `step`.
             let step_block = hir::Block {

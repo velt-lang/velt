@@ -739,6 +739,9 @@ impl FnCx<'_, '_> {
         block: &mut hir::Block,
         from_context: bool,
     ) {
+        if self.never_end_reachable(name, ret, span, block) {
+            return;
+        }
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
             && !crate::flow::block_diverges(block, &self.cx.ty)

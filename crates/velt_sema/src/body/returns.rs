@@ -530,6 +530,35 @@ impl FnCx<'_, '_> {
         }
         false
     }
+
+    /// A function declared to return `never` must not reach its end, as in TypeScript
+    /// (TS2534): its callers take it as never returning, so a reachable end would return where
+    /// nothing follows. Reports it; whether it did.
+    pub(super) fn never_end_reachable(
+        &mut self,
+        name: &str,
+        ret: TyId,
+        span: Span,
+        block: &hir::Block,
+    ) -> bool {
+        let reachable = ret == self.cx.ty.never
+            && !self.f.is_async
+            && self.f.yield_ty.is_none()
+            && !crate::flow::block_diverges(block, &self.cx.ty);
+        if reachable {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "function `{short}` returns `never`, so it cannot have a reachable end point"
+                    ),
+                    span,
+                )
+                .with_note("throw, loop forever or call a `never` function on every path"),
+            );
+        }
+        reachable
+    }
 }
 
 /// Converts every `return` value of a body to the inferred result type.

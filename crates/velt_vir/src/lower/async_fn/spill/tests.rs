@@ -28,6 +28,7 @@ fn func(locals: usize, blocks: Vec<BasicBlock>) -> Function {
         locs: vec![],
         param_attrs: vec![],
         is_poll: false,
+        cold: false,
         target: None,
     }
 }

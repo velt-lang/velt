@@ -37,14 +37,20 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
    where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
-   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
+   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce`, `thread_tags` (a jump
+   into the test of an inlined callee's `Result` tag that the jumping block just set goes where
+   the tag sends it) and `simplify_cfg`; then
    `module_state` (a function asks the runtime for the module state block once per call, not
    at every access to a module-level `let`), `map_probe`, `borrowed_copies` (a string local that
    only reads a copy of a string, such as `const src = this.src;`, holds the source's words
    without a reference of its own when nothing can change the source while its text is read:
    no `velt_rt_str_clone` / `velt_rt_str_drop` pair), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
-   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
+   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end, and `cold_calls`
+   last: a function's calls of one callee that never returns (a bounds check's report) become
+   one call, reached from every site. The panic text keeps each site's location (an argument),
+   but the merged call instruction carries the first site's debug location, so a debugger or a
+   backtrace shows that line for every merged check. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object

@@ -38,6 +38,10 @@
 //! - `sroa`: splits aggregate locals whose address is never taken into per-field locals.
 //! - `copyprop`: forwards `a = b` copies of register-like scalar locals.
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
+//! - `thread_tags`: a jump into a block that only tests a local aggregate's field (the tag of
+//!   an inlined callee's `Result`) goes to the test's target directly when the jumping block
+//!   stored a constant there, so each return of an inlined throwing callee continues on its own
+//!   path.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
 //! - `module_state`: once the rounds are done, a function asks the runtime for the module state
@@ -64,6 +68,9 @@
 //!   uses inside a loop are kept in locals (loaded on entry, stored back at every suspension).
 //! - `dead_fills`: at the same point, the zero fill of a new object is dropped when every
 //!   field is written after it before anything can read the object.
+//! - `cold_calls`: last, the calls of a function to one callee that never returns (the
+//!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
+//!   small function with many checks stays cheap enough for LLVM to inline.
 //!
 //! Every pass keeps `Function::locs` aligned with the statements it edits (`srclocs`).
 //!
@@ -79,6 +86,7 @@ mod addr_forward;
 mod borrowed_copies;
 mod bounds;
 mod callgraph;
+mod cold_calls;
 mod const_fields;
 mod constfold;
 mod copyprop;
@@ -102,6 +110,7 @@ mod scc;
 mod simplify_cfg;
 mod srclocs;
 mod sroa;
+mod thread_tags;
 mod timings;
 mod visit;
 mod vtable_loads;
@@ -253,6 +262,12 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 });
             }
             promote_memory(program, t);
+            let no_return = cold_calls::NoReturn::find(program);
+            for func in &mut program.funcs {
+                if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+            }
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
@@ -309,6 +324,7 @@ fn speed_round(
         changed |= t.time("enum_sroa", || enum_sroa::run(&program.aggs, func));
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
         changed |= t.time("dce", || dce::run(&program.aggs, func));
+        changed |= t.time("thread_tags", || thread_tags::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
     }
     changed

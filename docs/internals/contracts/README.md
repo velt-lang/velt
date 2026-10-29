@@ -115,6 +115,18 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `noalias` and `frozen` for redundant-load elimination; LLVM emits them as parameter
   attributes (`frozen` has no LLVM counterpart); Cranelift ignores them.
 
+## Cold functions (additive VIR extension)
+- `vir::Function::cold: bool` — no call of the function returns normally: its declared result
+  is `never` (it panics, throws, exits or loops forever). False promises nothing; `Function::new`
+  sets it false. Set by lowering on every `never` function instance; `velt_opt` keeps it on
+  clones.
+- A call of one that throws (its result through an out-pointer) is followed, as for any
+  throwing callee, by a branch on the result's tag; the Ok side of that branch is
+  `Unreachable`, so the code after the call is the error path only.
+- `velt_opt` never inlines a cold function (and `cold_calls` makes a function's calls of one a
+  single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return, such as
+  `_Goob_u64`); Cranelift ignores it.
+
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`
   (vir/debug.rs): which source variable a local holds (declaration, end of its scope, debug

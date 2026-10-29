@@ -1,0 +1,2 @@
+never_reachable_end_throw.vlt:3:10: error: function `f` returns `never`, so it cannot have a reachable end point
+  = note: throw, loop forever or call a `never` function on every path

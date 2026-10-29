@@ -141,6 +141,29 @@ fn never_returning_callee_stays_a_call() {
 }
 
 #[test]
+fn cold_callee_stays_a_call_even_when_called_once() {
+    // fail(out) { *out = 1; return } — a `never` function that throws: it returns, but only
+    // its error (`Function::cold`), so even its single call site keeps the call.
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::internal("fail", &[Ty::I64], Ty::Unit);
+    let b = fb.block();
+    let x = fb.param(0);
+    fb.assign(b, x, bin(BinOp::Add, copy_local(x), int(1, Ty::I64)));
+    fb.ret(b, Operand::Const(Const::Unit, Ty::Unit));
+    let mut fail = fb.finish();
+    fail.cold = true;
+    let fail = pb.add(fail);
+    let mut fb = FuncBuilder::export("main", &[], Ty::Unit);
+    let b = fb.block();
+    let n = fb.call(b, Callee::Func(fail), vec![int(1, Ty::I64)], None);
+    fb.ret(n, Operand::Const(Const::Unit, Ty::Unit));
+    pb.add(fb.finish());
+    let mut p = pb.finish();
+    inline(&mut p);
+    assert_eq!(calls_to(&p.funcs[1], fail), 1);
+}
+
+#[test]
 fn unit_callee_with_no_destination() {
     let mut pb = ProgramBuilder::new();
     let mut fb = FuncBuilder::internal("nothing", &[Ty::I64], Ty::Unit);

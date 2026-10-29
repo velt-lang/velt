@@ -1,0 +1,13 @@
+// A function returning `never` whose end is reachable is rejected, as in TypeScript (TS2534):
+// its callers take it as never returning normally.
+function f(x: number): never {
+  if (x > 0) {
+    throw new Error("p");
+  }
+}
+try {
+  f(-1);
+  console.log("f returned");
+} catch (e) {
+  console.log("f threw");
+}

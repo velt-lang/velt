@@ -277,8 +277,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
         }
         lw.cx.declared_unique = unique;
+        // A `never` function (a throw helper such as `corrupt(what): never`) returns only
+        // through its error, if at all: its calls are cold (`Function::cold`).
+        let cold = lw.cx.is_never(ret);
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.cold = cold;
         func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
             hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,

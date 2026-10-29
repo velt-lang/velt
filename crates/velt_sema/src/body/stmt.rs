@@ -662,8 +662,10 @@ impl FnCx<'_, '_> {
                 let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
                 Self::push(out, S::Return(Some(value)), span);
             }
+            // `return;` in a `never` function is an error too, as in TypeScript (TS2322): its
+            // callers take it as never returning.
             None => {
-                if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
+                if ret != self.cx.ty.unit && ret != self.cx.ty.error {
                     let rn = self.cx.display(ret);
                     self.cx.error(
                         Diagnostic::error("mismatched types", span)

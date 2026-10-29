@@ -571,6 +571,12 @@ impl FnLower<'_, '_> {
         self.fill_throw_loc();
         self.route_error(payload, err);
         self.switch_to(ok_bb);
+        if self.cx.is_never(ret) {
+            // A `never` callee returns only its error (`Function::cold`): no Ok follows, and
+            // nothing after the call runs on this path.
+            self.terminate(vir::Terminator::Unreachable);
+            return unit();
+        }
         if self.cx.is_unit(ret) {
             return unit();
         }

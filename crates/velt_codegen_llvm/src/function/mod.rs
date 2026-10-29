@@ -170,10 +170,11 @@ pub(crate) fn emit_function(
         },
     };
     Ok(format!(
-        "{} {}({}) {FN_ATTRS}{features}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {FN_ATTRS}{}{features}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
+        cold_attrs(function),
         emitter.body
     ))
 }
@@ -311,5 +312,19 @@ impl Emitter<'_> {
         } else {
             bail!("unknown block bb{}", id.0)
         }
+    }
+}
+
+/// The attributes of a function no call of which returns normally (`Function::cold`, or no
+/// path through it returns: a panic helper such as the out-of-bounds report): `cold`, so the
+/// ways to its calls are laid out of the hot code, and `noinline`, so its body stays out of its
+/// callers and they stay cheap to inline. "Never returns" stands for "its calls are rare", not
+/// "its body is cold": a hot `for (;;)` worker loop that ends in `process.exit` gets these too.
+/// Only its call sites are affected (without a profile LLVM does not shrink a cold body).
+fn cold_attrs(function: &vir::Function) -> &'static str {
+    let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
+    match function.cold || !returns {
+        true => " cold noinline",
+        false => "",
     }
 }
