@@ -171,8 +171,7 @@ pub(crate) struct Ctx<'m> {
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
-    /// The properties of `globalThis` the program uses (`crate::global_this`).
-    pub global_props: crate::global_this::GlobalProps,
+    pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// How many function values (arrows, function expressions, literal methods) are being
