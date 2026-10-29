@@ -397,6 +397,13 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     let version = manifest.version();
     let mut dependencies = BTreeMap::new();
     for (dep, spec) in &manifest.dependencies {
+        if spec.is_workspace() {
+            // Publishing members, with `"workspace"` replaced by versions, is planned
+            // (docs/internals/design/workspaces.md "Publishing").
+            return Err(format!(
+                "cannot publish `{name}`: dependency `{dep}` is `\"workspace\"`; publishing members of a workspace is not supported yet"
+            ));
+        }
         let req = spec.version().ok_or_else(|| {
             format!("cannot publish `{name}`: dependency `{dep}` has only a `path`; add a `version` requirement")
         })?;
@@ -523,6 +530,20 @@ mod tests {
             .unwrap_err()
             .contains("already published"));
         assert_eq!(read_index(&loc, "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn a_workspace_dependency_is_not_published_as_a_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let loc = Locations::under(&tmp.path().join("home"));
+        let pkg = tmp.path().join("lib");
+        package(&pkg, "export const pkg: Package = { name: \"lib\", version: \"1.0.0\", dependencies: { core: \"workspace\" } };");
+        let err = publish(&pkg, &loc).unwrap_err();
+        assert!(
+            err.contains("dependency `core` is `\"workspace\"`"),
+            "{err}"
+        );
+        assert_eq!(read_index(&loc, "lib").unwrap(), None);
     }
 
     #[test]
