@@ -412,7 +412,7 @@ export class Cursor {
     this.parsed = true;
   }
 
-  // decodeHeader's common case inline; false (nothing decided) for anything it does not cover.
+  /** decodeHeader's common case inline; false (nothing decided) for anything it does not cover. */
   parseFast(): bool {
     const data = this.db.data;
     const types = this.types;
