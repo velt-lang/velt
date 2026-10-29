@@ -9,8 +9,8 @@
 //!   moves or captures;
 //! - a place passed `Borrow` must not overlap a place another argument moves;
 //! - no argument may mutate or move (while being evaluated) a place another argument passes by
-//!   reference, except change the inside of a class instance, object or array passed so (the
-//!   callee sees the change as JavaScript's would: `this.set(this.src.get(1))`).
+//!   reference, except change the inside of a class instance or an array passed so (the callee
+//!   sees the change as JavaScript's would: `this.set(this.src.get(1))`).
 //!
 //! Places overlap when one is a prefix of the other (`a` / `a.f`, `xs` / `xs[i]`; `xs[i]` and
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as

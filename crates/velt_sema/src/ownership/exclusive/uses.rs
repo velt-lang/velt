@@ -73,8 +73,8 @@ pub(super) struct Use {
     pub text: String,
     pub captured: bool,
     pub capture: Option<(DefId, LocalId)>,
-    /// A value JavaScript holds by reference (a class instance, an object, an array) handed to
-    /// the callee: what another argument changes inside it while being evaluated is what
+    /// A value JavaScript holds by reference (a class instance or an array) handed to the
+    /// callee: what another argument changes inside it while being evaluated is what
     /// JavaScript's callee sees too.
     pub identity: bool,
 }
