@@ -169,6 +169,11 @@ const CALLS: Call[] = [
   call("printf", ["'%,.900000000d'", "1"]),
   call("printf", ["'%2147483647.1f'", "1.0"]),
   call("min", []),
+  // An empty pattern (or one starting with a NUL) gives x's text; %c's width counts characters.
+  call("replace", ["12", "''", "'x'"]),
+  call("replace", ["'a'", "x'00'", "NULL"]),
+  call("printf", ["'%y'"]),
+  call("printf", ["'%5.3c|'", "'é'"]),
   // like() checks the ESCAPE before a NULL operand, as likeFunc does.
   call("like", ["NULL", "1", "12"]),
   call("like", ["1", "NULL", "12"]),

@@ -440,8 +440,9 @@ function replace(x: Val, y: Val, z: Val): Val {
     return nullVal();
   }
   const pat = text(y);
-  if (pat == "") {
-    return x;
+  // An empty pattern (read as a C string: one that starts with a NUL) gives the text of x.
+  if (pat == "" || pat.startsWith("\u0000")) {
+    return textVal(text(x));
   }
   if (z.t == NULL) {
     return nullVal();

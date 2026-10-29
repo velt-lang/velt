@@ -206,7 +206,8 @@ export function printf(vals: Val[]): Val {
       }
       const times = precision > 1 ? precision : 1;
       fits(times * (__intrinsic_str_byte_len(ch) as i64), room);
-      out += padded(repeat(ch, times), width, left, alt2, room);
+      // %c's width counts characters (SQLite sets the `!` flag for it).
+      out += padded(repeat(ch, times), width, left, true, room);
     } else if (c == 37) {
       out += padded("%", width, left, false, room);
     } else if (c == 110) {
