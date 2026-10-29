@@ -114,8 +114,10 @@ export function aggMisuse(c: ExprCompiler, e: Expr, sc: Scope, message: string):
   prepareError(message);
 }
 
-// Whether the core whose FROM items `sc` holds is an aggregate query: GROUP BY, or an aggregate
-// of its own among the result columns.
+/**
+ * Whether the core whose FROM items `sc` holds is an aggregate query: GROUP BY, or an aggregate
+ * of its own among the result columns.
+ */
 export function aggregateCore(c: ExprCompiler, sc: Scope): bool {
   const core = sc.core!;
   if (core.groupBy.length > 0 || core.aggFromInner) {
