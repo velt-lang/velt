@@ -51,7 +51,7 @@ export class Pull implements RowSource {
   /** One level, not a LEFT JOIN (the common case, stepped without the nesting). */
   single: bool = false;
 
-  // A run's state.
+  /** A run's state. */
   state: u8[] = [];
   matched: bool[] = [];
   started: bool = false;
@@ -142,7 +142,7 @@ export class Pull implements RowSource {
     return false;
   }
 
-  // Moves to the next row the query outputs (OFFSET skipped, LIMIT counted).
+  /** Moves to the next row the query outputs (OFFSET skipped, LIMIT counted). */
   advance(): bool {
     if (this.limit >= 0 && this.emitted >= this.limit) {
       return false;
@@ -204,8 +204,10 @@ export class Pull implements RowSource {
     return false;
   }
 
-  // Moves level `lv` to its next row its terms accept (a LEFT JOIN's row of NULLs when it
-  // matched none); false when there is no more.
+  /**
+   * Moves level `lv` to its next row its terms accept (a LEFT JOIN's row of NULLs when it
+   * matched none); false when there is no more.
+   */
   level(lv: usize): bool {
     const w = this.walks[lv];
     const src = this.srcs[lv];
@@ -249,7 +251,7 @@ export class Pull implements RowSource {
     }
   }
 
-  // The value of computed column `i` for the current row.
+  /** The value of computed column `i` for the current row. */
   value(i: usize): Val {
     if (!this.seen[i]) {
       this.seen[i] = true;
@@ -302,7 +304,7 @@ export class Pull implements RowSource {
     }
   }
 
-  // Column `k` of a table's current row (H_COL): its storage class.
+  /** Column `k` of a table's current row (H_COL): its storage class. */
   colType(k: usize): u8 {
     const x = this.at[k];
     if (this.tsrc[x].nullRow) {

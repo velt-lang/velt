@@ -62,7 +62,7 @@ export class Rows implements RowSource {
     return this.row < (this.out.rows as i64);
   }
 
-  // The value's position in the output (fields are read in place: no copy of the value).
+  /** The value's position in the output (fields are read in place: no copy of the value). */
   pos(i: i64): usize {
     return (this.row as usize) * this.out.width + (i as usize);
   }
