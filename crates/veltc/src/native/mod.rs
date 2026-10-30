@@ -24,21 +24,22 @@ pub struct IoTypes {
 }
 
 impl IoTypes {
-    /// Find them: the ADTs named `IoResult`/`IoStatus` defined in `<std_root>/native/result.vlt`.
+    /// Find them: the ADTs `IoResult` in `<std_root>/native/result.vlt` and `IoStatus` in
+    /// `<std_root>/native/status.vlt`.
     pub fn find(p: &hir::Program, sm: &SourceMap, std_root: Option<&Path>) -> IoTypes {
         let mut io = IoTypes::default();
-        let Some(file) = std_root.map(|r| canonical(&r.join("native").join("result.vlt"))) else {
+        let Some(native) = std_root.map(|r| r.join("native")) else {
             return io;
         };
+        let result = canonical(&native.join("result.vlt"));
+        let status = canonical(&native.join("status.vlt"));
         for (i, def) in p.defs.iter().enumerate() {
             let Def::Adt(a) = def else { continue };
-            if canonical(&sm.get(a.span.file).path) != file {
-                continue;
-            }
+            let file = canonical(&sm.get(a.span.file).path);
             let id = Some(DefId(i as u32));
             match a.name.rsplit("::").next() {
-                Some("IoResult") => io.io_result = id,
-                Some("IoStatus") => io.io_status = id,
+                Some("IoResult") if file == result => io.io_result = id,
+                Some("IoStatus") if file == status => io.io_status = id,
                 _ => {}
             }
         }

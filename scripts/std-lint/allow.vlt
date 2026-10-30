@@ -92,7 +92,6 @@ export const allow: Allow = {
     "lang/typed_array/base.vlt",
     "lang/typed_array/core.vlt",
     "math/bigint.vlt",
-    "native/result.vlt",
     "net/http/fetch/blob.vlt",
     "net/http/fetch/body.vlt",
     "net/http/fetch/client/wire.vlt",

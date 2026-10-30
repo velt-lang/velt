@@ -1,0 +1,7 @@
+// velt/native (internal): the runtime function velt/native calls.
+
+/**
+ * `velt_rt_err_code_name(i32 code, VeltStr* out)`: the static Node-style name of a runtime error
+ * code (nothing to free).
+ */
+export declare function velt_rt_err_code_name(code: i32): string;

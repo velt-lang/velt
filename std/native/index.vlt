@@ -2,4 +2,6 @@
 // Rust functions with: `IoResult<T>` and `IoStatus`, the C layouts a native function returns,
 // and `unwrapIo` / `checkIo`, which turn a failed one into an `IoError`.
 
-export { checkIo, ioError, IoResult, IoStatus, unwrapIo } from "velt/native/result";
+export { IoResult, unwrapIo } from "velt/native/result";
+export { checkIo, IoStatus } from "velt/native/status";
+export { ioError } from "velt/native/error";
