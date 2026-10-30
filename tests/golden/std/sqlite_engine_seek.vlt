@@ -1,0 +1,213 @@
+// B-tree seeks and backward scans of the Velt SQLite reader (velt:sqlite/btree_seek,
+// velt:sqlite/btree_back) on a file C SQLite writes (through velt:sqlite), with 512-byte pages so
+// the trees are several levels deep: a rowid seek at or after a key and at or before it, a scan
+// from the last row to the first, and seeks into an index (with mixed storage classes, a NOCASE
+// column and a DESC column) to the first entry at or after a key, after it, and the last at or
+// before it. Each answer is compared with C SQLite's for the same question.
+import { open } from "velt:sqlite";
+import { DbFile } from "velt:sqlite/format";
+import { Cursor, INTEGER, TEXT } from "velt:sqlite/btree";
+import { BINARY, KeyRec, NOCASE } from "velt:sqlite/record";
+import "velt:sqlite/btree_seek";
+import "velt:sqlite/btree_back";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { readFileBytesSync, removeSync } from "velt:fs";
+
+struct Root {
+  name: string;
+  rootpage: i64;
+}
+
+struct Id {
+  id: i64;
+}
+
+struct Entry {
+  k: string;
+  id: i64;
+}
+
+function verdict(label: string, n: i64, bad: i64) {
+  console.log(`${label}: ${n} checks, ${bad == 0 ? "all the same" : bad + " differ"}`);
+}
+
+// The index entry under the cursor, as "<key>/<rowid>" (an integer key or a text key).
+function entry(c: Cursor): string {
+  const t = c.columnType(0);
+  const k = t == INTEGER ? String(c.int(0)) : t == TEXT ? `'${c.text(0)}'` : c.numberText(0);
+  return `${k}/${c.int(1)}`;
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-seek-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec("PRAGMA page_size = 512");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, a NUMERIC, s TEXT COLLATE NOCASE)");
+  db.exec("CREATE INDEX t_a ON t (a)");
+  db.exec("CREATE INDEX t_s ON t (s DESC)");
+  db.exec("BEGIN");
+  const ins = db.prepare("INSERT INTO t VALUES (:id, :a, :s)");
+  for (let i: i64 = 0; i < 3000; i++) {
+    // Sparse rowids; `a` an integer, a REAL or text (NUMERIC affinity); `s` in mixed case.
+    const id = i * 7 + (i % 3);
+    const a = i % 5 == 0 ? `x${i % 97}` : i % 5 == 1 ? `${(i % 211) as f64 + 0.5}` : `${i % 389}`;
+    ins.runWith({ id: id, a: a, s: i % 2 == 0 ? `Name${i % 613}` : `name${i % 613}` });
+  }
+  db.exec("COMMIT");
+  const roots: Root[] = db.prepare("SELECT name, rootpage FROM sqlite_schema").all();
+  const rootOf = (name: string): u32 => {
+    for (const r of roots) {
+      if (r.name == name) {
+        return r.rootpage as u32;
+      }
+    }
+    return 0;
+  };
+  const file = new DbFile(readFileBytesSync(path));
+
+  // Rowids at or after, and at or before, keys around and between the stored ones.
+  let n: i64 = 0;
+  let bad: i64 = 0;
+  const c = new Cursor(file, rootOf("t"));
+  for (let k: i64 = -5; k < 21100; k += 13) {
+    n += 2;
+    const ge: Id[] = db
+      .prepare("SELECT coalesce(min(id), -1) AS id FROM t WHERE id >= :k")
+      .allWith({ k: k });
+    if ((c.seekRowidGe(k) ? c.rowid : -1) != ge[0].id) {
+      bad++;
+    }
+    const le: Id[] = db
+      .prepare("SELECT coalesce(max(id), -1) AS id FROM t WHERE id <= :k")
+      .allWith({ k: k });
+    if ((c.seekRowidLe(k) ? c.rowid : -1) != le[0].id) {
+      bad++;
+    }
+  }
+  verdict("rowid seeks", n, bad);
+
+  // The whole table from the last row to the first.
+  const desc: Id[] = db.prepare("SELECT id FROM t ORDER BY id DESC").all();
+  n = 0;
+  bad = 0;
+  let more = c.last();
+  while (more) {
+    if (n >= (desc.length as i64) || c.rowid != desc[n as usize].id) {
+      bad++;
+    }
+    n++;
+    more = c.prev();
+  }
+  verdict("backward scan", n, bad + ((desc.length as i64) - n));
+
+  // Index t_a: numbers (integers and REALs) in value order, then text.
+  const ia = new Cursor(file, rootOf("t_a"));
+  const colls: u8[] = [BINARY];
+  const asc: bool[] = [false];
+  const key = new KeyRec([]);
+  n = 0;
+  bad = 0;
+  const probe = (sqlKey: string, fill: () => void) => {
+    const first: Entry[] = db
+      .prepare(
+        `SELECT CASE typeof(a) WHEN 'text' THEN '''' || a || '''' ELSE CAST(a AS TEXT) END AS k, id FROM t INDEXED BY t_a WHERE a >= ${sqlKey} ORDER BY a, id LIMIT 1`,
+      )
+      .all();
+    const after: Entry[] = db
+      .prepare(
+        `SELECT CASE typeof(a) WHEN 'text' THEN '''' || a || '''' ELSE CAST(a AS TEXT) END AS k, id FROM t INDEXED BY t_a WHERE a > ${sqlKey} ORDER BY a, id LIMIT 1`,
+      )
+      .all();
+    const before: Entry[] = db
+      .prepare(
+        `SELECT CASE typeof(a) WHEN 'text' THEN '''' || a || '''' ELSE CAST(a AS TEXT) END AS k, id FROM t INDEXED BY t_a WHERE a <= ${sqlKey} ORDER BY a DESC, id DESC LIMIT 1`,
+      )
+      .all();
+    const show = (es: Entry[]) => (es.length == 0 ? "none" : `${es[0].k}/${es[0].id}`);
+    key.clear();
+    fill();
+    n += 3;
+    if ((ia.seekKeyRec(key, 1, colls, asc) ? entry(ia) : "none") != show(first)) {
+      bad++;
+    }
+    key.clear();
+    fill();
+    if ((ia.seekKeyRecAfter(key, 1, colls, asc) ? entry(ia) : "none") != show(after)) {
+      bad++;
+    }
+    key.clear();
+    fill();
+    if ((ia.seekLastBefore(key, 1, colls, asc, false) ? entry(ia) : "none") != show(before)) {
+      bad++;
+    }
+  };
+  for (let k: i64 = -1; k < 400; k += 7) {
+    probe(`${k}`, () => key.addInt(k));
+    const r = (k as f64) + 0.5;
+    probe(`${r}`, () => key.addReal(r));
+  }
+  for (let k: i64 = 0; k < 100; k += 9) {
+    probe(`'x${k}'`, () => key.addText(`x${k}`));
+  }
+  probe("'zzz'", () => key.addText("zzz"));
+  probe("''", () => key.addText(""));
+  verdict("index seeks", n, bad);
+
+  // Index t_s (NOCASE, DESC): the first entry at or after a key in index order.
+  const is = new Cursor(file, rootOf("t_s"));
+  n = 0;
+  bad = 0;
+  for (let k: i64 = 0; k < 700; k += 11) {
+    const name = k % 2 == 0 ? `NAME${k}` : `name${k}`;
+    const want: Id[] = db
+      .prepare(
+        "SELECT coalesce((SELECT id FROM t INDEXED BY t_s WHERE s <= :k ORDER BY s DESC, id LIMIT 1), -1) AS id",
+      )
+      .allWith({ k: name });
+    key.clear();
+    key.addText(name);
+    n++;
+    if ((is.seekKeyRec(key, 1, [NOCASE], [true]) ? is.int(1) : -1) != want[0].id) {
+      bad++;
+    }
+  }
+  verdict("NOCASE DESC seeks", n, bad);
+  db.close();
+  removeSync(path);
+  corruptLastPage();
+}
+
+// A seek into the file's last page, whose last cell starts 4 bytes before the page's end with
+// varint bytes that run past the file: a CorruptError, not a read past the end.
+function corruptLastPage() {
+  const path = `${tmpdir()}/velt-seek-end-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec("PRAGMA page_size = 512");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+  db.exec("BEGIN");
+  const ins = db.prepare("INSERT INTO t VALUES (:id, :v)");
+  for (let i: i64 = 0; i < 200; i++) {
+    ins.runWith({ id: i, v: `row ${i}` });
+  }
+  db.exec("COMMIT");
+  const roots: Root[] = db.prepare("SELECT name, rootpage FROM sqlite_schema").all();
+  db.close();
+  const data = readFileBytesSync(path);
+  removeSync(path);
+  const last: usize = (data.length as usize) - 512;
+  console.log(`last page kind ${data[last]}`);
+  const n = ((data[last + 3] as usize) << 8) | (data[last + 4] as usize);
+  const ptr = last + 8 + 2 * (n - 1);
+  data[ptr] = 1;
+  data[ptr + 1] = 252;
+  for (let i: usize = 508; i < 512; i++) {
+    data[last + i] = 255;
+  }
+  const c = new Cursor(new DbFile(data), roots[0].rootpage as u32);
+  try {
+    console.log(`seek: ${c.seekRowidGe(1000000)}`);
+  } catch (e) {
+    console.log(`seek: ${e.message}`);
+  }
+}
