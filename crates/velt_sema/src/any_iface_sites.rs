@@ -214,16 +214,33 @@ fn carry(
 /// How deeply a carried target may nest types ([`check_any_ifaces`]).
 const MAX_DEPTH: u32 = 12;
 
-/// How deeply `t` nests types (bounded by `MAX_DEPTH + 1`).
-fn depth(cx: &Ctx, t: TyId, d: u32) -> u32 {
+/// How deeply `t` nests types, an object type through its fields (bounded by `MAX_DEPTH + 1`).
+fn depth(cx: &mut Ctx, t: TyId, d: u32) -> u32 {
     if d > MAX_DEPTH {
         return d;
     }
-    let kids = crate::types::children(cx.ty.kind(t));
-    kids.into_iter()
-        .map(|c| depth(cx, c, d + 1))
-        .max()
-        .unwrap_or(d)
+    let mut kids = crate::types::children(cx.ty.kind(t));
+    // An object type's fields are in its definition (`{ value: T }` grows as `{ value: { value:
+    // T } }`, the one level each, in a call a primitive guard allows, #1251).
+    if let TyKind::Adt(o, args) = cx.ty.kind(t).clone() {
+        if cx.is_object_type(t) {
+            let fields: Vec<TyId> = (cx.adt(o).into_iter())
+                .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                .collect();
+            kids.extend(fields.into_iter().map(|f| match args.is_empty() {
+                true => f,
+                false => cx.subst(f, &args),
+            }));
+        }
+    }
+    let mut most = d;
+    for c in kids {
+        most = most.max(depth(cx, c, d + 1));
+        if most > MAX_DEPTH {
+            break;
+        }
+    }
+    most
 }
 
 /// The units of the program: each function, each module constant's initializer and each type's
