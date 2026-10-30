@@ -170,7 +170,7 @@ impl Ctx<'_> {
         }
         // A type parameter (`o as T` in `conv<T>`), which a call may give an interface.
         if let TyKind::Param(_) = self.ty.kind(t) {
-            return (self.object_impls.sources.iter()).any(|s| self.holds_fn(*s));
+            return (self.object_impls.sources.iter()).any(|s| self.object_holds_fn(*s));
         }
         let TyKind::Dyn(iface, args) = self.ty.kind(t) else {
             return false;
@@ -186,7 +186,7 @@ impl Ctx<'_> {
 
     /// Is `t` (an object type converted to `any`) a literal's own interface or an object with a
     /// field holding a function?
-    fn holds_fn(&self, t: TyId) -> bool {
+    fn object_holds_fn(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.ty.kind(t) else {
             return true;
         };
