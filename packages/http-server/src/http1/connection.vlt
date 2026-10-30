@@ -1,21 +1,22 @@
-// http-server (internal): a connection of the server (serve.vlt). It reads into a buffer of its
-// own; each request is parsed in place there (parse.vlt) and handed to the handler with a
-// response writer whose bytes go into one buffer per connection: every response to the requests
-// one read brought (pipelining) leaves in one write. The fixed parts of a response head are
-// encoded once per connection and the `Date` value once per second; text goes into the buffer
-// without a copy in between. HTTP/2 when the client asks for it (h2/).
+// http-server (internal): an HTTP/1.1 connection of the server (serve.vlt). It reads into a
+// buffer of its own; each request is parsed in place there (`Parser`) and handed to the handler
+// as an `Http1Request`, with an `Http1Response` whose bytes go into one buffer per connection:
+// every response to the requests one read brought (pipelining) leaves in one write. HTTP/2 when
+// the client asks for it (h2/).
 
 import { TcpStream } from "velt/net";
 import { AbortSignal } from "velt/task";
 import { statusText } from "velt/net/http";
-import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "./parse";
-import { HttpRequest } from "./request";
-import { HttpResponse } from "./response";
-import { Http1Request } from "./http1/request";
-import { Http1Response } from "./http1/response";
-import { serveH2 } from "./h2/serve";
-import { H2Options } from "./h2/options";
-import { linger } from "./linger";
+import { BadRequest } from "./bad_request";
+import { H2Options } from "../h2/options";
+import { serveH2 } from "../h2/serve";
+import { linger } from "../linger";
+import { HttpRequest } from "../request";
+import { HttpResponse } from "../response";
+import { BODY_CHUNKED, BODY_LENGTH } from "./head";
+import { Parser } from "./parser";
+import { Http1Request } from "./request";
+import { Http1Response } from "./response";
 
 /// How long a connection waits for its next request by default (Node's `keepAliveTimeout`).
 export const IDLE_MS: number = 5000;
@@ -117,7 +118,7 @@ export async function connection<E>(
           // A body still to come: the responses before it go out first, so a client waiting
           // for them (or for `100 Continue` after them) sends it.
           if (
-            res.length > 0 &&
+            res.out.length > 0 &&
             (req.head.bodyMode == BODY_LENGTH || req.head.bodyMode == BODY_CHUNKED)
           ) {
             await res.flush();

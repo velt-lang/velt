@@ -1,16 +1,18 @@
-// http-server (internal): the HTTP server written in Velt on std/net (docs/std/http_server.md):
-// `serveHttp` binds, accepts, and serves each connection on a task of its own (connection.vlt,
-// HTTP/1.1, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
+// http-server (internal): `serveHttp`, the HTTP server written in Velt on velt/net
+// (docs/serve-http.md): it binds, accepts, and serves each connection on a task of its own
+// (http1/connection.vlt, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
 
 import { IoError } from "velt/io";
-import { listen, listenTls, TcpListener, TlsListenOptions } from "velt/net";
+import { listen, listenTls, TcpListener } from "velt/net";
 import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
 import { drained, joinStop } from "velt/dev";
 import { delay } from "velt/time";
+import { H2Options, h2Options } from "./h2/options";
+import { connection, HEADERS_MS, IDLE_MS, Limits, REQUEST_MS } from "./http1/connection";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
-import { connection, HEADERS_MS, IDLE_MS, Limits, REQUEST_MS } from "./connection";
-import { H2Options, h2Options } from "./h2/options";
+import { HttpServeOptions } from "./serve_options";
+import { HttpServer } from "./server";
 
 const DEFAULT_HOST = "127.0.0.1";
 /// A request head (request line and headers) larger than this is refused (431), as Node's
@@ -20,77 +22,6 @@ const MAX_HEAD: number = 16384;
 const MAX_HEADERS: number = 100;
 /// A request body larger than this is refused (413).
 const MAX_BODY: number = 8388608;
-
-export struct HttpServeOptions {
-  port: number;
-  host?: string;
-  /** The largest request head accepted, in bytes (431 beyond it). Default 16 KiB, as Node's. */
-  maxHeadSize?: number;
-  /** The most headers a request may have (431 beyond them). Default 100. */
-  maxHeaders?: number;
-  /** The largest request body accepted, in bytes (413 beyond it). Default 8 MiB. */
-  maxBodySize?: number;
-  /**
-   * Milliseconds a connection may wait for its next request (or the rest of one) before it is
-   * closed. Default 5000, as Node's `keepAliveTimeout`.
-   */
-  idleTimeout?: number;
-  /** Serve HTTPS: the certificate chain and key (PEM text), as `listenTls` takes them. */
-  tls?: TlsListenOptions;
-  /**
-   * Milliseconds a request's head may take to arrive in full, from its first byte (408 after,
-   * however steadily it trickles in). Default 60000, as Node's `headersTimeout`.
-   */
-  headersTimeout?: number;
-  /**
-   * Milliseconds a request's body may take to arrive, from its head (408 after). Default
-   * 300000, as Node's `requestTimeout`.
-   */
-  requestTimeout?: number;
-  /**
-   * Serve HTTP/2 too (default true): over TLS when the client chooses it with ALPN ("h2"),
-   * over plain TCP when it starts with the HTTP/2 preface (h2c with prior knowledge).
-   */
-  http2?: bool;
-  /** HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS: requests of a connection at once. Default 128. */
-  maxConcurrentStreams?: number;
-}
-
-/** A running server. */
-export class HttpServer {
-  /** The real port (useful after `port: 0`). */
-  port: number = 0;
-  private listener: TcpListener;
-  private stop: AbortController;
-  // Settles once the server stopped accepting and every connection finished.
-  private done: Promise<void>;
-
-  constructor(listener: TcpListener, stop: AbortController, done: Promise<void>) {
-    this.listener = listener;
-    this.port = listener.port;
-    this.stop = stop;
-    this.done = done;
-  }
-
-  /**
-   * Stops accepting connections and closes the idle ones; a connection in the middle of a
-   * request answers it, then closes. Idempotent.
-   */
-  close() {
-    this.listener.close();
-    this.stop.abort();
-  }
-
-  /**
-   * `close()`, then waits until every connection has finished (its request answered) and the
-   * handler, with everything it captured, was dropped.
-   */
-  async shutdown() {
-    this.close();
-    const done = this.done;
-    await done;
-  }
-}
 
 /**
  * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in

@@ -1,0 +1,95 @@
+// http-server (internal): the rules for header fields both protocols apply: tokens (RFC 9110
+// §5.6.2), the values a handler may set (Node's `ERR_INVALID_HTTP_TOKEN`, `ERR_INVALID_CHAR`),
+// a Content-Length a handler set, and comma-separated token lists.
+
+const SP: u8 = 32;
+const TAB: u8 = 9;
+const DEL: u8 = 127;
+
+/// Whether `c` may be in a token: a method, a header name (RFC 9110 §5.6.2).
+export function isTchar(c: u8): bool {
+  const l = c | 32;
+  if ((l >= 97 && l <= 122) || (c >= 48 && c <= 57)) {
+    return true;
+  }
+  // ! # $ % & ' * + - . ^ _ ` | ~
+  return c == 33 ||
+    (c >= 35 && c <= 39) ||
+    c == 42 ||
+    c == 43 ||
+    c == 45 ||
+    c == 46 ||
+    (c >= 94 && c <= 96) ||
+    c == 124 ||
+    c == 126;
+}
+
+/// Throws `TypeError` unless `b[nameStart..nameEnd)` is a token and `b[valueStart..valueEnd)` has
+/// no control character other than TAB (Node's `ERR_INVALID_HTTP_TOKEN`, `ERR_INVALID_CHAR`).
+export function checkField(b: u8[], nameStart: i64, nameEnd: i64, valueStart: i64, valueEnd: i64) {
+  if (nameStart == nameEnd) {
+    throw new TypeError("a header name must not be empty");
+  }
+  for (let i = nameStart; i < nameEnd; i++) {
+    if (!isTchar(b[i])) {
+      throw new TypeError(`invalid header name: ${b.utf8Slice(nameStart, nameEnd)}`);
+    }
+  }
+  for (let i = valueStart; i < valueEnd; i++) {
+    const c = b[i];
+    if (c < SP ? c != TAB : c == DEL) {
+      throw new TypeError(`invalid character in header ${b.utf8Slice(nameStart, nameEnd)}`);
+    }
+  }
+}
+
+/// Throws `TypeError` for a name that is not a token (as `checkField`).
+export function checkName(name: string) {
+  if (name.length == 0) {
+    throw new TypeError("a header name must not be empty");
+  }
+  for (let i: i64 = 0; i < (name.length as i64); i++) {
+    const ch = name.charCodeAt(i) as i64;
+    if (ch > 127 || !isTchar(ch as u8)) {
+      throw new TypeError(`invalid header name: ${name}`);
+    }
+  }
+}
+
+/// Throws `TypeError` for a value with a control character other than TAB (as `checkField`).
+export function checkValue(name: string, value: string) {
+  for (let i: i64 = 0; i < (value.length as i64); i++) {
+    const ch = value.charCodeAt(i) as i64;
+    if (ch < 32 ? ch != 9 : ch == 127) {
+      throw new TypeError(`invalid character in header ${name}`);
+    }
+  }
+}
+
+/// A Content-Length value a handler set: digits only (`TypeError` otherwise).
+export function lengthValue(value: string): i64 {
+  const t = value.trim();
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (t.length as i64); i++) {
+    const d = (t.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9 || n > 92233720368547757) {
+      throw new TypeError(`invalid Content-Length: ${value}`);
+    }
+    n = n * 10 + d;
+  }
+  if (t.length == 0) {
+    throw new TypeError(`invalid Content-Length: ${value}`);
+  }
+  return n;
+}
+
+/// Whether the comma-separated header value `value` holds `token` (any case).
+export function hasToken(value: string, token: string): bool {
+  const want = token.toLowerCase();
+  for (const part of value.split(",")) {
+    if (part.trim().toLowerCase() == want) {
+      return true;
+    }
+  }
+  return false;
+}

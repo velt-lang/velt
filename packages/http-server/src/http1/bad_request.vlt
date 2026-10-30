@@ -1,0 +1,10 @@
+// http-server (internal): `BadRequest`, input that is not an HTTP/1.1 request.
+
+/// Why input is not a request: the status the server answers with before it closes.
+export class BadRequest {
+  status: number;
+
+  constructor(status: number) {
+    this.status = status;
+  }
+}

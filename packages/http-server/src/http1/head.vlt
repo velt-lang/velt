@@ -1,0 +1,82 @@
+// http-server (internal): `Head`, an HTTP/1.1 request's head as ranges of its connection's read
+// buffer (parsed by `HeadParser`, http1/head_parser.vlt), and how its body is framed.
+
+/// How a request's body is framed (`Head.bodyMode`).
+export const BODY_NONE: i64 = 0;
+/// The whole body is in the buffer already: `bodyStart..bodyEnd`.
+export const BODY_BUFFERED: i64 = 1;
+/// `bodyLength` bytes follow the head, not all read yet.
+export const BODY_LENGTH: i64 = 2;
+/// `Transfer-Encoding: chunked`.
+export const BODY_CHUNKED: i64 = 3;
+
+/// A request's head, parsed in place: ranges of the connection's buffer (`buf`), valid until
+/// the connection reads its next request.
+export class Head {
+  buf: u8[] = [];
+  methodStart: i64 = 0;
+  methodEnd: i64 = 0;
+  targetStart: i64 = 0;
+  targetEnd: i64 = 0;
+  /// Where the path ends (`?` or the target's end).
+  pathEnd: i64 = 0;
+  /// The headers, four numbers each: name start, name end, value start, value end.
+  heads: i64[] = [];
+  /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`,
+  /// HTTP/1.0 with `Connection: keep-alive`).
+  keepAlive: bool = true;
+  /// `Expect: 100-continue` was sent with an HTTP/1.1 request whose body has not arrived yet
+  /// (the client waits for `100 Continue` before sending it), and whether that went out.
+  expectsContinue: bool = false;
+  continueSent: bool = false;
+  /// HTTP/1.1 (chunked responses can be sent).
+  http11: bool = true;
+  /// The body's framing (`BODY_*`), its range when buffered, its length when not all read.
+  bodyMode: i64 = BODY_NONE;
+  bodyStart: i64 = 0;
+  bodyEnd: i64 = 0;
+  bodyLength: i64 = 0;
+
+  /// The index in `heads` of the first header `name` (any case), or -1.
+  find(name: string): i64 {
+    return this.findFrom(name, 0);
+  }
+
+  /// The index in `heads` of the first header `name` (any case) at index `from` or after, or -1.
+  findFrom(name: string, from: i64): i64 {
+    const n = Buffer.byteLength(name) as i64;
+    for (let i = from; i < (this.heads.length as i64); i += 4) {
+      if (
+        this.heads[i + 1] - this.heads[i] == n &&
+        this.buf.utf8EqualsIgnoreCase(name, this.heads[i], this.heads[i + 1])
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// The text of `buf[start..end)`.
+  text(start: i64, end: i64): string {
+    return this.buf.utf8Slice(start, end);
+  }
+
+  /// The value of the header at index `i` of `heads`.
+  value(i: i64): string {
+    return this.buf.utf8Slice(this.heads[i + 2], this.heads[i + 3]);
+  }
+
+  /// Whether the request said `TE: trailers` (the client takes trailers).
+  teTrailers(): bool {
+    let i = this.find("te");
+    while (i >= 0) {
+      for (const part of this.value(i).split(",")) {
+        if (part.trim().toLowerCase() == "trailers") {
+          return true;
+        }
+      }
+      i = this.findFrom("te", i + 4);
+    }
+    return false;
+  }
+}

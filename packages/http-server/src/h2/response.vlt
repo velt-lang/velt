@@ -9,8 +9,8 @@ import { BodyStream } from "velt/net/http";
 import { AbortSignal } from "velt/task";
 import { TcpStream } from "velt/net";
 import { EventStream } from "../event_stream";
+import { checkName, checkValue, lengthValue } from "../fields";
 import { BodySink, HttpStream } from "../http_stream";
-import { isTchar } from "../parse";
 import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
@@ -323,44 +323,4 @@ function connectionField(n: string): bool {
     n == "keep-alive" ||
     n == "upgrade" ||
     n == "proxy-connection";
-}
-
-/// A Content-Length value a handler set: digits only (`TypeError` otherwise).
-function lengthValue(value: string): i64 {
-  const t = value.trim();
-  let n: i64 = 0;
-  for (let i: i64 = 0; i < (t.length as i64); i++) {
-    const d = (t.charCodeAt(i) as i64) - 48;
-    if (d < 0 || d > 9 || n > 92233720368547757) {
-      throw new TypeError(`invalid Content-Length: ${value}`);
-    }
-    n = n * 10 + d;
-  }
-  if (t.length == 0) {
-    throw new TypeError(`invalid Content-Length: ${value}`);
-  }
-  return n;
-}
-
-/// Throws `TypeError` for a name that is not a token (as `HttpResponse.header`).
-function checkName(name: string) {
-  if (name.length == 0) {
-    throw new TypeError("a header name must not be empty");
-  }
-  for (let i: i64 = 0; i < (name.length as i64); i++) {
-    const ch = name.charCodeAt(i) as i64;
-    if (ch > 127 || !isTchar(ch as u8)) {
-      throw new TypeError(`invalid header name: ${name}`);
-    }
-  }
-}
-
-/// Throws `TypeError` for a value with a control character other than TAB.
-function checkValue(name: string, value: string) {
-  for (let i: i64 = 0; i < (value.length as i64); i++) {
-    const ch = value.charCodeAt(i) as i64;
-    if (ch < 32 ? ch != 9 : ch == 127) {
-      throw new TypeError(`invalid character in header ${name}`);
-    }
-  }
 }

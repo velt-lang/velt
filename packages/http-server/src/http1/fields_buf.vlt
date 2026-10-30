@@ -1,0 +1,44 @@
+// http-server (internal): `FieldBuf`, header fields a handler set, encoded as they will be sent
+// (`name: value\r\n` each): a response's headers, and its trailers.
+
+import { checkField } from "../fields";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+
+/// Encoded fields: `buf[0..length)`.
+export class FieldBuf {
+  buf: u8[];
+  length: i64 = 0;
+
+  constructor(capacity: i64) {
+    this.buf = Buffer.alloc(capacity as usize);
+  }
+
+  /**
+   * Appends `name: value\r\n` and returns the name's length in bytes. Throws `TypeError` (and
+   * appends nothing) for a name that is not a token or a value with a control character other
+   * than TAB.
+   */
+  add(name: string, value: string): i64 {
+    const nameLength = Buffer.byteLength(name) as i64;
+    const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
+    if (this.length + n > (this.buf.length as i64)) {
+      const grown: u8[] = Buffer.alloc(((this.length + n) * 2) as usize);
+      this.buf.copy(grown, 0, 0, this.length);
+      this.buf = grown;
+    }
+    const b = this.buf;
+    const start = this.length;
+    let at = start + (b.write(name, start as usize) as i64);
+    b[at] = 58;
+    b[at + 1] = 32;
+    const valueStart = at + 2;
+    at = valueStart + (b.write(value, valueStart as usize) as i64);
+    checkField(b, start, start + nameLength, valueStart, at);
+    b[at] = CR;
+    b[at + 1] = LF;
+    this.length = at + 2;
+    return nameLength;
+  }
+}

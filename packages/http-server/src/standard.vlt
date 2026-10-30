@@ -9,7 +9,9 @@ import { BodyKind, Request, Response, responseParts, serverRequest } from "velt/
 import { Received } from "./received";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
-import { HttpServeOptions, HttpServer, serveHttp } from "./serve";
+import { serveHttp } from "./serve";
+import { HttpServeOptions } from "./serve_options";
+import { HttpServer } from "./server";
 import { ServeInfo } from "./serve_info";
 
 /**
