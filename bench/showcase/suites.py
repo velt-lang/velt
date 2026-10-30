@@ -44,20 +44,31 @@ def velt_build(ctx, src, exe, extra=()):
     return err
 
 
-def impl(label, lang, cmd, error=None, **kw):
-    d = {"label": label, "lang": lang, "cmd": [str(c) for c in cmd], **kw}
+# How many threads an implementation computes on, stated per implementation (never guessed from
+# its name): the report compares each row with Velt's implementation of the same kind.
+ST = "st"  # one thread: a plain program, `_st`, `Velt 1 thread`, one Node or Bun process
+MT = "mt"  # several threads or processes: `_mt`, rayon, worker_threads, node:cluster, reusePort
+UNPAIRED = None  # not compared by kind (compile times, which are not ranked)
+THREADS = (ST, MT, UNPAIRED)
+
+
+def impl(label, lang, cmd, error=None, *, threads, **kw):
+    """One implementation of a benchmark; `threads` is ST, MT or UNPAIRED (see above)."""
+    if threads not in THREADS:
+        raise ValueError(f"ICE: {label}: threads must be one of {THREADS}, not {threads!r}")
+    d = {"label": label, "lang": lang, "threads": threads, "cmd": [str(c) for c in cmd], **kw}
     if error:
         d["error"] = error
     return d
 
 
-def js_impls(ctx, path, args=(), label_suffix="", error=None, **kw):
+def js_impls(ctx, path, args=(), label_suffix="", error=None, *, threads, **kw):
     """Node and Bun running the same file."""
     out = []
     for lang, exe in (("node", ctx.node), ("bun", ctx.bun)):
         name = "Node" if lang == "node" else "Bun"
         err = error or (None if exe else f"{lang} not found")
-        out.append(impl(f"{name}{label_suffix}", lang, [exe or lang, path, *args], err, **kw))
+        out.append(impl(f"{name}{label_suffix}", lang, [exe or lang, path, *args], err, threads=threads, **kw))
     return out
 
 
@@ -102,8 +113,8 @@ def micro_benchmarks(ctx):
         verr = velt_build(ctx, os.path.join(ctx.bench, f"{name}.vlt"), velt)
         benches.append({
             "category": "cpu", "name": name, "check": "ref",
-            "impls": [impl("Rust", "rust", [rust], rerr), impl("Velt", "velt", [velt], verr),
-                      *js_impls(ctx, os.path.join(ctx.bench, "node", f"{name}.js"))],
+            "impls": [impl("Rust", "rust", [rust], rerr, threads=ST), impl("Velt", "velt", [velt], verr, threads=ST),
+                      *js_impls(ctx, os.path.join(ctx.bench, "node", f"{name}.js"), threads=ST)],
         })
     return benches
 
@@ -118,6 +129,34 @@ def read_conf(path):
             k, v = line.split("=", 1)
             conf[k.strip()] = v.strip()
     return conf
+
+
+# Every Benchmarks Game implementation by kind, per program: {program: {(lang, file stem): kind}}.
+# Rust stems are the binaries in bench/benchmarks-game/rust/src/bin (`_st`: the same program on a
+# rayon pool of one thread); Velt and JS stems are the files in the program's directory (JS
+# `main.js` is the published multi-threaded worker_threads program where one exists). A file
+# missing here is reported as an error ("not classified"), never guessed.
+_GAME_MT = ["binary-trees", "fannkuch-redux", "fasta", "k-nucleotide", "mandelbrot", "regex-redux",
+            "reverse-complement", "spectral-norm"]
+_JS_WORKERS = ["binary-trees", "fannkuch-redux", "fasta", "k-nucleotide", "mandelbrot", "regex-redux",
+               "spectral-norm"]
+GAME_THREADS = {
+    p: {("rust", p): MT if p in _GAME_MT else ST, ("rust", f"{p}_st"): ST,
+        ("velt", "main"): ST, ("velt", "main_mt"): MT, ("velt", "main_opt"): ST,
+        ("js", "main"): MT if p in _JS_WORKERS else ST, ("js", "main_st"): ST}
+    for p in _GAME_MT + ["n-body", "pidigits"]
+}
+GAME_THREADS["binary-trees"].update({("rust", "binary-trees_box"): ST, ("velt", "main_arena"): ST})
+GAME_THREADS["pidigits"].update({("rust", "pidigits_limbs"): ST, ("velt", "main_limbs"): ST})
+
+
+def game_impl(program, kind_lang, stem, label, lang, cmd, error, **kw):
+    """An implementation with its kind from GAME_THREADS (an error when it is not listed)."""
+    threads = GAME_THREADS.get(program, {}).get((kind_lang, stem), "unlisted")
+    if threads == "unlisted":
+        return impl(label, lang, cmd, f"not classified: add ({kind_lang!r}, {stem!r}) to GAME_THREADS",
+                    threads=UNPAIRED, **kw)
+    return impl(label, lang, cmd, error, threads=threads, **kw)
 
 
 def game_benchmarks(ctx, category):
@@ -147,18 +186,23 @@ def game_benchmarks(ctx, category):
         rust_files = sorted(f[:-3] for f in os.listdir(os.path.join(here, "rust", "src", "bin"))
                             if f == f"{program}.rs" or f.startswith(f"{program}_"))
         for b in rust_files:
-            impls.append(impl(f"Rust {b}", "rust", [os.path.join(rust_bin, b), *args],
-                              ctx.game_rust_err, stdin=stdin))
+            impls.append(game_impl(program, "rust", b, f"Rust {b}", "rust", [os.path.join(rust_bin, b), *args],
+                                   ctx.game_rust_err, stdin=stdin))
         for f in sorted(os.listdir(dirp)):
             stem, ext = os.path.splitext(f)
             if ext == ".vlt":
                 exe = os.path.join(out, f"{program}-{stem}")
                 err = velt_build(ctx, os.path.join(dirp, f), exe, ["--cpu", "native"])
-                impls.append(impl(f"Velt {stem}", "velt", [exe, *args], err, stdin=stdin))
+                impls.append(game_impl(program, "velt", stem, f"Velt {stem}", "velt", [exe, *args], err, stdin=stdin))
         for f in sorted(os.listdir(dirp)):
             stem, ext = os.path.splitext(f)
             if ext == ".js":
-                impls += js_impls(ctx, os.path.join(dirp, f), args, f" {stem}", stdin=stdin)
+                kind = GAME_THREADS.get(program, {}).get(("js", stem), "unlisted")
+                if kind == "unlisted":
+                    impls += [game_impl(program, "js", stem, f"{n} {stem}", lang, [], None)
+                              for n, lang in (("Node", "node"), ("Bun", "bun"))]
+                else:
+                    impls += js_impls(ctx, os.path.join(dirp, f), args, f" {stem}", stdin=stdin, threads=kind)
         benches.append({"category": category, "name": f"{program} ({n if not stdin else 'fasta ' + n})",
                         "check": check, "impls": impls})
     return benches
@@ -200,11 +244,11 @@ def async_benchmarks(ctx):
         verr = velt_build(ctx, os.path.join(here, f"{name}.vlt"), velt)
         benches.append({
             "category": "async", "name": name, "check": "ref",
-            "impls": [impl("Rust tokio multi-thread", "rust", [rust], rerr),
-                      impl("Rust tokio current-thread", "rust", [rust, "current"], rerr),
-                      impl("Velt", "velt", [velt], verr),
-                      impl("Velt 1 thread", "velt", [velt], verr, env={"VELT_THREADS": "1"}),
-                      *js_impls(ctx, os.path.join(here, "node", f"{name}.js"))],
+            "impls": [impl("Rust tokio multi-thread", "rust", [rust], rerr, threads=MT),
+                      impl("Rust tokio current-thread", "rust", [rust, "current"], rerr, threads=ST),
+                      impl("Velt", "velt", [velt], verr, threads=MT),
+                      impl("Velt 1 thread", "velt", [velt], verr, env={"VELT_THREADS": "1"}, threads=ST),
+                      *js_impls(ctx, os.path.join(here, "node", f"{name}.js"), threads=ST)],
         })
     if ctx.wanted_name("concurrent_map"):
         here = os.path.join(ctx.bench, "concurrent_map")
@@ -216,8 +260,9 @@ def async_benchmarks(ctx):
         benches.append({
             "category": "async", "name": "concurrent_map", "check": "cmap", "parse": "cmap",
             "unit": "Mops/s",
-            "impls": [impl("Rust bbtree", "rust", [os.path.join(rtarget, "release", "concurrent_map_bench")], rerr),
-                      impl("Velt ConcurrentMap", "velt", [velt], verr)],
+            "impls": [impl("Rust bbtree", "rust", [os.path.join(rtarget, "release", "concurrent_map_bench")], rerr,
+                           threads=MT),
+                      impl("Velt ConcurrentMap", "velt", [velt], verr, threads=MT)],
         })
     return benches
 
@@ -238,9 +283,9 @@ def json_benchmarks(ctx):
         verr = velt_build(ctx, os.path.join(here, f"{name}.vlt"), velt)
         benches.append({
             "category": "json", "name": name, "check": "ref",
-            "impls": [impl("Rust serde_json", "rust", [os.path.join(target, "release", name)], rerr),
-                      impl("Velt", "velt", [velt], verr),
-                      *js_impls(ctx, os.path.join(here, "node", f"{name}.js"))],
+            "impls": [impl("Rust serde_json", "rust", [os.path.join(target, "release", name)], rerr, threads=ST),
+                      impl("Velt", "velt", [velt], verr, threads=ST),
+                      *js_impls(ctx, os.path.join(here, "node", f"{name}.js"), threads=ST)],
         })
     corpora = os.path.join(here, "corpora")
     ferr = sh(ctx, "json corpora (download, checksums)", ["bash", os.path.join(corpora, "fetch.sh")])
@@ -262,12 +307,15 @@ def json_benchmarks(ctx):
                 "check": "ref",
                 "input_bytes": os.path.getsize(data) if os.path.isfile(data) else None,
                 "rounds": int(rounds),
-                "impls": [*js_impls(ctx, os.path.join(corpora, "node", f"{op}.js"), args, error=ferr),
+                "impls": [*js_impls(ctx, os.path.join(corpora, "node", f"{op}.js"), args, error=ferr, threads=ST),
                           impl("Velt JSON.parseValue" if op == "value" else "Velt JsonValue.stringify()", "velt",
-                               [velt, *args], verr),
-                          impl("Rust serde_json", "rust", [os.path.join(rb, f"{op}_serde"), *args], cerr, check=rust_check),
-                          impl("Rust sonic-rs", "rust", [os.path.join(rb, f"{op}_sonic"), *args], cerr, check=rust_check),
-                          impl("Rust simd-json", "rust", [os.path.join(rb, f"{op}_simd"), *args], cerr, check=rust_check)],
+                               [velt, *args], verr, threads=ST),
+                          impl("Rust serde_json", "rust", [os.path.join(rb, f"{op}_serde"), *args], cerr,
+                               check=rust_check, threads=ST),
+                          impl("Rust sonic-rs", "rust", [os.path.join(rb, f"{op}_sonic"), *args], cerr,
+                               check=rust_check, threads=ST),
+                          impl("Rust simd-json", "rust", [os.path.join(rb, f"{op}_simd"), *args], cerr,
+                               check=rust_check, threads=ST)],
             })
     # Typed: JSON.parse<T> into structs with the fields a program reads, and JSON.stringify of
     # the typed value (bench/showcase/json), against serde derive on the three Rust parsers. JS
@@ -285,16 +333,16 @@ def json_benchmarks(ctx):
             if not ctx.wanted_name(f"{corpus} typed"):
                 continue
             rows = [impl("Velt JSON.parse<T>" if op == "parse" else "Velt JSON.stringify(typed)", "velt",
-                         [tvelt, key, data, rounds, op], tverr)]
+                         [tvelt, key, data, rounds, op], tverr, threads=ST)]
             for lib, label in (("serde", "serde_json"), ("sonic", "sonic-rs"), ("simd", "simd-json")):
                 rows.append(impl(f"Rust {label} (serde derive)", "rust", [trust, lib, key, data, rounds, op], terr,
-                                 check="json" if op == "write" else "ref"))
+                                 check="json" if op == "write" else "ref", threads=ST))
             if op == "parse":
                 rows += js_impls(ctx, os.path.join(typed, "typed.mjs"), [key, data, rounds],
-                                 " JSON.parse + field reads", error=ferr)
+                                 " JSON.parse + field reads", error=ferr, threads=ST)
             else:
-                rows += [impl("Node", "node", [], "n/a: the typed write is in the 'write a parsed value' row"),
-                         impl("Bun", "bun", [], "n/a: the typed write is in the 'write a parsed value' row")]
+                rows += [impl("Node", "node", [], "n/a: the typed write is in the 'write a parsed value' row", threads=ST),
+                         impl("Bun", "bun", [], "n/a: the typed write is in the 'write a parsed value' row", threads=ST)]
             benches.append({"category": "json", "name": f"{corpus}.json typed {op} x{rounds}", "check": "ref",
                             "input_bytes": size, "rounds": int(rounds), "impls": rows})
     return benches
@@ -320,12 +368,12 @@ def sqlite_benchmarks(ctx):
     benches.append({
         "category": "sqlite", "name": "db workloads (file database, WAL)", "check": "results",
         "parse": "results", "unit": "ops/s",
-        "impls": [impl("Rust rusqlite", "rust", [os.path.join(target, "release", "sqlite"), *quick], rerr),
-                  impl("Velt velt:sqlite", "velt", [velt, *quick], verr),
+        "impls": [impl("Rust rusqlite", "rust", [os.path.join(target, "release", "sqlite"), *quick], rerr, threads=ST),
+                  impl("Velt velt:sqlite", "velt", [velt, *quick], verr, threads=ST),
                   impl("Node better-sqlite3", "node", [ctx.node or "node", os.path.join(db, "node", "sqlite.mjs"), *quick],
-                       nerr or (None if ctx.node else "node not found")),
+                       nerr or (None if ctx.node else "node not found"), threads=ST),
                   impl("Bun bun:sqlite", "bun", [ctx.bun or "bun", bun_file, *quick],
-                       None if ctx.bun else "bun not found")],
+                       None if ctx.bun else "bun not found", threads=ST)],
     })
     rows = os.path.join(ctx.bench, "sqlite")
     rtarget = os.path.join(out, "rows-rust-target")
@@ -337,8 +385,8 @@ def sqlite_benchmarks(ctx):
         benches.append({
             "category": "sqlite", "name": f"rows {q} x{n} (in-memory, rows to JSON)", "check": "ref",
             "impls": [impl("Rust rusqlite + serde_json", "rust",
-                           [os.path.join(rtarget, "release", "sqlite_rows_bench"), q, n], rrerr),
-                      impl("Velt", "velt", [rvelt, q, n], rverr)],
+                           [os.path.join(rtarget, "release", "sqlite_rows_bench"), q, n], rrerr, threads=ST),
+                      impl("Velt", "velt", [rvelt, q, n], rverr, threads=ST)],
         })
     return benches
 
@@ -360,8 +408,8 @@ def startup_benchmarks(ctx):
     bench = {
         "category": "startup", "name": "hello world", "check": "ref", "sizes": sizes,
         "runs_factor": 4,
-        "impls": [impl("Rust", "rust", [rust], rerr), impl("Velt", "velt", [velt], verr),
-                  *js_impls(ctx, os.path.join(src, "hello.js"))],
+        "impls": [impl("Rust", "rust", [rust], rerr, threads=ST), impl("Velt", "velt", [velt], verr, threads=ST),
+                  *js_impls(ctx, os.path.join(src, "hello.js"), threads=ST)],
     }
     return [bench]
 
@@ -394,11 +442,11 @@ def compile_benchmarks(ctx):
         o = os.path.join(out, name.split()[0])
         benches.append({
             "category": "compile", "name": name, "check": "none",
-            "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", vsrc, "-o", o + "-vd"], env=cold),
-                      impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", vsrc, "-o", o + "-vr"], env=cold),
-                      impl("rustc (debug)", "rust", ["rustc", "--edition", "2021", "-o", o + "-rd", rsrc], env=nocache),
+            "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", vsrc, "-o", o + "-vd"], env=cold, threads=UNPAIRED),
+                      impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", vsrc, "-o", o + "-vr"], env=cold, threads=UNPAIRED),
+                      impl("rustc (debug)", "rust", ["rustc", "--edition", "2021", "-o", o + "-rd", rsrc], env=nocache, threads=UNPAIRED),
                       impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
-                           [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache)],
+                           [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache, threads=UNPAIRED)],
         })
     # The HTTP server: velt:http against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
@@ -414,14 +462,14 @@ def compile_benchmarks(ctx):
     relenv = {**nocache, **rust_profile()}
     benches.append({
         "category": "compile", "name": "HTTP server (techempower: velt:http vs axum)", "check": "none",
-        "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", os.path.join(te, "server.vlt"), "-o", o + "-vd"], env=cold),
-                  impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", os.path.join(te, "server.vlt"), "-o", o + "-vr"], env=cold),
+        "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", os.path.join(te, "server.vlt"), "-o", o + "-vd"], env=cold, threads=UNPAIRED),
+                  impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", os.path.join(te, "server.vlt"), "-o", o + "-vr"], env=cold, threads=UNPAIRED),
                   impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--locked", "--target-dir", clean_t],
-                       env=nocache, cwd=axum_src, pre=_rmtree(clean_t)),
+                       env=nocache, cwd=axum_src, pre=_rmtree(clean_t), threads=UNPAIRED),
                   impl("cargo build --release (fat LTO, as the runtime rows), clean: axum + deps", "rust",
-                       [*cargo_cmd, "--target-dir", clean_t], env=relenv, cwd=axum_src, pre=_rmtree(clean_t)),
+                       [*cargo_cmd, "--target-dir", clean_t], env=relenv, cwd=axum_src, pre=_rmtree(clean_t), threads=UNPAIRED),
                   impl("cargo build --release (fat LTO), main.rs touched (deps built)", "rust",
-                       [*cargo_cmd, "--target-dir", touch_t], env=relenv, cwd=axum_src, pre=_touch(main_rs))],
+                       [*cargo_cmd, "--target-dir", touch_t], env=relenv, cwd=axum_src, pre=_touch(main_rs), threads=UNPAIRED)],
     })
     # Fetch the crates once, outside the timing (the clean builds run --offline).
     ferr = sh(ctx, "cargo fetch (axum)", ["cargo", "fetch", "-q"], cwd=axum_src)

@@ -7,7 +7,9 @@
 #
 #   --smoke        tiny sizes and one run of everything: checks that it all works, nothing more
 #                  (results go to the build directory, not bench/showcase/results)
-#   --force        run even when the 1-minute load average is over 2 (the numbers will be noisy)
+#   --force        run even when the 1-minute load average is over 2, before the build or after
+#                  it (the numbers will be noisy); without it, timing waits up to 15 minutes
+#                  after the build for the load to settle under 2, then gives up
 #   --runs N       timed runs per implementation (default 5; start-up runs 4 × N)
 #   --out DIR      where results.json and the tables go (default bench/showcase/results/<date>)
 #   --categories   a subset of: startup cpu core benchmarks-game regex async json tsx sqlite
@@ -15,10 +17,10 @@
 #   --only         run only the benchmarks whose name contains one of these strings
 #   --velt PATH    use this release velt instead of building one (set VELT_STD and VELT_RT_LIB to match)
 #
-# Needs: cargo, rustc, clang, python3, node + npm, bun (~/.bun/bin is searched too), oha (for
-# http), taskset, curl (the JSON corpora are downloaded once), git; network access the first time
-# (crates, npm packages). Builds into $CARGO_TARGET_DIR/showcase (or <repo>/target/showcase).
-# Stops only the processes it started.
+# Needs: cargo, rustc, clang (or cc, for the measure helper), python3, node + npm, bun
+# (~/.bun/bin is searched too), oha (for http), taskset, curl (the JSON corpora are downloaded
+# once), git; network access the first time (crates, npm packages). Builds into
+# $CARGO_TARGET_DIR/showcase (or <repo>/target/showcase). Stops only the processes it started.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -98,6 +100,7 @@ mkdir -p "$BUILD" "$OUT"
 args=(--out "$OUT" --build-dir "$BUILD" --runs "$RUNS" --velt "$VELT"
   --http-duration "$HTTP_DURATION" --http-conns "$HTTP_CONNS")
 [[ $SMOKE -eq 1 ]] && args+=(--smoke)
+[[ $FORCE -eq 1 ]] && args+=(--force)
 [[ -n $CATS ]] && args+=(--categories "$CATS")
 [[ -n $ONLY ]] && args+=(--only "$ONLY")
 "$PYTHON" "$HERE/showcase.py" "${args[@]}"

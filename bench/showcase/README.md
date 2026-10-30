@@ -25,7 +25,8 @@ It takes about 3.5–4 hours there (12 threads): about 20 minutes of builds (Vel
 fourteen Cargo projects, four npm installs), then the categories (estimates for the full run, in
 minutes: startup 1, cpu 6, core 30, benchmarks-game 35, regex 2, async 50 (the two
 `timer_await` programs take 23–44 s a run, `concurrent_map` about 50 s), json 12, tsx 5,
-sqlite 5, compile 17, http 31, websocket 4). It needs about 10 GB of disk for the build directory.
+sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It needs about
+10 GB of disk for the build directory.
 
 ## Fairness rules
 
@@ -57,18 +58,40 @@ sqlite 5, compile 17, http 31, websocket 4). It needs about 10 GB of disk for th
    by one each round, so a change of load on the machine hits all of them alike. The tables
    show the best wall time of N (default 5) and the median; CPU time is the smallest user + sys,
    peak RSS the largest of the N runs. The run refuses to start when the 1-minute load average
-   is over 2 (`--force` overrides) and pins the CPU frequency governor to `performance` when it
-   may, otherwise it records the governor as it is.
-5. **Every result is reported, losses included.** Every implementation of every benchmark that
+   is over 2 (`--force` overrides), and after the build phase it waits for the load average to
+   fall back under 2 before the first timed run (at most 15 minutes, `--settle-timeout`; then
+   it stops with a message, or goes on with `--force`). The results record that wait and the
+   load average at the start of every category. It pins the CPU frequency governor to
+   `performance` when it may, otherwise it records the governor as it is.
+5. **Like against like.** Every implementation states how many threads it computes on, in its
+   benchmark definition (`threads=ST` or `threads=MT` in `suites.py`, `core.py`, `servers.py`;
+   the Benchmarks Game files are listed one by one in `suites.GAME_THREADS`, and a file missing
+   there is an error, never guessed from its name). Single-threaded: a plain program, `_st`,
+   `Velt 1 thread`, one Node or Bun process. Multi-threaded: `_mt`, the Rust programs on rayon
+   or threads, Node's `worker_threads` programs, tokio's multi-thread runtime, `node:cluster`,
+   Bun `reusePort`, Velt with `VELT_THREADS` at the server cores. The tables' *threads* column
+   shows it, and *vs Velt* compares each row with Velt's first implementation of the same kind
+   (named when there are several), or says "no Velt multi-threaded version" (or
+   single-threaded) when there is none. The servers and the fetch client have a Velt row on one
+   thread for that reason.
+6. **Every result is reported, losses included.** Every implementation of every benchmark that
    runs is in the tables, and the results' `README.md` lists every benchmark where another
-   implementation beat Velt's first listed one. Variants (`main_mt`, `main_opt`, `_st`, `Velt 1
-   thread`, `node:cluster`) are labelled as such, beside the default implementation, never in
-   its place.
+   implementation beat Velt's implementation of the same kind, and every kind that has no Velt
+   implementation. Variants (`main_mt`, `main_opt`, `_st`, `Velt 1 thread`, `node:cluster`) are
+   labelled as such, beside the default implementation, never in its place.
 
-Measurement: wall time from `time.perf_counter` around the child; CPU time and peak RSS from
-`wait4` (`ru_utime`, `ru_stime`, `ru_maxrss`), the numbers GNU `time -v` prints, without needing
-it installed (the builder has no `/usr/bin/time`). Server CPU and RSS come from `/proc` over the
-server's whole process tree (all `node:cluster` workers, all Bun `reusePort` processes).
+Measurement: wall time, CPU time and peak RSS come from `measure.c`, a small helper built at
+the start of a run: it forks and execs the program, times it with the monotonic clock and
+takes `ru_utime`, `ru_stime` and `ru_maxrss` from `wait4`, the numbers GNU `time -v` prints,
+without needing it installed (the builder has no `/usr/bin/time`). The harness cannot take them
+from its own `wait4`: Python starts a child with `vfork`, and Linux starts the child's
+`ru_maxrss` at the peak RSS of the address space its `exec` replaced, which is the harness's own
+(hundreds of MB after reading a large output), so every program smaller than the harness
+reported the harness's size. The run checks the helper first on two programs (`true` must
+report under 16 MB while the harness holds 64 MB more, a program touching 128 MB over 120 MB),
+and without a working helper the peak RSS cells stay empty. Server CPU and RSS come from
+`/proc` over the server's whole process tree (all `node:cluster` workers, all Bun `reusePort`
+processes; `VmHWM`, each process's own peak).
 
 ## Categories
 
@@ -91,7 +114,7 @@ server's whole process tree (all `node:cluster` workers, all Bun `reusePort` pro
 | `compile` | hello world, nbody, the TechEmpower server: Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
 | `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (velt:http) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
 | `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt`, `tsx/server.mjs`) | ✓ | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
-| `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ | | ✓ (ws) | ✓ |
+| `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ (server cores, and 1 thread) | | ✓ (ws, 1 process) | ✓ (1 process) |
 | memory | peak RSS of every benchmark above, one table (`memory.md`) | | | | |
 
 The JSON rows say which Velt API they use; all of them run the JSON engine written in Velt
@@ -131,7 +154,9 @@ generator's limit, not the server's); a loss line in the results' README says
 "(load-bound)" when either row was. Every server table, the TechEmpower routes and the TSX
 pages alike, has each JavaScript server twice: as one process (one core) and on every server
 core (`node:cluster` with one worker per core; Bun with `reusePort` and one process per core).
-Velt (`VELT_THREADS` set to the server CPUs) and axum use every server core. Before any timing, every server is started once
+Velt (`VELT_THREADS` set to the server CPUs) and axum use every server core, and Velt runs a
+second time on one thread (`VELT_THREADS=1`), the row the one-process servers are compared
+with. Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
 response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,
 which the `tsx` category compares with React's and Preact's byte for byte). A server that fails
@@ -147,7 +172,10 @@ review. A benchmark, category or server that raises an error is recorded as fail
 preact-render-to-string, better-sqlite3, ws), the SQLite version that better-sqlite3, bun:sqlite
 and velt:sqlite report (`sqlite_version()`), and for rusqlite the version of the
 `libsqlite3-sys` crate, whose release fixes the SQLite it bundles.
-`test_report.py` (run by `run.sh` first) tests the list of losses on made-up results.
+`test_report.py` and `test_measure.py` (run by `run.sh` first) test the list of losses and the
+like-for-like pairing on made-up results, that every Benchmarks Game file is classified, the
+measure helper's peak RSS (two very different programs must report different peaks, whatever
+the harness's own size), and the wait for a quiet machine.
 
 ## Not covered
 
@@ -163,11 +191,15 @@ and velt:sqlite report (`sqlite_version()`), and for rusqlite the version of the
   `key_order` and typed-array programs, JavaScript for `btree`, `atomics` and `stdport`**: there
   is no such program in the suites, and none was written for this; those cells are n/a with the
   reason.
-- **Threads against Node `worker_threads` and Bun workers, and `ConcurrentMap` against Rust's
-  DashMap**: the suites have no worker-thread programs, and `concurrent_map` compares with
-  bbtree's concurrent map only.
-- **Clustered Node and Bun chat servers**: the chat rows compare Velt on the server cores with
-  Node and Bun as one process each; the suite has no clustered Node or Bun chat server.
+- **Threads against Node `worker_threads` and Bun workers outside the Benchmarks Game, and
+  `ConcurrentMap` against Rust's DashMap**: only the Benchmarks Game has worker-thread
+  programs, and `concurrent_map` compares with bbtree's concurrent map only.
+- **Clustered Node and Bun chat servers**: the Bun and Node chat servers keep a room's members
+  in the process (Bun's pub/sub, ws's client sets), so several processes behind `reusePort` or
+  `node:cluster` would each deliver a room's messages only to their own clients; a fair
+  multi-process version needs shared state (a broker) that the suite does not have. Their rows
+  say "single process; rooms need shared state" and are compared with Velt on one thread;
+  Velt on the server cores has no counterpart and is not counted as a win.
 - **Rust templating for the TSX rows** (askama, maud): templating is not JSX, so the Rust cell is
   n/a rather than a different kind of program.
 - **bench/array_view, bench/shared, bench/simd, bench/proxy and the other instruction-count

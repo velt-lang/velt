@@ -1,4 +1,4 @@
-"""Unit tests of report.losses on made-up results: `python3 -m unittest discover bench/showcase`
+"""Unit tests of report.losses and the like-for-like pairing on made-up results: `python3 -m unittest discover bench/showcase`
 (run.sh runs them before a run)."""
 
 import os
@@ -9,8 +9,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import report  # noqa: E402
 
 
-def impl(label, lang, runs=1, error=None, **summary):
+def impl(label, lang, runs=1, error=None, threads=None, **summary):
     d = {"label": label, "lang": lang, "summary": {"runs": runs, **summary}}
+    if threads:
+        d["threads"] = threads
     if error:
         d["error"] = error
     return d
@@ -73,7 +75,7 @@ class Losses(unittest.TestCase):
                                           impl("Velt main_opt", "velt", best_wall_s=1.0),
                                           impl("Rust", "rust", best_wall_s=0.5)]}
         out = report.losses(results("benchmarks-game", rec))
-        self.assertEqual(out, ["benchmarks-game: nbody: Rust (Velt 2.00× slower)"])
+        self.assertEqual(out, ["benchmarks-game: nbody: Rust (Velt main_opt 2.00× slower)"])
 
     def test_failed_benchmark_record_is_listed(self):
         rec = {"name": "binary-trees", "error": "KeyError: 'N'", "impls": []}
@@ -103,6 +105,113 @@ class Losses(unittest.TestCase):
     def test_compile_is_not_ranked(self):
         rec = {"name": "hello", "impls": [impl("velt build", "velt", best_wall_s=2.0), impl("rustc", "rust", best_wall_s=1.0)]}
         self.assertEqual(report.losses(results("compile", rec)), [])
+
+
+def game(*rows):
+    """A Benchmarks Game record from (label, lang, threads, best wall s) rows."""
+    return {"name": "mandelbrot (16000)",
+            "impls": [impl(l, g, threads=t, best_wall_s=w, median_wall_s=w, min_cpu_s=w) for l, g, t, w in rows]}
+
+
+class Pairing(unittest.TestCase):
+    """Single-threaded rows are compared with Velt's single-threaded program, multi-threaded rows
+    with Velt's multi-threaded one, never across."""
+
+    def test_each_kind_against_its_velt(self):
+        rec = game(("Rust mandelbrot", "rust", "mt", 0.5), ("Rust mandelbrot_st", "rust", "st", 3.0),
+                   ("Velt main", "velt", "st", 19.5), ("Velt main_mt", "velt", "mt", 2.0),
+                   ("Node main", "node", "mt", 1.0), ("Node main_st", "node", "st", 12.0))
+        out = report.losses(results("benchmarks-game", rec))
+        self.assertEqual(out, [
+            "benchmarks-game: mandelbrot (16000) [multi-threaded]: Rust mandelbrot (Velt main_mt 4.00× slower)",
+            "benchmarks-game: mandelbrot (16000) [single-threaded]: Rust mandelbrot_st (Velt main 6.50× slower)",
+        ])
+
+    def test_multi_threaded_competitor_never_beats_single_threaded_velt(self):
+        # Velt's single-threaded program beats every single-threaded competitor and its
+        # multi-threaded one every multi-threaded competitor: nothing is lost, although Rust on
+        # all cores is 39 times faster than Velt on one.
+        rec = game(("Rust mandelbrot", "rust", "mt", 0.5), ("Rust mandelbrot_st", "rust", "st", 21.0),
+                   ("Velt main", "velt", "st", 19.5), ("Velt main_mt", "velt", "mt", 0.4))
+        self.assertEqual(report.losses(results("benchmarks-game", rec)), [])
+
+    def test_no_velt_of_that_kind(self):
+        rec = game(("Rust fasta", "rust", "mt", 0.6), ("Rust fasta_st", "rust", "st", 1.8),
+                   ("Velt main", "velt", "st", 1.5))
+        out = report.losses(results("benchmarks-game", rec))
+        self.assertEqual(out, ["benchmarks-game: mandelbrot (16000) [multi-threaded]: Rust fasta: "
+                               "no Velt multi-threaded version"])
+
+    def test_no_velt_single_threaded_version(self):
+        rec = {"name": "/plaintext", "kind": "http",
+               "impls": [impl("Velt velt:http", "velt", threads="mt", best_rps=100.0),
+                         impl("Node node:http (1 process)", "node", threads="st", best_rps=50.0)]}
+        out = report.losses(results("http", rec))
+        self.assertEqual(out, ["http: /plaintext: req/s [single-threaded]: Node node:http (1 process): "
+                               "no Velt single-threaded version"])
+
+    def test_velt_failed_of_one_kind(self):
+        rec = {"name": "fasta", "impls": [impl("Velt main", "velt", threads="st", best_wall_s=1.0),
+                                          impl("Velt main_mt", "velt", 0, error="exit 1", threads="mt"),
+                                          impl("Rust fasta", "rust", threads="mt", best_wall_s=0.5)]}
+        out = report.losses(results("benchmarks-game", rec))
+        self.assertEqual(out, ["benchmarks-game: fasta [multi-threaded]: Velt: n/a (exit 1)"])
+
+    def test_websocket_single_process_rows_against_velt_one_thread(self):
+        def chat(bun_p99):
+            return {"name": "chat", "kind": "websocket",
+                    "impls": [impl("Velt (6 threads)", "velt", threads="mt", p99_ms=4.0),
+                              impl("Velt (1 thread)", "velt", threads="st", p99_ms=10.0),
+                              impl("Bun (single process; rooms need shared state)", "bun", threads="st",
+                                   p99_ms=bun_p99)]}
+        # Bun's one process is slower than Velt on 6 threads but faster than Velt on one: a loss
+        # against the like-for-like row, not a win of the 6-thread one.
+        out = report.losses(results("websocket", chat(5.0)))
+        self.assertEqual(out, ["websocket: chat: p99 [single-threaded]: Bun (single process; rooms need shared "
+                               "state) (Velt (1 thread) 2.00× slower)"])
+        self.assertEqual(report.losses(results("websocket", chat(20.0))), [])
+
+    def test_vs_velt_cell_pairs_by_kind(self):
+        rec = game(("Rust mandelbrot", "rust", "mt", 0.5), ("Velt main", "velt", "st", 19.5),
+                   ("Velt main_mt", "velt", "mt", 2.0), ("Bun main_st", "bun", "st", 9.75))
+        lines = []
+        report.process_table(rec, lines, [])
+        cells = {line.split(" | ")[1]: line.rstrip(" |").split(" | ")[-1] for line in lines}
+        self.assertEqual(cells["Rust mandelbrot"], "Velt main_mt 4.00× slower")
+        self.assertEqual(cells["Bun main_st"], "Velt main 2.00× slower")
+        self.assertEqual(cells["Velt main"], "same")
+        self.assertEqual(cells["Velt main_mt"], "same")
+
+    def test_vs_velt_cell_without_counterpart(self):
+        rec = {"name": "fib", "impls": [impl("Velt", "velt", threads="st", best_wall_s=1.0, median_wall_s=1.0, min_cpu_s=1.0),
+                                        impl("Rust rayon", "rust", threads="mt", best_wall_s=0.5, median_wall_s=0.5,
+                                             min_cpu_s=0.5)]}
+        lines = []
+        report.process_table(rec, lines, [])
+        self.assertTrue(lines[1].endswith("| no Velt multi-threaded version |"), lines[1])
+
+
+class Definitions(unittest.TestCase):
+    def test_every_benchmarks_game_implementation_is_classified(self):
+        import suites
+        here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks-game")
+        bins = os.listdir(os.path.join(here, "rust", "src", "bin"))
+        programs = [d for d in os.listdir(here) if os.path.isfile(os.path.join(here, d, "bench.conf"))]
+        self.assertTrue(programs)
+        for p in programs:
+            table = suites.GAME_THREADS.get(p, {})
+            files = [("velt", f[:-4]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".vlt")]
+            files += [("js", f[:-3]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".js")]
+            files += [("rust", f[:-3]) for f in bins if f == f"{p}.rs" or f.startswith(f"{p}_")]
+            for f in files:
+                self.assertIn(table.get(f, "missing"), (suites.ST, suites.MT), f"{p}: {f}")
+
+    def test_threads_is_required(self):
+        import suites
+        with self.assertRaises(TypeError):
+            suites.impl("Velt", "velt", ["x"])
+        with self.assertRaises(ValueError):
+            suites.impl("Velt", "velt", ["x"], threads="2")
 
 
 if __name__ == "__main__":

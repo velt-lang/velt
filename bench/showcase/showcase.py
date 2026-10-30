@@ -201,6 +201,34 @@ def package_versions(ctx):
     return out
 
 
+def load1():
+    """The 1-minute load average, or None where /proc/loadavg is missing."""
+    v = read("/proc/loadavg")
+    return float(v.split()[0]) if v else None
+
+
+def settle(threshold, timeout, force, poll=5.0, now=time.time, sleep=time.sleep, load=load1):
+    """Waits until the 1-minute load average is under threshold (the build phase leaves it high),
+    at most timeout seconds. Returns the record of the wait; on a timeout, exits with a message
+    unless force (then the run goes on, the times noisier)."""
+    t0, before = now(), load()
+    cur = before
+    while cur is not None and cur >= threshold and now() - t0 < timeout:
+        suites.log(f"waiting for a quiet machine: load average {cur:.2f}, want under {threshold} "
+                   f"(waited {now() - t0:.0f} s of at most {timeout:.0f} s)")
+        sleep(poll)
+        cur = load()
+    rec = {"threshold": threshold, "load_before": before, "load_after": cur,
+           "waited_s": round(now() - t0, 1), "timed_out": cur is not None and cur >= threshold}
+    if rec["timed_out"]:
+        msg = (f"the load average is still {cur:.2f} after {timeout:.0f} s (threshold {threshold}): "
+               "the machine is busy, so the times would be noisy")
+        if not force:
+            sys.exit(f"showcase: {msg}. Wait until it is quiet, or pass --force.")
+        suites.log(f"showcase: {msg}; going on (--force)")
+    return rec
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -212,6 +240,9 @@ def main():
     ap.add_argument("--build-dir", required=True)
     ap.add_argument("--http-duration", default="10s")
     ap.add_argument("--http-conns", type=int, default=256)
+    ap.add_argument("--max-load", type=float, default=2.0)
+    ap.add_argument("--settle-timeout", type=float, default=900)
+    ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
 
     ctx = Ctx()
@@ -239,6 +270,18 @@ def main():
 
     info = machine(ctx)
     t0 = time.time()
+    # Peak RSS from the measure helper, checked on two very different programs first.
+    try:
+        engine.MEASURE = engine.build_measure(ctx.out)
+        problem = engine.check_measure()
+    except engine.RunError as e:
+        problem = str(e)
+    if problem:
+        engine.MEASURE = None
+        info["rss"] = f"not measured: {problem}"
+        suites.log(f"peak RSS: not measured: {problem}")
+    else:
+        info["rss"] = "the program's own (measure.c: fork, exec and wait4 from a small process)"
     # Everything is built (release) before anything is measured.
     prepared = {}
     for c in cats:
@@ -257,6 +300,9 @@ def main():
                                              "http_duration": ctx.http_duration, "http_conns": ctx.http_conns},
                "build_failures": ctx.failures, "categories": {}}
     subs = redactions(ctx)
+    # The build phase leaves the load average high: timing starts once it has settled.
+    info["settle"] = settle(a.max_load, 60 if ctx.smoke else a.settle_timeout, a.force or ctx.smoke)
+    info["loadavg_by_category"] = {}
 
     def save():
         info["loadavg_end"] = read("/proc/loadavg")
@@ -266,7 +312,8 @@ def main():
 
     try:
         for c in cats:
-            suites.log(f"== running {c}")
+            info["loadavg_by_category"][c] = " ".join((read("/proc/loadavg") or "unknown").split()[:3])
+            suites.log(f"== running {c} (load average {info['loadavg_by_category'][c]})")
             results["categories"][c] = run_items(ctx, c, prepared[c])
             # Written after every category, so an interrupted run keeps what it measured.
             save()
