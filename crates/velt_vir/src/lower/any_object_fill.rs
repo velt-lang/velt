@@ -33,7 +33,7 @@ impl FnLower<'_, '_> {
         // would need a route out of the conversion.
         if self.cx.hir.dyn_members.is_none()
             || self.cx.has_proxies()
-            || self.record_fill
+            || self.record_fill >= super::any_record::FILL_DEPTH
             || a.kind != hir::AdtKind::Anon
             || a.fields.is_empty()
             || (a.fields.iter().enumerate())
@@ -61,7 +61,8 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let tys = self.cx.adt_field_tys(ty);
-        let filling = std::mem::replace(&mut self.record_fill, true);
+        let filling = self.record_fill;
+        self.record_fill += 1;
         // No route for a trap's error out of the conversion: in a program with proxies (known
         // from the second pass of lowering on) the fill is not made.
         let routes = std::mem::replace(&mut self.proxy_routes, false);

@@ -47,7 +47,8 @@ impl FnCx<'_, '_> {
     /// rest parameter's elements passed as arguments of their own), whose call goes through
     /// `any` (the arguments converted to the held function's parameter types, a `TypeError` for
     /// one that doesn't convert, or for a value that is no function) and whose result converts
-    /// to `exp`'s, as JavaScript calls the function whatever its declared types. Node checks nothing at the conversion either.
+    /// to `exp`'s, as JavaScript calls the function whatever its declared types. Node checks
+    /// nothing at the conversion either.
     /// Checked as a trial: `Err` (`h` as it was) when an argument or the result has no
     /// conversion through `any` (a result of `Promise<T>`), for the caller's checked
     /// conversion to the exact type.

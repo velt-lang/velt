@@ -790,7 +790,8 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
-    /// An object is being built from a record's entries (`any_record_fill`): its fields are
-    /// converted without that path, so a type that contains itself ends.
-    record_fill: bool,
+    /// How many objects are being built from a record's or object's members around this
+    /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
+    /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.
+    record_fill: u32,
 }

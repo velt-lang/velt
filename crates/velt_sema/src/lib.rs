@@ -536,14 +536,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("body::check_bodies", || body::check_bodies(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
-    timings::pass("make_dynamic_iface_adapters", || {
-        body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx)
-    });
-    timings::pass("make_dynamic_object_impls", || {
-        object_ifaces::make_dynamic_object_impls(cx)
-    });
-    timings::pass("make_fn_views", || {
-        body::expr::dynamic_fn_views::make_fn_views(cx)
+    timings::pass("make_dynamic_impls", || {
+        body::expr::dynamic_fn_views::make_dynamic_impls(cx)
     });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {

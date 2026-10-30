@@ -24,6 +24,8 @@ store.default = (scopedProps?: any): any[] => [
 ];
 const slots = store as Slots;
 const out = slots.default();
+// Printed whole until #1942 is fixed; then print the elements one by one again:
+// console.log(out.length, out[0], out[1], (out[2] as VNode).tag, out[3], out[4]);
 console.log(out, (out[2] as VNode).tag);
 
 // A member of an object literal.

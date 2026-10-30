@@ -105,10 +105,21 @@ impl Ctx<'_> {
     }
 }
 
+/// The conversion functions (module docs), then the adapters to generic interfaces and the
+/// object types' interface impls of the conversions recorded so far, those in the conversion
+/// functions' bodies included (an interface result, `get: () => Item`), then the conversion
+/// functions those two noted.
+pub(crate) fn make_dynamic_impls(cx: &mut Ctx) {
+    make_fn_views(cx);
+    super::iface_adapt_dynamic::make_dynamic_iface_adapters(cx);
+    crate::object_ifaces::make_dynamic_object_impls(cx);
+    make_fn_views(cx);
+}
+
 /// Make the conversion function of every function type noted (module docs), and of those the
 /// instantiations of generic targets give. Making one may note more (a result converted to an
 /// object type holding functions).
-pub(crate) fn make_fn_views(cx: &mut Ctx) {
+fn make_fn_views(cx: &mut Ctx) {
     if let Some(module) = cx.fn_views.generic.take() {
         let mut keep = |cx: &mut Ctx, t: TyId| {
             let fns = cx.fn_members(t);
