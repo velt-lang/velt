@@ -42,13 +42,13 @@ one): code generated for it that throws something else is an error.
 ## Writing a generator
 
 The generator module exports a function with the same name, which `velt/generate` gives a
-`Request` and an `Output`:
+`InstanceRequest` and an `Output`:
 
 ```ts ignore
 // show/gen.vlt
-import { Request, Output } from "velt/generate";
+import { InstanceRequest, Output } from "velt/generate";
 
-export function show(req: Request, out: Output): void {
+export function show(req: InstanceRequest, out: Output): void {
   const t = req.model.type(req.args[0]);  // the instance's type argument
   const v = req.params[0];                // the name of the parameter `value`
   if (t.kind == "string") {

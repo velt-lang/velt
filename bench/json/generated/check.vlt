@@ -26,7 +26,10 @@ function main() {
   const t = new Tagged();
   t.next = new Tagged();
   t.next!.note = "here";
-  const rows: Row[] = [{ name: "é✓", level: Level.High, ok: true }, { name: "", level: Level.Low, extra: 3, ok: false }];
+  const rows: Row[] = [
+    { name: "é✓", level: Level.High, ok: true },
+    { name: "", level: Level.Low, extra: 3, ok: false },
+  ];
   console.log(JSON.stringify(t));
   console.log(stringify(t));
   console.log(JSON.stringify(rows));

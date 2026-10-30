@@ -1,0 +1,45 @@
+// velt/generate (internal): one run of the generator host (`Session`).
+
+import { Model } from "./model";
+import { Pending } from "./pending";
+
+/** One run of the host: the model, the instances generated and queued, the output. */
+export class Session {
+  model: Model = new Model();
+  prefix: string = "";
+  /** The generator key of the instance being generated. */
+  key: string = "";
+  names: Map<string, string> = new Map();
+  params: Map<string, string[]> = new Map();
+  queue: Pending[] = [];
+  next: i64 = 0;
+
+  instance(fn: string, args: i64[]): string {
+    const k = this.key + " " + fn + "<" + args.join(",") + ">";
+    const known = this.names.get(k);
+    if (known != null) {
+      return known;
+    }
+    this.next += 1;
+    const name = `${this.prefix}n${this.next}_${fn}`;
+    this.names.set(k, name);
+    const p = new Pending();
+    p.name = name;
+    p.key = this.key;
+    p.fn = fn;
+    p.args = args;
+    this.queue.push(p);
+    // Tells the compiler about it before its body comes.
+    frame(`instance ${name} ${this.key} ${fn} ${args.join(",")}`, "");
+    return name;
+  }
+
+  report(kind: string, name: string, at: i64, message: string): void {
+    frame(`${kind} ${name} ${at}`, message);
+  }
+}
+
+/** Writes one record: a header line, then `text` with its length in bytes. */
+export function frame(header: string, text: string): void {
+  process.stdout.write(`#${header} ${Buffer.byteLength(text)}\n${text}\n`);
+}

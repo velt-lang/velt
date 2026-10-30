@@ -1,0 +1,13 @@
+// velt/generate (internal): what the compiler asks a generator for (`InstanceRequest`).
+
+import { Model } from "./model";
+
+/** What the compiler asks a generator for: the body of one instance. */
+export class InstanceRequest {
+  /** The generated function's name, and the instance's type arguments (model ids). */
+  fn: string = "";
+  args: i64[] = [];
+  /** The names of the instance's parameters, in order. */
+  params: string[] = [];
+  model: Model = new Model();
+}

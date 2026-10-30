@@ -220,7 +220,10 @@ pub(crate) fn of_file(record: &str, index: usize) -> Option<String> {
 /// §5): `-` or the reasons. The host's own plumbing (`velt/generate`, which reads the requests
 /// from standard input) is left out: what counts is what the generators it registers reach.
 pub(crate) fn generator_reaches(program: &Program) -> String {
-    describe(program, &|symbol| symbol.starts_with("_V3stdP8generateN"))
+    // `std/generate::…` and `std/generate/<file>::…`.
+    describe(program, &|symbol| {
+        symbol.starts_with("_V3stdP8generateN") || symbol.starts_with("_V3stdP8generateP")
+    })
 }
 
 fn is_test_runner(symbol: &str) -> bool {

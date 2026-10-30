@@ -1,0 +1,38 @@
+// velt/generate (internal): a type of the model a generator reads (`Type`).
+
+import { EnumMember } from "./enum_member";
+import { Field } from "./field";
+
+/** One type of the model: what a generator may know about it. */
+export class Type {
+  id: i64 = 0;
+  /**
+   * `number`, `boolean`, `string`, `void`, `never`, `symbol`, `literal`, `enum`, `array`,
+   * `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `date`,
+   * `function`, `any`, `unknown`, `promise` or `opaque`.
+   */
+  kind: string = "";
+  /** As messages show it (`User`, `number[]`). */
+  display: string = "";
+  /** `<module path>::<name>` of a declared type, else "". */
+  qualifiedName: string = "";
+  /** How generated code writes the type ("" when it cannot be named). */
+  spelling: string = "";
+  /** `f64`, `i32`, … for numbers. */
+  repr: string = "";
+  /** Element, payload, key and value, tuple elements or type arguments, by kind. */
+  args: i64[] = [];
+  /** The members of a union, in order. */
+  arms: i64[] = [];
+  /** Fields of objects, classes and structs, inherited ones first. */
+  fields: Field[] = [];
+  /** A class's base class (-1: none) and the classes of the program that extend it. */
+  base: i64 = -1;
+  subclasses: i64[] = [];
+  /** Members of an enum. */
+  members: EnumMember[] = [];
+  /** The value of a literal type as JavaScript source (`"a"`, `1`, `true`). */
+  literal: string = "";
+  /** Where it is declared, for `Output.error` (-1: nowhere). */
+  at: i64 = -1;
+}

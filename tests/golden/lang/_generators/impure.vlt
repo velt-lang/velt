@@ -1,7 +1,7 @@
 // A generator that reads the clock: rejected when its host is built (a generator is a pure
 // function of its request).
-import { Request, Output } from "velt/generate";
+import { InstanceRequest, Output } from "velt/generate";
 
-export function stamped(req: Request, out: Output): void {
+export function stamped(req: InstanceRequest, out: Output): void {
   out.line(`return ${out.literal(`${Date.now()}`)};`);
 }

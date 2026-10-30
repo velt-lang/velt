@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 mod no_window;
 mod test_dir;
 
-const GENERATOR: &str = "import { Request, Output } from \"velt/generate\";\n\
-     export function fields(req: Request, out: Output): void {\n\
+const GENERATOR: &str = "import { InstanceRequest, Output } from \"velt/generate\";\n\
+     export function fields(req: InstanceRequest, out: Output): void {\n\
      \x20 const t = req.model.type(req.args[0]);\n\
      \x20 const names: string[] = [];\n\
      \x20 for (const f of t.fields) { names.push(f.name); }\n\

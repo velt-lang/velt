@@ -16,61 +16,6 @@ declare function velt_rt_strbuf_push_u64(out: string, v: u64);
 declare function velt_rt_strbuf_push_f64(out: string, v: f64);
 declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
-declare function velt_rt_strbuf_new(cap: u64, out: string);
-declare function velt_rt_strbuf_push_i64(out: string, v: i64);
-declare function velt_rt_strbuf_finish(buf: string, out: string);
-
-/**
- * Writes JSON text into a buffer, for code that writes JSON itself: converters and the code
- * source generators write per type (docs/internals/design/source-generators.md). What it
- * writes is what `JSON.stringify` writes. It checks nothing about the document's structure:
- * the caller writes the punctuation (`raw("{\"id\":")`).
- */
-export class Writer {
-  #out: string = "";
-
-  /** An empty writer with room for `capacity` bytes before it grows (a hint). */
-  constructor(capacity: usize = 0) {
-    velt_rt_strbuf_new(capacity as u64, this.#out);
-  }
-
-  /** Appends `text` as it is: punctuation and keys already in JSON form. */
-  raw(text: string): void {
-    velt_rt_strbuf_push_str(this.#out, text);
-  }
-
-  /** Appends `s` as a JSON string (quoted and escaped). */
-  string(s: string): void {
-    writeString(this.#out, s);
-  }
-
-  /** Appends `x` as `JSON.stringify` writes a number (`null` for NaN and the infinities). */
-  number(x: f64): void {
-    writeF64(this.#out, x);
-  }
-
-  /** Appends an integer. */
-  int(n: i64): void {
-    velt_rt_strbuf_push_i64(this.#out, n);
-  }
-
-  /** Appends an unsigned integer. */
-  uint(n: u64): void {
-    velt_rt_strbuf_push_u64(this.#out, n);
-  }
-
-  /** Appends `true` or `false`. */
-  bool(b: bool): void {
-    velt_rt_strbuf_push_str(this.#out, b ? "true" : "false");
-  }
-
-  /** The text written, handed over without a copy; the writer is empty again. */
-  take(): string {
-    let out = "";
-    velt_rt_strbuf_finish(this.#out, out);
-    return out;
-  }
-}
 
 const QUOTE: u8 = 34;
 const BACKSLASH: u8 = 92;

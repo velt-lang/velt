@@ -1,0 +1,13 @@
+// velt/generate (internal): every type a request reaches (`Model`).
+
+import { Type } from "./type";
+
+/** Every type a request reaches. */
+export class Model {
+  types: Type[] = [];
+
+  /** The type with id `id`. */
+  type(id: i64): Type {
+    return this.types[id];
+  }
+}

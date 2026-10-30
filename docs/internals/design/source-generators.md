@@ -95,10 +95,10 @@ The generator module exports a function with the same name as the declaration. I
 
 ```ts ignore
 // velt/encoding/json/generate/write.vlt
-import { Request, Output, Type } from "velt/generate";
+import { InstanceRequest, Output, Type } from "velt/generate";
 import { jsonQuote } from "../quote";   // the key as JSON text, computed at compile time
 
-export function write(req: Request, out: Output): void {
+export function write(req: InstanceRequest, out: Output): void {
   const t = req.model.type(req.args[0]);
   switch (t.kind) {
     case "number":
@@ -121,7 +121,7 @@ export function write(req: Request, out: Output): void {
 }
 ```
 
-- `Request` carries: the function's name, the instance's type arguments (as ids into the model),
+- `InstanceRequest` carries: the function's name, the instance's type arguments (as ids into the model),
   the names of the parameters, and the **type model** (§4).
 - `Output.body(code)` / `line(code)` write the body, `literal(s)` spells a string as a Velt
   string literal; `helper(code)` adds a top-level function or
@@ -578,7 +578,7 @@ goldens:
    type names; `hir::Program::generated` (additive) mapping `(function, type arguments)` to the
    generated definition.
 3. Lowering: an instance of a generated function is built from its generated definition.
-4. `velt/generate` (the model, `Request`, `Output`, the host loop) and `velt generate --host`;
+4. `velt/generate` (the model, `InstanceRequest`, `Output`, the host loop) and `velt generate --host`;
    the driver's rounds; a test generator and goldens (a generated `describe<T>()` that lists a
    type's fields), including errors reported by the generator and errors in generated code.
 5. Caching and the offered modules (§9); compile-time measurements.
@@ -626,11 +626,11 @@ instance of the round; the offered modules make that rare).
   instructions against 629 M (+8%; one check, the offered module parsed and checked with the
   program, the offer and the generators' files read from the cache).
 - **Run time:** the prototype `JSON.stringify` generator (`bench/json/generated`, public APIs
-  only) writes byte-identical text and costs about 1.57 G instructions against the glue's 1.01 G
-  for the same work (+55%; `compare.sh`, release runtime). A literal append (`Writer.raw`,
-  `StringBuilder.append`) is a runtime call of about 80 instructions, where the glue writes
-  literal text inline (string-building.md step 1). Parity needs string-building.md step 2
-  (appends of `StringBuilder` compiled to the same inline path) in the compiler.
+  only: `StringBuilder` and `velt/encoding/json`'s `appendJson*`) writes byte-identical text.
+  Before string-building.md step 2 it cost 1.57 G instructions against the glue's 1.01 G
+  (+55%): a literal append was a runtime call. With literal appends inline it costs 1.36 G
+  against 1.10 G (+23%, `compare.sh`, release runtime); the rest is to be found and closed in
+  the compiler before `JSON.stringify` moves (the acceptance criteria allow 3%).
 - **Ergonomics:** `out.line(… out.instance(…) …)` is rejected by Velt's rule that one call
   cannot modify a value and read it in another argument; generators compute names into locals
   first. `Output` could keep its state outside the object the generator holds to lift that.

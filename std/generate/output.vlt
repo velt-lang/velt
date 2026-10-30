@@ -1,0 +1,97 @@
+// velt/generate (internal): where a generator writes code (`Output`), and `quote`.
+
+import { Session } from "./session";
+
+/** Where a generator writes the instance's body, helpers and diagnostics. */
+export class Output {
+  #session: Session;
+  #name: string;
+  #body: string[] = [];
+  #helpers: string[] = [];
+  #fresh: i64 = 0;
+
+  constructor(session: Session, name: string) {
+    this.#session = session;
+    this.#name = name;
+  }
+
+  /** Appends code to the body. */
+  body(code: string): void {
+    this.#body.push(code);
+  }
+
+  /** Appends one line of code to the body. */
+  line(code: string): void {
+    this.#body.push(code);
+    this.#body.push("\n");
+  }
+
+  /** Adds a top-level declaration (a helper function or constant) next to the instance. */
+  helper(code: string): void {
+    this.#helpers.push(code);
+  }
+
+  /** A name for a helper that no other instance uses. */
+  fresh(base: string): string {
+    this.#fresh += 1;
+    return `${this.#name}_${base}${this.#fresh}`;
+  }
+
+  /**
+   * The name of the function generated for instance `fn<args…>` of a generated function of
+   * the same generator module (generated in the same run when it is new): code calls it with
+   * the arguments `fn` takes.
+   */
+  instance(fn: string, args: i64[]): string {
+    return this.#session.instance(fn, args);
+  }
+
+  /** How generated code writes model type `id`. */
+  typeName(id: i64): string {
+    return this.#session.model.types[id].spelling;
+  }
+
+  /** `s` as a Velt string literal. */
+  literal(s: string): string {
+    return quote(s);
+  }
+
+  /** Reports an error at `at` (a type's or a field's `at`; -1: at the call that needs it). */
+  error(message: string, at: i64): void {
+    this.#session.report("error", this.#name, at, message);
+  }
+
+  /** The body written so far. */
+  takeBody(): string {
+    return this.#body.join("");
+  }
+
+  takeHelpers(): string {
+    return this.#helpers.join("\n");
+  }
+}
+
+/** `s` as a double-quoted Velt (and JavaScript) string literal. */
+export function quote(s: string): string {
+  let out = "\"";
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c == 10) {
+      out += "\\n";
+    } else if (c == 13) {
+      out += "\\r";
+    } else if (c == 9) {
+      out += "\\t";
+    } else if (c < 32 || c == 0x2028 || c == 0x2029) {
+      out += "\\u" + c.toString(16).padStart(4, "0");
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out + "\"";
+}

@@ -1,0 +1,14 @@
+// velt/generate (internal): a field of a model type (`Field`).
+
+/** A field of an object, class or struct type. */
+export class Field {
+  name: string = "";
+  type: i64 = 0;
+  optional: bool = false;
+  readonly: bool = false;
+  /** `private`, or an ES private field (`#x`, whose name keeps the `#`). */
+  isPrivate: bool = false;
+  isEsPrivate: bool = false;
+  hasDefault: bool = false;
+  at: i64 = -1;
+}
