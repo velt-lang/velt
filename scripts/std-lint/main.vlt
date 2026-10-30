@@ -164,9 +164,9 @@ function indexCode(text: string): string | null {
   return null;
 }
 
-/** The names an index.vlt re-exports (after `as`). */
-function reexported(text: string): string[] {
-  const out: string[] = [];
+/** The names an index.vlt re-exports (after `as`), each with the module it re-exports from. */
+function reexported(text: string): [string, string][] {
+  const out: [string, string][] = [];
   let list = "";
   let inList = false;
   for (const raw of text.split("\n")) {
@@ -181,11 +181,13 @@ function reexported(text: string): string[] {
         inList = false;
         const open = list.indexOf("{");
         const close = list.indexOf("}");
+        const quote = list.indexOf("\"", close);
+        const from = quote < 0 ? "" : list.slice(quote + 1, list.indexOf("\"", quote + 1));
         for (const name of list.slice(open + 1, close).split(",")) {
           const n = name.trim().replace("type ", "");
           if (n.length > 0) {
             const as = n.indexOf(" as ");
-            out.push(as < 0 ? n : n.slice(as + 4).trim());
+            out.push([as < 0 ? n : n.slice(as + 4).trim(), from]);
           }
         }
       }
@@ -272,15 +274,17 @@ function lint(std: Std): Problem[] {
       );
     }
   }
-  // One import path per public name.
+  // One import path per public name: the same definition is not re-exported by two modules (two
+  // definitions may share a name, as Node's `crypto.randomInt` and a fast PRNG's do).
   const exporters: Map<string, string> = new Map();
   for (const dir of std.indexes) {
     const file = dir.length == 0 ? "index.vlt" : dir + "/index.vlt";
     if (special(file)) {
       continue;
     }
-    for (const name of reexported(std.text(file))) {
-      const other = exporters.get(name);
+    for (const [name, from] of reexported(std.text(file))) {
+      const key = `${name} ${from}`;
+      const other = exporters.get(key);
       if (other !== undefined && other != dir) {
         problems.push(
           new Problem(
@@ -290,7 +294,7 @@ function lint(std: Std): Problem[] {
           ),
         );
       } else {
-        exporters.set(name, dir);
+        exporters.set(key, dir);
       }
     }
   }
