@@ -67,6 +67,27 @@ export class HpackEncoder {
     this.field(out, ":status", `${code}`);
   }
 
+  /// A request's pseudo-headers (the client side): the static table's entries where they match
+  /// (`GET`, `POST`, `/`, `http`, `https`), else literals by static name.
+  request(out: FrameWriter, method: string, scheme: string, authority: string, path: string) {
+    out.reserve(8);
+    if (method == "GET") {
+      out.byte(0x82);
+    } else if (method == "POST") {
+      out.byte(0x83);
+    } else {
+      this.field(out, ":method", method);
+    }
+    out.byte(scheme == "https" ? 0x87 : 0x86);
+    this.field(out, ":authority", authority);
+    if (path == "/") {
+      out.reserve(1);
+      out.byte(0x84);
+    } else {
+      this.field(out, ":path", path);
+    }
+  }
+
   /// `content-length: n`, without indexing (static name 28).
   contentLength(out: FrameWriter, n: i64) {
     out.reserve(24);

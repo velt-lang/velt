@@ -1,0 +1,262 @@
+// velt/net/http (internal): `ClientSession`, one HTTP/2 connection of the `fetch` client
+// (RFC 9113), served by a task of its own: requests from any task arrive on its channel
+// (`H2Call`) and become streams on the one connection, as many at once as the server allows
+// (more wait in order); responses go back on each request's channel (`H2Event`). The session
+// reads frames into its own buffer and parses them in place (h2/frames.vlt), and the frames it
+// writes while handling one read or one call leave in one write (`writeBytesLater`). It closes
+// after `IDLE_MS` without streams, after a GOAWAY once its streams are done, or on an error.
+
+import { TcpStream } from "velt/net";
+import { Channel } from "velt/sync";
+import {
+  DEFAULT_WINDOW,
+  END_STREAM,
+  HEADER_LENGTH,
+  MIN_MAX_FRAME_SIZE,
+  NO_ERROR,
+  SETTINGS_ENABLE_PUSH,
+  SETTINGS_INITIAL_WINDOW_SIZE,
+  SETTINGS_MAX_HEADER_LIST_SIZE,
+} from "velt/net/http/server/h2/frame";
+import { FieldList } from "velt/net/http/server/h2/field_list";
+import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
+import { HpackDecoder } from "velt/net/http/server/h2/hpack_decoder";
+import { HpackEncoder } from "velt/net/http/server/h2/hpack_encoder";
+import {
+  CALL_CANCEL,
+  CALL_CREDIT,
+  errorEvent,
+  H2Call,
+  H2Event,
+} from "velt/net/http/fetch/client/h2/call";
+import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
+import { frames, pump, pumpAll, startCall } from "velt/net/http/fetch/client/h2/frames";
+
+/// A session without streams for this long closes (undici's keep-alive default is 4 s).
+const IDLE_MS: number = 4000;
+/// The windows the session gives the server: 1 MiB a stream, 4 MiB for the connection.
+export const STREAM_WINDOW: i64 = 1048576;
+export const CONNECTION_WINDOW: i64 = 4194304;
+/// The largest response head taken.
+export const MAX_HEADER_LIST: i64 = 65536;
+
+/// One HTTP/2 connection of the client.
+export class ClientSession {
+  conn: TcpStream;
+  calls: Channel<H2Call>;
+  /// The origin it serves (its registry key).
+  key: string;
+  out: FrameWriter = new FrameWriter();
+  encoder: HpackEncoder = new HpackEncoder();
+  decoder: HpackDecoder = new HpackDecoder(4096, MAX_HEADER_LIST);
+  scratch: FieldList = new FieldList();
+  streams: Map<i64, ClientStream> = new Map();
+  /// Requests waiting for the server's concurrency limit.
+  waiting: H2Call[] = [];
+  blocked: ClientStream[] = [];
+  nextId: i64 = 1;
+  // The server's settings.
+  maxStreams: i64 = 100;
+  peerMaxFrame: i64 = MIN_MAX_FRAME_SIZE;
+  peerInitialWindow: i64 = DEFAULT_WINDOW;
+  sendWindow: i64 = DEFAULT_WINDOW;
+  recvConsumed: i64 = 0;
+  // The read buffer, and a header block in pieces.
+  rbuf: u8[] = Buffer.alloc(((MIN_MAX_FRAME_SIZE + HEADER_LENGTH) * 2) as usize);
+  rpos: i64 = 0;
+  rlen: i64 = 0;
+  blockStream: i64 = 0;
+  blockFlags: i64 = 0;
+  block: u8[] = Buffer.alloc(4096);
+  blockLength: i64 = 0;
+  /// GOAWAY arrived (or was sent): no new streams; the session ends once the streams are done.
+  goingAway: bool = false;
+  done: bool = false;
+  inBatch: bool = false;
+  /// Called once when the session stops taking requests (its registry entry goes).
+  onClose: (() => void) | null = null;
+
+  constructor(conn: TcpStream, calls: Channel<H2Call>, key: string) {
+    this.conn = conn;
+    this.calls = calls;
+    this.key = key;
+  }
+
+  /// Serves the connection until it ends.
+  async run() {
+    this.out.reserve(24);
+    this.out.length += this.out.buf.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 0) as i64;
+    this.out.settings([
+      SETTINGS_ENABLE_PUSH,
+      0,
+      SETTINGS_INITIAL_WINDOW_SIZE,
+      STREAM_WINDOW,
+      SETTINGS_MAX_HEADER_LIST_SIZE,
+      MAX_HEADER_LIST,
+    ]);
+    this.out.windowUpdate(0, CONNECTION_WINDOW - DEFAULT_WINDOW);
+    this.flush();
+    const receiving = this.receive();
+    try {
+      while (!this.done) {
+        this.room();
+        const n = this.conn.tryRead(this.rbuf, this.rlen as number, this.rbuf.length as number);
+        if (n == null) {
+          break;
+        }
+        if (n == 0) {
+          this.flush();
+          const idle = this.streams.size == 0 && this.waiting.length == 0;
+          if (idle && this.goingAway) {
+            break;
+          }
+          if (!(await this.conn.readableWithin(idle ? IDLE_MS : 3600000))) {
+            if (this.streams.size == 0 && this.waiting.length == 0) {
+              this.out.goaway(0, NO_ERROR, "idle");
+              break;
+            }
+          }
+          continue;
+        }
+        this.rlen += n as i64;
+        this.inBatch = true;
+        frames(this);
+        this.inBatch = false;
+        this.flush();
+      }
+    } catch (e) {
+      // The connection failed.
+    }
+    this.finish("the connection closed");
+    try {
+      this.flush();
+      this.conn.shutdown();
+    } catch (e) {
+      // Already gone.
+    }
+    this.conn.close();
+    await receiving;
+  }
+
+  /// Takes requests and controls from the channel until it is closed.
+  private async receive() {
+    while (true) {
+      const call = await this.calls.receive();
+      if (call == null) {
+        return;
+      }
+      if (call.kind == CALL_CREDIT) {
+        this.credit(call.id, call.n);
+      } else if (call.kind == CALL_CANCEL) {
+        this.cancel(call.id);
+      } else if (this.goingAway || this.done) {
+        call.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+      } else if ((this.streams.size as i64) >= this.maxStreams) {
+        this.waiting.push(call);
+      } else {
+        startCall(this, call);
+      }
+      if (!this.inBatch) {
+        this.flush();
+      }
+    }
+  }
+
+  /// Stops taking requests: the registry forgets the session, the channel is closed, and the
+  /// requests still in it get an error to retry with.
+  stopTaking() {
+    const f = this.onClose;
+    if (f != null) {
+      this.onClose = null;
+      f();
+    }
+    this.goingAway = true;
+    this.calls.close();
+    for (const w of this.waiting) {
+      w.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+    }
+    this.waiting.length = 0;
+  }
+
+  /// Ends every stream with `message` and stops.
+  finish(message: string) {
+    this.done = true;
+    this.stopTaking();
+    for (const s of this.streams.values()) {
+      s.events.trySend(errorEvent(`fetch failed: ${message}`, !s.headSeen && s.id > 0));
+    }
+    this.streams.clear();
+    let c = this.calls.tryReceive();
+    while (c != null) {
+      c.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+      c = this.calls.tryReceive();
+    }
+  }
+
+  /// Queues the frames written so far.
+  flush() {
+    if (this.out.length > 0) {
+      const n = this.out.length;
+      this.out.length = 0;
+      this.conn.writeBytesLater(this.out.buf, 0, n as number);
+    }
+  }
+
+  /// A request read `n` bytes of stream `id`'s body (0: none's): window given back in halves.
+  credit(id: i64, n: i64) {
+    this.recvConsumed += n;
+    if (this.recvConsumed * 2 >= CONNECTION_WINDOW) {
+      this.out.windowUpdate(0, this.recvConsumed);
+      this.recvConsumed = 0;
+    }
+    const s = this.streams.get(id);
+    if (s != undefined && !s.remoteEnded) {
+      s.consumed += n;
+      if (s.consumed * 2 >= STREAM_WINDOW) {
+        this.out.windowUpdate(id, s.consumed);
+        s.recvWindow += s.consumed;
+        s.consumed = 0;
+      }
+    }
+  }
+
+  /// The request gave up stream `id`: RST_STREAM CANCEL.
+  private cancel(id: i64) {
+    const s = this.streams.get(id);
+    if (s != undefined) {
+      this.out.rstStream(id, 8);
+      s.events.trySend(errorEvent("fetch failed: the request was cancelled", false));
+      this.forget(s);
+    }
+  }
+
+  /// A stream that is done: a waiting request takes its place.
+  forget(s: ClientStream) {
+    this.streams.delete(s.id);
+    while (
+      this.waiting.length > 0 && (this.streams.size as i64) < this.maxStreams && !this.goingAway
+    ) {
+      startCall(this, this.waiting.shift()!);
+    }
+  }
+
+  /// Room for a whole frame after `rlen`.
+  private room() {
+    if (this.rpos > 0) {
+      this.rbuf.copyWithin(0, this.rpos, this.rlen);
+      this.rlen -= this.rpos;
+      this.rpos = 0;
+    }
+    const want = this.rlen + HEADER_LENGTH + this.peerMaxFrameRead();
+    if (want > (this.rbuf.length as i64)) {
+      const grown: u8[] = Buffer.alloc((want * 2) as usize);
+      this.rbuf.copy(grown, 0, 0, this.rlen);
+      this.rbuf = grown;
+    }
+  }
+
+  /// The largest frame the server may send us (our SETTINGS_MAX_FRAME_SIZE: the default).
+  private peerMaxFrameRead(): i64 {
+    return MIN_MAX_FRAME_SIZE;
+  }
+}

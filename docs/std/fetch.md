@@ -2,9 +2,9 @@
 
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt
-on [`velt/net`](net.md) (`std/fetch/client/`): HTTP/1.1 with keep-alive connections pooled per
-origin and shared by every task (HTTP/2 is not used, as in Node's `fetch`), TLS from the runtime
-for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as the
+on [`velt/net`](net.md) (`std/net/http/fetch/client/`): [HTTP/2](#http2) for HTTPS origins that
+offer it, else HTTP/1.1 with keep-alive connections pooled per origin, both shared by every
+task, TLS from the runtime for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as the
 standard says. A pooled connection idle for more than a second is checked before it is reused,
 and one idle for a minute is closed. A request sent on a *reused* pooled
 connection that the server had closed (it fails before any response) is sent once more, on
@@ -259,6 +259,26 @@ async function status(url: string): Promise<string> {
 
 `AbortController`, `AbortSignal` (with `AbortSignal.timeout` and `AbortSignal.any`) are global
 too; their error classes `AbortError` and `TimeoutError` come from [`velt/task`](task.md).
+
+## HTTP/2
+
+A new connection to an `https:` origin offers `h2` and `http/1.1` with ALPN (as browsers, Deno and
+Bun do; Node's `fetch` uses HTTP/1.1 unless undici's `allowH2` is set). When the server chooses
+HTTP/2, that one connection carries every later request to the origin from every task, at once
+(as many as its SETTINGS_MAX_CONCURRENT_STREAMS allows; more wait in order), until it has been
+idle for 4 s, the server sends GOAWAY or it fails. Requests that start while it is being made
+wait for it rather than open connections of their own. A server that chooses HTTP/1.1 is served
+the HTTP/1.1 way, and later requests take its idle pooled connections first. Plain `http:` is
+always HTTP/1.1 (no h2c), as in browsers and undici.
+
+The API does not change: the same `Response`, headers (lowercase, as HTTP/2 sends them),
+redirects, `content-encoding` decoding and `signal`. Bodies have flow control: the server may
+send 1 MiB of a response body ahead of what the program read (4 MiB for the connection), and a
+request body goes out as the server's windows allow. An abort, or a body given up (`res.body`
+cancelled), resets just that stream. A request the server did not process (a GOAWAY's later
+streams, `REFUSED_STREAM`, a connection that closed before it went out) is sent again on a new
+connection, whatever its method, since the server never saw it. Server push is turned off;
+response trailers are read and dropped (the Fetch standard has no API for them).
 
 ## Differences from Node
 

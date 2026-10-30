@@ -177,6 +177,16 @@ export function staticValue(i: i64): string {
 /// sent with.
 export function staticNameIndex(name: string): i64 {
   switch (name) {
+    case ":authority":
+      return 1;
+    case ":method":
+      return 2;
+    case ":path":
+      return 4;
+    case ":scheme":
+      return 6;
+    case ":status":
+      return 8;
     case "accept-charset":
       return 15;
     case "accept-encoding":

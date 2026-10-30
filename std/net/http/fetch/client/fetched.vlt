@@ -10,6 +10,7 @@ import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task";
 import { reason } from "velt/net/http/server/response";
 import { BodyReader } from "velt/net/http/fetch/client/body";
+import { H2Body } from "velt/net/http/fetch/client/h2/body";
 import { Chain, CHUNK, codingsOf, decodeAll, tooMany } from "velt/net/http/fetch/client/decode";
 import { Head } from "velt/net/http/fetch/client/wire";
 
@@ -28,6 +29,8 @@ export class Fetched {
   private codings: i64[] | null;
   private chain: Chain | null = null;
   private used: bool = false;
+  /// The body arriving over HTTP/2 (`overH2`), instead of `reader`.
+  private h2: H2Body | null = null;
 
   constructor(head: Head, reader: BodyReader | null, bodyEnd: i64, url: string, redirected: bool) {
     this.status = head.status;
@@ -38,6 +41,21 @@ export class Fetched {
     this.url = url;
     this.redirected = redirected;
     this.codings = reader == null && bodyEnd == head.bodyStart ? [] : codingsOf(head.coding());
+  }
+
+  /** A response received over HTTP/2: its head, and its body (null: none). */
+  static overH2(head: Head, body: H2Body | null, url: string, redirected: bool): Fetched {
+    const f = new Fetched(head, null, head.bodyStart, url, redirected);
+    if (body != null) {
+      f.h2 = body;
+      f.codings = codingsOf(head.coding());
+    }
+    return f;
+  }
+
+  /** The `location` header, or null. */
+  location(): string | null {
+    return this.head.location();
   }
 
   /** The server's reason phrase, else the standard one for the status. */
@@ -77,8 +95,11 @@ export class Fetched {
       throw tooMany();
     }
     const reader = this.reader;
+    const h2 = this.h2;
     let raw: u8[];
-    if (reader == null) {
+    if (h2 != null) {
+      raw = await h2.all();
+    } else if (reader == null) {
       raw = this.head.buf.slice(this.bodyStart, this.bodyEnd);
     } else {
       raw = await reader.all();
@@ -89,7 +110,7 @@ export class Fetched {
   /** The whole body as text: UTF-8, invalid bytes as U+FFFD, a byte order mark dropped. */
   async text(): Promise<string, IoError | AbortError> {
     const codings = this.codings;
-    if (this.reader == null && codings != null && codings.length == 0) {
+    if (this.reader == null && this.h2 == null && codings != null && codings.length == 0) {
       // The body is in the read buffer: decoded from there, without a copy.
       this.claim();
       return utf8Text(this.head.buf, this.bodyStart, this.bodyEnd);
@@ -144,6 +165,10 @@ export class Fetched {
     if (reader != null) {
       return await reader.next(CHUNK);
     }
+    const h2 = this.h2;
+    if (h2 != null) {
+      return await h2.next();
+    }
     if (this.bodyEnd == this.bodyStart) {
       return [];
     }
@@ -157,6 +182,10 @@ export class Fetched {
     const reader = this.reader;
     if (reader != null) {
       reader.abandon();
+    }
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.abandon();
     }
   }
 }

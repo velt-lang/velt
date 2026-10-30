@@ -370,7 +370,7 @@ ends. No suspension point may lie between lock and unlock.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them) |
+| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them: 0 velt/net/websocket's topics, 1 the `fetch` client's HTTP/2 sessions) |
 | `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
 | `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
 

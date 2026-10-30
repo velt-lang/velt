@@ -1,0 +1,41 @@
+// fetch over HTTPS against serveHttp on loopback: HTTP/2 (one multiplexed connection) or
+// HTTP/1.1 (pooled connections). Usage: tls_h2 h2|h1 <requests> <at once>.
+// docs/internals/design/http2.md "Benchmarks".
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
+import { args } from "velt/process";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../tests/golden/std/_tls";
+
+async function worker(url: string, n: i64): Promise<i64> {
+  let bytes: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const r = await fetch(url, { ca: TEST_CA });
+    bytes += (await r.text()).length as i64;
+  }
+  return bytes;
+}
+
+async function main() {
+  const a = args();
+  const h2 = a[0] == "h2";
+  const n = parseInt(a[1], 10) as i64;
+  const conc = parseInt(a[2], 10) as i64;
+  const server = await serveHttp(
+    { port: 0, http2: h2, tls: { cert: TEST_CERT, key: TEST_KEY } },
+    async (req: HttpRequest, res: HttpResponse) => {
+      res.send("Hello, World!");
+    },
+  );
+  const url = `https://localhost:${server.port}/plaintext`;
+  await worker(url, 1);
+  const start = performance.now();
+  const all: Promise<i64>[] = [];
+  for (let c: i64 = 0; c < conc; c++) {
+    all.push(spawn(worker(url, n / conc)));
+  }
+  await Promise.all(all);
+  const ms = performance.now() - start;
+  console.log(
+    `${a[0]} ${n} requests, ${conc} at once: ${Math.round((n as number) / ms * 1000)} req/s`,
+  );
+  server.close();
+}

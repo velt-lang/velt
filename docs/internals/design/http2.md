@@ -218,6 +218,39 @@ The listener, accept loop, options, limits (`maxHeadSize` is the header list siz
 and header-value checks (`isTchar`). Not shared: framing, the head parser (HTTP/2 heads are
 HPACK fields; `FieldList` keeps them as the HTTP/1.1 `Head` does, bytes plus offsets).
 
+## The client (`fetch`)
+
+`std/net/http/fetch/client/h2/`, on the same frame and HPACK code:
+
+- **When.** A new connection to an `https:` origin offers `h2,http/1.1` (`dial`'s ALPN list).
+  Plain `http:` stays HTTP/1.1, as in browsers and undici. An idle pooled HTTP/1.1 connection to
+  the origin is taken first (the origin answered HTTP/1.1 before), so a server without HTTP/2
+  costs nothing extra once its pool is warm.
+- **One session per origin, shared by every task.** A session is a task of its own that owns
+  the connection (`ClientSession`). Requests reach it on a channel (`H2Call`), each with a
+  channel of its own for the response (`H2Event`: head, body pieces, end, error). Sessions are
+  found by origin in a map kept in the runtime slot std assigns to them (rt_abi_async.md §2.2,
+  slot 1, as velt/net/websocket's topics use slot 0): not module state, which would make every
+  task that fetches take the module lock at each poll, and not an `Atomic` of a `shared` map,
+  whose epoch bookkeeping outlives the program and fails std's leak checks. The first request
+  to an origin claims the entry before it connects, so requests started meanwhile queue on the
+  same session instead of opening connections; if ALPN says HTTP/1.1 they are told to retry and
+  take the HTTP/1.1 path.
+- **Multiplexing and limits.** Streams up to the server's SETTINGS_MAX_CONCURRENT_STREAMS, later
+  ones queue in order. Request bodies are sent within the server's windows (round robin over
+  the blocked streams); response bodies get 1 MiB per stream and 4 MiB per connection, given
+  back as the program reads (each piece read sends a credit message to the session), so a
+  response nobody reads holds at most its window.
+- **Errors and retries.** RST_STREAM fails one request; REFUSED_STREAM, a GOAWAY's streams above
+  its last id, and a session closing before the request went out are retried on a new
+  connection (the server did not process them). A GOAWAY makes the session take no new requests
+  and close once its streams are done; 4 s without streams closes it too. Aborts and abandoned
+  bodies send RST_STREAM CANCEL. Server push is disabled (SETTINGS_ENABLE_PUSH 0; a PUSH_PROMISE
+  is a connection error).
+- **Fetch's API is unchanged.** The response head becomes the HTTP/1.1 parser's `Head` (bytes
+  plus offsets), so `Response`, headers, redirects and `content-encoding` decoding are shared;
+  only where the body comes from differs (`H2Body` instead of the HTTP/1.1 `BodyReader`).
+
 ## Public API added
 
 - `TcpStream.alpnProtocol(): Promise<string | null>` (velt/net): the protocol the TLS handshake
@@ -291,10 +324,24 @@ retired per request (`/usr/bin/time -l`, which also counts idle worker threads):
 | `-c 100 -m 32 -t 4`, 400k requests | 2,337k req/s, 13.2k instr/req | 294k req/s, 57.7k instr/req |
 | `-c 4 -m 1 -t 4` (latency bound), 50k | 56k req/s, 76k instr/req | 50k req/s, 98k instr/req |
 
+`fetch` over HTTPS against `serveHttp` in the same process (`bench/fetch/tls_h2.vlt`, release,
+best of 3 interleaved; instructions retired by the whole process, client and server):
+
+| Requests | HTTP/2 (one connection) | HTTP/1.1 (pooled connections) |
+|---|---|---|
+| 40,000, 64 at once | 271k req/s, 61k instr/req | 128k req/s, 168k instr/req |
+| 5,000, one at a time | 39k req/s | 44k req/s |
+
+One at a time, HTTP/2 pays for the hand-off to the session's task (a channel each way) that
+HTTP/1.1's connection, used by the request's own task, does not; with requests at once the one
+connection, one TLS session and HPACK win.
+
 The hyper side includes the web `Request`/`Response` layer, as `bench/web`'s `velt-native`
 comparison of HTTP/1.1 does. A web-standard `serve` on top of `HttpRequest`/`HttpResponse` will
 carry that layer's cost over HTTP/2 too.
 
-## Not done (follow-ups)
+## Not done
 
-- An HTTP/2 client for `fetch`.
+Nothing from the first round's list is left (request body time limits, response trailers,
+extended CONNECT and the `fetch` client are above). Not planned: server push, the RFC 7540
+priority tree, and h2c for `fetch` over plain `http:` (browsers and undici do not either).

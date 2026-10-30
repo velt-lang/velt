@@ -1,0 +1,39 @@
+// velt/net/http (internal): `ClientStream`, one request of an HTTP/2 client session as the
+// session's task keeps it: where its response goes, its windows, and the request body still
+// waiting for the server's window.
+
+import { Channel } from "velt/sync";
+import { H2Event } from "velt/net/http/fetch/client/h2/call";
+
+/// One request on a session.
+export class ClientStream {
+  id: i64;
+  events: Channel<H2Event>;
+  /// What the request may still send, and what the server may still send on it.
+  sendWindow: i64;
+  recvWindow: i64;
+  /// Body bytes the request read since the last WINDOW_UPDATE.
+  consumed: i64 = 0;
+  /// The request body not yet sent: `body[at..]`.
+  body: u8[];
+  at: i64 = 0;
+  /// The response head arrived; the response ended; END_STREAM was sent.
+  headSeen: bool = false;
+  remoteEnded: bool = false;
+  localEnded: bool = false;
+  /// In the session's list of streams waiting for window.
+  queued: bool = false;
+
+  constructor(id: i64, events: Channel<H2Event>, body: u8[], sendWindow: i64, recvWindow: i64) {
+    this.id = id;
+    this.events = events;
+    this.body = body;
+    this.sendWindow = sendWindow;
+    this.recvWindow = recvWindow;
+  }
+
+  /// Request body bytes still to send.
+  get pending(): i64 {
+    return (this.body.length as i64) - this.at;
+  }
+}

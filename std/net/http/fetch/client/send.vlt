@@ -11,7 +11,8 @@ import { AbortError, AbortSignal } from "velt/task";
 import { URL } from "velt/net/url";
 import { utf8Encode } from "velt/encoding";
 import { BodyReader } from "velt/net/http/fetch/client/body";
-import { Conn, open } from "velt/net/http/fetch/client/conn";
+import { Conn, keyOf, open } from "velt/net/http/fetch/client/conn";
+import { h2Exchange } from "velt/net/http/fetch/client/h2/exchange";
 import { acceptEncoding } from "velt/net/http/fetch/client/decode";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { ofUrl, Target, target } from "velt/net/http/fetch/client/target";
@@ -90,8 +91,34 @@ export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortEr
   let redirected = false;
   for (let hop: i64 = 0; hop <= MAX_REDIRECTS; hop++) {
     // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
-    const req = encode(o.method, t, o.headers, acceptEncoding(t.https), o.kind, o.text, o.bytes);
-    const [conn, head] = await exchange(o, t, req);
+    const codings = acceptEncoding(t.https);
+    const req = encode(o.method, t, o.headers, codings, o.kind, o.text, o.bytes);
+    // HTTPS origins that speak HTTP/2 (ALPN) get the request on their shared session.
+    const viaH2 = await h2Exchange(
+      o.method,
+      t,
+      o.headers,
+      codings,
+      bodyOf(o),
+      o.signal,
+      o.ca,
+      redirected,
+      !idempotent(o.method),
+    );
+    const f = viaH2.fetched;
+    if (f != null) {
+      const at = redirects(f.status) && o.redirect != MANUAL ? f.location() : null;
+      if (at == null) {
+        return f;
+      }
+      f.close();
+      t = next(o, t, at, f.status);
+      redirected = true;
+      continue;
+    }
+    const got = viaH2.stream;
+    const pre = got != null ? new Conn(got, keyOf(t, o.ca), viaH2.reused, o.signal) : null;
+    const [conn, head] = await exchange(o, t, req, pre);
     const s = head.status;
     const location = redirects(s) && o.redirect != MANUAL ? head.location() : null;
     if (location == null) {
@@ -99,23 +126,33 @@ export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortEr
     }
     // The redirect's own body is not wanted: its connection is reused if it is all here.
     discard(conn, head);
-    if (o.redirect == ERROR) {
-      throw unknown("unexpected redirect");
-    }
-    const next = URL.parse(location, t.href);
-    if (next == null) {
-      throw unknown("invalid redirect URL");
-    }
-    const p = next.protocol;
-    if (p != "http:" && p != "https:") {
-      throw unknown("redirect to a URL that is not http: or https:");
-    }
-    const n = ofUrl(next);
-    follow(o, t, n, s);
-    t = n;
+    t = next(o, t, location, s);
     redirected = true;
   }
   throw unknown("redirect count exceeded");
+}
+
+/** The target a redirect with `status` to `location` leads to, `o` turned into its request. */
+function next(o: ClientRequest, t: Target, location: string, status: i64): Target throws IoError {
+  if (o.redirect == ERROR) {
+    throw unknown("unexpected redirect");
+  }
+  const u = URL.parse(location, t.href);
+  if (u == null) {
+    throw unknown("invalid redirect URL");
+  }
+  const p = u.protocol;
+  if (p != "http:" && p != "https:") {
+    throw unknown("redirect to a URL that is not http: or https:");
+  }
+  const n = ofUrl(u);
+  follow(o, t, n, status);
+  return n;
+}
+
+/** The request body as bytes (HTTP/2 sends it from the session's task). */
+function bodyOf(o: ClientRequest): u8[] {
+  return o.kind == 1 ? utf8Encode(o.text) : o.kind == 2 ? o.bytes : [];
 }
 
 /** Turns `o` into the request a redirect with `status` from `from` to `to` asks for. */
@@ -155,7 +192,8 @@ function follow(o: ClientRequest, from: Target, to: Target, status: i64) {
 }
 
 /**
- * Sends `req` on a connection for `t` and reads the response's head. A reused connection that
+ * Sends `req` on a connection for `t` (`pre`, the one the HTTP/2 attempt found, or one from the
+ * pool or a new one) and reads the response's head. A reused connection that
  * fails before any response byte arrived was closed by the server while it was idle: an
  * idempotent request goes out once more, on a new connection. Never one on a fresh connection
  * (that server got the request and failed).
@@ -164,8 +202,9 @@ async function exchange(
   o: ClientRequest,
   t: Target,
   req: Encoded,
+  pre: Conn | null = null,
 ): Promise<[Conn, Head], IoError | AbortError> {
-  const conn = await open(t, o.ca, o.signal, !idempotent(o.method));
+  const conn = pre != null ? pre : await open(t, o.ca, o.signal, !idempotent(o.method));
   try {
     return await sendOn(conn, o, req);
   } catch (e) {

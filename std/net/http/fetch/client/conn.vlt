@@ -223,20 +223,22 @@ export async function open(
   return new Conn(await dial(t, ca, signal), key, false, signal);
 }
 
-/** A new connection to `t` (TLS for `https:`), within `CONNECT_MS` and before an abort. */
-async function dial(
+/**
+ * A new connection to `t` (TLS for `https:`, offering the protocols in `alpn`), within
+ * `CONNECT_MS` and before an abort.
+ */
+export async function dial(
   t: Target,
   ca: string,
   signal: AbortSignal | null,
+  alpn: string = "http/1.1",
 ): Promise<TcpStream, IoError | AbortError> {
   const addr = `${t.hostname}:${t.port}`;
   const stop = new AbortController();
   // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
   // connecting (a function around it would go on and make a connection nobody closes).
   const connecting =
-    t.https
-      ? velt_rt_tcp_connect_tls(addr, bare(t.hostname), ca, "http/1.1")
-      : velt_rt_tcp_connect(addr);
+    t.https ? velt_rt_tcp_connect_tls(addr, bare(t.hostname), ca, alpn) : velt_rt_tcp_connect(addr);
   const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
   if (signal != null) {
     racers.push(aborted(signal, stop.signal));
