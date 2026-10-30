@@ -24,7 +24,7 @@ store.default = (scopedProps?: any): any[] => [
 ];
 const slots = store as Slots;
 const out = slots.default();
-console.log(out.length, out[0], out[1], (out[2] as VNode).tag, out[3], out[4]);
+console.log(out, (out[2] as VNode).tag);
 
 // A member of an object literal.
 const lit: any = { default: (p?: any): any[] => ["L", p === undefined] };

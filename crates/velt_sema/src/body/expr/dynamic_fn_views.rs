@@ -13,6 +13,8 @@
 //! (`hir::Program::any_fn_views`); the closure is made at the conversion, so a call of the
 //! converted function costs one call through `any`.
 
+use std::collections::hash_map::Entry;
+
 use velt_common::Span;
 
 use crate::body::{FnCx, Frame, LocalKind};
@@ -36,6 +38,15 @@ pub(crate) struct FnViews {
     pub generic: Option<usize>,
 }
 
+impl FnViews {
+    /// The conversion functions made, in order (`hir::Program::any_fn_views`).
+    pub(crate) fn into_program(self) -> Vec<DefId> {
+        let mut out: Vec<DefId> = self.made.into_values().flatten().collect();
+        out.sort_unstable_by_key(|d| d.0);
+        out
+    }
+}
+
 /// How deep the member types of a conversion's target are looked through.
 const DEPTH: u32 = 8;
 
@@ -54,8 +65,8 @@ impl Ctx<'_> {
         for t in self.fn_members(exp) {
             if self.has_type_params(t) {
                 self.fn_views.generic.get_or_insert(module);
-            } else if !self.fn_views.made.contains_key(&t) {
-                self.fn_views.made.insert(t, None);
+            } else if let Entry::Vacant(e) = self.fn_views.made.entry(t) {
+                e.insert(None);
                 self.fn_views.pending.push((t, module, span));
             }
         }

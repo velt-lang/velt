@@ -445,8 +445,7 @@ fn check_timed(
         fn_views,
         ..
     } = cx;
-    let mut any_fn_views: Vec<hir::DefId> = fn_views.made.into_values().flatten().collect();
-    any_fn_views.sort_unstable_by_key(|d| d.0);
+    let any_fn_views = fn_views.into_program();
     let program = hir::Program {
         types: ty.table,
         defs: (defs.into_iter())

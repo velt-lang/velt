@@ -1,4 +1,4 @@
-5 a 1 b true null
+[ 'a', 1, { tag: 'b' }, true, null ] b
 [ 'L', true ]
 5000
 x-undefined three 2 1+2+3 42
