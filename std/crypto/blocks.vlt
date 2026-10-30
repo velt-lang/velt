@@ -1,0 +1,69 @@
+// velt/crypto (internal): the Merkle–Damgård plumbing both portable hashes share: words in and
+// out of blocks, the final padding, HMAC's keyed first block.
+
+import { u8x16 } from "velt/simd";
+
+// Bytes per compression block of both hashes (and the HMAC key block).
+export const BLOCK: usize = 64;
+
+export function zeroWords(n: usize): u32[] {
+  const w: u32[] = __intrinsic_array_with_capacity(n);
+  for (let i: usize = 0; i < n; i++) {
+    w.push(0);
+  }
+  return w;
+}
+
+// Big-endian words of the 64-byte block at `off` into `w[0..16]`.
+export function loadWords(w: u32[], data: u8[], off: usize) {
+  for (let t: usize = 0; t < 16; t++) {
+    const i = off + t * 4;
+    w[t] =
+      ((data[i] as u32) << 24) |
+      ((data[i + 1] as u32) << 16) |
+      ((data[i + 2] as u32) << 8) |
+      (data[i + 3] as u32);
+  }
+}
+
+// The bytes after the last full block, padded with 0x80, zeros and the 64-bit big-endian bit
+// length: one or two blocks (both hashes use the same padding).
+// `before` bytes already hashed ahead of `data` count in the length.
+export function finalBlocks(data: u8[], full: usize, before: usize): u8[] {
+  const rest = data.length - full;
+  const size = rest < 56 ? BLOCK : 2 * BLOCK;
+  const out = Buffer.alloc(size);
+  for (let i: usize = 0; i < rest; i++) {
+    out[i] = data[full + i];
+  }
+  out[rest] = 0x80;
+  const bits = ((before + data.length) as u64) * 8;
+  for (let i: usize = 0; i < 8; i++) {
+    out[size - 8 + i] = ((bits >> (56 - (i as u64) * 8)) & 0xff) as u8;
+  }
+  return out;
+}
+
+export function wordsToBytes(h: u32[]): u8[] {
+  const out: u8[] = __intrinsic_array_with_capacity(h.length * 4);
+  for (let i: usize = 0; i < h.length; i++) {
+    const x = h[i];
+    out.push((x >>> 24) as u8);
+    out.push(((x >>> 16) & 0xff) as u8);
+    out.push(((x >>> 8) & 0xff) as u8);
+    out.push((x & 0xff) as u8);
+  }
+  return out;
+}
+
+// The key block K ^ `byte` (`k` at most a block, zero-padded) for the portable rounds:
+// H((K ^ opad) || H((K ^ ipad) || data)) hashes it as the first block, so nothing is joined.
+export function keyBlock(k: u8[], byte: u8): u8[] {
+  const out = Buffer.alloc(BLOCK);
+  out.set(k, 0);
+  const x = u8x16.splat(byte);
+  for (let i: usize = 0; i < BLOCK; i += 16) {
+    u8x16.load(out, i).xor(x).store(out, i);
+  }
+  return out;
+}

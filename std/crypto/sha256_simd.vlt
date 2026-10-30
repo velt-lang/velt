@@ -1,0 +1,221 @@
+// velt/crypto (internal): SHA-256 with the SHA instructions: ARMv8 SHA2 and x86 SHA-NI.
+
+import { u32x4, u8x16 } from "velt/simd";
+import { BLOCK } from "velt/crypto/blocks";
+import {
+  velt_simd_u32x4_sha256h,
+  velt_simd_u32x4_sha256h2,
+  velt_simd_u32x4_sha256msg1,
+  velt_simd_u32x4_sha256msg2,
+  velt_simd_u32x4_sha256rnds2,
+  velt_simd_u32x4_sha256su0,
+  velt_simd_u32x4_sha256su1,
+} from "velt/crypto/rt";
+import { H256, K256 } from "velt/crypto/tables";
+import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
+
+// One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
+// with the next sixteen message words made after each batch (but the last). The schedule
+// instructions share the crypto pipes with the rounds: made between batches, they stay off the
+// rounds' dependency chain.
+function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
+  __intrinsic_target("sha-arm");
+  let m0 = w0;
+  let m1 = w1;
+  let m2 = w2;
+  let m3 = w3;
+  let t = s;
+  for (let j: usize = 0; j < 16; j += 4) {
+    t = group256Arm(t, m0.add(u32x4.load(K256, 4 * j)));
+    t = group256Arm(t, m1.add(u32x4.load(K256, 4 * j + 4)));
+    t = group256Arm(t, m2.add(u32x4.load(K256, 4 * j + 8)));
+    t = group256Arm(t, m3.add(u32x4.load(K256, 4 * j + 12)));
+    if (j < 12) {
+      m0 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m0, m1), m2, m3);
+      m1 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m1, m2), m3, m0);
+      m2 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m2, m3), m0, m1);
+      m3 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m3, m0), m1, m2);
+    }
+  }
+  return { a: t.a.add(s.a), b: t.b.add(s.b) };
+}
+
+// Four rounds on ARMv8 with message words plus constants `wk`.
+function group256Arm(s: Pair, wk: u32x4): Pair {
+  __intrinsic_target("sha-arm");
+  return { a: velt_simd_u32x4_sha256h(s.a, s.b, wk), b: velt_simd_u32x4_sha256h2(s.b, s.a, wk) };
+}
+
+export function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const s = state256Arm(key, pad, keyed, data);
+  const out = newBytes(32);
+  s.a.reverseBytes().asU8x16().store(out, 0);
+  s.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// HMAC-SHA256 on ARMv8 (`k` at most a block): the inner hash's state is the outer message's
+// words already, so the outer block is made from it in registers and nothing is allocated but
+// the digest.
+export function hmac256Arm(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const inner = state256Arm(k, 0x36, true, data);
+  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  const p = u8x16.splat(0x5c);
+  s = rounds256Arm(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  // The 32-byte digest, the 0x80 marker, zeros, and the length: (64 + 32) bytes = 768 bits.
+  const marker = u32x4.splat(0).withLane(0, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 768);
+  s = rounds256Arm(s, inner.a, inner.b, marker, length);
+  const out = newBytes(32);
+  s.a.reverseBytes().asU8x16().store(out, 0);
+  s.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// The state after SHA-256 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
+function state256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
+  __intrinsic_target("sha-arm");
+  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds256Arm(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  // `fits` of a block's last 16 bytes covers its four loads.
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds256Arm(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds256Arm(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}
+
+// One SHA-256 block with x86 SHA-NI: state ABEF / CDGH (A in lane 3), two rounds per SHA256RNDS2.
+function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
+  __intrinsic_target("sha-x86");
+  let m0 = w0;
+  let m1 = w1;
+  let m2 = w2;
+  let m3 = w3;
+  let abef = s.a;
+  let cdgh = s.b;
+  // Groups 0–11 also make the message words of groups 4–15; 12–15 use them up.
+  for (let j: usize = 0; j < 12; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
+    abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
+    const tail = u32x4.shuffle(m2, m3, 1, 2, 3, 4);
+    const next = velt_simd_u32x4_sha256msg2(velt_simd_u32x4_sha256msg1(m0, m1).add(tail), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = next;
+  }
+  for (let j: usize = 12; j < 16; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
+    abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+  }
+  return { a: abef.add(s.a), b: cdgh.add(s.b) };
+}
+
+export function sha256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  return digest256X86(state256X86(key, pad, keyed, data));
+}
+
+// SHA-256's initial state as ABEF / CDGH (A in lane 3).
+function initial256X86(): Pair {
+  __intrinsic_target("sha-x86");
+  const dcba = u32x4.load(H256, 0);
+  const hgfe = u32x4.load(H256, 4);
+  const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
+  const efgh = u32x4.shuffle(hgfe, hgfe, 3, 2, 1, 0);
+  return { a: u32x4.shuffle(efgh, cdab, 2, 3, 4, 5), b: u32x4.shuffle(efgh, cdab, 0, 1, 6, 7) };
+}
+
+// State ABEF / CDGH back as ABCD / EFGH (A in lane 0).
+function unswapped256X86(s: Pair): Pair {
+  __intrinsic_target("sha-x86");
+  const feba = u32x4.shuffle(s.a, s.a, 3, 2, 1, 0);
+  const dchg = u32x4.shuffle(s.b, s.b, 1, 0, 3, 2);
+  return { a: u32x4.shuffle(feba, dchg, 0, 1, 6, 7), b: u32x4.shuffle(feba, dchg, 2, 3, 4, 5) };
+}
+
+// The 32 bytes of the digest of state ABEF / CDGH.
+function digest256X86(s: Pair): u8[] {
+  __intrinsic_target("sha-x86");
+  const abcd = unswapped256X86(s);
+  const out = newBytes(32);
+  abcd.a.reverseBytes().asU8x16().store(out, 0);
+  abcd.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// HMAC-SHA256 with x86 SHA-NI (`k` at most a block); see `hmac256Arm`.
+export function hmac256X86(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  const inner = unswapped256X86(state256X86(k, 0x36, true, data));
+  let s = initial256X86();
+  const p = u8x16.splat(0x5c);
+  s = rounds256X86(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  const marker = u32x4.splat(0).withLane(0, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 768);
+  return digest256X86(rounds256X86(s, inner.a, inner.b, marker, length));
+}
+
+// The state (ABEF / CDGH) after SHA-256 with SHA-NI of `data`, after a keyed first block.
+function state256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
+  __intrinsic_target("sha-x86");
+  let s = initial256X86();
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds256X86(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds256X86(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds256X86(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}

@@ -1,0 +1,32 @@
+// velt/crypto (internal): HMAC (RFC 2104) over SHA-256 and SHA-1.
+
+import { u32x4 } from "velt/simd";
+import { BLOCK } from "velt/crypto/blocks";
+import { sha1, sha1Of } from "velt/crypto/sha1";
+import { hmac1Arm, hmac1X86 } from "velt/crypto/sha1_simd";
+import { sha256, sha256Of } from "velt/crypto/sha256";
+import { hmac256Arm, hmac256X86 } from "velt/crypto/sha256_simd";
+
+/** HMAC-SHA256 (RFC 2104 / RFC 4231) of `data` under `key`. */
+export function hmacSha256(key: u8[], data: u8[]): u8[] {
+  const k = key.length > BLOCK ? sha256(key) : key;
+  if (u32x4.hasShaArm()) {
+    return hmac256Arm(k, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return hmac256X86(k, data);
+  }
+  return sha256Of(k, 0x5c, true, sha256Of(k, 0x36, true, data));
+}
+
+/** HMAC-SHA1 (RFC 2104 / RFC 2202) of `data` under `key`. */
+export function hmacSha1(key: u8[], data: u8[]): u8[] {
+  const k = key.length > BLOCK ? sha1(key) : key;
+  if (u32x4.hasShaArm()) {
+    return hmac1Arm(k, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return hmac1X86(k, data);
+  }
+  return sha1Of(k, 0x5c, true, sha1Of(k, 0x36, true, data));
+}

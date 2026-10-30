@@ -116,7 +116,7 @@ a build by reason):
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
 
 A fast path is marked with a statement at the top of its body, as gated functions use
-`__intrinsic_target("sha-arm")` (`std/crypto/index.vlt`):
+`__intrinsic_target("sha-arm")` (`std/crypto/sha256_simd.vlt`):
 
 ```text
 export function numberToString(x: number): string {
@@ -250,7 +250,7 @@ pointer"), and the runtime compares some statics' addresses (type descriptors;
 So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
 of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
 second block. Std has no module-level `let` today, so this is for later. Static atomics
-(`StaticData::mutable`, such as the four words of `std/sync/epoch/index.vlt`) are written by address,
+(`StaticData::mutable`, such as the four words of `std/sync/epoch/reclaim.vlt`) are written by address,
 and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
 catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
 the functions that reach a static atomic. A function that refers

@@ -12,7 +12,6 @@ export const allow: Allow = {
     "compress/brotli/command.vlt",
     "compress/inflate/blocks.vlt",
     "compress/inflate/tables.vlt",
-    "crypto/index.vlt",
     "encoding/json/reader.vlt",
     "encoding/json/scan.vlt",
     "encoding/json/tape.vlt",
@@ -126,7 +125,6 @@ export const allow: Allow = {
     "text/regex/regexp.vlt",
   ],
   indexCode: [
-    "crypto/index.vlt",
     "db/index.vlt",
     "encoding/json/index.vlt",
     "net/dns/index.vlt",

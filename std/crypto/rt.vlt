@@ -1,0 +1,51 @@
+// velt/crypto (internal): the runtime and SIMD functions velt/crypto calls: the OS generator and the
+// SHA instructions (std/simd/sha.vlt), called bare in the gated functions.
+
+import { u32x4 } from "velt/simd";
+
+// `(uint64_t n, VeltBytes* out)`: `n` bytes from the OS CSPRNG.
+export declare function velt_rt_random_bytes(n: u64): u8[];
+
+// A uniformly random `u64` from the OS CSPRNG.
+export declare function velt_rt_random_u64(): u64;
+
+// The SHA instructions (std/simd/sha.vlt), called bare in the gated functions below.
+export declare function velt_simd_u32x4_sha1c(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1p(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1m(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1h(e: u32): u32;
+
+export declare function velt_simd_u32x4_sha1su0(w0: u32x4, w1: u32x4, w2: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1su1(t: u32x4, w3: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256h(abcd: u32x4, efgh: u32x4, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256h2(efgh: u32x4, abcd: u32x4, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256su0(w0: u32x4, w1: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256su1(t: u32x4, w2: u32x4, w3: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256rnds2(cdgh: u32x4, abef: u32x4, wk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256msg1(a: u32x4, b: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha256msg2(a: u32x4, b: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1rnds4_0(abcd: u32x4, ewk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1rnds4_1(abcd: u32x4, ewk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1rnds4_2(abcd: u32x4, ewk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1rnds4_3(abcd: u32x4, ewk: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1nexte(a: u32x4, b: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1msg1(a: u32x4, b: u32x4): u32x4;
+
+export declare function velt_simd_u32x4_sha1msg2(a: u32x4, b: u32x4): u32x4;
