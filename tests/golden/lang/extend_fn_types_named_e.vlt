@@ -1,0 +1,23 @@
+// The error type an `extend` target's function type gets (#1878) is a type parameter source
+// can't name: a type `E` in scope keeps its meaning in the block's methods. TypeScript has no
+// `extend`, so there is no Node comparison.
+
+class E {
+  name: string = "the class E";
+}
+
+extend<R> (() => R) {
+  tag(e: E): string {
+    return e.name;
+  }
+
+  made(): E {
+    const e = new E();
+    e.name = `made after ${this()}`;
+    return e;
+  }
+}
+
+const f = () => 1;
+console.log(f.tag(new E()));
+console.log(f.made().name);

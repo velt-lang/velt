@@ -36,6 +36,16 @@ impl Generics {
     }
 }
 
+/// Ends the name of a type parameter sema adds that source can't name (the error type of a
+/// function type in an `extend` target, `collect/ext_fn_errors.rs`): no identifier holds it, so
+/// the name doesn't shadow a type in the scope, and messages show the name without it.
+pub(crate) const HIDDEN_PARAM: char = '\'';
+
+/// How messages show type parameter `name`: without the mark of a hidden one (`HIDDEN_PARAM`).
+pub(crate) fn shown_param(name: &str) -> &str {
+    name.strip_suffix(HIDDEN_PARAM).unwrap_or(name)
+}
+
 /// `T extends Iface<args>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Bound {

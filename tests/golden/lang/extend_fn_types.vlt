@@ -1,0 +1,152 @@
+// `extend` blocks on function types (#1878): the block a function gets is the same through an
+// interface bound as on a direct call, and is chosen by its parameters and result, whatever it
+// throws (a function type in a target written without `throws` fits one that throws
+// anything). One row per kind of function value: the block a direct call picks, then the one
+// a call through `T extends Kind` picks. TypeScript has no `extend`, so there is no Node
+// comparison.
+
+interface Kind {
+  kind(): string;
+}
+
+extend<T> T implements Kind {
+  kind(): string {
+    return "any";
+  }
+}
+
+extend<R> (() => R) implements Kind {
+  kind(): string {
+    return "thunk";
+  }
+}
+
+extend<A, R> ((a: A) => R) implements Kind {
+  kind(): string {
+    return "unary";
+  }
+}
+
+extend<A, R> ((...xs: A[]) => R) implements Kind {
+  kind(): string {
+    return "rest";
+  }
+}
+
+function viaBound<T extends Kind>(x: T): string {
+  return x.kind();
+}
+
+function row(name: string, direct: string, bound: string) {
+  console.log(`${name.padEnd(22)} ${direct.padEnd(6)} ${bound}`);
+}
+
+function named(): number {
+  return 1;
+}
+
+function generic<X>(x: X): X {
+  return x;
+}
+
+function throws(): number {
+  throw new Error("boom");
+}
+
+// A parameter's function type is a site whose error type is inferred.
+function param(f: (x: number) => string, g: () => void) {
+  row("parameter (x) => s", f.kind(), viaBound(f));
+  row("parameter () => void", g.kind(), viaBound(g));
+}
+
+const zero = () => 2;
+const one = (x: number) => `${x}`;
+const typed: (x: number) => string = one;
+const many = (...xs: number[]) => xs.length;
+const later = async () => 1;
+const failing = (): number => {
+  throw new Error("boom");
+};
+
+row("value", "direct", "bound");
+row("closure ()", zero.kind(), viaBound(zero));
+row("closure (x)", one.kind(), viaBound(one));
+row("typed (x) => string", typed.kind(), viaBound(typed));
+row("closure (...xs)", many.kind(), viaBound(many));
+row("async closure", later.kind(), viaBound(later));
+row("throwing closure", failing.kind(), viaBound(failing));
+row("named function", named.kind(), viaBound(named));
+row("throwing function", throws.kind(), viaBound(throws));
+row("generic function", generic.kind(), viaBound(generic));
+row("inline arrow", (() => "s").kind(), viaBound(() => "s"));
+param((x) => `${x}`, () => {});
+row("number", (3).kind(), viaBound(3));
+
+// `this` in such a block is the receiver with its own error type: calling it throws what the
+// receiver throws, directly and through a bound.
+interface Run {
+  run(): string;
+}
+
+extend<R> (() => R) implements Run {
+  run(): string {
+    try {
+      return `ran: ${this()}`;
+    } catch (e) {
+      return `caught ${e}`;
+    }
+  }
+}
+
+function viaRun<T extends Run>(x: T): string {
+  return x.run();
+}
+
+console.log(zero.run(), viaRun(zero));
+console.log(failing.run(), viaRun(failing));
+console.log(throws.run(), viaRun(throws));
+
+// An error type parameter binds to what the receiver throws; a type alias for a function type
+// is one too; and function types inside other types are matched the same way.
+extend<R, E> (() => R throws E) {
+  attempt(): string {
+    try {
+      this();
+      return "fine";
+    } catch (e) {
+      return `caught ${e}`;
+    }
+  }
+}
+
+type Thunk<R> = () => R;
+
+interface Label {
+  label(): string;
+}
+
+extend<T> T implements Label {
+  label(): string {
+    return "any";
+  }
+}
+
+extend<R> Thunk<R> implements Label {
+  label(): string {
+    return "thunk alias";
+  }
+}
+
+extend<R> Array<() => R> {
+  runAll(): R[] {
+    return this.map((f) => f());
+  }
+}
+
+function viaLabel<T extends Label>(x: T): string {
+  return x.label();
+}
+
+console.log(zero.attempt(), failing.attempt());
+console.log(zero.label(), viaLabel(zero), failing.label(), viaLabel(failing));
+console.log([() => 1, () => 2].runAll());

@@ -1089,6 +1089,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   interfaces it extends without generic methods, args in `D`'s params) when the listed args
   with `args` substituted are `bargs`. Converting an `any` to
   `iface` uses the same lookup for the held value's type.
+- A function type in an extension impl's `ty` (or an `extend` block's target) matches a
+  `FnPtr` part by part: its parameters, result, `rest` flag and error type (#1878). Its error
+  type (or, for one returning a `Promise`, the promise's rejection type) is always a type
+  parameter of the impl: the block's own (`throws E`) or, where the target wrote no `throws`, one
+  sema adds after the declared ones (`ImplDef::generics` counts it; the block's methods have
+  it as a type parameter too), so the impl fits a function that throws anything and `this` is
+  the receiver's type.
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
   `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
   `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.

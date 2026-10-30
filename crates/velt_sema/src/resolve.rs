@@ -548,7 +548,7 @@ impl Ctx<'_> {
     }
 
     /// Does `item` name a type (an alias, class, struct, enum or interface)?
-    fn is_type_item(&self, item: Item) -> bool {
+    pub(crate) fn is_type_item(&self, item: Item) -> bool {
         match item {
             Item::Alias(_) => true,
             Item::Def(d) => matches!(

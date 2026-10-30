@@ -1,0 +1,12 @@
+// A function type in an `extend` target can't throw a fixed type (#1878): whether the block
+// fits a function would depend on the error type inferred for the function's type. Leave
+// `throws` out, or write a type parameter of the block.
+
+extend<R> (() => R throws Error) {
+  m(): number {
+    return 1;
+  }
+}
+
+const f = () => 1;
+console.log(f.m());
