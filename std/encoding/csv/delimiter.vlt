@@ -1,0 +1,13 @@
+// velt/encoding/csv (internal): the delimiter option, checked for the parser and the writer.
+
+import { JSON } from "velt/prelude/json/json";
+import { CsvError } from "velt/encoding/csv/errors";
+
+// The delimiter code unit of `d`; throws `CsvError` unless it is one ASCII character.
+export function delimiterUnit(d: string): i64 {
+  const c = d.charCodeAt(0);
+  if (d.length != 1 || c >= 128 || c == 34 || c == 10 || c == 13) {
+    throw new CsvError(`Invalid CSV delimiter: ${JSON.stringify(d)}`, 0);
+  }
+  return c;
+}

@@ -7,15 +7,9 @@
 // decodes into one buffer of UTF-8 and turns it into a string with one runtime copy. Bad input
 // throws Node's `DOMException` (`InvalidCharacterError`, with Node's messages).
 
-import { IoResult } from "velt/native/result";
-import { base64Encode } from "velt/encoding";
 import { DOMException } from "velt/lang/dom_exception";
-
-declare function velt_rt_bytes_from_str(s: string): u8[];
-declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
-
-// `=`
-const PAD: u8 = 61;
+import { base64Encode, PAD } from "velt/encoding/base64";
+import { velt_rt_bytes_from_str, velt_rt_bytes_to_str } from "velt/encoding/rt";
 
 /**
  * The Base64 (standard alphabet, `=` padded) of `data`, whose code units are bytes, as Node's
@@ -143,6 +137,7 @@ function put(out: u8[], o: usize, b: i64): usize {
 
 // In `classTable`: `=`, and the ASCII whitespace forgiving-base64 ignores.
 const PAD_CLASS: i64 = -2;
+
 const SPACE_CLASS: i64 = -3;
 
 // The value of every byte as a standard Base64 digit; `PAD_CLASS` for `=`, `SPACE_CLASS` for
