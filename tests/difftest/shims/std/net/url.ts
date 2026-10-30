@@ -55,19 +55,8 @@ export class URL extends globalThis.URL {
   }
 }
 
-function decodeOrThrow(f: (s: string) => string, s: string): string {
-  try {
-    return f(s);
-  } catch {
-    throw new UrlError("URI malformed");
-  }
-}
-
+// The URI functions throw `URIError("URI malformed")`, in Velt as in Node: Node's own.
 export const encodeURIComponent = globalThis.encodeURIComponent;
 export const encodeURI = globalThis.encodeURI;
-export function decodeURIComponent(s: string): string {
-  return decodeOrThrow(globalThis.decodeURIComponent, s);
-}
-export function decodeURI(s: string): string {
-  return decodeOrThrow(globalThis.decodeURI, s);
-}
+export const decodeURIComponent = globalThis.decodeURIComponent;
+export const decodeURI = globalThis.decodeURI;
