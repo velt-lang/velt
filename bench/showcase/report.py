@@ -284,7 +284,9 @@ def losses(results):
                     continue
                 bv, bi = (max if hb else min)(others, key=lambda o: o[0])
                 if (bv > key(v)) if hb else (bv < key(v)):
-                    out.append(f"{cat}: {label}: {bi['label']}{partial(bi)} ({versus(key(v), bv, hb)})")
+                    # Either row at the load generator's limit: the gap may be oha's, not the servers'.
+                    bound = " (load-bound)" if bi["summary"].get("load_bound") or v["summary"].get("load_bound") else ""
+                    out.append(f"{cat}: {label}: {bi['label']}{partial(bi)} ({versus(key(v), bv, hb)}){bound}")
     return out
 
 

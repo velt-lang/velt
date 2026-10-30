@@ -41,6 +41,22 @@ class Losses(unittest.TestCase):
         self.assertIn("Rust axum (partial: round 4: exit 1)", out[0])
         self.assertIn("Velt 2.00× slower", out[0])
 
+    def test_load_bound_rows_are_marked(self):
+        for velt_bound, rust_bound in ((False, True), (True, False)):
+            rec = {"name": "/plaintext", "kind": "http",
+                   "impls": [impl("Velt", "velt", best_rps=100.0, load_bound=velt_bound),
+                             impl("Rust axum", "rust", best_rps=102.0, load_bound=rust_bound)]}
+            out = report.losses(results("http", rec))
+            self.assertEqual(len(out), 1)
+            self.assertTrue(out[0].endswith("(load-bound)"), out[0])
+
+    def test_unbound_rows_are_not_marked(self):
+        rec = {"name": "/plaintext", "kind": "http",
+               "impls": [impl("Velt", "velt", best_rps=100.0, load_bound=False),
+                         impl("Rust axum", "rust", best_rps=150.0, load_bound=False)]}
+        out = report.losses(results("http", rec))
+        self.assertNotIn("load-bound", out[0])
+
     def test_competitor_without_runs_is_not_compared(self):
         rec = {"name": "fib", "impls": [impl("Velt", "velt", best_wall_s=2.0),
                                         impl("Rust", "rust", 0, error="check failed: output differs")]}

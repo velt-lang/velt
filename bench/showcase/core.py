@@ -200,13 +200,20 @@ def tsx_servers(ctx, server_threads):
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     js = os.path.join(here, "server.mjs")
     servers = [("Velt TSX", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(server_threads)}, verr)]
+    n = server_threads
+    node_err = nerr or (None if ctx.node else "node not found")
+    bun_err = nerr or (None if ctx.bun else "bun not found")
+    prod = {"NODE_ENV": "production"}
     for lib, name in (("react", "React"), ("preact", "Preact")):
-        servers.append((f"Node node:http + {name} (1 process)", "node",
-                        lambda p, lib=lib: [[ctx.node or "node", js, lib, str(p)]], {"NODE_ENV": "production"},
-                        nerr or (None if ctx.node else "node not found")))
-        servers.append((f"Bun Bun.serve + {name} (1 process)", "bun",
-                        lambda p, lib=lib: [[ctx.bun or "bun", js, lib, str(p)]], {"NODE_ENV": "production"},
-                        nerr or (None if ctx.bun else "bun not found")))
+        node = lambda p, lib=lib: [[ctx.node or "node", js, lib, str(p)]]
+        bun = lambda p, lib=lib: [[ctx.bun or "bun", js, lib, str(p)]]
+        # One process each, and on every server core, as the TechEmpower table has them.
+        servers.append((f"Node node:http + {name} (1 process)", "node", node, prod, node_err))
+        servers.append((f"Node node:cluster + {name} ({n} workers)", "node", node, {**prod, "CLUSTER": "1"}, node_err))
+        servers.append((f"Bun Bun.serve + {name} (1 process)", "bun", bun, prod, bun_err))
+        servers.append((f"Bun Bun.serve reusePort + {name} ({n} processes)", "bun",
+                        lambda p, lib=lib: [[ctx.bun or "bun", js, lib, str(p)]] * n,
+                        {**prod, "REUSE_PORT": "1"}, bun_err))
     render = os.path.join(out, "render")
     if not os.path.isfile(render):
         velt_build(ctx, os.path.join(here, "render.vlt"), render)

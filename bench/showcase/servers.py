@@ -188,6 +188,8 @@ def http_servers(ctx, server_cpus):
 
 
 LOAD_BOUND = 0.9
+# oha's own error for a request still in flight when the run's duration ends.
+OHA_DEADLINE = "aborted due to deadline"
 
 
 def seconds(duration):
@@ -213,8 +215,8 @@ def oha(ctx, load_cpus, url, duration, conns):
             # oha cancels the requests still in flight when the duration ends ("aborted due to
             # deadline"): those are not the server's errors.
             "status_codes": codes,
-            "errors": {e: n for e, n in d.get("errorDistribution", {}).items() if "deadline" not in e},
-            "aborted_at_deadline": sum(n for e, n in d.get("errorDistribution", {}).items() if "deadline" in e),
+            "errors": {e: n for e, n in d.get("errorDistribution", {}).items() if e != OHA_DEADLINE},
+            "aborted_at_deadline": d.get("errorDistribution", {}).get(OHA_DEADLINE, 0),
             "p50_ms": (pct.get("p50") or 0) * 1000, "p99_ms": (pct.get("p99") or 0) * 1000,
             "avg_ms": (s.get("average") or 0) * 1000,
             "load_cpu_s": metrics["cpu_s"], "load_cpu_share": round(util, 3)}

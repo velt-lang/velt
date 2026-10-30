@@ -195,7 +195,8 @@ def package_versions(ctx):
         lines = (read(lock) or "").splitlines()
         for k, line in enumerate(lines[:-1]):
             if line == 'name = "libsqlite3-sys"':
-                out[f"rusqlite libsqlite3-sys, bundled SQLite ({os.path.relpath(lock, ctx.root)})"] = \
+                # The crate's version, not SQLite's: each libsqlite3-sys release bundles one SQLite.
+                out[f"libsqlite3-sys crate (rusqlite, bundled SQLite; {os.path.relpath(lock, ctx.root)})"] = \
                     lines[k + 1].split('"')[1]
     return out
 

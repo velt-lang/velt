@@ -43,7 +43,10 @@ sqlite 5, compile 17, http 31, websocket 4). It needs about 10 GB of disk for th
    which is opt-level 2). Where a suite's Rust baseline is built for the machine's CPU (the
    Benchmarks Game, `concurrent_map`, `btree`, `atomics`, as the published programs are), it is
    `-C target-cpu=native` and Velt gets `--cpu native`. Node and Bun run without flags (React
-   with `NODE_ENV=production`).
+   with `NODE_ENV=production`). Velt's runtime library (`velt_rt`, the Rust part: tokio, hyper,
+   the allocator) is linked prebuilt, built by `cargo build --release` with its own profile (thin
+   LTO, baseline x86-64), so in the server rows Rust's fat LTO over tokio and hyper is if
+   anything the stronger build.
 3. **No warm-up tricks.** Every process is timed from start to exit (start-up, JIT and file
    reading included), except where a suite times its own loop for every language alike (the
    SQLite workloads, the fetch scenarios, `concurrent_map`: the program prints its own time).
@@ -87,7 +90,7 @@ server's whole process tree (all `node:cluster` workers, all Bun `reusePort` pro
 | `sqlite` | rows to JSON: the feed and post queries of `bench/feed` (`bench/sqlite`) | ✓ | ✓ (rusqlite + serde_json) | | |
 | `compile` | hello world, nbody, the TechEmpower server: Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
 | `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (velt:http) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
-| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt`, `tsx/server.mjs`) | ✓ | n/a | ✓ (node:http + React or Preact) | ✓ (Bun.serve + React or Preact) |
+| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt`, `tsx/server.mjs`) | ✓ | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
 | `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ | | ✓ (ws) | ✓ |
 | memory | peak RSS of every benchmark above, one table (`memory.md`) | | | | |
 
@@ -124,9 +127,11 @@ half of the physical cores each (on the 6-core builder: 3 cores, 6 threads, for 
 3 for oha), so the load generator can keep up with the fastest servers; `SERVER_CPUS` and
 `LOAD_CPUS` override, as taskset lists. Each timed run records oha's own CPU time, and a row
 where it used 90% or more of its CPUs is marked **load-bound** (its req/s may be the load
-generator's limit, not the server's). Velt (`VELT_THREADS` set to the server CPUs), axum and
-`node:cluster` use every server core; Node and Bun as one process use one, and Bun with
-`reusePort` runs one process per server core. Before any timing, every server is started once
+generator's limit, not the server's); a loss line in the results' README says
+"(load-bound)" when either row was. Every server table, the TechEmpower routes and the TSX
+pages alike, has each JavaScript server twice: as one process (one core) and on every server
+core (`node:cluster` with one worker per core; Bun with `reusePort` and one process per core).
+Velt (`VELT_THREADS` set to the server CPUs) and axum use every server core. Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
 response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,
 which the `tsx` category compares with React's and Preact's byte for byte). A server that fails
@@ -139,7 +144,9 @@ repository (`<repo>`), the build directory (`$BUILD`) and the home directory (`~
 review. A benchmark, category or server that raises an error is recorded as failed in
 `results.json` and the run goes on; the tables are written at the end in any case.
 `results.json` also records the installed npm package versions (react, react-dom, preact,
-preact-render-to-string, better-sqlite3, ws) and the SQLite version of every driver.
+preact-render-to-string, better-sqlite3, ws), the SQLite version that better-sqlite3, bun:sqlite
+and velt:sqlite report (`sqlite_version()`), and for rusqlite the version of the
+`libsqlite3-sys` crate, whose release fixes the SQLite it bundles.
 `test_report.py` (run by `run.sh` first) tests the list of losses on made-up results.
 
 ## Not covered
