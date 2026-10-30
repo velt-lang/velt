@@ -207,7 +207,7 @@ def load1():
     return float(v.split()[0]) if v else None
 
 
-def settle(threshold, timeout, force, poll=5.0, now=time.time, sleep=time.sleep, load=load1):
+def settle(threshold, timeout, force, poll=10.0, now=time.time, sleep=time.sleep, load=load1):
     """Waits until the 1-minute load average is under threshold (the build phase leaves it high),
     at most timeout seconds. Returns the record of the wait; on a timeout, exits with a message
     unless force (then the run goes on, the times noisier)."""

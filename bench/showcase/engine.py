@@ -78,9 +78,10 @@ def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
     CPU time and peak RSS are the measure helper's (the program's own); without it, wall and CPU
     time come from here and peak RSS is None (unknown), never the harness's own size."""
     full_env = {**os.environ, **(env or {})}
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err,             tempfile.NamedTemporaryFile(prefix="measure-", delete=False) as res:
-        res.close()
-        argv = [MEASURE, res.name, *cmd] if MEASURE else list(cmd)
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        fd, result = tempfile.mkstemp(prefix="measure-")
+        os.close(fd)
+        argv = [MEASURE, result, *cmd] if MEASURE else list(cmd)
         inp = open(stdin, "rb") if stdin else subprocess.DEVNULL
         try:
             t = time.perf_counter()
@@ -92,11 +93,11 @@ def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
             finally:
                 timer.cancel()
             wall = time.perf_counter() - t
-            line = open(res.name).read().split() if MEASURE else []
+            line = open(result).read().split() if MEASURE else []
         finally:
             if stdin:
                 inp.close()
-            os.unlink(res.name)
+            os.unlink(result)
         p.returncode = os.waitstatus_to_exitcode(status)
         if p.returncode != 0:
             err.seek(0)
