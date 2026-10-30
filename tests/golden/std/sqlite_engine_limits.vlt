@@ -4,7 +4,8 @@
 // and not 1000 ("VIEWs and/or subqueries nested too deep"), a statement references a table at
 // most 65534 times (CTEs expanded; once in a query compiled again), an endless recursive CTE
 // ends at an outer LIMIT, and a result has at most 2,000 columns (`*` counted as the columns it
-// stands for, a VALUES row too), ORDER BY terms (a compound's too) and GROUP BY terms.
+// stands for, a VALUES row too), ORDER BY terms (a compound's too, a window's PARTITION BY and
+// ORDER BY together) and GROUP BY terms.
 // The expected output is the sqlite3 shell's for the same statements.
 import { open } from "velt:sqlite";
 import { openDatabase, Database } from "velt:sqlite/engine";
@@ -97,5 +98,21 @@ function main() {
   show(db, "a VALUES row of 2001", `SELECT count(*) FROM (VALUES (${ones(2001)}))`);
   show(db, "* over 1000 + 1000 columns", "SELECT count(*) FROM (SELECT * FROM w1, w2)");
   show(db, "* over 1000 + 1001 columns", "SELECT count(*) FROM (SELECT * FROM w1, w3)");
+  // A window's PARTITION BY and ORDER BY count together, as one ORDER BY, where it is used;
+  // the error comes after the names resolve.
+  const win = (over: string) => `SELECT count(*) OVER (${over}) FROM t`;
+  show(db, "a window ORDER BY of 2000", win(`ORDER BY ${ids(2000)}`));
+  show(db, "a window ORDER BY of 2001", win(`ORDER BY ${ids(2001)}`));
+  show(db, "a window PARTITION BY of 2000", win(`PARTITION BY ${ids(2000)}`));
+  show(db, "a window PARTITION BY of 2001", win(`PARTITION BY ${ids(2001)}`));
+  show(db, "a window of 1000 + 1000", win(`PARTITION BY ${ids(1000)} ORDER BY ${ids(1000)}`));
+  show(db, "a window of 1000 + 1001", win(`PARTITION BY ${ids(1000)} ORDER BY ${ids(1001)}`));
+  const named = (n: i64) => `SELECT count(*) OVER w FROM t WINDOW w AS (ORDER BY ${ids(n)})`;
+  show(db, "a named window of 2000", named(2000));
+  show(db, "a named window of 2001", named(2001));
+  show(db, "an unused window of 2001", `SELECT 1 FROM t WINDOW w AS (ORDER BY ${ids(2001)})`);
+  const over2001 = `count(*) OVER (ORDER BY ${ids(2001)})`;
+  show(db, "a window of 2001 in ORDER BY", `SELECT id FROM t ORDER BY ${over2001}`);
+  show(db, "a window of 2001, then no such column", `SELECT ${over2001}, nosuch FROM t`);
   removeSync(path);
 }

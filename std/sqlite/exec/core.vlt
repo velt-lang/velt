@@ -6,9 +6,7 @@ import { BINARY } from "velt:sqlite/record";
 import {
   E_BINARY,
   E_CALL,
-  E_COLLATE,
   E_COLUMN,
-  E_STAR,
   Expr,
   FromItem,
   J_FULL,
@@ -18,10 +16,11 @@ import {
   SelectCore,
 } from "velt:sqlite/sql/ast";
 import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
-import { AggRestart, Ev, Out, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
-import { AG_COUNT_STAR, AggCtx, Group } from "velt:sqlite/exec/agg";
+import { AggRestart, Ev, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
+import { AG_COUNT_STAR, AggCtx } from "velt:sqlite/exec/agg";
 import { prepareError } from "velt:sqlite/exec/errors";
-import { C, ExprCompiler } from "velt:sqlite/exec/expr";
+import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { hasWindow } from "velt:sqlite/exec/compiled";
 import {
   MAX_COLUMN,
   checkResultWidth,
@@ -30,9 +29,10 @@ import {
   rangeError,
   resultColumns,
   resultIndex,
-  termNumber,
 } from "velt:sqlite/exec/result";
 export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
+import { WinCtx } from "velt:sqlite/exec/window";
+import { lastWindowCalls } from "velt:sqlite/exec/window_call";
 import { Pull } from "velt:sqlite/exec/pull";
 import { walkOf } from "velt:sqlite/exec/walk";
 import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
@@ -49,7 +49,6 @@ import {
   orderJoins,
 } from "velt:sqlite/exec/core_plan";
 import { Emitter, limitValue } from "velt:sqlite/exec/emit";
-import { KeySet } from "velt:sqlite/exec/keys";
 import {
   ACC_INDEX,
   ACC_SCAN,
@@ -61,8 +60,9 @@ import {
   levelOf,
 } from "velt:sqlite/exec/plan";
 import { allOf, levelLoop } from "velt:sqlite/exec/loop";
+import { GroupState, groupStepFor, outputGroups } from "velt:sqlite/exec/group";
 import { AFF_NONE } from "velt:sqlite/exec/ops";
-import { Val, compareVals, intVal, nullVal } from "velt:sqlite/exec/value";
+import { Val, intVal, nullVal } from "velt:sqlite/exec/value";
 
 /** ORDER BY, LIMIT and OFFSET of the SELECT a core is the whole of. */
 export class Tail {
@@ -249,24 +249,56 @@ function compileCoreOnce(
     prepareError("HAVING clause on a non-aggregate query");
   }
   const agg = new AggCtx();
-  const osc = isAgg ? sc.forOutput(agg) : sc;
+  const osc0 = isAgg ? sc.forOutput(agg) : sc;
+  // Window functions: the rows are collected, and go out once the windows are computed.
+  let hasWin = false;
+  for (const rc of core.columns) {
+    hasWin = hasWin || hasWindow(rc.expr);
+  }
+  for (const o of tail.orderBy) {
+    hasWin = hasWin || hasWindow(o.expr);
+  }
+  const win = new WinCtx();
+  const osc = hasWin ? osc0.forWindows(win, core.windows) : osc0;
   const em = new Emitter(q.out);
   em.distinct = core.distinct;
   sc.output = !isAgg;
-  sc.results = !isAgg;
-  resultColumns(c, core.columns, osc, q, em);
-  sc.results = false;
-  q.out.width = q.names.length;
-  // ORDER BY: by the loops' order when the first level gives it, else a sort.
-  checkTerms(tail.orderBy.length, "ORDER");
+  // With window functions SQLite makes it an aggregate query from a subquery's aggregate only
+  // in the windows it computes last (window_call's lastWindowCalls); elsewhere that is its
+  // misuse error.
+  sc.results = !isAgg && !hasWin;
+  if (hasWin) {
+    osc.lastWins = lastWindowCalls(core.columns, tail.orderBy, core.windows);
+  }
+  setWindowed([sc, osc0, osc], hasWin);
+  try {
+    resultColumns(c, core.columns, osc, q, em);
+    sc.results = false;
+    osc.lastWins = [];
+    q.out.width = q.names.length;
+    // ORDER BY: by the loops' order when the first level gives it, else a sort.
+    checkTerms(tail.orderBy.length, "ORDER");
+    if (tail.orderBy.length > 0) {
+      orderKeys(c, tail.orderBy, osc, q, em);
+    }
+  } finally {
+    sc.results = false;
+    setWindowed([sc, osc0, osc], false);
+  }
   let sortedTerms: usize = 0;
-  if (tail.orderBy.length > 0) {
-    orderKeys(c, tail.orderBy, osc, q, em);
-    if (!isAgg && sc.sources.length > 0) {
-      sortedTerms = accessInOrder(c, em.sort, tail.orderBy, osc, access, left, q);
-      if (sortedTerms == em.sort.length) {
-        em.sorting = false;
-      }
+  if (tail.orderBy.length > 0 && !isAgg && !hasWin && sc.sources.length > 0) {
+    sortedTerms = accessInOrder(c, em.sort, tail.orderBy, osc, access, left, q);
+    if (sortedTerms == em.sort.length) {
+      em.sorting = false;
+    }
+  }
+  // The window computed first sorts the rows: as in SQLite, the loops give its order when they
+  // can (its sort is stable, so the rows it ties keep the loops' order).
+  let winOrder = false;
+  if (hasWin && !isAgg && sc.sources.length > 0 && win.specs.length > 0) {
+    const sp = win.specs[win.specs.length - 1];
+    if (sp.sk.length > 0) {
+      winOrder = accessInOrder(c, sp.sk, sp.terms, sc, access, left, q) > 0;
     }
   }
   // LIMIT and OFFSET name no column, not even an enclosing query's (SQLite resolves them in an
@@ -286,13 +318,18 @@ function compileCoreOnce(
     checkTerms(core.groupBy.length, "GROUP");
     groupStep = groupStepFor(c, core, sc, agg, groups, q);
   }
-  const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc);
+  const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc0);
+  // SQLite sorts by a window's PARTITION BY and ORDER BY together, as one ORDER BY.
+  if (win.tooManyTerms) {
+    prepareError("too many terms in ORDER BY clause");
+  }
   // GROUP BY or DISTINCT without ORDER BY on one table: SQLite scans an index led by the first
   // grouping column, which decides which row of a group shows its bare columns. For DISTINCT
   // over a range it does so only when the index orders all the result columns (else the range
   // stays, and DISTINCT uses a temporary b-tree).
   if (
     tail.orderBy.length == 0 &&
+    !(hasWin && !isAgg) &&
     sc.sources.length == 1 &&
     accessCost(access[0]) >= 50 &&
     (core.groupBy.length > 0 || core.distinct)
@@ -309,10 +346,10 @@ function compileCoreOnce(
       attachIndex(sc.sources[0], ix!);
     }
   }
-  const minmax = isAgg && minMaxIndex(c, core, sc, agg, access, left);
+  const minmax = isAgg && !hasWin && minMaxIndex(c, core, sc, agg, access, left);
   // A full scan reads a covering index instead when one holds every column used (as SQLite
   // does: index rows are smaller), unless the table's rowid order is the ORDER BY's.
-  const keepOrder = tail.orderBy.length > 0 && !em.sorting;
+  const keepOrder = (tail.orderBy.length > 0 && !em.sorting) || winOrder;
   for (let lv: usize = 0; lv < sc.sources.length; lv++) {
     if (access[lv].kind == ACC_SCAN && !(lv == 0 && keepOrder)) {
       const ix = coveringIndex(sc.sources[lv]);
@@ -350,7 +387,7 @@ function compileCoreOnce(
           : `USE TEMP B-TREE FOR LAST ${rest} TERMS OF ORDER BY`,
     );
   }
-  const emitRow: Step = () => em.row();
+  const emitRow: Step = hasWin ? () => win.collect() : () => em.row();
   let rowFn: Step = groupStep != null ? groupStep! : emitRow;
   if (minmax) {
     // The first row with a value is the minimum (maximum): the loops stop there.
@@ -364,7 +401,7 @@ function compileCoreOnce(
     };
   }
   // `SELECT count(*) FROM … [WHERE …]` alone: the loops only count.
-  const countOnly = countOnlyCore(core, isAgg, agg);
+  const countOnly = countOnlyCore(core, isAgg, hasWin, agg);
   const counter = new Counter();
   if (countOnly) {
     rowFn = () => {
@@ -385,14 +422,14 @@ function compileCoreOnce(
     );
   }
   const loops = inner;
-  q.correlated = sc.outer || osc.outer;
+  q.correlated = sc.outer || osc0.outer || osc.outer;
   for (const src of sc.sources) {
     if (src.kind == SRC_ROWS && c.rowsQuery(src).correlated) {
       q.correlated = true;
     }
   }
   // Rows that go out in the loops' order can also be read one at a time (velt:db's decoders).
-  if (!isAgg && !em.distinct && !em.sorting) {
+  if (!isAgg && !hasWin && !em.distinct && !em.sorting) {
     const pl = pullOf(c, sc, access, terms, left, pre, em, q, limitEv, offsetEv);
     q.pull = pl;
     // Read as a FROM item, its rows are made as the reader wants them (a co-routine).
@@ -460,10 +497,16 @@ function compileCoreOnce(
     if (isAgg) {
       groups.reset(agg);
     }
+    if (hasWin) {
+      win.reset();
+    }
     for (const p of pre) {
       if (!p()) {
         if (isAgg && core.groupBy.length == 0) {
           outputGroups(agg, groups, having, em.out, emitRow, core.groupBy.length > 0);
+        }
+        if (hasWin) {
+          win.finish(() => em.row(), () => out.stop);
         }
         em.finish();
         return;
@@ -475,6 +518,9 @@ function compileCoreOnce(
     }
     if (isAgg) {
       outputGroups(agg, groups, having, em.out, emitRow, core.groupBy.length > 0);
+    }
+    if (hasWin) {
+      win.finish(() => em.row(), () => out.stop);
     }
     em.finish();
   };
@@ -488,8 +534,8 @@ class Counter {
 
 // Whether a core is `SELECT count(*) FROM … [WHERE …]` (no GROUP BY, HAVING, DISTINCT, other
 // aggregate or column): its run counts the loops' rows and outputs the count.
-function countOnlyCore(core: SelectCore, isAgg: bool, agg: AggCtx): bool {
-  if (!isAgg || core.groupBy.length > 0 || core.having != null || core.distinct) {
+function countOnlyCore(core: SelectCore, isAgg: bool, hasWin: bool, agg: AggCtx): bool {
+  if (!isAgg || hasWin || core.groupBy.length > 0 || core.having != null || core.distinct) {
     return false;
   }
   if (agg.fns.length != 1 || agg.bareSrc.length > 0 || core.columns.length != 1) {
@@ -498,7 +544,12 @@ function countOnlyCore(core: SelectCore, isAgg: bool, agg: AggCtx): bool {
   const f = agg.fns[0];
   const e = core.columns[0].expr;
   return (
-    f.kind == AG_COUNT_STAR && f.filter == null && e.kind == E_CALL && e.star && e.filter == null
+    f.kind == AG_COUNT_STAR &&
+    f.filter == null &&
+    e.kind == E_CALL &&
+    e.star &&
+    e.over == null &&
+    e.filter == null
   );
 }
 
@@ -644,139 +695,10 @@ function valuesCore(
   return q;
 }
 
-/** The groups of an aggregate query during one run. */
-export class GroupState {
-  /** The groups' keys (a group's index in `list` is its key's in `keys`). */
-  keys: KeySet = new KeySet(0, []);
-  list: Group[] = [];
-  keyEvs: Ev[] = [];
-  keyColls: u8[] = [];
-
-  /** The only group of a query without GROUP BY, kept from run to run. */
-  single: Group | null = null;
-
-  reset(agg: AggCtx) {
-    if (this.keyEvs.length == 0) {
-      if (this.single == null) {
-        this.single = agg.newGroup([]);
-      } else {
-        agg.resetGroup(this.single!);
-      }
-      __intrinsic_array_truncate(this.list, 0);
-      this.list.push(this.single!);
-      return;
-    }
-    this.keys = new KeySet(this.keyEvs.length, this.keyColls);
-    this.list = [];
-  }
-}
-
-function groupStepFor(
-  c: ExprCompiler,
-  core: SelectCore,
-  sc: Scope,
-  agg: AggCtx,
-  gs: GroupState,
-  q: Query,
-): Step {
-  let star = false;
-  for (const rc of core.columns) {
-    star = star || rc.expr.kind == E_STAR;
-  }
-  // SQLite resolves the terms first, then rejects one holding an aggregate of this core.
-  sc.groupBy = true;
-  try {
-    for (let k: usize = 0; k < core.groupBy.length; k++) {
-      const e = core.groupBy[k];
-      let ce: C | null = null;
-      // With `*`, a number names a column of the expanded result.
-      let num: i64 = -1;
-      if (star) {
-        let x = e;
-        while (x.kind == E_COLLATE) {
-          x = x.a!;
-        }
-        num = termNumber(x);
-      }
-      if (star && num >= 1 && num <= 65535) {
-        if (num as usize > q.names.length) {
-          rangeError(k, "GROUP", q.names.length);
-        }
-        const at = (num - 1) as usize;
-        if (q.exprOf[at] == null) {
-          ce = c.columnRef(q.refSrc[at]!, q.refCol[at], sc);
-        } else {
-          ce = c.expr(q.exprOf[at]!, sc);
-        }
-      } else {
-        const i = resultIndex(e, core.columns, core.columns.length, "GROUP", k);
-        if (i >= (core.columns.length as i64)) {
-          rangeError(k, "GROUP", core.columns.length);
-        }
-        const target = i >= 0 ? core.columns[i as usize].expr : e;
-        ce = c.expr(target, sc);
-      }
-      const key = ce!;
-      gs.keyEvs.push(key.ev);
-      gs.keyColls.push(key.coll >= 0 ? key.coll as u8 : BINARY);
-    }
-  } finally {
-    sc.groupBy = false;
-  }
-  if (gs.keyEvs.length == 0) {
-    return () => {
-      agg.step(gs.single!);
-    };
-  }
-  return () => {
-    const key: Val[] = [];
-    for (const k of gs.keyEvs) {
-      key.push(k());
-    }
-    const at = gs.keys.find(key, 0);
-    if (at >= 0) {
-      agg.step(gs.list[at as usize]);
-      return;
-    }
-    const ng = agg.newGroup(key);
-    gs.list.push(ng);
-    agg.step(ng);
-  };
-}
-
-function outputGroups(
-  agg: AggCtx,
-  gs: GroupState,
-  having: Pred | null,
-  out: Out,
-  row: Step,
-  grouped: bool,
-) {
-  if (!grouped && gs.list.length == 0) {
-    gs.list.push(agg.newGroup([]));
-  }
-  let list = gs.list;
-  if (grouped) {
-    const colls = gs.keyColls;
-    list.sort((a, b) => {
-      for (let i: usize = 0; i < a.key.length; i++) {
-        const r = compareVals(a.key[i], b.key[i], colls[i]);
-        if (r != 0) {
-          return r as f64;
-        }
-      }
-      return 0.0;
-    });
-  }
-  for (const g of list) {
-    if (out.stop) {
-      break;
-    }
-    agg.cur = g;
-    agg.finishGroup(g);
-    if (having != null && !having!()) {
-      continue;
-    }
-    row();
+// Marks (or unmarks) the scopes of a query with window functions while its result columns and
+// ORDER BY compile (Scope.windowed).
+function setWindowed(scopes: Scope[], on: bool) {
+  for (const s of scopes) {
+    s.windowed = on;
   }
 }

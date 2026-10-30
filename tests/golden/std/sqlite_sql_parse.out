@@ -218,7 +218,7 @@ error at 7: unrecognized token: "12abc"
 error at 7: unrecognized token: "x'0'"
 error at 24: incomplete input
 error at 7: variable number must be between ?1 and ?32766
-error at 12: window functions are not supported yet
+{SELECT F(x)}
 {SELECT (= 1 (NOT 0)), (AND (= 1 (NOT 0)) 0), (= 0 (NOT (= 0 0))), (+ 1 (NOT 0)), (NOT (EXISTS {SELECT 1}))}
 {SELECT LIKE(1 2), GLOB('a' 'a'), MATCH(1 2), REGEXP(1 2), (LIKE a b _)}
 {SELECT 1, 255, 0}

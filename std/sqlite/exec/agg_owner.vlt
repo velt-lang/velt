@@ -45,7 +45,7 @@ export function ownsAggregate(c: ExprCompiler, e: Expr | null, sc: Scope): bool 
     return false;
   }
   const x = e!;
-  if (x.kind == E_CALL && aggregateKind(x.name, x.args.length, x.star) >= 0) {
+  if (x.kind == E_CALL && x.over == null && aggregateKind(x.name, x.args.length, x.star) >= 0) {
     return aggOwner(c, x, sc) == sc;
   }
   if (x.kind == E_IN_SELECT || x.kind == E_EXISTS || x.kind == E_SUBQUERY) {
@@ -60,6 +60,19 @@ export function ownsAggregate(c: ExprCompiler, e: Expr | null, sc: Scope): bool 
   for (const a of x.args) {
     if (ownsAggregate(c, a, sc)) {
       return true;
+    }
+  }
+  if (x.over != null) {
+    const w = x.over!;
+    for (const p of w.partition) {
+      if (ownsAggregate(c, p, sc)) {
+        return true;
+      }
+    }
+    for (const o of w.orderBy) {
+      if (ownsAggregate(c, o.expr, sc)) {
+        return true;
+      }
     }
   }
   return false;
@@ -130,4 +143,15 @@ export function aggregateCore(c: ExprCompiler, sc: Scope): bool {
     }
   }
   return false;
+}
+
+/**
+ * A subquery's aggregate `e` of a query with window functions (`owner`): SQLite computes the
+ * windows in a query around the aggregate query, and the aggregate is that query's only in the
+ * windows computed last (Scope.windowed); elsewhere it is the code generator's misuse error.
+ */
+export function windowedMisuse(c: ExprCompiler, e: Expr, sc: Scope, owner: Scope, lname: string) {
+  if (owner != sc && owner.windowed && !owner.winAgg) {
+    aggMisuse(c, e, sc, `misuse of aggregate: ${lname}()`);
+  }
 }

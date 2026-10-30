@@ -3,11 +3,12 @@
 // produce.
 
 import { NULL } from "velt:sqlite/btree";
-import { Expr, ResultColumn, SelectCore } from "velt:sqlite/sql/ast";
+import { Expr, ResultColumn, SelectCore, Window } from "velt:sqlite/sql/ast";
 import { Out, Source } from "velt:sqlite/exec/source";
 
 export { Out } from "velt:sqlite/exec/source";
 import { AggCtx } from "velt:sqlite/exec/agg";
+import { WinCtx } from "velt:sqlite/exec/window";
 import { Pull } from "velt:sqlite/exec/pull";
 import { Val, nullVal } from "velt:sqlite/exec/value";
 
@@ -132,6 +133,24 @@ export class Scope {
   base: Scope | null = null;
   /** Set when a name resolved in an enclosing scope. */
   outer: bool = false;
+  /**
+   * In the output of a query with window functions: the windows, and the scope the rows are
+   * collected in (expressions without window functions are computed there and read back).
+   */
+  win: WinCtx | null = null;
+  winBase: Scope | null = null;
+  /** The named windows of the WINDOW clause. */
+  windows: Window[] = [];
+  /**
+   * Set on a query with window functions while its result columns and ORDER BY compile. SQLite
+   * computes the windows in a query around the rest (sqlite3WindowRewrite), so a subquery's
+   * aggregate of this query is allowed only where `winAgg` is set.
+   */
+  windowed: bool = false;
+  /** Set while the terms, arguments and FILTER of a window function computed last compile. */
+  winAgg: bool = false;
+  /** The window function calls among the result columns whose windows are computed last. */
+  lastWins: Expr[] = [];
   /** The core whose FROM items these are, and whether its output (result columns on) compiles. */
   core: SelectCore | null = null;
   output: bool = false;
@@ -149,6 +168,23 @@ export class Scope {
    * there, even inside a subquery; one an enclosing query owns is.
    */
   groupBy: bool = false;
+
+  /** The same sources in the output of a query with window functions. */
+  forWindows(win: WinCtx, windows: Window[]): Scope {
+    const s = new Scope();
+    s.sources = this.sources;
+    s.fromOrder = this.fromOrder;
+    s.parent = this.parent;
+    s.aliases = this.aliases;
+    s.agg = this.agg;
+    s.base = this.base;
+    s.core = this.core;
+    s.output = true;
+    s.win = win;
+    s.winBase = this;
+    s.windows = windows;
+    return s;
+  }
 
   /** The same sources in an aggregate query's output mode. */
   forOutput(agg: AggCtx): Scope {

@@ -1,0 +1,472 @@
+// velt:sqlite/exec/window_call — a window function call compiled (velt:sqlite/exec/window
+// computes them): its window resolved against the WINDOW clause and checked as SQLite checks it,
+// its arguments and the window's PARTITION BY and ORDER BY compiled in the scope the rows are
+// collected in.
+
+import { BINARY } from "velt:sqlite/record";
+import {
+  BOUND_CURRENT,
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
+  E_COLLATE,
+  E_COLUMN,
+  E_EXISTS,
+  E_BINARY,
+  E_CALL,
+  E_IN_SELECT,
+  E_LIKE,
+  E_NULL,
+  E_STAR,
+  E_SUBQUERY,
+  Expr,
+  FRAME_DEFAULT,
+  FRAME_RANGE,
+  OrderTerm,
+  ResultColumn,
+  Window,
+} from "velt:sqlite/sql/ast";
+import { Ev, Scope } from "velt:sqlite/exec/scope";
+import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
+import { prepareError } from "velt:sqlite/exec/errors";
+import { scalarFunction } from "velt:sqlite/exec/func";
+import { C, ExprCompiler } from "velt:sqlite/exec/expr";
+import { SortKey } from "velt:sqlite/exec/emit";
+import { plain } from "velt:sqlite/exec/compiled";
+import { MAX_COLUMN, termNumber } from "velt:sqlite/exec/result";
+import {
+  W_AGG,
+  W_FIRST,
+  W_LAG,
+  W_LAST,
+  W_LEAD,
+  W_NTH,
+  W_NTILE,
+  WinCtx,
+  WinFn,
+  windowKind,
+} from "velt:sqlite/exec/window";
+import { intVal, nullVal } from "velt:sqlite/exec/value";
+
+/** Arity of a window function kind: [least, most]. */
+export function windowArity(kind: i64): i64[] {
+  if (kind == W_NTILE as i64 || kind == W_FIRST as i64 || kind == W_LAST as i64) {
+    return [1, 1];
+  }
+  if (kind == W_LAG as i64 || kind == W_LEAD as i64) {
+    return [1, 3];
+  }
+  if (kind == W_NTH as i64) {
+    return [2, 2];
+  }
+  return [0, 0];
+}
+
+/** A resolved window and the key two equal windows share. */
+export struct Resolved {
+  w: Window;
+  key: string;
+}
+
+/** The window of `OVER ...`, with the named windows of the WINDOW clause resolved. */
+export function resolveWindow(o: Window, named: Window[]): Resolved {
+  let w = o;
+  let key = o.text;
+  if (o.base != "") {
+    let b: Window | null = null;
+    let at: usize = 0;
+    for (let i: usize = 0; i < named.length; i++) {
+      if (named[i].name.toUpperCase() == o.base.toUpperCase()) {
+        b = named[i];
+        at = i;
+        break;
+      }
+    }
+    if (b == null) {
+      prepareError(`no such window: ${o.base}`);
+    }
+    // A named window may build on one defined before it.
+    const rb = resolveWindow(b!, named.slice(0, at as i64));
+    if (
+      o.text == "" && o.partition.length == 0 && o.orderBy.length == 0 && o.frame == FRAME_DEFAULT
+    ) {
+      w = rb.w;
+      key = rb.key;
+    } else {
+      const base = rb.w;
+      if (o.partition.length > 0) {
+        prepareError(`cannot override PARTITION clause of window: ${o.base}`);
+      }
+      if (o.orderBy.length > 0 && base.orderBy.length > 0) {
+        prepareError(`cannot override ORDER BY clause of window: ${o.base}`);
+      }
+      if (base.frame != FRAME_DEFAULT) {
+        prepareError(`cannot override frame specification of window: ${o.base}`);
+      }
+      const nw = new Window();
+      nw.partition = base.partition;
+      nw.orderBy = o.orderBy.length > 0 ? o.orderBy : base.orderBy;
+      nw.frame = o.frame;
+      nw.start = o.start;
+      nw.startExpr = o.startExpr;
+      nw.end = o.end;
+      nw.endExpr = o.endExpr;
+      nw.exclude = o.exclude;
+      w = nw;
+      key = rb.key + "|" + o.text;
+    }
+  }
+  checkFrame(w);
+  return Resolved { w: constantOffsets(w), key: key };
+}
+
+// `w` with a frame offset that is not a constant replaced by NULL, as SQLite's parser replaces
+// it (sqlite3WindowOffsetExpr): such an offset fails as a frame error when the query runs, and
+// its names, functions and subqueries are never resolved.
+function constantOffsets(w: Window): Window {
+  const s = w.startExpr != null && !isConstant(w.startExpr!);
+  const e = w.endExpr != null && !isConstant(w.endExpr!);
+  if (!s && !e) {
+    return w;
+  }
+  const nw = new Window();
+  nw.base = w.base;
+  nw.name = w.name;
+  nw.partition = w.partition;
+  nw.orderBy = w.orderBy;
+  nw.frame = w.frame;
+  nw.start = w.start;
+  nw.startExpr = s ? new Expr(E_NULL, w.startExpr!.at) : w.startExpr;
+  nw.end = w.end;
+  nw.endExpr = e ? new Expr(E_NULL, w.endExpr!.at) : w.endExpr;
+  nw.exclude = w.exclude;
+  nw.text = w.text;
+  return nw;
+}
+
+// Whether `e` is constant as SQLite's parser sees it (sqlite3ExprIsConstant before names
+// resolve): no column or name, no function call (LIKE, GLOB, `->` and `->>` are calls there),
+// no subquery.
+function isConstant(e: Expr): bool {
+  const k = e.kind;
+  if (k == E_COLUMN || k == E_CALL || k == E_LIKE || k == E_SUBQUERY || k == E_EXISTS) {
+    return false;
+  }
+  if (k == E_IN_SELECT || (k == E_BINARY && (e.op == "->" || e.op == "->>"))) {
+    return false;
+  }
+  for (const x of [e.a, e.b, e.c, e.filter]) {
+    if (x != null && !isConstant(x!)) {
+      return false;
+    }
+  }
+  for (const a of e.args) {
+    if (!isConstant(a)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The frames SQLite rejects (sqlite3WindowAlloc).
+function checkFrame(w: Window) {
+  if (w.frame == FRAME_DEFAULT) {
+    return;
+  }
+  const s = w.start;
+  const e = w.end;
+  if (
+    s == BOUND_UNBOUNDED_FOLLOWING ||
+    e == BOUND_UNBOUNDED_PRECEDING ||
+    (s == BOUND_CURRENT && e == BOUND_PRECEDING) ||
+    (s == BOUND_FOLLOWING && (e == BOUND_PRECEDING || e == BOUND_CURRENT))
+  ) {
+    prepareError("unsupported frame specification");
+  }
+  if (
+    w.frame == FRAME_RANGE &&
+    (s == BOUND_PRECEDING || s == BOUND_FOLLOWING || e == BOUND_PRECEDING || e == BOUND_FOLLOWING)
+  ) {
+    if (w.orderBy.length != 1) {
+      prepareError("RANGE with offset PRECEDING/FOLLOWING requires one ORDER BY expression");
+    }
+    prepareError("unsupported: RANGE frames with an offset");
+  }
+}
+
+/**
+ * The window function calls among `columns` whose windows SQLite computes last. Its rewrite
+ * (sqlite3WindowRewrite) groups the calls by window, in the order the result columns and then
+ * ORDER BY hold them (a term naming a result column copies it; windows with a subquery are
+ * never the same), computes the first call's group over a subquery that computes the next,
+ * and so on. A subquery there holding an aggregate of the query makes it an aggregate query
+ * only in the last group's windows, arguments and FILTER; elsewhere the aggregate is misused.
+ */
+export function lastWindowCalls(
+  columns: ResultColumn[],
+  orderBy: OrderTerm[],
+  named: Window[],
+): Expr[] {
+  const calls: Expr[] = [];
+  for (const rc of columns) {
+    windowCalls(rc.expr, calls);
+  }
+  const inResults = calls.length;
+  let star = false;
+  for (const rc of columns) {
+    star = star || rc.expr.kind == E_STAR;
+  }
+  for (const t of orderBy) {
+    let x = t.expr;
+    while (x.kind == E_COLLATE) {
+      x = x.a!;
+    }
+    const num = termNumber(x);
+    let at: i64 = -1;
+    if (!star && num >= 1 && num <= (columns.length as i64)) {
+      at = num - 1;
+    } else if (x.kind == E_COLUMN && x.table == "") {
+      for (let i: usize = 0; i < columns.length; i++) {
+        if (columns[i].alias != "" && columns[i].alias.toUpperCase() == x.name.toUpperCase()) {
+          at = i as i64;
+          break;
+        }
+      }
+    }
+    windowCalls(at >= 0 ? columns[at as usize].expr : t.expr, calls);
+  }
+  // Each call's window as SQLite compares it, "" for one that is never the same as another.
+  const keys: string[] = [];
+  for (const e of calls) {
+    let key = "";
+    try {
+      key = windowKey(resolveWindow(e.over!, named).w);
+    } catch (err) {
+      // Reported when the call compiles.
+    }
+    keys.push(key);
+  }
+  // The group of each call is its first equal call; the last group starts last.
+  const first: usize[] = [];
+  let last: usize = 0;
+  for (let i: usize = 0; i < calls.length; i++) {
+    let f = i;
+    if (keys[i] != "") {
+      for (let j: usize = 0; j < i; j++) {
+        if (keys[j] == keys[i]) {
+          f = j;
+          break;
+        }
+      }
+    }
+    first.push(f);
+    if (f > last) {
+      last = f;
+    }
+  }
+  const out: Expr[] = [];
+  for (let i: usize = 0; i < inResults; i++) {
+    if (first[i] == last) {
+      out.push(calls[i]);
+    }
+  }
+  return out;
+}
+
+// The window function calls of `e`, outside subqueries, in the order SQLite resolves them.
+function windowCalls(e: Expr | null, out: Expr[]) {
+  if (e == null) {
+    return;
+  }
+  const x = e!;
+  if (x.over != null) {
+    out.push(x);
+    return;
+  }
+  windowCalls(x.a, out);
+  windowCalls(x.b, out);
+  windowCalls(x.c, out);
+  for (const a of x.args) {
+    windowCalls(a, out);
+  }
+}
+
+// A window as SQLite compares two (sqlite3WindowCompare: the terms as trees, names in any case,
+// and the frame): equal windows give equal keys. "" when it holds a subquery, which SQLite
+// never finds the same as another.
+function windowKey(w: Window): string {
+  const parts: string[] = [];
+  for (const p of w.partition) {
+    if (hasSubquery(p)) {
+      return "";
+    }
+    parts.push(exprKey(p));
+  }
+  parts.push("|");
+  for (const t of w.orderBy) {
+    if (hasSubquery(t.expr)) {
+      return "";
+    }
+    parts.push(`${exprKey(t.expr)} ${t.desc} ${t.nulls}`);
+  }
+  if (hasSubquery(w.startExpr) || hasSubquery(w.endExpr)) {
+    return "";
+  }
+  parts.push(`|${w.frame} ${w.start} ${exprKey(w.startExpr)} ${w.end} ${exprKey(w.endExpr)}`);
+  parts.push(w.exclude);
+  return "=" + parts.join(" ");
+}
+
+// An expression tree as a key (no subquery in it).
+function exprKey(e: Expr | null): string {
+  if (e == null) {
+    return "-";
+  }
+  const x = e!;
+  const kids: string[] = [exprKey(x.a), exprKey(x.b), exprKey(x.c), exprKey(x.filter)];
+  for (const a of x.args) {
+    kids.push(exprKey(a));
+  }
+  const head = `${x.kind} ${x.op} ${x.ival} ${x.rval} ${x.not} ${x.distinct} ${x.star}`;
+  const names = `${x.table.toUpperCase()}.${x.name.toUpperCase()}`;
+  return `(${head} ${JSON.stringify(x.text)} ${names} ${kids.join(" ")})`;
+}
+
+function hasSubquery(e: Expr | null): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  if (x.kind == E_SUBQUERY || x.kind == E_EXISTS || x.kind == E_IN_SELECT) {
+    return true;
+  }
+  if (hasSubquery(x.a) || hasSubquery(x.b) || hasSubquery(x.c) || hasSubquery(x.filter)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (hasSubquery(a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** A window function call (`... OVER ...`) in the output of a query. */
+export function windowCall(c: ExprCompiler, e: Expr, sc: Scope, lname: string): C {
+  const w = sc.win!;
+  const base = sc.winBase!;
+  const r = resolveWindow(e.over!, sc.windows);
+  // SQLite sorts by PARTITION BY and ORDER BY together, as one ORDER BY (reported by the core).
+  if (r.w.partition.length + r.w.orderBy.length > MAX_COLUMN) {
+    w.tooManyTerms = true;
+  }
+  // In a window computed last, a subquery's aggregate of the query makes it an aggregate
+  // query, as in the result columns of a query without window functions.
+  let last = false;
+  for (const x of sc.lastWins) {
+    last = last || x == e;
+  }
+  const wasResults = base.results;
+  const wasWinAgg = base.winAgg;
+  if (last) {
+    base.results = true;
+    base.winAgg = true;
+  }
+  try {
+    return windowCallIn(c, e, r, w, base, lname);
+  } finally {
+    base.results = wasResults;
+    base.winAgg = wasWinAgg;
+  }
+}
+
+function windowCallIn(
+  c: ExprCompiler,
+  e: Expr,
+  r: Resolved,
+  w: WinCtx,
+  base: Scope,
+  lname: string,
+): C {
+  let wk = windowKind(e.name);
+  let ak: i64 = -1;
+  if (wk < 0) {
+    ak = aggregateKind(e.name, e.args.length, e.star);
+    if (ak == -2) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (ak < 0) {
+      const probe: Ev[] = [];
+      for (const a of e.args) {
+        probe.push(() => nullVal());
+      }
+      if (scalarFunction(e.name, lname, probe, BINARY) != null) {
+        prepareError(`${lname}() may not be used as a window function`);
+      }
+      prepareError(`no such function: ${lname}`);
+    }
+    wk = W_AGG as i64;
+  } else {
+    const ar = windowArity(wk);
+    if (e.star || e.args.length < (ar[0] as usize) || e.args.length > (ar[1] as usize)) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (e.filter != null) {
+      prepareError("FILTER clause may only be used with aggregate window functions");
+    }
+  }
+  if (e.distinct) {
+    prepareError("DISTINCT is not supported for window functions");
+  }
+  const f = new WinFn(wk as u8);
+  const before = w.specs.length;
+  f.spec = w.spec(r.key);
+  if (w.specs.length > before) {
+    const sp = w.specs[f.spec];
+    for (const p of r.w.partition) {
+      const pc = c.expr(p, base);
+      sp.partition.push(pc.ev);
+      sp.terms.push(OrderTerm { expr: p, desc: false, nulls: 0 });
+      sp.sk.push(new SortKey(-1, null, false, 0, pc.coll >= 0 ? pc.coll as u8 : BINARY));
+    }
+    for (const t of r.w.orderBy) {
+      const oc = c.expr(t.expr, base);
+      sp.order.push(oc.ev);
+      sp.terms.push(t);
+      sp.sk.push(new SortKey(-1, null, t.desc, t.nulls, oc.coll >= 0 ? oc.coll as u8 : BINARY));
+    }
+  }
+  f.argAt = w.evs.length;
+  f.nargs = e.args.length;
+  for (const a of e.args) {
+    const ac = c.expr(a, base);
+    if (wk == W_AGG as i64 && w.evs.length == f.argAt) {
+      const af = new AggFn(ak as u8, e.name.toLowerCase());
+      af.coll = ac.coll >= 0 ? ac.coll as u8 : BINARY;
+      f.agg = af;
+    }
+    w.evs.push(ac.ev);
+  }
+  if (wk == W_AGG as i64 && f.agg == null) {
+    f.agg = new AggFn(ak as u8, e.name.toLowerCase());
+  }
+  if (e.filter != null) {
+    const p = c.pred(e.filter!, base);
+    f.filterAt = w.evs.length as i64;
+    w.evs.push(() => intVal(p() ? 1 : 0));
+  }
+  f.frame = r.w.frame;
+  f.start = r.w.start;
+  f.end = r.w.end;
+  f.exclude = r.w.exclude;
+  if (r.w.startExpr != null) {
+    f.startN = c.ev(r.w.startExpr!, base);
+  }
+  if (r.w.endExpr != null) {
+    f.endN = c.ev(r.w.endExpr!, base);
+  }
+  w.fns.push(f);
+  const slot = w.fns.length - 1;
+  return plain(() => w.value(slot));
+}

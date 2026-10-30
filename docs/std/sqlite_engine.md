@@ -85,9 +85,16 @@ Functions: `abs`, `char`, `coalesce`, `concat`, `concat_ws`, `glob`, `hex`, `ifn
 `datetime`, `julianday`, `unixepoch`, `strftime`, `current_date`, `current_time`,
 `current_timestamp`, with SQLite's modifiers (but `localtime` and `utc`); aggregates `avg`, `count`,
 `group_concat`, `max`, `min`, `string_agg`, `sum`, `total`, with `DISTINCT` and `FILTER`.
+Window functions: `row_number`, `rank`, `dense_rank`, `percent_rank`, `cume_dist`, `ntile`,
+`lag`, `lead`, `first_value`, `last_value`, `nth_value`, and the aggregates over a window, with
+`PARTITION BY`, `ORDER BY`, `ROWS` and `GROUPS` frames, `RANGE` frames bounded by `UNBOUNDED` or
+`CURRENT ROW`, `EXCLUDE`, `FILTER` and named windows (`WINDOW w AS (…)`). An aggregate over a
+moving frame is computed as SQLite computes it, adding the rows that enter the frame and taking
+out the ones that leave it, so its result is the same to the last bit (a `REAL` that passed
+through the frame, the order of a floating-point sum).
 
 Not yet (an error at `prepare`): statements other than SELECT, RIGHT and FULL joins, ORDER BY
-inside a recursive CTE, window functions, the `localtime`
+inside a recursive CTE, `RANGE` frames with a `PRECEDING` or `FOLLOWING` offset, the `localtime`
 and `utc` date modifiers, `timediff`, ORDER BY inside an aggregate (`group_concat(x ORDER BY y)`),
 the math functions (`sqrt`, `pow`, `ln`, `log`, `floor`, `ceil`, `pi`, the trigonometric ones),
 `median` and `percentile`, `unhex`, `unistr`, JSON functions and operators, `random()`, tables
@@ -103,6 +110,9 @@ cheapest path given the ones before it), chosen per table from the WHERE and ON 
 lookup or range, an index with equalities on its leading columns and a range on the next, a
 covering index, or a full scan. An ORDER BY that an index (or the rowid) already gives needs
 no sort, and LIMIT then stops the loops early; an index giving its first terms is scanned too,
-the sort then ordering only rows equal in those. Columns are decoded from the record only when
-read, and the table row behind an index entry is found only when a column the index lacks is
-read. A correlated subquery runs again for each outer row; an uncorrelated one once per run.
+the sort then ordering only rows equal in those. A query with window functions collects its
+rows, sorts them by each window (as SQLite does, the loops give the first window's order when
+they can), computes the functions and passes the rows on to DISTINCT, ORDER BY and LIMIT.
+Columns are decoded from the record only when read, and the table row behind an index entry is
+found only when a column the index lacks is read. A correlated subquery runs again for each
+outer row; an uncorrelated one once per run.

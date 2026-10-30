@@ -1,0 +1,691 @@
+// velt:sqlite/exec/window — window functions (https://sqlite.org/windowfunctions.html): the rows
+// of a SELECT are collected with their partition and order keys, the window functions' arguments
+// and every other value the result reads; then sorted by partition and order, each window
+// function is computed over its frame, and the rows go to the output stage in that order.
+//
+// Ranking: row_number, rank, dense_rank, percent_rank, cume_dist, ntile. Values: lag, lead,
+// first_value, last_value, nth_value. Aggregates over frames: count, sum, total, avg, min, max,
+// group_concat. Frames: ROWS and GROUPS with any bounds, RANGE with UNBOUNDED and CURRENT ROW,
+// EXCLUDE.
+
+import { INTEGER, NULL, REAL } from "velt:sqlite/btree";
+import { A_NUMERIC } from "velt:sqlite/schema";
+import {
+  OrderTerm,
+  BOUND_CURRENT,
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
+  FRAME_DEFAULT,
+  FRAME_GROUPS,
+  FRAME_ROWS,
+} from "velt:sqlite/sql/ast";
+import {
+  AG_AVG,
+  AG_CONCAT,
+  AG_COUNT,
+  AG_COUNT_STAR,
+  AG_MAX,
+  AG_MIN,
+  AG_SUM,
+  AG_TOTAL,
+  Acc,
+  AggFn,
+  finish,
+  inverseValues,
+  stepValues,
+} from "velt:sqlite/exec/agg";
+import { SqlRunError } from "velt:sqlite/exec/errors";
+import { SortKey, compareKeys } from "velt:sqlite/exec/emit";
+import { toI64 } from "velt:sqlite/exec/ops";
+
+type Ev = () => Val throws Error;
+
+import {
+  Val,
+  applyAffinity,
+  compareVals,
+  intVal,
+  nullVal,
+  realVal,
+  textVal,
+  toText,
+} from "velt:sqlite/exec/value";
+import { Concat, MinMax } from "velt:sqlite/exec/window_state";
+
+/** Window function kinds. */
+export const W_ROW_NUMBER: u8 = 0;
+export const W_RANK: u8 = 1;
+export const W_DENSE_RANK: u8 = 2;
+export const W_PERCENT_RANK: u8 = 3;
+export const W_CUME_DIST: u8 = 4;
+export const W_NTILE: u8 = 5;
+export const W_LAG: u8 = 6;
+export const W_LEAD: u8 = 7;
+export const W_FIRST: u8 = 8;
+export const W_LAST: u8 = 9;
+export const W_NTH: u8 = 10;
+export const W_AGG: u8 = 11;
+
+/** The window kind of `name` (upper case), or -1 when it is no built-in window function. */
+export function windowKind(name: string): i64 {
+  const names = [
+    "ROW_NUMBER",
+    "RANK",
+    "DENSE_RANK",
+    "PERCENT_RANK",
+    "CUME_DIST",
+    "NTILE",
+    "LAG",
+    "LEAD",
+    "FIRST_VALUE",
+    "LAST_VALUE",
+    "NTH_VALUE",
+  ];
+  return names.indexOf(name) as i64;
+}
+
+/** One window function call: its kind, where its values are in a collected row, its frame. */
+export class WinFn {
+  kind: u8;
+  /** W_AGG: the aggregate. */
+  agg: AggFn | null = null;
+  /** The window (an index into WinCtx.specs). */
+  spec: usize = 0;
+  /** Where its argument values start in a collected row, and how many. */
+  argAt: usize = 0;
+  nargs: usize = 0;
+  /** Where its FILTER result is in a collected row (-1: none). */
+  filterAt: i64 = -1;
+  frame: u8 = FRAME_DEFAULT;
+  start: u8 = BOUND_UNBOUNDED_PRECEDING;
+  startN: Ev | null = null;
+  end: u8 = BOUND_CURRENT;
+  endN: Ev | null = null;
+  exclude: string = "";
+  /** The frame offsets, evaluated once per run. */
+  startOff: i64 = 0;
+  endOff: i64 = 0;
+
+  constructor(kind: u8) {
+    this.kind = kind;
+  }
+}
+
+/** One distinct window (PARTITION BY and ORDER BY): its keys of each collected row. */
+export class WinSpec {
+  key: string;
+  partition: Ev[] = [];
+  order: Ev[] = [];
+  /** The sort: the partition terms (ascending) then the ORDER BY terms. */
+  sk: SortKey[] = [];
+  /** The same terms as written (to find an index giving the order). */
+  terms: OrderTerm[] = [];
+  keys: Val[] = [];
+
+  constructor(key: string) {
+    this.key = key;
+  }
+}
+
+/** The window functions of one SELECT core, and its collected rows. */
+export class WinCtx {
+  specs: WinSpec[] = [];
+  /**
+   * Set when a window's PARTITION BY and ORDER BY hold more terms than an ORDER BY may: the
+   * error comes once the query's names resolve, as in SQLite's rewrite.
+   */
+  tooManyTerms: bool = false;
+  fns: WinFn[] = [];
+  /** Per-row values: function arguments and FILTER results, then captured values. */
+  evs: Ev[] = [];
+  captures: Ev[] = [];
+  rows: Val[] = [];
+  count: usize = 0;
+  /** The row being output, and every function's results (row by row). */
+  cur: usize = 0;
+  results: Val[] = [];
+
+  /** The window with key `key`, added when new. */
+  spec(key: string): usize {
+    for (let i: usize = 0; i < this.specs.length; i++) {
+      if (this.specs[i].key == key) {
+        return i;
+      }
+    }
+    this.specs.push(new WinSpec(key));
+    return this.specs.length - 1;
+  }
+
+  stride(): usize {
+    return this.evs.length + this.captures.length;
+  }
+
+  /** Collects the row the loops (or the group being output) stand on. */
+  collect() {
+    for (const s of this.specs) {
+      for (const e of s.partition) {
+        s.keys.push(e());
+      }
+      for (const e of s.order) {
+        s.keys.push(e());
+      }
+    }
+    for (const e of this.evs) {
+      this.rows.push(e());
+    }
+    for (const e of this.captures) {
+      this.rows.push(e());
+    }
+    this.count++;
+  }
+
+  /** A captured value of the row being output. */
+  capture(k: usize): Val {
+    return this.rows[this.cur * this.stride() + this.evs.length + k];
+  }
+
+  /** Window function `k`'s value for the row being output. */
+  value(k: usize): Val {
+    return this.results[this.cur * this.fns.length + k];
+  }
+
+  arg(row: usize, f: WinFn, j: usize): Val {
+    return this.rows[row * this.stride() + f.argAt + j];
+  }
+
+  /**
+   * Computes the functions and outputs each row with `emit`. As in SQLite, the last window is
+   * computed first and the first one last, each sorting (stably) the order the one before left,
+   * and the rows go out in the first window's order.
+   */
+  finish(emit: () => void throws Error, stopped: () => bool) {
+    const n = this.count;
+    // Without rows SQLite never reaches its check of the offsets.
+    for (const f of n > 0 ? this.fns : []) {
+      f.startOff = offsetOf(f.startN, f.start, true);
+      f.endOff = offsetOf(f.endN, f.end, false);
+    }
+    __intrinsic_array_truncate(this.results, 0);
+    for (let i: usize = 0; i < n * this.fns.length; i++) {
+      this.results.push(nullVal());
+    }
+    const order: usize[] = [];
+    for (let r: usize = 0; r < n; r++) {
+      order.push(r);
+    }
+    for (let k = this.specs.length; k > 0; k--) {
+      const sp = this.specs[k - 1];
+      const keys = sp.keys;
+      const sk = sp.sk;
+      if (sk.length > 0) {
+        order.sort((a, b) => compareKeys(keys, sk, a, b));
+      }
+      // Partitions: runs of rows with equal partition keys.
+      let s: usize = 0;
+      while (s < n) {
+        let e = s + 1;
+        while (e < n && samePrefix(sp, order[s], order[e], 0, sp.partition.length)) {
+          e++;
+        }
+        this.compute(sp, k - 1, order, s, e);
+        s = e;
+      }
+    }
+    for (const r of order) {
+      if (stopped()) {
+        break;
+      }
+      this.cur = r;
+      emit();
+    }
+    this.reset();
+  }
+
+  /** Drops the collected rows. */
+  reset() {
+    for (const sp of this.specs) {
+      __intrinsic_array_truncate(sp.keys, 0);
+    }
+    __intrinsic_array_truncate(this.rows, 0);
+    this.count = 0;
+  }
+
+  /** The functions of window `spec` over the partition order[s..e]. */
+  compute(sp: WinSpec, spec: usize, order: usize[], s: usize, e: usize) {
+    const n = e - s;
+    const np = sp.partition.length;
+    // Peer groups: runs of rows with equal ORDER BY keys (the whole partition without ORDER BY).
+    const group: usize[] = [];
+    const gs: usize[] = [0];
+    const ge: usize[] = [];
+    for (let i: usize = 0; i < n; i++) {
+      if (i > 0 && !samePrefix(sp, order[s + i - 1], order[s + i], np, sp.sk.length)) {
+        ge.push(i - 1);
+        gs.push(i);
+      }
+      group.push(gs.length - 1);
+    }
+    ge.push(n - 1);
+    const ordered = sp.order.length > 0;
+    for (let k: usize = 0; k < this.fns.length; k++) {
+      const f = this.fns[k];
+      if (f.spec != spec) {
+        continue;
+      }
+      if (incremental(f)) {
+        this.moving(f, k, order, s, n, group, gs, ge, ordered);
+        continue;
+      }
+      for (let i: usize = 0; i < n; i++) {
+        const v = this.fnValue(f, order, s, n, i, group, gs, ge, ordered);
+        this.results[order[s + i] * this.fns.length + k] = v;
+      }
+    }
+  }
+
+  /**
+   * count(), sum(), total() or avg() over a moving frame, as SQLite computes it: rows entering
+   * the frame are stepped and rows leaving it taken back out (xInverse) in SQLite's order, so
+   * that the state a value has passed through (an overflow, a REAL, rounding) shows as in SQLite.
+   */
+  moving(
+    f: WinFn,
+    k: usize,
+    order: usize[],
+    s: usize,
+    n: usize,
+    group: usize[],
+    gs: usize[],
+    ge: usize[],
+    ordered: bool,
+  ) {
+    if (growing(f)) {
+      this.grown(f, k, order, s, n, group, gs, ge, ordered);
+      return;
+    }
+    const af = f.agg!;
+    let acc = new Acc();
+    let gc = new Concat();
+    const concat = af.kind == AG_CONCAT;
+    const minmax = af.kind == AG_MIN || af.kind == AG_MAX;
+    let mm = new MinMax(af.kind == AG_MAX, af.coll);
+    let stepped: i64 = -1;
+    let removed: i64 = -1;
+    // n FOLLOWING AND m FOLLOWING takes a row (or group) out as soon as the frame is full.
+    let lag: i64 = 1 << 62;
+    if (f.start == BOUND_FOLLOWING && f.end == BOUND_FOLLOWING) {
+      lag = f.endOff - f.startOff;
+    }
+    const groups = f.frame == FRAME_GROUPS;
+    // A frame that ends before it starts is empty for every row.
+    const empty =
+      f.frame != FRAME_DEFAULT &&
+      (f.start == BOUND_PRECEDING || f.start == BOUND_FOLLOWING) &&
+      (f.end == BOUND_PRECEDING || f.end == BOUND_FOLLOWING) &&
+      f.startOff > f.endOff;
+    for (let i: usize = 0; i < n; i++) {
+      const fr = this.frameOf(f, i, n, group[i], gs, ge, ordered);
+      if (empty) {
+        acc = new Acc();
+        gc = new Concat();
+        mm = new MinMax(af.kind == AG_MAX, af.coll);
+      } else {
+        while (removed + 1 < fr.lo && removed + 1 <= stepped) {
+          removed++;
+          this.stepRow(f, af, acc, gc, mm, order[s + (removed as usize)], true);
+        }
+        while (stepped < fr.hi) {
+          stepped++;
+          this.stepRow(f, af, acc, gc, mm, order[s + (stepped as usize)], false);
+          // In units of rows, or of whole groups for GROUPS.
+          const st = stepped as usize;
+          if (!groups || st == ge[group[st]]) {
+            while (removed + 1 < fr.lo && behind(group, removed + 1, stepped, lag, groups)) {
+              removed++;
+              this.stepRow(f, af, acc, gc, mm, order[s + (removed as usize)], true);
+            }
+          }
+        }
+        while (removed + 1 < fr.lo && removed + 1 <= stepped) {
+          removed++;
+          this.stepRow(f, af, acc, gc, mm, order[s + (removed as usize)], true);
+        }
+      }
+      this.results[order[s + i] * this.fns.length + k] =
+        concat ? gc.value() : minmax ? mm.value() : finish(af, acc);
+    }
+  }
+
+  /**
+   * min() or max() over a frame that starts at the partition's first row: the frame only grows,
+   * so rows are stepped in once (SQLite needs no inverse there), O(n) a partition.
+   */
+  grown(
+    f: WinFn,
+    k: usize,
+    order: usize[],
+    s: usize,
+    n: usize,
+    group: usize[],
+    gs: usize[],
+    ge: usize[],
+    ordered: bool,
+  ) {
+    const af = f.agg!;
+    const acc = new Acc();
+    let stepped: i64 = -1;
+    for (let i: usize = 0; i < n; i++) {
+      const fr = this.frameOf(f, i, n, group[i], gs, ge, ordered);
+      while (stepped < fr.hi) {
+        stepped++;
+        this.stepAgg(f, af, acc, order[s + (stepped as usize)]);
+      }
+      this.results[order[s + i] * this.fns.length + k] = finish(af, acc);
+    }
+  }
+
+  /** Steps aggregate `af` with row `r`'s arguments, unless its FILTER rejects it. */
+  stepAgg(f: WinFn, af: AggFn, acc: Acc, r: usize) {
+    if (f.filterAt >= 0) {
+      const fv = this.rows[r * this.stride() + (f.filterAt as usize)];
+      if (fv.t != INTEGER || fv.i == 0) {
+        return;
+      }
+    }
+    const v = f.nargs > 0 ? this.arg(r, f, 0) : nullVal();
+    const sep = f.nargs > 1 ? this.arg(r, f, 1) : nullVal();
+    stepValues(af, acc, v, sep, f.nargs > 1);
+  }
+
+  /** Steps (or with `inverse` takes back) row `r`'s arguments, unless its FILTER rejects it. */
+  stepRow(f: WinFn, af: AggFn, acc: Acc, gc: Concat, mm: MinMax, r: usize, inverse: bool) {
+    if (f.filterAt >= 0) {
+      const fv = this.rows[r * this.stride() + (f.filterAt as usize)];
+      if (fv.t != INTEGER || fv.i == 0) {
+        return;
+      }
+    }
+    const v = f.nargs > 0 ? this.arg(r, f, 0) : nullVal();
+    if (af.kind == AG_MIN || af.kind == AG_MAX) {
+      if (inverse) {
+        mm.remove(v);
+      } else {
+        mm.add(v);
+      }
+    } else if (af.kind == AG_CONCAT) {
+      if (inverse) {
+        gc.inverse(v);
+      } else {
+        gc.step(v, f.nargs > 1 ? this.arg(r, f, 1) : nullVal(), f.nargs > 1);
+      }
+    } else if (inverse) {
+      inverseValues(af, acc, v);
+    } else {
+      stepValues(af, acc, v, v, false);
+    }
+  }
+
+  fnValue(
+    f: WinFn,
+    order: usize[],
+    s: usize,
+    n: usize,
+    i: usize,
+    group: usize[],
+    gs: usize[],
+    ge: usize[],
+    ordered: bool,
+  ): Val {
+    const row = order[s + i];
+    const g = group[i];
+    if (f.kind == W_ROW_NUMBER) {
+      return intVal((i + 1) as i64);
+    }
+    if (f.kind == W_RANK) {
+      return intVal((gs[g] + 1) as i64);
+    }
+    if (f.kind == W_DENSE_RANK) {
+      return intVal((g + 1) as i64);
+    }
+    if (f.kind == W_PERCENT_RANK) {
+      return realVal(n <= 1 ? 0.0 : (gs[g] as f64) / ((n - 1) as f64));
+    }
+    if (f.kind == W_CUME_DIST) {
+      return realVal(((ge[g] + 1) as f64) / (n as f64));
+    }
+    if (f.kind == W_NTILE) {
+      const tv = this.arg(row, f, 0);
+      const t = toI64(tv);
+      if (t <= 0 || tv.t != INTEGER) {
+        throw new SqlRunError("argument of ntile must be a positive integer");
+      }
+      const buckets = t as usize;
+      if (buckets >= n) {
+        return intVal((i + 1) as i64);
+      }
+      const size = n / buckets;
+      const big = n % buckets;
+      // The first `big` buckets hold size + 1 rows.
+      const cut = big * (size + 1);
+      if (i < cut) {
+        return intVal((i / (size + 1) + 1) as i64);
+      }
+      return intVal((big + (i - cut) / size + 1) as i64);
+    }
+    if (f.kind == W_LAG || f.kind == W_LEAD) {
+      let off: i64 = 1;
+      if (f.nargs > 1) {
+        const o = this.arg(row, f, 1);
+        if (o.t == NULL) {
+          return nullVal();
+        }
+        off = toI64(o);
+      }
+      const j = f.kind == W_LAG ? (i as i64) - off : (i as i64) + off;
+      if (j < 0 || j >= (n as i64)) {
+        return f.nargs > 2 ? this.arg(row, f, 2) : nullVal();
+      }
+      return this.arg(order[s + (j as usize)], f, 0);
+    }
+    // Functions over the frame.
+    const fr = this.frameOf(f, i, n, g, gs, ge, ordered);
+    if (f.kind == W_FIRST || f.kind == W_LAST || f.kind == W_NTH) {
+      return this.valueIn(f, row, i, fr, order, s, group);
+    }
+    // An aggregate over the frame.
+    const af = f.agg!;
+    const acc = new Acc();
+    for (let j = fr.lo; j <= fr.hi; j++) {
+      if (excluded(f, i, j as usize, group)) {
+        continue;
+      }
+      const r = order[s + (j as usize)];
+      if (f.filterAt >= 0) {
+        const fv = this.rows[r * this.stride() + (f.filterAt as usize)];
+        if (fv.t != INTEGER || fv.i == 0) {
+          continue;
+        }
+      }
+      const v = f.nargs > 0 ? this.arg(r, f, 0) : nullVal();
+      const sep = f.nargs > 1 ? this.arg(r, f, 1) : nullVal();
+      stepValues(af, acc, v, sep, f.nargs > 1);
+    }
+    return finish(af, acc);
+  }
+
+  /** first_value(), last_value() or nth_value() of row `i` (at `row`) over frame `fr`. */
+  valueIn(
+    f: WinFn,
+    row: usize,
+    i: usize,
+    fr: Frame,
+    order: usize[],
+    s: usize,
+    group: usize[],
+  ): Val {
+    let want: i64 = 1;
+    if (f.kind == W_NTH) {
+      const nv = this.arg(row, f, 1);
+      want = toI64(nv);
+      if (want <= 0 || !(nv.t == INTEGER || (nv.t == REAL && (want as f64) == nv.r))) {
+        throw new SqlRunError("second argument to nth_value must be a positive integer");
+      }
+    }
+    // Without EXCLUDE the frame's rows are all there: the value is at a position in it.
+    if (f.exclude == "") {
+      const at = f.kind == W_LAST ? fr.hi : fr.lo + want - 1;
+      if (fr.lo > fr.hi || at > fr.hi) {
+        return nullVal();
+      }
+      return this.arg(order[s + (at as usize)], f, 0);
+    }
+    let seen: i64 = 0;
+    let last: Val = nullVal();
+    for (let j = fr.lo; j <= fr.hi; j++) {
+      if (excluded(f, i, j as usize, group)) {
+        continue;
+      }
+      const v = this.arg(order[s + (j as usize)], f, 0);
+      seen++;
+      if (f.kind != W_LAST && seen == want) {
+        return v;
+      }
+      last = v;
+    }
+    return f.kind == W_LAST ? last : nullVal();
+  }
+
+  /** The frame of row `i`: partition positions lo..hi (empty when lo > hi). */
+  frameOf(f: WinFn, i: usize, n: usize, g: usize, gs: usize[], ge: usize[], ordered: bool): Frame {
+    const last = (n as i64) - 1;
+    if (f.frame == FRAME_DEFAULT) {
+      return Frame { lo: 0, hi: ordered ? ge[g] as i64 : last };
+    }
+    const lo = bound(f, true, i, g, gs, ge, last);
+    const hi = bound(f, false, i, g, gs, ge, last);
+    return Frame { lo: lo < 0 ? 0 : lo, hi: hi > last ? last : hi };
+  }
+}
+
+// Whether row `j` is at least `lag` rows (or groups) behind row `at`.
+function behind(group: usize[], j: i64, at: i64, lag: i64, groups: bool): bool {
+  if (groups) {
+    return (group[j as usize] as i64) <= (group[at as usize] as i64) - lag;
+  }
+  return j <= at - lag;
+}
+
+// Whether SQLite computes `f` by stepping rows in and out of a moving frame (an aggregate with
+// an inverse, and no EXCLUDE: that one is computed afresh for each row), or only in (min() and
+// max() from the partition's first row: WinCtx.grown).
+function incremental(f: WinFn): bool {
+  if (f.kind != W_AGG || f.exclude != "") {
+    return false;
+  }
+  const k = f.agg!.kind;
+  return (
+    k == AG_COUNT_STAR ||
+    k == AG_COUNT ||
+    k == AG_SUM ||
+    k == AG_TOTAL ||
+    k == AG_AVG ||
+    k == AG_CONCAT ||
+    k == AG_MIN ||
+    k == AG_MAX
+  );
+}
+
+// min() or max() whose frame starts at the partition's first row, without EXCLUDE: computed as
+// the frame grows (WinCtx.grown).
+function growing(f: WinFn): bool {
+  if (f.kind != W_AGG || f.exclude != "") {
+    return false;
+  }
+  const k = f.agg!.kind;
+  return (k == AG_MIN || k == AG_MAX) && f.start == BOUND_UNBOUNDED_PRECEDING;
+}
+
+/** A frame: rows `lo` to `hi` of the partition. */
+export struct Frame {
+  lo: i64;
+  hi: i64;
+}
+
+// A frame bound's offset: checked once per run, as SQLite does (OP_MustBeInt: numeric
+// affinity first, so TEXT that reads as an integer counts, and a REAL only if it is an integer
+// strictly inside i64's range).
+function offsetOf(e: Ev | null, kind: u8, start: bool): i64 {
+  if (e == null || !(kind == BOUND_PRECEDING || kind == BOUND_FOLLOWING)) {
+    return 0;
+  }
+  const v = applyAffinity(e!(), A_NUMERIC);
+  const off = v.i;
+  if (v.t != INTEGER || off < 0) {
+    throw new SqlRunError(
+      start
+        ? "frame starting offset must be a non-negative integer"
+        : "frame ending offset must be a non-negative integer",
+    );
+  }
+  return kind == BOUND_PRECEDING ? -off : off;
+}
+
+// Where a frame starts (or ends) for row `i` in peer group `g`.
+function bound(
+  f: WinFn,
+  start: bool,
+  i: usize,
+  g: usize,
+  gs: usize[],
+  ge: usize[],
+  last: i64,
+): i64 {
+  const kind = start ? f.start : f.end;
+  if (kind == BOUND_UNBOUNDED_PRECEDING) {
+    return start ? 0 : -1;
+  }
+  if (kind == BOUND_UNBOUNDED_FOLLOWING) {
+    return start ? last + 1 : last;
+  }
+  const off = start ? f.startOff : f.endOff;
+  if (f.frame == FRAME_ROWS) {
+    return (i as i64) + off;
+  }
+  // RANGE (CURRENT ROW) and GROUPS: by peer groups.
+  const ng = (gs.length as i64) - 1;
+  const t = (g as i64) + off;
+  if (t < 0) {
+    return start ? 0 : -1;
+  }
+  if (t > ng) {
+    return start ? last + 1 : last;
+  }
+  return start ? gs[t as usize] as i64 : ge[t as usize] as i64;
+}
+
+function excluded(f: WinFn, i: usize, j: usize, group: usize[]): bool {
+  if (f.exclude == "") {
+    return false;
+  }
+  if (f.exclude == "CURRENT ROW") {
+    return i == j;
+  }
+  if (f.exclude == "GROUP") {
+    return group[i] == group[j];
+  }
+  // TIES: the current row's peers but itself.
+  return i != j && group[i] == group[j];
+}
+
+// Whether rows `a` and `b` have equal keys from..to of window `sp`.
+function samePrefix(sp: WinSpec, a: usize, b: usize, from: usize, to: usize): bool {
+  const n = sp.sk.length;
+  for (let k = from; k < to; k++) {
+    if (compareVals(sp.keys[a * n + k], sp.keys[b * n + k], sp.sk[k].coll) != 0) {
+      return false;
+    }
+  }
+  return true;
+}

@@ -351,6 +351,52 @@ function sumStep(a: Acc, v: Val) {
   }
 }
 
+/**
+ * Takes a row's value back out of count(), sum(), total() or avg() (their xInverse, for a
+ * window frame that moves).
+ */
+export function inverseValues(f: AggFn, a: Acc, v: Val) {
+  if (f.kind == AG_COUNT_STAR) {
+    a.cnt--;
+    return;
+  }
+  if (f.kind == AG_COUNT) {
+    if (v.t != NULL) {
+      a.cnt--;
+    }
+    return;
+  }
+  const t = numericType(v);
+  if (t == NULL) {
+    return;
+  }
+  a.cnt--;
+  if (!a.approx) {
+    const x = toI64(v);
+    const d = a.isum - x;
+    if (!((a.isum >= 0) != (x >= 0) && (d >= 0) != (a.isum >= 0))) {
+      a.isum = d;
+      return;
+    }
+    // SQLite 3.54's sumInverse: the sum only turns approximate (the integer sum is left
+    // behind: the approximate one starts from nothing).
+    a.ovrfl = true;
+    a.approx = true;
+    return;
+  }
+  if (t == INTEGER) {
+    const x = toI64(v);
+    if (x != -9223372036854775807 - 1) {
+      kbnInt(a, -x);
+    } else {
+      kbnInt(a, 9223372036854775807);
+      kbnInt(a, 1);
+    }
+  } else {
+    kbn(a, -toF64(v));
+  }
+}
+
 function isOverflow(r: f64): bool {
   return r != r || r == Infinity || r == -Infinity;
 }
