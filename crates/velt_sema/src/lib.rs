@@ -110,6 +110,7 @@ mod replaced_holders;
 mod resolve;
 mod script_locals;
 mod script_tdz;
+mod source_module;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
@@ -133,40 +134,15 @@ mod void_fields;
 mod weak_threads;
 mod written_types;
 
-use velt_common::{Diagnostic, Diagnostics, FileId, Span};
-use velt_syntax::ast;
+use velt_common::{Diagnostic, Diagnostics, Span};
 
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
+pub use source_module::SourceModule;
 pub use visit::rebase_detached_locals;
-
-/// One parsed module handed to sema by the driver.
-pub struct SourceModule {
-    /// Canonical module path: `"main"` for the root file, `"std/fs"`, `"./util"` resolved to a
-    /// root-relative path like `"util"`, package modules as `"pkgname"` / `"pkgname/sub"`.
-    pub path: String,
-    /// Loaded from the standard library root (the loader's `Origin::Std`). Only std modules may
-    /// use compiler intrinsics and the private members of std types; never derived from `path`,
-    /// which user files must not be able to imitate.
-    pub is_std: bool,
-    /// Loaded from a package the program depends on (the loader's `Origin::Package`). Like std,
-    /// a library to the program: the analyses that report a problem at the program's call into
-    /// library code (a callback a library runs on other threads) treat both alike. It grants no
-    /// privilege.
-    pub is_dependency: bool,
-    pub file: FileId,
-    pub ast: ast::Module,
-    /// For each `import ... from "<spec>"` in this module: spec string → canonical path of the
-    /// module it resolved to (the driver already loaded it into `modules`).
-    pub imports: Vec<(String, String)>,
-    /// Canonical path of the JSX runtime (`<jsxImportSource>/jsx-runtime`, see
-    /// docs/internals/contracts/jsx.md) the driver loaded because this module contains JSX; `None` when it
-    /// has none. Sema binds it as the namespace `JSX` and lowers JSX to calls of its exports.
-    pub jsx_runtime: Option<String>,
-}
 
 /// Stack for the checking thread: the passes recurse over the AST/HIR (bounded by the parser's
 /// nesting limit), which can exceed the 1 MB main-thread stack on Windows.

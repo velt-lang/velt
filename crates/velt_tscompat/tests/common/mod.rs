@@ -120,6 +120,7 @@ impl Loader {
         self.modules.push(SourceModule {
             path,
             is_std,
+            is_dependency: false,
             file: id,
             ast,
             imports: vec![],
