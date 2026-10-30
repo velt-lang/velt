@@ -1,39 +1,30 @@
 // An HTTP server returning the TSX page of _page.vlt, rendered per request: `/small` (10 rows)
-// and `/large` (1000 rows); anything else is a plain-text probe. server.mjs is the same on
-// React or Preact (node:http, or Bun.serve under Bun). Usage: server <port>
+// and `/large` (1000 rows); anything else is a plain-text probe. It serves through
+// velt:http/server, the HTTP/1.1 server written in Velt on std/net (not velt:http, which is hyper
+// in the runtime). server.mjs is the same on React or Preact (node:http, or Bun.serve under Bun).
+// Usage: server <port>
 //
 // The rows are built once, in `main`, and shared with every request as `shared(...)` values,
 // which tasks on all cores read without a lock. (As module constants built by a call they would
 // be module state, and each request would take the module lock while it renders.)
 import { renderToStringSync } from "velt:jsx";
-import { serve } from "velt:http";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
 import { args } from "velt:process";
 import { items, Page } from "./_page";
-
-function html(body: string): Response {
-  return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
-}
 
 async function main() {
   const argv = args();
   const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
   const small = shared(items(10));
   const large = shared(items(1000));
-  const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
-    const url = req.url;
-    const path = url.slice(url.indexOf("/", 8));
-    if (path == "/small") {
-      return html(
-        `<!DOCTYPE html>${renderToStringSync(<Page title="small page" items={small} />)}`,
-      );
+  const server = await serve({ port: port }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/small")) {
+      res.html(`<!DOCTYPE html>${renderToStringSync(<Page title="small page" items={small} />)}`);
+    } else if (req.pathIs("/large")) {
+      res.html(`<!DOCTYPE html>${renderToStringSync(<Page title="large page" items={large} />)}`);
+    } else {
+      res.send("ok");
     }
-    if (path == "/large") {
-      return html(
-        `<!DOCTYPE html>${renderToStringSync(<Page title="large page" items={large} />)}`,
-      );
-    }
-    return new Response("ok");
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);
-  await sleep(1000000000);
 }
