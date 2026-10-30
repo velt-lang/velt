@@ -1,0 +1,7 @@
+// velt/dev (internal): the runtime's graceful stop under `velt dev` (rt_abi_async.md §13.2,
+// crates/velt_rt/src/dev/shutdown.rs).
+
+/** A signal aborted once the stop request arrives (the caller owns it); 0 outside `velt dev`. */
+export declare function velt_rt_dev_server_stop(): u64;
+/** The server that joined the stop stopped accepting and finished its requests. */
+export declare function velt_rt_dev_server_drained();

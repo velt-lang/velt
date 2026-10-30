@@ -5,7 +5,7 @@
 import { IoError } from "velt/io/error";
 import { listen, listenTls, TcpListener, TlsListenOptions } from "velt/net";
 import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
-import { devStop, drained } from "velt/net/http/server/dev";
+import { drained, joinStop } from "velt/dev";
 import { delay } from "velt/time/timers";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse } from "velt/net/http/server/response";
@@ -138,8 +138,8 @@ export async function serveHttp<E>(
     maxHeaders: maxHeaders,
   };
   const stop = new AbortController();
-  // Under `velt dev` the server also stops when the next version is about to start (dev.vlt).
-  const dev = devStop();
+  // Under `velt dev` the server also stops when the next version is about to start (velt/dev).
+  const dev = joinStop();
   const stopped = dev == null ? stop.signal : AbortSignal.any([stop.signal, dev]);
   if (dev != null) {
     const closing = spawn(closeWhen(stopped, listener));

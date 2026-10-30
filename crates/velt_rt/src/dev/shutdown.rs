@@ -89,7 +89,7 @@ pub(crate) fn open_stop_channel(socket: &std::ffi::OsStr) {
     });
 }
 
-/// A server written in Velt joins the graceful stop (std/net/http/server/dev.vlt): a signal that
+/// A server written in Velt joins the graceful stop (velt/dev's `joinStop`): a signal that
 /// is aborted once a stop request arrives, or a null handle outside dev mode. The process waits
 /// for the server (up to [`DRAIN`]) until it reports itself drained
 /// ([`velt_rt_dev_server_drained`]).
