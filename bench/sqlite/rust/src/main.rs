@@ -1,6 +1,8 @@
 //! The Rust counterpart of `bench/sqlite/rows.vlt`: the same in-memory database, queries and
 //! output, with rusqlite (bundled SQLite, cached statements), serde_json and mimalloc (the Velt
-//! runtime's allocator). Prints the bytes written, which must equal the Velt program's. Usage: rows [feed|post|both] [rounds]
+//! runtime's allocator). Prints the bytes written, which must equal the Velt program's. Usage:
+//! rows [feed|post|both|scan|point] [rounds]; `scan` and `point` are bench/sqlite/engine.vlt's
+//! (all 2000 posts into structs per round; one post by its rowid, 10 a round).
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -18,6 +20,22 @@ struct Post {
     created_at: String,
     author: String,
     like_count: i64,
+}
+
+struct Row {
+    id: i64,
+    user_id: i64,
+    body: String,
+    created_at: String,
+}
+
+fn row(r: &rusqlite::Row) -> rusqlite::Result<Row> {
+    Ok(Row {
+        id: r.get(0)?,
+        user_id: r.get(1)?,
+        body: r.get(2)?,
+        created_at: r.get(3)?,
+    })
 }
 
 #[derive(Serialize)]
@@ -44,6 +62,36 @@ fn main() {
     let feed = format!("{POST_COLUMNS} ORDER BY p.created_at DESC, p.id DESC LIMIT 20");
     let one = format!("{POST_COLUMNS} WHERE p.id = ?");
     let mut bytes = 0;
+    let rows_sql = "SELECT id, user_id, body, created_at FROM posts";
+    let row_sql = format!("{rows_sql} WHERE id = ?");
+    if which == "scan" {
+        for _ in 0..rounds {
+            let mut st = db.prepare_cached(rows_sql).unwrap();
+            let rows = st
+                .query_map([], row)
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            std::hint::black_box(
+                rows.iter()
+                    .map(|r| r.id + r.user_id + r.created_at.len() as i64)
+                    .sum::<i64>(),
+            );
+            bytes += rows.len();
+        }
+    } else if which == "point" {
+        for i in 0..rounds * 10 {
+            let mut st = db.prepare_cached(&row_sql).unwrap();
+            if let Ok(r) = st.query_row([(i * 7919) % POSTS + 1], row) {
+                std::hint::black_box(r.id + r.user_id + r.created_at.len() as i64);
+                bytes += r.body.len();
+            }
+        }
+    }
+    if which == "scan" || which == "point" {
+        println!("{bytes}");
+        return;
+    }
     if which != "post" {
         for _ in 0..rounds {
             let mut st = db.prepare_cached(&feed).unwrap();

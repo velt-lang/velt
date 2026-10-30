@@ -7,7 +7,8 @@
 over a SQLite database file, with no C library: the file format, the SQL parser, the planner
 and the execution are Velt (`velt:sqlite/format`, `btree`, `sql/*`, `exec/*`). Answers are
 SQLite's, value for value: type affinity, collations, NULL rules, integer overflow to REAL and
-the text form of REAL values are kept, and the tests compare it with C SQLite. Rows a query
+the text form of REAL values are kept; the tests, and a differential fuzzer
+(`bench/sqlite/fuzz.vlt`) against the `sqlite3` shell, compare it with C SQLite. Rows a query
 does not order come in the order SQLite's plan gives them where this engine picks the same plan
 (the same index, the same scan direction); where SQLite's cost model would pick another plan
 they can come in another order, and DISTINCT or GROUP BY can then show another row of a group

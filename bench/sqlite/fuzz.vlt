@@ -1,0 +1,161 @@
+// Differential fuzzing of the Velt SQLite engine (velt:sqlite/engine) against C SQLite, #1725:
+// random tables (affinities, collations, indexes) with random values of every storage class,
+// and random SELECTs (expressions, functions, joins, aggregates, subqueries, compound selects)
+// run through the Velt engine and through the `sqlite3` command-line shell (`.mode quote`, which
+// prints each value as SQLite's quote() does). Every row must be the same; queries that differ
+// are printed. The database is written by C SQLite (velt:sqlite).
+//
+// Usage: fuzz [seed] [queries]          random queries
+//        fuzz <seed> 0 <sql>...         both engines' rows of these queries on the seed's data
+// Env: SQLITE3 (default /usr/bin/sqlite3).
+
+import { open } from "velt:sqlite";
+import { openDatabase, Database } from "velt:sqlite/engine";
+import { BLOB, REAL } from "velt:sqlite/btree";
+import { quote } from "velt:sqlite/exec/func";
+import { hexEncode } from "velt:encoding";
+import { args } from "velt:process";
+import { tmpdir } from "velt:os";
+import { removeSync } from "velt:fs";
+import { execSync } from "velt:child_process";
+import { Gen, generateSchema, generateQuery } from "./_fuzz_gen.vlt";
+
+/** The Velt engine's rows, each as the shell's quote mode prints it, or ["error: …"]. */
+function veltRows(db: Database, sql: string): string[] {
+  const out: string[] = [];
+  try {
+    const st = db.prepare(sql);
+    const vals = st.values();
+    // The typed reads' path (rows pulled one at a time) must read the same values.
+    const pulled = st.pulledValues();
+    if (pulled.length != vals.length) {
+      return ["error: pulled rows differ"];
+    }
+    for (let i: usize = 0; i < vals.length; i++) {
+      if (quote(pulled[i]) != quote(vals[i])) {
+        return ["error: pulled rows differ"];
+      }
+    }
+    const n = st.columns().length as usize;
+    const rows: usize = n == 0 ? 0 : (vals.length as usize) / n;
+    for (let r: usize = 0; r < rows; r++) {
+      const parts: string[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        const v = vals[r * n + i];
+        if (v.t == BLOB) {
+          parts.push(`x'${hexEncode(v.b)}'`);
+        } else if (v.t == REAL && (v.r == Infinity || v.r == -Infinity)) {
+          parts.push(v.r > 0 ? "Inf" : "-Inf");
+        } else {
+          parts.push(quote(v));
+        }
+      }
+      out.push(parts.join(","));
+    }
+  } catch (e) {
+    return [`error: ${e.message}`];
+  }
+  return out;
+}
+
+/** The shell's rows, or ["error: …"] (rows printed before a failure are dropped). */
+function cliRows(shell: string, path: string, sql: string): string[] {
+  const r = execSync(shell, ["-cmd", ".mode quote", path, sql]);
+  if (r.code != 0) {
+    const first = r.stderr.split("\n")[0];
+    const at = first.indexOf(": ");
+    return [`error: ${at >= 0 ? first.slice(at + 2) : first}`];
+  }
+  const text = r.stdout.endsWith("\n") ? r.stdout.slice(0, r.stdout.length - 1) : r.stdout;
+  return text == "" ? [] : text.split("\n");
+}
+
+/** Whether a query's top level orders its rows (an ORDER BY outside parentheses). */
+function isOrdered(sql: string): bool {
+  let depth = 0;
+  let found = false;
+  const u = sql.toUpperCase();
+  for (let i = 0; i < u.length; i++) {
+    const ch = u.charCodeAt(i);
+    if (ch == 40) {
+      depth++;
+    } else if (ch == 41) {
+      depth--;
+    } else if (depth == 0 && u.slice(i, i + 8) == "ORDER BY") {
+      found = true;
+    }
+  }
+  return found;
+}
+
+/** "" when both engines agree on `sql`, else a report. */
+function compare(shell: string, path: string, v: Database, sql: string): string {
+  const mine = veltRows(v, sql);
+  let theirs = cliRows(shell, path, sql);
+  const mineErr = mine.length == 1 && mine[0].startsWith("error: ");
+  const theirErr = theirs.length == 1 && theirs[0].startsWith("error: ");
+  if (mineErr && theirErr) {
+    return mine[0] == theirs[0] ? "" : `${sql}\n  velt: ${mine[0]}\n  C:    ${theirs[0]}`;
+  }
+  let a = mine;
+  if (!isOrdered(sql)) {
+    a = mine.toSorted();
+    theirs = theirs.toSorted();
+  }
+  if (a.join("\n") == theirs.join("\n")) {
+    return "";
+  }
+  let at = 0;
+  while (at < a.length && at < theirs.length && a[at] == theirs[at]) {
+    at++;
+  }
+  const from = at > 2 ? at - 2 : 0;
+  return `${sql}\n  rows ${a.length} vs ${theirs.length}, from row ${from}:\n  velt: ${a.slice(from, from + 6).join(" ; ")}\n  C:    ${theirs.slice(from, from + 6).join(" ; ")}`;
+}
+
+function main() {
+  const argv = args();
+  const seed = argv.length > 0 ? parseInt(argv[0], 10) as i64 : 1;
+  const n = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 500;
+  const shell = process.env.SQLITE3 ?? "/usr/bin/sqlite3";
+  // Without the shell every query would differ: say so once instead.
+  let found = false;
+  try {
+    found = execSync(shell, ["-version"]).code == 0;
+  } catch (e) {
+    found = false;
+  }
+  if (!found) {
+    console.error(`fuzz: cannot run the sqlite3 shell at ${shell} (set SQLITE3)`);
+    process.exit(2);
+  }
+  const g = new Gen(seed);
+  const path = `${tmpdir()}/velt-sqlite-fuzz-${seed}-${Date.now()}.db`;
+  const c = open(path);
+  for (const s of generateSchema(g)) {
+    c.exec(s);
+  }
+  c.close();
+  const v = openDatabase(path);
+  if (argv.length > 2) {
+    for (let k = 2; k < argv.length; k++) {
+      const q = argv[k];
+      console.log(q);
+      console.log("  velt:", veltRows(v, q).join(" ; "));
+      console.log("  C:   ", cliRows(shell, path, q).join(" ; "));
+    }
+    removeSync(path);
+    return;
+  }
+  let bad = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const q = generateQuery(g);
+    const r = compare(shell, path, v, q);
+    if (r != "") {
+      bad++;
+      console.log(r);
+    }
+  }
+  removeSync(path);
+  console.log(`seed ${seed}: ${n} queries, ${bad == 0 ? "all the same" : `${bad} differ`}`);
+}
