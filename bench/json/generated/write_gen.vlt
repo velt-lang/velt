@@ -1,0 +1,120 @@
+// The generator of ./index.vlt `write<T>`: one function per type, with each object's constant
+// text (`{"id":`, `,"name":`) written as one literal.
+import { Request, Output, Type, Model } from "velt/generate";
+
+/** `s` as JSON string text (for keys, known at compile time). */
+function jsonQuote(s: string): string {
+  let out = "\"";
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c < 32) {
+      out += "\\u" + c.toString(16).padStart(4, "0");
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out + "\"";
+}
+
+/** The statement that writes `v` of type `t`. */
+function writeValue(out: Output, model: Model, t: Type, id: i64, v: string): string {
+  if (t.kind == "number") {
+    if (t.repr == "f64" || t.repr == "f32") {
+      return `w.number(${v} as f64);`;
+    }
+    if (t.repr == "u64" || t.repr == "usize") {
+      return `w.uint(${v} as u64);`;
+    }
+    return `w.int(${v} as i64);`;
+  }
+  if (t.kind == "string") {
+    return `w.string(${v});`;
+  }
+  if (t.kind == "boolean") {
+    return `w.bool(${v});`;
+  }
+  const name = out.instance("write", [id]);
+  return `${name}(w, ${v});`;
+}
+
+export function write(req: Request, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const v = req.params[1];
+  if (t.kind == "number" || t.kind == "string" || t.kind == "boolean") {
+    const s = writeValue(out, model, t, id, v);
+    out.line(s);
+  } else if (t.kind == "enum") {
+    out.line(`w.int(${v} as i64);`);
+  } else if (t.kind == "option") {
+    const inner = model.type(t.args[0]);
+    const s = writeValue(out, model, inner, t.args[0], v);
+    out.line(`if (${v} == null) { w.raw("null"); } else { ${s} }`);
+  } else if (t.kind == "array") {
+    const elem = model.type(t.args[0]);
+    const s = writeValue(out, model, elem, t.args[0], "e");
+    out.line(`w.raw("[");`);
+    out.line(`let first = true;`);
+    out.line(`for (const e of ${v}) {`);
+    out.line(`  if (!first) { w.raw(","); }`);
+    out.line(`  first = false;`);
+    out.line(`  ${s}`);
+    out.line(`}`);
+    out.line(`w.raw("]");`);
+  } else if (t.kind == "object" || t.kind == "struct" || t.kind == "class") {
+    // Constant text is gathered and written as one literal before each value.
+    let pending = "{";
+    let optional = false;
+    let wrote = false;
+    for (const f of t.fields) {
+      if (f.isEsPrivate) {
+        continue;
+      }
+      if (f.isPrivate) {
+        out.error(`\`${t.display}.${f.name}\` is private: generated code gets no access to private fields yet`, f.at);
+        continue;
+      }
+      const ft = model.type(f.type);
+      if (f.optional) {
+        // Left out when absent; a separator depends on what came before, so it is written
+        // with a flag from here on.
+        if (pending.length > 0) {
+          const lit = out.literal(pending);
+          out.line(`w.raw(${lit});`);
+          pending = "";
+        }
+        if (!optional) {
+          out.line(`let sep = ${wrote ? "true" : "false"};`);
+          optional = true;
+        }
+        const local = out.fresh("f");
+        const key = out.literal(jsonQuote(f.name) + ":");
+        const s = writeValue(out, model, ft, f.type, local);
+        out.line(`const ${local} = ${v}.${f.name};`);
+        out.line(`if (${local} != null) { if (sep) { w.raw(","); } sep = true; w.raw(${key}); ${s} }`);
+        continue;
+      }
+      if (optional) {
+        const key = out.literal(jsonQuote(f.name) + ":");
+        out.line(`if (sep) { w.raw(","); } sep = true; w.raw(${key});`);
+      } else {
+        const lit = out.literal(pending + (pending == "{" ? "" : ",") + jsonQuote(f.name) + ":");
+        out.line(`w.raw(${lit});`);
+      }
+      pending = "";
+      wrote = true;
+      const s = writeValue(out, model, ft, f.type, `${v}.${f.name}`);
+      out.line(s);
+    }
+    const end = out.literal(pending + "}");
+    out.line(`w.raw(${end});`);
+  } else {
+    out.error(`this prototype cannot write a ${t.kind} (\`${t.display}\`) as JSON`, t.at);
+  }
+}

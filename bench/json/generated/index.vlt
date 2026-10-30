@@ -1,0 +1,16 @@
+// `JSON.stringify` as a source generator written against public APIs only, as a third-party
+// library would write it (docs/internals/design/source-generators.md, migration step 4): the
+// prototype that the benchmark `stringify_generated.vlt` compares with the compiler's glue.
+// It covers numbers, booleans, strings, arrays, `T | null`, objects, structs and classes
+// (public fields), C-like enums; the rest is reported by the generator.
+import { Writer } from "velt/encoding/json";
+
+/** Appends the JSON text of `value` to `w` (written per type by ./write_gen). */
+export declare generated("./write_gen") function write<T>(w: Writer, value: T): void;
+
+/** The JSON text of `value`, as `JSON.stringify` writes it. */
+export function stringify<T>(value: T): string {
+  const w = new Writer();
+  write(w, value);
+  return w.take();
+}

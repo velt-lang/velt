@@ -9,3 +9,5 @@
 import { JsonValue } from "velt/prelude/json/json";
 
 export type Value = JsonValue;
+
+export { Writer } from "velt/encoding/json/writer";
