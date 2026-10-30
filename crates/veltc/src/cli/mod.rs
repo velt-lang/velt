@@ -35,8 +35,11 @@ pub struct DocArgs {
     pub paths: Vec<PathBuf>,
     /// `--std`: document the standard library.
     pub std: bool,
-    /// `-o`: output directory (default `target/doc`, in the package root for packages).
+    /// `-o`: output directory (default `target/doc`, in the package root for packages); with
+    /// `--format json` also a `.json` file, or `-` for stdout.
     pub output: Option<PathBuf>,
+    /// `--format json`: one JSON document instead of HTML pages.
+    pub json: bool,
 }
 
 /// `velt registry serve` arguments.

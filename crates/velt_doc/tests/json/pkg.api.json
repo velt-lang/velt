@@ -1,0 +1,1361 @@
+{
+  "schemaVersion": 1,
+  "title": "pkg",
+  "modules": [
+    {
+      "module": "pkg/lib",
+      "specifier": "pkg/lib",
+      "file": "lib.vlt",
+      "doc": "The fixture package of `velt doc --format json`: every kind of export, members, tags, links\nand re-exports. See `Point`.",
+      "summary": "The fixture package of `velt doc --format json`: every kind of export, members, tags, links and re-exports.",
+      "links": [
+        {
+          "text": "`Point`",
+          "ref": "Point",
+          "target": {
+            "id": "pkg/lib#Point",
+            "module": "pkg/lib",
+            "kind": "class",
+            "name": "Point",
+            "member": null
+          }
+        }
+      ],
+      "exports": [
+        {
+          "id": "pkg/lib#LIMIT",
+          "name": "LIMIT",
+          "kind": "const",
+          "modifiers": [],
+          "signature": "const LIMIT: i64 = 100",
+          "spans": [],
+          "doc": "Largest coordinate a `Point` may have.",
+          "summary": "Largest coordinate a `Point` may have.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [
+            {
+              "text": "`Point`",
+              "ref": "Point",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            }
+          ],
+          "source": {
+            "file": "lib.vlt",
+            "line": 11
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#Pair",
+          "name": "Pair",
+          "kind": "type",
+          "modifiers": [],
+          "signature": "type Pair = [f64, f64]",
+          "spans": [],
+          "doc": "A coordinate pair.",
+          "summary": "A coordinate pair.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 14
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#Direction",
+          "name": "Direction",
+          "kind": "enum",
+          "modifiers": [],
+          "signature": "enum Direction",
+          "spans": [],
+          "doc": "Directions on the compass.",
+          "summary": "Directions on the compass.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 17
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Direction.North",
+              "name": "North",
+              "kind": "member",
+              "modifiers": [],
+              "signature": "North",
+              "spans": [],
+              "doc": "Up.",
+              "summary": "Up.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 19
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Direction.South",
+              "name": "South",
+              "kind": "member",
+              "modifiers": [],
+              "signature": "South",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 20
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#Point",
+          "name": "Point",
+          "kind": "class",
+          "modifiers": [],
+          "signature": "class Point",
+          "spans": [],
+          "doc": "A point in the plane.",
+          "summary": "A point in the plane.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 24
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Point.x",
+              "name": "x",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "x: f64",
+              "spans": [],
+              "doc": "The x coordinate.",
+              "summary": "The x coordinate.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 26
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.y",
+              "name": "y",
+              "kind": "field",
+              "modifiers": [
+                "readonly"
+              ],
+              "signature": "readonly y: f64",
+              "spans": [],
+              "doc": "The y coordinate.",
+              "summary": "The y coordinate.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 28
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.constructor",
+              "name": "constructor",
+              "kind": "constructor",
+              "modifiers": [],
+              "signature": "constructor(x: f64, y: f64)",
+              "spans": [],
+              "doc": "A point at `x`, `y`.",
+              "summary": "A point at `x`, `y`.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 32
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.static:origin",
+              "name": "origin",
+              "kind": "method",
+              "modifiers": [
+                "static"
+              ],
+              "signature": "static origin(): Point",
+              "spans": [
+                {
+                  "start": 17,
+                  "end": 22,
+                  "role": "return",
+                  "target": {
+                    "id": "pkg/lib#Point",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "The origin.",
+              "summary": "The origin.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 38
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.length",
+              "name": "length",
+              "kind": "getter",
+              "modifiers": [],
+              "signature": "get length(): f64",
+              "spans": [],
+              "doc": "The distance to the origin.",
+              "summary": "The distance to the origin.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 43
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.length:set",
+              "name": "length",
+              "kind": "setter",
+              "modifiers": [],
+              "signature": "set length(v: f64)",
+              "spans": [],
+              "doc": "Scales the point to this distance from the origin.",
+              "summary": "Scales the point to this distance from the origin.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 48
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.origin",
+              "name": "origin",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "origin(): Point",
+              "spans": [
+                {
+                  "start": 10,
+                  "end": 15,
+                  "role": "return",
+                  "target": {
+                    "id": "pkg/lib#Point",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "The origin, from a point.",
+              "summary": "The origin, from a point.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 53
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Point.moved",
+              "name": "moved",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "moved(dx: f64, dy: f64): Point",
+              "spans": [
+                {
+                  "start": 25,
+                  "end": 30,
+                  "role": "return",
+                  "target": {
+                    "id": "pkg/lib#Point",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "The point moved by `dx`, `dy`.",
+              "summary": "The point moved by `dx`, `dy`.",
+              "tags": {
+                "params": [
+                  {
+                    "name": "dx",
+                    "doc": "how far along x"
+                  },
+                  {
+                    "name": "dy",
+                    "doc": "how far along y; see `Point.length`"
+                  }
+                ],
+                "returns": "a new point",
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [
+                {
+                  "text": "`Point.length`",
+                  "ref": "Point.length",
+                  "target": {
+                    "id": "pkg/lib#Point.length",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": "length"
+                  }
+                }
+              ],
+              "source": {
+                "file": "lib.vlt",
+                "line": 64
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#Size",
+          "name": "Size",
+          "kind": "struct",
+          "modifiers": [],
+          "signature": "struct Size",
+          "spans": [],
+          "doc": "A size in two dimensions.",
+          "summary": "A size in two dimensions.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 72
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Size.width",
+              "name": "width",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "width: f64",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 73
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Size.height",
+              "name": "height",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "height: f64",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 74
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Size.corner",
+              "name": "corner",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "corner: Point",
+              "spans": [
+                {
+                  "start": 8,
+                  "end": 13,
+                  "role": "field",
+                  "target": {
+                    "id": "pkg/lib#Point",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "Where it starts.",
+              "summary": "Where it starts.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 76
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#Drawable",
+          "name": "Drawable",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Drawable",
+          "spans": [],
+          "doc": "Something that can be drawn.",
+          "summary": "Something that can be drawn.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 80
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Drawable.draw",
+              "name": "draw",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "draw(at: Point): bool",
+              "spans": [
+                {
+                  "start": 9,
+                  "end": 14,
+                  "role": "param",
+                  "target": {
+                    "id": "pkg/lib#Point",
+                    "module": "pkg/lib",
+                    "kind": "class",
+                    "name": "Point",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "Draws it, and says whether anything changed.",
+              "summary": "Draws it, and says whether anything changed.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 82
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#enclose",
+          "name": "enclose",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function enclose(p: Point): shapes.Circle",
+          "spans": [
+            {
+              "start": 20,
+              "end": 25,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            },
+            {
+              "start": 28,
+              "end": 41,
+              "role": "return",
+              "target": {
+                "id": "pkg/shapes#Circle",
+                "module": "pkg/shapes",
+                "kind": "class",
+                "name": "Circle",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The circle that fits around `p`, with the `Circle` class from `./shapes`.",
+          "summary": "The circle that fits around `p`, with the `Circle` class from `./shapes`.",
+          "tags": {
+            "params": [
+              {
+                "name": "p",
+                "doc": "the point on its edge"
+              }
+            ],
+            "returns": "the circle",
+            "throws": [
+              "`RangeError`: when `p` is beyond `LIMIT`"
+            ],
+            "examples": [
+              "const c = enclose(new Point(3.0, 4.0));"
+            ],
+            "deprecated": null,
+            "see": [
+              "`shapes.Circle`",
+              "https://en.wikipedia.org/wiki/Circle"
+            ]
+          },
+          "links": [
+            {
+              "text": "`Circle`",
+              "ref": "Circle",
+              "target": {
+                "id": "pkg/shapes#Circle",
+                "module": "pkg/shapes",
+                "kind": "class",
+                "name": "Circle",
+                "member": null
+              }
+            },
+            {
+              "text": "`LIMIT`",
+              "ref": "LIMIT",
+              "target": {
+                "id": "pkg/lib#LIMIT",
+                "module": "pkg/lib",
+                "kind": "const",
+                "name": "LIMIT",
+                "member": null
+              }
+            },
+            {
+              "text": "`shapes.Circle`",
+              "ref": "shapes.Circle",
+              "target": {
+                "id": "pkg/shapes#Circle",
+                "module": "pkg/shapes",
+                "kind": "class",
+                "name": "Circle",
+                "member": null
+              }
+            }
+          ],
+          "source": {
+            "file": "lib.vlt",
+            "line": 96
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#Framed",
+          "name": "Framed",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Framed<T extends Drawable> extends Drawable",
+          "spans": [
+            {
+              "start": 27,
+              "end": 35,
+              "role": "typeArg",
+              "target": {
+                "id": "pkg/lib#Drawable",
+                "module": "pkg/lib",
+                "kind": "interface",
+                "name": "Drawable",
+                "member": null
+              }
+            },
+            {
+              "start": 45,
+              "end": 53,
+              "role": "extends",
+              "target": {
+                "id": "pkg/lib#Drawable",
+                "module": "pkg/lib",
+                "kind": "interface",
+                "name": "Drawable",
+                "member": null
+              }
+            }
+          ],
+          "doc": "Something drawn in a frame.",
+          "summary": "Something drawn in a frame.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 101
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Framed.inner",
+              "name": "inner",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "inner(): T",
+              "spans": [],
+              "doc": "What is in the frame.",
+              "summary": "What is in the frame.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 103
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#ParseError",
+          "name": "ParseError",
+          "kind": "class",
+          "modifiers": [],
+          "signature": "class ParseError extends Error",
+          "spans": [],
+          "doc": "Text that is not a point.",
+          "summary": "Text that is not a point.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 107
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#parse",
+          "name": "parse",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function parse(text: string): Point throws ParseError",
+          "spans": [
+            {
+              "start": 30,
+              "end": 35,
+              "role": "return",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            },
+            {
+              "start": 43,
+              "end": 53,
+              "role": "throws",
+              "target": {
+                "id": "pkg/lib#ParseError",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "ParseError",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The point written as `x,y`.",
+          "summary": "The point written as `x,y`.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 110
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#later",
+          "name": "later",
+          "kind": "function",
+          "modifiers": [
+            "async",
+            "deprecated"
+          ],
+          "signature": "async function later(p: Point): Promise<Point>",
+          "spans": [
+            {
+              "start": 24,
+              "end": 29,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            },
+            {
+              "start": 40,
+              "end": 45,
+              "role": "return",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            }
+          ],
+          "doc": "Waits, then gives the point back.",
+          "summary": "Waits, then gives the point back.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": "Use `enclose` instead.",
+            "see": []
+          },
+          "links": [
+            {
+              "text": "`enclose`",
+              "ref": "enclose",
+              "target": {
+                "id": "pkg/lib#enclose",
+                "module": "pkg/lib",
+                "kind": "function",
+                "name": "enclose",
+                "member": null
+              }
+            }
+          ],
+          "source": {
+            "file": "lib.vlt",
+            "line": 122
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#extend:Point",
+          "name": "Point",
+          "kind": "extend",
+          "modifiers": [],
+          "signature": "extend Point",
+          "spans": [
+            {
+              "start": 7,
+              "end": 12,
+              "role": "type",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            }
+          ],
+          "doc": "Points convert to pairs.",
+          "summary": "Points convert to pairs.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 127
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#extend:Point.toPair",
+              "name": "toPair",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "toPair(): Pair",
+              "spans": [
+                {
+                  "start": 10,
+                  "end": 14,
+                  "role": "return",
+                  "target": {
+                    "id": "pkg/lib#Pair",
+                    "module": "pkg/lib",
+                    "kind": "type",
+                    "name": "Pair",
+                    "member": null
+                  }
+                }
+              ],
+              "doc": "The coordinates as a `Pair`.",
+              "summary": "The coordinates as a `Pair`.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [
+                {
+                  "text": "`Pair`",
+                  "ref": "Pair",
+                  "target": {
+                    "id": "pkg/lib#Pair",
+                    "module": "pkg/lib",
+                    "kind": "type",
+                    "name": "Pair",
+                    "member": null
+                  }
+                }
+              ],
+              "source": {
+                "file": "lib.vlt",
+                "line": 129
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#Figure",
+          "name": "Figure",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Shape",
+          "spans": [],
+          "doc": "Anything with an area.",
+          "summary": "Anything with an area.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "shapes.vlt",
+            "line": 4
+          },
+          "reexportedFrom": {
+            "module": "pkg/shapes",
+            "name": "Shape"
+          },
+          "members": [
+            {
+              "id": "pkg/lib#Figure.name",
+              "name": "name",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "name: string",
+              "spans": [],
+              "doc": "The name shown in listings.",
+              "summary": "The name shown in listings.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 6
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Figure.area",
+              "name": "area",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "area(): f64",
+              "spans": [],
+              "doc": "The area in square units.",
+              "summary": "The area in square units.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 8
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#readFile",
+          "name": "readFile",
+          "kind": "re-export",
+          "modifiers": [],
+          "signature": "export { readFile } from \"velt:fs\"",
+          "spans": [],
+          "doc": null,
+          "summary": null,
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": null,
+          "reexportedFrom": null,
+          "members": []
+        }
+      ]
+    },
+    {
+      "module": "pkg/shapes",
+      "specifier": "pkg/shapes",
+      "file": "shapes.vlt",
+      "doc": "Shapes, re-exported by `pkg/lib`.",
+      "summary": "Shapes, re-exported by `pkg/lib`.",
+      "links": [],
+      "exports": [
+        {
+          "id": "pkg/shapes#Shape",
+          "name": "Shape",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Shape",
+          "spans": [],
+          "doc": "Anything with an area.",
+          "summary": "Anything with an area.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "shapes.vlt",
+            "line": 4
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/shapes#Shape.name",
+              "name": "name",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "name: string",
+              "spans": [],
+              "doc": "The name shown in listings.",
+              "summary": "The name shown in listings.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 6
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/shapes#Shape.area",
+              "name": "area",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "area(): f64",
+              "spans": [],
+              "doc": "The area in square units.",
+              "summary": "The area in square units.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 8
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/shapes#Circle",
+          "name": "Circle",
+          "kind": "class",
+          "modifiers": [],
+          "signature": "class Circle implements Shape",
+          "spans": [
+            {
+              "start": 24,
+              "end": 29,
+              "role": "implements",
+              "target": {
+                "id": "pkg/shapes#Shape",
+                "module": "pkg/shapes",
+                "kind": "interface",
+                "name": "Shape",
+                "member": null
+              }
+            }
+          ],
+          "doc": "A circle around the origin.",
+          "summary": "A circle around the origin.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "shapes.vlt",
+            "line": 12
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/shapes#Circle.name",
+              "name": "name",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "name: string = \"circle\"",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 13
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/shapes#Circle.radius",
+              "name": "radius",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "radius: f64",
+              "spans": [],
+              "doc": "The radius.",
+              "summary": "The radius.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 15
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/shapes#Circle.constructor",
+              "name": "constructor",
+              "kind": "constructor",
+              "modifiers": [],
+              "signature": "constructor(radius: f64)",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 17
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/shapes#Circle.area",
+              "name": "area",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "area(): f64",
+              "spans": [],
+              "doc": null,
+              "summary": null,
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "shapes.vlt",
+                "line": 21
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+// Shapes, re-exported by `pkg/lib`.
+
+/** Anything with an area. */
+export interface Shape {
+  /** The name shown in listings. */
+  name: string;
+  /** The area in square units. */
+  area(): f64;
+}
+
+/** A circle around the origin. */
+export class Circle implements Shape {
+  name: string = "circle";
+  /** The radius. */
+  radius: f64;
+
+  constructor(radius: f64) {
+    this.radius = radius;
+  }
+
+  area(): f64 {
+    return 3.14159 * this.radius * this.radius;
+  }
+}

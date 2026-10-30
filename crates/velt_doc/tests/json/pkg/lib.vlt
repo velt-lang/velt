@@ -1,0 +1,132 @@
+// The fixture package of `velt doc --format json`: every kind of export, members, tags, links
+// and re-exports. See {@link Point}.
+
+import { Circle } from "./shapes";
+import * as shapes from "./shapes";
+
+export { Shape as Figure } from "./shapes";
+export { readFile } from "velt:fs";
+
+/** Largest coordinate a {@link Point} may have. */
+export const LIMIT: i64 = 100;
+
+/** A coordinate pair. */
+export type Pair = [f64, f64];
+
+/** Directions on the compass. */
+export enum Direction {
+  /** Up. */
+  North,
+  South,
+}
+
+/** A point in the plane. */
+export class Point {
+  /** The x coordinate. */
+  x: f64;
+  /** The y coordinate. */
+  readonly y: f64;
+  private secret: i64 = 0;
+
+  /** A point at `x`, `y`. */
+  constructor(x: f64, y: f64) {
+    this.x = x;
+    this.y = y;
+  }
+
+  /** The origin. */
+  static origin(): Point {
+    return new Point(0.0, 0.0);
+  }
+
+  /** The distance to the origin. */
+  get length(): f64 {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+
+  /** Scales the point to this distance from the origin. */
+  set length(v: f64) {
+    this.x = v;
+  }
+
+  /** The origin, from a point. */
+  origin(): Point {
+    return Point.origin();
+  }
+
+  /**
+   * The point moved by `dx`, `dy`.
+   *
+   * @param dx - how far along x
+   * @param dy - how far along y; see {@link Point.length}
+   * @returns a new point
+   */
+  moved(dx: f64, dy: f64): Point {
+    return new Point(this.x + dx, this.y);
+  }
+
+  private hidden(): void {}
+}
+
+/** A size in two dimensions. */
+export struct Size {
+  width: f64;
+  height: f64;
+  /** Where it starts. */
+  corner: Point;
+}
+
+/** Something that can be drawn. */
+export interface Drawable {
+  /** Draws it, and says whether anything changed. */
+  draw(at: Point): bool;
+}
+
+/**
+ * The circle that fits around `p`, with the {@link Circle} class from `./shapes`.
+ *
+ * @param p - the point on its edge
+ * @returns the circle
+ * @throws {RangeError} when `p` is beyond {@link LIMIT}
+ * @example
+ * const c = enclose(new Point(3.0, 4.0));
+ * @see {@link shapes.Circle}
+ * @see https://en.wikipedia.org/wiki/Circle
+ */
+export function enclose(p: Point): shapes.Circle {
+  return new Circle(p.length);
+}
+
+/** Something drawn in a frame. */
+export interface Framed<T extends Drawable> extends Drawable {
+  /** What is in the frame. */
+  inner(): T;
+}
+
+/** Text that is not a point. */
+export class ParseError extends Error {}
+
+/** The point written as `x,y`. */
+export function parse(text: string): Point throws ParseError {
+  if (text == "") {
+    throw new ParseError("empty");
+  }
+  return new Point(0.0, 0.0);
+}
+
+/**
+ * Waits, then gives the point back.
+ *
+ * @deprecated Use {@link enclose} instead.
+ */
+export async function later(p: Point): Promise<Point> {
+  return p;
+}
+
+/** Points convert to pairs. */
+extend Point {
+  /** The coordinates as a {@link Pair}. */
+  toPair(): Pair {
+    return [this.x, this.y];
+  }
+}

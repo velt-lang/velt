@@ -176,6 +176,8 @@ fn stubs(r: &ReExport) -> Vec<DocItem> {
         signature,
         doc: String::new(),
         deprecated: None,
+        comment: Default::default(),
+        line: 0,
         members: vec![],
         generics: vec![],
         origin: None,

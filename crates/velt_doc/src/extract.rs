@@ -79,6 +79,11 @@ pub struct DocItem {
     pub doc: String,
     /// `@deprecated`: `Some` (with its text, possibly empty) when deprecated.
     pub deprecated: Option<String>,
+    /// The doc comment, parsed: its body, tags and links (`doc` is its rendering).
+    pub comment: DocComment,
+    /// The 1-based line where the declaration starts, in its module's file (0 for a re-export
+    /// of a module that is not documented).
+    pub line: u32,
     /// Public members (types and extensions only).
     pub members: Vec<DocItem>,
     /// Its generic parameters' names (they are never links to types of the same name).
@@ -103,6 +108,8 @@ pub struct DocModule {
     pub name: String,
     /// The module's leading comment block.
     pub doc: String,
+    /// The `{@link}`s to names in it.
+    pub links: Vec<comment::DocLink>,
     /// Exported items in source order (after [`crate::resolve`], followed by re-exported ones).
     pub items: Vec<DocItem>,
     /// Names imported from other modules (for links in signatures).
@@ -153,6 +160,9 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
     let text = Source {
         printer: Printer { src: source },
         comments: velt_syntax::comment_ranges(source),
+        line_starts: std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(i, _)| i as u32 + 1))
+            .collect(),
         plain_above: RefCell::default(),
     };
     let mut imports = vec![];
@@ -203,9 +213,11 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
             _ => items.extend(text.item(item, false)),
         }
     }
+    let module_doc = text.module_doc();
     let module = DocModule {
         name: name.to_string(),
-        doc: text.module_doc(),
+        doc: module_doc.render_markdown(),
+        links: module_doc.links,
         items,
         imports,
         reexports,
@@ -264,6 +276,8 @@ struct Source<'a> {
     printer: Printer<'a>,
     /// Where the comments are ([`velt_syntax::comment_ranges`]).
     comments: Vec<Range<u32>>,
+    /// Where each line starts.
+    line_starts: Vec<u32>,
     /// Documented declarations without a doc comment and with a plain comment right above.
     plain_above: RefCell<Vec<u32>>,
 }
@@ -279,11 +293,38 @@ impl Source<'_> {
         doc.unwrap_or_default()
     }
 
+    /// The 1-based line of byte `lo`.
+    fn line(&self, lo: u32) -> u32 {
+        self.line_starts.partition_point(|&start| start <= lo) as u32
+    }
+
     /// The first comment block of the file, when a blank line separates it from what follows.
-    fn module_doc(&self) -> String {
-        comment::module_doc(self.printer.src, &self.comments)
-            .map(|d| d.render_markdown())
-            .unwrap_or_default()
+    fn module_doc(&self) -> DocComment {
+        comment::module_doc(self.printer.src, &self.comments).unwrap_or_default()
+    }
+
+    /// An item without members, signature or origin (filled in by the caller), declared at
+    /// byte `lo`.
+    fn leaf(
+        &self,
+        kind: Kind,
+        name: &str,
+        generics: &[ast::GenericParam],
+        doc: DocComment,
+        lo: u32,
+    ) -> DocItem {
+        DocItem {
+            kind,
+            name: name.to_string(),
+            signature: String::new(),
+            doc: doc.render_markdown(),
+            deprecated: doc.deprecated.clone(),
+            comment: doc,
+            line: self.line(lo),
+            members: vec![],
+            generics: generic_names(generics),
+            origin: None,
+        }
     }
 
     /// The documentation of a top-level item: exported ones and extensions, or any
@@ -312,13 +353,19 @@ impl Source<'_> {
                     .join("\n");
                 DocItem {
                     signature,
-                    ..leaf(Kind::Function, &f.sig.name.name, &f.sig.generics, doc)
+                    ..self.leaf(
+                        Kind::Function,
+                        &f.sig.name.name,
+                        &f.sig.generics,
+                        doc,
+                        item.span.lo,
+                    )
                 }
             }
-            ItemKind::Struct(t) => self.type_decl(Kind::Struct, t, doc),
-            ItemKind::Class(t) => self.type_decl(Kind::Class, t, doc),
-            ItemKind::Interface(i) => self.interface(i, doc),
-            ItemKind::Enum(e) => self.enumeration(e, doc),
+            ItemKind::Struct(t) => self.type_decl(Kind::Struct, t, doc, item.span.lo),
+            ItemKind::Class(t) => self.type_decl(Kind::Class, t, doc, item.span.lo),
+            ItemKind::Interface(i) => self.interface(i, doc, item.span.lo),
+            ItemKind::Enum(e) => self.enumeration(e, doc, item.span.lo),
             ItemKind::TypeAlias(t) => DocItem {
                 signature: format!(
                     "type {}{} = {}",
@@ -326,9 +373,15 @@ impl Source<'_> {
                     p.generics(&t.generics),
                     p.ty(&t.ty)
                 ),
-                ..leaf(Kind::TypeAlias, &t.name.name, &t.generics, doc)
+                ..self.leaf(
+                    Kind::TypeAlias,
+                    &t.name.name,
+                    &t.generics,
+                    doc,
+                    item.span.lo,
+                )
             },
-            ItemKind::Var(v) => self.constant(v, doc)?,
+            ItemKind::Var(v) => self.constant(v, doc, item.span.lo)?,
             ItemKind::Extend(e) => {
                 let target = p.ty(&e.target);
                 let implements: Vec<String> = e.implements.iter().map(|t| p.ty(t)).collect();
@@ -339,7 +392,7 @@ impl Source<'_> {
                 DocItem {
                     signature: format!("extend{} {target}{implements}", p.generics(&e.generics)),
                     members: self.methods(&e.methods),
-                    ..leaf(Kind::Extension, &target, &e.generics, doc)
+                    ..self.leaf(Kind::Extension, &target, &e.generics, doc, item.span.lo)
                 }
             }
             ItemKind::Import(_)
@@ -349,7 +402,7 @@ impl Source<'_> {
         })
     }
 
-    fn type_decl(&self, kind: Kind, t: &ast::TypeDecl, doc: DocComment) -> DocItem {
+    fn type_decl(&self, kind: Kind, t: &ast::TypeDecl, doc: DocComment, lo: u32) -> DocItem {
         let mut members: Vec<DocItem> = t
             .fields
             .iter()
@@ -379,7 +432,7 @@ impl Source<'_> {
                 &t.implements,
             ),
             members,
-            ..leaf(kind, &t.name.name, &t.generics, doc)
+            ..self.leaf(kind, &t.name.name, &t.generics, doc, lo)
         }
     }
 
@@ -402,7 +455,7 @@ impl Source<'_> {
             .collect()
     }
 
-    fn interface(&self, i: &ast::InterfaceDecl, doc: DocComment) -> DocItem {
+    fn interface(&self, i: &ast::InterfaceDecl, doc: DocComment, lo: u32) -> DocItem {
         let mut members: Vec<DocItem> = i.fields.iter().map(|f| self.field(f)).collect();
         members.extend(
             i.methods
@@ -424,29 +477,35 @@ impl Source<'_> {
                 &[],
             ),
             members,
-            ..leaf(Kind::Interface, &i.name.name, &i.generics, doc)
+            ..self.leaf(Kind::Interface, &i.name.name, &i.generics, doc, lo)
         }
     }
 
-    fn enumeration(&self, e: &ast::EnumDecl, doc: DocComment) -> DocItem {
+    fn enumeration(&self, e: &ast::EnumDecl, doc: DocComment, lo: u32) -> DocItem {
         let members = e
             .variants
             .iter()
             .map(|v| DocItem {
                 signature: self.printer.flat(v.span).trim_end_matches(',').to_string(),
-                ..leaf(Kind::Variant, &v.name.name, &[], self.doc_before(v.span.lo))
+                ..self.leaf(
+                    Kind::Variant,
+                    &v.name.name,
+                    &[],
+                    self.doc_before(v.span.lo),
+                    v.span.lo,
+                )
             })
             .collect();
         DocItem {
             signature: format!("enum {}", e.name.name),
             members,
-            ..leaf(Kind::Enum, &e.name.name, &[], doc)
+            ..self.leaf(Kind::Enum, &e.name.name, &[], doc, lo)
         }
     }
 
     /// `const NAME: T = init` (the initializer only when the whole fits in 80 characters, or
     /// there is no type to show instead).
-    fn constant(&self, v: &ast::VarDecl, doc: DocComment) -> Option<DocItem> {
+    fn constant(&self, v: &ast::VarDecl, doc: DocComment, lo: u32) -> Option<DocItem> {
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return None;
         };
@@ -463,14 +522,20 @@ impl Source<'_> {
         }
         Some(DocItem {
             signature,
-            ..leaf(Kind::Constant, &name.name, &[], doc)
+            ..self.leaf(Kind::Constant, &name.name, &[], doc, lo)
         })
     }
 
     fn field(&self, f: &ast::Field) -> DocItem {
         DocItem {
             signature: self.printer.field(f),
-            ..leaf(Kind::Field, &f.name.name, &[], self.doc_before(f.span.lo))
+            ..self.leaf(
+                Kind::Field,
+                &f.name.name,
+                &[],
+                self.doc_before(f.span.lo),
+                f.span.lo,
+            )
         }
     }
 
@@ -488,27 +553,14 @@ impl Source<'_> {
             .collect();
         DocItem {
             signature: format!("{mods}{}", self.printer.fn_sig(sig)),
-            ..leaf(
+            ..self.leaf(
                 kind,
                 &sig.name.name,
                 &sig.generics,
                 self.doc_before(sig.span.lo),
+                sig.span.lo,
             )
         }
-    }
-}
-
-/// An item without members, signature or origin (filled in by the caller).
-fn leaf(kind: Kind, name: &str, generics: &[ast::GenericParam], doc: DocComment) -> DocItem {
-    DocItem {
-        kind,
-        name: name.to_string(),
-        signature: String::new(),
-        doc: doc.render_markdown(),
-        deprecated: doc.deprecated,
-        members: vec![],
-        generics: generic_names(generics),
-        origin: None,
     }
 }
 
