@@ -7,12 +7,24 @@ export interface StdLayout {
   dirs: Record<string, string>;
   /** Old file → new file, below `std/`; wins over `dirs`. */
   files: Record<string, string>;
+  /** std files and folders (ending in `/`) that leave std instead of moving inside it. */
+  leaving: string[];
   /** Module folders whose `index.vlt` the move writes by hand. */
   newIndex: string[];
+  /** Per old module (below `std/`), its names that moved: where std code and other code take them. */
+  names: Record<string, Record<string, NameMove>>;
   /** Old `velt:` specifier → its `velt/` module, or `null` for names that are globals. */
   modules: Record<string, string | null>;
   /** `docs/std` page → its new place. */
   docs: Record<string, string>;
   /** File → the pull request that brings it under 400 lines. Only shrinks. */
   oversize: Record<string, string>;
+}
+
+/** Where a name that moved to another module is imported from (module paths below `std/`). */
+export interface NameMove {
+  /** From std code: the file that defines it. */
+  std: string;
+  /** From everywhere else: the public module that exports it. */
+  user: string;
 }
