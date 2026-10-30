@@ -1,7 +1,7 @@
 # Design: source generators (compile-time code written in Velt, for any library)
 
-Status: proposed; the mechanism is being built on branch `source-generators` (see "Order of
-work"). Owners: `velt_syntax` (the declaration), `velt_sema` (demand, the type model, checking
+Status: proposed; steps 1–4 of "Order of work" are built on branch `source-generators`
+("As built so far" at the end). Owners: `velt_syntax` (the declaration), `velt_sema` (demand, the type model, checking
 generated code, the access rule), `velt_vir` (instantiating a generated function), `veltc` (the
 generation loop, the generator host, caching), std (`velt/generate`, and each generator).
 Related: [the JSON engine](json-engine.md) (whose steps 9–10, decorators, become generator input),
@@ -564,3 +564,41 @@ goldens:
 5. Caching and the offered modules (§9); compile-time measurements.
 6. The access rule (§7).
 7. `JSON.stringify` (§Migration step 4) with benchmarks before and after; then `JSON.parse`.
+
+## As built so far
+
+- `declare generated("<spec>") function` (`FnSig::generator`), the demand pass
+  (`velt_sema/src/generated/demand.rs`), the model (`model.rs`), spellings with
+  `__qualified<"module", "Name">` (`spell.rs`), binding (`bind.rs`, `hir::Program::generated`),
+  the redirect in lowering (`velt_vir` `generated_instance`), the driver's rounds and the host
+  (`veltc/src/generate.rs`, `velt __generate-host`), `velt/generate` (`std/generate/index.vlt`).
+- Generated code is appended to the declaring module (its scope, as §7 says), in a file of its
+  own in the source map (`<generated>/<module>.<round>.vlt`; `VELT_EMIT_GENERATED=<dir>` writes
+  them out until `--emit-generated` exists).
+- A generated function and its generated bodies share pass modes: they are joined like a vtable
+  slot's (`ownership/mutation.rs`), so callers checked against the declaration call the bodies
+  with the same ABI. A body throws only what the declaration's `throws` lists.
+
+Not yet: caching (§9), the access rule and `construct<T>` (§7), the no-I/O rule of the
+generator build (§5), decorators, package specifiers for generator modules, and generated code
+of std modules being non-std (it inherits the declaring module's `is_std` while it is appended
+to it; §7 needs it in a module of its own with the declaring module's scope).
+
+### Measured (Apple M4, a shared machine)
+
+- **No generators:** no demand, one check; the only new work is a scan of the modules' items
+  for `generated` declarations.
+- **With generators, no cache:** `bench/json/generated/stringify.vlt` builds in 1.48 G
+  instructions against 1.07 G for `bench/json/stringify.vlt` (+39%): a second check (31 ms) and
+  the host (116–400 ms wall, almost all of it the host compiling `velt/generate` and the
+  generators and JIT-compiling them). Far over the 10% criterion: caching the output (§9) and the
+  compiled host are required before any std operation moves onto generators.
+- **Run time:** the prototype `JSON.stringify` generator (`bench/json/generated`, public APIs
+  only) writes byte-identical text and costs about 1.57 G instructions against the glue's 1.01 G
+  for the same work (+55%; `compare.sh`, release runtime). A literal append (`Writer.raw`,
+  `StringBuilder.append`) is a runtime call of about 80 instructions, where the glue writes
+  literal text inline (string-building.md step 1). Parity needs string-building.md step 2
+  (appends of `StringBuilder` compiled to the same inline path) in the compiler.
+- **Ergonomics:** `out.line(… out.instance(…) …)` is rejected by Velt's rule that one call
+  cannot modify a value and read it in another argument; generators compute names into locals
+  first. `Output` could keep its state outside the object the generator holds to lift that.
