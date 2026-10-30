@@ -149,8 +149,12 @@ fn every_std_definition_lowering_names_stays_checked() {
         "{names:?}"
     );
     const INTERFACES: &[(&str, &str)] = &[("std/db", "RowSource")];
+    // Names lowering compares the callee of a call with (it compiles such a call its own way),
+    // never looks up: a call of one is checked code calling a checked function.
+    const RECOGNIZED: &[(&str, &str)] = &[("std/text/string_builder", "StringBuilder.append")];
     let missing: Vec<_> = (names.iter())
         .filter(|(m, name)| !INTERFACES.contains(&(m.as_str(), name.as_str())))
+        .filter(|(m, name)| !RECOGNIZED.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| {
             let eager = EAGER.iter().any(|p| m.starts_with(p)) || JSON_GLUE.contains(&m.as_str());
             let prelude = HELPERS.iter().any(|p| m.starts_with(p))

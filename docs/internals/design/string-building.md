@@ -1,6 +1,6 @@
 # Design: building strings fast, in compiled code and in Velt
 
-Status: proposed (#1677, part of the JSON engine, #1655). Nothing here is in `main` yet.
+Status: steps 1 and 2 built (#1677, part of the JSON engine, #1655); step 3 proposed.
 
 ## Problem
 
@@ -71,7 +71,16 @@ const s = b.take();     // the builder becomes the string: no copy (it has VeltS
 
 A std class whose one field is the builder value (the 24 bytes of a `VeltStrBuf`), declared as
 a builder type the compiler knows. Its methods are Velt code over the same inline fast path as
-step 1, so a call to `append` inlines to the step-1 sequence. The JSON writer then takes a
+step 1, so a call to `append` inlines to the step-1 sequence.
+
+As built: `StringBuilder` (`velt/text`) holds the builder in its field, and lowering compiles
+`b.append("literal")` (ASCII, at most 32 bytes) to the step-1 sequence on that field
+(`lower/strbuf.rs` `builder_append_literal`), without the count check: the buffer may be shared
+(`toString()`), but every other holder is a string whose text ends at or before the builder's
+and appends in place only as the buffer's one holder (the runtime checks), when the builder no
+longer has it, so the bytes after the builder's text are always the builder's. Measured on
+literal appends (a loop of `append("{\"id\":")`, `appendInt`, three more literals): 1.95 G →
+0.745 G instructions in a release build (-62%), 2.27 G → 1.13 G in a debug build. The JSON writer then takes a
 `StringBuilder` instead of an opaque `string`, and the generated glue passes its builder as one.
 Integer formatting moves to Velt (`bench/stdport` `int_to_string` is 1.82× `itoa` today: a call
 per value and a string result, where writing digits into the builder needs neither).

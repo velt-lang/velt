@@ -29,6 +29,9 @@ impl FnLower<'_, '_> {
                     if let Some(v) = self.type_test_call(*def, &targs, args) {
                         return v;
                     }
+                    if let Some(v) = self.builder_append_literal(&f.name, args) {
+                        return v;
+                    }
                     let v = self.call_def(*def, targs, vec![], args);
                     self.after_super_inits(*def);
                     v
