@@ -1,0 +1,28 @@
+// check: no leaks
+// A top-level variable that a closure refers to and that holds a promise stays a local of the
+// generated `main`, as before #1872: module state cannot hold a promise. A `let` the closure
+// assigns (`p`) can't be told apart by its syntax, so sema finds that module state refuses it
+// and moves it into `main`; a constant holding `new Promise(…)` (`ready`, `later`) never stays
+// at module level. All three were "module-level `…` holds a promise" errors.
+let p = Promise.resolve(1);
+const swapP = () => {
+  p = Promise.resolve(2);
+};
+swapP();
+console.log(await p);
+
+let resolveIt: () => void = () => {};
+const ready = new Promise<void>((r) => {
+  resolveIt = r;
+});
+const waiter = async () => {
+  await ready;
+  console.log("ready seen");
+};
+const w = waiter();
+resolveIt();
+await w;
+
+const later = new Promise<number>((r) => setTimeout(() => r(5), 1));
+const use = async () => (await later) + 1;
+console.log(await use());

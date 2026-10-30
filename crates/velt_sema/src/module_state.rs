@@ -348,11 +348,11 @@ impl crate::body::FnCx<'_, '_> {
     }
 }
 
-/// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
-/// function value whose body is not known; with the calls that lead there.
+/// Why a function may reach module state: the `let` or kept `const` it uses (and which), or that
+/// it calls a function value whose body is not known; with the calls that lead there.
 #[derive(Clone)]
 struct Reach {
-    what: String,
+    what: (String, Option<DefId>),
     via: Vec<DefId>,
 }
 
@@ -361,7 +361,7 @@ struct Reach {
 /// initializers a `new` or a constant read evaluates); and the types of the values it handles,
 /// whose class hooks it may run without a call (`replaced_holders::implicit`).
 struct Facts {
-    direct: Option<String>,
+    direct: Option<(String, Option<DefId>)>,
     edges: Vec<DefId>,
     tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
@@ -381,8 +381,8 @@ struct Facts {
 /// through the code that runs without a call (field and constant initializers, and the
 /// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
 /// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
-/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` if it happens
-/// anyway).
+/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` otherwise).
+/// A variable this refuses is recorded (`script_locals`).
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // Without `any`, no function has properties (locked_props.rs).
     let props = cx.any.is_some_and(|a| a.imp.is_some());
@@ -490,16 +490,20 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
                 r
             }),
             _ => Some(Reach {
-                what: "is a function value whose body is not known here".into(),
+                what: (
+                    "is a function value whose body is not known here".into(),
+                    None,
+                ),
                 via: vec![],
             }),
         };
         let Some(r) = found else { continue };
+        cx.state_refused.extend(r.what.1);
         let what = match r.via.is_empty() {
-            true => r.what,
+            true => r.what.0,
             false => {
                 let chain: Vec<String> = r.via.iter().map(|&f| node_name(cx, f)).collect();
-                format!("{} (through {})", r.what, chain.join(" -> "))
+                format!("{} (through {})", r.what.0, chain.join(" -> "))
             }
         };
         cx.error(
@@ -614,7 +618,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
         if !self.std {
             self.facts.props = true;
             if self.facts.direct.is_none() {
-                self.facts.direct = Some(what.into());
+                self.facts.direct = Some((what.into(), None));
             }
         }
     }
@@ -681,8 +685,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
         }
     }
 
-    /// The methods a virtual call through slot `slot` of class `class` may run: its own and every
-    /// subclass's.
+    /// The methods a virtual call through slot `slot` of class `class` may run (also subclasses').
     fn virtual_methods(&mut self, class: DefId, slot: u32) {
         let ms = self.dispatch.virtual_methods(class, slot);
         self.facts.edges.extend(ms);
@@ -699,7 +702,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
             E::Global(d) => match self.cx.global(*d) {
                 Some(g) if g.stored => {
                     if self.facts.direct.is_none() {
-                        self.facts.direct = Some(format!("uses `{}`", g.name));
+                        self.facts.direct = Some((format!("uses `{}`", g.name), Some(*d)));
                     }
                 }
                 // A constant's initializer runs at each read.

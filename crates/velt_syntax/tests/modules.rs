@@ -126,4 +126,8 @@ fn script_variables_closures_capture_stay_module_state() {
                spawn((async () => { stats.n++; set.add(1); })());\n\
                if (grow instanceof Map) { grow.forEach((v, k) => grow.set(k, v)); }\n";
     assert_eq!(module_vars(src), ["set"]);
+    // Not a new promise: module state cannot hold one, and a closure awaits the same promise.
+    let src = "const ready = new Promise<number>((r) => r(5));\nconst list = [1];\n\
+               const use = async () => (await ready) + list.length;\nconsole.log(await use());\n";
+    assert_eq!(module_vars(src), ["list"]);
 }

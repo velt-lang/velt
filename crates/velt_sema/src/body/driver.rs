@@ -356,6 +356,7 @@ pub(crate) fn promise_in_state(
     if !holds_promise_by_value(cx, ty, 0) {
         return;
     }
+    cx.state_refused.push(d);
     let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
     let shown = cx.display(ty);
     cx.error(

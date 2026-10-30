@@ -22,7 +22,7 @@ pub struct FreeUse {
 }
 
 /// The free names of `item`.
-pub(super) fn free_names(item: &Item) -> FxHashSet<String> {
+pub fn free_names(item: &Item) -> FxHashSet<String> {
     let mut n = Names::default();
     match &item.kind {
         // A top-level variable's initializer runs at once; the rest is the item's own code.

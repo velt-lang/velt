@@ -9,7 +9,10 @@
 //! function the code makes names (an arrow, a function expression, a method, a function declared
 //! in a block; #1872): as in Node, that function sees the module's variable, which it may assign
 //! from another task (a request handler), and what the statements assign after making it, where
-//! a local of `main` would be captured as a copy. Sema initializes the
+//! a local of `main` would be captured as a copy. When module state can't hold one that only
+//! a function the code makes keeps there (a promise, a variable a `Mutex` `with` callback uses:
+//! types the parser can't see), sema checks the program again with it in `main`, where it was
+//! before (`velt_sema` `script_locals`). Sema initializes the
 //! ones that are module state where they stand among the statements (#1438) and reports a
 //! statement that uses a declaration below it directly (`velt_sema` `script_tdz`).
 //!
@@ -203,7 +206,8 @@ impl Parser<'_> {
             // in its own initializer names (`const p = new Proxy(t, { get: () => p })`, which
             // would need a type as module state), and one whose declared type is wider than the
             // object (`const m: object = new Map()`): the checks the statements make narrow a
-            // local (`m instanceof Map`), not module state.
+            // local (`m instanceof Map`), not module state. A new promise isn't such an object
+            // (`fresh_object`); a `let` that holds one is moved back into `main` by sema.
             let fresh = v.init.as_ref().is_some_and(fresh_object)
                 && !v.ty.as_ref().is_some_and(wide_type)
                 && !own_captured.iter().any(|n| names.contains(n));
@@ -359,10 +363,13 @@ fn assigned_names(items: &[Item], stmts: &[Stmt]) -> rustc_hash::FxHashSet<Strin
 
 /// Does `e` make a new object the code may change: `new C(…)` or an array literal? (Not an
 /// object literal yet: sema checks some uses of one, such as `Object.defineProperty` on it, only
-/// on a local.)
+/// on a local. Not `new Promise(…)`, which module state cannot hold and nothing changes: a
+/// closure awaits the same promise.)
 fn fresh_object(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::New { .. } | ExprKind::Array(_) => true,
+        ExprKind::New { class, .. } => !matches!(&class.kind,
+            TypeExprKind::Named { path, .. } if matches!(path.as_slice(), [c] if c.name == "Promise")),
+        ExprKind::Array(_) => true,
         ExprKind::Paren(e) | ExprKind::Cast { expr: e, .. } => fresh_object(e),
         _ => false,
     }
