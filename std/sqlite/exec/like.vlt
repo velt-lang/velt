@@ -1,0 +1,63 @@
+// velt:sqlite/exec/like — the LIKE and GLOB operators, compiled: `x LIKE p [ESCAPE e]`.
+
+import { NULL } from "velt:sqlite/btree";
+import { SqlRunError } from "velt:sqlite/exec/errors";
+import {
+  LIKE_PATTERN_LIMIT,
+  PatternInfo,
+  cBytes,
+  chars,
+  patternMatch,
+} from "velt:sqlite/exec/text";
+import { Val, intVal, nullVal, toText, valueBytes } from "velt:sqlite/exec/value";
+
+/**
+ * `like(p, s [, e])` or `glob(p, s)` on values, checked in the order of SQLite's likeFunc: a
+ * pattern longer than `LIKE_PATTERN_LIMIT` bytes is an error even when the string is NULL, then
+ * a NULL ESCAPE gives NULL and one that is not a single character is an error, and only then a
+ * NULL string or pattern gives NULL. `e` is null when there is no ESCAPE.
+ */
+export function likeValue(s: Val, pt: Val, e: Val | null, glob: bool): Val throws Error {
+  // sqlite3_value_bytes: the whole value, before the matcher stops at a NUL.
+  if (pt.t != NULL && valueBytes(pt) > LIKE_PATTERN_LIMIT) {
+    throw new SqlRunError("LIKE or GLOB pattern too complex");
+  }
+  let escape: i64 = 0;
+  if (e != null) {
+    const ev = e!;
+    if (ev.t == NULL) {
+      return nullVal();
+    }
+    // sqlite3Utf8CharLen(zEsc, -1) counts up to the first NUL.
+    const cs = chars(cBytes(toText(ev)));
+    if (cs.length != 1) {
+      throw new SqlRunError("ESCAPE expression must be a single character");
+    }
+    escape = cs[0];
+  }
+  if (s.t == NULL || pt.t == NULL) {
+    return nullVal();
+  }
+  const m = patternMatch(cBytes(toText(pt)), cBytes(toText(s)), new PatternInfo(glob, escape));
+  return intVal(m ? 1 : 0);
+}
+
+/** `x [NOT] LIKE p [ESCAPE esc]` (or GLOB): 1, 0, or NULL when an operand is NULL. */
+export function compileLike(
+  x: () => Val throws Error,
+  p: () => Val throws Error,
+  esc: (() => Val throws Error) | null,
+  glob: bool,
+  not: bool,
+): () => Val throws Error {
+  return () => {
+    const s = x();
+    const pt = p();
+    const e = esc != null ? esc!() : null;
+    const r = likeValue(s, pt, e, glob);
+    if (r.t == NULL || !not) {
+      return r;
+    }
+    return intVal(r.i == 1 ? 0 : 1);
+  };
+}

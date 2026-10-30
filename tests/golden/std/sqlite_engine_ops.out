@@ -1,0 +1,21 @@
+binary operators: 7260 cases, all the same
+minus and CAST: 132 cases, all the same
+LIKE and GLOB: 366 cases, all the same
+a pattern of 50000 bytes: velt integer:1, C integer:1
+a pattern of 50001 bytes: velt "LIKE or GLOB pattern too complex", C "LIKE or GLOB pattern too complex"
+NULL LIKE <50003 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"
+'a' LIKE <50003 chars of SQL> ESCAPE 'ab': velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"
+'a' LIKE <50020 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"
+NULL LIKE 1 ESCAPE 12: velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
+1 LIKE NULL ESCAPE 12: velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
+'a' LIKE 'a' ESCAPE NULL: velt null:, C null:
+'x' LIKE 'x' ESCAPE 'a' || char(0) || 'b': velt integer:1, C integer:1
+'a' LIKE 'a' ESCAPE char(0): velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"
+a value of 1000000000 bytes: ok
+a value of 1000000001 bytes: string or blob too big
+text:ab12 null:
+real:0.0
+integer:0
+real:9.2233720368547758e+18
+real:0.0
+real:9.2233720368547758e+18
