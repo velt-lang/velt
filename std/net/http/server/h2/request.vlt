@@ -132,6 +132,9 @@ export class H2Request {
       if (s.remoteEnded) {
         return null;
       }
+      if (s.late) {
+        throw new IoError("ETIMEDOUT", "the request body did not arrive in time");
+      }
       if (s.reset) {
         this.cut = true;
         throw new IoError("ECONNRESET", "the client reset the stream before the end of its body");
@@ -197,9 +200,9 @@ export class H2Request {
     return this.cut;
   }
 
-  /// Never: HTTP/2 bodies have no time limit of their own yet (internal).
+  /// Whether the body did not arrive within `requestTimeout` (internal: answered 408).
   timedOut(): bool {
-    return false;
+    return this.s.late;
   }
 
   /// A client that sent `expect: 100-continue` gets the 100 before the handler first waits for

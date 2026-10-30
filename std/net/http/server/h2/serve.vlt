@@ -27,10 +27,10 @@ export async function serveH2<E>(
       await handler(req, res);
     } catch (e) {
       try {
-        if (req.bodyTooLarge()) {
+        if (req.bodyTooLarge() || req.timedOut()) {
           if (!res.sent()) {
-            res.status(413);
-            res.send("Payload Too Large");
+            res.status(req.timedOut() ? 408 : 413);
+            res.send(req.timedOut() ? "Request Timeout" : "Payload Too Large");
           }
         } else if (!res.clientGone() && !req.bodyMalformed()) {
           if (!res.sent()) {

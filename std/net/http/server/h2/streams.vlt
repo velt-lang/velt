@@ -232,7 +232,7 @@ export function onHeaderBlock(
     c.spend();
     return;
   }
-  const s = c.takeStream();
+  const s = c.pool.pop() ?? new H2Stream();
   s.fields.clear();
   if (!c.decoder.decode(src, start, end, s.fields)) {
     c.pool.push(s);
@@ -240,6 +240,10 @@ export function onHeaderBlock(
     return;
   }
   s.open(id, c.opts.streamWindow, c.peerInitialWindow);
+  s.deadline = Date.now() + c.opts.requestTimeout;
+  if (s.deadline < c.nextDeadline) {
+    c.nextDeadline = s.deadline;
+  }
   c.inUse++;
   c.streams.set(id, s);
   if ((flags & 0x100) != 0 || !checkRequest(s.fields, s.info)) {
@@ -283,6 +287,25 @@ export function startHandlers(c: H2Connection) {
       const running = serve(c, s);
     }
   }
+}
+
+/// Marks the streams whose request body is past its deadline (`requestTimeout`) and wakes their
+/// handlers, whose reads then throw `ETIMEDOUT` (408); computes the next deadline.
+export function expire(c: H2Connection) {
+  const now = Date.now();
+  let next: i64 = 9007199254740991;
+  for (const s of c.streams.values()) {
+    if (s.remoteEnded || s.late || s.reset) {
+      continue;
+    }
+    if (s.deadline <= now) {
+      s.late = true;
+      s.wake();
+    } else if (s.deadline < next) {
+      next = s.deadline;
+    }
+  }
+  c.nextDeadline = next;
 }
 
 /// Decodes a block nobody keeps (HPACK state only).

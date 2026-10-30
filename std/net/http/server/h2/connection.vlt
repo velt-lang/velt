@@ -37,13 +37,15 @@ import { H2Request } from "velt/net/http/server/h2/request";
 import { H2Response } from "velt/net/http/server/h2/response";
 import { CLOSED, H2Stream } from "velt/net/http/server/h2/stream";
 import { frames } from "velt/net/http/server/h2/inbound";
-import { startHandlers } from "velt/net/http/server/h2/streams";
+import { expire, startHandlers } from "velt/net/http/server/h2/streams";
 import { linger } from "velt/net/http/server/h2/linger";
 
 /// Queued output beyond which the connection reads no more frames until the peer has read most
 /// of it: a peer that sends PINGs or requests but does not read the answers gets no more.
 const MAX_QUEUED: number = 1048576;
 const RESUME_QUEUED: number = 262144;
+/// No deadline.
+const MAX_TIME: i64 = 9007199254740991;
 
 /// One HTTP/2 connection.
 export class H2Connection {
@@ -66,6 +68,8 @@ export class H2Connection {
   /// Streams in use: in `streams`, or reset with their handler still running (the concurrency
   /// limit counts these).
   inUse: i64 = 0;
+  /// The earliest deadline of a request body still arriving (`MAX_TIME`: none).
+  nextDeadline: i64 = MAX_TIME;
   /// The handler of each request.
   handler: (req: H2Request, res: H2Response) => Promise<void>;
 
@@ -174,6 +178,9 @@ export class H2Connection {
           if (this.starting.length > 0 && !this.done) {
             startHandlers(this);
           }
+          if (this.nextDeadline <= Date.now()) {
+            expire(this);
+          }
           this.inBatch = false;
         }
         const queued = this.flush();
@@ -219,12 +226,21 @@ export class H2Connection {
         this.wakeLoop = w;
         signal = w.signal;
       }
-      const idle = this.inUse > 0 ? 3600000 : this.opts.idleTimeout;
-      if (await this.conn.readableWithin(idle, signal)) {
-        this.wakeLoop = null;
+      let idle = this.inUse > 0 ? 3600000 : this.opts.idleTimeout;
+      if (this.inUse > 0 && this.nextDeadline < MAX_TIME) {
+        // Not past the next request body's deadline.
+        const left = (this.nextDeadline - Date.now()) as number;
+        idle = left < 1 ? 1 : left < idle ? left : idle;
+      }
+      const ready = await this.conn.readableWithin(idle, signal);
+      this.wakeLoop = null;
+      if (this.nextDeadline <= Date.now()) {
+        expire(this);
+        this.flush();
+      }
+      if (ready) {
         return true;
       }
-      this.wakeLoop = null;
       if (!this.stopped.aborted && !this.goingAway && this.inUse == 0) {
         // Idle: tell the peer, then close.
         this.goaway(NO_ERROR, "idle");
@@ -318,12 +334,6 @@ export class H2Connection {
     }
   }
 
-  /// A stream from the pool (or a new one).
-  takeStream(): H2Stream {
-    const s = this.pool.pop();
-    return s == undefined ? new H2Stream() : s;
-  }
-
   /// Forgets a stream the protocol is done with; its object goes back to the pool once its
   /// handler has returned too.
   release(s: H2Stream) {
@@ -383,12 +393,4 @@ export class H2Connection {
       this.rbuf = grown;
     }
   }
-
-  /// Applies the peer's SETTINGS frame at `rbuf[at..at + length)`: false after a connection
-  /// error (sent already).
-  applySettings(at: i64, length: i64): bool {
-    return applyPeerSettings(this, at, length);
-  }
 }
-
-import { applyPeerSettings } from "velt/net/http/server/h2/settings";

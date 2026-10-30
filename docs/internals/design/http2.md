@@ -135,6 +135,17 @@ upload), the stream is reset with NO_ERROR (§8.1) and what it held is given bac
   FLOW_CONTROL_ERROR. A streamed body (`HttpStream.write`) waits while more than 64 KiB of it
   wait for window or for the socket.
 
+### Time limits
+
+`requestTimeout` (300 s) runs per stream from its head, as HTTP/1.1's runs per request: a
+handler still reading the body after it gets `IoError` `ETIMEDOUT` and, if it lets the error
+through before sending, the client gets 408; the stream is reset with NO_ERROR after the
+response, the connection goes on. The connection keeps the earliest deadline of the bodies
+still arriving and waits for input no longer than that (one wait in the runtime, no timer per
+stream). `idleTimeout` closes a connection that has no streams. `headersTimeout` has no HTTP/2
+counterpart: a head is one header block, and a block that does not end is bounded by the block
+limits below and the idle timeout.
+
 ### SETTINGS, PING, GOAWAY
 
 Our SETTINGS go out first (MAX_CONCURRENT_STREAMS, INITIAL_WINDOW_SIZE,
@@ -272,6 +283,4 @@ carry that layer's cost over HTTP/2 too.
 
 - Response trailers (an API in `HttpResponse` first), extended CONNECT (RFC 8441) for WebSockets
   over HTTP/2.
-- Time limits for an HTTP/2 request body (`requestTimeout`); the idle timeout applies to a
-  connection without streams only.
 - An HTTP/2 client for `fetch`.

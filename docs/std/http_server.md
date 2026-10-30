@@ -217,6 +217,10 @@ write. What differs from HTTP/1.1, for a handler:
 - Bodies have flow control: a request body arrives as fast as the handler reads it (up to
   256 KiB a stream may send ahead), and a response body is sent as fast as the client's
   windows allow; `HttpStream.write` waits while more than 64 KiB are still to be sent.
+- `requestTimeout` applies to each stream: a handler reading a body that has not arrived within
+  it from the request's head gets `IoError` `ETIMEDOUT`, and the client 408 (if nothing was sent
+  yet); the stream is then reset (NO_ERROR), the connection and its other streams go on.
+  `idleTimeout` closes a connection without streams (GOAWAY first).
 - A client that resets its stream aborts `res.signal()`, and a write to it throws `IoError`;
   the handler's slot stays taken until it returns, so resetting streams never runs more
   handlers at once than the limit.

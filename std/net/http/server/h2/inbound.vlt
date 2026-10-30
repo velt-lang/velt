@@ -37,6 +37,7 @@ import {
   onWindowUpdate,
   streamError,
 } from "velt/net/http/server/h2/streams";
+import { applyPeerSettings } from "velt/net/http/server/h2/settings";
 
 /// A header block may take this many CONTINUATION frames (a flood of tiny ones is refused).
 const MAX_CONTINUATIONS: i64 = 128;
@@ -114,7 +115,7 @@ function settings(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
   } else if (len % 6 != 0) {
     c.fail(FRAME_SIZE_ERROR, "a SETTINGS length not a multiple of 6");
   } else {
-    c.applySettings(p, len);
+    applyPeerSettings(c, p, len);
   }
 }
 

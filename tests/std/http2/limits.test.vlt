@@ -1,6 +1,7 @@
 // velt/net/http's HTTP/2 server under abuse and shutdown: the concurrency limit (counting
 // handlers of reset streams too), rapid reset (CVE-2023-44487), empty DATA frames, a client
 // reset aborting the handler's signal, and a graceful stop.
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { delay } from "velt/time/timers";
 import { h2Options } from "velt/net/http/server/h2/options";
@@ -34,6 +35,33 @@ describe("HTTP/2 limits", () => {
     c.get(7, "/fast");
     await c.flush();
     expect(await c.until(endOf(7))).toBe("HEADERS 7 :status=200\nDATA 7 es 4:done");
+    c.close();
+    server.close();
+  });
+
+  it("answers 408 when a request body does not arrive within requestTimeout", async () => {
+    const opts = h2Options();
+    opts.requestTimeout = 200;
+    const server = await startServer(
+      async (req: H2Request, res: H2Response) => {
+        const body = await req.bodyText();
+        res.send(`got ${body}`);
+      },
+      opts,
+    );
+    const c = await Client.open(server.port);
+    c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 0, 1, bytes("part"));
+    // Stream 3 sends its whole body in time.
+    c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 1, 3, bytes("all"));
+    await c.flush();
+    const started = Date.now();
+    const out = await timeout(c.until((f) => f.id == 1 && f.type == 3), 3000);
+    expect(out).toBe(
+      "HEADERS 3 :status=200\nDATA 3 es 7:got all\nHEADERS 1 :status=408\nDATA 1 es 15:Request Timeout\nRST 1 NO_ERROR",
+    );
+    expect(Date.now() - started >= 150).toBe(true);
     c.close();
     server.close();
   });

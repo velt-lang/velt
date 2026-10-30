@@ -60,6 +60,9 @@ export class H2Stream {
   running: bool = false;
   /// The connection is in the list of streams with output waiting.
   queued: bool = false;
+  /// The request body must have arrived by `deadline` (`Date.now()` ms); `late` once it has not.
+  deadline: i64 = 0;
+  late: bool = false;
 
   // Who waits: a handler for body or window (`wake` settles it).
   private waiter: (() => void) | null = null;
@@ -85,6 +88,7 @@ export class H2Stream {
     this.reset = false;
     this.running = false;
     this.queued = false;
+    this.late = false;
     this.waiter = null;
     this.aborter = null;
   }

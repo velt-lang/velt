@@ -17,6 +17,9 @@ export struct H2Options {
   maxBodySize: i64;
   /// Milliseconds a connection without streams stays open (5000).
   idleTimeout: number;
+  /// Milliseconds a request's body may take to arrive, from its head (300000, as HTTP/1.1's
+  /// `requestTimeout`): a handler reading it after that gets `IoError` `ETIMEDOUT` (408).
+  requestTimeout: i64;
 }
 
 /// The defaults, with the HTTP/1.1 server's limits where they apply.
@@ -24,6 +27,7 @@ export function h2Options(
   maxHeaderListSize: i64 = 16384,
   maxBodySize: i64 = 8388608,
   idleTimeout: number = 5000,
+  requestTimeout: i64 = 300000,
 ): H2Options {
   return {
     maxConcurrentStreams: 128,
@@ -32,5 +36,6 @@ export function h2Options(
     maxHeaderListSize: maxHeaderListSize,
     maxBodySize: maxBodySize,
     idleTimeout: idleTimeout,
+    requestTimeout: requestTimeout,
   };
 }

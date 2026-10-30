@@ -113,7 +113,12 @@ export async function serveHttp<E>(
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
   let h2: H2Options | null = null;
   if (opts.http2 ?? true) {
-    const o = h2Options(maxHead, maxBody, opts.idleTimeout ?? IDLE_MS);
+    const o = h2Options(
+      maxHead,
+      maxBody,
+      opts.idleTimeout ?? IDLE_MS,
+      (opts.requestTimeout ?? REQUEST_MS) as i64,
+    );
     o.maxConcurrentStreams = (opts.maxConcurrentStreams ?? 128) as i64;
     h2 = o;
   }
