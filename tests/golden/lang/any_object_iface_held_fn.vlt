@@ -1,7 +1,7 @@
 // A function held through `any` and called with an object literal converts the argument to its
 // parameter's interface (#1909): a function type, a closure, an optional function. And the
-// conversions in a generic class's method and in a generic function another one calls, each at
-// its type arguments.
+// conversions in a generic class's method, in a generic function another one calls and to a
+// type parameter given the interface, each at its type arguments.
 interface SetupCtx {
   props: any;
   emit(name: string): void;
@@ -55,6 +55,10 @@ function outer<V>(o: unknown): string {
 function list<T>(o: unknown): Box<T>[] {
   return o as Box<T>[];
 }
+function conv<T>(o: unknown): T {
+  return o as T;
+}
+console.log(conv<Box<string>>({ value: "c", show: () => "conv" } as unknown).show());
 console.log(outer<boolean>({ value: true, show: () => "yes" } as unknown));
 const l = list<number>([{ value: 1, show: () => "one" }] as unknown);
 console.log(l[0].value, l[0].show(), emitted.join(","));
