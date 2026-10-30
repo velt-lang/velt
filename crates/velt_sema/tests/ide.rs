@@ -468,3 +468,16 @@ function main() { const f = () => 1; console.log(f.run(new E()), f.map((x: numbe
         map.detail
     );
 }
+
+#[test]
+fn extension_methods_on_function_types_name_the_hidden_error_apart_from_method_generics() {
+    // A method's own type parameter `E` keeps its name in the hover; the error type the block
+    // adds for `() => R` (#1878) shows as `E1`.
+    let src = "extend<R> (() => R) {
+  run<E>(x: E): R { return this(); }
+}
+function main() { const f = () => 1; console.log(f.run(2)); }";
+    let (a, file) = analyze(src);
+    let run = a.def_at(file, at(src, "run<E>", 0, 0)).expect("run");
+    assert_eq!(run.detail, "(method) run<R, E>(x: E): R throws E1");
+}

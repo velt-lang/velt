@@ -36,13 +36,15 @@ struct Target {
     fixed: Option<TyId>,
 }
 
-/// Resolve the target `t` of an `extend` block with type parameters `generics`, adding one
-/// for the error type of each function type in it written without `throws`.
+/// Resolve the target `t` of an `extend` block with type parameters `generics` and methods
+/// `methods`, adding one for the error type of each function type in it written without
+/// `throws`.
 pub(super) fn resolve_target(
     cx: &mut Ctx,
     t: &ast::TypeExpr,
     env: &TyEnv,
     generics: &mut Generics,
+    methods: &[ast::Method],
 ) -> TyId {
     let resolved = cx.resolve_type(t, env);
     let n = generics.len() as u32;
@@ -53,7 +55,7 @@ pub(super) fn resolve_target(
     };
     let target = with_error_params(cx, resolved, &mut at, 0);
     for _ in n..at.next {
-        let name = unused_name(cx, generics, env.module, t.span);
+        let name = unused_name(cx, generics, methods, env.module, t.span);
         generics.push(&name);
     }
     if let Some(e) = at.fixed {
@@ -134,13 +136,17 @@ fn error_param(cx: &mut Ctx, e: TyId, free: bool, at: &mut Target) -> TyId {
 }
 
 /// The name of an added parameter: `E`, or else the first of `E1`, `E2`, … that no parameter
-/// of the block shows as and no type in the block's scope (`module`, at `at`) is named,
-/// ended with `HIDDEN_PARAM`. Source can't name it, so a type `E` in the scope keeps its
-/// meaning in the block's methods; messages show the name without the mark, and it names
-/// nothing else there (`throws E1` beside a class `E`).
-fn unused_name(cx: &Ctx, g: &Generics, module: usize, at: Span) -> String {
+/// of the block shows as, no type parameter of one of its `methods` is named and no type in
+/// the block's scope (`module`, at `at`) is named, ended with `HIDDEN_PARAM`. Source can't
+/// name it, so a type `E` in the scope keeps its meaning in the block's methods; messages show
+/// the name without the mark, and it names nothing else there (`throws E1` beside a class `E`
+/// or in a method `m<E>`).
+fn unused_name(cx: &Ctx, g: &Generics, methods: &[ast::Method], module: usize, at: Span) -> String {
     let taken = |s: &str| {
         g.names.iter().any(|n| shown_param(n) == s)
+            || methods
+                .iter()
+                .any(|m| m.decl.sig.generics.iter().any(|p| p.name.name == s))
             || cx
                 .lookup_type_item_at(module, s, at)
                 .is_some_and(|item| cx.is_type_item(item))

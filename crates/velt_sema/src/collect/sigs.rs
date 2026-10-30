@@ -689,7 +689,8 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         }
     }
     generics.bounds = b.bounds;
-    let target = super::ext_fn_errors::resolve_target(cx, &e.target, &env, &mut generics);
+    let target =
+        super::ext_fn_errors::resolve_target(cx, &e.target, &env, &mut generics, &e.methods);
     let saved = std::mem::replace(&mut cx.display_params, generics.names.clone());
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
     cx.display_params = saved;

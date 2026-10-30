@@ -768,9 +768,9 @@ builtins included, at zero cost (the calls are direct):
   anything: it has a type parameter of its own for that, so `this` in the block is the
   receiver with its error type, and calling `this()` throws what the receiver throws. That
   parameter has no name in the block (a type `E` in scope keeps its meaning there); messages
-  show it as `E`, or as `E1`, `E2`, … when the block or its scope has a type of that name,
-  and hovers leave it out of the method's type parameters. To name
-  it, write the parameter (`extend<R, E> (() => R throws E)`); a fixed error type (`() => R
+  show it as `E`, or as `E1`, `E2`, … when the block, one of its methods or its scope has a
+  type of that name, and hovers leave it out of the method's type parameters. To name it,
+  write the parameter (`extend<R, E> (() => R throws E)`); a fixed error type (`() => R
   throws Error`) is an error. A function type written without `throws` in a method's
   signature can't hold `this` (`self(): () => R { return this; }` is an error: expected `() =>
   R`, found `() => R throws E`), as a function type's error type parameter isn't assignable to
