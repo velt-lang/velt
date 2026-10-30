@@ -48,6 +48,7 @@ mod pick;
 mod resolve;
 mod spec;
 mod std_root;
+mod wanted;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -132,6 +133,9 @@ pub fn load_with_roots(
         npm: vpm::npm::NpmResolver::default(),
         ambient: ambient::Ambients::new(opts.packages),
         global_vars: vec![],
+        wanted: wanted::WantedByModule::default(),
+        resolved: std::collections::HashSet::new(),
+        effects: HashMap::new(),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -204,6 +208,14 @@ struct Loader<'a, 'o> {
     /// The typed `var`s of each module's `declare global { … }`, by module index
     /// ([`ambient::global_vars`]).
     global_vars: Vec<(usize, Vec<velt_syntax::Ambient>)>,
+    /// What importers ask of each module, so a std module's re-exports load only for the names
+    /// a program imports ([`wanted`]).
+    wanted: wanted::WantedByModule,
+    /// The modules whose imports were resolved (a std module asked for more names later is
+    /// resolved again, for the re-exports that adds).
+    resolved: std::collections::HashSet<usize>,
+    /// Per std file not loaded: whether it has effects beyond its exports ([`wanted::has_effects`]).
+    effects: HashMap<PathBuf, bool>,
 }
 
 impl Loader<'_, '_> {
@@ -441,34 +453,54 @@ impl Loader<'_, '_> {
     }
 
     /// Resolve every import of module `index`, loading new modules (queued for their own imports).
+    /// A std module's re-exports are followed only for the names asked of it ([`wanted`]).
     fn resolve_imports(&mut self, index: usize, queue: &mut VecDeque<usize>) {
-        let imports: Vec<(String, Span)> = self.modules[index]
-            .ast
-            .items
-            .iter()
+        let is_std = self.modules[index].is_std;
+        let items: Vec<(ast::Import, bool)> = (self.modules[index].ast.items.iter())
             .filter_map(|item| match &item.kind {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
-                    Some((imp.from.clone(), imp.from_span))
+                    Some((imp.clone(), item.exported))
                 }
                 // `declare module "spec" { … }` augments that module: it is loaded as an import.
                 ast::ItemKind::Augment(ast::Augment {
                     module: Some((spec, span)),
                     ..
-                }) => Some((spec.clone(), *span)),
+                }) => Some((wanted::augmented(spec, *span), false)),
                 _ => None,
             })
             .collect();
-        for (spec, span) in imports {
-            if self.modules[index].imports.iter().any(|(s, _)| *s == spec) {
+        let mut imports: Vec<(String, Span, Option<Vec<String>>)> = vec![];
+        for (imp, exported) in items {
+            let skip = exported && is_std && !self.wanted.needs(index, &imp);
+            if skip && self.pure(index, &imp.from) {
                 continue;
             }
-            if let Some(target) = self.import(index, &spec, span, queue) {
-                let canonical = self.modules[target].path.clone();
-                self.modules[index].imports.push((spec, canonical));
+            imports.push((imp.from.clone(), imp.from_span, wanted::names_taken(&imp)));
+        }
+        let first = self.resolved.insert(index);
+        for (spec, span, names) in imports {
+            let known = self.modules[index].imports.iter().find(|(s, _)| *s == spec);
+            let target = match known {
+                Some((_, path)) => self.modules.iter().position(|m| m.path == *path),
+                None => {
+                    let target = self.import(index, &spec, span, queue);
+                    if let Some(t) = target {
+                        let canonical = self.modules[t].path.clone();
+                        self.modules[index].imports.push((spec, canonical));
+                    }
+                    target
+                }
+            };
+            if let Some(t) = target {
+                if self.wanted.request(t, names) && self.resolved.contains(&t) && t != index {
+                    queue.push_back(t);
+                }
             }
         }
-        self.jsx_runtime(index, queue);
-        self.load_globals(index, queue);
+        if first {
+            self.jsx_runtime(index, queue);
+            self.load_globals(index, queue);
+        }
     }
 
     /// Load the JSX runtime of module `index` if it contains JSX.

@@ -32,6 +32,11 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
             continue;
         }
         let Some(t) = import_target(cx, m, &imp.from) else {
+            if item.exported && modules[m].is_std {
+                // A re-export of a std module no one imports a name of: not loaded
+                // (veltc's loader, `wanted`).
+                continue;
+            }
             cx.err(
                 format!("cannot resolve module `{}`", imp.from),
                 imp.from_span,
