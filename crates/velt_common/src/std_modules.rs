@@ -1,5 +1,5 @@
 //! The standard library modules the compiler knows by name, in one table
-//! (docs/internals/design/std-layout.md §5).
+//! (docs/internals/design/std-layout.md §5), and the prelude's load order (§4).
 //! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
 //!
 //! Each entry names a module by its path below the std root (`prelude/adapt` for
@@ -156,6 +156,45 @@ macro_rules! std_specifier {
     };
 }
 
+/// The file listing the prelude's modules in load order, below the std root.
+pub const PRELUDE_INDEX: &str = "prelude/index.vlt";
+
+/// The prelude's modules in load order, as `prelude/index.vlt` (`index_src`) lists them: one
+/// side-effect import per module (`import "./array";`), comments and blank lines between. Each
+/// is a file name below `prelude/` without its extension (`array`). A line that is not such an
+/// import is an error naming it (1-based line number).
+pub fn prelude_order(index_src: &str) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    for (n, raw) in index_src.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        let name = line
+            .strip_prefix("import \"./")
+            .and_then(|rest| rest.strip_suffix("\";"))
+            .filter(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            });
+        match name {
+            Some(name) if out.iter().any(|m| m == name) => {
+                return Err(format!("line {}: `{name}` is listed twice", n + 1));
+            }
+            Some(name) => out.push(name.to_string()),
+            None => {
+                return Err(format!(
+                    "line {}: expected `import \"./<module>\";`, found `{line}`",
+                    n + 1
+                ))
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +228,41 @@ mod tests {
         assert_eq!(specifier("std/fs/index").as_deref(), Some("velt/fs"));
         assert_eq!(specifier("main"), None);
         assert!(is_std("std/fs::readFile") && !is_std("stdlib"));
+    }
+
+    #[test]
+    fn prelude_order_reads_the_imports_in_order() {
+        let src = "// Prelude: the order.\n\nimport \"./array\";\n// note\nimport \"./any_ops\";\n";
+        assert_eq!(prelude_order(src).unwrap(), ["array", "any_ops"]);
+        let err = prelude_order("import \"./a\";\nexport { x } from \"./b\";\n").unwrap_err();
+        assert!(err.starts_with("line 2: expected"), "{err}");
+        let err = prelude_order("import \"./a\";\nimport \"./a\";\n").unwrap_err();
+        assert!(err.contains("twice"), "{err}");
+        assert!(prelude_order("import \"../x\";").is_err());
+        assert!(prelude_order("import \"./global/x\";").is_err());
+    }
+
+    #[test]
+    fn std_prelude_index_lists_every_prelude_file() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
+        let src = std::fs::read_to_string(dir.join("index.vlt")).expect("std/prelude/index.vlt");
+        let mut listed = prelude_order(&src).expect("std/prelude/index.vlt");
+        let mut files: Vec<String> = std::fs::read_dir(&dir)
+            .expect("std/prelude")
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()?
+                    .strip_suffix(".vlt")
+                    .map(str::to_string)
+            })
+            .filter(|f| f != "index")
+            .collect();
+        listed.sort();
+        files.sort();
+        assert_eq!(
+            listed, files,
+            "std/prelude/index.vlt must list every prelude file once"
+        );
     }
 }

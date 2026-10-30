@@ -8,6 +8,7 @@ use super::*;
 fn globals_load_when_a_user_module_names_them() {
     let t = Tree::new();
     let std = t.path("std");
+    t.write("std/prelude/index.vlt", "import \"./core\";\n");
     t.write(
         "std/prelude/core.vlt",
         "export function id(): i64 { return 0; }\n",

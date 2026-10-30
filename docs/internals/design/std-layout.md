@@ -164,8 +164,10 @@ whole tree after the move is in the appendix.
 
 ### 4. `prelude/` and `lang/` are never imported
 
-- `std/prelude/` stays the implicit prelude. Its load order becomes an explicit list in
-  `std/prelude/index.vlt` (`import "./array"; …`), and the `z_`…`zzzzz_` prefixes go.
+- `std/prelude/` stays the implicit prelude. Its load order is an explicit list in
+  `std/prelude/index.vlt` (`import "./array"; …`), which the loader follows (done: the `z_`…`zzzzz_`
+  prefixes are gone; `velt_common::std_modules::prelude_order` reads the list, and a test checks
+  that it names every prelude file once).
 - `std/lang/` is new: what implements the language and its globals, which no program imports:
   `symbol`, `proxy`, `record`, `this_fn`, `import_meta`, `dom_exception`, `typed_array`,
   `number` (float parsing), `sort` (the sort algorithms). Each is a folder; since nothing

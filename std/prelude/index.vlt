@@ -1,0 +1,38 @@
+// Prelude: the modules implicitly imported into every program, in the order the compiler loads
+// them (docs/internals/design/std-layout.md §4). The loader reads this list, not the folder: a
+// new prelude file is added here, and a test checks that every file is listed once. Only
+// side-effect imports of files in this folder (`import "./name";`) and comments may appear.
+//
+// The core types and their methods come first, in name order. The dynamic value (`dynamic`),
+// the interface adapters (`adapt`, `adapt_ctor`) and the methods and operators of `any`
+// (`any_methods`, `any_ops`) come last, in this order, as when the order was spelled in file
+// names (`z_dynamic.vlt` … `zzzzz_any_ops.vlt`).
+
+import "./array";
+import "./array_nested";
+import "./assert";
+import "./bits";
+import "./bytes";
+import "./clone";
+import "./compare";
+import "./date";
+import "./error";
+import "./iter";
+import "./map";
+import "./math";
+import "./nullable";
+import "./number";
+import "./process";
+import "./promise";
+import "./record";
+import "./sort";
+import "./string";
+import "./sync";
+import "./timers";
+import "./type_tests";
+import "./weak";
+import "./dynamic";
+import "./adapt";
+import "./adapt_ctor";
+import "./any_methods";
+import "./any_ops";

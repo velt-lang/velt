@@ -231,14 +231,12 @@ fn normalize(p: &Path) -> PathBuf {
 }
 
 fn prelude(l: &mut Loader) {
+    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
     let dir = repo_root().join("std/prelude");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    files.retain(|f| f.extension().is_some_and(|e| e == "vlt"));
-    files.sort();
-    for f in files {
-        let name = f.file_stem().unwrap().to_string_lossy().to_string();
+    let index = std::fs::read_to_string(dir.join("index.vlt")).expect("std/prelude/index.vlt");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    for name in order {
+        let f = dir.join(format!("{name}.vlt"));
         let src = std::fs::read_to_string(&f).unwrap();
         l.add(&format!("std/prelude/{name}"), &f, src);
     }

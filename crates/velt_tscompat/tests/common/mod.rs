@@ -80,13 +80,13 @@ pub fn load(path: &Path, src: &str) -> Loaded {
         sm: SourceMap::new(),
         files: vec![],
     };
-    let mut prelude: Vec<PathBuf> = std::fs::read_dir(std_dir().join("prelude"))
-        .expect("std/prelude")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
-        .collect();
-    prelude.sort();
-    for file in prelude {
+    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
+    let index = std::fs::read_to_string(std_dir().join("prelude/index.vlt")).expect("index");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    for file in order
+        .iter()
+        .map(|n| std_dir().join(format!("prelude/{n}.vlt")))
+    {
         let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
         let text = std::fs::read_to_string(&file).expect("read the prelude");
         l.add(format!("std/prelude/{stem}"), true, &file, text);

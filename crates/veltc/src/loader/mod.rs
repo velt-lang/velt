@@ -1,6 +1,7 @@
 //! Module loading: root file → every module the program needs, parsed, as [`SourceModule`]s for sema.
 //!
-//! Order of the result: the prelude (`std/prelude/*.vlt`, canonical `"std/prelude/<name>"`), then
+//! Order of the result: the prelude (`std/prelude/*.vlt` in the order `std/prelude/index.vlt`
+//! lists them, canonical `"std/prelude/<name>"`), then
 //! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
 //! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. A global loaded on
 //! demand (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first
@@ -138,8 +139,13 @@ pub fn load_with_roots(
         effects: HashMap::new(),
     };
     if let Some(std) = &opts.std_root {
-        for file in prelude_files(std) {
-            loader.load_prelude(&file, std);
+        match prelude_files(std) {
+            Ok(files) => {
+                for file in files {
+                    loader.load_prelude(&file, std);
+                }
+            }
+            Err(e) => loader.diags.push(Diagnostic::error(e, Span::DUMMY)),
         }
         loader.globals = globals::global_modules(std);
     }

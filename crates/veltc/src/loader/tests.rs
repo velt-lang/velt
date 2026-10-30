@@ -96,6 +96,11 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");
+    // The index decides the prelude's order, not the file names.
+    t.write(
+        "std/prelude/index.vlt",
+        "// Prelude.\nimport \"./b_array\";\nimport \"./a_core\";\n",
+    );
     t.write(
         "std/prelude/b_array.vlt",
         "export function len(): i64 { return 0; }\n",
@@ -124,8 +129,8 @@ fn std_modules_and_prelude_come_first() {
     assert_eq!(
         paths(&l),
         [
-            "std/prelude/a_core",
             "std/prelude/b_array",
+            "std/prelude/a_core",
             "main",
             "std/math",
             "std/net"
