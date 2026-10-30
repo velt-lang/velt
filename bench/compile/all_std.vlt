@@ -171,6 +171,8 @@ import * as std_websocket_receive from "velt/net/websocket/receive";
 import * as std_websocket_topics from "velt/net/websocket/topics";
 import * as std_websocket_writer from "velt/net/websocket/writer";
 import * as std_os from "velt/os";
+import * as std_os_machine from "velt/os/machine";
+import * as std_os_rt from "velt/os/rt";
 import * as std_package from "velt/package";
 import * as std_postgres from "velt/postgres";
 import * as std_child_process from "velt/process/child";

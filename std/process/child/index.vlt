@@ -9,7 +9,7 @@
 
 import { IoError } from "velt/io/error";
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";
-import { platform } from "velt/os";
+import { platform } from "velt/os/machine";
 
 // The runtime's `VeltCommand`, field by field (the layout must match child/command.rs).
 struct CommandSpec {
