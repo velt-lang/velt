@@ -164,7 +164,7 @@ export async function __run() {
     // Counting blocks (`VELT_RC_STATS=1`, debug runtime): `main` returns, so the runtime frees
     // the module state and reports what is left (`blocks=A/F`), which the runner checks. A test
     // that left a timer or a server running then keeps the process alive (a leak).
-    if ((process.env.VELT_RC_STATS ?? "") == "1" && !result.teardownFailed) {
+    if (process.env.VELT_RC_STATS == "1" && !result.teardownFailed) {
       return;
     }
     process.exit(result.teardownFailed ? 1 : 0);
@@ -195,7 +195,7 @@ struct Outcome {
  */
 async function runTests(file: TestFile, from: usize, mark: string | null): Promise<Outcome> {
   const filter = process.env.VELT_TEST_FILTER;
-  const exact = (process.env.VELT_TEST_EXACT ?? "") == "1";
+  const exact = process.env.VELT_TEST_EXACT == "1";
   const tests = file
     .tests()
     .filter((t) => filter == null || (exact ? t.name == filter : t.name.includes(filter)));
@@ -431,7 +431,7 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   }
   // Counting blocks, the process returns from `main` after its tests and waits for what is
   // still running, as Node does: one that is still running after `LEAK_WAIT` is ended.
-  const counting = (process.env.VELT_RC_STATS ?? "") == "1";
+  const counting = process.env.VELT_RC_STATS == "1";
   let r: ExecResult;
   let ended = false;
   try {

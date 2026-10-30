@@ -1,0 +1,58 @@
+// `process.env.NAME` is a read of the variable in every operand position, as in Node: compared
+// with `==` / `===` / `!=` / `!==` to a literal (on either side), `switch`ed on, tested by `if`,
+// `!`, `typeof`, `?.` and a conditional, and passed on (#1871). So are the members of `Number`.
+// Output identical to Node (PATH is set and not empty; VELT_UNSET_1871 is not set).
+
+function isUnset(s: string | undefined): boolean {
+  return s === undefined;
+}
+
+function main() {
+  console.log("== lit:", process.env.VELT_UNSET_1871 == "1", process.env.PATH == "");
+  console.log("=== lit:", process.env.VELT_UNSET_1871 === "1", process.env.PATH === "");
+  console.log("!= lit:", process.env.VELT_UNSET_1871 != "1", process.env.PATH != "");
+  console.log("!== lit:", process.env.VELT_UNSET_1871 !== "1", process.env.PATH !== "");
+  console.log("lit ==:", "1" == process.env.VELT_UNSET_1871, "" === process.env.PATH);
+  const a = process.env.VELT_UNSET_1871 == "x";
+  const b = (process.env.VELT_UNSET_1871 ?? "") == "x";
+  console.log("const:", a, b);
+  console.log("nothing:", process.env.VELT_UNSET_1871 == null, process.env.PATH === undefined);
+  console.log("same:", process.env.PATH == process.env.PATH);
+  console.log("order:", process.env.PATH! < "~");
+  console.log("typeof:", typeof process.env.PATH, typeof process.env.PATH == "string");
+  console.log("template:", `${process.env.VELT_UNSET_1871}`);
+  console.log("?.length:", process.env.VELT_UNSET_1871?.length);
+  console.log("!:", !process.env.VELT_UNSET_1871, !process.env.PATH);
+  console.log("?:", process.env.VELT_UNSET_1871 ? "set" : "unset");
+  console.log("argument:", isUnset(process.env.VELT_UNSET_1871));
+  if (process.env.VELT_UNSET_1871 == "1") {
+    console.log("if: one");
+  } else {
+    console.log("if: not one");
+  }
+  if (process.env.VELT_UNSET_1871 !== undefined) {
+    console.log("if: set");
+  } else {
+    console.log("if: unset");
+  }
+  switch (process.env.VELT_UNSET_1871) {
+    case "1":
+      console.log("switch: one");
+      break;
+    default:
+      console.log("switch: other");
+  }
+  console.log(
+    "Number:",
+    Number.MAX_SAFE_INTEGER == 3,
+    Number.MAX_SAFE_INTEGER !== 9007199254740991,
+  );
+  switch (Number.MAX_SAFE_INTEGER) {
+    case 9007199254740991:
+      console.log("switch: max");
+      break;
+    default:
+      console.log("switch: other");
+  }
+  console.log("Math:", Math.PI == 3);
+}

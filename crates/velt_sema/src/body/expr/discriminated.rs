@@ -238,7 +238,7 @@ impl FnCx<'_, '_> {
         else {
             return Err(None);
         };
-        if self.is_type_name(object) {
+        if self.not_a_value(object) {
             return Err(None);
         }
         let obj = self.expr(object, None, Want::Borrow);

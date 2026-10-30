@@ -64,7 +64,7 @@ impl FnCx<'_, '_> {
                 object,
                 prop,
                 optional: false,
-            } if !self.is_type_name(object) => {
+            } if !self.not_a_value(object) => {
                 let obj = self.expr(object, None, Want::Borrow);
                 if let Some(values) = self.cx.discriminant_values(obj.ty, &prop.name) {
                     self.rec_discriminant(prop, obj.ty);
@@ -279,8 +279,36 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is `e` the object of a member read that is not a value of its own: a type / enum /
+    /// module item used as `X.y`, or a builtin global or a member of one (`Number`, `Math`,
+    /// `process.env`), whose members `member` reads without checking the object (#1871)?
+    pub(crate) fn not_a_value(&self, e: &ast::Expr) -> bool {
+        self.is_type_name(e) || self.is_builtin_rooted(e)
+    }
+
+    /// Is `e` a builtin global (a name the program doesn't declare, or `Number` and the other
+    /// prelude functions with a companion class), or a member path of one?
+    fn is_builtin_rooted(&self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.is_builtin_rooted(inner),
+            ast::ExprKind::Member {
+                object,
+                optional: false,
+                ..
+            } => self.is_builtin_rooted(object),
+            ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => {
+                // A prelude function with a companion class (`Number`) has its members there.
+                match self.cx.lookup_item_at(self.module, &id.name, id.span) {
+                    None => !self.is_namespace(&id.name),
+                    Some(it) => self.companion_class(&id.name, it).is_some(),
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// Is `e` a name that is not a value (a type / enum / module item used as `X.y`)?
-    pub(crate) fn is_type_name(&self, e: &ast::Expr) -> bool {
+    fn is_type_name(&self, e: &ast::Expr) -> bool {
         match &e.kind {
             ast::ExprKind::Ident(id) if self.is_namespace(&id.name) => true,
             ast::ExprKind::Ident(id) => {

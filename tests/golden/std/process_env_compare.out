@@ -1,0 +1,21 @@
+== lit: false false
+=== lit: false false
+!= lit: true true
+!== lit: true true
+lit ==: false false
+const: false false
+nothing: true false
+same: true
+order: true
+typeof: string true
+template: undefined
+?.length: undefined
+!: true false
+?: unset
+argument: true
+if: not one
+if: unset
+switch: other
+Number: false false
+switch: max
+Math: false
