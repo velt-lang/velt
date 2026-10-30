@@ -435,7 +435,7 @@ caller (section 4): no allocation per item, the same runtime calls as the pull l
 | velt/process | `export async function* lines()` | remaining lines | `IoError` |
 | `WebSocket` (std/net/websocket/index.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
 | `RedisSubscriber` (std/redis/pubsub.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
-| `Ticker` (std/time/timers.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
+| `Ticker` (std/time/ticker.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
 | postgres `CopyReader` | `implements AsyncIterable<string, PgError>` | `read()` chunks to the end | `PgError` |
 
 `FileReader` and stdin get a `lines()` method rather than being iterable themselves: a reader

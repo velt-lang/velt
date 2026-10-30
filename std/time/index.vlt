@@ -2,7 +2,11 @@
 // `Duration`; timers that run later (`setTimeout` and the others, also globals), `delay` and
 // `Ticker`. docs/std/time.md.
 
-export { DateParts, DateTime, DateTimeError, Duration } from "velt/time/datetime";
+export { DateParts, DateTime } from "velt/time/datetime";
+export { Duration } from "velt/time/duration";
+export { DateTimeError } from "velt/time/errors";
+export { Ticker } from "velt/time/ticker";
+export { TickerStop } from "velt/time/ticker_stop";
 export {
   clearImmediate,
   clearInterval,
@@ -11,7 +15,5 @@ export {
   setImmediate,
   setInterval,
   setTimeout,
-  Ticker,
-  TickerStop,
   Timer,
 } from "velt/time/timers";

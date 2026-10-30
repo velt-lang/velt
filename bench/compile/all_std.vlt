@@ -300,8 +300,13 @@ import * as std_string_builder from "velt/text/string_builder";
 import * as std_time from "velt/time";
 import * as std_datetime_civil from "velt/time/civil";
 import * as std_datetime from "velt/time/datetime";
+import * as std_time_duration from "velt/time/duration";
+import * as std_time_errors from "velt/time/errors";
 import * as std_datetime_format from "velt/time/format";
 import * as std_datetime_parse from "velt/time/parse";
+import * as std_time_rt from "velt/time/rt";
+import * as std_time_ticker from "velt/time/ticker";
+import * as std_time_ticker_stop from "velt/time/ticker_stop";
 import * as std_timers from "velt/time/timers";
 
 function main() {

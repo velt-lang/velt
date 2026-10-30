@@ -1,5 +1,5 @@
 // velt/time (internal): `DateTime`, a UTC-first instant (JS `Date` without its local-time
-// pitfalls), and `Duration`.
+// pitfalls) (`Duration` is velt/time/duration).
 //
 // A DateTime is epoch milliseconds (i64, proleptic Gregorian, no leap seconds) in a Copy
 // struct, so it passes and stores like a number. Getters and `toISOString` are UTC; local time
@@ -20,17 +20,15 @@ import {
 } from "velt/time/civil";
 import { isoString, httpString, formatPattern } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
-
-declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
+import { Duration } from "velt/time/duration";
+import { DateTimeError } from "velt/time/errors";
+import { velt_rt_local_offset_minutes } from "velt/time/rt";
 
 /**
  * Calendar fields of a DateTime: `year month(1-12) day hour minute second millisecond
  * dayOfWeek(0 = Sunday) dayOfYear(1-366) offsetMinutes`.
  */
 export type DateParts = Parts;
-
-/** Thrown by `DateTime.parse` / `parseHttpDate` for malformed or out-of-range input. */
-export class DateTimeError extends Error {}
 
 /** An instant in time: milliseconds since 1970-01-01T00:00:00Z. */
 export struct DateTime implements Comparable<DateTime> {
@@ -263,83 +261,5 @@ export struct DateTime implements Comparable<DateTime> {
 
   equals(other: DateTime): bool {
     return this.ms == other.ms;
-  }
-}
-
-/** A signed span of time with millisecond precision. */
-export struct Duration implements Comparable<Duration> {
-  private ms: i64;
-
-  static ofMs(n: i64): Duration {
-    return { ms: n };
-  }
-
-  static ofSeconds(n: i64): Duration {
-    return { ms: n * MS_PER_SECOND };
-  }
-
-  static ofMinutes(n: i64): Duration {
-    return { ms: n * MS_PER_MINUTE };
-  }
-
-  static ofHours(n: i64): Duration {
-    return { ms: n * MS_PER_HOUR };
-  }
-
-  /** `n` days of 24 hours. */
-  static ofDays(n: i64): Duration {
-    return { ms: n * MS_PER_DAY };
-  }
-
-  toMs(): i64 {
-    return this.ms;
-  }
-
-  /** Fractional seconds. */
-  toSeconds(): f64 {
-    return (this.ms as f64) / 1000.0;
-  }
-
-  plus(other: Duration): Duration {
-    return { ms: this.ms + other.ms };
-  }
-
-  minus(other: Duration): Duration {
-    return { ms: this.ms - other.ms };
-  }
-
-  negated(): Duration {
-    return { ms: -this.ms };
-  }
-
-  compareTo(other: Duration): i64 {
-    return this.ms < other.ms ? -1 : this.ms > other.ms ? 1 : 0;
-  }
-
-  /** ISO 8601 duration with days as the largest unit: `P1DT2H3M4.005S`, `PT0S`, `-PT1.5S`. */
-  toString(): string {
-    const neg = this.ms < 0;
-    let rest = neg ? -this.ms : this.ms;
-    const days = rest / MS_PER_DAY;
-    rest -= days * MS_PER_DAY;
-    const hours = rest / MS_PER_HOUR;
-    rest -= hours * MS_PER_HOUR;
-    const minutes = rest / MS_PER_MINUTE;
-    rest -= minutes * MS_PER_MINUTE;
-    let out = neg ? "-P" : "P";
-    if (days > 0) {
-      out = `${out}${days}D`;
-    }
-    if (rest == 0 && hours == 0 && minutes == 0) {
-      return days > 0 ? out : `${out}T0S`;
-    }
-    out += "T";
-    if (hours > 0) {
-      out = `${out}${hours}H`;
-    }
-    if (minutes > 0) {
-      out = `${out}${minutes}M`;
-    }
-    return rest > 0 ? `${out}${(rest as f64) / 1000.0}S` : out;
   }
 }

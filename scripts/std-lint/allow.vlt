@@ -128,8 +128,6 @@ export const allow: Allow = {
     "test/expect.vlt",
     "test/suite.vlt",
     "text/regex/regexp.vlt",
-    "time/datetime.vlt",
-    "time/timers.vlt",
   ],
   indexCode: [
     "cli/index.vlt",
