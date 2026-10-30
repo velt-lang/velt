@@ -15,6 +15,7 @@
 //! [`api_json`] is `velt doc --format json`.
 
 pub mod comment;
+pub mod dts;
 pub mod extract;
 pub mod html;
 pub mod json;
@@ -22,10 +23,13 @@ pub mod markdown;
 pub mod resolve;
 mod sig;
 pub mod site;
+mod ts;
+mod ts_extend;
 
 use std::path::{Path, PathBuf};
 
 pub use extract::{extract, DocModule};
+pub use ts::{TsDecl, TsExtMember, TsExtension};
 
 /// A module to document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,7 +145,13 @@ pub fn api_json(title: &str, inputs: &[Input]) -> String {
 pub fn extract_all(inputs: &[Input]) -> Vec<DocModule> {
     let mut modules: Vec<DocModule> = inputs
         .iter()
-        .map(|i| extract(&i.module, &i.source))
+        .map(|i| {
+            let stem = i.file.rsplit('/').next().unwrap_or("");
+            DocModule {
+                index: stem.split('.').next() == Some("index"),
+                ..extract(&i.module, &i.source)
+            }
+        })
         .collect();
     resolve::resolve(&mut modules);
     modules

@@ -453,7 +453,9 @@ building and passing its tests:
 10. Quality, area by area (one commit per area): one class per file, files under 400 lines,
     `index.vlt` doc comments, `errors.vlt`, docs pages per module, tests per module.
 11. Docs: `docs/std` mirrors the tree, `std/README.md` points to CONTRIBUTING.md; the
-    docs-sync issue on the website; the `velt` type package for `tsc` as a follow-up issue.
+    docs-sync issue on the website; the `velt` type package for `tsc` (`velt doc --std --format
+    types`, docs/tooling/cli.md "TypeScript declarations"), so ts-compat accepts `import type`
+    from std.
 
 ## Open questions
 

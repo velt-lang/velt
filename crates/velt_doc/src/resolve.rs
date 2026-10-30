@@ -12,18 +12,32 @@ use std::collections::{HashMap, HashSet};
 use crate::extract::{DocItem, DocModule, Kind, Origin, ReExport};
 
 /// Module names → their index in a module list.
-pub struct ModuleIndex(HashMap<String, usize>);
+pub struct ModuleIndex {
+    names: HashMap<String, usize>,
+    /// The modules that are a folder's `index` file ([`DocModule::index`]).
+    index_files: HashSet<String>,
+}
 
 impl ModuleIndex {
     /// Index `modules` by name.
     pub fn new(modules: &[DocModule]) -> ModuleIndex {
-        ModuleIndex(
-            modules
+        ModuleIndex {
+            names: modules
                 .iter()
                 .enumerate()
                 .map(|(i, m)| (m.name.clone(), i))
                 .collect(),
-        )
+            index_files: modules
+                .iter()
+                .filter(|m| m.index)
+                .map(|m| m.name.clone())
+                .collect(),
+        }
+    }
+
+    /// Module names → their index.
+    pub fn names(&self) -> &HashMap<String, usize> {
+        &self.names
     }
 
     /// The module that `spec`, written in module `from`, names: `velt/x` is `std/x`; `./x` and
@@ -33,7 +47,7 @@ impl ModuleIndex {
     pub fn resolve(&self, from: &str, spec: &str) -> Option<usize> {
         if let Some(std) = spec.strip_prefix(velt_common::std_modules::SPECIFIER_PREFIX) {
             let canonical = format!("{}{std}", velt_common::std_modules::CANONICAL_PREFIX);
-            return self.0.get(&canonical).copied();
+            return self.names.get(&canonical).copied();
         }
         if spec.starts_with("./") || spec.starts_with("../") {
             // `./x.ts`, `./x.js` (TypeScript's spelling of `x.ts`): the module `x`.
@@ -42,12 +56,18 @@ impl ModuleIndex {
                 .find_map(|ext| spec.strip_suffix(ext))
                 .unwrap_or(spec);
             let parent = from.rsplit_once('/').map_or("", |(dir, _)| dir);
-            return [parent, from]
+            // An index file's imports start in its folder; for a module not known to be one,
+            // next to it first, then in a folder of its name.
+            let bases = match self.index_files.contains(from) {
+                true => [from, from],
+                false => [parent, from],
+            };
+            return bases
                 .iter()
                 .filter_map(|base| join(base, spec))
-                .find_map(|name| self.0.get(&name).copied());
+                .find_map(|name| self.names.get(&name).copied());
         }
-        self.0.get(spec).copied()
+        self.names.get(spec).copied()
     }
 }
 
@@ -182,6 +202,7 @@ fn stubs(r: &ReExport) -> Vec<DocItem> {
         members: vec![],
         generics: vec![],
         origin: None,
+        ts: Default::default(),
     };
     if r.all {
         return vec![stub("*", format!("export * from \"{}\"", r.from))];
@@ -240,6 +261,24 @@ mod tests {
         assert_eq!(idx.resolve("pkg", "pkg/util"), Some(4));
         assert_eq!(idx.resolve("pkg", "../../x"), None);
         assert_eq!(idx.resolve("pkg", "other"), None);
+        // `pkg/shapes/index.vlt` next to `pkg/circle.vlt`: its `./circle` is in its folder.
+        let mut ms: Vec<DocModule> = ["pkg/circle", "pkg/shapes", "pkg/shapes/circle"]
+            .iter()
+            .map(|n| extract(n, ""))
+            .collect();
+        assert_eq!(
+            ModuleIndex::new(&ms).resolve("pkg/shapes", "./circle"),
+            Some(0)
+        );
+        ms[1].index = true;
+        assert_eq!(
+            ModuleIndex::new(&ms).resolve("pkg/shapes", "./circle"),
+            Some(2)
+        );
+        assert_eq!(
+            ModuleIndex::new(&ms).resolve("pkg/shapes", "../circle"),
+            Some(0)
+        );
     }
 
     #[test]

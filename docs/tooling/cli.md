@@ -20,7 +20,7 @@ prints every command's options and examples.
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
-| `velt doc` | generate HTML API documentation, or JSON for other tools ([`velt doc`](#velt-doc)) |
+| `velt doc` | generate HTML API documentation, JSON for other tools, or the standard library's TypeScript declarations ([`velt doc`](#velt-doc)) |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
@@ -253,6 +253,9 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
 - A relative import must stay among the files passed (or in the `tsCompat` folders): `tsc`
   compiles every file a shared file imports.
+- An import of a std module (`velt/fs`) is an error, as std has no JavaScript runtime, except
+  `import type { … }`: TypeScript erases it, and the [`velt` type
+  package](#typescript-declarations-the-velt-type-package) declares the types for `tsc`.
 - Some rules need types: they ask the checker about what a name refers to and what type a
   value has (`=== null` on a `Map.get`, `${xs}` of an array, `sort()` of numbers), so the
   files are checked once more for them. That about doubles the time of the check and grows
@@ -300,7 +303,7 @@ a package, or to `--dir`), and never overwrites one.
 ## `velt doc`
 
 ```
-velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file>]
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]
 ```
 
 Generates HTML documentation for exported items: their signatures and the doc comment right
@@ -407,6 +410,42 @@ cards and backlinks can key on it. For example, a method of a class in a package
   "members": []
 }
 ```
+
+### TypeScript declarations: the `velt` type package
+
+`velt doc --std --format types` writes the standard library's declarations as an npm package
+named `velt` (into `-o`, default `target/velt-types`), so that `tsc`, editors and bundlers
+resolve `velt/*` imports in TypeScript: code shared with a client
+([`--ts-compat`](#code-shared-with-typescript---ts-compat)) can `import type` std's types.
+
+```
+velt doc --std --format types -o node_modules/velt
+```
+
+```ts
+import type { Deque } from "velt/collections";
+
+export function oldest(queue: Deque<string>): string | undefined {
+  return queue.peekFront();
+}
+```
+
+- `package.json` maps each public module to its declarations (`"./fs": { "types":
+  "./fs/index.d.ts" }`); `globals.d.ts`, which every module's file references, declares the
+  prelude's globals that TypeScript lacks (`Mutex`, `Atomic`, `StringBuilder`, …).
+- The declarations are std's in TypeScript's types: the integer and float types are
+  `number`, `bool` is `boolean`, `shared<T>` is `T`, and the error type of `Promise<T, E>` and
+  of the iterators is left out (TypeScript has no `throws`). A parameter with a default is
+  optional. Doc comments come along, for editors' hovers.
+- An `extend` block adds its methods to its target's interface (`interface Array<T>`); one of
+  a narrower target (`extend Array<string>`) gives each method a `this` parameter of that type,
+  as TypeScript's own `flat` does. A block TypeScript can't attach to anything (`extend<T> T`,
+  `extend<T> (T | null)`, `Record`) is left out, and so are getters and setters on TypeScript's
+  own interfaces, which declare those properties already.
+- A type std uses in a public signature but doesn't export (an internal class in a constructor
+  only std calls) is opaque: `unknown`.
+- The package declares types only; the modules run in Velt. It needs a `lib` with
+  `esnext.disposable` (`"lib": ["esnext"]`, TypeScript 5.2 or newer) for `Symbol.dispose`.
 
 ## `velt toolchain`
 

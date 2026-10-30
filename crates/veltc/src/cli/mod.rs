@@ -38,8 +38,20 @@ pub struct DocArgs {
     /// `-o`: output directory (default `target/doc`, in the package root for packages); with
     /// `--format json` also a `.json` file, or `-` for stdout.
     pub output: Option<PathBuf>,
-    /// `--format json`: one JSON document instead of HTML pages.
-    pub json: bool,
+    /// `--format`: HTML pages, one JSON document, or the `velt` type package.
+    pub format: DocFormat,
+}
+
+/// What `velt doc` writes (`--format`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DocFormat {
+    /// HTML pages (`html`, the default).
+    #[default]
+    Html,
+    /// One JSON document, `api.json` (`json`).
+    Json,
+    /// The standard library's TypeScript declarations as the `velt` type package (`types`).
+    Types,
 }
 
 /// `velt registry serve` arguments.

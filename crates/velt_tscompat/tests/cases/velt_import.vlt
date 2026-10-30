@@ -1,7 +1,14 @@
-// The Velt standard library doesn't exist for TypeScript.
+// The Velt standard library has no JavaScript runtime; its types are declared for `tsc` by the
+// `velt` type package, so a type-only import is fine.
 
 import { join } from "velt/path"; //~ velt-import
+import type { Deque } from "velt/collections";
+import { type Channel, channel } from "velt/sync"; //~ velt-import
 
 export function under(dir: string, file: string): string {
   return join(dir, file);
+}
+
+export function same(q: Deque<string>): Deque<string> {
+  return q;
 }

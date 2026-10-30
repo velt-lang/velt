@@ -192,6 +192,8 @@ jobs:
         run: cargo test -p velt_tscompat --test oracle -- --nocapture
       - name: behaviour samples under Node
         run: cargo test -p veltc --test ts_compat behaviour_samples -- --nocapture
+      - name: the `velt` type package under tsc
+        run: cargo test -p veltc --test ts_compat type_package -- --nocapture
 
   # Instructions per benchmark (bench/nightly.sh: valgrind, so the counts don't depend on how busy
   # the runner is) against the counts of the last run that passed, kept in the Actions cache. More

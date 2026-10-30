@@ -502,7 +502,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "doc",
         summary: "Generate HTML API docs (or JSON for other tools)",
         usage: &[
-            "doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file>]",
+            "doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]",
             "doc (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<doc options>]",
         ],
         about: "Documents exported items and the `///` comments above them. Without paths: the \
@@ -514,8 +514,9 @@ pub const COMMANDS: &[CommandHelp] = &[
             FAIL_FAST,
             ("--std", "document the standard library"),
             (
-                "--format <html|json>",
-                "HTML pages (the default), or one JSON document (api.json) for tools",
+                "--format <html|json|types>",
+                "HTML pages (the default), one JSON document (api.json) for tools, or (with \
+                 --std) the `velt` type package: TypeScript declarations for tsc",
             ),
             (
                 "-o, --output <dir|file>",
@@ -528,6 +529,10 @@ pub const COMMANDS: &[CommandHelp] = &[
             (
                 "velt doc --std --format json -o std.json",
                 "standard library docs as JSON",
+            ),
+            (
+                "velt doc --std --format types -o velt-types",
+                "the `velt` type package for tsc",
             ),
         ],
     },

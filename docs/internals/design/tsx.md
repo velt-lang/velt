@@ -146,7 +146,7 @@ Errors where `tsc` rejects the code:
 | `throws` | `throws E` on functions, methods, arrows and function types | a fix removes it where Velt infers it (a body) | |
 | `promise-error-type` | `Promise<T, E>` | `Promise<T>` (a fix on the return type of a function with a body) | |
 | `interface-body` | default method bodies in an interface | a base class or a function | |
-| `velt-import` | `velt:*` imports | keep them out of the shared files | |
+| `velt-import` | `velt/*` imports of values (`import type` passes: the `velt` type package declares the types) | keep them out of the shared files | |
 | `outside-import` | relative imports of files not being linted | lint them too, or keep the import out | |
 | `jsx-provider` | JSX on the default `velt/jsx` provider | a provider with both runtimes | |
 | `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |

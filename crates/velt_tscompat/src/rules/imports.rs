@@ -1,4 +1,5 @@
-//! Rules on what a module imports: the Velt standard library (`velt-import`), files outside the
+//! Rules on what a module imports: the Velt standard library's values (`velt-import`; its types
+//! come from the `velt` type package), files outside the
 //! linted set (`outside-import`), and the default JSX provider (`jsx-provider`).
 
 use std::path::Path;
@@ -24,14 +25,19 @@ pub(super) fn check(module: &LintModule, scope: &[&Path], cx: &mut Cx) {
 
 fn import_item(module: &LintModule, import: &ast::Import, scope: &[&Path], cx: &mut Cx) {
     let spec = import.from.as_str();
-    if spec.starts_with(velt_common::std_modules::SPECIFIER_PREFIX) {
+    // `import type { … }`: erased, and the `velt` type package declares the types for `tsc`.
+    let types_only = import.namespace.is_none()
+        && !import.names.is_empty()
+        && import.names.iter().all(|n| n.type_only);
+    if spec.starts_with(velt_common::std_modules::SPECIFIER_PREFIX) && !types_only {
         cx.error(
             "velt-import",
             import.from_span,
-            format!("`{spec}` is a Velt standard library module, which TypeScript can't import"),
+            format!("`{spec}` is a Velt standard library module, which has no JavaScript runtime"),
             &[
-                "`tsc` finds no `velt` package; only Velt provides these modules",
-                "keep code that uses the Velt standard library out of the shared files, and \
+                "only Velt runs these modules; the `velt` type package (`velt doc --std \
+                 --format types`) declares their types for `tsc`, so `import type { … }` works",
+                "keep code that calls the Velt standard library out of the shared files, and \
                  pass what it computes in",
             ],
         );

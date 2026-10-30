@@ -15,6 +15,8 @@ use serde_json::Value;
 
 use super::{json, stderr, test_dir, velt};
 
+mod type_package;
+
 /// stdout of `velt run <file>` in `dir`.
 fn run_velt(dir: &Path, file: &str) -> String {
     let o = velt(dir, &["run", file]);

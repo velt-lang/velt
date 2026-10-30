@@ -13,6 +13,7 @@ use velt_syntax::ast::{self, Item, ItemKind};
 
 use crate::comment::{self, DocComment};
 use crate::sig::Printer;
+use crate::ts::{TsDecl, TsPrinter};
 
 /// The kind of a documented declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +91,9 @@ pub struct DocItem {
     pub generics: Vec<String>,
     /// For an item another module declares and this one re-exports: where it is declared.
     pub origin: Option<Origin>,
+    /// A top-level item's declaration in TypeScript, for the `velt` type package
+    /// ([`crate::dts`]); empty for members.
+    pub ts: TsDecl,
 }
 
 /// Where a re-exported item is declared.
@@ -117,6 +121,9 @@ pub struct DocModule {
     /// `export { … } from` / `export * from` (and exported imports), in source order; resolved
     /// into `items` by [`crate::resolve`].
     pub reexports: Vec<ReExport>,
+    /// Whether it is a folder's `index` file, whose relative imports start in that folder
+    /// (set by [`crate::extract_all`]; `false` from [`extract`]).
+    pub index: bool,
 }
 
 /// A name bound by an import.
@@ -222,6 +229,7 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
         items,
         imports,
         reexports,
+        index: false,
     };
     (module, text.plain_above.into_inner())
 }
@@ -248,6 +256,9 @@ fn merge_interfaces(items: Vec<DocItem>) -> Vec<DocItem> {
             first.deprecated = item.deprecated;
         }
         first.members.extend(item.members);
+        // TypeScript merges them too.
+        first.ts.text = format!("{}\n{}", first.ts.text, item.ts.text);
+        first.ts.refs.extend(item.ts.refs);
     }
     out
 }
@@ -351,12 +362,33 @@ impl Source<'_> {
             members: vec![],
             generics: generic_names(generics),
             origin: None,
+            ts: TsDecl::default(),
         }
     }
 
     /// The documentation of a top-level item: exported ones and extensions, or any
     /// declaration with `any` (one named in an `export { … }` list).
     fn item(&self, item: &Item, any: bool) -> Option<DocItem> {
+        let mut doc = self.item_docs(item, any)?;
+        let ts = TsPrinter {
+            p: &self.printer,
+            doc: &|lo| {
+                comment::doc_before_in(self.printer.src, &self.comments, lo)
+                    .unwrap_or_default()
+                    .render_markdown()
+            },
+            refs: Default::default(),
+            scope: Default::default(),
+            subst: Default::default(),
+        };
+        doc.ts = ts.decl(
+            item,
+            declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
+        );
+        Some(doc)
+    }
+
+    fn item_docs(&self, item: &Item, any: bool) -> Option<DocItem> {
         if !(item.exported || any) && !matches!(item.kind, ItemKind::Extend(_)) {
             return None;
         }
