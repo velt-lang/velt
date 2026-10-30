@@ -13,7 +13,11 @@ import {
   E_COLLATE,
   E_COLUMN,
   E_EXISTS,
+  E_BINARY,
+  E_CALL,
   E_IN_SELECT,
+  E_LIKE,
+  E_NULL,
   E_STAR,
   E_SUBQUERY,
   Expr,
@@ -114,7 +118,55 @@ export function resolveWindow(o: Window, named: Window[]): Resolved {
     }
   }
   checkFrame(w);
-  return Resolved { w: w, key: key };
+  return Resolved { w: constantOffsets(w), key: key };
+}
+
+// `w` with a frame offset that is not a constant replaced by NULL, as SQLite's parser replaces
+// it (sqlite3WindowOffsetExpr): such an offset fails as a frame error when the query runs, and
+// its names, functions and subqueries are never resolved.
+function constantOffsets(w: Window): Window {
+  const s = w.startExpr != null && !isConstant(w.startExpr!);
+  const e = w.endExpr != null && !isConstant(w.endExpr!);
+  if (!s && !e) {
+    return w;
+  }
+  const nw = new Window();
+  nw.base = w.base;
+  nw.name = w.name;
+  nw.partition = w.partition;
+  nw.orderBy = w.orderBy;
+  nw.frame = w.frame;
+  nw.start = w.start;
+  nw.startExpr = s ? new Expr(E_NULL, w.startExpr!.at) : w.startExpr;
+  nw.end = w.end;
+  nw.endExpr = e ? new Expr(E_NULL, w.endExpr!.at) : w.endExpr;
+  nw.exclude = w.exclude;
+  nw.text = w.text;
+  return nw;
+}
+
+// Whether `e` is constant as SQLite's parser sees it (sqlite3ExprIsConstant before names
+// resolve): no column or name, no function call (LIKE, GLOB, `->` and `->>` are calls there),
+// no subquery.
+function isConstant(e: Expr): bool {
+  const k = e.kind;
+  if (k == E_COLUMN || k == E_CALL || k == E_LIKE || k == E_SUBQUERY || k == E_EXISTS) {
+    return false;
+  }
+  if (k == E_IN_SELECT || (k == E_BINARY && (e.op == "->" || e.op == "->>"))) {
+    return false;
+  }
+  for (const x of [e.a, e.b, e.c, e.filter]) {
+    if (x != null && !isConstant(x!)) {
+      return false;
+    }
+  }
+  for (const a of e.args) {
+    if (!isConstant(a)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The frames SQLite rejects (sqlite3WindowAlloc).

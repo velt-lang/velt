@@ -93,6 +93,22 @@ const QUERIES: string[] = [
   "SELECT count(*), (SELECT count(users.id) FROM posts), count(*) OVER () FROM users",
   "SELECT age, count(*) OVER (), (SELECT count(users.id) FROM posts) FROM users GROUP BY age",
   "SELECT age, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM users GROUP BY age",
+  // A ROWS or GROUPS offset that is not a constant (a column or name, a function call, a
+  // subquery, a window) is NULL to SQLite's parser: a frame error when rows come, before its names
+  // resolve. Constant offsets are computed.
+  "SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT count(users.id) FROM posts) PRECEDING) FROM users",
+  "SELECT id, count(*) OVER w FROM users WINDOW w AS (ORDER BY id ROWS (SELECT max(users.id)) PRECEDING)",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND (SELECT count(users.id) FROM posts) FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS (SELECT 1) PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND id FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS abs(-1) PRECEDING), count(*) OVER (ORDER BY id ROWS ('a' LIKE 'a') PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS max(1) PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS nosuch PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS row_number() OVER () PRECEDING) FROM users",
+  "SELECT age, count(*) OVER (ORDER BY age ROWS EXISTS (SELECT 1) PRECEDING) FROM users GROUP BY age",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT 1) PRECEDING) FROM users WHERE 0",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS -1 PRECEDING) FROM users WHERE 0",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 + 1 PRECEDING AND CAST('1' AS INTEGER) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN (1) PRECEDING AND CASE WHEN 1 THEN 2 END FOLLOWING) FROM users",
 ];
 
 /** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */

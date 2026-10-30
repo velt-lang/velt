@@ -222,3 +222,34 @@ SELECT age, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM us
   41,4
   25,6
   30,6
+SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT count(users.id) FROM posts) PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER w FROM users WINDOW w AS (ORDER BY id ROWS (SELECT max(users.id)) PRECEDING)
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND (SELECT count(users.id) FROM posts) FOLLOWING) FROM users
+  error: frame ending offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id GROUPS (SELECT 1) PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND id FOLLOWING) FROM users
+  error: frame ending offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS abs(-1) PRECEDING), count(*) OVER (ORDER BY id ROWS ('a' LIKE 'a') PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS max(1) PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS nosuch PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS row_number() OVER () PRECEDING) FROM users
+  error: frame starting offset must be a non-negative integer
+SELECT age, count(*) OVER (ORDER BY age ROWS EXISTS (SELECT 1) PRECEDING) FROM users GROUP BY age
+  error: frame starting offset must be a non-negative integer
+SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT 1) PRECEDING) FROM users WHERE 0
+SELECT id, count(*) OVER (ORDER BY id ROWS -1 PRECEDING) FROM users WHERE 0
+SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 + 1 PRECEDING AND CAST('1' AS INTEGER) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN (1) PRECEDING AND CASE WHEN 1 THEN 2 END FOLLOWING) FROM users
+  1,2,3
+  2,3,4
+  3,4,4
+  4,4,4
+  5,4,4
+  6,4,4
+  7,4,3
+  8,3,2

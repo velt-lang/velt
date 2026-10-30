@@ -200,7 +200,8 @@ export class WinCtx {
    */
   finish(emit: () => void throws Error, stopped: () => bool) {
     const n = this.count;
-    for (const f of this.fns) {
+    // Without rows SQLite never reaches its check of the offsets.
+    for (const f of n > 0 ? this.fns : []) {
       f.startOff = offsetOf(f.startN, f.start, true);
       f.endOff = offsetOf(f.endN, f.end, false);
     }
