@@ -27,8 +27,14 @@ pub(super) enum Arg {
     Scalar(Operand),
     /// The place of the array's or struct's inline value, and its type.
     Value(Place, TyId),
-    /// A view's bytes: their address and length (`u64`).
-    Bytes(Operand, Operand),
+    /// A typed array or `DataView` (a class extending std's `BufferView`): the place of the
+    /// pointer to it, its class type, and the message when its bytes are outside its buffer;
+    /// the buffer's header is read at the call.
+    View {
+        place: Place,
+        t: TyId,
+        outside: String,
+    },
     /// `xs.subarray(begin, end)` of a `u8[]`: the place of the array's value and its type, and
     /// the two positions evaluated (with their types); the header is read at the call.
     Sub {
@@ -330,7 +336,7 @@ impl FnLower<'_, '_> {
     fn buffer(&mut self, arg: Option<Arg>) -> (Operand, Operand) {
         match arg {
             Some(Arg::Value(place, t)) => self.header_parts(&place, t),
-            Some(Arg::Bytes(ptr, n)) => (ptr, n),
+            Some(Arg::View { place, t, outside }) => self.view_bytes(&place, t, &outside),
             Some(Arg::Sub {
                 place,
                 t,

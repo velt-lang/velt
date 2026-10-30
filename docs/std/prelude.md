@@ -174,6 +174,35 @@ past the array is its end (Node's `buf.utf8Slice` throws for both instead). `wri
 code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
 SIMD vectors, and are compiled into their caller.
 
+`subarray(begin?, end?)` of a `u8[]` (Node's `buf.subarray`) is a
+[`Uint8Array`](typed_array.md) over the array's bytes, sharing them: writes through either are
+seen by both, and its `buffer` is the array. It is the array plus a range, so it is valid
+whatever happens to the array or to the variable that held it: kept in a field, returned,
+captured by a closure or held across an `await`, it keeps the array alive (a program that keeps
+such a view counts its byte arrays' references; one that doesn't pays nothing), and it sees the
+array after it grows. A Node `Buffer` cannot become shorter; a `u8[]` can (`length = 0`, `pop`,
+`splice`), and then the view (and any typed array over its `buffer`) has the elements the array
+still has in its range: its `length` counts those, `xs[i]` past them panics like any index, a
+write past them does nothing (as one past a view's end in JS), and a method that needs the
+missing elements (`join`, `fill`, …) panics. `slice`, `subarray`, `with`, `toReversed` and
+`toSorted` take the elements that are left, as they take `length` (a `subarray` of a view of
+which not even the start is left is empty, with a buffer of its own). Growing the array back
+brings the elements back. The view's `buffer` follows the array's length (`byteLength`), though
+its `resizable` is `false` and its `maxByteLength` is its `byteLength` at each read. Each
+`subarray` of a `u8[]` has a `buffer` object of its own over the same array: they share the
+bytes, but unlike Node, where `b.subarray(0, 8).buffer === b.subarray(4, 12).buffer`, they are
+different objects (`!==`).
+
+```ts
+const buf: u8[] = Buffer.alloc(8);
+buf.write("abcdefgh");
+const head = buf.subarray(0, 4);
+head[0] = 65;
+console.log(buf.utf8Slice(0, 4), head.length); // Abcd 4
+buf.length = 2;
+console.log(head.length); // 2
+```
+
 ```ts
 const buf: u8[] = Buffer.alloc(16);
 const n = buf.write("GET /");

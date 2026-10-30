@@ -5,8 +5,10 @@
 //!   `subarray` positions of `begin` and `end` (negative counts from the end, clamped).
 //! - A typed array or a `DataView` (a class extending std's `BufferView`, which holds its
 //!   `ArrayBuffer` `buf`, the byte offset `off` and the length `len` in elements): the bytes
-//!   `off..off + byteLength` of the buffer's `u8[]`. The view's owner may have changed length
-//!   since it was made: bytes outside its current length stop the program.
+//!   `off..off + byteLength` of the buffer's `u8[]`, whose header is read when the C arguments
+//!   are assembled, after every argument (a later one may grow the array, which moves its
+//!   bytes, or shrink it). The view's owner may have changed length since it was made: bytes
+//!   outside its current length stop the program.
 
 use velt_sema::hir::{self, Callee as HCallee, Intrinsic, TyId};
 
@@ -72,9 +74,31 @@ impl FnLower<'_, '_> {
         self.note_held_buffer(a, later);
         let v = self.expr(a);
         let v = self.hold_buffer(v, a.ty, later);
-        let place = self.operand_place(v.clone(), Ty::Ptr);
-        let buf = self.class_field(&place, t, "buf");
-        let off = self.class_field(&place, t, "off");
+        let place = self.operand_place(v, Ty::Ptr);
+        Some(Arg::View {
+            place,
+            t,
+            outside: format!(
+                "system function `{}`: the bytes `{name}` views are outside its buffer, which \
+                 is shorter than when the view was made",
+                func.name
+            ),
+        })
+    }
+
+    /// The address and length (`u64`) of the bytes of the view of class type `t` whose pointer
+    /// is at `place`: `off..off + byteLength` of its buffer's `u8[]` as it is now (its header
+    /// read here, at the call, after every argument: a later one may have grown, shrunk or
+    /// replaced the array), or the program stops with `outside` when they are not all in it.
+    pub(super) fn view_bytes(
+        &mut self,
+        place: &Place,
+        t: TyId,
+        outside: &str,
+    ) -> (Operand, Operand) {
+        let v = Operand::Copy(place.clone());
+        let buf = self.class_field(place, t, "buf");
+        let off = self.class_field(place, t, "off");
         let off = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(off.0)));
         let (buf, bt) = buf;
         let (bytes, at) = self.class_field(&buf, bt, "bytes");
@@ -104,15 +128,11 @@ impl FnLower<'_, '_> {
         let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, n.clone(), avail));
         self.branch(fits, ok, bad);
         self.switch_to(bad);
-        self.panic_msg(&format!(
-            "system function `{}`: the bytes `{name}` views are outside its buffer, which is \
-             shorter than when the view was made",
-            func.name
-        ));
+        self.panic_msg(outside);
         self.terminate(Terminator::Unreachable);
         self.switch_to(ok);
         let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, off));
-        Some(Arg::Bytes(ptr, n))
+        (ptr, n)
     }
 
     /// The address and length (`u64`) of `xs.subarray(begin, end)`, from the array of type `t`

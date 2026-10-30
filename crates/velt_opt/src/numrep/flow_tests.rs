@@ -81,6 +81,19 @@ fn the_work_grows_linearly_with_the_function() {
 }
 
 #[test]
+fn a_function_inlining_several_loops_is_analysed() {
+    // 1200 segments: 1200 tracked locals in 1200 blocks, about what a `main` that inlines a few
+    // loops over typed arrays has (more than 2^19 cells, the bound before #1718).
+    let (small, _) = work(&segments(100));
+    let (large, tracked) = work(&segments(1200));
+    assert!(tracked >= 1200);
+    assert!(
+        large <= small * 14,
+        "12 times the length costs {large} against {small}: more than linear"
+    );
+}
+
+#[test]
 fn a_block_loads_only_the_locals_live_into_it() {
     let p = segments(10);
     let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);

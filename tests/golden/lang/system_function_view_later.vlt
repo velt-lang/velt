@@ -1,0 +1,82 @@
+// requires: unix
+// A typed array held in a variable or a field (here views of a `u8[]`, which wrap the
+// caller's array) passed as a system function's buffer: its buffer's data pointer and length
+// are read at the call, after every argument, so a later argument that grows the array (which
+// moves its bytes) cannot leave the call reading or writing freed memory. One that gives the
+// variable another array leaves the view at the first one, which the view keeps alive.
+import { platform } from "velt:os";
+
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+declare system function close(fd: i32): i32;
+declare system function unlink(path: readonly u8[]): i32;
+
+const ZERO: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // "/dev/zero"
+let g: u8[] = Buffer.alloc(4096);
+let victims: u8[][] = [];
+
+// Grow `g` past its capacity (its bytes move), then fill blocks of the old size, which reuse
+// the freed one.
+function grow(): i64 {
+  for (let i = 0; i < 200000; i++) g.push(1);
+  for (let i = 0; i < 64; i++) {
+    const x: u8[] = Buffer.alloc(4096);
+    x.fill(9);
+    victims.push(x);
+  }
+  return 0;
+}
+
+function replace(): i64 {
+  g = Buffer.alloc(4096);
+  g.fill(3);
+  return 0;
+}
+
+class Holder {
+  v: Uint8Array;
+  constructor(v: Uint8Array) { this.v = v; }
+}
+
+function reset() {
+  g = Buffer.alloc(4096);
+  g.fill(5);
+  victims = [];
+}
+
+function main() {
+  const fd = open(ZERO, 0, 0);
+
+  // A view in a local.
+  reset();
+  const v = g.subarray(0, 4096);
+  console.log("local", pread(fd, v, grow()), g.length, g[0], g[4095], g[4096]);
+
+  // A view in a field.
+  reset();
+  const h = new Holder(g.subarray(0, 4096));
+  console.log("field", pread(fd, h.v, grow()), g.length, g[0], g[4095]);
+
+  // A wider typed array over a view's buffer.
+  reset();
+  const w = new Uint32Array(g.subarray(0).buffer, 0, 1024);
+  console.log("u32", pread(fd, w, grow()), g.length, g[0], w[1023]);
+
+  // Bytes written from a view: the array's, wherever they moved.
+  reset();
+  const name = new TextEncoder().encode("velt_system_function_view_later_tmp.bin\0");
+  const mac = platform() == "darwin";
+  const out = open(name, 2 | (mac ? 0x200 | 0x400 : 0x40 | 0x200), 0o600);
+  g.write("ABCDEFG");
+  const t = g.subarray(0, 7);
+  const back = new Uint8Array(7);
+  console.log("write", pwrite(out, t, grow()), pread(out, back, 0), new TextDecoder().decode(back));
+  console.log(close(out), unlink(name));
+
+  // A later argument that gives the variable another array: the call reads into the first.
+  reset();
+  const first = g;
+  const r = g.subarray(0, 4096);
+  console.log("replace", pread(fd, r, replace()), first[0], g[0], r.length);
+}

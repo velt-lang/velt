@@ -325,13 +325,16 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             }
         }
         // A counter's cap needs the trip counts of the loops around it: track what their exit
-        // tests compare too (`i < s.length` with an `i64` `i`).
-        let double_counter = |i: usize| {
+        // tests compare too (`i < s.length` with an `i64` `i`). Also for an integer counter
+        // read as a double (`page[q++]` once `q` is an `i64`: `q as f64` is whole only within
+        // the cap).
+        let counter = |i: usize| {
+            let t = ty(Local(i as u32));
             in_slice[i]
-                && ty(Local(i as u32)) == Ty::F64
+                && (t == Ty::F64 || t.is_int())
                 && counter::maybe(&counter_cx, Local(i as u32), true)
         };
-        if counters_seen || !(0..n).any(double_counter) {
+        if counters_seen || !(0..n).any(counter) {
             break;
         }
         counters_seen = true;

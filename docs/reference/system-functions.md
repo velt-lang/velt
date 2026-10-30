@@ -64,10 +64,10 @@ array, and the call gets the address and length of the bytes the view sees, with
   its `ArrayBuffer`, whatever its element type;
 - a `subarray(begin, end)` of one;
 - `xs.subarray(begin, end)` of a `u8[]` `xs` (Node's `buf.subarray` of a `Buffer`), with JS's
-  positions: a negative one counts from the end, and both are clamped to the array. It borrows
-  `xs` for the call (written, for a buffer the function writes); no `Uint8Array` is made. A
-  `subarray` of a `u8[]` is a view only as such an argument: elsewhere a `u8[]` has no
-  `subarray` yet (`slice` copies).
+  positions: a negative one counts from the end, and both are clamped to the array. As an
+  argument it borrows `xs` for the call (written, for a buffer the function writes), and no
+  `Uint8Array` is made; elsewhere it is the `Uint8Array` view of the array
+  ([prelude](../std/prelude.md)).
 
 The array is the one `xs` holds when the argument is evaluated, before the positions and the
 later arguments, as in JS: a later argument that gives the variable another array leaves the
@@ -91,8 +91,12 @@ function writeHeader(fd: i32, header: DataView): isize {
 }
 ```
 
-A view of a buffer whose `u8[]` has become shorter than the view's range (Velt's `ArrayBuffer`
-cannot shrink, but its owner can) stops the program rather than reach past the array.
+A typed array or `DataView` argument is the view the expression gives when it is evaluated,
+kept alive for the call; its buffer's bytes are taken at the call too, after every argument, so
+an argument after it that grows the `u8[]` under the view (`g.subarray(0, 4096)` held in a
+variable or a field) cannot leave the call reading or writing freed bytes. A view of a buffer
+whose `u8[]` is then shorter than the view's range (Velt's `ArrayBuffer` cannot shrink, but its
+owner can, a later argument too) stops the program rather than reach past the array.
 
 `lastOsError()` reads `errno` (`GetLastError()` on Windows) of the calling thread. The compiler
 captures `errno` into a slot of the thread right after every system call, and `lastOsError()`

@@ -53,7 +53,13 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    nor release, when no call that may free a counted object runs while `data` is still used and
    the reference never leaves the local), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
-   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end, and `cold_calls`
+   `frame_slots`, each followed by a cleanup; `invariant_reads` (a read through object and
+   array header pointers inside a loop nest that writes no memory, calls nothing and tests only
+   counters (a type test such as `instanceof` decides which class the read sees), such as a
+   typed array's buffer and its bytes' length, is made once in front of the outermost such
+   loop, each pointer tested for null first: LLVM cannot move such a chain out of an outer loop
+   when the inner loop may run no iteration, and then keeps the inner loop's bounds check);
+   `dead_funcs` again at the end, and `cold_calls`
    last: a function's calls of one callee that never returns (a bounds check's report) become
    one call, reached from every site. The panic text keeps each site's location (an argument),
    but the merged call instruction carries the first site's debug location, so a debugger or a

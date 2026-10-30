@@ -26,8 +26,12 @@ use super::Env;
 
 /// Arrivals at a loop head before its entry state is widened.
 const WIDEN_AFTER: u32 = 2;
-/// Largest tracked-locals × blocks product analysed (bounds memory and time).
-const MAX_CELLS: usize = 1 << 19;
+/// Largest tracked-locals × blocks product analysed (bounds memory and time). A block keeps
+/// the facts of the locals live into it only, so the work grows with the function's length,
+/// not with this product: the bound is for the per-block bookkeeping. A `main` that inlines a
+/// few loops over typed arrays has about 700 × 900 (`bench/typed_array/loops.ts`): past the
+/// bound, none of its loop counters would be integers.
+const MAX_CELLS: usize = 1 << 21;
 /// Bounds a widened interval jumps to: 0, the int32/uint32 limits, 2^32 (one past a string's
 /// largest length: an index that steps past the end), ±2^53 and ±∞.
 const THRESHOLDS: [f64; 9] = [
