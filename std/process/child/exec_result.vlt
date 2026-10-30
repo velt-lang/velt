@@ -1,0 +1,20 @@
+// velt/process/child (internal): `ExecResult`, what a finished command printed and how it exited.
+
+/** What a finished program produced (output decoded as UTF-8, invalid bytes as U+FFFD). */
+export class ExecResult {
+  /** Exit code; `128 + n` when killed by signal `n` (Unix). */
+  code: number;
+  stdout: string;
+  stderr: string;
+
+  constructor(code: number, stdout: string, stderr: string) {
+    this.code = code;
+    this.stdout = stdout;
+    this.stderr = stderr;
+  }
+
+  /** Whether the program exited with code 0. */
+  get ok(): bool {
+    return this.code == 0;
+  }
+}

@@ -1,30 +1,30 @@
-// velt/process (internal): reading standard input (rt_abi_async.md §14.4), line by line or all at
-// once, as text or bytes. Sync and async reads share one buffered stream; text is UTF-8 (invalid
-// bytes become U+FFFD). A line already buffered costs no system call (and no hop to the blocking
-// pool for `await readLine()`).
+// velt/process (internal): standard input: `Stdin` (for its `isTTY`), `stdin`, and reading it by
+// lines or whole, as text or bytes (`readLine`, `lines`, `readAll`, `readAllBytes` and their
+// `*Sync` twins).
 
+import { unwrapIo } from "velt/native/result";
 import { IoError } from "velt/io/error";
-import { IoResult, unwrapIo } from "velt/native/result";
+import {
+  lineOf,
+  velt_rt_isatty,
+  velt_rt_stdin_read_all,
+  velt_rt_stdin_read_all_bytes,
+  velt_rt_stdin_read_all_bytes_sync,
+  velt_rt_stdin_read_all_sync,
+  velt_rt_stdin_read_line,
+  velt_rt_stdin_read_line_sync,
+} from "velt/process/rt";
 
-// The runtime's `LineRead`: a line, and whether input had ended instead.
-struct LineRead {
-  line: IoResult<string>;
-  eof: bool;
-}
-
-declare async function velt_rt_stdin_read_line(): Promise<LineRead>;
-declare function velt_rt_stdin_read_line_sync(): LineRead;
-declare async function velt_rt_stdin_read_all(): Promise<IoResult<string>>;
-declare function velt_rt_stdin_read_all_sync(): IoResult<string>;
-declare async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>>;
-declare function velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>;
-
-function lineOf(r: LineRead): string | null {
-  if (r.eof) {
-    return null;
+/** Standard input, for its `isTTY` (read it with `readLine`, `lines` or `readAll`). */
+export struct Stdin {
+  /** Whether standard input is a terminal (Node's `process.stdin.isTTY`). Cached. */
+  get isTTY(): bool {
+    return velt_rt_isatty(0);
   }
-  return unwrapIo(r.line);
 }
+
+/** Standard input (for `stdin.isTTY`). */
+export const stdin: Stdin = {};
 
 /** The next line without its "\n" / "\r\n", or null at end of input. */
 export async function readLine(): Promise<string | null> {

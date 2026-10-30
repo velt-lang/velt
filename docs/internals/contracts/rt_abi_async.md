@@ -376,7 +376,7 @@ ends. No suspension point may lie between lock and unlock.
 
 ### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/index.vlt and
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
 stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
@@ -398,7 +398,7 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 
 ### 2.4 Task groups (`taskScope`)
 
-The live-children count of a `taskScope` (std/task/index.vlt), behind a registry key (a `TaskScope`
+The live-children count of a `taskScope` (std/task/scope.vlt), behind a registry key (a `TaskScope`
 copy used after its scope ended finds no group). No code pointers are stored.
 
 | Symbol | Signature | Notes |
@@ -1153,7 +1153,7 @@ pair, and the offsets of a match are translated once per match.
 ### 14.3 Child processes (`velt/process/child`)
 
 ```c
-typedef struct {                 // std/process/child/index.vlt `CommandSpec` (104 bytes)
+typedef struct {                 // std/process/child/spec.vlt `CommandSpec` (104 bytes)
     VeltStr program;             // looked up in PATH when it has no separator
     VeltStrArray args;           // after the program name
     VeltStr cwd;                 // "" = the parent's

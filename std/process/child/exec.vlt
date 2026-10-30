@@ -1,0 +1,51 @@
+// velt/process/child (internal): running a command to completion (`exec`, `execShell` and their `*Sync`
+// twins).
+
+import { unwrapIo } from "velt/native/result";
+import { platform } from "velt/os/machine";
+import { ExecOptions } from "velt/process/child/exec_options";
+import { ExecResult } from "velt/process/child/exec_result";
+import { resultOf, velt_rt_child_output, velt_rt_child_output_sync } from "velt/process/child/rt";
+import { specOf } from "velt/process/child/spec";
+
+/** Runs `program` with `args` to completion; resolves with its exit code and output. */
+export async function exec(
+  program: string,
+  args: string[] = [],
+  opts: ExecOptions = {},
+): Promise<ExecResult> {
+  const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
+  return resultOf(unwrapIo(await velt_rt_child_output(spec, opts.input ?? "")));
+}
+
+/** `exec` that blocks the calling thread (for scripts and CLIs). */
+export function execSync(program: string, args: string[] = [], opts: ExecOptions = {}): ExecResult {
+  const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
+  return resultOf(unwrapIo(velt_rt_child_output_sync(spec, opts.input ?? "")));
+}
+
+function shellArgs(command: string): string[] {
+  if (platform() == "win32") {
+    return ["cmd", "/C", command];
+  }
+  return ["sh", "-c", command];
+}
+
+/**
+ * Runs a command line through the platform shell (`sh -c` / `cmd /C`). Never pass untrusted
+ * text: the shell interprets it.
+ */
+export async function execShell(command: string, opts: ExecOptions = {}): Promise<ExecResult> {
+  const argv = shellArgs(command);
+  const program = argv[0].clone();
+  __intrinsic_array_remove(argv, 0);
+  return await exec(program, argv, opts);
+}
+
+/** `execShell` that blocks the calling thread. */
+export function execShellSync(command: string, opts: ExecOptions = {}): ExecResult {
+  const argv = shellArgs(command);
+  const program = argv[0].clone();
+  __intrinsic_array_remove(argv, 0);
+  return execSync(program, argv, opts);
+}

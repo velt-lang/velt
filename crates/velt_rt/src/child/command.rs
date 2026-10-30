@@ -5,7 +5,7 @@ use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use std::process::{Command, Stdio};
 
-/// `CommandSpec` in std/process/child/index.vlt, field by field (size 104, align 8).
+/// `CommandSpec` in std/process/child/spec.vlt, field by field (size 104, align 8).
 #[repr(C)]
 pub struct VeltCommand {
     /// Program to run (looked up in `PATH` when it has no path separator).

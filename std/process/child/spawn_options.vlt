@@ -1,0 +1,15 @@
+// velt/process/child (internal): `SpawnOptions`, the options of `spawn`.
+
+/** Options shared by every way of running a program. */
+export struct SpawnOptions {
+  /** Working directory (default: the current one). */
+  cwd?: string;
+  /** Variables added to (or replacing ones in) the inherited environment. */
+  env?: Map<string, string>;
+  /** Start from an empty environment (only `env` is set). */
+  clearEnv?: bool;
+  /** "pipe", "inherit" (default) or "ignore", for `spawn` only. */
+  stdin?: string;
+  stdout?: string;
+  stderr?: string;
+}

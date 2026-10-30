@@ -515,7 +515,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(d, _) => self
                 .cx
                 .adt(*d)
-                .is_some_and(|a| a.qual_name == "std/process::Stdout"),
+                .is_some_and(|a| a.qual_name == "std/process/stdout::Stdout"),
             _ => false,
         }
     }

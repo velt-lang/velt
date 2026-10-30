@@ -1,0 +1,111 @@
+// velt/process/child (internal): `ChildProcess`, a running child with piped streams, and `spawn`.
+
+import { IoError } from "velt/io/error";
+import { unwrapIo } from "velt/native/result";
+import { checkIo } from "velt/native/status";
+import {
+  velt_rt_child_close,
+  velt_rt_child_close_stdin,
+  velt_rt_child_exit_code,
+  velt_rt_child_kill,
+  velt_rt_child_pid,
+  velt_rt_child_read,
+  velt_rt_child_read_string,
+  velt_rt_child_spawn,
+  velt_rt_child_wait,
+  velt_rt_child_write,
+} from "velt/process/child/rt";
+import { SpawnOptions } from "velt/process/child/spawn_options";
+import { specOf, stdioBits } from "velt/process/child/spec";
+
+// Unix signal numbers by name (the values are the same on Linux and macOS for these).
+function signalNumber(name: string): i32 {
+  switch (name) {
+    case "SIGHUP":
+      return 1;
+    case "SIGINT":
+      return 2;
+    case "SIGQUIT":
+      return 3;
+    case "SIGKILL":
+      return 9;
+    case "SIGTERM":
+      return 15;
+    default:
+      throw new IoError("EINVAL", `unknown signal: ${name}`);
+  }
+}
+
+/**
+ * A started program: a Copy handle like std/net's `TcpStream` (async methods take `this` by
+ * copy, so `await p.readStdout()` can be called repeatedly), released by `close()` (after
+ * which the methods of every copy throw `IoError` `EBADF` and `exitCode` is null). Closing does
+ * not stop the program (it is reaped in the background): `kill` it or `wait` for it.
+ */
+export struct ChildProcess {
+  /** The OS process id. */
+  pid: number;
+  private handle: u64;
+
+  /** Writes to stdin (spawned with `stdin: "pipe"`); resolves once everything is written. */
+  async write(data: string): Promise<void> {
+    checkIo(await velt_rt_child_write(this.handle, data));
+  }
+
+  /** Closes stdin: the program reads end of input. */
+  async closeStdin(): Promise<void> {
+    checkIo(await velt_rt_child_close_stdin(this.handle));
+  }
+
+  /** The next chunk of stdout as text ("" = end of output); requires `stdout: "pipe"`. */
+  async readStdout(max: u64 = 0): Promise<string> {
+    return unwrapIo(await velt_rt_child_read_string(this.handle, 1, max));
+  }
+
+  /** The next chunk of stderr as text ("" = end of output); requires `stderr: "pipe"`. */
+  async readStderr(max: u64 = 0): Promise<string> {
+    return unwrapIo(await velt_rt_child_read_string(this.handle, 2, max));
+  }
+
+  /** The next 1..max bytes of stdout (empty = end of output; `max` 0 = up to 64 KiB). */
+  async readStdoutBytes(max: u64 = 0): Promise<u8[]> {
+    return unwrapIo(await velt_rt_child_read(this.handle, 1, max));
+  }
+
+  /** The next 1..max bytes of stderr (empty = end of output). */
+  async readStderrBytes(max: u64 = 0): Promise<u8[]> {
+    return unwrapIo(await velt_rt_child_read(this.handle, 2, max));
+  }
+
+  /** Resolves with the exit code once the program has finished. */
+  async wait(): Promise<i64> {
+    return unwrapIo(await velt_rt_child_wait(this.handle)) as i64;
+  }
+
+  /** The exit code if the program has finished, else null. */
+  get exitCode(): i64 | null {
+    const code = velt_rt_child_exit_code(this.handle);
+    return code < 0 ? null : code;
+  }
+
+  /**
+   * Sends a signal ("SIGTERM" default, "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT"); on Windows
+   * every signal terminates the process. Does nothing once the program has finished.
+   */
+  kill(signal: string = "SIGTERM") {
+    checkIo(velt_rt_child_kill(this.handle, signalNumber(signal)));
+  }
+
+  /** Releases the handle (operations in flight finish first; the program keeps running). */
+  close() {
+    velt_rt_child_close(this.handle);
+  }
+}
+
+/** Starts `program` with `args`. Stdio defaults to "inherit"; use "pipe" to talk to it. */
+export function spawn(program: string, args: string[] = [], opts: SpawnOptions = {}): ChildProcess {
+  const stdio = stdioBits(opts.stdin, 0) | stdioBits(opts.stdout, 2) | stdioBits(opts.stderr, 4);
+  const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, stdio);
+  const handle = unwrapIo(velt_rt_child_spawn(spec));
+  return ChildProcess { pid: velt_rt_child_pid(handle), handle: handle };
+}
