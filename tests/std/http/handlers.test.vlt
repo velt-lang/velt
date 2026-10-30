@@ -385,17 +385,6 @@ async function okCount(base: string, n: i64): Promise<i64> {
 let hits = 0;
 const byPath = new Map<string, number>();
 
-// A named function, not an arrow in the test: in a file with top-level statements, a closure
-// that assigns a top-level `let` is taken for one that assigns a captured variable.
-async function countHit(req: Request): Promise<Response> {
-  const path = new URL(req.url).pathname;
-  hits++;
-  const n = hits;
-  byPath.set(path, (byPath.get(path) ?? 0) + 1);
-  await sleep(0);
-  return new Response(`hit ${n}`);
-}
-
 async function burst(base: string, from: number): Promise<number> {
   let ok = 0;
   for (let i = 0; i < 10; i++) {
@@ -412,7 +401,16 @@ describe("module state", () => {
   // counts into the same module counter and Map, as a Node server does. (Was the golden
   // std/http_module_state.)
   it("is shared by every request handler", async () => {
-    const server = await serve({ port: 0 }, countHit);
+    // The handler is an arrow in the test, which assigns the file's `hits` and changes its
+    // `byPath`: module state, as in Node (#1872).
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      hits++;
+      const n = hits;
+      byPath.set(path, (byPath.get(path) ?? 0) + 1);
+      await sleep(0);
+      return new Response(`hit ${n}`);
+    });
     let ok = 0;
     try {
       const base = `http://127.0.0.1:${server.port}`;
