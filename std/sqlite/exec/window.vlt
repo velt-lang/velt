@@ -130,6 +130,11 @@ export class WinSpec {
 /** The window functions of one SELECT core, and its collected rows. */
 export class WinCtx {
   specs: WinSpec[] = [];
+  /**
+   * Set when a window's PARTITION BY and ORDER BY hold more terms than an ORDER BY may: the
+   * error comes once the query's names resolve, as in SQLite's rewrite.
+   */
+  tooManyTerms: bool = false;
   fns: WinFn[] = [];
   /** Per-row values: function arguments and FILTER results, then captured values. */
   evs: Ev[] = [];

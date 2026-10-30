@@ -17,3 +17,14 @@ a VALUES row of 2000: 1
 a VALUES row of 2001: error: too many columns in result set
 * over 1000 + 1000 columns: 0
 * over 1000 + 1001 columns: error: too many columns in result set
+a window ORDER BY of 2000: 1 2
+a window ORDER BY of 2001: error: too many terms in ORDER BY clause
+a window PARTITION BY of 2000: 1 1
+a window PARTITION BY of 2001: error: too many terms in ORDER BY clause
+a window of 1000 + 1000: 1 1
+a window of 1000 + 1001: error: too many terms in ORDER BY clause
+a named window of 2000: 1 2
+a named window of 2001: error: too many terms in ORDER BY clause
+an unused window of 2001: 1 1
+a window of 2001 in ORDER BY: error: too many terms in ORDER BY clause
+a window of 2001, then no such column: error: no such column: nosuch

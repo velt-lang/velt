@@ -307,6 +307,10 @@ function compileCoreOnce(
     groupStep = groupStepFor(c, core, sc, agg, groups, q);
   }
   const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc0);
+  // SQLite sorts by a window's PARTITION BY and ORDER BY together, as one ORDER BY.
+  if (win.tooManyTerms) {
+    prepareError("too many terms in ORDER BY clause");
+  }
   // GROUP BY or DISTINCT without ORDER BY on one table: SQLite scans an index led by the first
   // grouping column, which decides which row of a group shows its bare columns. For DISTINCT
   // over a range it does so only when the index orders all the result columns (else the range
