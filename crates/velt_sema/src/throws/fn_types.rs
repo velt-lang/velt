@@ -11,8 +11,8 @@
 //! grows. A program that stores no throwing closure into such a type is checked once.
 //!
 //! The sets outlive one check, whose interned types they can't use: an error type is kept as a
-//! [`Portable`] type, classes by `DefId` and declaration span (collected before any body is
-//! checked, so the same in every check of one program).
+//! [`Portable`] type, classes and interfaces (`unknown` is one) by `DefId` and declaration span
+//! (collected before any body is checked, so the same in every check of one program).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -29,6 +29,9 @@ pub(crate) enum Portable {
     Leaf(TyKind),
     /// A class (or other definition) instance: its id, declaration span and type arguments.
     Def(DefId, Span, Vec<Portable>),
+    /// A value of an interface type (`unknown`, `any`, a thrown interface value): the
+    /// interface's id, declaration span and type arguments.
+    Dyn(DefId, Span, Vec<Portable>),
     Array(Box<Portable>),
     Option(Box<Portable>, Nothing),
 }
@@ -38,7 +41,9 @@ impl Portable {
     fn size(&self) -> usize {
         match self {
             Portable::Leaf(_) => 1,
-            Portable::Def(_, _, args) => 1 + args.iter().map(Portable::size).sum::<usize>(),
+            Portable::Def(_, _, args) | Portable::Dyn(_, _, args) => {
+                1 + args.iter().map(Portable::size).sum::<usize>()
+            }
             Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
         }
     }
@@ -691,6 +696,13 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 Portable::Def(*d, span, args)
             }
+            TyKind::Dyn(d, args) if (d.0 as usize) < self.collected_defs => {
+                let span = *self.def_spans.get(d.0 as usize)?;
+                let args = (args.iter())
+                    .map(|a| self.port(*a, depth + 1))
+                    .collect::<Option<Vec<_>>>()?;
+                Portable::Dyn(*d, span, args)
+            }
             TyKind::Array(e) => Portable::Array(Box::new(self.port(*e, depth + 1)?)),
             TyKind::Option(e, n) => Portable::Option(Box::new(self.port(*e, depth + 1)?), *n),
             _ => return None,
@@ -709,6 +721,15 @@ impl Ctx<'_> {
                     .map(|a| self.unport(a))
                     .collect::<Option<Vec<_>>>()?;
                 TyKind::Adt(*d, args)
+            }
+            Portable::Dyn(d, span, args) => {
+                if self.def_spans.get(d.0 as usize) != Some(span) {
+                    return None;
+                }
+                let args = (args.iter())
+                    .map(|a| self.unport(a))
+                    .collect::<Option<Vec<_>>>()?;
+                TyKind::Dyn(*d, args)
             }
             Portable::Array(e) => TyKind::Array(self.unport(e)?),
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
