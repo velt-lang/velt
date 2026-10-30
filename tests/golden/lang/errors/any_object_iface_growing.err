@@ -1,0 +1,4 @@
+any_object_iface_growing.vlt:21:10: error: instantiating `f<W1<T>>` from `f<T>` grows without end
+any_object_iface_growing.vlt:21:31: error: instantiating `f<W2<T>>` from `f<T>` grows without end
+any_object_iface_growing.vlt:21:52: error: instantiating `f<W3<T>>` from `f<T>` grows without end
+any_object_iface_growing.vlt:21:73: error: instantiating `f<T[]>` from `f<T>` grows without end
