@@ -550,7 +550,13 @@ impl Loader<'_, '_> {
         let spec = jsx::runtime_spec(&source);
         match self.import(index, &spec, span, true, queue) {
             Some(target) => {
-                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone())
+                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone());
+                // The module's JSX uses the runtime as the namespace `JSX`: all of it, also
+                // when an import took one name of it before (`import { jsxEscape } from
+                // "velt/jsx/jsx-runtime"`), which followed only that re-export.
+                if self.wanted.request(target, None) && self.resolved.contains(&target) {
+                    queue.push_back(target);
+                }
             }
             None => {
                 if let Some(d) = self.diags.pop() {
