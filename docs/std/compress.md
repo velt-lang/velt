@@ -2,7 +2,7 @@
 
 Decompression, written in Velt: gzip (RFC 1952), zlib (RFC 1950) and raw DEFLATE (RFC 1951) in
 `velt/compress`, Brotli (RFC 7932) in `velt/compress`. They are what
-[`fetch`](fetch.md) decodes compressed bodies with. A stream that is not valid, or that ends
+[`fetch`](net/http.md) decodes compressed bodies with. A stream that is not valid, or that ends
 before it should, throws `CompressError` (from `velt/compress/errors`, also exported by both
 modules).
 

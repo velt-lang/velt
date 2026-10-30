@@ -63,7 +63,7 @@ hidden classes and no runtime shape checks.
   its own inherits its base's, with the same rule. `JSON.parse<C>` (and `v.as<C>()`) cannot
   decode such a class, alone or inside another type, since decoding fills the fields without
   running a constructor; `JSON.stringify` writes it as usual
-  ([`velt/encoding/json`](../std/json.md)).
+  ([`velt/encoding/json`](../std/encoding/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass may declare an inherited field again with the same
   type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is

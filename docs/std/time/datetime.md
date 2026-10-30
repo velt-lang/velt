@@ -1,4 +1,4 @@
-# velt/time
+# velt/time: DateTime and Duration
 
 `import { DateTime, Duration } from "velt/time"`. `DateTime` is a UTC-first instant: epoch
 milliseconds in a small struct. **Months are 1-12.** Local time is opt-in and DST-aware, using

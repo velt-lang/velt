@@ -6,7 +6,7 @@
 // promises. Programs are found through `PATH`; arguments are passed as-is (no shell quoting).
 // A non-zero exit code is not an error (check `code`); failing to start the program throws
 // `IoError` (e.g. code "ENOENT", message "spawn <program>: …").
-// docs/std/child_process.md.
+// docs/std/process/child.md.
 
 export { ChildProcess, spawn } from "velt/process/child/child_process";
 export { exec, execShell, execShellSync, execSync } from "velt/process/child/exec";

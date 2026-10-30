@@ -218,7 +218,7 @@ The loader gains:
 | Errors | One error class per module, or a few in `errors.vlt`, extending `Error`; messages as in docs/std/README.md "Conventions". |
 | Names | Files and folders `snake_case`; `*Sync` for blocking twins; Node's name where Node has the function. |
 | No duplicate exports | Rule 6 of §2, across all `index.vlt`. |
-| Docs mirror the tree | `docs/std/<module path>.md` exists for every module (`docs/std/net/http.md`); the docs index is generated from the layout. |
+| Docs mirror the tree | `docs/std/<module path>.md` exists for every module (`docs/std/net/http.md`), with a page per part of a module below it (`docs/std/time/datetime.md`); the site lists docs/std by following the tree (`* = ../std/` in `docs/site/pages.txt`). |
 | Tests mirror the tree | Every module has end-to-end tests under `tests/golden/std/<module path>/`. |
 
 **How to split a file.** The size limit only detects the problem; the goal is files that each
@@ -261,7 +261,7 @@ what is wrong:
 | A new export in an implementation file that no `index.vlt` re-exports, or a re-export without a doc comment | `Deque is exported from collections/deque.vlt but not re-exported by collections/index.vlt` |
 | `export *` in an `index.vlt` | `re-export by name so the module's API is reviewable` |
 | A file over 400 lines, or one more exported class in a file | `split by type: one exported class per file (docs/internals/design/std-layout.md §6)` |
-| A new module (a new `index.vlt`) without `docs/std/<path>.md` and `tests/golden/std/<path>/` | lists the missing pieces |
+| A module (an `index.vlt`) without `docs/std/<path>.md`, or without tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder | `velt/text has no page: write docs/std/text.md (docs/std mirrors std's tree; the site lists it by itself)` |
 | A file added to an allow list in `layout.vlt` (`oversize` …) | `the allow lists only shrink` |
 | Header line missing or naming the wrong module | the expected first line |
 

@@ -143,7 +143,7 @@ HTTP/1.0 request's expectation is ignored.
   (the server ends one the handler leaves open). A write to a client that went away throws `IoError`
   and aborts `signal()`.
 - `sendStream(body: BodyStream, type = "text/html; charset=utf-8")`: streams a
-  [`BodyStream`](../../../docs/std/fetch.md#bodystream) as the response, each chunk as it comes, for
+  [`BodyStream`](../../../docs/std/net/http.md#bodystream) as the response, each chunk as it comes, for
   `renderToStream` of [velt/jsx](../../../docs/std/jsx.md): the markup above a pending async
   component reaches the client while it loads. A client that goes away ends it quietly: the source
   is closed, so rendering stops.
@@ -252,7 +252,7 @@ match the body) is reset without reaching the handler, and a connection that res
 streams it may not, sends empty DATA frames, or floods CONTINUATION frames is closed with
 `ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487, and its relatives). `close()` sends GOAWAY:
 streams in flight finish, then each connection closes. The design and its benchmarks are in
-[docs/internals/design/http2.md](../internals/design/http2.md).
+[docs/internals/design/http2.md](../../../docs/internals/design/http2.md).
 
 ## Writing fast handlers
 

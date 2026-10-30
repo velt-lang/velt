@@ -1,4 +1,4 @@
-# velt/fs
+# velt/fs: file streams
 
 `import { openRead, openWrite } from "velt/fs"`. Reads and writes files in chunks, for
 files too large to hold in memory or written incrementally. `FileReader` and `FileWriter` are

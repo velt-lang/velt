@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: SortedMap
 
 `import { SortedMap } from "velt/collections"`. A map with its keys kept in ascending
 order (`K extends Comparable<K>`). It uses two sorted arrays: lookups are O(log n), and inserts

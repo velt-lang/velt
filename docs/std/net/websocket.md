@@ -1,9 +1,9 @@
 # velt/net/websocket
 
 `import { connectWebSocket, WebSocket, webSocketOver } from "velt/net/websocket"`. WebSockets
-(RFC 6455), written in Velt on [`velt/net`](net.md) streams: opened as a client to `ws://` /
+(RFC 6455), written in Velt on [`velt/net`](../net.md) streams: opened as a client to `ws://` /
 `wss://` URLs, or over a connection a server upgraded. Servers accept them with
-[`http-server/websocket`](../../packages/http-server/docs/websocket.md) (`upgradeWebSocket`), which
+[`http-server/websocket`](../../../packages/http-server/docs/websocket.md) (`upgradeWebSocket`), which
 is built on `webSocketOver`: another server can do the same.
 
 - `webSocketOver(stream: TcpStream, server: bool, head: u8[] = []): WebSocket`: a WebSocket over
@@ -64,7 +64,7 @@ async function main() {
 Notes: messages are pulled with `receive` or `for await` (no callbacks, so hot reload needs nothing
 special); pings are answered automatically. Over HTTP/2 a server accepts WebSockets through the
 extended CONNECT of RFC 8441
-([http-server/websocket](../../packages/http-server/docs/websocket.md)); the client opens them over
+([http-server/websocket](../../../packages/http-server/docs/websocket.md)); the client opens them over
 HTTP/1.1.
 
 `send` and `sendBytes` queue the message when they are called, so messages go out in call order

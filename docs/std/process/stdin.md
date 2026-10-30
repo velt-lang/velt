@@ -1,4 +1,4 @@
-# velt/process
+# velt/process: standard input
 
 `import { lines, readLine } from "velt/process"`. Reads standard input. The sync and async readers
 share one buffered stream. Text is UTF-8, and invalid bytes become U+FFFD. Before a read waits

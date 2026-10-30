@@ -1,6 +1,6 @@
 # Design: the JSON engine, fastest in class with System.Text.Json's features
 
-Status: proposed. Nothing here is implemented beyond what [velt/encoding/json](../../std/json.md)
+Status: proposed. Nothing here is implemented beyond what [velt/encoding/json](../../std/encoding/json.md)
 documents today. Tracking: #1655, with one sub-issue per step; survey #529 has the `navigate` and `parse_value` rows.
 
 ## Where we are
@@ -445,7 +445,7 @@ decodes.
 Each step is one pull request:
 - a step that changes speed has `bench/json/run.sh` numbers before and after, plus build time
   and IR size, with every row within 3% or better;
-- a step that users see updates `docs/std/json.md` (marked **Planned** until it lands) and adds
+- a step that users see updates `docs/std/encoding/json.md` (marked **Planned** until it lands) and adds
   goldens.
 
 ## Open questions

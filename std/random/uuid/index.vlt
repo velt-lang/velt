@@ -5,7 +5,7 @@
 // either case); binary form is 16 bytes in network order. Randomness comes from the OS CSPRNG.
 // v7 puts the Unix time in milliseconds in the first 48 bits, so v7 ids sort by creation time
 // (ids created in the same millisecond are ordered randomly: no counter, no module state).
-// docs/std/uuid.md.
+// docs/std/random/uuid.md.
 
 export { UuidError } from "velt/random/uuid/errors";
 export {

@@ -102,7 +102,7 @@ Promises behave like JavaScript's, at Rust's cost:
   that started it, nor before timers due earlier. `sleep`s of different tasks have no order
   between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
   callbacks do, whichever task created them: they run in Node's order, one list per delay
-  ([velt/time](../std/timers.md)).
+  ([velt/time](../std/time/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting while it can
   still make progress, like Node waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
@@ -111,7 +111,7 @@ Promises behave like JavaScript's, at Rust's cost:
   `main`) starts when it is awaited or spawned.
 - After `main` returns (a synchronous one, an `async` one, or the top level), the process runs
   while something can still happen, as in Node: a listening [server](../../packages/http-server/README.md), a pending
-  [timer](../std/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
+  [timer](../std/time/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
   and promises that run or wait for a timer or I/O (`sleep`, a socket, a file, a child
   process). Spawned tasks are waited for like that too. What waits only for other promises or
   tasks that can never settle it (a `resolve` nobody calls any more, a channel nobody sends on)
@@ -154,7 +154,7 @@ Promises behave like JavaScript's, at Rust's cost:
     using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
     it on both tasks.
   - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
-    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
+    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/time/timers.md) callback
     capturing it, which runs as a task of its own, a `Promise.all` or `Promise.race` over it) is
     awaited there through a copy. So is one inside a value that goes there while it is still
     used here (an object, an array or a closure passed to a spawned call or sent over a
@@ -304,7 +304,7 @@ only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept
 is reported as uncaught, like a dropped promise, once the microtask queue is empty (as in
 Node). `queueMicrotask(f)` runs `f` as such a callback, but an error `f` throws ends the
 process at the throw, as in Node, like one a timer's callback throws
-([timers](../std/timers.md)). Both need async code around them:
+([timers](../std/time/timers.md)). Both need async code around them:
 in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
 starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
 statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
@@ -411,12 +411,12 @@ ending the stream is always an explicit `close()` (or `stop()`).
 
 | Source | Loop | Ends when |
 |---|---|---|
-| [`Channel<T>`](../std/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
-| [`FileReader`](../std/fs_stream.md) | `for await (const line of reader.lines())` | end of file |
-| [standard input](../std/stdin.md) | `for await (const line of lines())` | end of input |
-| [`WebSocket`](../std/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
+| [`Channel<T>`](../std/sync/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
+| [`FileReader`](../std/fs/stream.md) | `for await (const line of reader.lines())` | end of file |
+| [standard input](../std/process/stdin.md) | `for await (const line of lines())` | end of input |
+| [`WebSocket`](../std/net/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
 | [`RedisSubscriber`](../std/redis.md) | `for await (const m of sub)` | `sub.close()` |
-| [`Ticker`](../std/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
+| [`Ticker`](../std/time/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
 | [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
 
 ```ts
@@ -460,7 +460,7 @@ call or a task body (not a promise that already started); an index out of range 
 the spawn. Every task stays on the worker it started on unless that worker is busy enough to
 share its work, so a caller pinned next to the task it talks to never wakes another thread.
 
-Tasks exchange values through channels ([`velt/sync`](../std/channel.md)): typed,
+Tasks exchange values through channels ([`velt/sync`](../std/sync/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
 
 Output from different tasks interleaves line by line: a `console.log` line is never split by
@@ -479,7 +479,7 @@ Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not 
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
 
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
-`Date.now(): i64`. Timers and intervals are in [`velt/time`](../std/timers.md).
+`Date.now(): i64`. Timers and intervals are in [`velt/time`](../std/time/timers.md).
 
 ## Cancellation
 
@@ -962,7 +962,7 @@ the type arguments or from the expected type; without a written `E`
 (`Promise.withResolvers<T>()`), the promise rejects with what `reject` is called with.
 
 - `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
-  spawned task, or send them over a [channel](../std/channel.md) and call them there; the
+  spawned task, or send them over a [channel](../std/sync/channel.md) and call them there; the
   awaiting task wakes. The first settlement wins and later calls do nothing.
 - A value settled from another task is transferred (moved, or copied while that task still uses
   it), one settled on the promise's own task is the same object, as for `new Promise`.

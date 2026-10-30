@@ -1,5 +1,6 @@
 // scripts/std-lint: checks the standard library's layout and quality rules
-// (docs/internals/design/std-layout.md §2 and §6), with messages that say what to do.
+// (docs/internals/design/std-layout.md §2 and §6), with messages that say what to do: the layout,
+// and each public module's page under docs/std (docs.vlt).
 //
 //   velt run scripts/std-lint/main.vlt [--base <ref>] [--fix-headers] [--write-allow] [files…]
 //
@@ -13,6 +14,7 @@ import { execSync } from "velt/process/child";
 import { readFileSync, writeFileSync } from "velt/fs";
 import { args, exit } from "velt/process";
 import { allow } from "./allow";
+import { docsProblems } from "./docs";
 
 const MAX_LINES = 400;
 
@@ -305,6 +307,9 @@ function lint(std: Std): Problem[] {
         exporters.set(key, dir);
       }
     }
+  }
+  for (const [file, message] of docsProblems(std.indexes, std.files)) {
+    problems.push(new Problem(file, "docs", message));
   }
   return problems;
 }

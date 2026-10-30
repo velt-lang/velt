@@ -1,4 +1,4 @@
-# Streams
+# velt/io: streams
 
 `ReadableStream`, `ReadableStreamDefaultReader` and `ReadableStreamDefaultController` are
 globals, as in Node (no import; the module is `velt/io`). A stream is made from a source
@@ -67,7 +67,7 @@ async function main() {
 - **`ReadableStream.from(iterable)`** reads an async iterable (an async generator), one value
   per read (it is not read ahead: its high-water mark is 0); an error
   it throws reaches the reader as an `Error` with its text.
-- **Bodies**: `res.body` / `req.body` are a `ReadableStream<Uint8Array>` ([fetch](fetch.md)),
+- **Bodies**: `res.body` / `req.body` are a `ReadableStream<Uint8Array>` ([fetch](../net/http.md)),
   pulled only as they are read. Each read of `res.body` gives a new stream object (in JS it is
   the same one). A `ReadableStream<Uint8Array>` is a body, as in Node: `new Response(stream)`,
   `fetch(url, { method: "POST", body: stream })`; a stream is read when the body is, and a
@@ -80,7 +80,7 @@ Differences from Node:
 - Velt has no `undefined`: a finished read is `{ done: true }`, which prints without `value:
   undefined`, and a `cancel` reason is an `Error`, a `string` or `null`.
 - An `await` resumes as soon as its promise settles, before callbacks queued earlier
-  ([Async](../reference/async.md)), so code after `await reader.read()` can run before a `pull`
+  ([Async](../../reference/async.md)), so code after `await reader.read()` can run before a `pull`
   that Node would have called first (the order of the `pull` calls themselves is Node's).
 - Not supported yet: `WritableStream`, `TransformStream`, `pipeTo`, `pipeThrough`, `tee`,
   byte streams (`type: "bytes"`, BYOB readers), a strategy's `size` function, `values({

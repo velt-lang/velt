@@ -1,4 +1,4 @@
 // Global (loaded when a module names one of these): `JSON`, `JsonValue` and their types
-// (docs/std/json.md). They sit on the JSON engine in Velt (the reader, the scanner, the writer
+// (docs/std/encoding/json.md). They sit on the JSON engine in Velt (the reader, the scanner, the writer
 // and the number code they use), which a program that never names them should not read.
 export { JSON, JsonError, JsonParseOptions, JsonReplacer, JsonValue } from "velt/prelude/json/json";

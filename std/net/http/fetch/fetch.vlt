@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `fetch` API (docs/std/fetch.md), global like in Node:
+// velt/net/http (internal): the WHATWG `fetch` API (docs/std/net/http.md), global like in Node:
 // `fetch`, `Request`, `Response` and `Headers` need no import (std/prelude/global/fetch.vlt).
 //
 // `fetch` resolves once the response's status and headers have arrived; the body is received

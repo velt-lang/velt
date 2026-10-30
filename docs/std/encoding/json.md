@@ -8,7 +8,7 @@ what code that writes JSON itself builds on:
 
 - `writeJson<T>(w: StringBuilder, value: T)` appends what `JSON.stringify(value)` writes. Its
   body is generated for each type at compile time by a source generator written in Velt, which
-  uses nothing a package could not use ([source generators](../reference/source-generators.md)).
+  uses nothing a package could not use ([source generators](../../reference/source-generators.md)).
   It writes numbers, booleans, strings, literal types, enums, arrays, tuples, `T | null`,
   objects, structs and classes (a class value as its dynamic class, and through its `toJSON()`)
   for now; other types are a compile error at the call.
@@ -35,7 +35,7 @@ function main() {
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
 - `JSON.stringify` of an `any`, `unknown` or `object` writes the value held, as Node does
-  ([Reference](../reference/types.md#any-and-unknown)).
+  ([Reference](../../reference/types.md#any-and-unknown)).
 - `JSON.stringify(x, replacer, space)` writes as JavaScript does. `space` indents: a number of
   spaces (its integer part, at most 10; a number in (0, 1) keeps the line breaks without
   indentation, as in Node, and 0 or less writes no whitespace) or a string (its first 10

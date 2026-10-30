@@ -5,7 +5,7 @@
 // are slices with `""` unescaped. Records end at LF, CRLF or a lone CR; a final line break does
 // not start another record, and a leading byte order mark (U+FEFF) is skipped. Quoted fields may
 // contain delimiters and line breaks. Fields are strings; no type inference.
-// docs/std/csv.md.
+// docs/std/encoding/csv.md.
 
 export { CsvError } from "velt/encoding/csv/errors";
 export { CsvOptions, parseCsv, parseCsvRecords } from "velt/encoding/csv/parse";

@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: ConcurrentMap
 
 `import { ConcurrentMap } from "velt/collections"`. A map from `u64` or `string`
 keys to values that many threads read and write at once, `ConcurrentMap<K, V>` (`K` and `V` are

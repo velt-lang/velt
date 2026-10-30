@@ -115,9 +115,9 @@ Options:
   `CliError | InputError` and can choose the exit code with `instanceof`.
 - **Output**: `console.log` goes to stdout, `console.error` to stderr. For large outputs,
   build the text first and print it once, or write in chunks with
-  [`velt/fs`](../std/fs_stream.md).
-- **Input**: `readFileSync` reads a whole file; [`velt/process`](../std/stdin.md) reads standard
-  input line by line or at once; [`velt/fs`](../std/fs_stream.md) reads large files in
+  [`velt/fs`](../std/fs/stream.md).
+- **Input**: `readFileSync` reads a whole file; [`velt/process`](../std/process/stdin.md) reads standard
+  input line by line or at once; [`velt/fs`](../std/fs/stream.md) reads large files in
   chunks.
 
 ## Testing
@@ -146,7 +146,7 @@ export function test_usage_error() {
 
 ## Running other programs
 
-[`velt/process/child`](../std/child_process.md) runs other programs and captures their output:
+[`velt/process/child`](../std/process/child.md) runs other programs and captures their output:
 
 ```ts
 import { execSync } from "velt/process/child";

@@ -1,2 +1,2 @@
-// Global (loaded when a module names it): `Symbol` (docs/std/symbol.md).
+// Global (loaded when a module names it): `Symbol` (docs/std/prelude/symbol.md).
 export { Symbol, SymbolConstructor } from "velt/lang/symbol";

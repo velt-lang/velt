@@ -1,8 +1,8 @@
-# velt/time
+# velt/time: timers
 
 `import { Ticker } from "velt/time"`. Timers and a pull-based interval.
 `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`, `clearImmediate`
-and `Timer` are globals (from the [prelude](prelude.md)), as in Node; `velt/time` exports them
+and `Timer` are globals (from the [prelude](../prelude.md)), as in Node; `velt/time` exports them
 too. A timer takes a
 callback, like JS: one returning the promise to run (`() => save(doc)` or `async () => { … }`),
 or a plain one (`() => console.log("x")`, a function name or a local function value,
@@ -73,10 +73,10 @@ async function main() {
 ```
 
 What keeps a process alive is what can still happen, as in Node: a pending ref'd timer, a
-listening [server](../../packages/http-server/README.md), and code that runs or waits for a timer or I/O (a spawned task, a
+listening [server](../../../packages/http-server/README.md), and code that runs or waits for a timer or I/O (a spawned task, a
 started promise, a timer's callback once it started, `await sleep(ms)`, a read). A promise that
 waits only for something that never comes (a `resolve` nobody calls) does not keep it alive: once
-nothing else is left, the process ends, as Node's does ([Async](../reference/async.md#promises)).
+nothing else is left, the process ends, as Node's does ([Async](../../reference/async.md#promises)).
 
 Differences from Node:
 
@@ -121,5 +121,5 @@ async function main() {
 }
 ```
 
-A `Ticker` stops through an [`AbortController`](task.md): each `tick()` races its sleep against
+A `Ticker` stops through an [`AbortController`](../task.md): each `tick()` races its sleep against
 the stop signal.

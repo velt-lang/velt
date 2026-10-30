@@ -1,4 +1,4 @@
-# velt/text
+# velt/text: regular expressions
 
 `RegExp` is a global, as in Node, and so are regex literals (`/ab+c/gi`); `import { RegExp } from
 "velt/text"` also works. JavaScript-flavoured regular expressions on Rust's `regex`

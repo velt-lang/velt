@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: Set
 
 `Set` is a global, as in Node (or `import { Set } from "velt/collections"`). An
 insertion-ordered hash set with JS `Set` semantics plus the ES2025 set algebra. It is built on

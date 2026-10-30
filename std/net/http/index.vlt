@@ -2,7 +2,7 @@
 // of Node, Deno and Bun: `fetch` (HTTP/1.1, and HTTP/2 where the origin offers it), `Request`,
 // `Response`, `Headers` and their bodies; and what a server written in Velt needs of them
 // (`RequestSource`, `responseParts`, `statusText`; packages/http-server is one). HTTP/2's wire
-// format is velt/net/http/h2. docs/std/fetch.md.
+// format is velt/net/http/h2. docs/std/net/http.md.
 
 export {
   BodyInit,

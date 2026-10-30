@@ -1,4 +1,4 @@
-# velt/math
+# velt/math: BigInt
 
 `import { BigInt, BigIntError } from "velt/math"`. Arbitrary-precision integers, like JS
 `BigInt`, backed by the runtime (dashu-int). Velt has no operator overloading and no `10n`

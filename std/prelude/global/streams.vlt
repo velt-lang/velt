@@ -1,5 +1,5 @@
 // Global (loaded when a module names one of these): WHATWG streams, as in Node
-// (docs/std/streams.md).
+// (docs/std/io/streams.md).
 export { ReadableStream } from "velt/io/streams/streams";
 export { ReadableStreamDefaultController } from "velt/io/streams/controller";
 export { ReadableStreamDefaultReader } from "velt/io/streams/reader";

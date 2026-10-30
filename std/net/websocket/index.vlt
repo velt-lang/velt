@@ -1,7 +1,7 @@
 // velt/net/websocket: WebSocket connections (RFC 6455) written in Velt on velt/net streams:
 // opened as a client (`connectWebSocket("ws://…")`, `wss://` over TLS), or over a connection a
 // server upgraded (`webSocketOver`; packages/http-server's `upgradeWebSocket` makes one).
-// docs/std/websocket.md.
+// docs/std/net/websocket.md.
 //
 // `WebSocket` is a handle like velt/net's `TcpStream` (its copies share one connection, so one
 // task can wait in `receive` while another `send`s), released by `close()`: a `receive` already

@@ -278,14 +278,14 @@ surprise ([Error handling](errors.md)).
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
   their `clear` functions are globals and take any callback (`() => console.log("x")`,
   `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
-  process alive unless it is `unref()`ed, as in Node ([`velt/time`](../std/timers.md)). To wait, `await sleep(ms)`.
+  process alive unless it is `unref()`ed, as in Node ([`velt/time`](../std/time/timers.md)). To wait, `await sleep(ms)`.
 - A promise is a shared value, as in TypeScript: `const q = p`, `m.get(k)` on a `Map` of
   promises, `arr[i]`, a class or object field read by several callers, and `p.then(f); await p`
   all hold the same promise, and every `await` of it gets the result (the same object for an
   object result). A holder that goes to another task (`spawn`, a channel, a timer callback) is
   awaited there through a copy of the result
   ([Promises](../reference/async.md#promises)).
-- Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
+- Std streams are async iterables: `for await` over a [channel](../std/sync/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
   loop keeps the source open (a channel may have other receivers): close it yourself
@@ -316,7 +316,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 `var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`),
 `with`, getters on object literals, decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
-method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt/math`](../std/bigint.md)), Unicode
+method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt/math`](../std/math/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for

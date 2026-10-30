@@ -2,7 +2,7 @@
 
 `import { isWebSocketRequest, upgradeWebSocket, acceptWebSocket } from "http-server/websocket"`.
 Accepting WebSockets (RFC 6455) on the server: each is a
-[velt/net/websocket](../../../docs/std/websocket.md) `WebSocket` (sending, receiving, topics) once
+[velt/net/websocket](../../../docs/std/net/websocket.md) `WebSocket` (sending, receiving, topics) once
 its handshake is answered, over an HTTP/1.1 `Upgrade`
 ([`upgradeConnection`](../README.md#upgradeconnectionreq-protocol-headers)) or, over HTTP/2, the
 extended CONNECT of RFC 8441 (the socket then runs on that one stream).

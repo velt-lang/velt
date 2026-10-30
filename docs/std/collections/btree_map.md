@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: BTreeMap
 
 `import { BTreeMap } from "velt/collections"`. A map with its keys kept in ascending
 order (`K extends Comparable<K>`: numbers, strings, bool, and user types with a `compareTo`).

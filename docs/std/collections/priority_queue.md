@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: PriorityQueue
 
 `import { PriorityQueue } from "velt/collections"`. A binary heap ordered by a
 comparator. `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` gives a min-heap.

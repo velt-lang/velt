@@ -1,4 +1,4 @@
-// velt/sync (internal): `Channel<T>`, a typed queue between tasks (docs/std/channel.md). Any number
+// velt/sync (internal): `Channel<T>`, a typed queue between tasks (docs/std/sync/channel.md). Any number
 // of tasks may send and receive through clones of one channel. A bounded channel makes `send` wait
 // while it is full (backpressure); an unbounded one never waits. `close()` ends the stream: sends
 // fail from then on, and receivers get what is queued, then `null`.

@@ -1,17 +1,17 @@
-# fetch
+# velt/net/http: fetch
 
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt on
-[`velt/net`](net.md) (`std/net/http/fetch/client/`): [HTTP/2](#http2) for HTTPS origins that offer
+[`velt/net`](../net.md) (`std/net/http/fetch/client/`): [HTTP/2](#http2) for HTTPS origins that offer
 it, else HTTP/1.1 with keep-alive connections pooled per origin, both shared by every task, TLS from
-the runtime for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as
+the runtime for HTTPS, bodies decoded by [`velt/compress`](../compress.md), and redirects followed as
 the standard says. A pooled connection idle for more than a second is checked before it is reused,
 and one idle for a minute is closed. A request sent on a *reused* pooled connection that the server
 had closed (it fails before any response) is sent once more, on another connection, when its method
 is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`), as Go's client does; `POST` and
 `PATCH` are never sent twice, and neither is a request on a fresh connection (that server got the
 request and failed). Node fails such a request. A server's handlers
-([packages/http-server](../../packages/http-server/README.md)'s `serve`) take and return the same
+([packages/http-server](../../../packages/http-server/README.md)'s `serve`) take and return the same
 `Request` and `Response`, as in Deno and Bun. The option types of their signatures (`RequestInit`,
 `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are global too, as in TypeScript, so
 an init object can be built before the call: `const init: RequestInit = { method: "POST" }; if (body
@@ -37,13 +37,13 @@ AbortError>` sends a request and resolves once the response's status and headers
 the body is received when you read it. An HTTP error status (404, 500) is a response, not an
 error: check `res.ok`. `fetch` rejects when there is no response:
 
-- `IoError` (from [`velt/io`](io.md)) when the request fails: `code` is `"ECONNREFUSED"`,
+- `IoError` (from [`velt/io`](../io.md)) when the request fails: `code` is `"ECONNREFUSED"`,
   `"ETIMEDOUT"` (connecting takes more than 10 s), `"ECONNRESET"`, … and the message starts with
   `fetch failed`, as Node's does. An invalid URL, header name or value, a GET or HEAD request
   with a body, and a scheme other than `http:` / `https:` fail with `"EINVAL"` / `"ENOTSUP"`
   before anything is sent. A redirect loop (more than 20) or a redirect with `redirect: "error"`
   fails with `fetch failed: …`.
-- The signal's `AbortError` (from [`velt/task`](task.md)) when `init.signal` is aborted: a
+- The signal's `AbortError` (from [`velt/task`](../task.md)) when `init.signal` is aborted: a
   `TimeoutError`, which extends `AbortError`, for `AbortSignal.timeout(ms)`. Aborting stops
   the request where it waits (connecting, sending, waiting for the response or receiving its
   body) and closes its connection.
@@ -96,7 +96,7 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 - Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
   mark is dropped, as in JS),
   `await res.json<T>()`, `await res.bytes(): Uint8Array` and `await res.arrayBuffer():
-  ArrayBuffer` ([typed arrays](typed_array.md)). A body is read once: a second read throws `IoError`
+  ArrayBuffer` ([typed arrays](../prelude/typed_array.md)). A body is read once: a second read throws `IoError`
   (`Body is unusable: Body has already been read`); a response without a body can be read any
   number of times, as in JS. A large body is received into one buffer
   sized from `content-length`, so `bytes()` copies it once.
@@ -104,12 +104,12 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
   or give the variable one (`const users: User[] = await res.json()`); an untyped
   `res.json()` is a compile error that says so.
-- `res.body` is the body as it arrives, a [`ReadableStream`](streams.md) of `Uint8Array`s:
+- `res.body` is the body as it arrives, a [`ReadableStream`](../io/streams.md) of `Uint8Array`s:
   `res.body.getReader()` or `for await (const chunk of res.body)`, so a large download need not
   be held in memory: each chunk is at most 64 KiB, however much a compressed body expands. It is
   `null` for a status without a body (101, 103, 204, 205, 304), for a `HEAD` request's response
   and for a response made without one. Reading it uses the body up, as `text()` does; getting
-  it does not. A [`ReadableStream`](streams.md) of `Uint8Array` chunks is a body too, as in
+  it does not. A [`ReadableStream`](../io/streams.md) of `Uint8Array` chunks is a body too, as in
   Node: `new Response(ReadableStream.from(gen()))` (a chunk of another type fails the read
   with `IoError` "EINVAL", `Received non-Uint8Array chunk`), and so is a
   [`BodyStream`](#bodystream).
@@ -129,7 +129,7 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 - `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
   BodyStream | null, init?: ResponseInit { status?; statusText?; headers? })`, `Response.json(data,
   init?)` (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status
-  = 302)` build responses: what a [server](../../packages/http-server/README.md#the-response)
+  = 302)` build responses: what a [server](../../../packages/http-server/README.md#the-response)
   handler returns, or a stand-in in tests. A string body implies `content-type:
   text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`,
   unless `headers` set one; a constructed response makes no `Headers` until you read `headers`. A
@@ -149,13 +149,13 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 `new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
 `url`, `method`, `headers`, `redirect`, `signal` (the `init.signal`, else one that is never
 aborted, as in JS), `bodyUsed`, the body readers `text()`, `json<T>()`, `bytes()`,
-`arrayBuffer()`, `blob()`, `formData()` and `body` (a [`ReadableStream`](streams.md) of
+`arrayBuffer()`, `blob()`, `formData()` and `body` (a [`ReadableStream`](../io/streams.md) of
 `Uint8Array`s, `null` without a body), and `clone()` (as `Response.clone()`; a received
 request's body is teed too). `fetch(request)` sends it
 (its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
 a stream is read whole before the request is sent (**Planned**: streamed uploads).
 
-A [server](../../packages/http-server/README.md#the-request) hands its handler a `Request` for what
+A [server](../../../packages/http-server/README.md#the-request) hands its handler a `Request` for what
 it received: its `url` is absolute, its headers are immutable, and its body is received while it is
 read.
 
@@ -165,7 +165,7 @@ Global, as in Node. `new Blob(parts?: (string | Uint8Array | ArrayBuffer | DataV
 Blob)[], { type? })` holds the bytes of its parts (text as UTF-8) with a media type (lowercased;
 `""` if it is not printable ASCII): `size`, `type`, `slice(start?, end?, contentType?)`
 (negative indices count from the end), and the readers `text()`, `bytes(): Uint8Array`,
-`arrayBuffer()` and `stream()` (a [`ReadableStream`](streams.md) of `Uint8Array`s). `new
+`arrayBuffer()` and `stream()` (a [`ReadableStream`](../io/streams.md) of `Uint8Array`s). `new
 File(parts, name, { type?, lastModified? })` is a `Blob` with a `name` and a `lastModified`
 time (milliseconds; default now).
 
@@ -187,7 +187,7 @@ async function upload(url: string, report: string): Promise<number> {
 
 ## `BodyStream`
 
-Velt's body stream of `u8[]` chunks (a [`ReadableStream`](streams.md) of `Uint8Array`s is a body
+Velt's body stream of `u8[]` chunks (a [`ReadableStream`](../io/streams.md) of `Uint8Array`s is a body
 too, as in JS): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one from an async iterable,
 such as an async generator, for `new Response(stream)`: a server sends each chunk as it is made, and
 `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws
@@ -259,7 +259,7 @@ async function status(url: string): Promise<string> {
 ```
 
 `AbortController`, `AbortSignal` (with `AbortSignal.timeout` and `AbortSignal.any`) are global
-too; their error classes `AbortError` and `TimeoutError` come from [`velt/task`](task.md).
+too; their error classes `AbortError` and `TimeoutError` come from [`velt/task`](../task.md).
 
 ## HTTP/2
 
@@ -281,16 +281,13 @@ streams, `REFUSED_STREAM`, a connection that closed before it went out) is sent 
 connection, whatever its method, since the server never saw it. Server push is turned off;
 response trailers are read and dropped (the Fetch standard has no API for them).
 
-HTTP/2's wire format is `velt/net/http/h2`, which the client and HTTP/2 servers share: the frame
-types, flags, settings and error codes of RFC 9113 (`DATA`, `END_STREAM`, `SETTINGS_MAX_FRAME_SIZE`,
-`PROTOCOL_ERROR`, …), `FrameWriter` (the frames a connection sends, encoded into one buffer that
-leaves in one write), and HPACK (RFC 7541): `HpackEncoder`, `HpackDecoder` and the `FieldList` it
-decodes a header block into, with the Huffman code (`huffmanEncode`, `huffmanDecode`).
+HTTP/2's wire format, which the client and HTTP/2 servers share, is
+[`velt/net/http/h2`](http/h2.md).
 
 ## For servers
 
 What a server written in Velt needs of these classes is in `velt/net/http` too, so a server is a
-library like any other ([packages/http-server](../../packages/http-server/README.md) is one):
+library like any other ([packages/http-server](../../../packages/http-server/README.md) is one):
 
 - `RequestSource`, an interface the server implements: what a received request's `Request`
   reads (`method()`, `url()`, `header(name)`, `hasHeader(name)`, `headers()`, `hasBody()`,
@@ -320,7 +317,7 @@ library like any other ([packages/http-server](../../packages/http-server/README
   it.
 - `console.log` shows a `File` as a `Blob` (`File { size, type }`), without its name and time.
 - `res.body` and `req.body` have no `pipeTo()`, `pipeThrough()`, `tee()` or BYOB reader
-  ([streams](streams.md)).
+  ([streams](../io/streams.md)).
 - Mistakes JS reports with a catchable `RangeError` or `TypeError` stop the program instead,
   like an index out of bounds: `new Response(body, { status })` outside 200–599,
   a body with a status that has none (204, 205, 304), `Response.redirect(url, status)` with a

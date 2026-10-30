@@ -1,4 +1,4 @@
-# SIMD
+# velt/simd
 
 ```ts
 import { u8x16, f32x4, mask8x16 } from "velt/simd";

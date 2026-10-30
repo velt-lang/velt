@@ -1,6 +1,6 @@
 // Global (loaded when a module names one of these): Node's `fetch` API, the types its signatures
 // use (TypeScript's DOM lib has them as globals too), and the cancellation it takes
-// (docs/std/fetch.md, docs/std/task.md).
+// (docs/std/net/http.md, docs/std/task.md).
 export {
   fetch,
   Headers,

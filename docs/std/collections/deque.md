@@ -1,4 +1,4 @@
-# velt/collections
+# velt/collections: Deque
 
 `import { Deque } from "velt/collections"`. A double-ended queue on a growable ring buffer.
 Pushing and popping at either end is amortized O(1), and indexing is O(1).

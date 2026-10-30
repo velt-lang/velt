@@ -1,4 +1,4 @@
-# velt/sync
+# velt/sync: channels
 
 `import { channel, Channel, ChannelClosed } from "velt/sync"`. Typed queues between tasks,
 for producer/consumer pipelines and worker pools. Any number of tasks may send and receive
@@ -31,8 +31,8 @@ through one channel.
   longer uses it, and is deep-copied otherwise, so tasks never share an object. Changing an
   object after sending it doesn't affect the receiver's copy. A resource is copied with its
   class's `clone()` (a `RegExp` compiles its pattern again); sending one without `clone()`
-  while still using it is a compile error ([Promises](../reference/async.md#promises)).
-- `Channel<T>` is a handle struct, like `TcpStream` ([Handles](README.md#conventions)). Copies
+  while still using it is a compile error ([Promises](../../reference/async.md#promises)).
+- `Channel<T>` is a handle struct, like `TcpStream` ([Handles](../README.md#conventions)). Copies
   share one channel, so pass it to producers and consumers, `spawn`ed tasks included, without
   `shared(...)`.
 - Close a channel when you're done with it. A closed channel is freed once it is drained. A

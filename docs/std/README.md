@@ -1,7 +1,7 @@
 # The Velt standard library
 
-The standard library is written in Velt and ships with the toolchain. Import a module with the
-`velt:` prefix, like Node's `node:` modules:
+The standard library is written in Velt and ships with the toolchain. A module is imported as
+`velt/<module>`, the path of its folder under `std/` (`velt:` specifiers were removed):
 
 ```ts ignore
 import { readFile, writeFile } from "velt/fs";
@@ -9,11 +9,11 @@ import { Deque } from "velt/collections";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in scope
-everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md), `Request`,
+everywhere without an import, and so are Node's web globals: [`fetch`](net/http.md), `Request`,
 `Response`, `Headers`, `Blob`, `File`, `FormData`, `AbortController`, `AbortSignal`, `URL`,
-`URLSearchParams`, `Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`,
+`URLSearchParams`, `Set`, `RegExp`, [`Symbol`](prelude/symbol.md), `TextEncoder`, `TextDecoder`, `btoa`,
 `atob`, `DOMException`, `structuredClone`, `ArrayBuffer`, `DataView`, `Uint8Array` and the other
-[typed arrays](typed_array.md), and [`ReadableStream`](streams.md). `velt doc --std` generates HTML
+[typed arrays](prelude/typed_array.md), and [`ReadableStream`](io/streams.md). `velt doc --std` generates HTML
 API documentation from the sources.
 
 ## Conventions
@@ -43,25 +43,50 @@ API documentation from the sources.
 
 ## Modules
 
-| Area | Modules |
-|---|---|
-| Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [fetch](fetch.md) (global; `velt/net/http`, `velt/net/http/h2`) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
-| Data formats | [json](json.md) · [csv](csv.md) · [db](db.md) (typed rows from any source) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [compress](compress.md) (gzip, zlib, DEFLATE, Brotli) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
-| Collections | [collections/btree_map](collections/btree_map.md) · [collections/concurrent_map](collections/concurrent_map.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/set](collections/set.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
-| Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
-| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`; `velt/sync/epoch`) |
-| Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
-| Text | [regex](regex.md) |
-| Language | [string_builder](string_builder.md) (global `StringBuilder`) · [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt/simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
-| Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) · [dev](dev.md) (the graceful stop under `velt dev`) |
-| Testing | [test](test.md) (the runner `velt test` builds into test programs) |
-| Packages | [package](package.md) (the type of `package.vlt`) |
-| Servers (packages) | [http-server](../../packages/http-server/README.md) (`serve`, `serveHttp`, WebSocket servers) |
-| Databases (moving to packages) | [sqlite](sqlite.md) · [sqlite/engine](sqlite_engine.md) (the SQLite engine in Velt, read-only for now) · [postgres](postgres.md) · [redis](redis.md) |
+Each module has a page here at the same path as its folder in `std/` (`velt/net/http` is
+[net/http](net/http.md)); a module with several parts has a page for each below its own.
+`velt doc --std` generates the API reference from the sources, and `velt doc --std --format
+types` the TypeScript declarations ([the `velt` type
+package](../tooling/cli.md#typescript-declarations-the-velt-type-package)).
 
-The database drivers are part of the standard library today. They are moving to separately
-versioned packages; their APIs will stay the same.
+| Module | Pages |
+|---|---|
+| [cli](cli.md) | command-line programs: arguments, subcommands, `--help`, exit codes |
+| [collections](collections.md) | [BTreeMap](collections/btree_map.md) · [ConcurrentMap](collections/concurrent_map.md) · [Deque](collections/deque.md) · [PriorityQueue](collections/priority_queue.md) · [Set](collections/set.md) · [SortedMap](collections/sorted_map.md) |
+| [compress](compress.md) | gzip, zlib, DEFLATE, Brotli |
+| [crypto](crypto.md) | hashing, HMAC, secure random values |
+| [db](db.md) | typed rows from any source |
+| [dev](dev.md) | the graceful stop under `velt dev` |
+| [encoding](encoding.md) | base64, hex, UTF-8 · [csv](encoding/csv.md) · [json](encoding/json.md) |
+| [fs](fs.md) | files and directories · [file streams](fs/stream.md) |
+| [generate](generate.md) | what source generators are written with |
+| [hash](hash.md) | stable, non-cryptographic hashing |
+| [io](io.md) | `IoError`, readers and writers · [streams](io/streams.md) (`ReadableStream`, global) |
+| [jsx](jsx.md) | TSX rendering · [attrs](jsx/attrs.md) · [jsx-runtime](jsx/jsx-runtime.md) · [generic/jsx-runtime](jsx/generic/jsx-runtime.md) |
+| [math](math.md) | [BigInt](math/bigint.md) |
+| [mem](mem.md) | `needsDrop`, for containers · [arenas](mem/arena.md) |
+| [native](native.md) | the Velt side of packages with native code |
+| [net](net.md) | TCP and TLS · [dns](net/dns.md) · [http](net/http.md) (`fetch`, global) · [http/h2](net/http/h2.md) · [udp](net/udp.md) · [url](net/url.md) · [websocket](net/websocket.md) (the client) |
+| [os](os.md) | platform facts |
+| [package](package.md) | the type of `package.vlt` |
+| [path](path.md) | paths |
+| [process](process.md) | arguments, environment, exit · [standard input](process/stdin.md) · [child](process/child.md) (child processes) |
+| [random](random.md) | a fast per-thread generator · [uuid](random/uuid.md) |
+| [simd](simd.md) | the vector types and their methods |
+| [sync](sync.md) | `Atomic<T>` (in the prelude), `Backoff`, `VersionLatch` · [channels](sync/channel.md) · [epoch](sync/epoch.md) (reclamation) |
+| [task](task.md) | cancellation, timeouts, task scopes |
+| [test](test.md) | the runner `velt test` builds into test programs · [http](test/http.md) (matchers for a `Response`) |
+| [text](text.md) | [regular expressions](text/regex.md) · [StringBuilder](text/string_builder.md) · [HTML escaping](text/html.md) |
+| [time](time.md) | [DateTime and Duration](time/datetime.md) · [timers](time/timers.md) |
+
+The prelude's globals have pages of their own too: [Symbol](prelude/symbol.md) and [typed
+arrays, `ArrayBuffer` and `DataView`](prelude/typed_array.md). Servers are a package:
+[http-server](../../packages/http-server/README.md) (`serve`, `serveHttp`, WebSocket servers).
+
+The database drivers, [sqlite](sqlite.md) (with [sqlite/engine](sqlite_engine.md), the SQLite
+engine in Velt, read-only for now), [postgres](postgres.md) and [redis](redis.md), are part of
+the standard library today. They are moving to separately versioned packages; their APIs will
+stay the same.
 
 ## Runtime-backed and pure modules
 
@@ -70,30 +95,28 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt/fs`, `velt/fs`, `velt/net`, `velt/http` | file system, TCP and TLS streams, and an HTTP server on hyper; TLS, HTTPS and HTTP/2 through rustls |
-| `velt/net/http` | none of its own: the HTTP/1.1 client is written in Velt on `velt/net` streams, which the runtime pools between requests (`TcpStream.park`), and bodies are decoded by `velt/compress` (Velt) |
-| `velt/net/websocket` | none of its own: the protocol is written in Velt on `velt/net` streams and `velt/http` upgrades (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
-| `velt/process`, `velt/process`, `velt/os` | arguments, environment, working directory, standard input, platform facts |
-| `velt/text` | Rust's `regex` engine |
-| `velt/sync`, `velt/task` | channel queues, abort signals and task groups |
+| `velt/fs`, `velt/net` | the file system, TCP and TLS streams (TLS through rustls) |
+| `velt/net/http` | TCP and TLS connections, which the runtime pools between requests; HTTP/1.1, HTTP/2 (`velt/net/http/h2`) and body decoding (`velt/compress`) are Velt |
+| `velt/net/websocket` | none of its own: the protocol is Velt on `velt/net` streams (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
+| `velt/process`, `velt/os` | arguments, environment, working directory, standard input, platform facts |
 | `velt/process/child` | process spawning and pipes |
 | `velt/net/udp`, `velt/net/dns` | sockets and the system resolver |
+| `velt/sync`, `velt/task` | channel queues, abort signals and task groups |
+| `velt/text` | Rust's `regex` engine; `escapeHtml` and `StringBuilder` are runtime passes over bytes |
 | `velt/math` | arbitrary-precision integers (dashu-int) |
-| `velt/crypto`, `velt/random/uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt (on the CPU's SHA instructions through `velt/simd` where it has them) |
+| `velt/crypto`, `velt/random/uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are Velt (on the CPU's SHA instructions through `velt/simd` where it has them) |
 | `velt/random` | a per-thread wyrand generator |
-| `velt/time` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
-| `velt/text` | `escapeHtml` is one runtime pass |
+| `velt/time` | only the local UTC offset; calendar math, parsing and formatting are Velt |
 | `velt/hash` | FNV-1a over a string's or array's bytes, without a copy |
 | `velt/sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
 | `velt/postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt/redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem/arena`,
-`velt/encoding/csv`, `velt/cli`, `velt/time/timers` (built on `sleep`, `spawn` and `velt/task`
-signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx` too (escaping through
-`velt/text/html`). `velt/encoding`, `velt/net/url` and `velt/native/result` use only the runtime's
-UTF-8 conversions and error-code names. The runtime ABI is documented in [the
-internals](../internals/contracts/rt_abi_async.md).
+Pure Velt: `velt/path`, `velt/mem`, `velt/collections`, `velt/encoding` (with
+`velt/encoding/csv` and `velt/encoding/json`), `velt/cli`, `velt/jsx`, `velt/generate`,
+`velt/net/http/h2`, `velt/net/url` and the timers of `velt/time` (built on `sleep`, `spawn` and
+`velt/task` signals); some use only the runtime's UTF-8 conversions and error-code names. The
+runtime ABI is documented in [the internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly
 

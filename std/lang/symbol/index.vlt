@@ -1,5 +1,5 @@
 // velt/lang/symbol: JavaScript's `Symbol` (a global, std/prelude/global/symbol.vlt;
-// docs/std/symbol.md).
+// docs/std/prelude/symbol.md).
 //
 // A `symbol` is the address of a record the runtime or the compiler made (rt_abi.md "Symbols"),
 // compared by identity. A module constant initialized with `Symbol("d")` is a record the

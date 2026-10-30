@@ -5,13 +5,13 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 `shared`) is implemented by the compiler.
 
 Node's web globals need no import either: `fetch`, `Request`, `Response`, `Headers`, `Blob`,
-`File` and `FormData` ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt/net/url](url.md)), and `AbortController` and
+`File` and `FormData` ([fetch](net/http.md)), `URL` and `URLSearchParams` ([velt/net/url](net/url.md)), and `AbortController` and
 `AbortSignal` ([velt/task](task.md)), `Set` ([velt/collections](collections/set.md)),
-`RegExp` ([velt/text](regex.md); a regex literal counts as naming it), `TextEncoder`,
+`RegExp` ([velt/text](text/regex.md); a regex literal counts as naming it), `TextEncoder`,
 `TextDecoder`, `btoa` and `atob` ([velt/encoding](encoding.md)), `DOMException`
 ([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
-([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
-([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
+([typed arrays](prelude/typed_array.md)), and `ReadableStream` and its reader and controller
+([streams](io/streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
 ([Proxy and Reflect](../reference/types.md#proxy-and-reflect)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
@@ -41,7 +41,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
-| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt/text`](regex.md#string-methods-with-a-regex)) |
+| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt/text`](text/regex.md#string-methods-with-a-regex)) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
 | `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
 | `codePointAt(i = 0): number \| undefined` | the character at `i` when `i` is at the high half of a pair, otherwise the code unit there; `undefined` out of range, as in JS |
@@ -176,7 +176,7 @@ code in the prelude: they read the string's bytes where it keeps them, sixteen a
 SIMD vectors, and are compiled into their caller.
 
 `subarray(begin?, end?)` of a `u8[]` (Node's `buf.subarray`) is a
-[`Uint8Array`](typed_array.md) over the array's bytes, sharing them: writes through either are
+[`Uint8Array`](prelude/typed_array.md) over the array's bytes, sharing them: writes through either are
 seen by both, and its `buffer` is the array. It is the array plus a range, so it is valid
 whatever happens to the array or to the variable that held it: kept in a field, returned,
 captured by a closure or held across an `await`, it keeps the array alive (a program that keeps
@@ -440,7 +440,7 @@ An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 ## JSON
 
 `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and
-`JSON.parseValue(text, options?): JsonValue` ([`velt/encoding/json`](json.md)); arrays and objects may
+`JSON.parseValue(text, options?): JsonValue` ([`velt/encoding/json`](encoding/json.md)); arrays and objects may
 nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
@@ -499,7 +499,7 @@ console.log(deepEqual(a, b), a == b); // true false
 
 `Date` is JavaScript's: an instant in milliseconds since the epoch (`NaN` when invalid), with
 months 0-11, local-time getters and setters (the OS time zone, DST-aware) and their `UTC`
-variants. It is built on [`velt/time`](datetime.md), whose `DateTime` (UTC-first, months
+variants. It is built on [`velt/time`](time/datetime.md), whose `DateTime` (UTC-first, months
 1-12) is the better choice for new code.
 
 - `new Date()`, `new Date(ms)`, `new Date(string)`, `new Date(date)`,
@@ -534,7 +534,7 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `Atomic<T>` (lock-free numbers and flags, [Atomics and velt/sync](sync.md)),
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
-`clearImmediate` with their `Timer` handle ([velt/time](timers.md)).
+`clearImmediate` with their `Timer` handle ([velt/time](time/timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

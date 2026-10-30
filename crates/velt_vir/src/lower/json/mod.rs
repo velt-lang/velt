@@ -1,4 +1,4 @@
-//! `JSON.stringify(x)` / `JSON.parse<T>(s)` (docs/std/json.md): compile-time
+//! `JSON.stringify(x)` / `JSON.parse<T>(s)` (docs/std/encoding/json.md): compile-time
 //! generated per-type glue over the rt string builder and JSON pull reader (rt_abi_async.md
 //! §12). One function per type, shared by every use (which also handles recursive types).
 //!

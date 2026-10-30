@@ -1,4 +1,4 @@
-//! `velt_rt_chan_*`: `Channel<T>` (std/sync/channel.vlt, docs/std/channel.md), a multi-producer,
+//! `velt_rt_chan_*`: `Channel<T>` (std/sync/channel.vlt, docs/std/sync/channel.md), a multi-producer,
 //! multi-consumer FIFO of Velt values between tasks, bounded (`send` waits while full) or
 //! unbounded.
 //!

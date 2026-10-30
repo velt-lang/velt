@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `Blob` and `File` (docs/std/fetch.md): immutable bytes with
+// velt/net/http (internal): the WHATWG `Blob` and `File` (docs/std/net/http.md): immutable bytes with
 // a media type, which a `Response` or `Request` takes as its body (the type becomes its
 // `content-type`), and which `FormData` sends as a file. The bytes are held whole, in one array.
 //

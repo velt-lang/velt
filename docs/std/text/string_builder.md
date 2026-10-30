@@ -1,4 +1,4 @@
-# StringBuilder
+# velt/text: StringBuilder
 
 `StringBuilder` is a global (no import; the module is `velt/text/string_builder`). It is Velt's own:
 JavaScript has none. It builds a string by appending to one buffer that grows by doubling, so

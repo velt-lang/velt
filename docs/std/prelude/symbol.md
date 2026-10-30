@@ -1,7 +1,7 @@
-# Symbol
+# The prelude: Symbol
 
 JavaScript's `Symbol`, a global (`std/lang/symbol/index.vlt`): unique values compared by identity, which
-also name members of objects ([Symbols](../reference/types.md#symbols)).
+also name members of objects ([Symbols](../../reference/types.md#symbols)).
 
 | Member | Meaning |
 |---|---|

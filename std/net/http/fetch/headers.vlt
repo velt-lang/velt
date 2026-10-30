@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the
+// velt/net/http (internal): the WHATWG `Headers` class of `fetch` (docs/std/net/http.md), also the
 // type of a received request's `headers` (source.vlt).
 //
 // One flat list, `[name, value, name, value, …]`, in insertion order: names are lowercased when

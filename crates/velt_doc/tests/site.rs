@@ -22,6 +22,9 @@ fn repository_site_builds() {
         "book/tour.html",
         "reference/types.html",
         "std/fs.html",
+        // docs/std's pages, found by following its tree.
+        "std/net/http/h2.html",
+        "std/collections/deque.html",
         "tooling/webassembly.html",
         "std/index.html",
         "std/std.fs.html",

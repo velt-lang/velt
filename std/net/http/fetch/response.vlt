@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to,
+// velt/net/http (internal): the WHATWG `Response` (docs/std/net/http.md): what `fetch` resolves to,
 // what a server handler returns (`serve`), or a response built with `new Response(body, init)`
 // / `Response.json(data)`.
 //

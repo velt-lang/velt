@@ -1,4 +1,4 @@
-# velt/mem
+# velt/mem: arenas
 
 `import { Arena } from "velt/mem"`. A typed memory pool (a region). Values are appended to one
 growing array and named by their `u32` index, and the whole pool is released at once with

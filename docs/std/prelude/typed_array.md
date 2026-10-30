@@ -1,4 +1,4 @@
-# Typed arrays, ArrayBuffer and DataView
+# The prelude: typed arrays, ArrayBuffer and DataView
 
 `ArrayBuffer`, `DataView` and the typed arrays `Uint8Array`, `Int8Array`, `Uint8ClampedArray`,
 `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array` and `Float64Array` are
@@ -49,7 +49,7 @@ function main() {
 - **`ArrayBufferView`**: TypeScript's type of any typed array or `DataView`, with `buffer`,
   `byteOffset` and `byteLength` (a type only, as in JavaScript).
 - **As values**: the typed array classes and `DataView` are values of a
-  [construct signature](../reference/functions.md#arrow-functions-and-function-types) type,
+  [construct signature](../../reference/functions.md#arrow-functions-and-function-types) type,
   `new (buffer: ArrayBuffer) => ArrayBufferView`: `new C(buffer)` and `v instanceof C` through
   such a value work as in JS.
 - **`SharedArrayBuffer`** is a global as in Node (`typeof SharedArrayBuffer` is
@@ -74,14 +74,14 @@ function main() {
   keeps its length whatever happens to `b` afterwards), and `xs.toBytes()` copies a
   `Uint8Array`'s elements into a `u8[]`, and `b.subarray(begin, end)` of a `u8[]` is a
   `Uint8Array` over its bytes, not a copy, whose `length` counts the elements `b` still has
-  when `b` became shorter, as its `slice`, `subarray` and `with` do ([prelude](prelude.md)). An
+  when `b` became shorter, as its `slice`, `subarray` and `with` do ([prelude](../prelude.md)). An
   index may be an integer of any type (`xs[k]` with `k: usize`), as for arrays.
 - **To the system**: a typed array or a `DataView` passed to `velt/fs`'s `readSync` /
-  `writeSync` or to a [system function](../reference/system-functions.md#views)'s buffer
+  `writeSync` or to a [system function](../../reference/system-functions.md#views)'s buffer
   parameter passes its bytes where they are, with no copy (`readSync(fd, page.subarray(0,
   512))` reads into the page).
 - **Across tasks**: a typed array (or buffer) sent to `spawn` or over a channel is copied, with
-  its buffer, as any value a task receives is ([Async](../reference/async.md)): the two tasks
+  its buffer, as any value a task receives is ([Async](../../reference/async.md)): the two tasks
   don't share its bytes. Views of one buffer stay views of one buffer within a task.
 
 ```ts

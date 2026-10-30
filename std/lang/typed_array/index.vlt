@@ -1,4 +1,4 @@
-// velt/lang/typed_array: the ES typed arrays and their buffer (docs/std/typed_array.md):
+// velt/lang/typed_array: the ES typed arrays and their buffer (docs/std/prelude/typed_array.md):
 // `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`,
 // `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array` and `Float64Array`. Each is also a
 // global of its own (std/prelude/global/), so a program loads only the classes it names.

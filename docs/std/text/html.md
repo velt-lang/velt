@@ -1,4 +1,4 @@
-# velt/text
+# velt/text: HTML escaping
 
 `import { escapeHtml } from "velt/text"`. Escapes text for HTML element content and quoted
 attribute values in one pass: `&`, `<`, `>`, `"` and `'` become `&amp;`, `&lt;`, `&gt;`,

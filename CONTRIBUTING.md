@@ -225,8 +225,43 @@ shrinks.
 - **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3, its page
   under `docs/std/`, and end-to-end tests under `tests/golden/std/` or `tests/std/`.
 - Callbacks rethrow what they throw (`map<U, E>(f: (x: T) => U throws E): U[] throws E`);
-  element-returning methods clone, iteration and callbacks borrow; performance notes are in
-  [std/README.md](std/README.md).
+  element-returning methods clone, iteration and callbacks borrow.
+- Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
+  their module is loaded (they cannot be exported).
+- Only std code may call compiler intrinsics, spelled `__intrinsic_<snake_case>` after the
+  `Intrinsic` enum in `crates/velt_sema/src/hir/intrinsic.rs`.
+
+#### Runtime bindings
+
+std binds `velt_rt_*` symbols (docs/internals/contracts/rt_abi_async.md) with `declare function` /
+`declare async function`. Lowering passes `string`/struct/array params as `const T*` and returns
+struct results through a trailing out-pointer; a C out-parameter next to a scalar result is an
+ordinary param that std always passes as a fresh local (`let out = "";` / a zeroed value, which
+the runtime overwrites): sema cannot see foreign writes, so an out-parameter must never be a
+param, field or element of the calling function. Opaque runtime
+handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]()` drop hook (http
+`Server`/`Response`, fetch's `Response`, `JsonValue`); the Copy handle structs of std/net
+(`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
+
+#### Performance
+
+Std code is monomorphized and inlined like user code, so write plain index loops.
+- Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
+- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
+  other references may reach the array, lowering passes a share of the element instead, so a
+  callback that pushes onto the array or pops it cannot leave its argument dangling).
+- Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
+  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
+  buffer (the stable sort, std/lang/sort/stable.vlt) move raw elements with
+  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
+  element owned exactly once themselves, and set its length back to 0 before it is dropped.
+  A callback may reach the caller's array through an alias, so while it runs that array must
+  hold only elements it owns: the stable sort copies elements that need no drop
+  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
+  and moves the others out at any length, leaving the array empty.
+- Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
+  two buffers as long as the array).
+
 
 ## Interfaces between stages
 

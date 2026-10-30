@@ -20,26 +20,26 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `String(x)`, `Number(x)`, `Boolean(x)`, `parseInt(s, radix)`, `parseFloat(s)`, `isNaN(x)`, `isFinite(x)`, `String.fromCharCode(...codes)`, `NaN`, `Infinity` | conversions and checks |
 | `Buffer.alloc(n)`, `Buffer.byteLength(s)` | byte arrays (`u8[]`) ([prelude](../std/prelude.md)) |
 | `Number.isInteger(x)`, `Number.isNaN`, `isFinite`, `isSafeInteger`, `parseInt`, `parseFloat`, `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` | JS's `Number` members, on `f64` |
-| `JSON.stringify` (also with an array replacer and `space`), `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt/encoding/json`](../std/json.md)) |
+| `JSON.stringify` (also with an array replacer and `space`), `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt/encoding/json`](../std/encoding/json.md)) |
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
 | `Object.keys/values/entries/fromEntries/is/assign/freeze/hasOwn/getPrototypeOf/create(null)`, `Object.prototype.hasOwnProperty.call`, `Object.prototype.toString.call`, `Array.isArray` | JavaScript's object built-ins, on Velt's objects ([Types](types.md#object-built-ins)) |
 | `sleep(ms)`, `yieldNow()`, `spawn(p, options?)`, `Promise.all/race/allSettled/any/withResolvers`, `new Promise((resolve, reject) => …)` | async ([Async](async.md)) |
-| `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback may return a promise (`() => save(doc)`, `async () => { … }`) or nothing (`() => console.log("x")`) ([velt/time](../std/timers.md)) |
+| `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback may return a promise (`() => save(doc)`, `async () => { … }`) or nothing (`() => console.log("x")`) ([velt/time](../std/time/timers.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
-| `fetch(input, init)`, `Request`, `Response`, `Headers` | the WHATWG Fetch API, as in Node ([fetch](../std/fetch.md)) |
+| `fetch(input, init)`, `Request`, `Response`, `Headers` | the WHATWG Fetch API, as in Node ([fetch](../std/net/http.md)) |
 | `AbortController`, `AbortSignal` | cancellation, e.g. of a `fetch` ([velt/task](../std/task.md)) |
-| `URL`, `URLSearchParams` | WHATWG URLs ([velt/net/url](../std/url.md)) |
+| `URL`, `URLSearchParams` | WHATWG URLs ([velt/net/url](../std/net/url.md)) |
 | `Set<T>` | insertion-ordered hash set ([velt/collections](../std/collections/set.md)) |
-| `RegExp`, `/ab+c/gi` | regular expressions ([velt/text](../std/regex.md)) |
+| `RegExp`, `/ab+c/gi` | regular expressions ([velt/text](../std/text/regex.md)) |
 | `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt/encoding](../std/encoding.md)) |
-| `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` | bytes and the typed arrays that view them, as in Node ([typed arrays](../std/typed_array.md)) |
+| `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` | bytes and the typed arrays that view them, as in Node ([typed arrays](../std/prelude/typed_array.md)) |
 | `btoa(s)`, `atob(s)` | Base64 of binary strings, as in Node ([velt/encoding](../std/encoding.md)) |
 | `DOMException` | the error web APIs throw, with `name` and `code` ([prelude](../std/prelude.md#errors)) |
-| `ReadableStream`, `ReadableStreamDefaultReader`, `ReadableStreamDefaultController` | WHATWG streams, as in Node ([streams](../std/streams.md)) |
+| `ReadableStream`, `ReadableStreamDefaultReader`, `ReadableStreamDefaultController` | WHATWG streams, as in Node ([streams](../std/io/streams.md)) |
 | `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |

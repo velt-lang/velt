@@ -1,5 +1,5 @@
 // velt/io (internal): WHATWG streams (https://streams.spec.whatwg.org) as in Node 22:
-// `ReadableStream` with its default controller and reader. They are globals (docs/std/streams.md).
+// `ReadableStream` with its default controller and reader. They are globals (docs/std/io/streams.md).
 //
 // A stream's state lives in its controller (`ReadableStreamDefaultController`): the queue of
 // chunks, the pending reads, and the flags of the spec's algorithms (`started`, `pulling`,

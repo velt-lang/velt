@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `FormData` (docs/std/fetch.md): named text fields and files,
+// velt/net/http (internal): the WHATWG `FormData` (docs/std/net/http.md): named text fields and files,
 // which a `Response` or `Request` body sends as `multipart/form-data` (RFC 7578, as undici writes
 // it), and which `formData()` reads back from such a body or a `application/x-www-form-urlencoded`
 // one.
