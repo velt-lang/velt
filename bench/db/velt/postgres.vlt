@@ -2,7 +2,7 @@
 // the end. Sequential workloads use one client; the pool workloads a pool of 8. Prints
 // `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed loop.
 // `quick` as the first argument runs 1/20 of the sizes.
-import { connect, createPool, Client, PgError, Pool } from "velt/postgres";
+import { connect, createPool, Client, PgError, Pool } from "postgres";
 import { args } from "velt/process";
 import { uuidv4 } from "velt/random/uuid";
 

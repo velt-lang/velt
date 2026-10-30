@@ -5,5 +5,8 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "db-bench",
   version: "0.1.0",
-  dependencies: { sqlite: { path: "../../../packages/sqlite" } },
+  dependencies: {
+    postgres: { path: "../../../packages/postgres" },
+    sqlite: { path: "../../../packages/sqlite" },
+  },
 };

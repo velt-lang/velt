@@ -1,0 +1,155 @@
+// postgres transactions: transaction(fn) commits or rolls back (reporting the first
+// failure, not the "transaction is aborted" ones after it), nests with savepoints, and
+// begin()/commit()/rollback() give explicit control. Needs VELT_TEST_PG_URL
+// (tests/support/pg.vlt).
+import { connect, Client } from "../src/lib";
+import { pgUrl } from "./support/pg";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+// A connection with an empty TEMP table `t` of unique numbers.
+async function numbers(url: string): Promise<Client> {
+  const db = await connect(url);
+  await db.batch("CREATE TEMP TABLE t (n int PRIMARY KEY)");
+  return db;
+}
+
+async function count(db: Client): Promise<i64> {
+  const c: Count | null = await db.selectOne("SELECT count(*) AS n FROM t");
+  return c?.n ?? -1;
+}
+
+// Inserts `n`; a duplicate fails (and its code is pushed to `failed`, since closures cannot
+// throw).
+async function add(db: Client, n: i64, failed: string[]) {
+  try {
+    await db.execute("INSERT INTO t VALUES ($1)", [n]);
+  } catch (e) {
+    failed.push(e.code.clone());
+  }
+}
+
+export async function test_commit_returns_the_result() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await numbers(url);
+  const failed: string[] = [];
+  // Commit: the callback's result is returned.
+  const inserted = await db.transaction(async (tx) => {
+    for (let i = 1; i <= 100; i++) {
+      await add(tx, i, failed);
+    }
+    return 100;
+  });
+  assertEq(inserted, 100);
+  assertEq(await count(db), 100);
+  assertEq(db.inTransaction, false);
+  assertEq(failed.length, 0);
+  db.close();
+}
+
+export async function test_failure_rolls_back_and_throws() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await numbers(url);
+  await db.run("INSERT INTO t SELECT generate_series(1, 100)");
+  const failed: string[] = [];
+  // Any failure inside rolls everything back and is thrown by transaction().
+  let what = "";
+  try {
+    await db.transaction(async (tx) => {
+      await add(tx, 200, failed);
+      await add(tx, 1, failed);
+      await add(tx, 201, failed);
+      return 0;
+    });
+  } catch (e) {
+    what = `${e.code} ${e.constraint}`;
+  }
+  assertEq(failed, ["23505", "25P02"]);
+  assertEq(what, "23505 t_pkey");
+  assertEq(await count(db), 100);
+  assertEq(db.inTransaction, false);
+  db.close();
+}
+
+export async function test_nested_failure_undoes_its_savepoint() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await numbers(url);
+  const failed: string[] = [];
+  const inner: string[] = [];
+  // Nested: a failed inner transaction undoes only its savepoint.
+  await db.transaction(async (tx) => {
+    await add(tx, 300, failed);
+    try {
+      await tx.transaction(async (nested) => {
+        await add(nested, 301, failed);
+        await add(nested, 300, failed);
+        return 0;
+      });
+    } catch (e) {
+      inner.push(`${e.code} ${tx.inTransaction}`);
+    }
+    await add(tx, 302, failed);
+    return 0;
+  });
+  assertEq(failed, ["23505"]);
+  assertEq(inner, ["23505 true"]);
+  const top: Count[] = await db.select("SELECT n FROM t WHERE n >= 300 ORDER BY n");
+  assertEq(top.map((c) => c.n), [300, 302]);
+  db.close();
+}
+
+export async function test_explicit_begin_commit_rollback() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await numbers(url);
+  await db.run("INSERT INTO t SELECT generate_series(1, 102)");
+  // Explicit control.
+  const tx = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [400]);
+  assertEq(db.inTransaction, true);
+  assertEq(await count(db), 103);
+  await tx.rollback();
+  assertEq(db.inTransaction, false);
+  assertEq(await count(db), 102);
+  const tx2 = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [401]);
+  const inner = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [402]);
+  let what = "";
+  try {
+    await tx2.commit();
+  } catch (e) {
+    what = `${e.code} ${e.message}`;
+  }
+  assertEq(what, "EINVAL an inner transaction is still open; end it first");
+  await inner.rollback();
+  await tx2.commit();
+  what = "";
+  try {
+    await tx2.commit();
+  } catch (e) {
+    what = `${e.code} ${e.message}`;
+  }
+  assertEq(what, "EINVAL the transaction has already ended");
+  const last: Count[] = await db.select("SELECT n FROM t WHERE n >= 400");
+  assertEq(last.map((c) => c.n), [401]);
+  assertEq(db.inTransaction, false);
+  db.close();
+}

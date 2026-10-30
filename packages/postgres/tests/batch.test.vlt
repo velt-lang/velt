@@ -1,0 +1,272 @@
+// postgres batches: one statement with many parameter sets in one round trip (one Sync).
+// Selects, first rows, updates, named parameters, an error in the middle (the SQLSTATE
+// surfaces, nothing of the batch stays), empty and single-set batches, batches mixed with
+// ordinary queries on one connection, inside a transaction, after a COPY, and on a pool.
+// Needs VELT_TEST_PG_URL (tests/support/pg.vlt).
+import { connect, createPool, Client } from "../src/lib";
+import { pgUrl } from "./support/pg";
+
+class Item {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+// The rows the first tests start with, and the rows their updates leave behind.
+const FRESH = "(1, 'a'), (2, 'b'), (3, 'c')";
+const UPDATED = "(1, 'a+'), (2, 'b+'), (3, 'c!+'), (4, 'd')";
+
+// A connection with a TEMP table of items holding `values`.
+async function itemsDb(url: string, values: string): Promise<Client> {
+  const db = await connect(url);
+  await db.batch(
+    `CREATE TEMP TABLE items (id int PRIMARY KEY, name text NOT NULL); INSERT INTO items VALUES ${values}`,
+  );
+  return db;
+}
+
+function show(sets: Item[][]): string {
+  const parts: string[] = [];
+  for (const set of sets) {
+    const names: string[] = [];
+    for (const item of set) {
+      names.push(`${item.id}:${item.name}`);
+    }
+    parts.push(`[${names.join(" ")}]`);
+  }
+  return parts.join(" ");
+}
+
+function showOne(items: (Item | null)[]): string {
+  const parts: string[] = [];
+  for (const item of items) {
+    parts.push(item == null ? "null" : `${item.id}:${item.name}`);
+  }
+  return parts.join(" ");
+}
+
+async function total(db: Client): Promise<i64> {
+  const c: Count | null = await db.selectOne("SELECT count(*)::int8 AS n FROM items");
+  return c == null ? -1 : c.n;
+}
+
+async function single(db: Client, id: i64): Promise<string> {
+  const item: Item | null = await db.queryOne("SELECT id, name FROM items WHERE id = $1", [id]);
+  return item == null ? "none" : item.name;
+}
+
+async function batched(db: Client, ids: i64[]): Promise<string> {
+  const sets: i64[][] = [];
+  for (const id of ids) {
+    sets.push([id]);
+  }
+  const items: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE id = $1", sets);
+  return show(items);
+}
+
+export async function test_selects() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, FRESH);
+  const sql = "SELECT id, name FROM items WHERE id <= $1 ORDER BY id";
+  const sets: Item[][] = await db.batchQuery(sql, [[1], [3], [0]]);
+  assertEq(show(sets), "[1:a] [1:a 2:b 3:c] []");
+  const one: (Item | null)[] = await db.batchQueryOne("SELECT id, name FROM items WHERE id = $1", [
+    [2],
+    [99],
+    [1],
+  ]);
+  assertEq(showOne(one), "2:b null 1:a");
+  const named: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE name = :name", [
+    { name: "c" },
+    { name: "a" },
+  ]);
+  assertEq(show(named), "[3:c] [1:a]");
+  const none: i64[][] = [];
+  const empty: Item[][] = await db.batchQuery(sql, none);
+  assertEq(empty.length, 0);
+  const n1: Item[][] = await db.batchQuery(sql, [[2]]);
+  assertEq(show(n1), "[1:a 2:b]");
+  db.close();
+}
+
+export async function test_updates() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, FRESH);
+  const affected = await db.batchExecute(
+    "UPDATE items SET name = name || :tail WHERE id >= :from",
+    [
+      { from: 3, tail: "!" },
+      { from: 9, tail: "?" },
+      { from: 1, tail: "+" },
+    ],
+  );
+  assertEq(affected.join(","), "1,0,3");
+  const after: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE id = $1", [
+    [1],
+    [3],
+  ]);
+  assertEq(show(after), "[1:a+] [3:c!+]");
+  const inserted = await db.batchExecute("INSERT INTO items VALUES (:id, :name)", [
+    new Item(4, "d"),
+  ]);
+  assertEq(inserted.join(","), "1");
+  assertEq(await total(db), 4);
+  db.close();
+}
+
+export async function test_failures() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, UPDATED);
+  // The second insert violates the primary key: the third never runs, the first is undone.
+  let what = "";
+  try {
+    await db.batchExecute("INSERT INTO items VALUES (:id, :name)", [
+      new Item(10, "x"),
+      new Item(1, "dup"),
+      new Item(11, "y"),
+    ]);
+    what = "no error";
+  } catch (e) {
+    what = `${e.code} ${e.constraint}`;
+  }
+  assertEq(what, "23505 items_pkey");
+  assertEq(await total(db), 4);
+  try {
+    const quotients: Count[][] = await db.batchQuery("SELECT 10 / $1 AS n", [[5], [0], [2]]);
+    what = `${quotients.length} sets`;
+  } catch (e) {
+    what = `${e.code} ${e.message}`;
+  }
+  assertEq(what, "22012 division by zero");
+  try {
+    const wrong: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE id = $1", [
+      [1],
+      [1, 2],
+    ]);
+    what = `${wrong.length} sets`;
+  } catch (e) {
+    what = `${e.code} ${e.message}`;
+  }
+  assertEq(what, "EINVAL the statement takes 1 parameter(s) but 2 were given");
+  try {
+    const bad: Item[][] = await db.batchQuery("SELEC $1", [[1]]);
+    what = `${bad.length} sets`;
+  } catch (e) {
+    what = e.code.clone();
+  }
+  assertEq(what, "42601");
+  // The connection and the statement are still fine.
+  const again: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE id = $1", [[2]]);
+  assertEq(show(again), "[2:b+]");
+  db.close();
+}
+
+// Batches pipelined with ordinary queries on one connection keep their own results.
+export async function test_mixed_with_ordinary_queries() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, UPDATED);
+  const results = await Promise.all([
+    single(db, 1),
+    batched(db, [2, 3]),
+    single(db, 2),
+    batched(db, [4]),
+    single(db, 3),
+  ]);
+  assertEq(results.join(" | "), "a+ | [2:b+] [3:c!+] | b+ | [4:d] | c!+");
+  db.close();
+}
+
+export async function test_in_transaction() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, UPDATED);
+  const tx = await db.begin();
+  await db.batchExecute("UPDATE items SET name = :name WHERE id = :id", [
+    new Item(1, "tx1"),
+    new Item(2, "tx2"),
+  ]);
+  assertEq(await single(db, 1), "tx1");
+  assertEq(await single(db, 2), "tx2");
+  await tx.rollback();
+  assertEq(await single(db, 1), "a+");
+  assertEq(await single(db, 2), "b+");
+  db.close();
+}
+
+export async function test_after_copy() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, UPDATED);
+  const w = await db.copyFrom("COPY items (id, name) FROM STDIN (FORMAT csv)");
+  await w.write("20,t\n21,u\n");
+  assertEq(await w.end(), 2);
+  const sets: Item[][] = await db.batchQuery("SELECT id, name FROM items WHERE id = $1", [
+    [20],
+    [21],
+  ]);
+  assertEq(show(sets), "[20:t] [21:u]");
+  db.close();
+}
+
+export async function test_closed_client() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url, FRESH);
+  db.close();
+  let code = "";
+  try {
+    const none: i64[][] = [[]];
+    const rows: Count[][] = await db.batchQuery("SELECT 1 AS n", none);
+    code = `${rows.length} sets`;
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "ECLOSED");
+}
+
+export async function test_on_a_pool() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 2 });
+  const squares: Count[][] = await pool.batchQuery("SELECT $1::int8 * $1 AS n", [[2], [3], [4]]);
+  const parts: string[] = [];
+  for (const s of squares) {
+    parts.push(`${s[0].n}`);
+  }
+  assertEq(parts.join(","), "4,9,16");
+  const counts = await pool.batchExecute("SELECT generate_series(1, $1)", [[2], [5]]);
+  assertEq(counts.join(","), "2,5");
+  pool.end();
+}

@@ -1,0 +1,144 @@
+// postgres (internal): `Pool`, connections opened on demand and reused, and `createPool`.
+//
+// `Pool` is a Copy handle: pass and capture it freely (concurrent queries run on separate
+// connections) and release it once with `end()`.
+
+import {
+  velt_postgres__bind_abort,
+  velt_postgres__bind_begin,
+  velt_postgres__pool_batch,
+  velt_postgres__pool_connect,
+  velt_postgres__pool_end,
+  velt_postgres__pool_execute,
+  velt_postgres__pool_execute_bound,
+  velt_postgres__pool_idle,
+  velt_postgres__pool_new,
+  velt_postgres__pool_query_batch,
+  velt_postgres__pool_query_bound,
+  velt_postgres__pool_query_rows,
+} from "./native";
+import { bindParams } from "velt/db";
+import { check, PgError, unwrap } from "./errors";
+import { counts, cursorRow, cursorRows, firstRows, rowSets } from "./rows";
+import { Client } from "./client";
+
+/** `createPool` options. */
+export struct PoolOptions {
+  /** Connection string (as for `connect`). */
+  url: string;
+  /** Most connections open at once (default 10); further operations wait for a free one. */
+  max?: i64;
+}
+
+/**
+ * Up to `max` connections, opened on demand and reused. `query` & co. borrow a connection
+ * for one statement; `connect()` and `transaction` keep one for longer.
+ */
+export struct Pool {
+  private handle: u64;
+
+  /** A pool for `opts.url`: what `createPool(opts)` does. */
+  static create(opts: PoolOptions): Pool {
+    const max = opts.max ?? 10;
+    return Pool { handle: unwrap(velt_postgres__pool_new(opts.url, max as u32)) };
+  }
+
+  async query<T, P>(sql: string, params: P): Promise<T[]> {
+    return cursorRows<T>(0, await this.open(sql, params, false));
+  }
+
+  async queryOne<T, P>(sql: string, params: P): Promise<T | null> {
+    return cursorRow<T>(0, await this.open(sql, params, true));
+  }
+
+  async execute<P>(sql: string, params: P): Promise<i64> {
+    const sink = velt_postgres__bind_begin();
+    if (bindParams<P>(sink, params)) {
+      return unwrap(await velt_postgres__pool_execute_bound(this.handle, sql, sink));
+    }
+    velt_postgres__bind_abort(sink);
+    return unwrap(await velt_postgres__pool_execute(this.handle, sql, JSON.stringify(params)));
+  }
+
+  async select<T>(sql: string): Promise<T[]> {
+    const cursor = unwrap(await velt_postgres__pool_query_rows(this.handle, sql, "", false));
+    return cursorRows<T>(0, cursor);
+  }
+
+  async selectOne<T>(sql: string): Promise<T | null> {
+    const cursor = unwrap(await velt_postgres__pool_query_rows(this.handle, sql, "", true));
+    return cursorRow<T>(0, cursor);
+  }
+
+  // As `Client.open`, on one of the pool's connections.
+  private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
+    const sink = velt_postgres__bind_begin();
+    if (bindParams<P>(sink, params)) {
+      return unwrap(await velt_postgres__pool_query_bound(this.handle, sql, sink, firstOnly));
+    }
+    velt_postgres__bind_abort(sink);
+    const text = JSON.stringify(params);
+    return unwrap(await velt_postgres__pool_query_rows(this.handle, sql, text, firstOnly));
+  }
+
+  async run(sql: string): Promise<i64> {
+    return unwrap(await velt_postgres__pool_execute(this.handle, sql, ""));
+  }
+
+  async batch(sql: string): Promise<void> {
+    check(await velt_postgres__pool_batch(this.handle, sql));
+  }
+
+  /** The batch forms run on one of the pool's connections. */
+  async batchQuery<T, P>(sql: string, paramSets: P[]): Promise<T[][]> {
+    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 0);
+    return rowSets<T>(0, unwrap(r));
+  }
+
+  async batchQueryOne<T, P>(sql: string, paramSets: P[]): Promise<(T | null)[]> {
+    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 1);
+    return firstRows<T>(0, unwrap(r));
+  }
+
+  async batchExecute<P>(sql: string, paramSets: P[]): Promise<i64[]> {
+    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 2);
+    return counts(0, unwrap(r));
+  }
+
+  /** A dedicated connection until its `close()`, which returns it to the pool. */
+  async connect(): Promise<Client> {
+    return Client.fromHandle(unwrap(await velt_postgres__pool_connect(this.handle)));
+  }
+
+  /** `Client.transaction` on a dedicated connection, returned to the pool afterwards. */
+  async transaction<T, E>(fn: (tx: Client) => Promise<T, E>): Promise<T> throws PgError | E {
+    const client = await this.connect();
+    try {
+      const result = await client.transaction(fn);
+      client.close();
+      return result;
+    } catch (e) {
+      client.close();
+      throw e;
+    }
+  }
+
+  /** Connections waiting idle in the pool. */
+  get idleCount(): i64 {
+    return velt_postgres__pool_idle(this.handle) as i64;
+  }
+
+  /**
+   * Closes the pool: idle connections now, busy ones when their operation (or dedicated
+   * client) finishes; later operations throw "ECLOSED".
+   */
+  end() {
+    velt_postgres__pool_end(this.handle);
+    this.handle = 0;
+  }
+}
+
+/** A pool for `opts.url` (connections open on first use; a bad connection string throws now). */
+export function createPool(opts: PoolOptions): Pool {
+  return Pool.create(opts);
+}

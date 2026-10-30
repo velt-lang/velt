@@ -2,9 +2,9 @@
   "version": 1,
   "packages": [
     {
-      "name": "http-server",
+      "name": "postgres",
       "version": "0.1.0",
-      "source": "path+../../packages/http-server"
+      "source": "path+../../packages/postgres"
     }
   ]
 }
