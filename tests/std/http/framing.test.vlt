@@ -82,12 +82,7 @@ describe("request framing", () => {
 
   // Each case: its name, the raw request bytes, and the summary of the answer.
   function probes(cases: [string, string, string][]) {
-    // Indexed, not destructured: `const [name, raw, expected]` is refused when `name` and a
-    // closure capturing `raw` go to one call (a borrow-check bug).
-    for (const c of cases) {
-      const name = c[0];
-      const raw = c[1];
-      const expected = c[2];
+    for (const [name, raw, expected] of cases) {
       it(name, async () => {
         expect(summary(await exchange(port, raw))).toBe(expected);
       });
@@ -329,10 +324,7 @@ describe("request framing", () => {
         "5\r\nhead;\r\n5\r\ngot 3\r\n0\r\n\r\n",
       ],
     ];
-    for (const r of routes) {
-      const route = r[0];
-      const expected = r[1];
-      const expectedBody = r[2];
+    for (const [route, expected, expectedBody] of routes) {
       it(`${route} gets its 100 Continue first`, async () => {
         const c2 = await connect(`127.0.0.1:${port}`);
         await c2.write(
