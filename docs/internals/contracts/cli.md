@@ -77,6 +77,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
   build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
+  `test --no-cache` (additive, #1855): runs every test file. Without it, a file whose harness is
+  unchanged since all its tests passed, and whose tests reach nothing outside the program (the
+  build stamp's `outside` record, per file of a harness), is not run: the runner prints its kept
+  report after `running <path> (cached)`; a file whose tests do reach outside prints `running
+  <path> (ran: not cacheable, it uses <what>)`. Kept in `<harness>.test-results.json`.
   `test --jobs <n>` / `-j <n>` (additive): how many test files run at once (default: one per
   core); the output is the same for any `n`, in file order.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one

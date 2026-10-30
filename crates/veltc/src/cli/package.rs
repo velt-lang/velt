@@ -61,6 +61,7 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             ("test", "--exact") => flags.exact = true,
             ("test", "--no-run") => flags.no_run = true,
             ("test", "--json") => flags.json = true,
+            ("test", "--no-cache") => flags.no_cache = true,
             ("test", "--jobs" | "-j") => {
                 let n = take_value(inline.as_deref(), &mut it, "--jobs")?;
                 match n.parse::<usize>() {
@@ -94,6 +95,7 @@ struct Flags {
     no_run: bool,
     json: bool,
     jobs: Option<usize>,
+    no_cache: bool,
     path: Option<String>,
     native_artifacts: Option<PathBuf>,
     native_only: bool,
@@ -197,6 +199,7 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             json: flags.json,
             cpu: flags.cpu,
             jobs: flags.jobs,
+            no_cache: flags.no_cache,
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
@@ -341,6 +344,7 @@ mod tests {
                 json: false,
                 cpu: None,
                 jobs: None,
+                no_cache: false,
             }
         );
         assert_eq!(
@@ -366,6 +370,7 @@ mod tests {
                 json: false,
                 cpu: Some("x86-64-v3".into()),
                 jobs: Some(3),
+                no_cache: false,
             }
         );
         assert_eq!(
@@ -389,11 +394,16 @@ mod tests {
                 json: true,
                 cpu: None,
                 jobs: None,
+                no_cache: false,
             }
         );
         assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));
         assert!(p(&["test", "--jobs=0"]).unwrap_err().contains("1 or more"));
         assert!(p(&["test", "--jobs", "x"]).unwrap_err().contains("not `x`"));
+        assert!(matches!(
+            p(&["test", "--no-cache"]).unwrap(),
+            Command::Test { no_cache: true, .. }
+        ));
         assert!(p(&["test", "--exact"]).unwrap_err().contains("`--filter"));
         assert!(p(&["test", "--no-run", "--watch"])
             .unwrap_err()

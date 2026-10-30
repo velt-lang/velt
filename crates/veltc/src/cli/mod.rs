@@ -149,6 +149,8 @@ pub enum Command {
         cpu: Option<String>,
         /// `--jobs <n>`: how many test files run at once.
         jobs: Option<usize>,
+        /// `--no-cache`: run every test; keep and use no results.
+        no_cache: bool,
     },
     /// `velt fmt [paths...] [--check]`: no paths → the current package's `src/` (or the cwd).
     Fmt { paths: Vec<PathBuf>, check: bool },
