@@ -77,7 +77,8 @@ literal a closure changes (`const stats = { n: 0 }`), or a new object declared w
 checks narrow (`const m: object = new Map()`): those stay locals of `main`, which a closure
 captures as a copy. So does one that module state can't hold: a promise (`let p =
 Promise.resolve(1)` that a closure assigns), or one a `Mutex` `with` callback uses
-([module state](variables.md#module-state)).
+([module state](variables.md#module-state)), with the variables below it whose initializers
+read it (`let ok = p !== undefined;`).
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant

@@ -1,0 +1,16 @@
+// check: no leaks
+// A top-level `let` that holds a promise a closure assigns moves into the generated `main`
+// (#1872), and so does a variable below it that a closure keeps at module level and whose
+// initializer reads it (`ok`): a module-level initializer can't see a local of `main`, and in
+// `main` it runs where it stands, after `p`, as in Node.
+let p = Promise.resolve(1);
+const f = () => {
+  p = Promise.resolve(2);
+};
+let ok = p !== undefined;
+const g = () => {
+  ok = false;
+};
+g();
+f();
+console.log(await p, ok);

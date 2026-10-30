@@ -1,0 +1,14 @@
+// check: no leaks
+// Like script_closure_promise_read: an array a closure changes, made from the promise `p` that
+// another closure assigns, moves into the generated `main` with `p` (#1872).
+let p = Promise.resolve(1);
+const f = () => {
+  p = Promise.resolve(2);
+};
+let arr = [p];
+const g = () => {
+  arr.push(Promise.resolve(3));
+};
+g();
+f();
+console.log(await p, (await Promise.all(arr)).join(","));
