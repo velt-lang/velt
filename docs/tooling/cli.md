@@ -344,7 +344,7 @@ always present (`null` or `[]` when empty). A module's record:
 |---|---|
 | `module` | its name in the docs (`std/fs`, `mypkg/util`); targets refer to modules by it |
 | `specifier` | how it is imported (`velt:fs`, `mypkg/util`) |
-| `file` | its source file (`std/fs.vlt`, `src/util.vlt`) |
+| `file` | its source file (`std/fs.vlt`, `src/util.vlt`); for files and directories given on the command line, relative to the current directory when they are under it (`velt doc ./lib` and `velt doc D:/pkg/lib` run in `D:/pkg` both give `lib/util.vlt`), otherwise the path as given |
 | `doc`, `summary` | the module doc (Markdown) and its first sentence |
 | `links` | the `{@link}`s in the module doc (as for items, below) |
 | `exports` | its exported items, in source order, then the re-exported ones |
@@ -353,14 +353,14 @@ An item (an export, or a member in `members`, which has the same shape):
 
 | Field | |
 |---|---|
-| `id` | a key unique in the document: `<specifier>#<name>` (`velt:http#serve`), `#<Type>.<member>` for a member (`velt:http#Server.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
+| `id` | a key unique in the document: `<specifier>#<name>` (`velt:http#serve`), `#<Type>.<member>` for a member (`velt:http#Server.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
 | `name` | its exported name |
 | `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
 | `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
 | `signature` | the canonical signature (one line per overload) |
 | `spans` | the type names in `signature` (of members too) that link to their documentation: `{start, end, role, target}`, offsets in UTF-16 code units (JavaScript string indices); `role` is where the name is: `param`, `return`, `throws`, `extends`, `implements`, `typeArg` (a bound or default of the item's own type parameters), `field` (a field's type) or `type` (a constant's or type alias's type, the type an `extend` block extends); a type argument has the role of the type it belongs to (`Promise<Point>` as a return type: `return`) |
 | `doc`, `summary` | the doc comment's text without its tags (Markdown; `{@link}` already rendered as in HTML) and its first sentence |
-| `tags` | `params` (`[{name, doc}]`), `returns`, `throws` (`[…]`), `examples` (`[…]`, verbatim), `deprecated` (its text, `""` without one), `see` (`[…]`) |
+| `tags` | `params` (`[{name, doc}]`), `returns`, `throws` (`[…]`), `examples` (`[…]`, verbatim), `deprecated` (`null` without a `@deprecated` tag, `""` for a tag without text, otherwise its text), `see` (`[…]`) |
 | `links` | the `{@link}`s in the doc comment and its tags: `{text, ref, target}`, `text` as the Markdown shows it, `ref` as written, `target` `null` when nothing documented has that name |
 | `source` | `{file, line}` of the declaration (a re-exported item's is where it is declared); `null` for a `re-export` |
 | `reexportedFrom` | `{module, name}` where a re-exported item is declared, else `null` |

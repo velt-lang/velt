@@ -6,11 +6,11 @@
 //! `docs/tooling/cli.md` ("JSON output"); bump [`SCHEMA_VERSION`] when a field changes meaning
 //! or goes away (new fields don't need it).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::comment::{DocComment, DocLink};
 use crate::extract::{DocItem, DocModule, Kind};
-use crate::html::{self, item_target, signature_parts, Links, Target};
+use crate::html::{self, is_type, item_target, signature_parts, Links, Target};
 
 /// The `schemaVersion` of the output.
 pub const SCHEMA_VERSION: u64 = 1;
@@ -129,16 +129,28 @@ pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
         .map(|(m, f)| (m.name.as_str(), f.as_str()))
         .collect();
     // The items declared in each module (not re-exported; an `extend` block shares its type's
-    // name), for links to members.
-    let declared: HashMap<(&str, &str), &DocItem> = modules
+    // name), for links to members: by module, name and whether it is a type (a type and a
+    // value may share a name).
+    let declared: HashMap<(&str, &str, bool), &DocItem> = modules
         .iter()
         .flat_map(|m| {
             m.items
                 .iter()
                 .filter(|it| it.origin.is_none() && it.kind != Kind::Extension)
-                .map(move |it| ((m.name.as_str(), it.name.as_str()), it))
+                .map(move |it| ((m.name.as_str(), it.name.as_str(), is_type(it.kind)), it))
         })
         .collect();
+    // The types whose module exports a value of the same name: their ids are `type:<name>`.
+    let clash: HashSet<(&str, &str)> = modules
+        .iter()
+        .flat_map(|m| {
+            m.items
+                .iter()
+                .filter(|it| shares_name_with_value(&m.items, it))
+                .map(move |it| (m.name.as_str(), it.name.as_str()))
+        })
+        .collect();
+    let ids = Ids { clash: &clash };
     let records = modules
         .iter()
         .map(|m| {
@@ -148,6 +160,7 @@ pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
                 items: links.item_scope(modules, m),
                 file_of: &file_of,
                 declared: &declared,
+                ids,
             };
             cx.record()
         })
@@ -175,7 +188,15 @@ struct Module<'a> {
     /// Names its `{@link}`s can refer to ([`Links::item_scope`]).
     items: HashMap<String, Target>,
     file_of: &'a HashMap<&'a str, &'a str>,
-    declared: &'a HashMap<(&'a str, &'a str), &'a DocItem>,
+    declared: &'a HashMap<(&'a str, &'a str, bool), &'a DocItem>,
+    ids: Ids<'a>,
+}
+
+/// How link targets get their `id`s.
+#[derive(Clone, Copy)]
+struct Ids<'a> {
+    /// The types whose module exports a value of the same name, by module and name.
+    clash: &'a HashSet<(&'a str, &'a str)>,
 }
 
 impl Module<'_> {
@@ -251,6 +272,7 @@ impl Module<'_> {
                     &generics,
                     &self.types,
                     &self_href,
+                    self.ids,
                 ),
             ),
             ("doc", Json::text(&c.body)),
@@ -295,7 +317,7 @@ impl Module<'_> {
     fn resolve_link(&self, name: &str) -> Json {
         let name = name.trim_end_matches("()").replace('#', ".");
         if let Some(t) = self.items.get(&name) {
-            return target(t, None);
+            return target(t, None, self.ids);
         }
         let Some((head, member)) = name.rsplit_once('.') else {
             return Json::Null;
@@ -303,21 +325,26 @@ impl Module<'_> {
         let Some(t) = self.items.get(head) else {
             return Json::Null;
         };
-        let Some(parent) = self.declared.get(&(t.module.as_str(), t.name.as_str())) else {
+        let key = (t.module.as_str(), t.name.as_str(), is_type(t.kind));
+        let Some(parent) = self.declared.get(&key) else {
             return Json::Null;
         };
         match parent.members.iter().find(|m| m.name == member) {
-            Some(m) => target(t, Some((parent, m))),
+            Some(m) => target(t, Some((parent, m)), self.ids),
             None => Json::Null,
         }
     }
 }
 
-/// The part of an `id` after `#` for export `i` of `items`: its name; `extend:<type>` for an
-/// `extend` block (which shares its type's name), `extend:<type>~2` for the second block on
-/// that type in the module, and so on.
+/// The part of an `id` after `#` for export `i` of `items`: its name; `type:<name>` for a type
+/// that shares its name with a value the module exports (`type Color = …; const Color = …`);
+/// `extend:<type>` for an `extend` block (which shares its type's name), `extend:<type>~2` for
+/// the second block on that type in the module, and so on.
 fn key(items: &[DocItem], i: usize) -> String {
     let item = &items[i];
+    if shares_name_with_value(items, item) {
+        return format!("type:{}", item.name);
+    }
     if item.kind != Kind::Extension {
         return item.name.clone();
     }
@@ -329,6 +356,14 @@ fn key(items: &[DocItem], i: usize) -> String {
         0 => format!("extend:{}", item.name),
         n => format!("extend:{}~{}", item.name, n + 1),
     }
+}
+
+/// Whether `item` is a type and `items` (its module's exports) has a value of the same name.
+fn shares_name_with_value(items: &[DocItem], item: &DocItem) -> bool {
+    is_type(item.kind)
+        && items
+            .iter()
+            .any(|it| it.name == item.name && !is_type(it.kind) && it.kind != Kind::Extension)
 }
 
 /// A member's part of an `id`: its name; `<name>:set` for a setter (a getter has the plain
@@ -350,8 +385,12 @@ fn member_key(parent: &DocItem, member: &DocItem) -> String {
 
 /// `{id, module, kind, name, member}`: where a link leads (to `member` of the `parent` that
 /// `t` names, when given).
-fn target(t: &Target, member: Option<(&DocItem, &DocItem)>) -> Json {
-    let mut id = format!("{}#{}", specifier(&t.module), t.name);
+fn target(t: &Target, member: Option<(&DocItem, &DocItem)>, ids: Ids) -> Json {
+    let mut id = match is_type(t.kind) && ids.clash.contains(&(t.module.as_str(), t.name.as_str()))
+    {
+        true => format!("{}#type:{}", specifier(&t.module), t.name),
+        false => format!("{}#{}", specifier(&t.module), t.name),
+    };
     if let Some((parent, m)) = member {
         id = format!("{id}.{}", member_key(parent, m));
     }
@@ -373,6 +412,7 @@ fn spans(
     generics: &[&str],
     scope: &HashMap<String, Target>,
     self_href: &str,
+    ids: Ids,
 ) -> Json {
     let mut out = vec![];
     let (mut at, mut byte) = (0u64, 0usize);
@@ -389,7 +429,7 @@ fn spans(
                 ("start", Json::Num(at)),
                 ("end", Json::Num(at + len)),
                 ("role", Json::str(role(line, byte - line_start, field))),
-                ("target", target(t, None)),
+                ("target", target(t, None, ids)),
             ]));
         }
         at += len;

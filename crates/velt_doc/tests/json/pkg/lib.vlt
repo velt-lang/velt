@@ -130,3 +130,24 @@ extend Point {
     return [this.x, this.y];
   }
 }
+
+/** A color name. */
+export type Color = "red" | "green";
+
+/** The color points are drawn in: a value with the name of a type. */
+export const Color: Color = "red";
+
+/** Draws `p` in color `c`. */
+export function paint(p: Point, c: Color): Color {
+  return c;
+}
+
+/** The point, tinted: a name after a non-ASCII character in the signature. */
+export function tint(c: "é" | Color, p: Point): Point {
+  return p;
+}
+
+/** The first of `xs`: a type parameter with a default. */
+export function first<T = Point>(xs: T[]): T | undefined {
+  return xs[0];
+}

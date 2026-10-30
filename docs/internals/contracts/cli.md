@@ -23,7 +23,7 @@ velt native build [--target <triple>]
 velt fmt [<file|dir>...] [--check]
 velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
 velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
-velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
+velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website)
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
 velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | self-update | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
@@ -148,6 +148,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (its `.vlt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
+  `--format json` (additive): the same documentation as one JSON document, `api.json` in the
+  output directory, or the `.json` file `-o` names, or stdout for `-o -`. It is
+  `{ schemaVersion, title, modules }`; `schemaVersion` (1) goes up when a field changes meaning
+  or goes away, and fields may be added without it. The fields are in docs/tooling/cli.md
+  "JSON output"; the docs website renders its API pages, search index and std catalog from it.
 - `registry serve` (additive): serves a registry directory (default: the
   local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.

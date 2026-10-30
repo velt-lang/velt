@@ -107,13 +107,15 @@ impl Links {
                     .collect()
             })
             .collect();
-        let types = items
+        // From the items themselves, not from `items`: a type and a value may share a name
+        // (`type Color = …; const Color = …`), and signatures link to the type.
+        let types = modules
             .iter()
-            .map(|names| {
-                names
+            .map(|m| {
+                m.items
                     .iter()
-                    .filter(|(_, t)| is_type(t.kind))
-                    .map(|(n, t)| (n.clone(), t.clone()))
+                    .filter(|it| is_type(it.kind))
+                    .map(|it| (it.name.clone(), item_target(m, it)))
                     .collect()
             })
             .collect();
@@ -171,7 +173,8 @@ impl Links {
     }
 }
 
-fn is_type(kind: Kind) -> bool {
+/// Whether items of `kind` are types: classes, structs, interfaces, enums and type aliases.
+pub(crate) fn is_type(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::Class | Kind::Struct | Kind::Interface | Kind::Enum | Kind::TypeAlias

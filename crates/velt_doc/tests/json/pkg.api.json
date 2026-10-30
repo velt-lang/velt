@@ -1030,6 +1030,231 @@
           ]
         },
         {
+          "id": "pkg/lib#type:Color",
+          "name": "Color",
+          "kind": "type",
+          "modifiers": [],
+          "signature": "type Color = \"red\" | \"green\"",
+          "spans": [],
+          "doc": "A color name.",
+          "summary": "A color name.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 135
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#Color",
+          "name": "Color",
+          "kind": "const",
+          "modifiers": [],
+          "signature": "const Color: Color = \"red\"",
+          "spans": [
+            {
+              "start": 13,
+              "end": 18,
+              "role": "type",
+              "target": {
+                "id": "pkg/lib#type:Color",
+                "module": "pkg/lib",
+                "kind": "type",
+                "name": "Color",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The color points are drawn in: a value with the name of a type.",
+          "summary": "The color points are drawn in: a value with the name of a type.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 138
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#paint",
+          "name": "paint",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function paint(p: Point, c: Color): Color",
+          "spans": [
+            {
+              "start": 18,
+              "end": 23,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            },
+            {
+              "start": 28,
+              "end": 33,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#type:Color",
+                "module": "pkg/lib",
+                "kind": "type",
+                "name": "Color",
+                "member": null
+              }
+            },
+            {
+              "start": 36,
+              "end": 41,
+              "role": "return",
+              "target": {
+                "id": "pkg/lib#type:Color",
+                "module": "pkg/lib",
+                "kind": "type",
+                "name": "Color",
+                "member": null
+              }
+            }
+          ],
+          "doc": "Draws `p` in color `c`.",
+          "summary": "Draws `p` in color `c`.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 141
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#tint",
+          "name": "tint",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function tint(c: \"é\" | Color, p: Point): Point",
+          "spans": [
+            {
+              "start": 23,
+              "end": 28,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#type:Color",
+                "module": "pkg/lib",
+                "kind": "type",
+                "name": "Color",
+                "member": null
+              }
+            },
+            {
+              "start": 33,
+              "end": 38,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            },
+            {
+              "start": 41,
+              "end": 46,
+              "role": "return",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The point, tinted: a name after a non-ASCII character in the signature.",
+          "summary": "The point, tinted: a name after a non-ASCII character in the signature.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 146
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#first",
+          "name": "first",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function first<T = Point>(xs: T[]): T | undefined",
+          "spans": [
+            {
+              "start": 19,
+              "end": 24,
+              "role": "typeArg",
+              "target": {
+                "id": "pkg/lib#Point",
+                "module": "pkg/lib",
+                "kind": "class",
+                "name": "Point",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The first of `xs`: a type parameter with a default.",
+          "summary": "The first of `xs`: a type parameter with a default.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 151
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
           "id": "pkg/lib#Figure",
           "name": "Figure",
           "kind": "interface",

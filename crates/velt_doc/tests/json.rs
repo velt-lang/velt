@@ -12,16 +12,23 @@ fn dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/json"))
 }
 
+/// Whether a JSON `kind` is a type's (a type and a value may share a name).
+fn is_type(kind: &Value) -> bool {
+    ["class", "struct", "interface", "enum", "type"]
+        .iter()
+        .any(|k| kind == *k)
+}
+
 /// The exports each module declares itself (not re-exported, and not `extend` blocks, which
-/// share their type's name), by module and name.
-fn declared(doc: &Value) -> HashMap<(String, String), &Value> {
+/// share their type's name), by module, name and whether it is a type.
+fn declared(doc: &Value) -> HashMap<(String, String, bool), &Value> {
     let mut out = HashMap::new();
     for m in doc["modules"].as_array().expect("modules") {
         let module = m["module"].as_str().expect("module").to_string();
         for e in m["exports"].as_array().expect("exports") {
             if e["reexportedFrom"].is_null() && e["kind"] != "extend" {
                 let name = e["name"].as_str().expect("name").to_string();
-                out.insert((module.clone(), name), e);
+                out.insert((module.clone(), name, is_type(&e["kind"])), e);
             }
         }
     }
@@ -39,6 +46,7 @@ fn check_links(doc: &Value) -> (Vec<String>, Vec<String>) {
         let key = (
             t["module"].as_str().unwrap_or("").to_string(),
             t["name"].as_str().unwrap_or("").to_string(),
+            is_type(&t["kind"]),
         );
         let Some(item) = declared.get(&key) else {
             broken.push(format!("{at}: no `{}` in `{}`", key.1, key.0));
@@ -254,4 +262,85 @@ fn every_std_module_serializes_and_its_links_resolve() {
         "these `{{@link}}`s in std name nothing documented:\n{}",
         unresolved.join("\n")
     );
+}
+
+/// The export named `name` of kind `kind` in module `module` of `doc`.
+fn export<'a>(doc: &'a Value, module: &str, name: &str, kind: &str) -> &'a Value {
+    let m = doc["modules"]
+        .as_array()
+        .and_then(|ms| ms.iter().find(|m| m["module"] == module))
+        .unwrap_or_else(|| panic!("no module {module}"));
+    m["exports"]
+        .as_array()
+        .and_then(|es| es.iter().find(|e| e["name"] == name && e["kind"] == kind))
+        .unwrap_or_else(|| panic!("no {kind} {name} in {module}"))
+}
+
+#[test]
+fn a_type_and_a_value_with_one_name() {
+    // `export type Color = …; export const Color: Color = …`: two ids, and signatures link to
+    // the type, in the JSON and in the HTML pages.
+    let inputs = velt_doc::inputs_from_dir(&dir().join("pkg"), "pkg").expect("fixture");
+    let doc: Value = serde_json::from_str(&velt_doc::api_json("pkg", &inputs)).expect("JSON");
+    assert_eq!(
+        export(&doc, "pkg/lib", "Color", "type")["id"],
+        "pkg/lib#type:Color"
+    );
+    assert_eq!(
+        export(&doc, "pkg/lib", "Color", "const")["id"],
+        "pkg/lib#Color"
+    );
+    let paint = export(&doc, "pkg/lib", "paint", "function");
+    let colors: Vec<&Value> = paint["spans"]
+        .as_array()
+        .expect("spans")
+        .iter()
+        .filter(|s| s["target"]["name"] == "Color")
+        .collect();
+    assert_eq!(colors.len(), 2, "{}", paint["spans"]);
+    for span in colors {
+        assert_eq!(span["target"]["id"], "pkg/lib#type:Color");
+        assert_eq!(span["target"]["kind"], "type");
+    }
+
+    let out = tempfile::tempdir().expect("tempdir");
+    velt_doc::write_api_docs("pkg", "", &inputs, out.path()).expect("HTML");
+    let page = std::fs::read_to_string(out.path().join("pkg.lib.html")).expect("page");
+    let link = "<a href=\"#type.Color\">Color</a>";
+    let sig = format!("paint(p: <a href=\"#class.Point\">Point</a>, c: {link}): {link}");
+    assert!(page.contains(&sig), "no `{sig}` in the page:\n{page}");
+}
+
+#[test]
+fn type_parameter_defaults_are_in_signatures() {
+    let inputs = velt_doc::inputs_from_dir(&dir().join("pkg"), "pkg").expect("fixture");
+    let doc: Value = serde_json::from_str(&velt_doc::api_json("pkg", &inputs)).expect("JSON");
+    let first = export(&doc, "pkg/lib", "first", "function");
+    let sig = first["signature"].as_str().expect("signature");
+    assert!(sig.starts_with("function first<T = Point>("), "{sig}");
+    let span = &first["spans"][0];
+    assert_eq!(span["target"]["name"], "Point");
+    assert_eq!(span["role"], "typeArg");
+}
+
+#[test]
+fn span_offsets_count_utf16_code_units() {
+    // `"é" | Color`: `é` is two bytes in UTF-8 and one UTF-16 code unit, so a byte count would
+    // put every span after it one unit late.
+    let inputs = velt_doc::inputs_from_dir(&dir().join("pkg"), "pkg").expect("fixture");
+    let doc: Value = serde_json::from_str(&velt_doc::api_json("pkg", &inputs)).expect("JSON");
+    let tint = export(&doc, "pkg/lib", "tint", "function");
+    let sig = tint["signature"].as_str().expect("signature");
+    let units: Vec<u16> = sig.encode_utf16().collect();
+    let spans = tint["spans"].as_array().expect("spans");
+    let names: Vec<String> = spans
+        .iter()
+        .map(|s| {
+            let (start, end) = (s["start"].as_u64().unwrap(), s["end"].as_u64().unwrap());
+            String::from_utf16_lossy(&units[start as usize..end as usize])
+        })
+        .collect();
+    assert_eq!(names, ["Color", "Point", "Point"], "{sig}: {spans:?}");
+    let at = sig.find("Color").expect("Color");
+    assert_eq!(spans[0]["start"], sig[..at].encode_utf16().count());
 }
