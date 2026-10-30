@@ -399,9 +399,12 @@ impl Run<'_> {
             .filter_map(|(exe, i)| harnesses[exe].cached(*i))
             .map(|r| r["passed"].as_u64().unwrap_or(0) as usize)
             .sum();
-        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-        let exes: Vec<PathBuf> = harnesses.keys().cloned().collect();
-        member_stamp::write(root, &args, tests, &exes, &self.listed);
+        let args = crate::commands::members::command_line();
+        let stamps: Vec<Option<&str>> = harnesses
+            .values()
+            .map(cache::Harness::build_stamp)
+            .collect();
+        member_stamp::write(root, &args, tests, &stamps, &self.listed);
     }
 
     /// Build one harness for the files `group` of `planned` and record it in `built`. When a

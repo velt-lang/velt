@@ -303,6 +303,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
         "apps/b/tests/b.test.vlt",
         "import { expect } from \"velt:test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
     );
+    r.write("packages/core/tests/fixtures/README.md", "data\n");
     let sorted = |mut v: Vec<String>| {
         v.sort();
         v
@@ -335,6 +336,28 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
     assert_eq!(sorted(ran), ["a", "b"]);
     assert_eq!(unchanged, ["core"]);
+    // So is one in a directory no test file was in, which only discovery lists.
+    r.write(
+        "packages/core/tests/fixtures/deep.test.vlt",
+        "import { expect } from \"velt:test\";\n\nexport function test_deep() {\n  expect(1).toBe(1);\n}\n",
+    );
+    let (ran, _) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+    assert_eq!(sorted(ran), ["b", "core"]);
+    // `velt test -p core` runs as `velt test` in `core` and keys its stamp so: the workspace
+    // run, and `-p core` again, find it unchanged.
+    r.write(
+        "packages/core/tests/fixtures/deep.test.vlt",
+        "import { expect } from \"velt:test\";\n\nexport function test_deep() {\n  expect(2).toBe(2);\n}\n",
+    );
+    let (ran, _) = ran_and_unchanged(&r.ok(".", &["test", "-p", "core"]).1);
+    assert_eq!(ran, ["core"]);
+    let (_, unchanged) = ran_and_unchanged(&r.ok(".", &["test", "-p", "core"]).1);
+    assert_eq!(unchanged, ["core"]);
+    let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+    assert_eq!(
+        (ran, sorted(unchanged)),
+        (vec!["b".to_string()], vec!["a".into(), "core".into()])
+    );
     // A failing member always runs.
     r.write(
         "apps/a/tests/more.test.vlt",
