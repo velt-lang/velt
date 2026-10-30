@@ -14,6 +14,9 @@
 //! constructor), closures, a class's `extends` clause (its base's initializers and constructor),
 //! and a generic interface method called through an interface value or a bound (the method of
 //! each implementing class).
+//!
+//! The same carrying gives the interfaces an object literal held by an `any` may be converted to
+//! at run time ([`instantiated_conversions`], `object_ifaces.rs`, #1909).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -35,6 +38,10 @@ type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
 #[derive(Default)]
 struct Unit {
     convs: Vec<(TyId, Span)>,
+    /// The types of the values converted to `any`: a function in one (also in its fields,
+    /// elements and options) converts the arguments of a call through `any` to its parameter
+    /// types ([`instantiated_conversions`]).
+    held: Vec<TyId>,
     sites: Vec<(DefId, Vec<TyId>, Span)>,
     bounds: Vec<(TyId, DefId, u32, Span)>,
 }
@@ -53,15 +60,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let units = collect(cx);
-    let mut callers: Callers = FxHashMap::default();
-    for (d, u) in &units {
-        for (g, targs, span) in &u.sites {
-            callers
-                .entry(*g)
-                .or_default()
-                .push((*d, targs.clone(), *span));
-        }
-    }
+    let callers = callers_of(&units);
     // A generic method called through a bound runs the method of the type the bound's parameter
     // is given; it goes through the interface's table only where that is an interface value.
     let mut names: Vec<String> = vec![];
@@ -93,6 +92,85 @@ pub(crate) fn check(cx: &mut Ctx) {
     carry(cx, &callers, convs, &mut |cx, t, _, span| {
         report(cx, t, span, &mut reported, &mut checked)
     });
+}
+
+/// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) to interfaces written
+/// with type parameters that an object converted to `any` may fill, as each site instantiating
+/// their definitions makes them (substituted, through the generic definitions in between): the
+/// interfaces such a conversion reaches at run time (`object_ifaces::make_dynamic_object_impls`,
+/// #1909).
+pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
+    // A program whose generic recursion grows without end is reported later
+    // (`instantiation_cycles`): carrying targets around its cycles would only multiply the work
+    // up to `MAX_DEPTH`, before the same errors.
+    if crate::instantiation_cycles::has_growing_cycle(cx) {
+        return vec![];
+    }
+    let units = collect(cx);
+    let callers = callers_of(&units);
+    let mut convs: Vec<(DefId, TyId, usize, Span)> = (units.iter())
+        .flat_map(|(d, u)| u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span)))
+        .collect();
+    for (d, u) in &units {
+        for &t in &u.held {
+            if !cx.has_type_params(t) {
+                continue;
+            }
+            let params = fn_params_in(cx, t);
+            convs.extend(params.into_iter().map(|p| (*d, p, 0, Span::DUMMY)));
+        }
+    }
+    convs.retain(|(_, t, ..)| cx.may_fill_generic(*t));
+    let mut out = vec![];
+    carry(cx, &callers, convs, &mut |_, t, _, _| out.push(t));
+    out.sort_unstable_by_key(|t| t.0);
+    out.dedup();
+    out
+}
+
+/// The parameter types of the functions in a value of type `t`: itself, its options, elements
+/// and map values, and the fields of an object type (with its arguments).
+fn fn_params_in(cx: &mut Ctx, t: TyId) -> Vec<TyId> {
+    let mut out = vec![];
+    let mut seen: FxHashSet<TyId> = FxHashSet::default();
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        if !seen.insert(t) || seen.len() > 4096 {
+            continue;
+        }
+        match cx.ty.kind(t).clone() {
+            TyKind::FnPtr { params, .. } => out.extend(params),
+            TyKind::Array(e) | TyKind::Option(e, _) => todo.push(e),
+            TyKind::Map(_, v) => todo.push(v),
+            TyKind::Adt(d, args) if cx.is_object_type(t) => {
+                let fields: Vec<TyId> = (cx.adt(d).into_iter())
+                    .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                    .collect();
+                for f in fields {
+                    todo.push(match args.is_empty() {
+                        true => f,
+                        false => cx.subst(f, &args),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The sites instantiating each definition, in `units`.
+fn callers_of(units: &[(DefId, Unit)]) -> Callers {
+    let mut callers: Callers = FxHashMap::default();
+    for (d, u) in units {
+        for (g, targs, span) in &u.sites {
+            callers
+                .entry(*g)
+                .or_default()
+                .push((*d, targs.clone(), *span));
+        }
+    }
+    callers
 }
 
 /// Carries each of `start` (a unit, a type in its terms, a tag, where) to the sites instantiating
@@ -136,16 +214,33 @@ fn carry(
 /// How deeply a carried target may nest types ([`check_any_ifaces`]).
 const MAX_DEPTH: u32 = 12;
 
-/// How deeply `t` nests types (bounded by `MAX_DEPTH + 1`).
-fn depth(cx: &Ctx, t: TyId, d: u32) -> u32 {
+/// How deeply `t` nests types, an object type through its fields (bounded by `MAX_DEPTH + 1`).
+fn depth(cx: &mut Ctx, t: TyId, d: u32) -> u32 {
     if d > MAX_DEPTH {
         return d;
     }
-    let kids = crate::types::children(cx.ty.kind(t));
-    kids.into_iter()
-        .map(|c| depth(cx, c, d + 1))
-        .max()
-        .unwrap_or(d)
+    let mut kids = crate::types::children(cx.ty.kind(t));
+    // An object type's fields are in its definition (`{ value: T }` grows as `{ value: { value:
+    // T } }`, the one level each, in a call a primitive guard allows, #1251).
+    if let TyKind::Adt(o, args) = cx.ty.kind(t).clone() {
+        if cx.is_object_type(t) {
+            let fields: Vec<TyId> = (cx.adt(o).into_iter())
+                .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                .collect();
+            kids.extend(fields.into_iter().map(|f| match args.is_empty() {
+                true => f,
+                false => cx.subst(f, &args),
+            }));
+        }
+    }
+    let mut most = d;
+    for c in kids {
+        most = most.max(depth(cx, c, d + 1));
+        if most > MAX_DEPTH {
+            break;
+        }
+    }
+    most
 }
 
 /// The units of the program: each function, each module constant's initializer and each type's
@@ -172,6 +267,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } => u.convs.push((e.ty, e.span)),
+        E::ToDyn { expr, .. } => u.held.push(expr.ty),
         E::Call {
             callee:
                 Callee::Dyn {

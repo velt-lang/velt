@@ -3224,7 +3224,13 @@ A literal whose methods use `this`, or with getters, converts as its own interfa
 object's members, so a member the interface requires that the object lacks, or a method the
 object holds no function for, stops there with a `TypeError` (Node throws only once the member
 is called: `c.update is not a function`); and an object built in a generic function, of a
-type with a type parameter, does not convert yet.
+type with a type parameter, does not convert yet. The interface may be written with a generic
+function's type parameters (`o as Box<T>` in `function view<T>(o: unknown): Box<T>`, a
+component's `setup(ctx as SetupCtx<P>)`), or be a type parameter itself (`o as T` in
+`conv<T>`, called as `conv<Box<number>>`): each call at other type arguments (`view<number>`,
+`view<string>`) converts to that instance of the interface, as in Node (#1909). A function held
+through `any` (`setup as any`) and called with such an object converts it to the parameter's
+interface the same way.
 
 ```ts
 interface Ctx {

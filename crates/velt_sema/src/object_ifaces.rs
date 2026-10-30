@@ -46,6 +46,12 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
+    /// Those written with type parameters (`o as Box<T>` in `view<T>`, `o as T`): the targets
+    /// are also those they become where their definitions are instantiated (#1909).
+    generic_targets: FxHashSet<TyId>,
+    /// May a converted object be some interface that needs an implementation (set once every
+    /// body is checked, `Ctx::some_iface_fillable`)?
+    param_fillable: bool,
     /// The setters of fields read and written as a plain assignment converts them
     /// (`Ctx::assign_setter`).
     pub assign_setters: FxHashSet<DefId>,
@@ -103,17 +109,34 @@ impl Ctx<'_> {
                 continue;
             }
             match self.ty.kind(t).clone() {
-                TyKind::Adt(d, a) if a.is_empty() && self.is_object_type(t) => {
-                    self.object_impls.sources.push(t);
-                    let fields: Option<Vec<TyId>> =
-                        self.adt(d).map(|a| a.fields.iter().map(|f| f.ty).collect());
-                    todo.extend(fields.unwrap_or_default());
+                TyKind::Adt(d, a) if self.is_object_type(t) => {
+                    // One with type arguments (made in a generic function) does not convert
+                    // yet; its fields may hold functions (`{ setup }` in `inObj<P>`).
+                    if a.is_empty() {
+                        self.object_impls.sources.push(t);
+                    }
+                    let fields: Vec<TyId> = (self.adt(d).into_iter())
+                        .flat_map(|x| x.fields.iter().map(|f| f.ty))
+                        .collect();
+                    for f in fields {
+                        todo.push(match a.is_empty() {
+                            true => f,
+                            false => self.subst(f, &a),
+                        });
+                    }
                 }
                 TyKind::Dyn(i, _) if self.literal_ifaces.contains(&i) => {
                     self.object_impls.sources.push(t);
                 }
                 TyKind::Array(e) | TyKind::Option(e, _) => todo.push(e),
                 TyKind::Map(k, v) => todo.extend([k, v]),
+                // A function called through `any` converts each argument to its parameter's
+                // type, as `x as T` does.
+                TyKind::FnPtr { params, .. } => {
+                    for p in params {
+                        self.note_dyn_object_target(p);
+                    }
+                }
                 _ => {}
             }
         }
@@ -121,21 +144,74 @@ impl Ctx<'_> {
 
     /// A dynamic value converted to `t` (module docs): recorded when it is an interface type,
     /// or an option or array of one (whose elements a view converts, `array_view_cast.rs`).
+    /// One written with type parameters is carried to its instantiations once every body is
+    /// checked ([`make_dynamic_object_impls`]).
     pub(crate) fn note_dyn_object_target(&mut self, t: TyId) {
         let mut t = self.ty.opt_payload(t).unwrap_or(t);
         if let TyKind::Array(e) = *self.ty.kind(t) {
             t = self.ty.opt_payload(e).unwrap_or(e);
         }
+        if let TyKind::Param(_) = self.ty.kind(t) {
+            self.object_impls.generic_targets.insert(t);
+            return;
+        }
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
             return;
         };
-        if self.dynamic(t).is_some() || args.iter().any(|a| self.has_type_params(*a)) {
+        if self.dynamic(t).is_some() {
+            return;
+        }
+        if args.iter().any(|a| self.has_type_params(*a)) {
+            self.object_impls.generic_targets.insert(t);
             return;
         }
         let known = &self.object_impls.targets;
         if !known.iter().any(|(i, a)| *i == iface && *a == args) {
             self.object_impls.targets.push((iface, args));
         }
+    }
+
+    /// Is `t` a type parameter, or an interface written with type parameters (or an option or
+    /// array of one), that a value converted to `any` may be filled as ([`Self::may_fill`])?
+    /// Only those are carried to their instantiations ([`make_dynamic_object_impls`]). A type
+    /// parameter may become any interface: it is carried when a converted object may be some
+    /// interface that needs an implementation (`param_fillable`).
+    pub(crate) fn may_fill_generic(&self, t: TyId) -> bool {
+        let mut t = self.ty.opt_payload(t).unwrap_or(t);
+        if let TyKind::Array(e) = *self.ty.kind(t) {
+            t = self.ty.opt_payload(e).unwrap_or(e);
+        }
+        // A type parameter (`o as T` in `conv<T>`), which a call may give an interface.
+        if let TyKind::Param(_) = self.ty.kind(t) {
+            return self.object_impls.param_fillable;
+        }
+        let TyKind::Dyn(iface, args) = self.ty.kind(t) else {
+            return false;
+        };
+        if self.dynamic(t).is_some() || !args.iter().any(|a| self.has_type_params(*a)) {
+            return false;
+        }
+        (self.object_impls.sources.iter()).any(|s| match self.ty.kind(*s) {
+            TyKind::Adt(d, _) => self.may_fill(*d, *iface),
+            _ => true,
+        })
+    }
+
+    /// May an object converted to `any` be some interface that needs an implementation (one
+    /// with a method, a getter or a setter, [`Self::may_fill`])? A literal's own interface may.
+    fn some_iface_fillable(&self) -> bool {
+        let sources = &self.object_impls.sources;
+        if (sources.iter()).any(|s| !matches!(self.ty.kind(*s), TyKind::Adt(..))) {
+            return true;
+        }
+        (0..self.info.len()).any(|i| {
+            let iface = DefId(i as u32);
+            self.iface(iface).is_some_and(|x| !x.methods.is_empty())
+                && (sources.iter()).any(|s| match self.ty.kind(*s) {
+                    TyKind::Adt(d, _) => self.may_fill(*d, iface),
+                    _ => true,
+                })
+        })
     }
 
     /// The implementation of `iface<args>` for the object type `self_ty`, made on first use;
@@ -482,6 +558,18 @@ impl Ctx<'_> {
 /// Once every body is checked: the implementation of each interface a dynamic value is
 /// converted to for each object type converted to `any` that fits (module docs).
 pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
+    // A target written with type parameters is each one it becomes at the sites instantiating
+    // its definition (`view<number>` converts to `Box<number>`), as lowering converts there.
+    let generic = std::mem::take(&mut cx.object_impls.generic_targets);
+    let params = generic
+        .iter()
+        .any(|t| matches!(cx.ty.kind(*t), TyKind::Param(_)));
+    cx.object_impls.param_fillable = params && cx.some_iface_fillable();
+    if generic.iter().any(|t| cx.may_fill_generic(*t)) {
+        for t in crate::any_iface_sites::instantiated_conversions(cx) {
+            cx.note_dyn_object_target(t);
+        }
+    }
     let targets = std::mem::take(&mut cx.object_impls.targets);
     if targets.is_empty() {
         return;
