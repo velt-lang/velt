@@ -9,7 +9,7 @@
 // only documents (Vite serves the client modules and assets) and reads the template on each
 // request, so edits to index.html show up without a restart.
 
-import { serve, HttpServer } from "velt/net/http";
+import { serve, HttpServer } from "http-server";
 import { readFile, readFileBytes, exists } from "velt/fs";
 import { args, exit } from "velt/process";
 import { decodeURIComponent } from "velt/net/url";

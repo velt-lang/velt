@@ -4,7 +4,7 @@
 // velt/worlds.ts) and the TSX pages.
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 
-import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 import { args } from "velt/process";
 import { renderToString, renderToStringSync, renderToStream } from "velt/jsx";
 import {

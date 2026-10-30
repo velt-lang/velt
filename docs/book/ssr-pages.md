@@ -112,14 +112,13 @@ naming the component.
 
 ## Streaming pages
 
-`renderToStream` turns a page into a streamed response body (a `BodyStream` for
-`new Response`, see [`velt/http`](../std/http.md#the-response)) that is sent in chunks: the
-markup above each async component goes out before the component is awaited, so the browser gets
-the top of the page while the rest loads. The status goes out first, so decide it before
-streaming starts:
+`renderToStream` turns a page into a streamed response body (a `BodyStream` for `new Response`, see
+[http-server](../../packages/http-server/README.md#the-response)) that is sent in chunks: the markup
+above each async component goes out before the component is awaited, so the browser gets the top of
+the page while the rest loads. The status goes out first, so decide it before streaming starts:
 
 ```ts
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { renderToStream } from "velt/jsx";
 
 async function Slow(): Promise<JSX.Element> {

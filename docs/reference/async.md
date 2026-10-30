@@ -110,7 +110,7 @@ Promises behave like JavaScript's, at Rust's cost:
   created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
 - After `main` returns (a synchronous one, an `async` one, or the top level), the process runs
-  while something can still happen, as in Node: a listening [server](../std/http.md), a pending
+  while something can still happen, as in Node: a listening [server](../../packages/http-server/README.md), a pending
   [timer](../std/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
   and promises that run or wait for a timer or I/O (`sleep`, a socket, a file, a child
   process). Spawned tasks are waited for like that too. What waits only for other promises or

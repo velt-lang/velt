@@ -2,7 +2,7 @@
 // object of a class holds may be reached through what it shares, which the check does not
 // follow, so it errs on the side of rejecting (docs/std/http.md). Each assigns a variable that
 // only `main` (or `start`) uses: another `Input` than the handler's, another `Emitter`.
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 class Input {
   onChange: (v: string) => void = (v) => {};

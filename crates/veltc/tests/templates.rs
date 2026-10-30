@@ -79,6 +79,13 @@ fn text(o: &Output) -> String {
 /// `velt new` with `template`, then build (binaries), test and format-check the project.
 fn check_template(template: &str, has_main: bool) {
     let s = sandbox();
+    if matches!(template, "api" | "websocket") {
+        // Their projects depend on `http-server` from the registry: the repository's, published
+        // to the sandbox's local registry.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let loc = vpm::Locations::under(&s.dir.join("home"));
+        vpm::registry::publish_local(&repo.join("packages/http-server"), &loc).unwrap();
+    }
     let name = format!("demo-{template}");
     let out = s.ok("", &["new", &name, "--template", template]);
     assert!(out.contains(&format!("({template} template)")), "{out}");

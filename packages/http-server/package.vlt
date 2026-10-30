@@ -1,0 +1,7 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "http-server",
+  version: "0.1.0",
+  description: "An HTTP/1.1 and HTTP/2 server written in Velt, with web-standard handlers",
+};

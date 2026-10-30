@@ -1,0 +1,177 @@
+// velt/net/http's HTTP/2 server under abuse and shutdown: the concurrency limit (counting
+// handlers of reset streams too), rapid reset (CVE-2023-44487), empty DATA frames, a client
+// reset aborting the handler's signal, and a graceful stop.
+import { timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { delay } from "velt/time";
+import { h2Options } from "../../src/h2/options";
+import { H2Request } from "../../src/h2/request";
+import { H2Response } from "../../src/h2/response";
+import { bytes, Client, endOf, goaway, startServer } from "./_h2";
+
+describe("HTTP/2 limits", () => {
+  it("refuses streams past the limit, counting handlers still running after a reset", async () => {
+    const opts = h2Options();
+    opts.maxConcurrentStreams = 2;
+    const server = await startServer(
+      async (req: H2Request, res: H2Response) => {
+        if (req.pathIs("/slow")) {
+          await delay(300);
+        }
+        res.send("done");
+      },
+      opts,
+    );
+    const c = await Client.open(server.port);
+    c.get(1, "/slow");
+    c.get(3, "/slow");
+    // Reset: the handler of stream 3 still runs, so its slot is still taken.
+    c.frame(3, 0, 3, [0, 0, 0, 8]);
+    c.get(5, "/fast");
+    await c.flush();
+    expect(await c.until((f) => f.id == 5)).toBe("RST 5 REFUSED_STREAM");
+    expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 4:done");
+    await delay(100);
+    c.get(7, "/fast");
+    await c.flush();
+    expect(await c.until(endOf(7))).toBe("HEADERS 7 :status=200\nDATA 7 es 4:done");
+    c.close();
+    server.close();
+  });
+
+  it("answers 408 when a request body does not arrive within requestTimeout", async () => {
+    const opts = h2Options();
+    opts.requestTimeout = 200;
+    const server = await startServer(
+      async (req: H2Request, res: H2Response) => {
+        const body = await req.bodyText();
+        res.send(`got ${body}`);
+      },
+      opts,
+    );
+    const c = await Client.open(server.port);
+    c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 0, 1, bytes("part"));
+    // Stream 3 sends its whole body in time.
+    c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 1, 3, bytes("all"));
+    await c.flush();
+    const started = Date.now();
+    const out = await timeout(c.until((f) => f.id == 1 && f.type == 3), 3000);
+    expect(out).toBe(
+      "HEADERS 3 :status=200\nDATA 3 es 7:got all\nHEADERS 1 :status=408\nDATA 1 es 15:Request Timeout\nRST 1 NO_ERROR",
+    );
+    expect(Date.now() - started >= 150).toBe(true);
+    c.close();
+    server.close();
+  });
+
+  it("ends a connection that keeps resetting its streams (rapid reset)", async () => {
+    const server = await startServer(async (req: H2Request, res: H2Response) => {
+      await delay(50);
+      res.send("late");
+    });
+    const c = await Client.open(server.port);
+    let id: i64 = 1;
+    for (let round = 0; round < 20; round++) {
+      for (let k = 0; k < 60; k++) {
+        c.get(id, "/");
+        c.frame(3, 0, id, [0, 0, 0, 8]);
+        id += 2;
+      }
+      await c.flush();
+    }
+    const lines = (await c.until(goaway)).split("\n");
+    expect(lines[lines.length - 1].endsWith("ENHANCE_YOUR_CALM")).toBe(true);
+    c.close();
+    server.close();
+  });
+
+  it("ends a connection sending empty DATA frames", async () => {
+    const server = await startServer(async (req: H2Request, res: H2Response) => {
+      const b = await req.body();
+      res.send(`${b.length}`);
+    });
+    const c = await Client.open(server.port);
+    c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    for (let i = 0; i < 1100; i++) {
+      c.frame(0, 0, 1, []);
+    }
+    await c.flush();
+    expect(await c.until(goaway)).toBe("GOAWAY 1 ENHANCE_YOUR_CALM");
+    c.close();
+    server.close();
+  });
+
+  it("aborts the handler's signal when the client resets its stream", async () => {
+    const seen = shared(0 as i64);
+    const server = await startServer(async (req: H2Request, res: H2Response) => {
+      await res.startStream();
+      const signal = res.signal();
+      try {
+        for (let i = 0; i < 1000 && !signal.aborted; i++) {
+          await res.piece("tick ");
+          await delay(5);
+        }
+      } catch (e) {
+        // The write after the reset throws.
+      }
+      if (signal.aborted) {
+        seen.set(1);
+      }
+    });
+    const c = await Client.open(server.port);
+    c.get(1, "/");
+    await c.flush();
+    await c.until((f) => f.type == 0);
+    c.frame(3, 0, 1, [0, 0, 0, 8]);
+    await c.flush();
+    await delay(100);
+    expect(seen.get()).toBe(1);
+    c.close();
+    server.close();
+  });
+
+  it("stops gracefully: GOAWAY, then the streams in flight finish", async () => {
+    const server = await startServer(async (req: H2Request, res: H2Response) => {
+      await delay(100);
+      res.send("finished");
+    });
+    const c = await Client.open(server.port);
+    c.get(1, "/");
+    await c.flush();
+    await delay(20);
+    server.close();
+    expect(await c.until((f) => f.type == 7)).toBe("GOAWAY 1 NO_ERROR");
+    expect(await c.until((f) => false)).toBe("HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    c.close();
+  });
+
+  it("gives the window of a body the handler does not read back", async () => {
+    const server = await startServer(async (req: H2Request, res: H2Response) => {
+      // The body arrives (and waits, unread) before the handler answers.
+      await delay(50);
+      res.send("no thanks");
+    });
+    const c = await Client.open(server.port);
+    // More than the connection's 1 MiB window over several streams: each is given back.
+    const chunk: u8[] = new Array<u8>(16384).fill(120);
+    for (let s: i64 = 0; s < 5; s++) {
+      const id = s * 2 + 1;
+      c.headers(id, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+      for (let k = 0; k < 15; k++) {
+        c.frame(0, 0, id, chunk);
+      }
+      await c.flush();
+      const out = await c.until(endOf(id));
+      expect(out.endsWith(`HEADERS ${id} :status=200\nDATA ${id} es 9:no thanks`)).toBe(true);
+    }
+    c.get(11, "/");
+    await c.flush();
+    expect(
+      (await c.until(endOf(11))).endsWith("HEADERS 11 :status=200\nDATA 11 es 9:no thanks"),
+    ).toBe(true);
+    c.close();
+    server.close();
+  });
+});

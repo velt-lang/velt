@@ -2,7 +2,7 @@
 // the post before the comments have loaded.
 
 import { Channel } from "velt/sync";
-import { serve, HttpServer } from "velt/net/http";
+import { serve, HttpServer } from "http-server";
 import { BodyStream } from "velt/net/http";
 import { IoError } from "velt/io";
 import { AbortError } from "velt/task";

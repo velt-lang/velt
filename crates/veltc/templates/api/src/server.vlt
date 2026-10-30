@@ -1,5 +1,5 @@
 // The HTTP side: one store shared by every request, `route` behind std/http.
-import { serve, HttpServer } from "velt/net/http";
+import { serve, HttpServer } from "http-server";
 import { ItemStore } from "./store";
 import { route } from "./api";
 

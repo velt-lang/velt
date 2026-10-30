@@ -3,10 +3,10 @@
 // (std/websocket/frame).
 import { channel, Channel } from "velt/sync";
 import { base64Decode, utf8Decode, utf8Encode } from "velt/encoding";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import { WebSocket, connectWebSocket } from "velt/net/websocket";
-import { upgradeWebSocket } from "velt/net/http";
+import { upgradeWebSocket } from "http-server/websocket";
 import { maskKey } from "velt/net/websocket/bytes";
 import {
   Frame,

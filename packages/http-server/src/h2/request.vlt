@@ -1,0 +1,281 @@
+// http-server (internal): `H2Request`, a request received over HTTP/2, with the methods of
+// HTTP/1.1's `HttpRequest` (server/request.vlt), so a handler reads either the same way:
+// the head from the stream's decoded fields (`:method`, `:path`, and `:authority` as `host` when
+// no `host` field came), the body as DATA frames arrive, giving their window back as it reads.
+
+import { utf8DecodeLossy } from "velt/encoding";
+import { IoError } from "velt/io";
+import { BodyTooLarge } from "../errors";
+import { H2Connection } from "./connection";
+import { H2Stream } from "./stream";
+import { consumed } from "./streams";
+
+/// A request on an HTTP/2 stream. Valid while the handler runs.
+export class H2Request {
+  private c: H2Connection;
+  private s: H2Stream;
+  private overLimit: bool = false;
+  private cut: bool = false;
+  private continued: bool = false;
+
+  constructor(c: H2Connection, s: H2Stream) {
+    this.c = c;
+    this.s = s;
+  }
+
+  /// Always true: an HTTP/2 connection serves further requests after this one.
+  get keepAlive(): bool {
+    return true;
+  }
+
+  /// Whether the method is `m` (`"GET"`), without making a string.
+  isMethod(m: string): bool {
+    return this.equals(this.s.info.method, m);
+  }
+
+  /// The method (`"GET"`, `"POST"`, ...).
+  method(): string {
+    return this.s.fields.value(this.s.info.method);
+  }
+
+  /// Whether the path (the target up to `?`) is `p`, without making a string.
+  pathIs(p: string): bool {
+    const f = this.s.fields;
+    const i = this.targetField();
+    if (i < 0) {
+      return false;
+    }
+    return f.buf.utf8Equals(p, f.heads[i * 4 + 2], this.pathEnd(i));
+  }
+
+  /// The path: the request target up to `?` (`/users/1`).
+  path(): string {
+    const f = this.s.fields;
+    const i = this.targetField();
+    return i < 0 ? "" : f.buf.utf8Slice(f.heads[i * 4 + 2], this.pathEnd(i));
+  }
+
+  /// The query after `?`, without it, or `""`.
+  query(): string {
+    const f = this.s.fields;
+    const i = this.targetField();
+    if (i < 0) {
+      return "";
+    }
+    const end = f.heads[i * 4 + 3];
+    const q = this.pathEnd(i);
+    return q < end ? f.buf.utf8Slice(q + 1, end) : "";
+  }
+
+  /// The whole request target (`/users/1?full=1`; a CONNECT's authority).
+  target(): string {
+    const i = this.targetField();
+    return i < 0 ? "" : this.s.fields.value(i);
+  }
+
+  /// The value of header `name` (any case), the first one if there are several, or null.
+  /// `host` is the `:authority` when the request has no `host` field.
+  header(name: string): string | null {
+    const i = this.find(name);
+    if (i >= 0) {
+      return this.s.fields.value(i);
+    }
+    const a = this.s.info.authority;
+    if (a >= 0 && name.toLowerCase() == "host") {
+      return this.s.fields.value(a);
+    }
+    return null;
+  }
+
+  /// The values of header `name` (any case) joined with ", " in the order they came, as
+  /// `Headers.get` reads them; null when it was not sent (`host` as for `header`).
+  headerValues(name: string): string | null {
+    const first = this.find(name);
+    if (first < 0) {
+      return this.header(name);
+    }
+    const f = this.s.fields;
+    const n = Buffer.byteLength(name) as i64;
+    let out = f.value(first);
+    for (let i = first + 1; i < f.count; i++) {
+      if (
+        f.nameLength(i) == n && f.buf.utf8EqualsIgnoreCase(name, f.heads[i * 4], f.heads[i * 4 + 1])
+      ) {
+        out = `${out}, ${f.value(i)}`;
+      }
+    }
+    return out;
+  }
+
+  /// Whether header `name` (any case) was sent.
+  hasHeader(name: string): bool {
+    return this.header(name) != null;
+  }
+
+  /// The headers' names (lowercase, as HTTP/2 sends them) and values, in order; the
+  /// pseudo-headers are not among them, `host` is when only `:authority` came.
+  headers(): [string, string][] {
+    const out: [string, string][] = [];
+    const f = this.s.fields;
+    let host = false;
+    for (let i: i64 = 0; i < f.count; i++) {
+      if (f.nameByte(i) != 0x3a) {
+        host = host || f.nameIs(i, "host");
+        out.push([f.name(i), f.value(i)]);
+      }
+    }
+    const a = this.s.info.authority;
+    if (!host && a >= 0) {
+      out.push(["host", f.value(a)]);
+    }
+    return out;
+  }
+
+  /// Whether this is an extended CONNECT (RFC 8441) for `protocol` (`"websocket"`): HTTP/2's
+  /// way to carry another protocol on a stream, as `Upgrade` does on an HTTP/1.1 connection.
+  isUpgrade(protocol: string): bool {
+    const i = this.s.info.protocol;
+    return i >= 0 && this.s.fields.value(i).toLowerCase() == protocol.toLowerCase();
+  }
+
+  /**
+   * The next piece of the body as it arrives, or null at its end. Throws `IoError`
+   * `ECONNRESET` when the client reset the stream before the end.
+   */
+  async read(): Promise<u8[] | null> {
+    const s = this.s;
+    while (true) {
+      const piece = s.take();
+      if (piece != null) {
+        consumed(this.c, s, piece.length as i64);
+        this.c.written();
+        return piece;
+      }
+      if (s.remoteEnded) {
+        return null;
+      }
+      if (s.late) {
+        throw new IoError("ETIMEDOUT", "the request body did not arrive in time");
+      }
+      if (s.reset) {
+        this.cut = true;
+        throw new IoError("ECONNRESET", "the client reset the stream before the end of its body");
+      }
+      this.sendContinue();
+      await s.waitForWake();
+    }
+  }
+
+  /// The whole body (what `read()` has not taken yet); `BodyTooLarge` beyond `maxBodySize`.
+  async body(): Promise<u8[]> {
+    const limit = this.c.opts.maxBodySize;
+    if (this.s.info.contentLength > limit) {
+      this.overLimit = true;
+      throw new BodyTooLarge(limit);
+    }
+    const pieces: u8[][] = [];
+    let total: i64 = 0;
+    let piece = await this.read();
+    while (piece != null) {
+      total += piece.length as i64;
+      if (total > limit) {
+        this.overLimit = true;
+        throw new BodyTooLarge(limit);
+      }
+      pieces.push(piece);
+      piece = await this.read();
+    }
+    if (pieces.length == 1) {
+      return pieces[0];
+    }
+    const all: u8[] = Buffer.allocUnsafe(total as usize);
+    let at: i64 = 0;
+    for (const p of pieces) {
+      p.copy(all, at);
+      at += p.length as i64;
+    }
+    return all;
+  }
+
+  /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
+  async bodyText(): Promise<string> {
+    return utf8DecodeLossy(await this.body());
+  }
+
+  /// Nothing: an HTTP/2 stream is never handed over.
+  takeUnread(): u8[] {
+    return [];
+  }
+
+  /// Whether the body was read to its end, or there is none (internal).
+  bodyRead(): bool {
+    return this.s.remoteEnded && this.s.buffered == 0;
+  }
+
+  /// Whether `body()` found the body larger than the limit (internal: answered 413).
+  bodyTooLarge(): bool {
+    return this.overLimit;
+  }
+
+  /// Whether the body was cut short by a reset (internal: not the handler's failure).
+  bodyMalformed(): bool {
+    return this.cut;
+  }
+
+  /// Whether the body did not arrive within `requestTimeout` (internal: answered 408).
+  timedOut(): bool {
+    return this.s.late;
+  }
+
+  /// A client that sent `expect: 100-continue` gets the 100 before the handler first waits for
+  /// the body (RFC 9110 §10.1.1).
+  private sendContinue() {
+    const s = this.s;
+    if (this.continued || s.headersSent || s.received > 0) {
+      return;
+    }
+    this.continued = true;
+    const e = this.header("expect");
+    if (e != null && e.toLowerCase() == "100-continue") {
+      const c = this.c;
+      const at = c.out.beginHeaders();
+      c.encoder.begin(c.out);
+      c.encoder.status(c.out, 100);
+      c.out.endHeaders(at, s.id, 0, c.peerMaxFrame);
+      c.written();
+    }
+  }
+
+  /// The field holding the target: `:path`, or `:authority` for CONNECT.
+  private targetField(): i64 {
+    const info = this.s.info;
+    return info.path >= 0 ? info.path : info.authority;
+  }
+
+  /// Where the path of target field `i` ends (`?` or the end).
+  private pathEnd(i: i64): i64 {
+    const f = this.s.fields;
+    const start = f.heads[i * 4 + 2];
+    const end = f.heads[i * 4 + 3];
+    const q = f.buf.indexOf(0x3f, start) as i64;
+    return q >= 0 && q < end ? q : end;
+  }
+
+  private equals(i: i64, s: string): bool {
+    const f = this.s.fields;
+    return i >= 0 && f.buf.utf8Equals(s, f.heads[i * 4 + 2], f.heads[i * 4 + 3]);
+  }
+
+  private find(name: string): i64 {
+    const f = this.s.fields;
+    const n = Buffer.byteLength(name) as i64;
+    for (let i: i64 = 0; i < f.count; i++) {
+      if (
+        f.nameLength(i) == n && f.buf.utf8EqualsIgnoreCase(name, f.heads[i * 4], f.heads[i * 4 + 1])
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+}

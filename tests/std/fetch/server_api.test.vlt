@@ -3,16 +3,8 @@
 // back from the request (`requestSource`), a response's parts to write (`responseParts`), and
 // `101 Switching Protocols` (`switchingProtocols`).
 import { utf8Encode } from "velt/encoding";
-import { IoError } from "velt/io/error";
-import {
-  BodyKind,
-  RequestSource,
-  requestSource,
-  responseParts,
-  serverRequest,
-  statusText,
-  switchingProtocols,
-} from "velt/net/http";
+import { IoError } from "velt/io";
+import { BodyKind, RequestSource, requestSource, responseParts, serverRequest, statusText, switchingProtocols } from "velt/net/http";
 import { describe, expect, it } from "velt/test";
 
 /** A request held in memory, counting what the `Request` asked it for. */

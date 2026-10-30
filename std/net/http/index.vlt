@@ -1,7 +1,8 @@
-// velt/net/http: HTTP, client and server, as in Node, Deno, Bun and Go: the WHATWG `fetch` API
-// (global) with `Request`, `Response`, `Headers` and their bodies, and the HTTP/1.1 server written
-// in Velt: `serve` with web-standard handlers (`(req: Request) => Response`, as in Deno and Bun)
-// and the lower-level `serveHttp` with `HttpRequest` and `HttpResponse`. docs/std/net/http.md.
+// velt/net/http: the HTTP client and the web types both sides of HTTP share, as the web globals
+// of Node, Deno and Bun: `fetch` (HTTP/1.1, and HTTP/2 where the origin offers it), `Request`,
+// `Response`, `Headers` and their bodies; and what a server written in Velt needs of them
+// (`RequestSource`, `responseParts`, `statusText`; packages/http-server is one). HTTP/2's wire
+// format is velt/net/http/h2. docs/std/fetch.md.
 
 export {
   BodyInit,
@@ -23,20 +24,3 @@ export {
   responseParts,
   switchingProtocols,
 } from "velt/net/http/fetch/parts";
-export { HttpServeOptions, HttpServer, serveHttp } from "velt/net/http/server/serve";
-export { BodyTooLarge } from "velt/net/http/server/errors";
-export { HttpRequest } from "velt/net/http/server/request";
-export { EventStream, HttpResponse, HttpStream } from "velt/net/http/server/response";
-export { serve } from "velt/net/http/server/standard";
-export { NetAddr, ServeInfo } from "velt/net/http/server/serve_info";
-export {
-  ConnectionUpgrade,
-  isUpgradeRequest,
-  upgradeConnection,
-} from "velt/net/http/server/upgrade";
-export {
-  acceptWebSocket,
-  isWebSocketRequest,
-  upgradeWebSocket,
-  WebSocketUpgrade,
-} from "velt/net/http/server/websocket";

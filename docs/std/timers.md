@@ -73,7 +73,7 @@ async function main() {
 ```
 
 What keeps a process alive is what can still happen, as in Node: a pending ref'd timer, a
-listening [server](http.md), and code that runs or waits for a timer or I/O (a spawned task, a
+listening [server](../../packages/http-server/README.md), and code that runs or waits for a timer or I/O (a spawned task, a
 started promise, a timer's callback once it started, `await sleep(ms)`, a read). A promise that
 waits only for something that never comes (a `resolve` nobody calls) does not keep it alive: once
 nothing else is left, the process ends, as Node's does ([Async](../reference/async.md#promises)).

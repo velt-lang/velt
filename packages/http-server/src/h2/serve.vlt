@@ -1,0 +1,48 @@
+// http-server (internal): `serveH2`, the entry point of an HTTP/2 connection: the HTTP/1.1
+// server hands it a connection that began with the HTTP/2 preface (h2c with prior knowledge) or
+// whose TLS handshake chose "h2" (ALPN), with what it read already.
+
+import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
+import { H2Connection } from "./connection";
+import { H2Options } from "./options";
+import { H2Request } from "./request";
+import { H2Response } from "./response";
+
+/**
+ * Serves `conn` as an HTTP/2 connection until it ends (`initial`: the bytes read from it
+ * already, from the preface on). A handler that throws gets a 500 (the error is printed), unless
+ * the client reset its stream or the body was cut short; one that returns without sending gets
+ * an empty 200. Resolves once every handler has returned and the connection is closed.
+ */
+export async function serveH2<E>(
+  conn: TcpStream,
+  initial: u8[],
+  opts: H2Options,
+  stopped: AbortSignal,
+  handler: (req: H2Request, res: H2Response) => Promise<void, E> throws E,
+): Promise<void> {
+  const c = new H2Connection(conn, opts, stopped, async (req: H2Request, res: H2Response) => {
+    try {
+      await handler(req, res);
+    } catch (e) {
+      try {
+        if (req.bodyTooLarge() || req.timedOut()) {
+          if (!res.sent()) {
+            res.status(req.timedOut() ? 408 : 413);
+            res.send(req.timedOut() ? "Request Timeout" : "Payload Too Large");
+          }
+        } else if (!res.clientGone() && !req.bodyMalformed()) {
+          if (!res.sent()) {
+            res.status(500);
+            res.send("Internal Server Error");
+          }
+          console.error("request handler failed:", e);
+        }
+      } catch (e2) {
+        // Nothing more can be sent.
+      }
+    }
+  });
+  await c.run(initial);
+}

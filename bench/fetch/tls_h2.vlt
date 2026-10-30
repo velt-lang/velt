@@ -1,7 +1,7 @@
 // fetch over HTTPS against serveHttp on loopback: HTTP/2 (one multiplexed connection) or
 // HTTP/1.1 (pooled connections). Usage: tls_h2 h2|h1 <requests> <at once>.
 // docs/internals/design/http2.md "Benchmarks".
-import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 import { args } from "velt/process";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../tests/golden/std/_tls";
 

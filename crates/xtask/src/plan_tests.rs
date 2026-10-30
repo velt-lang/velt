@@ -476,7 +476,7 @@ fn example_apps_run_their_velt_tests() {
 
 #[test]
 fn std_suites_run_with_std_tests() {
-    let p = plan(&["tests/std/http/server.test.vlt"]);
+    let p = plan(&["tests/std/fetch/client.test.vlt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert!(p.filterset().unwrap().contains("binary(std_tests)"));
     // A change to std or the runner runs every `veltc` test, `std_tests` with them.

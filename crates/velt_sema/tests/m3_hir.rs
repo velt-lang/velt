@@ -170,19 +170,23 @@ fn borrowed_places_passed_to_async_functions_are_cloned() {
     assert!(intrinsics(start).contains(&Intrinsic::Share));
 }
 
+/// A handler a library function runs on its own tasks (a server's, here a function that spawns
+/// it): the function reaches `spawn`, and the handler, an async closure, owns its parameters and
+/// what it captures.
 #[test]
-fn http_server_shapes() {
-    let p = golden("m4/http_server.vlt");
-    // `serve` runs the handler on the server's connection tasks: it reaches `spawn`.
-    let serve = func(&p, "std/net/http/server/serve::serveHttp");
-    assert!(intrinsics(serve).contains(&Intrinsic::Spawn));
+fn spawned_handler_shapes() {
+    let p = ok_src(
+        "async function each(handler: (s: string) => Promise<void>) {\n  const t = spawn(handler(\"x\"));\n  await t;\n}\nasync function main() {\n  const hits = shared(0);\n  await each(async (s: string): Promise<void> => {\n    hits.add(s.length as i64);\n  });\n}\n",
+    );
+    let each = func(&p, "each");
+    assert!(intrinsics(each).contains(&Intrinsic::Spawn));
     let main = func(&p, "main");
     let handler = closures(&p, main)
         .into_iter()
         .find(|c| c.is_async)
         .expect("handler");
-    let req = handler.params.last().expect("req param");
-    assert_eq!(req.mode, PassMode::Owned, "async closure params are owned");
+    let s = handler.params.last().expect("s param");
+    assert_eq!(s.mode, PassMode::Owned, "async closure params are owned");
     assert_eq!(handler.captures.len(), 1);
     assert_eq!(handler.captures[0].mode, PassMode::Owned);
 }

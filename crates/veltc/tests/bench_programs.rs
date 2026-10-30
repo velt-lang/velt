@@ -1,6 +1,11 @@
 //! The benchmark programs keep compiling: every `bench/**/*.vlt` goes through parse, sema,
 //! lowering and VIR verification (no codegen or linking, so the set checks in seconds).
 //!
+//! A program inside a package (a directory with `package.vlt`: the server and database benchmarks
+//! depend on the repository's packages by path) is compiled with that package's dependencies
+//! installed as `velt check` installs them (`--locked`, so the committed lockfile must be current),
+//! which builds a native package's library with cargo the first time.
+//!
 //! Nothing else builds `bench/`, so a change to the standard library or the checker that breaks
 //! a benchmark (a driver function gaining an error type, say) would otherwise go unnoticed until
 //! someone runs it. The gate runs this test whenever the compiler, the standard library or
@@ -36,9 +41,10 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
         if path.is_dir() {
             out.extend(programs(&path));
         } else if path.extension().is_some_and(|e| e == "vlt")
-            && !path
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+            && !path.file_name().is_some_and(|n| {
+                let n = n.to_string_lossy();
+                n.starts_with('_') || n == vpm::manifest::MANIFEST_FILE
+            })
         {
             out.push(path);
         }
@@ -60,14 +66,33 @@ fn other_os_only(path: &Path) -> bool {
     (wants("unix") && cfg!(windows)) || (wants("windows") && !cfg!(windows))
 }
 
+/// The dependencies of the package `path` is in (none outside a package), installed for this
+/// machine as `velt check --locked` installs them.
+fn package_graph(path: &Path) -> Result<Option<vpm::PackageGraph>, String> {
+    let Some(root) = path.parent().and_then(vpm::manifest::find_package_root) else {
+        return Ok(None);
+    };
+    let opts = vpm::InstallOptions {
+        locked: true,
+        update: false,
+        target: Some(velt_codegen_cl::host_triple().to_string()),
+    };
+    vpm::install(&root, &vpm::Locations::from_env()?, opts).map(|i| Some(i.graph))
+}
+
 /// Compiles one program to verified VIR; `Some(message)` when it fails.
 fn compile(path: &Path) -> Option<String> {
     if other_os_only(path) {
         return None;
     }
+    let packages = match package_graph(path) {
+        Ok(graph) => graph,
+        Err(e) => return Some(format!("error: installing its package's dependencies: {e}")),
+    };
     let opts = BuildOptions {
         input: path.to_path_buf(),
         emit: Emit::Vir,
+        packages,
         ..Default::default()
     };
     let mut sess = Session::new();

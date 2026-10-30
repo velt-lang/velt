@@ -734,6 +734,9 @@ mod tests {
         std::fs::remove_file(&lock).unwrap();
         let mut watcher = first_watcher(Watcher::new(false), input, None);
         first_build(&mut watcher, true);
-        assert!(reports_a_change(&mut watcher), "the lockfile the build wrote");
+        assert!(
+            reports_a_change(&mut watcher),
+            "the lockfile the build wrote"
+        );
     }
 }

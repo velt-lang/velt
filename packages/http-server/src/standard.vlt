@@ -1,0 +1,90 @@
+// http-server (internal): `serve`, the server with web-standard handlers, as in Deno and Bun:
+// a handler takes the global `Request` and returns a `Response` (or a promise of one). It runs
+// on the HTTP/1.1 server written in Velt (`serveHttp`, serve.vlt): each request reaches the
+// handler as a `Request` that reads the connection's request lazily (received.vlt), and the
+// `Response` it returns is written through the connection's `HttpResponse`.
+
+import { IoError } from "velt/io";
+import { BodyKind, Request, Response, responseParts, serverRequest } from "velt/net/http";
+import { Received } from "./received";
+import { HttpRequest } from "./request";
+import { HttpResponse } from "./response";
+import { HttpServeOptions, HttpServer, serveHttp } from "./serve";
+import { ServeInfo } from "./serve_info";
+
+/**
+ * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in
+ * the background. The handler returns a `Response`, or a promise of one (an `async` handler), as
+ * in Deno and Bun; its second argument says who connected (`info.remoteAddr`). Handlers run
+ * concurrently, so like spawned tasks they must not change captured variables (use `shared`). A
+ * handler that throws, or whose promise rejects, gets a 500 response, and the error is printed
+ * to stderr (as Deno and Bun do). The request is valid while the handler runs: a streamed body
+ * that reads it later stops the program, so read what the body needs before returning.
+ */
+export async function serve<E, F>(
+  opts: HttpServeOptions,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+): Promise<HttpServer, IoError> {
+  const secure = opts.tls != null;
+  return await serveHttp(opts, async (hreq: HttpRequest, out: HttpResponse): Promise<void> => {
+    const received = new Received(hreq, out, secure);
+    let res: Response | null = null;
+    try {
+      res = await handler(serverRequest(received), new ServeInfo(received));
+    } catch (e) {
+      console.error("request handler failed:", e);
+    }
+    received.release();
+    if (out.upgraded()) {
+      // The handler switched the connection (`upgradeConnection`): its 101 was sent.
+      return;
+    }
+    if (res == null) {
+      failed(out);
+      return;
+    }
+    try {
+      await respond(res, out);
+    } catch (e) {
+      if (!out.sent()) {
+        console.error("request handler failed: the response could not be written:", e);
+        failed(out);
+      }
+    }
+  });
+}
+
+/** A 500 for a handler that failed. */
+function failed(out: HttpResponse) {
+  out.status(500);
+  out.send("Internal Server Error");
+}
+
+/** Writes `res` through `out`: its status, headers and body. */
+async function respond(res: Response, out: HttpResponse) {
+  const b = responseParts(res);
+  out.status(b.status as number);
+  const h = b.headers;
+  let typed = false;
+  for (let i: usize = 0; i + 1 < h.length; i += 2) {
+    const name = h[i];
+    // The server frames the body: its own Content-Length or chunks.
+    if (name == "content-length" || name == "transfer-encoding") {
+      continue;
+    }
+    typed = typed || name == "content-type";
+    out.header(name, h[i + 1]);
+  }
+  const type = b.type;
+  if (!typed && type != null) {
+    out.header("content-type", type);
+  }
+  const stream = b.stream;
+  if (b.kind == BodyKind.Stream && stream != null) {
+    await out.sendStream(stream, "application/octet-stream");
+  } else if (b.kind == BodyKind.Bytes) {
+    out.sendBytes(b.bytes);
+  } else {
+    out.send(b.text);
+  }
+}

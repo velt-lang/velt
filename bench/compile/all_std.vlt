@@ -6,7 +6,7 @@
 // missing and that all of std checks without diagnostics. A small main touches a few modules and names the globals
 // loaded on demand whose modules nothing imports (`Proxy` and `Reflect`,
 // std/prelude/global/proxy.vlt).
-import { HttpServeOptions } from "velt/net/http";
+import { RequestInit } from "velt/net/http";
 import { existsSync } from "velt/fs";
 import { ioError } from "velt/native/error";
 import { Value } from "velt/encoding/json";
@@ -251,32 +251,6 @@ import * as std_net_http_server_h2_hpack_static from "velt/net/http/h2/hpack_sta
 import * as std_net_http_server_h2_hpack_table from "velt/net/http/h2/hpack_table";
 import * as std_net_http_server_h2_huffman from "velt/net/http/h2/huffman";
 import * as std_net_http_server_h2_huffman_table from "velt/net/http/h2/huffman_table";
-import * as std_net_http_server_connection from "velt/net/http/server/connection";
-import * as std_net_http_server_errors from "velt/net/http/server/errors";
-import * as std_net_http_server_h2_connection from "velt/net/http/server/h2/connection";
-import * as std_net_http_server_h2_facade from "velt/net/http/server/h2/facade";
-import * as std_net_http_server_h2_inbound from "velt/net/http/server/h2/inbound";
-import * as std_net_http_server_h2_options from "velt/net/http/server/h2/options";
-import * as std_net_http_server_h2_outbound from "velt/net/http/server/h2/outbound";
-import * as std_net_http_server_h2_request from "velt/net/http/server/h2/request";
-import * as std_net_http_server_h2_response from "velt/net/http/server/h2/response";
-import * as std_net_http_server_h2_serve from "velt/net/http/server/h2/serve";
-import * as std_net_http_server_h2_settings from "velt/net/http/server/h2/settings";
-import * as std_net_http_server_h2_stream from "velt/net/http/server/h2/stream";
-import * as std_net_http_server_h2_streams from "velt/net/http/server/h2/streams";
-import * as std_net_http_server_h2_tunnel from "velt/net/http/server/h2/tunnel";
-import * as std_net_http_server_h2_validate from "velt/net/http/server/h2/validate";
-import * as std_net_http_server_h2_wait from "velt/net/http/server/h2/wait";
-import * as std_net_http_server_linger from "velt/net/http/server/linger";
-import * as std_net_http_server_parse from "velt/net/http/server/parse";
-import * as std_net_http_server_received from "velt/net/http/server/received";
-import * as std_net_http_server_request from "velt/net/http/server/request";
-import * as std_net_http_server_response from "velt/net/http/server/response";
-import * as std_net_http_server_serve from "velt/net/http/server/serve";
-import * as std_net_http_server_serve_info from "velt/net/http/server/serve_info";
-import * as std_net_http_server_standard from "velt/net/http/server/standard";
-import * as std_net_http_server_upgrade from "velt/net/http/server/upgrade";
-import * as std_net_http_server_websocket from "velt/net/http/server/websocket";
 import * as std_net_pair from "velt/net/pair";
 import * as std_net_udp from "velt/net/udp";
 import * as std_net_url from "velt/net/url";
@@ -444,10 +418,10 @@ function main() {
   const p = join("a", "b");
   console.log(`${p} ${existsSync(p)} ${clamp(gcd(12, 18), 0, 5)} ${argv().length}`);
   console.log(process.env.HOME ?? "");
-  const opts: HttpServeOptions = { port: 0 };
+  const opts: RequestInit = { method: "GET" };
   const r = new Response("ok");
   r.headers.set("x-a", "1");
-  console.log(`${opts.port} ${r.headers.get("x-a")}`);
+  console.log(`${opts.method} ${r.headers.get("x-a")}`);
   const px: any = new Proxy({ a: 1 }, {});
   console.log(Reflect.has(px, "a"));
 }

@@ -1,0 +1,347 @@
+// http-server (internal): `H2Response`, a response sent over HTTP/2, with the methods of
+// HTTP/1.1's `HttpResponse` (server/response.vlt): the head as one HEADERS frame (HPACK),
+// the body as DATA frames within the client's windows. A streamed body (`startStream`, `piece`)
+// waits while more than 64 KiB of it are still to be sent, held back by flow control or by the
+// socket: a fast producer waits for a slow client.
+
+import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
+import { AbortSignal } from "velt/task";
+import { TcpStream } from "velt/net";
+import { isTchar } from "../parse";
+import { H2Connection } from "./connection";
+import { endBody, sendBytes, sendText, writeHead } from "./outbound";
+import { H2Stream } from "./stream";
+import { openTunnel } from "./tunnel";
+
+/// How many bytes of a streamed body may wait to be sent before `piece` waits.
+const QUEUED: i64 = 65536;
+
+/// A response on an HTTP/2 stream. Valid while the handler runs.
+export class H2Response {
+  private c: H2Connection;
+  private s: H2Stream;
+  private code: i64 = 200;
+  /// The handler's headers: lowercase name, value, ...
+  private fields: string[] = [];
+  private hasType: bool = false;
+  /// A Content-Length the handler set (-1: none), sent for a HEAD request's response.
+  private headLength: i64 = -1;
+  private done: bool = false;
+  private streaming: bool = false;
+  private noBody: bool = false;
+
+  constructor(c: H2Connection, s: H2Stream) {
+    this.c = c;
+    this.s = s;
+  }
+
+  /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
+  status(code: number) {
+    if (!(code >= 100 && code <= 999) || code != Math.floor(code)) {
+      throw new RangeError(`invalid status code: ${code}`);
+    }
+    this.code = code as i64;
+  }
+
+  /**
+   * Adds header `name: value`, sent with a lowercase name. Throws `TypeError` for a name that is
+   * not a token or a value with a control character other than TAB, as `HttpResponse.header`.
+   * The fields HTTP/2 does not have (`connection`, `keep-alive`, `transfer-encoding`, `upgrade`,
+   * `proxy-connection`) are not sent, nor `content-length`, which the server sets (except for
+   * the response to a HEAD request).
+   */
+  header(name: string, value: string) {
+    checkName(name);
+    checkValue(name, value);
+    const n = name.toLowerCase();
+    if (n == "content-length") {
+      this.headLength = lengthValue(value);
+      return;
+    }
+    if (connectionField(n)) {
+      return;
+    }
+    if (n == "content-type") {
+      this.hasType = true;
+    }
+    this.fields.push(n, value);
+  }
+
+  /**
+   * Adds trailers, sent as a HEADERS frame after the body (names in lowercase, checked as
+   * `header` checks them; the fields HTTP/2 does not have are dropped). Before the body ends.
+   */
+  addTrailers(trailers: [string, string][]) {
+    for (const t of trailers) {
+      checkName(t[0]);
+      checkValue(t[0], t[1]);
+      const n = t[0].toLowerCase();
+      if (!connectionField(n) && n != "content-length") {
+        this.s.trailers.push(n, t[1]);
+      }
+    }
+  }
+
+  /** Nothing: the connection serves other streams after this response (internal). */
+  closeAfter() {}
+
+  /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
+  send(body: string) {
+    const n = Buffer.byteLength(body) as i64;
+    this.head("text/plain; charset=utf-8", n);
+    if (!this.noBody && n > 0) {
+      sendText(this.c, this.s, body, n, true);
+    }
+    this.c.written();
+  }
+
+  /** Writes the response with body `body` (default type `application/octet-stream`). */
+  sendBytes(body: u8[]) {
+    const n = body.length as i64;
+    this.head("application/octet-stream", n);
+    if (!this.noBody && n > 0) {
+      sendBytes(this.c, this.s, body, 0, n, true);
+    }
+    this.c.written();
+  }
+
+  /** Writes the response with JSON text `json` (type `application/json`). */
+  json(json: string) {
+    const n = Buffer.byteLength(json) as i64;
+    this.head("application/json", n);
+    if (!this.noBody && n > 0) {
+      sendText(this.c, this.s, json, n, true);
+    }
+    this.c.written();
+  }
+
+  /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
+  html(html: string) {
+    const n = Buffer.byteLength(html) as i64;
+    this.head("text/html; charset=utf-8", n);
+    if (!this.noBody && n > 0) {
+      sendText(this.c, this.s, html, n, true);
+    }
+    this.c.written();
+  }
+
+  /**
+   * Starts a streamed response (default type `text/plain; charset=utf-8`): the head goes out
+   * now, the body through `piece` and `finishStream`.
+   */
+  async startStream(type: string = "text/plain; charset=utf-8") {
+    this.head(type, -1);
+    this.streaming = !this.noBody;
+    await this.drain();
+  }
+
+  /** The head of a Server-Sent Events stream (`text/event-stream`, not cached). */
+  async startEvents() {
+    this.header("cache-control", "no-cache");
+    await this.startStream("text/event-stream");
+  }
+
+  /**
+   * One piece of a streamed body. Resolves once at most 64 KiB are still to be sent; throws
+   * `IoError` when the client reset the stream or went away (and aborts `signal()`).
+   */
+  async piece(data: string | u8[] | Uint8Array) {
+    const s = this.s;
+    if (s.reset) {
+      throw new IoError("ECONNRESET", "the client reset the stream");
+    }
+    if (!this.streaming) {
+      if (this.noBody && this.done) {
+        return;
+      }
+      throw new Error("the streamed response has ended");
+    }
+    if (typeof data == "string") {
+      sendText(this.c, s, data, Buffer.byteLength(data) as i64, false);
+    } else if (data instanceof Uint8Array) {
+      const bytes: u8[] = Buffer.allocUnsafe(data.length as usize);
+      for (let i = 0; i < data.length; i++) {
+        bytes[i] = data[i] as u8;
+      }
+      sendBytes(this.c, s, bytes, 0, bytes.length as i64, false);
+    } else {
+      sendBytes(this.c, s, data, 0, data.length as i64, false);
+    }
+    await this.drain();
+  }
+
+  /** Ends a streamed body. */
+  async finishStream() {
+    if (!this.streaming) {
+      return;
+    }
+    this.streaming = false;
+    endBody(this.c, this.s);
+    await this.drain();
+  }
+
+  /**
+   * Streams `body` as the response (default type `text/html; charset=utf-8`), each chunk as it
+   * comes; a client that goes away ends it quietly.
+   */
+  async sendStream(body: BodyStream, type: string = "text/html; charset=utf-8") {
+    await this.startStream(type);
+    try {
+      for await (const chunk of body) {
+        await this.piece(chunk);
+      }
+    } catch (e) {
+      return;
+    }
+    await this.finishStream();
+  }
+
+  /** Aborted when the client resets the stream, goes away, or the server closes. */
+  signal(): AbortSignal {
+    return this.s.signal();
+  }
+
+  /**
+   * Accepts an extended CONNECT for `protocol` (RFC 8441, `req.isUpgrade(protocol)`): answers
+   * 200 with `headers` and returns a stream carrying the protocol over this HTTP/2 stream (the
+   * connection itself is never handed over). Throws if the request is not one, or a response was
+   * started.
+   */
+  upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
+    const s = this.s;
+    const i = s.info.protocol;
+    if (i < 0 || s.fields.value(i).toLowerCase() != protocol.toLowerCase()) {
+      throw new Error(`not an extended CONNECT request for ${protocol}`);
+    }
+    for (const h of headers) {
+      this.header(h[0], h[1]);
+    }
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    this.done = true;
+    writeHead(this.c, s, 200, "", -1, this.fields, false);
+    const stream = openTunnel(this.c, s);
+    this.c.written();
+    return stream;
+  }
+
+  /** Never (internal). */
+  upgraded(): bool {
+    return false;
+  }
+
+  /** Whether the client reset the stream or went away (internal). */
+  clientGone(): bool {
+    return this.s.reset;
+  }
+
+  /** Whether a response was started. */
+  sent(): bool {
+    return this.done;
+  }
+
+  /** Whether a streamed body is still open (internal). */
+  streamOpen(): bool {
+    return this.streaming;
+  }
+
+  /// After the handler returned (internal): an empty 200 if it sent nothing, the end of a body
+  /// it left open.
+  async complete() {
+    if (!this.done) {
+      this.send("");
+    } else if (this.streaming) {
+      await this.finishStream();
+    }
+  }
+
+  /// The head: `type` unless the handler set one; `length` < 0 for a streamed body.
+  private head(type: string, length: i64) {
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    this.done = true;
+    const code = this.code;
+    const noContent = (code >= 100 && code < 200) || code == 204 || code == 304;
+    const headOnly = this.s.info.method >= 0 && this.s.fields.value(this.s.info.method) == "HEAD";
+    this.noBody = headOnly || noContent;
+    if (this.s.reset) {
+      return;
+    }
+    const t = this.hasType || noContent ? "" : type;
+    let len = noContent ? -1 : length;
+    if (headOnly && this.headLength >= 0) {
+      len = this.headLength;
+    }
+    writeHead(this.c, this.s, code, t, len, this.fields, this.noBody || length == 0);
+  }
+
+  /// Waits while more than `QUEUED` bytes of the body wait for window or for the socket.
+  private async drain() {
+    const c = this.c;
+    const s = this.s;
+    if (!c.inBatch) {
+      const q = c.flush();
+      if (q > QUEUED) {
+        await c.conn.drained(QUEUED as number);
+      }
+    }
+    while (s.pending > QUEUED && !s.reset) {
+      await s.waitForWindow();
+    }
+    if (s.reset) {
+      throw new IoError("ECONNRESET", "the client reset the stream");
+    }
+  }
+}
+
+/// A Content-Length value a handler set: digits only (`TypeError` otherwise).
+function lengthValue(value: string): i64 {
+  const t = value.trim();
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (t.length as i64); i++) {
+    const d = (t.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9 || n > 92233720368547757) {
+      throw new TypeError(`invalid Content-Length: ${value}`);
+    }
+    n = n * 10 + d;
+  }
+  if (t.length == 0) {
+    throw new TypeError(`invalid Content-Length: ${value}`);
+  }
+  return n;
+}
+
+/// Throws `TypeError` for a name that is not a token (as `HttpResponse.header`).
+function checkName(name: string) {
+  if (name.length == 0) {
+    throw new TypeError("a header name must not be empty");
+  }
+  for (let i: i64 = 0; i < (name.length as i64); i++) {
+    const ch = name.charCodeAt(i) as i64;
+    if (ch > 127 || !isTchar(ch as u8)) {
+      throw new TypeError(`invalid header name: ${name}`);
+    }
+  }
+}
+
+/// Throws `TypeError` for a value with a control character other than TAB.
+function checkValue(name: string, value: string) {
+  for (let i: i64 = 0; i < (value.length as i64); i++) {
+    const ch = value.charCodeAt(i) as i64;
+    if (ch < 32 ? ch != 9 : ch == 127) {
+      throw new TypeError(`invalid character in header ${name}`);
+    }
+  }
+}
+
+/// Whether `n` (lowercase) is a field HTTP/2 does not have (RFC 9113 §8.2.2).
+function connectionField(n: string): bool {
+  return n == "transfer-encoding" ||
+    n == "connection" ||
+    n == "keep-alive" ||
+    n == "upgrade" ||
+    n == "proxy-connection";
+}

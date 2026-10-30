@@ -2,7 +2,7 @@
 // error (#873): a field holding `T | null`, an interface value, a method calling `this.cb`, a
 // setter keeping it, a `Map` value, a generic box, `setTimeout` in the handler, a handler
 // factory's parameter.
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 class Opt {
   cb: (() => void) | null = null;
@@ -96,12 +96,9 @@ async function main() {
     return new Response("ok");
   });
   let hit = false;
-  const two = await serve(
-    { port: 0 },
-    makeHandler((b: boolean) => {
-      hit = b;
-    }),
-  );
+  const two = await serve({ port: 0 }, makeHandler((b: boolean) => {
+    hit = b;
+  }));
   await one.shutdown();
   await two.shutdown();
 }

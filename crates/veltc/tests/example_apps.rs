@@ -1,8 +1,9 @@
-//! `velt test` for every example application: each `examples/apps/<app>/` with a `tests/`
-//! directory is copied to a temporary directory (so its build output stays out of the source
-//! tree) and its tests must pass, with an unchanged lock file (`--locked`); an app where no test
-//! ran fails too. The apps' `demo.vlt` programs run as goldens; this covers their `*.test.vlt`
-//! files.
+//! `velt test` for every example application: each `examples/apps/<app>/` with a `tests/` directory
+//! is copied to a temporary directory (so its build output stays out of the source tree), at the
+//! same place relative to the repository's `packages/` (which apps depend on by path, `{ path:
+//! "../../../packages/http-server" }`), and its tests must pass, with an unchanged lock file
+//! (`--locked`); an app where no test ran fails too. The apps' `demo.vlt` programs run as goldens;
+//! this covers their `*.test.vlt` files.
 //!
 //! Filter with `VELT_EXAMPLE_APPS=<name>` (several separated by `,`).
 
@@ -50,13 +51,31 @@ fn copy_app(from: &Path, to: &Path) {
     }
 }
 
+/// `<tmp>/packages`: the repository's packages, where an app's path dependencies
+/// (`../../../packages/<name>`) find them from its copy in `<tmp>/examples/apps/<app>`. A link:
+/// `velt` builds a linked package's native library where the package really is, in its own
+/// `target/`, so it is built once for every run. Where links cannot be made (Windows without the
+/// privilege), a copy, with the crates its native crates depend on by path (`crates/`).
+fn link_packages(root: &Path, tmp: &Path) {
+    let (from, to) = (root.join("packages"), tmp.join("packages"));
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&from, &to).is_ok();
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(&from, &to).is_ok();
+    if !linked {
+        copy_app(&from, &to);
+        copy_app(&root.join("crates"), &tmp.join("crates"));
+    }
+}
+
 /// `velt test --locked` in a copy of `app`: `None` if it ran at least one test and all passed,
 /// else the report.
 fn run_tests(app: &Path) -> Option<String> {
     let name = app.file_name().unwrap().to_string_lossy().into_owned();
     let tmp = test_dir::TestDir::new();
-    let dir = tmp.path().join(&name);
+    let dir = tmp.path().join("examples/apps").join(&name);
     copy_app(app, &dir);
+    link_packages(&root(), tmp.path());
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["test", "--locked"])
         .current_dir(&dir)

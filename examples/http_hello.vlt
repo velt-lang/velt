@@ -1,6 +1,6 @@
 // Minimal HTTP server: `velt run --release examples/http_hello.vlt`, then
 // `oha -z 10s -c 256 http://127.0.0.1:8080/` (or curl). Stops after `VELT_HELLO_SECONDS` if set.
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 async function main() {
   const hits = shared(0);

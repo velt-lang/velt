@@ -3,7 +3,7 @@
 // check what Node 22 gives for them (against an equivalent `node:http` server).
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { IoError } from "velt/io";
 import { AbortError, AbortSignal, TimeoutError } from "velt/task";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";

@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+// The single-file examples (examples/apps/* are packages of their own). The HTTP ones serve with
+// the repository's HTTP server package.
+export const pkg: Package = {
+  name: "examples",
+  version: "0.1.0",
+  dependencies: { "http-server": { path: "../packages/http-server" } },
+};

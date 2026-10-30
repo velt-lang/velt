@@ -1,22 +1,22 @@
 # fetch
 
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
-WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt
-on [`velt/net`](net.md) (`std/net/http/fetch/client/`): [HTTP/2](#http2) for HTTPS origins that
-offer it, else HTTP/1.1 with keep-alive connections pooled per origin, both shared by every
-task, TLS from the runtime for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as the
-standard says. A pooled connection idle for more than a second is checked before it is reused,
-and one idle for a minute is closed. A request sent on a *reused* pooled
-connection that the server had closed (it fails before any response) is sent once more, on
-another connection, when its method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`,
-`DELETE`), as Go's client does; `POST` and `PATCH` are never sent twice, and neither is a request
-on a fresh connection (that server got the request and failed). Node fails such a request. A [`velt/http`](http.md) server's handlers
-take and return the same `Request` and `Response`, as in Deno and Bun. The option types of their
-signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
-global too, as in TypeScript, so an init object can be built before the call:
-`const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
-`velt/net/http` exports the same names and [`BodyStream`](#bodystream), a Velt body stream of
-`u8[]` chunks.
+WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt on
+[`velt/net`](net.md) (`std/net/http/fetch/client/`): [HTTP/2](#http2) for HTTPS origins that offer
+it, else HTTP/1.1 with keep-alive connections pooled per origin, both shared by every task, TLS from
+the runtime for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as
+the standard says. A pooled connection idle for more than a second is checked before it is reused,
+and one idle for a minute is closed. A request sent on a *reused* pooled connection that the server
+had closed (it fails before any response) is sent once more, on another connection, when its method
+is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`), as Go's client does; `POST` and
+`PATCH` are never sent twice, and neither is a request on a fresh connection (that server got the
+request and failed). Node fails such a request. A server's handlers
+([packages/http-server](../../packages/http-server/README.md)'s `serve`) take and return the same
+`Request` and `Response`, as in Deno and Bun. The option types of their signatures (`RequestInit`,
+`RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are global too, as in TypeScript, so
+an init object can be built before the call: `const init: RequestInit = { method: "POST" }; if (body
+!= null) { init.body = body; }`. `velt/net/http` exports the same names and
+[`BodyStream`](#bodystream), a Velt body stream of `u8[]` chunks.
 
 ```ts
 type User = { id: number; name: string };
@@ -120,21 +120,21 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   body is `""` in any coding, as in Node. A body
   that does not decode fails the read with `IoError` (`fetch failed: invalid compressed body:
   …`).
-- The status text, URL and headers stay readable after the body was read; the headers are
-  kept as received and made into strings the first time you read them, so a response whose
-  headers you never look at costs nothing for them. A small body that arrives with the head
-  gives its connection back to the pool at once, whether or not you read it. `headers` is read-only, as in JS (a getter): change the `Headers` it
-  returns, not the property. Dropping a response whose body was not read closes its
-  connection.
+- The status text, URL and headers stay readable after the body was read; the headers are kept as
+  received and made into strings the first time you read them, so a response whose headers you never
+  look at costs nothing for them. A small body that arrives with the head gives its connection back
+  to the pool at once, whether or not you read it. `headers` is read-only, as in JS (a getter):
+  change the `Headers` it returns, not the property. Dropping a response whose body was not read
+  closes its connection.
 - `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
-  BodyStream | null, init?:
-  ResponseInit { status?; statusText?; headers? })`, `Response.json(data, init?)`
-  (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status =
-  302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
-  in tests. A string body implies `content-type: text/plain;charset=UTF-8` and form fields
-  `application/x-www-form-urlencoded;charset=UTF-8`, unless `headers` set one; a constructed
-  response makes no `Headers` until you read `headers`. A [`Blob`](#blob-file-and-formdata)
-  body implies its `type`, and a `FormData` body `multipart/form-data; boundary=…`.
+  BodyStream | null, init?: ResponseInit { status?; statusText?; headers? })`, `Response.json(data,
+  init?)` (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status
+  = 302)` build responses: what a [server](../../packages/http-server/README.md#the-response)
+  handler returns, or a stand-in in tests. A string body implies `content-type:
+  text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`,
+  unless `headers` set one; a constructed response makes no `Headers` until you read `headers`. A
+  [`Blob`](#blob-file-and-formdata) body implies its `type`, and a `FormData` body
+  `multipart/form-data; boundary=…`.
 - `await res.blob()` and `await res.formData()` read the body as a
   [`Blob`](#blob-file-and-formdata) (its type the `content-type`) or a `FormData` (a
   `multipart/form-data` or `application/x-www-form-urlencoded` body; any other fails with
@@ -155,8 +155,9 @@ request's body is teed too). `fetch(request)` sends it
 (its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
 a stream is read whole before the request is sent (**Planned**: streamed uploads).
 
-A [server](http.md#the-request) hands its handler a `Request` for what it received: its `url`
-is absolute, its headers are immutable, and its body is received while it is read.
+A [server](../../packages/http-server/README.md#the-request) hands its handler a `Request` for what
+it received: its `url` is absolute, its headers are immutable, and its body is received while it is
+read.
 
 ## `Blob`, `File` and `FormData`
 
@@ -186,11 +187,11 @@ async function upload(url: string, report: string): Promise<number> {
 
 ## `BodyStream`
 
-Velt's body stream of `u8[]` chunks (a [`ReadableStream`](streams.md) of `Uint8Array`s is a
-body too, as in JS): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
-from an async iterable, such as an async generator, for `new Response(stream)`: a server sends
-each chunk as it is made, and `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws reaches the reader as
-an `IoError` (`"EIO"`) carrying its text.
+Velt's body stream of `u8[]` chunks (a [`ReadableStream`](streams.md) of `Uint8Array`s is a body
+too, as in JS): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one from an async iterable,
+such as an async generator, for `new Response(stream)`: a server sends each chunk as it is made, and
+`for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws
+reaches the reader as an `IoError` (`"EIO"`) carrying its text.
 
 ```ts
 import { BodyStream } from "velt/net/http";
@@ -210,13 +211,13 @@ async function main() {
 ## `Headers`
 
 Case-insensitive, in insertion order, with repeated names: `new Headers(init?: Headers |
-Record<string, string> | [string, string][])` (pairs keep repeated names:
-`new Headers([["accept", "text/html"], ["accept", "application/json"]])`), `append(name, value)`, `set`, `delete`, `get(name): string | null`
-(repeated values joined with `", "`), `has`, `getSetCookie(): string[]`, `forEach((value,
-name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the names
-lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values have
-surrounding HTTP whitespace (tab, LF, CR, space) removed. Unlike JS, an invalid name or value is not rejected when it is
-added: `fetch` rejects it with `IoError` `"EINVAL"`.
+Record<string, string> | [string, string][])` (pairs keep repeated names: `new Headers([["accept",
+"text/html"], ["accept", "application/json"]])`), `append(name, value)`, `set`, `delete`,
+`get(name): string | null` (repeated values joined with `", "`), `has`, `getSetCookie(): string[]`,
+`forEach((value, name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the
+names lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values
+have surrounding HTTP whitespace (tab, LF, CR, space) removed. Unlike JS, an invalid name or value
+is not rejected when it is added: `fetch` rejects it with `IoError` `"EINVAL"`.
 
 ```ts
 const h = new Headers({ "Content-Type": "text/plain" });
@@ -279,6 +280,35 @@ cancelled), resets just that stream. A request the server did not process (a GOA
 streams, `REFUSED_STREAM`, a connection that closed before it went out) is sent again on a new
 connection, whatever its method, since the server never saw it. Server push is turned off;
 response trailers are read and dropped (the Fetch standard has no API for them).
+
+HTTP/2's wire format is `velt/net/http/h2`, which the client and HTTP/2 servers share: the frame
+types, flags, settings and error codes of RFC 9113 (`DATA`, `END_STREAM`, `SETTINGS_MAX_FRAME_SIZE`,
+`PROTOCOL_ERROR`, …), `FrameWriter` (the frames a connection sends, encoded into one buffer that
+leaves in one write), and HPACK (RFC 7541): `HpackEncoder`, `HpackDecoder` and the `FieldList` it
+decodes a header block into, with the Huffman code (`huffmanEncode`, `huffmanDecode`).
+
+## For servers
+
+What a server written in Velt needs of these classes is in `velt/net/http` too, so a server is a
+library like any other ([packages/http-server](../../packages/http-server/README.md) is one):
+
+- `RequestSource`, an interface the server implements: what a received request's `Request`
+  reads (`method()`, `url()`, `header(name)`, `hasHeader(name)`, `headers()`, `hasBody()`,
+  `read()`, `body()`), each called when the handler first asks for that part, so the server can
+  keep the request where it read it until then. `serverRequest(source): Request` makes the
+  `Request` a handler reads; `requestSource(req)` gives the source back (null for a request made
+  with `new Request`), for what is the server's own (a connection to upgrade, the client's
+  address).
+- `responseParts(res): ResponseParts`: a response's `status`, `headers` (`[name, value, …]`,
+  lowercase names), the `type` its body implies (written unless `headers` names a
+  `content-type`), and its body as the response holds it (`kind: BodyKind`: `None`, `Text`
+  (`text`), `Bytes` (`bytes`) or `Stream` (`stream`)), with no copy. A streamed body is used up,
+  as sending it does in JS (`IoError` "EINVAL" if it was read already); a fetched body arrives
+  decoded, so its `content-encoding` is not among the headers.
+- `switchingProtocols(headers?): Response`: a `101 Switching Protocols` for an upgrade (the
+  `Response` constructor takes 200-599).
+- `statusText(status): string`: the reason phrase, as Node's `http.STATUS_CODES` has it (`Not
+  Found` for 404), `Unknown` for a status it does not list.
 
 ## Differences from Node
 

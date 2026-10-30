@@ -1,9 +1,9 @@
 // A velt/net/websocket client against a velt/http server, over TCP and TLS.
 import { channel, Channel } from "velt/sync";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import { WebSocket, connectWebSocket } from "velt/net/websocket";
-import { isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
+import { isWebSocketRequest, upgradeWebSocket } from "http-server/websocket";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
 // Server side of one connection: echoes text upper-cased and binary reversed until closed, then

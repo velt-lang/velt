@@ -32,7 +32,7 @@ conflicts by hand.
 ```ts ignore
 import { readFile } from "velt/fs";
 import { Deque, BTreeMap } from "velt/collections";
-import { serve } from "velt/net/http";
+import { Headers } from "velt/net/http";
 ```
 
 - `velt` is a package name the toolchain provides. The loader resolves `velt/…` to `std/`

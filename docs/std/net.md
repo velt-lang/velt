@@ -136,7 +136,7 @@ async function main() {
 ```
 
 A connection taken over from an HTTP server
-([`upgradeConnection`](http.md#upgradeconnectionreq-protocol-headers)) is a `TcpStream` too.
+([`upgradeConnection`](../../packages/http-server/README.md#upgradeconnectionreq-protocol-headers)) is a `TcpStream` too.
 
 Notes: an unclosed handle leaks until the process exits. After `close()` through any copy
 (also one handed to another task), every copy's operations throw `IoError` `EBADF` and closing

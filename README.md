@@ -11,8 +11,8 @@ engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
-// server.ts: run it with `velt run server.ts`
-import { serve } from "velt/net/http";
+// src/main.ts of a package (`velt new hello`, then `velt add http-server`): `velt run`
+import { serve } from "http-server";
 
 interface User {
   id: string;

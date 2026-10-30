@@ -3,7 +3,7 @@
 // the body needs before returning (tests/std/http/streams.test.vlt, "a BodyStream response").
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 // Reads `req` while the response is sent, after its handler returned.
 async function* late(req: Request): AsyncGenerator<u8[]> {

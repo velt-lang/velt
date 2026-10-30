@@ -8,13 +8,13 @@ import { readFile, writeFile } from "velt/fs";
 import { Deque } from "velt/collections";
 ```
 
-The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
-scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
-`Request`, `Response`, `Headers`, `Blob`, `File`, `FormData`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
-`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`, `atob`,
-`DOMException`, `structuredClone`, `ArrayBuffer`, `DataView`, `Uint8Array` and the other
-[typed arrays](typed_array.md), and [`ReadableStream`](streams.md).
-`velt doc --std` generates HTML API documentation from the sources.
+The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in scope
+everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md), `Request`,
+`Response`, `Headers`, `Blob`, `File`, `FormData`, `AbortController`, `AbortSignal`, `URL`,
+`URLSearchParams`, `Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`,
+`atob`, `DOMException`, `structuredClone`, `ArrayBuffer`, `DataView`, `Uint8Array` and the other
+[typed arrays](typed_array.md), and [`ReadableStream`](streams.md). `velt doc --std` generates HTML
+API documentation from the sources.
 
 ## Conventions
 
@@ -36,17 +36,17 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
   nothing). A promise that is neither awaited nor spawned is a compile error. `*Sync` variants
   block the calling thread.
 - **Handles**: some modules return handle structs (`TcpStream`, `FileReader`, `ChildProcess`,
-  `Database`, …) that you can pass around and capture freely and release with `close()`
-  (closing again does nothing). **Planned**
-  ([semantics stage 2 §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)):
-  they become disposable classes with `using` support when the `struct` keyword is removed.
+  `Database`, …) that you can pass around and capture freely and release with `close()` (closing
+  again does nothing). **Planned** ([semantics stage 2
+  §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)): they become
+  disposable classes with `using` support when the `struct` keyword is removed.
 
 ## Modules
 
 | Area | Modules |
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [fetch](fetch.md) (global) · [http](http.md) · [http/server](http_server.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
+| Network | [fetch](fetch.md) (global; `velt/net/http`, `velt/net/http/h2`) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
 | Data formats | [json](json.md) · [csv](csv.md) · [db](db.md) (typed rows from any source) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [compress](compress.md) (gzip, zlib, DEFLATE, Brotli) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/btree_map](collections/btree_map.md) · [collections/concurrent_map](collections/concurrent_map.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/set](collections/set.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
@@ -54,9 +54,10 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
 | Language | [string_builder](string_builder.md) (global `StringBuilder`) · [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt/simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
-| Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
+| Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) · [dev](dev.md) (the graceful stop under `velt dev`) |
 | Testing | [test](test.md) (the runner `velt test` builds into test programs) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
+| Servers (packages) | [http-server](../../packages/http-server/README.md) (`serve`, `serveHttp`, WebSocket servers) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [sqlite/engine](sqlite_engine.md) (the SQLite engine in Velt, read-only for now) · [postgres](postgres.md) · [redis](redis.md) |
 
 The database drivers are part of the standard library today. They are moving to separately
@@ -87,11 +88,12 @@ what Velt can't do on its own:
 | `velt/postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt/redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem/arena`, `velt/encoding/csv`, `velt/cli`,
-`velt/time/timers` (built on `sleep`, `spawn` and `velt/task` signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx`
-too (escaping through `velt/text/html`). `velt/encoding`, `velt/net/url` and `velt/native/result` use only the
-runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
-[the internals](../internals/contracts/rt_abi_async.md).
+Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem/arena`,
+`velt/encoding/csv`, `velt/cli`, `velt/time/timers` (built on `sleep`, `spawn` and `velt/task`
+signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx` too (escaping through
+`velt/text/html`). `velt/encoding`, `velt/net/url` and `velt/native/result` use only the runtime's
+UTF-8 conversions and error-code names. The runtime ABI is documented in [the
+internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly
 

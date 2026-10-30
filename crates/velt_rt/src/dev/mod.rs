@@ -5,7 +5,7 @@
 //!   serves the same socket and connections arriving during a reload wait in the kernel backlog
 //!   instead of being refused.
 //! - `shutdown`: a stop request (SIGTERM on Unix, `stop` on the dev channel on Windows) stops
-//!   the HTTP servers (std/net/http/server, through `velt_rt_dev_server_stop`), lets their
+//!   the servers that joined (velt/dev's `joinStop`, through `velt_rt_dev_server_stop`), lets their
 //!   in-flight requests finish (bounded) and exits, so a reload does not cut requests off.
 //!
 //! Outside `velt dev` (variable not set) listeners bind directly and nothing else changes.

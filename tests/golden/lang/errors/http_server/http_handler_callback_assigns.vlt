@@ -3,7 +3,7 @@
 // variable at once (#873). The error names the call and the variable, and shows the variable
 // shared with `shared(...)`, as Node shares it, with its type written out where the initializer
 // does not give it.
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 class Input {
   onChange: (v: string) => void = (v) => {};

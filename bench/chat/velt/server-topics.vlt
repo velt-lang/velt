@@ -4,10 +4,10 @@
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DB (chat.db), TLS_CERT and TLS_KEY (PEM
 // files: serve HTTPS/WSS instead of HTTP/WS when both are set).
 
-import { serve, HttpServeOptions } from "velt/net/http";
+import { serve, HttpServeOptions } from "http-server";
 import { TlsListenOptions } from "velt/net";
 import { WebSocket, WsMessage, publish } from "velt/net/websocket";
-import { isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
+import { isWebSocketRequest, upgradeWebSocket } from "http-server/websocket";
 import { hmacSha256 } from "velt/crypto";
 import { hexEncode, utf8Encode } from "velt/encoding";
 import { open, Database } from "velt/sqlite";
@@ -29,8 +29,7 @@ const SCHEMA = `
   CREATE INDEX messages_room_id ON messages(room, id);`;
 
 const INSERT = "INSERT INTO messages (room, user, text, ts) VALUES (:room, :user, :text, :ts)";
-const HISTORY =
-  "SELECT id, user, text, ts FROM messages WHERE room = :room ORDER BY id DESC LIMIT 20";
+const HISTORY = "SELECT id, user, text, ts FROM messages WHERE room = :room ORDER BY id DESC LIMIT 20";
 
 type ClientMessage = { type: "say"; text: string } | { type: "ping"; t: number };
 

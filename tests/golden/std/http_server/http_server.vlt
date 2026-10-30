@@ -1,7 +1,7 @@
 // check: no leaks
-// velt/net/http: a handler that throws gets a 500, and its error is printed to stderr. (The
-// rest of what velt/net/http does is tested in tests/std/http/handlers.test.vlt.)
-import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
+// http-server: a handler that throws gets a 500, and its error is printed to stderr. (The
+// rest of what the server does is tested in packages/http-server/tests/handlers.test.vlt.)
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 
 async function main() {
   const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {

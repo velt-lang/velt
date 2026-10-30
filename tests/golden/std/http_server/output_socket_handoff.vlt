@@ -1,7 +1,7 @@
 // Sending on a socket hands work to the peer, here a task of the same program that may run on
 // another worker at once: what the sender printed before the send comes first, also while the
 // sender keeps running without suspending. (In Node the peer runs once the sender suspends.)
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { connect, listen, TcpStream } from "velt/net";
 
 // Runs for `ms` milliseconds without suspending.

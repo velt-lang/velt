@@ -9,4 +9,5 @@ export const pkg: Package = {
   version: "0.0.1",
   description: "sigx server rendering for Velt (the provider behind @sigx/velt)",
   jsx: { importSource: "./src" },
+  dependencies: { "http-server": { path: "../../../../../packages/http-server" } },
 };

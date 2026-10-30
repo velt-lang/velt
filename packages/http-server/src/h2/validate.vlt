@@ -1,0 +1,181 @@
+// http-server (internal): the checks a decoded HTTP/2 request head and its trailers must
+// pass (RFC 9113 §8.1, §8.2, §8.3). A request that fails one is malformed: its stream is reset
+// with PROTOCOL_ERROR, and the handler never sees it.
+
+import { FieldList } from "velt/net/http/h2";
+
+/// Where a request's pseudo-header fields are in its `FieldList` (-1: absent), and its
+/// `content-length` (-1: none).
+export struct RequestFields {
+  method: i64;
+  scheme: i64;
+  authority: i64;
+  path: i64;
+  /// `:protocol` of an extended CONNECT (RFC 8441), -1 otherwise.
+  protocol: i64;
+  contentLength: i64;
+}
+
+/// Whether byte `c` may be in a field name sent over HTTP/2: lowercase, visible, no colon
+/// (RFC 9113 §8.2.1).
+function nameByte(c: u8): bool {
+  return c > 0x20 && c < 0x7f && !(c >= 0x41 && c <= 0x5a) && c != 0x3a;
+}
+
+/// Whether field `i`'s value is allowed: no NUL, CR or LF, no whitespace at either end.
+function valueOk(f: FieldList, i: i64): bool {
+  const b = f.buf;
+  const start = f.heads[i * 4 + 2];
+  const end = f.heads[i * 4 + 3];
+  for (let k = start; k < end; k++) {
+    const c = b[k];
+    if (c == 0 || c == 10 || c == 13) {
+      return false;
+    }
+  }
+  if (end > start) {
+    const a = b[start];
+    const z = b[end - 1];
+    if (a == 32 || a == 9 || z == 32 || z == 9) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Whether field `i`'s name (not a pseudo-header) is allowed.
+function nameOk(f: FieldList, i: i64): bool {
+  const start = f.heads[i * 4];
+  const end = f.heads[i * 4 + 1];
+  if (start == end) {
+    return false;
+  }
+  for (let k = start; k < end; k++) {
+    if (!nameByte(f.buf[k])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Whether field `i` is one HTTP/2 does not have (connection-specific, RFC 9113 §8.2.2): `te`
+/// other than `trailers` included.
+function connectionSpecific(f: FieldList, i: i64): bool {
+  const n = f.nameLength(i);
+  if (n == 2 && f.nameIs(i, "te")) {
+    return f.value(i) != "trailers";
+  }
+  return (n == 10 && (f.nameIs(i, "connection") || f.nameIs(i, "keep-alive"))) ||
+    (n == 7 && f.nameIs(i, "upgrade")) ||
+    (n == 16 && f.nameIs(i, "proxy-connection")) ||
+    (n == 17 && f.nameIs(i, "transfer-encoding"));
+}
+
+/// A decimal `content-length` value, or -2 when it is not one.
+function lengthOf(f: FieldList, i: i64): i64 {
+  const start = f.heads[i * 4 + 2];
+  const end = f.heads[i * 4 + 3];
+  if (start == end || end - start > 18) {
+    return -2;
+  }
+  let n: i64 = 0;
+  for (let k = start; k < end; k++) {
+    const d = (f.buf[k] as i64) - 48;
+    if (d < 0 || d > 9) {
+      return -2;
+    }
+    n = n * 10 + d;
+  }
+  return n;
+}
+
+/**
+ * Checks a request head (RFC 9113 §8.3.1): pseudo-headers first, each known one once, the ones
+ * a request needs present (`:method`, `:scheme` and a non-empty `:path`; a CONNECT only
+ * `:method` and `:authority`), names lowercase, values without CR, LF or NUL, no
+ * connection-specific fields, at most one `content-length` value. `out` gets the positions.
+ */
+export function checkRequest(f: FieldList, out: RequestFields): bool {
+  out.method = -1;
+  out.scheme = -1;
+  out.authority = -1;
+  out.path = -1;
+  out.protocol = -1;
+  out.contentLength = -1;
+  let regular = false;
+  for (let i: i64 = 0; i < f.count; i++) {
+    if (f.nameLength(i) > 0 && f.nameByte(i) == 0x3a) {
+      if (regular) {
+        return false;
+      }
+      let slot: i64 = -1;
+      if (f.nameIs(i, ":method")) {
+        slot = out.method;
+        out.method = i;
+      } else if (f.nameIs(i, ":scheme")) {
+        slot = out.scheme;
+        out.scheme = i;
+      } else if (f.nameIs(i, ":authority")) {
+        slot = out.authority;
+        out.authority = i;
+      } else if (f.nameIs(i, ":path")) {
+        slot = out.path;
+        out.path = i;
+      } else if (f.nameIs(i, ":protocol")) {
+        slot = out.protocol;
+        out.protocol = i;
+      } else {
+        // `:status` or unknown.
+        return false;
+      }
+      if (slot >= 0 || !valueOk(f, i)) {
+        return false;
+      }
+      continue;
+    }
+    regular = true;
+    if (!nameOk(f, i) || !valueOk(f, i) || connectionSpecific(f, i)) {
+      return false;
+    }
+    if (f.nameLength(i) == 14 && f.nameIs(i, "content-length")) {
+      const n = lengthOf(f, i);
+      if (n < 0 || (out.contentLength >= 0 && out.contentLength != n)) {
+        return false;
+      }
+      out.contentLength = n;
+    }
+  }
+  if (out.method < 0) {
+    return false;
+  }
+  const connect = f.value(out.method) == "CONNECT";
+  if (connect && out.protocol < 0) {
+    return out.authority >= 0 && out.scheme < 0 && out.path < 0;
+  }
+  // An extended CONNECT (RFC 8441 §4) has `:scheme`, `:path` and `:authority`; `:protocol` is
+  // only for it.
+  if (out.protocol >= 0 && (!connect || out.authority < 0)) {
+    return false;
+  }
+  if (out.scheme < 0 || out.path < 0) {
+    return false;
+  }
+  const pathStart = f.heads[out.path * 4 + 2];
+  const pathEnd = f.heads[out.path * 4 + 3];
+  if (pathStart == pathEnd) {
+    return false;
+  }
+  // An origin-form path, or `*` (OPTIONS).
+  const c = f.buf[pathStart];
+  return c == 0x2f || (c == 0x2a && pathEnd - pathStart == 1);
+}
+
+/// Checks trailers (RFC 9113 §8.1): no pseudo-header fields, and the rules of any field.
+export function checkTrailers(f: FieldList): bool {
+  for (let i: i64 = 0; i < f.count; i++) {
+    if (!nameOk(f, i) || !valueOk(f, i) || connectionSpecific(f, i)) {
+      return false;
+    }
+  }
+  return true;
+}

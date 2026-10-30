@@ -1,6 +1,6 @@
 // No std handle can be built, read or changed from user code: handle fields are private, and
 // the HTTP types' runtime objects are made only by std (`serve`, `fetch`, ...).
-import { HttpServer } from "velt/net/http";
+import { HttpServer } from "http-server";
 import { TcpStream } from "velt/net";
 import { FileReader } from "velt/fs";
 import { WebSocket } from "velt/net/websocket";

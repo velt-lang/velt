@@ -8,7 +8,7 @@ A module containing JSX compiles to calls into `velt/jsx/jsx-runtime` and sees i
   awaiting the async components. `renderToStringSync(el): string` for a tree without async
   components (throws `RenderError` if it has one).
 - `renderToStream(el: Element): BodyStream`: the HTML as a streamed [response
-  body](http.md#the-response) (like React's `renderToReadableStream`), `new
+  body](../../packages/http-server/README.md#the-response) (like React's `renderToReadableStream`), `new
   Response(renderToStream(el), init)`. The markup above each pending async component is sent
   before the component is awaited, so it reaches the client while it loads; rendering stops
   once the client has gone away. A component that throws a `RenderError` cuts the response off.
@@ -78,7 +78,7 @@ streamed pages: [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.m
 
 ```tsx
 import { renderToStream, Element } from "velt/jsx";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 async function Posts(): Promise<Element> {
   const posts = await loadPosts(); // a database query

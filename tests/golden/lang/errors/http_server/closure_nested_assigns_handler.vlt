@@ -1,7 +1,7 @@
 // An HTTP handler whose own closure assigns a variable the handler captured (#913): each
 // request runs on its own copy of `hits`, so the assignment would be lost; this is the error
 // for the handler modifying `hits` itself.
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 
 async function main() {
   let hits = 0;

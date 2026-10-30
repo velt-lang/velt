@@ -1,0 +1,252 @@
+// Test helpers for velt/net/http's HTTP/2 server: a server on a free port serving each
+// connection as HTTP/2 (prior knowledge), and a client that writes raw frames and reads them
+// back, decoding header blocks with the server's own HPACK decoder.
+import { connect, listen, TcpListener, TcpStream } from "velt/net";
+import { AbortController } from "velt/task";
+import { FieldList } from "velt/net/http/h2";
+import { FrameWriter } from "velt/net/http/h2";
+import { HpackDecoder } from "velt/net/http/h2";
+import { HpackEncoder } from "velt/net/http/h2";
+import { H2Options, h2Options } from "../../src/h2/options";
+import { H2Request } from "../../src/h2/request";
+import { H2Response } from "../../src/h2/response";
+import { serveH2 } from "../../src/h2/serve";
+
+/// A running test server.
+export class TestServer {
+  port: number;
+  private listener: TcpListener;
+  private stop: AbortController;
+
+  constructor(listener: TcpListener, stop: AbortController) {
+    this.listener = listener;
+    this.port = listener.port;
+    this.stop = stop;
+  }
+
+  close() {
+    this.listener.close();
+    this.stop.abort();
+  }
+}
+
+/// Serves `handler` over HTTP/2 with prior knowledge on a free port.
+export async function startServer(
+  handler: (req: H2Request, res: H2Response) => Promise<void>,
+  opts: H2Options = h2Options(),
+): Promise<TestServer> {
+  const l = await listen("127.0.0.1:0");
+  const stop = new AbortController();
+  const stopped = stop.signal;
+  const accepting = l;
+  spawn(async () => {
+    while (!stopped.aborted) {
+      try {
+        const conn = await accepting.accept();
+        spawn(serveH2(conn, [], opts, stopped, handler));
+      } catch (e) {
+        break;
+      }
+    }
+  });
+  return new TestServer(l, stop);
+}
+
+/// A frame read by the client.
+export struct Frame {
+  type: i64;
+  flags: i64;
+  id: i64;
+  payload: u8[];
+}
+
+/// A raw HTTP/2 client.
+export class Client {
+  conn: TcpStream;
+  enc: HpackEncoder = new HpackEncoder();
+  dec: HpackDecoder = new HpackDecoder();
+  w: FrameWriter = new FrameWriter();
+  private buf: u8[] = [];
+
+  constructor(conn: TcpStream) {
+    this.conn = conn;
+  }
+
+  /// Connects, sends the preface and `settings` (identifier, value, ...), and reads the
+  /// server's SETTINGS.
+  static async open(port: number, settings: i64[] = []): Promise<Client> {
+    const c = new Client(await connect(`127.0.0.1:${port}`));
+    await c.conn.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+    c.w.settings(settings);
+    await c.flush();
+    return c;
+  }
+
+  /// Sends what was written into `w`.
+  async flush() {
+    const n = this.w.length;
+    this.w.length = 0;
+    await this.conn.writeBytes(this.w.buf, 0, n as number);
+  }
+
+  /// Writes a raw frame into `w`.
+  frame(type: i64, flags: i64, id: i64, payload: u8[]) {
+    this.w.reserve(9 + (payload.length as i64));
+    this.w.header(payload.length as i64, type, flags, id);
+    for (const b of payload) {
+      this.w.byte(b as i64);
+    }
+  }
+
+  /// Writes a HEADERS frame of a request (`fields`: name, value, ...) into `w`.
+  headers(id: i64, fields: string[], endStream: bool) {
+    const at = this.w.beginHeaders();
+    this.enc.begin(this.w);
+    for (let i = 0; i < fields.length; i += 2) {
+      this.enc.field(this.w, fields[i], fields[i + 1]);
+    }
+    this.w.endHeaders(at, id, endStream ? 1 : 0, 16384);
+  }
+
+  /// A GET of `path` on stream `id`.
+  get(id: i64, path: string, extra: string[] = []) {
+    const f = [":method", "GET", ":scheme", "http", ":path", path, ":authority", "test"];
+    for (const x of extra) {
+      f.push(x);
+    }
+    this.headers(id, f, true);
+  }
+
+  /// The next frame, or null at the end of the stream.
+  async next(): Promise<Frame | null> {
+    while (true) {
+      if (this.buf.length >= 9) {
+        const len =
+          ((this.buf[0] as i64) << 16) | ((this.buf[1] as i64) << 8) | (this.buf[2] as i64);
+        if ((this.buf.length as i64) >= 9 + len) {
+          const f: Frame = {
+            type: this.buf[3] as i64,
+            flags: this.buf[4] as i64,
+            id:
+              (((this.buf[5] as i64) & 127) << 24) |
+              ((this.buf[6] as i64) << 16) |
+              ((this.buf[7] as i64) << 8) |
+              (this.buf[8] as i64),
+            payload: this.buf.slice(9, 9 + len),
+          };
+          this.buf = this.buf.slice(9 + len);
+          return f;
+        }
+      }
+      const more = await this.conn.read();
+      if (more.length == 0) {
+        return null;
+      }
+      this.buf = this.buf.concat(more);
+    }
+  }
+
+  /// The decoded fields of a HEADERS frame's block, as "name: value" lines.
+  fields(f: Frame): string {
+    const out = new FieldList();
+    if (!this.dec.decode(f.payload, 0, f.payload.length as i64, out)) {
+      return "<hpack error>";
+    }
+    return out.pairs().map((p) => `${p[0]}: ${p[1]}`).join("\n");
+  }
+
+  /// Frames up to and including the one `stop` accepts (or the end), summarized one per line:
+  /// `HEADERS 1 es :status=200` / `DATA 1 es 5:hello` / `RST 3 PROTOCOL_ERROR` / `GOAWAY ...`.
+  /// SETTINGS, PING acks and WINDOW_UPDATEs are left out unless `all`.
+  async until(stop: (f: Frame) => bool, all: bool = false): Promise<string> {
+    const lines: string[] = [];
+    while (true) {
+      const f = await this.next();
+      if (f == null) {
+        lines.push("EOF");
+        return lines.join("\n");
+      }
+      const line = this.describe(f);
+      if (all || !(f.type == 4 || f.type == 8 || (f.type == 6 && (f.flags & 1) == 1))) {
+        lines.push(line);
+      }
+      if (stop(f)) {
+        return lines.join("\n");
+      }
+    }
+  }
+
+  describe(f: Frame): string {
+    const es = (f.flags & 1) == 1 ? " es" : "";
+    switch (f.type) {
+      case 0:
+        return `DATA ${f.id}${es} ${f.payload.length}:${f.payload.utf8Slice(0, 80)}`;
+      case 1: {
+        const status = this.fields(f).split("\n")[0].replace(": ", "=");
+        return `HEADERS ${f.id}${es} ${status}`;
+      }
+      case 3:
+        return `RST ${f.id} ${errorName(code(f.payload, 0))}`;
+      case 4:
+        return (f.flags & 1) == 1 ? "SETTINGS ack" : `SETTINGS ${f.payload.length / 6}`;
+      case 6:
+        return (f.flags & 1) == 1 ? "PING ack" : "PING";
+      case 7:
+        return `GOAWAY ${code(f.payload, 0)} ${errorName(code(f.payload, 4))}`;
+      case 8:
+        return `WINDOW_UPDATE ${f.id} ${code(f.payload, 0)}`;
+      default:
+        return `type ${f.type}`;
+    }
+  }
+
+  close() {
+    this.conn.close();
+  }
+}
+
+/// The 32-bit number at `b[at..]`.
+export function code(b: u8[], at: i64): i64 {
+  return (((b[at] as i64) & 127) << 24) |
+    ((b[at + 1] as i64) << 16) |
+    ((b[at + 2] as i64) << 8) |
+    (b[at + 3] as i64);
+}
+
+export function errorName(c: i64): string {
+  const names = [
+    "NO_ERROR",
+    "PROTOCOL_ERROR",
+    "INTERNAL_ERROR",
+    "FLOW_CONTROL_ERROR",
+    "SETTINGS_TIMEOUT",
+    "STREAM_CLOSED",
+    "FRAME_SIZE_ERROR",
+    "REFUSED_STREAM",
+    "CANCEL",
+    "COMPRESSION_ERROR",
+    "CONNECT_ERROR",
+    "ENHANCE_YOUR_CALM",
+  ];
+  return c < (names.length as i64) ? names[c] : `${c}`;
+}
+
+/// Stops at the END_STREAM or reset of stream `id`, or a GOAWAY.
+export function endOf(id: i64): (f: Frame) => bool {
+  return (f: Frame) =>
+    (f.id == id && ((f.flags & 1) == 1 && f.type <= 1)) ||
+    (f.id == id && f.type == 3) ||
+    f.type == 7;
+}
+
+/// Stops at a GOAWAY.
+export function goaway(f: Frame): bool {
+  return f.type == 7;
+}
+
+/// Bytes of `s`.
+export function bytes(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s) as usize);
+  b.write(s, 0);
+  return b;
+}

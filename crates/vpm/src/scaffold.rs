@@ -64,6 +64,16 @@ pub fn manifest_text(name: &str) -> String {
 
 /// `package.vlt` of a new package with a `description` (a library's placeholder, say).
 pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
+    manifest_text_depending(name, description, &[])
+}
+
+/// [`manifest_text_with`] for a package that starts with registry dependencies: `(name,
+/// version requirement)` (a template's server, say).
+pub fn manifest_text_depending(
+    name: &str,
+    description: Option<&str>,
+    dependencies: &[(&str, &str)],
+) -> String {
     Manifest {
         registry: None,
         package: Package {
@@ -74,7 +84,15 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
             entry: DEFAULT_ENTRY.into(),
         },
         toolchain: Some(this_toolchain_pin()),
-        dependencies: BTreeMap::new(),
+        dependencies: dependencies
+            .iter()
+            .map(|(n, v)| {
+                (
+                    n.to_string(),
+                    crate::manifest::Dependency::Version(v.to_string()),
+                )
+            })
+            .collect(),
         paths: BTreeMap::new(),
         native: None,
         jsx: None,

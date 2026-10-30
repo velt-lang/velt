@@ -2,7 +2,7 @@
 // answered with `{"data":…}` or `{"error":{"status","message","data":{"kind"}}}` — the same
 // requests and bodies as `handleActorRequest` in @sigx/actors/server, so one client and one
 // load generator drive both.
-import { serve, HttpServer } from "velt/net/http";
+import { serve, HttpServer } from "http-server";
 import { Value } from "velt/encoding/json";
 import { Router, Reply, errorReply } from "./runtime";
 

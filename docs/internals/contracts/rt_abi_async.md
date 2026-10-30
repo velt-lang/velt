@@ -580,9 +580,9 @@ writes.
 
 ## 7. HTTP (no runtime functions)
 
-The HTTP server and client are written in Velt on the TCP and TLS streams of §6
-(std/net/http/server, std/net/http/fetch/client): the runtime has no HTTP of its own. Under
-`velt dev` a server joins the graceful stop through `velt_rt_dev_server_stop` /
+The HTTP client (std/net/http/fetch/client) and server (packages/http-server) are written in Velt
+on the TCP and TLS streams of §6: the runtime has no HTTP of its own. Under `velt dev` a server
+joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop` /
 `velt_rt_dev_server_drained` (§13.2).
 
 ## 8. Process
@@ -1049,7 +1049,7 @@ its port. Without the variable the runtime binds as before.
 In dev mode (`VELT_DEV_SOCKET` set, once the program listens) the runtime handles a stop request:
 HTTP servers stop accepting (the supervisor still holds the socket), in-flight requests get up to
 1 s to finish, stdout is flushed and the process exits with status 0. A server written in Velt
-(std/net/http/server) joins with:
+joins through velt/dev's `joinStop` and `drained` (std/dev/stop.vlt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|

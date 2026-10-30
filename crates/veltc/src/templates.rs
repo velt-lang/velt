@@ -174,6 +174,15 @@ impl Template {
         }
     }
 
+    /// The packages a project from this template starts with: the servers' HTTP server
+    /// (packages/http-server, from the registry).
+    pub fn dependencies(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Template::Api | Template::Websocket => &[("http-server", "0.1")],
+            Template::App | Template::Cli | Template::Lib => &[],
+        }
+    }
+
     /// The files of package `name` made from this template: `package.vlt`, `.gitignore` and
     /// `.gitattributes` (merged into existing ones), `README.md` and the VS Code files (existing
     /// ones are kept) and the
@@ -183,11 +192,12 @@ impl Template {
             ScaffoldFile::new(
                 vpm::manifest::MANIFEST_FILE,
                 // A library is published and searched for: it starts with a description to edit.
-                vpm::scaffold::manifest_text_with(
+                vpm::scaffold::manifest_text_depending(
                     name,
                     self.is_lib()
                         .then(|| format!("What {name} does, in one sentence."))
                         .as_deref(),
+                    self.dependencies(),
                 ),
             ),
             ScaffoldFile {
