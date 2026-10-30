@@ -519,6 +519,9 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
         "const g = (x: Item) => { const k = (t: string[]) => { t.push(\"x\"); }; k(x.tags); }; const q = s.items[0]; g(q);",
         "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const c = s.items.slice(); c.forEach(g);",
         "let g = (x: Item) => { console.log(x.v); }; const h = () => { g = (x: Item) => { x.v = 50; }; }; h(); const q = s.items[0]; g(q);",
+        // A closure (whose own body reads no `shared`) changing a loop element it captures.
+        "for (const x of s.items) { const g = () => { x.v = 50; }; g(); }",
+        "for (const x of s.items) { const g = () => { x.tags.push(\"a\"); }; g(); }",
     ] {
         let r = err_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"

@@ -16,8 +16,29 @@ use super::recursive::recursive_arrow;
 use super::typed::{typed_function, GenericFnTypes};
 use crate::ast_walk::{children, children_mut};
 
-/// Does a body or initializer in `item` declare a local generic arrow constant?
-pub(super) fn item_has_local(item: &ast::Item, t: &GenericFnTypes) -> bool {
+/// Does a body or initializer in `item` (of module `module`) declare a local generic arrow
+/// constant, one that `Rewriter` rewrites?
+pub(super) fn item_has_local(item: &ast::Item, types: &GenericFnTypes, module: usize) -> bool {
+    item_has(item, &Scan { types, module })
+}
+
+/// What [`item_has_local`] looks with: the program's generic function types, and the module
+/// whose aliases a constant's annotation names.
+struct Scan<'t, 'm> {
+    types: &'t GenericFnTypes<'m>,
+    module: usize,
+}
+
+impl Scan<'_, '_> {
+    /// Is `v` a constant of a generic function type (`typed_function`, as `Rewriter::stmt`
+    /// decides it)? Not only one that may be: an annotation naming any alias of a named type
+    /// (`type Kind = Kind_`) would make the whole program a copy with nothing rewritten.
+    fn typed(&self, v: &ast::VarDecl) -> bool {
+        self.types.may_declare(v) && typed_function(v, self.module, self.types).is_some()
+    }
+}
+
+fn item_has(item: &ast::Item, t: &Scan) -> bool {
     match &item.kind {
         I::Function(f) => fn_has(f, t),
         I::Struct(d) | I::Class(d) => {
@@ -35,13 +56,13 @@ pub(super) fn item_has_local(item: &ast::Item, t: &GenericFnTypes) -> bool {
             .filter_map(|m| m.body.as_ref())
             .any(|x| block_has(x, t)),
         I::Var(v) => v.init.as_ref().is_some_and(|x| expr_has(x, t)),
-        I::Augment(a) => a.items.iter().any(|x| item_has_local(x, t)),
-        I::Namespace(n) => n.items.iter().any(|x| item_has_local(x, t)),
+        I::Augment(a) => a.items.iter().any(|x| item_has(x, t)),
+        I::Namespace(n) => n.items.iter().any(|x| item_has(x, t)),
         I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => false,
     }
 }
 
-fn fn_has(f: &ast::FnDecl, t: &GenericFnTypes) -> bool {
+fn fn_has(f: &ast::FnDecl, t: &Scan) -> bool {
     f.sig
         .params
         .iter()
@@ -50,16 +71,16 @@ fn fn_has(f: &ast::FnDecl, t: &GenericFnTypes) -> bool {
         || block_has(&f.body, t)
 }
 
-fn block_has(b: &ast::Block, t: &GenericFnTypes) -> bool {
+fn block_has(b: &ast::Block, t: &Scan) -> bool {
     b.stmts.iter().any(|x| stmt_has(x, t))
 }
 
-fn stmt_has(s: &ast::Stmt, t: &GenericFnTypes) -> bool {
+fn stmt_has(s: &ast::Stmt, t: &Scan) -> bool {
     match &s.kind {
         S::Var(v) => {
             arrow_function(v).is_some()
                 || recursive_arrow(v).is_some()
-                || t.may_declare(v)
+                || t.typed(v)
                 || v.init.as_ref().is_some_and(|x| expr_has(x, t))
         }
         S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e, t),
@@ -104,12 +125,12 @@ fn stmt_has(s: &ast::Stmt, t: &GenericFnTypes) -> bool {
                 || catch.as_ref().is_some_and(|(_, c)| block_has(c, t))
                 || finally.as_ref().is_some_and(|x| block_has(x, t))
         }
-        S::Item(item) => item_has_local(item, t),
+        S::Item(item) => item_has(item, t),
         S::Return(None) | S::Break(_) | S::Continue(_) | S::Empty => false,
     }
 }
 
-fn expr_has(e: &ast::Expr, t: &GenericFnTypes) -> bool {
+fn expr_has(e: &ast::Expr, t: &Scan) -> bool {
     let nested = match &e.kind {
         ast::ExprKind::Arrow {
             body: ast::ArrowBody::Block(b),
