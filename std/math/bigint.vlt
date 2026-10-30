@@ -11,33 +11,40 @@
 //
 // A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
 
-declare function velt_rt_bigint_from_i64(v: i64): u64;
-declare function velt_rt_bigint_from_f64(v: f64): u64;
-declare function velt_rt_bigint_parse(s: string, radix: i64): u64;
-declare function velt_rt_bigint_clone(h: u64): u64;
-declare function velt_rt_bigint_free(h: u64);
-declare function velt_rt_bigint_op(dst: u64, a: u64, b: u64, op: u32): bool;
-declare function velt_rt_bigint_op_i64(dst: u64, a: u64, k: i64, op: u32): bool;
-declare function velt_rt_bigint_assign(dst: u64, a: u64);
-declare function velt_rt_bigint_neg(dst: u64, a: u64);
-declare function velt_rt_bigint_cmp(a: u64, b: u64): i64;
-declare function velt_rt_bigint_cmp_i64(a: u64, k: i64): i64;
-declare function velt_rt_bigint_to_f64(a: u64): f64;
-declare function velt_rt_bigint_to_i64(a: u64): i64;
-declare function velt_rt_bigint_to_string(a: u64, radix: i64): string;
+import { BigIntError } from "velt/math/errors";
+import {
+  velt_rt_bigint_assign,
+  velt_rt_bigint_clone,
+  velt_rt_bigint_cmp,
+  velt_rt_bigint_cmp_i64,
+  velt_rt_bigint_free,
+  velt_rt_bigint_from_f64,
+  velt_rt_bigint_from_i64,
+  velt_rt_bigint_neg,
+  velt_rt_bigint_op,
+  velt_rt_bigint_op_i64,
+  velt_rt_bigint_parse,
+  velt_rt_bigint_to_f64,
+  velt_rt_bigint_to_i64,
+  velt_rt_bigint_to_string,
+} from "velt/math/rt";
 
 // Operation codes of `velt_rt_bigint_op*` (crates/velt_rt/src/bigint.rs `op`).
 const ADD: u32 = 0;
+
 const SUB: u32 = 1;
+
 const MUL: u32 = 2;
+
 const DIV: u32 = 3;
+
 const REM: u32 = 4;
+
 const SHL: u32 = 5;
+
 const SHR: u32 = 6;
 
-/** A string that is not a valid integer (JS throws `SyntaxError`). */
-export class BigIntError extends Error {}
-
+/** An arbitrary-precision integer (JS `BigInt`); see the module comment. */
 export class BigInt {
   #handle: u64;
 

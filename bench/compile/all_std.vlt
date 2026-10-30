@@ -119,6 +119,9 @@ import * as std_typed_array_uint32_array from "velt/lang/typed_array/uint32_arra
 import * as std_typed_array_uint8_array from "velt/lang/typed_array/uint8_array";
 import * as std_typed_array_uint8_clamped_array from "velt/lang/typed_array/uint8_clamped_array";
 import * as std_bigint from "velt/math/bigint";
+import * as std_math_errors from "velt/math/errors";
+import * as std_math_integer from "velt/math/integer";
+import * as std_math_rt from "velt/math/rt";
 import * as std_mem from "velt/mem";
 import * as std_arena from "velt/mem/arena";
 import * as std_native from "velt/native";
