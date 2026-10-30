@@ -5,7 +5,6 @@ type Node = { tag: string };
 declare global {
   namespace UI {
     type Element = Node;
-
     interface Attributes {
       key?: string;
     }

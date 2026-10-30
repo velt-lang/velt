@@ -58,14 +58,10 @@ function kinds(v: string | number, o: Shape, flag: boolean, xs: number[] | null)
         console.log(v.length, o.b, xs.length);
       }
       for (const x of [1, 2]) {
-        if (x > 1) {
-          console.log(v.toUpperCase(), x);
-        }
+        if (x > 1) console.log(v.toUpperCase(), x);
       }
       run(() => {
-        if (flag) {
-          console.log(o.b + xs[0]);
-        }
+        if (flag) console.log(o.b + xs[0]);
         console.log(v.charAt(0), xs.length);
       });
       console.log(v + "!", o.b);

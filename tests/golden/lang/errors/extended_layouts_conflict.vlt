@@ -2,21 +2,17 @@
 // base's objects have room for the first one's fields, so it converts as the same object, and
 // a cast to the other copies, an error once the program writes a field through it.
 type VNode = { type: string; children: VNode[] };
-
 interface InternalVNode extends VNode {
   _sub?: VNode | null;
   _ns?: boolean;
 }
-
 interface HydrateVNode extends VNode {
   _sub?: VNode;
 }
-
 function mark(v: VNode): void {
   (v as InternalVNode)._ns = true;
   const h = v as HydrateVNode;
   h._sub = v;
   console.log(h.type);
 }
-
 mark({ type: "a", children: [] });

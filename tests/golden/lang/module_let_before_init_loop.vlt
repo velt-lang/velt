@@ -3,7 +3,6 @@
 // module state once per function call (#1571).
 let a = sum();
 let xs = [1, 2, 3];
-
 function sum(): number {
   let s = 0;
   for (let i = 0; i < 3; i++) {
@@ -11,7 +10,6 @@ function sum(): number {
   }
   return s;
 }
-
 function main() {
   console.log(a, xs.length);
 }

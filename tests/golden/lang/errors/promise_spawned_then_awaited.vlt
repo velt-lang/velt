@@ -3,11 +3,9 @@
 async function work(): Promise<number> {
   return 1;
 }
-
 async function fire(p: Promise<number>): Promise<void> {
   console.log(await p);
 }
-
 async function main() {
   const p = work();
   const t = spawn(fire(p));

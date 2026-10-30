@@ -14,17 +14,15 @@ async function main() {
 
   const writes: Promise<void>[] = [];
   for (let w = 0; w < WRITERS; w++) {
-    writes.push(
-      spawn(async () => {
-        const data: u8[] = Buffer.alloc(SIZE);
-        data.fill((w + 1) as u8);
-        try {
-          await out.writeBytes(data);
-        } catch (e) {
-          console.log("write failed:", e.message);
-        }
-      }),
-    );
+    writes.push(spawn(async () => {
+      const data: u8[] = Buffer.alloc(SIZE);
+      data.fill((w + 1) as u8);
+      try {
+        await out.writeBytes(data);
+      } catch (e) {
+        console.log("write failed:", e.message);
+      }
+    }));
   }
 
   // Runs of one byte value: each is one whole write.

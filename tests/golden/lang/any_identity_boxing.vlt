@@ -9,19 +9,11 @@ const u2: unknown = defaults;
 console.log(u1 === u2);
 const a1: any = defaults;
 console.log(a1 === u1);
-
 function depsChanged(a: unknown[], b: unknown[]): boolean {
-  if (a.length !== b.length) {
-    return true;
-  }
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return true;
-    }
-  }
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
   return false;
 }
-
 console.log(depsChanged([defaults], [defaults]), depsChanged([defaults], [{ title: "d" }]));
 const seen = new Set<unknown>();
 seen.add(defaults);

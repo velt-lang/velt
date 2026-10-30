@@ -7,26 +7,14 @@ function mixed<T>(x: T | string | undefined): string {
   }
   return String(x);
 }
-
 function both<T>(x: T | string): string {
   return `${x}`;
 }
-
 function back<T>(x: T, s: boolean): T | string | undefined {
   return s ? "s" : x;
 }
-
-console.log(
-  mixed<number | null>(null),
-  mixed<number | null>(3),
-  mixed<number | null>(undefined),
-  mixed<number | null>("s"),
-);
-console.log(
-  both<number | null>(null),
-  both<number | undefined>(undefined),
-  both<boolean | null>(true),
-);
+console.log(mixed<number | null>(null), mixed<number | null>(3), mixed<number | null>(undefined), mixed<number | null>("s"));
+console.log(both<number | null>(null), both<number | undefined>(undefined), both<boolean | null>(true));
 const n: number | string | null | undefined = back<number | null>(null, false);
 console.log(n, back<number | null>(null, true), back<number | null>(2, false));
 const vs: (number | null | string | undefined)[] = [null, undefined, 1, "x"];
@@ -43,7 +31,6 @@ class Box<T> {
     this.v = v;
   }
 }
-
 const b = new Box<number | null>(null);
 console.log(b.v == null, b.v === null, b.v ?? "d", JSON.stringify({ v: b.v }), b);
 b.v = 5;

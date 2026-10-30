@@ -5,53 +5,37 @@
 // (sigx: server-renderer serverfn-scope.ts), and `reject` with any value.
 
 class LoadError extends Error {}
-
 class UrlError extends Error {}
 
 async function fail(n: string): Promise<string> {
-  if (n.startsWith("bad")) {
-    throw new LoadError("no " + n);
-  }
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
   return n;
 }
-
 async function failN(n: string): Promise<number> {
-  if (n.startsWith("bad")) {
-    throw new LoadError("no " + n);
-  }
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
   return n.length;
 }
-
 function wrap<T>(p: Promise<T>): Promise<T> {
   return p;
 }
-
 class Box<T> {
   items: T[] = [];
   add(x: T) {
     this.items.push(x);
   }
 }
-
 async function page(): Promise<string> {
   throw new UrlError("bad url");
 }
-
 function runIt(fn: () => string | Promise<string>): string | Promise<string> {
   return fn();
 }
-
 function make(k: number): Promise<number> {
   return new Promise((res, rj) => {
-    if (k === 0) {
-      rj(null);
-    } else if (k === 1) {
-      rj(undefined);
-    } else if (k === 2) {
-      rj(7);
-    } else {
-      res(k);
-    }
+    if (k === 0) rj(null);
+    else if (k === 1) rj(undefined);
+    else if (k === 2) rj(7);
+    else res(k);
   });
 }
 

@@ -3,50 +3,15 @@
 // the call empties or replaces what holds them (#1161): the constant itself is never
 // reassigned, but its contents are. Identical to Node.
 
-class Box {
-  name: string = "box" + String(1);
-  n: number = 0;
-}
-
-class Reg {
-  items: Box[] = [new Box()];
-  label: string = "reg";
-}
-
-function makeBoxes(): Box[] {
-  const out: Box[] = [];
-  for (let i = 0; i < 2; i++) {
-    out.push(new Box());
-  }
-  return out;
-}
-
-function makeReg(): Reg {
-  const r = new Reg();
-  for (let i = 0; i < 1; i++) {
-    r.label += String(i);
-  }
-  return r;
-}
-
+class Box { name: string = "box" + String(1); n: number = 0; }
+class Reg { items: Box[] = [new Box()]; label: string = "reg"; }
+function makeBoxes(): Box[] { const out: Box[] = []; for (let i = 0; i < 2; i++) { out.push(new Box()); } return out; }
+function makeReg(): Reg { const r = new Reg(); for (let i = 0; i < 1; i++) { r.label += String(i); } return r; }
 const CXS: Box[] = makeBoxes();
 const REG: Reg = makeReg();
-
-function emptyC(b: Box): string {
-  CXS.length = 0;
-  return b.name + "/" + b.n;
-}
-
-function resetReg(b: Box): string {
-  REG.items = [];
-  return b.name + ":" + REG.items.length;
-}
-
-function relabel(s: string): string {
-  REG.label = "new";
-  return s + "!";
-}
-
+function emptyC(b: Box): string { CXS.length = 0; return b.name + "/" + b.n; }
+function resetReg(b: Box): string { REG.items = []; return b.name + ":" + REG.items.length; }
+function relabel(s: string): string { REG.label = "new"; return s + "!"; }
 function main(): void {
   console.log(emptyC(CXS[1]), CXS.length);
   console.log(resetReg(REG.items[0]));

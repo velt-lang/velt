@@ -3,11 +3,9 @@
 // proxies, the conversion keeps only a proxy's identity, and a plain value throws (#823).
 type Box = { v: number; w: number };
 type V = { v: number };
-
 function mk<T>(x: T): { v: T; w: T } {
   return { v: x, w: x };
 }
-
 const p = new Proxy({ x: 1 }, {});
 console.log(p.x);
 const b: Box = mk(1);

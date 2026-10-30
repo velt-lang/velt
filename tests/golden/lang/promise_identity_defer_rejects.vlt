@@ -3,15 +3,12 @@
 interface DeferCollector {
   add(p: Promise<unknown, Error>): void;
 }
-
 function makeDefer(log: string[]): { collector: DeferCollector; pending: () => number } {
   const state = { pending: 0 };
   const tracked = new Set<Promise<unknown, Error>>();
   const collector: DeferCollector = {
     add(p) {
-      if (tracked.has(p)) {
-        return;
-      }
+      if (tracked.has(p)) return;
       tracked.add(p);
       queueMicrotask(() => {
         state.pending++;
@@ -30,15 +27,11 @@ function makeDefer(log: string[]): { collector: DeferCollector; pending: () => n
   };
   return { collector, pending: () => state.pending };
 }
-
 async function load(name: string, ok: boolean): Promise<string> {
   await Promise.resolve();
-  if (!ok) {
-    throw new Error(`no ${name}`);
-  }
+  if (!ok) throw new Error(`no ${name}`);
   return name;
 }
-
 async function main() {
   const log: string[] = [];
   const d = makeDefer(log);
@@ -59,5 +52,4 @@ async function main() {
   console.log(log.join(", "));
   console.log("left", d.pending());
 }
-
 main();

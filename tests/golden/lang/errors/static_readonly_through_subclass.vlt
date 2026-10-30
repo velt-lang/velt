@@ -3,8 +3,6 @@
 class C {
   static readonly k = 1;
 }
-
 class D extends C {}
-
 D.k = 2;
 console.log(D.k);

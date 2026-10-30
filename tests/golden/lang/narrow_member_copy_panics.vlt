@@ -3,11 +3,9 @@
 // read that needs the string (`d.toUpperCase()`) stops with a `TypeError` where JavaScript
 // throws one. Velt names the copy; Node says "d.toUpperCase is not a function".
 const st: { v: string | number } = { v: "s" };
-
 function toNum(): void {
   st.v = 5;
 }
-
 function f(): void {
   if (typeof st.v === "string") {
     const c = st.v;
@@ -19,5 +17,4 @@ function f(): void {
     console.log(d.toUpperCase());
   }
 }
-
 f();

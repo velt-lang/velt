@@ -5,6 +5,5 @@ function f2(x: number): never {
     for (;;) {}
   }
 }
-
 f2(-1);
 console.log("f2 returned");

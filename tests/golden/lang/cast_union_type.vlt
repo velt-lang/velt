@@ -5,18 +5,16 @@ interface Bag {
 }
 
 function describe(v: number | string | Bag): string {
-  const u = v as (number | string | Bag);
-  if (typeof u === "number") {
-    return `number ${u}`;
-  }
-  if (typeof u === "string") {
-    return `string ${u}`;
-  }
+  const u = v as number | string | Bag;
+  if (typeof u === "number") return `number ${u}`;
+  if (typeof u === "string") return `string ${u}`;
   return `bag ${u.size}`;
 }
 
 function parse(s: string): number | null {
-  const n = (s.length > 0 ? Number(s) : null) as number | null;
+  const n = (s.length > 0 ? Number(s) : null) as
+    | number
+    | null;
   return n;
 }
 
@@ -25,9 +23,9 @@ type Aged = { age: number };
 
 console.log(describe(1), describe("a"), describe({ size: 7 }));
 console.log(parse("42"), parse(""));
-const p = { name: "Ada", age: 36 } as (Named & Aged);
+const p = { name: "Ada", age: 36 } as Named & Aged;
 console.log(p.name, p.age);
-const q = 3 satisfies (number | string);
+const q = 3 satisfies number | string;
 console.log(q);
 const bits = (5 as number) | 2;
 console.log(bits);

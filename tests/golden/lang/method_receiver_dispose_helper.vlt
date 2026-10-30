@@ -6,39 +6,11 @@
 class State {
   n: number = 1;
   label: string = "lbl" + String(1);
-  f(): string {
-    {
-      const e = new E();
-    }
-    return this.label + "#" + String(this.n);
-  }
+  f(): string { { const e = new E(); } return this.label + "#" + String(this.n); }
 }
-
-class D {
-  [Symbol.dispose](): void {
-    reset();
-    console.log("disposed");
-  }
-}
-
+class D { [Symbol.dispose](): void { reset(); console.log("disposed"); } }
 let cur = new State();
-
-function reset(): void {
-  cur = new State();
-  cur.label = "new" + String(cur.n);
-}
-
-class E {
-  [Symbol.dispose](): void {
-    helper();
-  }
-}
-
-function helper(): void {
-  const x = new D();
-}
-
-function main(): void {
-  console.log(cur.f());
-  console.log(cur.label);
-}
+function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
+class E { [Symbol.dispose](): void { helper(); } }
+function helper(): void { const x = new D(); }
+function main(): void { console.log(cur.f()); console.log(cur.label); }

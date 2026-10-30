@@ -10,7 +10,6 @@ class Box {
     return this.v * 2;
   }
 }
-
 const p = new Proxy(new Box(), {
   get(t: any, k: string | symbol, r: any) {
     if (k === "$set") {

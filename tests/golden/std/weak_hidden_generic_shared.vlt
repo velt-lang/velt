@@ -1,15 +1,6 @@
 // shared(...) of a Mutex of a type parameter, instantiated with a WeakMap.
-class K {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-function mk<T>(x: T): shared<Mutex<T>> {
-  return shared(new Mutex<T>(x));
-}
-
+class K { n: number; constructor(n: number) { this.n = n; } }
+function mk<T>(x: T): shared<Mutex<T>> { return shared(new Mutex<T>(x)); }
 async function main() {
   const m = mk(new WeakMap<K, number>());
   console.log(m.with((v) => 1));

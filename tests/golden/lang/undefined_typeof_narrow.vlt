@@ -3,7 +3,6 @@
 class A {
   constructor(public n: number) {}
 }
-
 class B {
   constructor(public s: string) {}
 }
@@ -50,12 +49,8 @@ function o(x: D | null | undefined): string {
 }
 
 function o2(x: D | null | undefined): string {
-  if (typeof x !== "object") {
-    return "u";
-  }
-  if (x === null) {
-    return "N";
-  }
+  if (typeof x !== "object") return "u";
+  if (x === null) return "N";
   return x.a;
 }
 

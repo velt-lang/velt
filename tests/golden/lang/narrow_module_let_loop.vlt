@@ -5,29 +5,23 @@
 class Ctx {
   name = "c";
 }
-
 class Base {
   readonly k: number = 1;
 }
-
 class Sub extends Base {
   readonly extra: string = "sub";
 }
-
 class Holder {
   readonly left: Base;
   constructor(b: Base) {
     this.left = b;
   }
 }
-
 let cur: Ctx | null = new Ctx();
 let h: Holder = new Holder(new Sub());
-
 function swap(): void {
   h = new Holder(new Base());
 }
-
 function f(): void {
   let i = 0;
   if (cur) {
@@ -42,5 +36,4 @@ function f(): void {
     console.log(h.left.extra);
   }
 }
-
 f();

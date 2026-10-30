@@ -3,19 +3,13 @@
 function pluck<T, K extends keyof T>(xs: T[], k: K): T[K][] {
   return xs.map((x) => x[k]);
 }
-
 function copyField<T, K extends keyof T>(dst: T, src: T, k: K): void {
   dst[k] = src[k];
 }
-
 function setField<T, K extends keyof T>(r: T, k: K, v: T[K]): void {
   r[k] = v;
 }
-
-const us = [
-  { id: 1, name: "a" },
-  { id: 2, name: "b" },
-];
+const us = [{ id: 1, name: "a" }, { id: 2, name: "b" }];
 const which: "id" | "name" = us.length > 5 ? "id" : "name";
 console.log(pluck(us, "name"), pluck(us, "id"), pluck(us, which));
 const a = { id: 1, name: "a" };

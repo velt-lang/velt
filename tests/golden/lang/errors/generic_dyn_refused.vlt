@@ -166,9 +166,7 @@ function runVirt<X>(v: Virt<X>, u: unknown): X {
 
 function main(): void {
   const xs: Base[] = [new Base(), new Sub()];
-  for (const x of xs) {
-    console.log(use(x));
-  }
+  for (const x of xs) console.log(use(x));
   console.log(use(new Sub()), use(new Base()), new Sub().run());
   const s: Base = new Sub();
   const a: any = s;

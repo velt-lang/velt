@@ -3,15 +3,10 @@
 function isA(x: string | number): x is "a" {
   return x === "a";
 }
-
 function show(x: string | number) {
-  if (isA(x)) {
-    console.log("A", x);
-  } else {
-    console.log("not", x);
-  }
+  if (isA(x)) console.log("A", x);
+  else console.log("not", x);
 }
-
 show("a");
 show(1);
 show("b");
@@ -22,17 +17,11 @@ class Animal {
     this.name = name;
   }
 }
-
 class Dog extends Animal {}
-
 class Cat extends Animal {}
-
 // A predicate type no member of the variable's type is: no narrowing.
 function isPet(x: Animal | string): x is Dog | Cat {
   return x instanceof Dog || x instanceof Cat;
 }
-
 const xs: (Animal | string)[] = [new Dog("rex"), "tom", new Animal("x")];
-for (const x of xs) {
-  console.log(isPet(x) ? "pet" : "other");
-}
+for (const x of xs) console.log(isPet(x) ? "pet" : "other");

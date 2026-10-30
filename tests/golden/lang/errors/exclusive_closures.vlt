@@ -13,14 +13,9 @@ function main() {
     xs.push(x);
   });
   const ys: i64[] = [];
-  console.log(
-    twice(
-      () => {
-        ys.push(1);
-      },
-      () => ys.length as i64,
-    ),
-  );
+  console.log(twice(() => {
+    ys.push(1);
+  }, () => ys.length as i64));
   const m = new Mutex<i64[]>([1]);
   m.with((v) => {
     v.push(2);

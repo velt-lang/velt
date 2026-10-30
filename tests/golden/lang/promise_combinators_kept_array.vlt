@@ -7,7 +7,6 @@
 function wait(ms: number, v: number): Promise<number> {
   return new Promise((resolve) => setTimeout(() => resolve(v), ms));
 }
-
 function fail(ms: number, msg: string): Promise<number> {
   return new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms));
 }
@@ -19,10 +18,7 @@ function make(n: number): { name: string; loads: Promise<void>[] } {
   }
   return { name: "c" + n, loads };
 }
-
-function* render(n: number, deferred: boolean, out: string[]): Generator<{
-  p: Promise<any>;
-}, void, unknown> {
+function* render(n: number, deferred: boolean, out: string[]): Generator<{ p: Promise<any> }, void, unknown> {
   const { name, loads } = make(n);
   if (deferred) {
     const later = (async () => {
@@ -35,7 +31,6 @@ function* render(n: number, deferred: boolean, out: string[]): Generator<{
     out.push("blocking " + name + " " + loads.length);
   }
 }
-
 async function drive(n: number, deferred: boolean, out: string[]): Promise<void> {
   for (const s of render(n, deferred, out)) {
     await s.p;
@@ -110,12 +105,7 @@ async function main(): Promise<void> {
   b.push(wait(1, 3));
   b[0] = wait(1, 9);
   const sb = await pb;
-  console.log(
-    "allSettled after push",
-    sb.length,
-    sb.map((s) => (s.status == "fulfilled" ? s.value : -1)).join(","),
-    b.length,
-  );
+  console.log("allSettled after push", sb.length, sb.map((s) => (s.status == "fulfilled" ? s.value : -1)).join(","), b.length);
   const c: Promise<number>[] = [wait(5, 1), wait(2, 2)];
   const pc = Promise.allSettled(c);
   c.length = 0;
@@ -134,5 +124,4 @@ async function main(): Promise<void> {
     console.log("any rejected", (e as Error).name, rejected.length);
   }
 }
-
 main();

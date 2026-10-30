@@ -2,77 +2,21 @@
 // own (#1501): one field, which the subclass's initializer sets after the base class has been
 // constructed, in order with its other initializers.
 let log: string[] = [];
-
-function note(s: string): number {
-  log.push(s);
-  return s.length;
-}
-
-class A {
-  x: number = note("A.x");
-  y: number = 10;
-  constructor() {
-    console.log("A ctor", this.x, this.y);
-  }
-}
-
-class B extends A {
-  x: number = note("B.xx") * 100;
-  z: string = "z";
-}
-
-class C extends B {
-  y: number = 30;
-  constructor() {
-    super();
-    console.log("C ctor", this.x, this.y, this.z);
-  }
-}
-
+function note(s: string): number { log.push(s); return s.length; }
+class A { x: number = note("A.x"); y: number = 10; constructor() { console.log("A ctor", this.x, this.y); } }
+class B extends A { x: number = note("B.xx") * 100; z: string = "z"; }
+class C extends B { y: number = 30; constructor() { super(); console.log("C ctor", this.x, this.y, this.z); } }
 console.log(new B().x, new A().x, new C().y);
 console.log(log.join(","));
-
-class Animal {
-  kind: string = "animal";
-  describe(): string {
-    return this.kind;
-  }
-}
-
-class Dog extends Animal {
-  kind = "dog";
-}
-
+class Animal { kind: string = "animal"; describe(): string { return this.kind; } }
+class Dog extends Animal { kind = "dog"; }
 console.log(new Dog().describe(), new Animal().describe());
-
-class G<T> {
-  item: T;
-  tag: string = "g";
-  constructor(item: T) {
-    this.item = item;
-  }
-}
-
-class H extends G<number> {
-  tag: string = "h";
-}
-
+class G<T> { item: T; tag: string = "g"; constructor(item: T) { this.item = item; } }
+class H extends G<number> { tag: string = "h"; }
 const h = new H(4);
 console.log(h.item, h.tag);
-
-class P {
-  a: number = 1;
-  b: number = 2;
-}
-
-class R extends P {
-  b: number = 20;
-  c: number = this0();
-}
-
-function this0(): number {
-  return 7;
-}
-
+class P { a: number = 1; b: number = 2; }
+class R extends P { b: number = 20; c: number = this0(); }
+function this0(): number { return 7; }
 const r = new R();
 console.log(r.a, r.b, r.c, JSON.stringify(r));

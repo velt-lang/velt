@@ -4,11 +4,9 @@
 interface Base {
   refresh(): number;
 }
-
 interface Other {
   refresh(): string;
 }
-
 type Missing = Pick<Base, "nope">;
 type Clash = Base & Other;
 type Wide = Base & { errors: number };

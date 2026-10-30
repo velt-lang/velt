@@ -6,27 +6,23 @@ console.log(Reflect.deleteProperty(rec, "a"), rec, Reflect.deleteProperty(rec, "
 const ra: any = rec;
 delete ra["b"];
 console.log(rec, Object.keys(rec));
-
 interface Opt {
   name: string;
   tag?: string;
   note?: string | null;
 }
-
 const o: Opt = { name: "n", tag: "t", note: null };
 const oa: any = o;
 console.log(delete oa.tag, delete oa.note, delete oa.missing);
 console.log(o, "note" in oa, JSON.stringify(o));
 oa.tag = "back";
 console.log(o);
-
 class C {
   v = 1;
   m(): number {
     return this.v;
   }
 }
-
 const c: any = new C();
 console.log(Reflect.deleteProperty(c, "m"), Reflect.deleteProperty(c, "zz"), c.m());
 const arr: any = [1, 2];

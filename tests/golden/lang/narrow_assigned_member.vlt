@@ -11,38 +11,22 @@ class B {
 }
 
 function elseAssigns(p: A | B): number {
-  if (p instanceof A) {
-    return 0;
-  } else {
-    p = new B();
-  }
+  if (p instanceof A) { return 0; } else { p = new B(); }
   return p.b;
 }
 
 function thenAssigns(p: A | B): number {
-  if (p instanceof B) {
-    p = new B();
-  } else {
-    return 0;
-  }
+  if (p instanceof B) { p = new B(); } else { return 0; }
   return p.b;
 }
 
 function typeofNumber(p: string | number): number {
-  if (typeof p === "string") {
-    return 0;
-  } else {
-    p = 5;
-  }
+  if (typeof p === "string") { return 0; } else { p = 5; }
   return p + 1;
 }
 
 function typeofString(p: string | number): string {
-  if (typeof p === "number") {
-    return "n";
-  } else {
-    p = p + "!";
-  }
+  if (typeof p === "number") { return "n"; } else { p = p + "!"; }
   return p.toUpperCase();
 }
 
@@ -55,21 +39,13 @@ function declared(): number {
 
 function bothBranches(c: boolean): string {
   let u: string | number = 0;
-  if (c) {
-    u = "yes";
-  } else {
-    u = "no";
-  }
+  if (c) { u = "yes"; } else { u = "no"; }
   return u.toUpperCase();
 }
 
 function nullable(c: boolean): number {
   let v: string | number | null = null;
-  if (c) {
-    v = "four";
-  } else {
-    v = "two";
-  }
+  if (c) { v = "four"; } else { v = "two"; }
   return v.length;
 }
 
@@ -93,10 +69,7 @@ function breakInIf(k: number, c: boolean): number {
   let x: string | null = null;
   switch (k) {
     case 1:
-      if (c) {
-        x = "early";
-        break;
-      }
+      if (c) { x = "early"; break; }
       x = "late!!";
       break;
     default:
@@ -115,21 +88,9 @@ function untilSet(x: string | null): number {
 }
 
 function main() {
-  console.log(
-    elseAssigns(new B()),
-    elseAssigns(new A()),
-    thenAssigns(new B()),
-    thenAssigns(new A()),
-  );
+  console.log(elseAssigns(new B()), elseAssigns(new A()), thenAssigns(new B()), thenAssigns(new A()));
   console.log(typeofNumber(4), typeofNumber("s"), typeofString("q"), typeofString(1));
   console.log(declared(), bothBranches(true), bothBranches(false), nullable(true), nullable(false));
-  console.log(
-    cases(1),
-    cases(2),
-    cases(3),
-    breakInIf(1, true),
-    breakInIf(1, false),
-    breakInIf(2, true),
-  );
+  console.log(cases(1), cases(2), cases(3), breakInIf(1, true), breakInIf(1, false), breakInIf(2, true));
   console.log(untilSet(null), untilSet("ab"));
 }

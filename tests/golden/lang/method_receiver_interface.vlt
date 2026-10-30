@@ -2,73 +2,31 @@
 // An interface method called on a value held by a module `let`, a field of a counted object, an
 // array element or a closure's variable, whose body (or a function it calls) replaces that
 // holder (#1188). Identical to Node.
-interface Greeter {
-  greet(): string;
-}
-
+interface Greeter { greet(): string; }
 class Hello implements Greeter {
   who: string;
-  constructor(w: string) {
-    this.who = w;
-  }
-  greet(): string {
-    swap();
-    return "hello " + this.who;
-  }
+  constructor(w: string) { this.who = w; }
+  greet(): string { swap(); return "hello " + this.who; }
 }
-
 class Field implements Greeter {
   who: string;
-  constructor(w: string) {
-    this.who = w;
-  }
-  greet(): string {
-    boxes[0].g = new Hello("field2");
-    return "field " + this.who;
-  }
+  constructor(w: string) { this.who = w; }
+  greet(): string { boxes[0].g = new Hello("field2"); return "field " + this.who; }
 }
-
 class Elem implements Greeter {
   who: string;
-  constructor(w: string) {
-    this.who = w;
-  }
-  greet(): string {
-    greeters.pop();
-    return "elem " + this.who;
-  }
+  constructor(w: string) { this.who = w; }
+  greet(): string { greeters.pop(); return "elem " + this.who; }
 }
-
 class Cell implements Greeter {
   who: string;
-  constructor(w: string) {
-    this.who = w;
-  }
-  greet(): string {
-    again();
-    return "cell " + this.who;
-  }
+  constructor(w: string) { this.who = w; }
+  greet(): string { again(); return "cell " + this.who; }
 }
-
-class Quiet implements Greeter {
-  greet(): string {
-    return "quiet";
-  }
-}
-
-class Box {
-  g: Greeter;
-  constructor(g: Greeter) {
-    this.g = g;
-  }
-}
-
+class Quiet implements Greeter { greet(): string { return "quiet"; } }
+class Box { g: Greeter; constructor(g: Greeter) { this.g = g; } }
 let current: Greeter = new Hello("h" + String(1));
-
-function swap(): void {
-  current = new Quiet();
-}
-
+function swap(): void { current = new Quiet(); }
 const boxes: Box[] = [];
 const greeters: Greeter[] = [new Elem("e" + String(1))];
 let again: () => void = () => {};
@@ -80,8 +38,6 @@ function main(): void {
   console.log(b.g.greet(), b.g.greet());
   console.log(greeters[0].greet(), greeters.length);
   let local: Greeter = new Cell("c" + String(1));
-  again = () => {
-    local = new Quiet();
-  };
+  again = () => { local = new Quiet(); };
   console.log(local.greet(), local.greet());
 }

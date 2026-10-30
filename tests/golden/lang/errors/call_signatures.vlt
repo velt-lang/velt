@@ -3,24 +3,22 @@
 // it may use as a value, #943); a function must match the signature (`Runner`, a function with
 // properties, is).
 interface Runner {
-  (): number;
-  stop(): void;
+  (): number
+  stop(): void
 }
-
-type Overloaded = { (x: string): string; (x: number): number };
-
+type Overloaded = {
+  (x: string): string;
+  (x: number): number;
+};
 interface Identity {
-  <T>(x: T): T;
+  <T>(x: T): T
 }
-
 // `new(…)` in an interface is a construct signature, not a method named `new`.
 interface PointCtor {
-  new (x: number): Runner;
+  new (x: number): Runner
 }
-
 interface Fn {
-  (x: number): string;
+  (x: number): string
 }
-
 const f: Fn = (x: string) => x;
 console.log(f(1));

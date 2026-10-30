@@ -7,7 +7,11 @@
 const VNODE: unique symbol = Symbol("sigx:vnode");
 const COUNT = Symbol.for("sigx.count");
 
-type VNode = { type: string; props: Record<string, number>; text?: string };
+type VNode = {
+  type: string;
+  props: Record<string, number>;
+  text?: string;
+};
 
 interface Cell {
   value: number;
@@ -31,12 +35,8 @@ function counted(value: number): Cell {
 }
 
 function kind(x: VNode | Cell | null): string {
-  if ((x as any)?.[VNODE] === true) {
-    return "vnode";
-  }
-  if (x && COUNT in x) {
-    return "counted cell";
-  }
+  if ((x as any)?.[VNODE] === true) return "vnode";
+  if (x && COUNT in x) return "counted cell";
   return "other";
 }
 

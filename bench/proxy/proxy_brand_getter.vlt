@@ -5,14 +5,12 @@ class Box {
     return this.n * 2;
   }
 }
-
 type S<T> = T & { $set(v: T): void };
-const p: S<Box> =
-  new Proxy(new Box(), {
-    get(t: any, k: string | symbol, r: any) {
-      return Reflect.get(t, k);
-    },
-  }) as S<Box>;
+const p: S<Box> = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    return Reflect.get(t, k);
+  },
+}) as S<Box>;
 let s = 0;
 for (let i = 0; i < 300000; i++) {
   s += p.twice + p.n;

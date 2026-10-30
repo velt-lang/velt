@@ -145,12 +145,7 @@ function main() {
   s2 &&= "replaced";
   console.log(a, c1, c2, s1, s2);
   // Sort comparators: a - b || c - d.
-  const pairs: number[][] = [
-    [1, 2],
-    [0, 5],
-    [1, 1],
-    [0, 3],
-  ];
+  const pairs: number[][] = [[1, 2], [0, 5], [1, 1], [0, 3]];
   pairs.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
   console.log(JSON.stringify(pairs));
   // Unions, literal types and `bool` operands.

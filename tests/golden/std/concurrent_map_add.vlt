@@ -41,15 +41,11 @@ async function main() {
   await Promise.all(ps);
   let wrong: u64 = 0;
   for (let c: u64 = 0; c < COUNTERS; c++) {
-    if (s.get(mix(c)) != 4 * ROUNDS) {
-      wrong++;
-    }
+    if (s.get(mix(c)) != 4 * ROUNDS) wrong++;
   }
   let lost: u64 = 0;
   for (let i: u64 = 0; i < 30000; i++) {
-    if (s.get(mix(1000000 + i)) != i) {
-      lost++;
-    }
+    if (s.get(mix(1000000 + i)) != i) lost++;
   }
   console.log("wrong", wrong, "lost", lost, "before", s.add(mix(7), 10), s.get(mix(7)));
 }

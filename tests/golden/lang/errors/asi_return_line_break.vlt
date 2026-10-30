@@ -3,10 +3,10 @@
 // value, as TypeScript reports too.
 
 function answer(): number {
-  return;
-  42;
+  return
+  42
 }
 
 function main() {
-  console.log(answer());
+  console.log(answer())
 }

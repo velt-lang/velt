@@ -8,18 +8,13 @@ function more(): void {
   console.log(b);
   const arr = JSON.parse('{"a":[1],"b":null}') as Record<string, number[] | null | undefined>;
   console.log(arr);
-  const mm =
-    JSON.parse('{"o":{"p":{"x":2},"q":null}}') as {
-      o: Record<string, { x: number } | null | undefined>;
-    };
+  const mm = JSON.parse('{"o":{"p":{"x":2},"q":null}}') as { o: Record<string, { x: number } | null | undefined> };
   console.log(mm.o, JSON.stringify(mm));
   const mp = new Map(Object.entries(s));
   console.log(mp);
 }
-
 function main(): void {
-  const r =
-    JSON.parse('{"a":{"x":1},"b":null}') as Record<string, { x: number } | null | undefined>;
+  const r = JSON.parse('{"a":{"x":1},"b":null}') as Record<string, { x: number } | null | undefined>;
   console.log(r, Object.keys(r), r["b"] === null, r["c"] === undefined);
   const n = JSON.parse('{"z":2,"y":null}') as Record<string, number | null | undefined>;
   console.log(n);

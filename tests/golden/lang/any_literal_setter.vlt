@@ -49,7 +49,6 @@ function box<T>(first: T) {
     },
   };
 }
-
 const bx = box(1);
 (bx as any).value = 3;
 console.log(bx.value, Reflect.get(bx, "value"));

@@ -1,11 +1,7 @@
 // check: no leaks
 // `"k" in o` does not narrow `o.k` past `undefined` (`{ k: undefined }` has the key).
 function g(o: { k?: number }): string {
-  if ("k" in o) {
-    const k = o.k;
-    return k === undefined ? "U" : String(k * 2);
-  }
+  if ("k" in o) { const k = o.k; return k === undefined ? "U" : String(k * 2); }
   return "absent";
 }
-
 console.log(g({ k: 1 }), g({}), g({ k: undefined }));

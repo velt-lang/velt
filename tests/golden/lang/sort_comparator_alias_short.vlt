@@ -35,14 +35,7 @@ function throughCapturedAlias(n: number) {
     }
     return a < b ? -1 : a > b ? 1 : 0;
   });
-  console.log(
-    n,
-    xs.length,
-    bad,
-    xs.slice(0, n).map((s) => s.slice(8, 10)).join(","),
-    xs[n],
-    xs[xs.length - 1],
-  );
+  console.log(n, xs.length, bad, xs.slice(0, n).map((s) => s.slice(8, 10)).join(","), xs[n], xs[xs.length - 1]);
 }
 
 // Tuples whose holder owns the array; the comparator captures nothing and pushes through its
@@ -66,13 +59,7 @@ function throughElement(n: number) {
       bad++;
     }
   }
-  console.log(
-    n,
-    h.items.length,
-    bad,
-    h.items.slice(0, n).map((e) => e[0].slice(8, 10)).join(","),
-    h.items[n][0],
-  );
+  console.log(n, h.items.length, bad, h.items.slice(0, n).map((e) => e[0].slice(8, 10)).join(","), h.items[n][0]);
   // The holder and its elements reference each other: cut the cycle.
   h.items = [];
 }

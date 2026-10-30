@@ -2,7 +2,6 @@
 // errors: the promise gives their union and rejects with either callback's error, as in
 // TypeScript (`Promise<TResult1 | TResult2>`).
 class LoadError extends Error {}
-
 class Parse extends Error {}
 
 async function load(ok: boolean): Promise<{ default: string } | string> {

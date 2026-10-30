@@ -6,16 +6,12 @@
 class LoadError extends Error {}
 
 async function fetchName(n: string): Promise<string> {
-  if (n.startsWith("bad")) {
-    throw new LoadError("no " + n);
-  }
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
   return n;
 }
 
 async function step(n: string): Promise<void> {
-  if (n.startsWith("bad")) {
-    throw new LoadError("step " + n);
-  }
+  if (n.startsWith("bad")) throw new LoadError("step " + n);
 }
 
 interface Svc {
@@ -33,9 +29,7 @@ async function withScope<T>(fn: () => T | Promise<T>): Promise<T> {
 }
 
 function track(tracked: Set<Promise<unknown>>, p: Promise<unknown>): boolean {
-  if (tracked.has(p)) {
-    return false;
-  }
+  if (tracked.has(p)) return false;
   tracked.add(p);
   return true;
 }
@@ -62,11 +56,9 @@ async function main() {
     }
   }
 
-  console.log(
-    await withScope(async function scoped(): Promise<string> {
-      return new URL("https://example.com/x").pathname;
-    }),
-  );
+  console.log(await withScope(async function scoped(): Promise<string> {
+    return new URL("https://example.com/x").pathname;
+  }));
   try {
     await withScope(async (): Promise<string> => new URL("not a url").pathname);
   } catch (e) {

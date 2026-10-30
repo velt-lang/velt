@@ -6,9 +6,7 @@
 function clobber(n: number): number {
   // Reuses the stack the earlier frames used.
   const words: string[] = [];
-  for (let i = 0; i < n; i++) {
-    words.push("w" + i);
-  }
+  for (let i = 0; i < n; i++) words.push("w" + i);
   return words.join("").length;
 }
 
@@ -17,9 +15,7 @@ function watch(cb: (v: number, onCleanup: (fn: () => void) => void) => void): ()
   let cleanupFn: (() => void) | null = null;
   let n = 0;
   return () => {
-    if (cleanupFn) {
-      cleanupFn();
-    }
+    if (cleanupFn) cleanupFn();
     n++;
     cb(n, (fn) => (cleanupFn = fn));
   };
@@ -48,15 +44,11 @@ class ListTopic implements Topic {
     this.subscribers.push(handler);
     return () => {
       const i = this.subscribers.indexOf(handler);
-      if (i > -1) {
-        this.subscribers.splice(i, 1);
-      }
+      if (i > -1) this.subscribers.splice(i, 1);
     };
   }
   publish(data: string): void {
-    for (const s of this.subscribers) {
-      s(data);
-    }
+    for (const s of this.subscribers) s(data);
   }
 }
 
@@ -71,9 +63,7 @@ class SimpleBus implements Bus {
     this.hs.push(h);
   }
   emit(x: number): void {
-    for (const h of this.hs) {
-      h(x);
-    }
+    for (const h of this.hs) h(x);
   }
 }
 

@@ -11,27 +11,23 @@ class A {
     return `A${this.n}`;
   }
 }
-
 class B extends A {
   override hi(): string {
     return `B${this.n}`;
   }
 }
-
 class Box<T> {
   v: T;
   constructor(v: T) {
     this.v = v;
   }
 }
-
 class Many {
   xs: number[];
   constructor(...xs: number[]) {
     this.xs = xs;
   }
 }
-
 class Fails {
   constructor(n: number) {
     if (n < 0) {
@@ -39,7 +35,6 @@ class Fails {
     }
   }
 }
-
 type Ctor = new (n: number) => A;
 
 const KS: (readonly [string, Ctor])[] = [
@@ -50,11 +45,9 @@ for (const [name, C] of KS) {
   const v = new C(3);
   console.log(name, C.name, v.n, v instanceof C, v instanceof A, v instanceof B);
 }
-
 function make(C: Ctor, n: number): A {
   return new C(n);
 }
-
 console.log(make(B, 5) instanceof B, make(A, 6).n);
 const check = (v: unknown, C: Ctor): string => (v instanceof C ? v.hi() : "no");
 console.log(check(new B(1), A), check(new A(2), B), check(3, A), check(new B(4), B));
@@ -79,11 +72,9 @@ try {
 const ks: Ctor[] = [A, B];
 console.log(ks.map((K) => new K(5).hi()).join(","), ks.map((K) => K.name).join(","));
 console.log(typeof A, typeof ks[0], Object.keys(ks[0]).length);
-
 function pick(b: boolean): Ctor {
   return b ? A : B;
 }
-
 const P = pick(false);
 console.log(new P(7).hi());
 
@@ -92,7 +83,6 @@ interface Reg {
   ctor: Ctor;
   label: string;
 }
-
 const reg: Reg = { ctor: B, label: "b" };
 console.log(reg.label, new reg.ctor(2).n, new B(1) instanceof reg.ctor);
 const byName = new Map<string, Ctor>();
@@ -101,27 +91,20 @@ byName.set("b", B);
 for (const [k, C] of byName) {
   console.log(k, C.name, new C(1) instanceof B);
 }
-
 function withDefault(C: Ctor = A): string {
   return C.name;
 }
-
 console.log(withDefault(), withDefault(B));
-
 function later(C: Ctor): () => A {
   return () => new C(4);
 }
-
 console.log(later(B)().hi());
-
 async function slow(C: Ctor): Promise<number> {
   await Promise.resolve(0);
   return new C(8).n;
 }
-
 function build<T>(C: new (n: number) => T, n: number): T {
   return new C(n);
 }
-
 console.log(build(B, 3) instanceof B, build<A>(A, 2).hi());
 slow(A).then((n) => console.log("slow", n));

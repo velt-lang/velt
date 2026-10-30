@@ -4,7 +4,6 @@
 function merge<A extends object, B extends object>(a: A, b: B) {
   return { ...a, ...b };
 }
-
 type Opt = { name?: string; tags?: string[] };
 const base: { name: string; tags: string[] } = { name: "base", tags: ["x"] };
 const none: Opt = {};

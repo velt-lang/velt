@@ -22,15 +22,11 @@ class Joiner {
 }
 
 function main() {
-  for (const s of SCENARIOS) {
-    console.log(build(s));
-  }
+  for (const s of SCENARIOS) console.log(build(s));
   const local = ["large", "small"] as const;
   console.log(build(local[0]), local.length, local, SCENARIOS.map((s) => build(s)).join(","));
   const once: Name[] = [];
-  for (const s of local) {
-    once.push(s);
-  }
+  for (const s of local) once.push(s);
   console.log(once, local.includes("small"));
   const copy: string[] = [...SCENARIOS];
   copy.push("extra");

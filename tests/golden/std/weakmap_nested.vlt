@@ -17,7 +17,7 @@ class Proxy {
 
 // A value that owns a map, its own `raw -> proxy` cache, and another map's key.
 class Scope {
-  cache: WeakMap<Node, Proxy> = new WeakMap<Node, Proxy>();
+  cache = new WeakMap<Node, Proxy>();
   parent: Node;
   constructor(parent: Node) {
     this.parent = parent;

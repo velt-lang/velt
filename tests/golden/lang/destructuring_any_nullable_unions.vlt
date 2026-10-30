@@ -1,14 +1,8 @@
 // check: no leaks
 // Elements of a nullable union type read through an `any` (and destructured from it) are
 // the member or nothing they hold. Expected output: Node's.
-class A {
-  a = 1;
-}
-
-class B {
-  b = "b";
-}
-
+class A { a = 1; }
+class B { b = "b"; }
 function run(): void {
   const v: any = [1, "s", null];
   console.log(v[0], v[1], v[2]);
@@ -22,7 +16,6 @@ function run(): void {
   const [e, f, g] = ar;
   console.log(e, f, g);
 }
-
 function main(): void {
   run();
 }

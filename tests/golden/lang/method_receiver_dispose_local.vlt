@@ -7,28 +7,10 @@ class State {
   n: number = 1;
   label: string = "lbl" + String(1);
   held: D | null = null;
-  f(): string {
-    let d = new D();
-    d = new D();
-    return this.label + "#" + String(this.n);
-  }
+  f(): string { let d = new D(); d = new D(); return this.label + "#" + String(this.n); }
 }
-
-class D {
-  [Symbol.dispose](): void {
-    reset();
-    console.log("disposed");
-  }
-}
-
+class D { [Symbol.dispose](): void { reset(); console.log("disposed"); } }
 let cur = new State();
+function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
 
-function reset(): void {
-  cur = new State();
-  cur.label = "new" + String(cur.n);
-}
-
-function main(): void {
-  console.log(cur.f());
-  console.log(cur.label);
-}
+function main(): void { console.log(cur.f()); console.log(cur.label); }

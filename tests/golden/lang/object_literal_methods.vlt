@@ -20,7 +20,6 @@ console.log(handler.get("ab", "c"), handler.set("a", "b", 1), handler.set("a", "
 function install(plugin: { name: string; setup(level: number): string }): string {
   return plugin.setup(2);
 }
-
 console.log(
   install({
     name: "logger",

@@ -1,39 +1,17 @@
 // `static { … }` blocks (#1501): each runs once, where the class is declared, in source order
 // with the static field initializers and the top-level statements around the class.
 console.log("start");
-
 class S {
   static n: number = 1;
-  static {
-    S.n = S.n + 10;
-    console.log("block 1", S.n);
-  }
+  static { S.n = S.n + 10; console.log("block 1", S.n); }
   static readonly k: number = 5;
   static m: number = S.n * 2;
-  static {
-    console.log("block 2", S.n, S.m, S.k);
-  }
+  static { console.log("block 2", S.n, S.m, S.k); }
   v: number = 3;
 }
-
 console.log("after", S.n, S.m, new S().v);
-
 class T extends S {
-  static {
-    console.log("T block", T.n);
-    let i = 0;
-    for (const x of [1, 2, 3]) {
-      i += x;
-    }
-    console.log("sum", i);
-  }
+  static { console.log("T block", T.n); let i = 0; for (const x of [1, 2, 3]) i += x; console.log("sum", i); }
 }
-
-class Q {
-  static k: number = (() => {
-    console.log("Q.k");
-    return 1;
-  })();
-}
-
+class Q { static k: number = (() => { console.log("Q.k"); return 1; })(); }
 console.log("end");

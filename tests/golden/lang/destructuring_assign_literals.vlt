@@ -3,37 +3,25 @@
 // TypeScript does, in declarations and destructuring assignments; the whole literal is
 // evaluated before it is taken apart. Expected output: Node's.
 const log: string[] = [];
-
-function f(n: number): number {
-  log.push("f" + n);
-  return n;
-}
-
-function pair(): [number, string] {
-  return [2, "t"];
-}
-
+function f(n: number): number { log.push("f" + n); return n; }
+function pair(): [number, string] { return [2, "t"]; }
 function main(): void {
-  let x = 0;
-  let s = "";
+  let x = 0, s = "";
   [x, s] = [1, "s"];
   console.log(x, s);
   [x, s] = [x + 1, s + "!"];
   console.log(x, s);
   [x, s] = pair();
   console.log(x, s);
-  let o = { a: 1 };
-  let xs = [1];
+  let o = { a: 1 }, xs = [1];
   [o, xs] = [{ a: 2 }, [3, 4]];
   console.log(o, xs);
-  let u: number | undefined = 1;
-  let t = "";
+  let u: number | undefined = 1, t = "";
   [u, t] = [undefined, "k"];
   console.log(u, t);
   const c = [2, "y"] as const;
   const [p, q] = c;
-  let b = 0;
-  let w = "";
+  let b = 0, w = "";
   [b, w] = c;
   [x, s] = [3, "z"] as const;
   console.log(p, q, b, w, x, s);
@@ -44,8 +32,7 @@ function main(): void {
   i++;
   console.log(i, j, k);
   const shared = { a: 5 };
-  let y1 = { a: 0 };
-  let y2 = { a: 0 };
+  let y1 = { a: 0 }, y2 = { a: 0 };
   [y1, y2] = [shared, shared];
   y1.a = 6;
   console.log(y2.a, y1 === y2);

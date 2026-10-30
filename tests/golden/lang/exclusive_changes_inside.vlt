@@ -24,19 +24,15 @@ class User {
 class C {
   v: number[] = [1, 2, 3];
 }
-
 class B {
   c: C = new C();
 }
-
 class A {
   b: B = new B();
 }
 
 function grow(xs: number[]): number {
-  for (let i = 0; i < 100; i++) {
-    xs.push(i);
-  }
+  for (let i = 0; i < 100; i++) xs.push(i);
   return xs.length;
 }
 
@@ -48,7 +44,6 @@ class V {
   n: number = 1;
   s: string = "y".repeat(30);
 }
-
 class H {
   vs: V[] = [new V(), new V(), new V()];
 }
@@ -58,7 +53,6 @@ function g(vs: V[], n: number): string {
 }
 
 type Pt = { x: number; y: number };
-
 class O {
   pts: Pt[] = [
     { x: 1, y: 2 },

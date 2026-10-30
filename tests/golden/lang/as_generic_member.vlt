@@ -56,7 +56,7 @@ interface Pend {
 }
 
 function settled<T>(r: Ok<T> | Err | Pend): string {
-  const s = r as (Ok<T> | Err);
+  const s = r as Ok<T> | Err;
   return s.tag === "ok" ? `${s.value}` : s.msg;
 }
 

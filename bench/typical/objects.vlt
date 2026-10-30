@@ -48,12 +48,8 @@ class Particle {
   step(dt: number): void {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    if (this.x < 0 || this.x > 100) {
-      this.vx = -this.vx;
-    }
-    if (this.y < 0 || this.y > 100) {
-      this.vy = -this.vy;
-    }
+    if (this.x < 0 || this.x > 100) this.vx = -this.vx;
+    if (this.y < 0 || this.y > 100) this.vy = -this.vy;
   }
   energy(): number {
     return 0.5 * (this.vx * this.vx + this.vy * this.vy);
@@ -90,9 +86,7 @@ function main() {
       total += s.area();
     }
     if (round % 10 === 0) {
-      for (const s of shapes) {
-        s.scale(1.0001);
-      }
+      for (const s of shapes) s.scale(1.0001);
     }
   }
   console.log(total.toFixed(1));

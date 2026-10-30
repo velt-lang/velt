@@ -4,9 +4,7 @@ function helper(): number[] {
   const s: string = 5;
   return [s.length];
 }
-
 const X = helper();
-
 function main() {
   console.log(X.length);
 }

@@ -1,44 +1,15 @@
 // check: no leaks
 // `box.inner.val = repl()` where `repl` replaces `box.inner`: the old inner value gets the write
 // and is freed after it.
-interface N {
-  val: string;
-  m(): number;
-}
-
-class Node1 implements N {
-  val: string;
-  constructor(v: string) {
-    this.val = v;
-  }
-  m(): number {
-    return 0;
-  }
-}
-
-class Box {
-  inner: N;
-  constructor(n: N) {
-    this.inner = n;
-  }
-}
-
+interface N { val: string; m(): number; }
+class Node1 implements N { val: string; constructor(v: string) { this.val = v; } m(): number { return 0; } }
+class Box { inner: N; constructor(n: N) { this.inner = n; } }
 const box = new Box(new Node1("first"));
 let old: N = box.inner;
-
-function repl(): string {
-  box.inner = new Node1("second");
-  return "replaced";
-}
-
+function repl(): string { box.inner = new Node1("second"); return "replaced"; }
 box.inner.val = repl();
 console.log(box.inner.val, old.val);
 const box2 = new Box(new Node1("third"));
-
-function repl2(): string {
-  box2.inner = new Node1("fourth");
-  return "dropped";
-}
-
+function repl2(): string { box2.inner = new Node1("fourth"); return "dropped"; }
 box2.inner.val = repl2();
 console.log(box2.inner.val);

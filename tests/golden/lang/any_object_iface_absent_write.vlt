@@ -6,7 +6,6 @@ interface Ctx {
   label?: string;
   update(): void;
 }
-
 const init = { n: 1, update: () => console.log("update") };
 const c = init as unknown as Ctx;
 console.log(c.label);

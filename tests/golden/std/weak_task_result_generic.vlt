@@ -1,51 +1,17 @@
 // A generic spawner returns T; instantiated with an interface that hides a WeakRef.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-interface Peek {
-  peek(): number;
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
 class H implements Peek {
-  r: WeakRef<V>;
-  v: V;
-  constructor(v: V) {
-    this.v = v;
-    this.r = new WeakRef(v);
-  }
-  peek(): number {
-    const x = this.r.deref();
-    if (x === null) {
-      return -1;
-    }
-    return x.n;
-  }
+  r: WeakRef<V>; v: V;
+  constructor(v: V) { this.v = v; this.r = new WeakRef(v); }
+  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
 }
-
-class N implements Peek {
-  peek(): number {
-    return 0;
-  }
-}
-
-async function make(v: V): Promise<Peek> {
-  return new H(v);
-}
-
-async function relay<T>(p: Promise<T>): Promise<T> {
-  return await spawn(p);
-}
-
+class N implements Peek { peek(): number { return 0; } }
+async function make(v: V): Promise<Peek> { return new H(v); }
+async function relay<T>(p: Promise<T>): Promise<T> { return await spawn(p); }
 async function main() {
   const keep = new V(7);
   let s = 0;
-  for (let i = 0; i < 300; i++) {
-    const h = await relay<Peek>(make(new V(i)));
-    s += h.peek();
-  }
+  for (let i = 0; i < 300; i++) { const h = await relay<Peek>(make(new V(i))); s += h.peek(); }
   console.log(s, keep.n);
 }

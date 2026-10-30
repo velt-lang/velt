@@ -7,5 +7,4 @@ function register(target: Function): void {
   const ref = new WeakRef(target);
   console.log(ws.has(target), wm.has(target), ref.deref() === target);
 }
-
 register(() => 1);

@@ -4,59 +4,29 @@
 // Each case has a class of its own. Identical to Node.
 class ItemA {
   label: string;
-  constructor(l: string) {
-    this.label = l;
-  }
-  popAll(): string {
-    itemsA.length = 0;
-    return this.label + " popped";
-  }
+  constructor(l: string) { this.label = l; }
+  popAll(): string { itemsA.length = 0; return this.label + " popped"; }
 }
-
 const itemsA: ItemA[] = [];
-
 class ItemB {
   label: string;
-  constructor(l: string) {
-    this.label = l;
-  }
-  replace(): string {
-    itemsB[0] = new ItemB("replacement");
-    return this.label + " replaced";
-  }
+  constructor(l: string) { this.label = l; }
+  replace(): string { itemsB[0] = new ItemB("replacement"); return this.label + " replaced"; }
 }
-
 const itemsB: ItemB[] = [];
-
 class ItemC {
   label: string;
-  constructor(l: string) {
-    this.label = l;
-  }
-  swap(): string {
-    lists = [[new ItemC("other")]];
-    return this.label + " swapped";
-  }
+  constructor(l: string) { this.label = l; }
+  swap(): string { lists = [[new ItemC("other")]]; return this.label + " swapped"; }
 }
-
 let lists: ItemC[][] = [[new ItemC("list" + String(1))]];
-
 class ItemD {
   label: string;
-  constructor(l: string) {
-    this.label = l;
-  }
-  splice(): string {
-    removeFirst();
-    return this.label + " spliced";
-  }
+  constructor(l: string) { this.label = l; }
+  splice(): string { removeFirst(); return this.label + " spliced"; }
 }
-
 let itemsD: ItemD[] = [new ItemD("d" + String(1)), new ItemD("d" + String(2))];
-
-function removeFirst(): void {
-  itemsD.splice(0, 1);
-}
+function removeFirst(): void { itemsD.splice(0, 1); }
 
 function main(): void {
   itemsA.push(new ItemA("a" + String(1)));

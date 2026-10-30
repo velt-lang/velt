@@ -1,46 +1,12 @@
 // A class hierarchy crossing threads, with a weak cache keyed by objects on the main task.
-class Shape {
-  area(): number {
-    return 0;
-  }
-}
-
-class Sq extends Shape {
-  s: number;
-  constructor(s: number) {
-    super();
-    this.s = s;
-  }
-  override area(): number {
-    return this.s * this.s;
-  }
-}
-
-class Circ extends Shape {
-  r: number;
-  constructor(r: number) {
-    super();
-    this.r = r;
-  }
-  override area(): number {
-    return 3 * this.r * this.r;
-  }
-}
-
-async function total(xs: Shape[]): Promise<number> {
-  let s = 0;
-  for (const x of xs) {
-    s += x.area();
-  }
-  return s;
-}
-
+class Shape { area(): number { return 0; } }
+class Sq extends Shape { s: number; constructor(s: number) { super(); this.s = s; } override area(): number { return this.s * this.s; } }
+class Circ extends Shape { r: number; constructor(r: number) { super(); this.r = r; } override area(): number { return 3 * this.r * this.r; } }
+async function total(xs: Shape[]): Promise<number> { let s = 0; for (const x of xs) s += x.area(); return s; }
 async function main() {
   const xs: Shape[] = [new Sq(2), new Circ(1)];
   const memo = new WeakMap<Shape, number>();
-  for (const x of xs) {
-    memo.set(x, x.area());
-  }
+  for (const x of xs) memo.set(x, x.area());
   const t = await spawn(total(xs));
   const m = shared(new Mutex<Shape[]>([new Sq(3)]));
   const a = m.with((v) => v[0].area());

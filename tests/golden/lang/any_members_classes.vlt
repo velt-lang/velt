@@ -4,36 +4,13 @@
 // past the end, compared with Node.
 class Box<T> {
   v: T;
-  constructor(v: T) {
-    this.v = v;
-  }
-  get(): T {
-    return this.v;
-  }
-  with(x: T): Box<T> {
-    return new Box<T>(x);
-  }
+  constructor(v: T) { this.v = v; }
+  get(): T { return this.v; }
+  with(x: T): Box<T> { return new Box<T>(x); }
 }
-
-class Base {
-  a: number = 1;
-  hello(n: number): string {
-    return "base" + n;
-  }
-}
-
-class Kid extends Base {
-  b: string = "k";
-  override hello(n: number): string {
-    return "kid" + n;
-  }
-}
-
-interface Cfg {
-  name: string;
-  port?: number;
-}
-
+class Base { a: number = 1; hello(n: number): string { return "base" + n; } }
+class Kid extends Base { b: string = "k"; override hello(n: number): string { return "kid" + n; } }
+interface Cfg { name: string; port?: number; }
 function main(): void {
   const b: any = new Box<number>(5);
   console.log(b.v, b.get(), b.with(7).v);

@@ -7,7 +7,10 @@
 type SetupFn = (inst: Inst) => VNode;
 type VNode = { type: any; dom: any; kids: VNode[] };
 type Inst = { vnode: VNode; el: any };
-type Opts<N, E> = { insert: (n: N, c: E, b: N | null) => void; comment: (t: string) => N };
+type Opts<N, E> = {
+  insert: (n: N, c: E, b: N | null) => void;
+  comment: (t: string) => N;
+};
 
 function createRenderer<HostNode = any, HostElement = any>(opts: Opts<HostNode, HostElement>) {
   const { insert: hostInsert, comment: hostComment } = opts;
@@ -25,9 +28,7 @@ function createRenderer<HostNode = any, HostElement = any>(opts: Opts<HostNode, 
     const el = hostComment(String(vnode.type));
     vnode.dom = el;
     hostInsert(el, container, before);
-    for (const k of vnode.kids) {
-      mount(k, container, null, parentNS);
-    }
+    for (const k of vnode.kids) mount(k, container, null, parentNS);
   }
   function mountComponent(
     vnode: VNode,

@@ -71,4 +71,6 @@ function main(): void {
   console.log(back === kept, typeof back);
   ids.set(kept, 1);
   console.log(back !== undefined ? ids.get(back) : -1);
+
 }
+

@@ -11,11 +11,9 @@ class Src {
     return this.it;
   }
 }
-
 async function* gen(): AsyncGenerator<number> {
   yield 1;
 }
-
 async function count(s: Src): Promise<number> {
   let n = 0;
   for await (const c of s) {
@@ -23,7 +21,6 @@ async function count(s: Src): Promise<number> {
   }
   return n;
 }
-
 class Holder {
   s: Src | null = null;
   constructor(s: Src) {
@@ -37,7 +34,6 @@ class Holder {
     return 0;
   }
 }
-
 async function main() {
   const h = new Holder(new Src(gen()));
   console.log(await h.total());

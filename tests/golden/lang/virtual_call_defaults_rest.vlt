@@ -5,13 +5,11 @@ class B {
     return "B" + a + r.length;
   }
 }
-
 class D extends B {
   override m(a: number = 2, ...r: number[]): string {
     return "D" + a + r.length;
   }
 }
-
 const xs: B[] = [new B(), new D()];
 for (const x of xs) {
   console.log(x.m(), x.m(undefined, 1), x.m(5, 6, 7), x.m(undefined), x.m(4, ...[1, 2]));

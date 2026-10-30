@@ -30,12 +30,7 @@ function main() {
   tree.kids[0].visit(tree.kids[0]);
   console.log(seen.join(","));
   const leaf: TNode = { name: "leaf", kids: [], byName: new Map(), list: [] };
-  const root: TNode = {
-    name: "root",
-    kids: [leaf],
-    byName: new Map([["leaf", leaf]]),
-    list: [leaf],
-  };
+  const root: TNode = { name: "root", kids: [leaf], byName: new Map([["leaf", leaf]]), list: [leaf] };
   console.log(root.byName.get("leaf")?.name, root.list.length);
   const t: T = { v: 1, kids: [], j: "x" };
   const u: T = { v: 2, kids: [t], j: [t] };

@@ -9,15 +9,9 @@ async function f(n: number): Promise<number> {
 
 async function check(s: Set<Promise<number>>): Promise<string> {
   let found = 0;
-  for (const x of s) {
-    if (s.has(x)) {
-      found++;
-    }
-  }
+  for (const x of s) if (s.has(x)) found++;
   let sum = 0;
-  for (const x of s) {
-    sum += await x;
-  }
+  for (const x of s) sum += await x;
   return "in task " + s.size + " found " + found + " sum " + sum;
 }
 
@@ -35,9 +29,7 @@ async function main() {
   }
   console.log(await spawn(check(s)));
   let t = 0;
-  for (const k of keepers) {
-    t += await k;
-  }
+  for (const k of keepers) t += await k;
   console.log(t);
   const p = f(7);
   const one = new Set<Promise<number>>();

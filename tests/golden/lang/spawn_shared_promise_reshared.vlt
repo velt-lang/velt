@@ -8,23 +8,19 @@ class Obj {
     this.n = n;
   }
 }
-
 async function make(n: number): Promise<Obj> {
   await Promise.resolve();
   return new Obj(n);
 }
-
 async function inner(p: Promise<Obj>): Promise<number> {
   return (await p).n * 10;
 }
-
 async function use(p: Promise<Obj>): Promise<number> {
   const again = p;
   const third = again;
   const t = spawn(inner(third));
   return (await again).n + (await p).n + (await t);
 }
-
 async function main() {
   const p = make(1);
   const q = p;

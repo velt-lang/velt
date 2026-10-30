@@ -1,132 +1,44 @@
 // A left-out argument takes the default of the override that runs (#1506), also through a
 // method value, `bind`, a generic class, and when that default throws.
-function boom(): number {
-  throw new Error("boom");
-}
+function boom(): number { throw new Error("boom"); }
 
-class B {
-  tag = "b";
-  m(x: number = 1): string {
-    return "B" + x;
-  }
-}
-
-class D extends B {
-  override m(x: number = 2): string {
-    return "D" + x;
-  }
-}
-
+class B { tag = "b"; m(x: number = 1): string { return "B" + x; } }
+class D extends B { override m(x: number = 2): string { return "D" + x; } }
 const b: B = new D();
 const f = b.m;
 console.log(f(), f(7));
-
-function call(h: (x?: number) => string): string {
-  return h();
-}
-
+function call(h: (x?: number) => string): string { return h(); }
 console.log(call(b.m), call((x?: number) => b.m(x)));
 const g = b.m.bind(b);
 console.log(g(), [0, 1].map(() => b.m()).join());
 const maybe: number | undefined = undefined;
 console.log(b.m(maybe), b.m(undefined), new B().m(maybe));
 
-class G<T> {
-  m(x: number = 1): string {
-    return "G" + x;
-  }
-}
-
-class H<T> extends G<T> {
-  override m(x: number = 2): string {
-    return "H" + x;
-  }
-}
-
+class G<T> { m(x: number = 1): string { return "G" + x; } }
+class H<T> extends G<T> { override m(x: number = 2): string { return "H" + x; } }
 const gs: G<string> = new H<string>();
 console.log(gs.m(), gs.m(5));
-
-class K extends G<number> {
-  override m(x: number = 3): string {
-    return "K" + x;
-  }
-}
-
+class K extends G<number> { override m(x: number = 3): string { return "K" + x; } }
 const gk: G<number> = new K();
 console.log(gk.m(), new G<number>().m());
 
-class P {
-  m(x: number = 1): number {
-    return x;
-  }
-}
-
-class Q extends P {
-  override m(x: number = boom()): number {
-    return x;
-  }
-}
-
+class P { m(x: number = 1): number { return x; } }
+class Q extends P { override m(x: number = boom()): number { return x; } }
 const p: P = new Q();
-try {
-  console.log(p.m());
-} catch (e) {
-  console.log("caught", (e as Error).message);
-}
+try { console.log(p.m()); } catch (e) { console.log("caught", (e as Error).message); }
 console.log(p.m(4));
-
-function viaFn(v: P): number {
-  return v.m();
-}
-
-try {
-  console.log(viaFn(new Q()));
-} catch (e) {
-  console.log("caught", (e as Error).message);
-}
+function viaFn(v: P): number { return v.m(); }
+try { console.log(viaFn(new Q())); } catch (e) { console.log("caught", (e as Error).message); }
 console.log(viaFn(new P()));
+function plain(x: number = boom()): number { return x; }
+try { console.log(plain()); } catch (e) { console.log("caught", (e as Error).message); }
 
-function plain(x: number = boom()): number {
-  return x;
-}
-
-try {
-  console.log(plain());
-} catch (e) {
-  console.log("caught", (e as Error).message);
-}
-
-class S {
-  m(s: string = "b", o: { k: number } = { k: 1 }, a: number[] = [1]): string {
-    return s + o.k + a.length;
-  }
-}
-
-class T extends S {
-  override m(s: string = "d" + "x", o: { k: number } = { k: 2 }, a: number[] = [1, 2, 3]): string {
-    return s + o.k + a.length;
-  }
-}
-
+class S { m(s: string = "b", o: { k: number } = { k: 1 }, a: number[] = [1]): string { return s + o.k + a.length; } }
+class T extends S { override m(s: string = "d" + "x", o: { k: number } = { k: 2 }, a: number[] = [1, 2, 3]): string { return s + o.k + a.length; } }
 const ss: S[] = [new S(), new T()];
-for (const x of ss) {
-  console.log(x.m(), x.m("z"), x.m(undefined, { k: 9 }));
-}
+for (const x of ss) { console.log(x.m(), x.m("z"), x.m(undefined, { k: 9 })); }
 
-class A1 {
-  async m(x: number = 1): Promise<number> {
-    return x;
-  }
-}
-
-class A2 extends A1 {
-  override async m(x: number = 2): Promise<number> {
-    return x * 10;
-  }
-}
-
-async function run(a: A1): Promise<void> {
-  console.log(await a.m(), await a.m(5));
-}
-
+class A1 { async m(x: number = 1): Promise<number> { return x; } }
+class A2 extends A1 { override async m(x: number = 2): Promise<number> { return x * 10; } }
+async function run(a: A1): Promise<void> { console.log(await a.m(), await a.m(5)); }
 run(new A2()).then(() => console.log("done"));

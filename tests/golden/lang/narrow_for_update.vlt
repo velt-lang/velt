@@ -11,26 +11,19 @@ class N {
     this.next = next;
   }
 }
-
 function sum(head: N | null): number {
   let s = 0;
   let c: N | null;
-  for (c = head; c; c = c.next) {
-    s += c.v;
-  }
+  for (c = head; c; c = c.next) s += c.v;
   for (let d = head; d !== null; d = d.next) {
-    if (d.v === 2) {
-      continue;
-    }
+    if (d.v === 2) continue;
     s += d.v * 100;
   }
   return s;
 }
-
 console.log(sum(new N(1, new N(2, null))));
 let head: N | null = new N(1, new N(2, new N(3, null)));
 let cur: N | null = null;
-
 function walk(): number {
   let s = 0;
   cur = head;
@@ -38,14 +31,10 @@ function walk(): number {
     s += cur.v;
     cur = cur.next;
   }
-  for (cur = head; cur; cur = cur.next) {
-    s += cur.v * 10;
-  }
+  for (cur = head; cur; cur = cur.next) s += cur.v * 10;
   return s;
 }
-
 console.log(walk());
-
 function sw(): string {
   switch (cur === null ? "none" : "some") {
     case "none":
@@ -54,23 +43,17 @@ function sw(): string {
       return "s";
   }
 }
-
 console.log(sw());
-
 function tf(): string {
   cur = head;
   try {
-    if (!cur) {
-      return "no";
-    }
+    if (!cur) return "no";
     return String(cur.v);
   } finally {
     cur = null;
   }
 }
-
 console.log(tf(), cur);
-
 function* gen(): Generator<number> {
   cur = head;
   while (cur) {
@@ -78,18 +61,12 @@ function* gen(): Generator<number> {
     cur = cur.next;
   }
 }
-
-for (const v of gen()) {
-  console.log("g", v);
-}
-
+for (const v of gen()) console.log("g", v);
 function clearHead(): void {
   head = null;
 }
-
 function ternary(): number {
   clearHead();
   return head ? head.v : -1;
 }
-
 console.log(ternary());

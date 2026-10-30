@@ -23,8 +23,6 @@ class Point {
 
 // What compiles instead.
 xs.sort((a, b) => {
-  if (a == b) {
-    panic("equal keys");
-  }
+  if (a == b) panic("equal keys");
   return a - b;
 });

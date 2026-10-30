@@ -19,7 +19,6 @@ function cString(s: string): u8[] {
 function fail(): i32 {
   return close(-1);
 }
-
 function pick(h: bool): i32 {
   const r = h ? fail() : close(-1);
   return r == -1 ? lastOsError() : 0;

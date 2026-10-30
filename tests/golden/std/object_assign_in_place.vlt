@@ -13,14 +13,12 @@ console.log(u);
 function setA(p: { a: number }): void {
   Object.assign(p, { a: 7 });
 }
-
 setA(t);
 console.log(t);
 
 class Src {
   a = 9;
 }
-
 Object.assign(u, new Src());
 console.log(u);
 
@@ -35,7 +33,6 @@ class Point {
     Object.assign(this, { x: 3, y: 4 });
   }
 }
-
 const pt = new Point();
 pt.move();
 console.log(pt.x, pt.y);
@@ -67,12 +64,10 @@ const arr: { a: number }[] = [{ a: 0 }, { a: 1 }];
 Object.assign(arr[0], { a: 42 });
 console.log(arr);
 let calls = 0;
-
 function next(): number {
   calls++;
   return calls;
 }
-
 Object.assign(arr[next()], { a: 7 });
 console.log(arr, calls);
 const pts: { x: number; y: number }[] = [{ x: 0, y: 0 }];

@@ -4,7 +4,6 @@ interface Ctx {
   n: number;
   update(): void;
 }
-
 const bad = { n: 1, update: 5 };
 const c = bad as unknown as Ctx;
 c.update();

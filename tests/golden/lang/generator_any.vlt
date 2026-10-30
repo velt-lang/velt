@@ -5,7 +5,6 @@ function* gen(x: any): Generator<any> {
   yield 2;
   yield "s";
 }
-
 function main(): void {
   const g = gen(1);
   console.log(g.next().value);
@@ -15,9 +14,7 @@ function main(): void {
   const e = g.next();
   console.log(e.done, e.value, typeof e.value);
   console.log(g.next().value === undefined);
-  for (const v of gen(null)) {
-    console.log(v);
-  }
+  for (const v of gen(null)) console.log(v);
   console.log([...gen({ a: 1 })]);
   const it: Iterator<any> = gen([1, 2]);
   console.log(it.next().value, it.next().value);

@@ -14,15 +14,12 @@ async function main() {
   const { promise } = Promise.withResolvers<number>();
   promise.then((v) => console.log("never", v));
   spawn(wait());
-  setTimeout(
-    async () => {
-      console.log("timer");
-      await new Promise<void>((resolve) => {
-        keepTimer = resolve;
-      });
-      console.log("never after the timer");
-    },
-    5,
-  );
+  setTimeout(async () => {
+    console.log("timer");
+    await new Promise<void>((resolve) => {
+      keepTimer = resolve;
+    });
+    console.log("never after the timer");
+  }, 5);
   console.log("main done");
 }

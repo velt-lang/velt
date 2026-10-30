@@ -15,5 +15,4 @@ function run(): void {
   };
   console.log([...walk(3)], [...named(2)]);
 }
-
 run();

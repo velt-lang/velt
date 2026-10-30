@@ -8,56 +8,35 @@ class T {
     this.name = name;
   }
 }
-
 let R: { t: T | null } = { t: null };
-
 function show(): void {
-  if (R.t !== null) {
-    console.log(R.t.name);
-  } else {
-    console.log("none");
-  }
+  if (R.t !== null) console.log(R.t.name);
+  else console.log("none");
 }
-
 show();
 R.t = new T("a");
 show();
 const K: { t: T | null } = { t: new T("k") };
-
 function showConst(): void {
-  if (K.t) {
-    console.log(K.t.name);
-  }
+  if (K.t) console.log(K.t.name);
 }
-
 showConst();
 let state: { v: string | number; next: T | null } = { v: 1, next: null };
-
 function kind(): void {
-  if (typeof state.v === "string") {
-    console.log("str", state.v.length);
-  } else {
-    console.log("num", state.v);
-  }
-  if (state.next) {
-    console.log(state.next.name);
-  }
+  if (typeof state.v === "string") console.log("str", state.v.length);
+  else console.log("num", state.v);
+  if (state.next) console.log(state.next.name);
   state = { v: "abc", next: new T("n") };
-  if (typeof state.v === "string") {
-    console.log("str", state.v.length);
-  }
+  if (typeof state.v === "string") console.log("str", state.v.length);
   if (state.next) {
     state.next.name = "m";
     console.log(state.next.name);
   }
 }
-
 kind();
-
 function reset(): void {
   state = { v: 2, next: null };
 }
-
 function guarded(): void {
   if (state.next) {
     reset();
@@ -65,5 +44,4 @@ function guarded(): void {
     console.log(state.next ?? "none");
   }
 }
-
 guarded();

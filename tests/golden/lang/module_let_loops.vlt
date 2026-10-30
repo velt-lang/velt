@@ -55,8 +55,6 @@ async function main() {
   console.log(seen.join(","), total);
   names = ["fresh"];
   let len = 0;
-  for (let i = 0; i < 4; i++) {
-    len += names.length + names[0]!.length;
-  }
+  for (let i = 0; i < 4; i++) len += names.length + names[0]!.length;
   console.log(len);
 }

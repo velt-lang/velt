@@ -24,9 +24,5 @@ function otherBranch(config: Config, err: Error): boolean {
 }
 
 function main() {
-  console.log(
-    unchecked({}, new Error("x")),
-    reassigned({}, new Error("y")),
-    otherBranch({}, new Error("z")),
-  );
+  console.log(unchecked({}, new Error("x")), reassigned({}, new Error("y")), otherBranch({}, new Error("z")));
 }

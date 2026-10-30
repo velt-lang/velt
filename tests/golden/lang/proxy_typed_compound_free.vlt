@@ -7,18 +7,17 @@ class Box {
 }
 
 let cur: Box = new Box();
-cur =
-  new Proxy(new Box(), {
-    get(t: any, key: string | symbol, receiver: any): any {
-      cur = new Box();
-      cur.count = 50;
-      return Reflect.get(t, key, receiver);
-    },
-    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
-      console.log("set", String(key), value, "p");
-      return Reflect.set(t, key, value, receiver);
-    },
-  }) as Box;
+cur = new Proxy(new Box(), {
+  get(t: any, key: string | symbol, receiver: any): any {
+    cur = new Box();
+    cur.count = 50;
+    return Reflect.get(t, key, receiver);
+  },
+  set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+    console.log("set", String(key), value, "p");
+    return Reflect.set(t, key, value, receiver);
+  },
+}) as Box;
 cur.count += 1;
 console.log(cur.count);
 cur.count += 1;

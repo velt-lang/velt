@@ -10,22 +10,16 @@ let active: (() => void) | null = null;
 const deps: Map<string, (() => void)[]> = new Map();
 const ids: WeakMap<object, number> = new WeakMap();
 let nextId = 0;
-
 function idOf(o: any): number {
   const id = ids.get(o);
-  if (id != null) {
-    return id;
-  }
+  if (id != null) return id;
   const fresh = nextId++;
   ids.set(o, fresh);
   return fresh;
 }
-
 function track(k: string): void {
   const f = active;
-  if (f == null) {
-    return;
-  }
+  if (f == null) return;
   const fs = deps.get(k);
   if (fs == null) {
     deps.set(k, [f]);
@@ -33,17 +27,11 @@ function track(k: string): void {
     fs.push(f);
   }
 }
-
 function trigger(k: string): void {
   const fs = deps.get(k);
-  if (fs == null) {
-    return;
-  }
-  for (const f of fs.slice()) {
-    f();
-  }
+  if (fs == null) return;
+  for (const f of fs.slice()) f();
 }
-
 function effect(f: () => void): void {
   const prev = active;
   active = f;
@@ -52,7 +40,6 @@ function effect(f: () => void): void {
 }
 
 let built = 0;
-
 function reactive(target: any): any {
   const cache: WeakMap<object, any> = new WeakMap();
   const id = idOf(target);
@@ -104,5 +91,4 @@ function run(): void {
   s.todo = { title: "new", done: false };
   console.log("after replace:", s.todo.title, "proxies built:", built);
 }
-
 run();

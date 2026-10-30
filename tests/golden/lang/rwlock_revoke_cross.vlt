@@ -6,12 +6,7 @@ class Cell {
   n: i64 = 1;
 }
 
-async function cross(
-  a: shared<RwLock<Cell>>,
-  b: shared<RwLock<Cell>>,
-  flip: bool,
-  rounds: i64,
-): Promise<i64> {
+async function cross(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, flip: bool, rounds: i64): Promise<i64> {
   let t: i64 = 0;
   for (let i: i64 = 0; i < rounds; i++) {
     t += flip ? b.read((y) => a.read((x) => x.n + y.n)) : a.read((x) => b.read((y) => x.n + y.n));

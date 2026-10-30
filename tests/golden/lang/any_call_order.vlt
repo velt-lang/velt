@@ -19,11 +19,9 @@ class G {
     return this.grow();
   }
 }
-
 class Holder {
   x: any = null;
 }
-
 class D {
   name: string;
   h: Holder;
@@ -36,7 +34,6 @@ class D {
     return this.name;
   }
 }
-
 function main(): void {
   const ss: string[] = ["a" + String(1)];
   const ns: number[] = [5];

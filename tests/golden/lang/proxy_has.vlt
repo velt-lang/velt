@@ -7,18 +7,14 @@ class Box {
     return this.size * 2;
   }
 }
-
 function main(): void {
   const seen: string[] = [];
-  const p = new Proxy(
-    { a: 1 },
-    {
-      has(t, k) {
-        seen.push(typeof k === "string" ? k : "?");
-        return k === "virtual" || Reflect.has(t, k);
-      },
+  const p = new Proxy({ a: 1 }, {
+    has(t, k) {
+      seen.push(typeof k === "string" ? k : "?");
+      return k === "virtual" || Reflect.has(t, k);
     },
-  );
+  });
   console.log("a" in p, "b" in p, "virtual" in p, seen.join(","));
   const plain = new Proxy(new Box(), {});
   console.log("size" in plain, "double" in plain, "nope" in plain, "toString" in plain);

@@ -1,16 +1,8 @@
 // check: no leaks
 // `"k" in o` then `typeof k === "undefined"`.
 type O = { k?: number | string };
-
 function g(o: O): string {
-  if ("k" in o) {
-    const k = o.k;
-    if (typeof k === "undefined") {
-      return "U";
-    }
-    return typeof k === "string" ? k : String(k + 1);
-  }
+  if ("k" in o) { const k = o.k; if (typeof k === "undefined") return "U"; return typeof k === "string" ? k : String(k + 1); }
   return "absent";
 }
-
 console.log(g({ k: 1 }), g({ k: "s" }), g({}), g({ k: undefined }));

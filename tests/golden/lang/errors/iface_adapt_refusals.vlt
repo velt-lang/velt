@@ -4,30 +4,24 @@
 interface Shape {
   area(): number;
 }
-
 interface Handler<T, R> {
   handle(t: T): R;
 }
-
 class H implements Handler<Shape, number> {
   handle(t: Shape): number {
     return t.area();
   }
 }
-
 const h: Handler<Shape, number> = new H();
 const all: Handler<unknown, unknown>[] = [h];
-
 class Box<T> {
   constructor(public v: T) {}
 }
-
 class BH implements Handler<Box<number>, number> {
   handle(t: Box<number>): number {
     return t.v;
   }
 }
-
 const bh: Handler<Box<number>, number> = new BH();
 const boxed: Handler<Box<unknown>, unknown>[] = [bh];
 console.log(all.length, boxed.length);

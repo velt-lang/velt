@@ -3,13 +3,10 @@
 interface G<T> {
   get(): T;
 }
-
 interface M {
   get(): number;
 }
-
 function f<T>(x: G<T> & M): number {
   return x.get();
 }
-
 console.log(1);

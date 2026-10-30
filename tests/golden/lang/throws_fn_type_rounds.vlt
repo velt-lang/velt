@@ -10,53 +10,18 @@ class End extends Error {
   }
 }
 
-class K0 {
-  v = 0;
-}
-
-class K1 {
-  v = 1;
-}
-
-class K2 {
-  v = 2;
-}
-
-class K3 {
-  v = 3;
-}
-
-class K4 {
-  v = 4;
-}
-
-class K5 {
-  v = 5;
-}
-
-class K6 {
-  v = 6;
-}
-
-class K7 {
-  v = 7;
-}
-
-class K8 {
-  v = 8;
-}
-
-class K9 {
-  v = 9;
-}
-
-class K10 {
-  v = 10;
-}
-
-class K11 {
-  v = 11;
-}
+class K0 { v = 0; }
+class K1 { v = 1; }
+class K2 { v = 2; }
+class K3 { v = 3; }
+class K4 { v = 4; }
+class K5 { v = 5; }
+class K6 { v = 6; }
+class K7 { v = 7; }
+class K8 { v = 8; }
+class K9 { v = 9; }
+class K10 { v = 10; }
+class K11 { v = 11; }
 
 let s0: (k: K0) => number = (k) => k.v;
 let s1: (k: K1) => number = (k) => k.v;

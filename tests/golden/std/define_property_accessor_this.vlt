@@ -2,7 +2,6 @@
 interface Cell {
   get value(): number;
 }
-
 const c: Cell = {
   get value() {
     return 1;

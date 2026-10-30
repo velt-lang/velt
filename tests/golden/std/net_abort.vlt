@@ -59,10 +59,7 @@ async function main() {
       }
     }
     conn.close();
-    return total == (filled as number) + size + 3 &&
-      tail[13] == 1 &&
-      tail[14] == 2 &&
-      tail[15] == 3;
+    return total == (filled as number) + size + 3 && tail[13] == 1 && tail[14] == 2 && tail[15] == 3;
   });
   const w = await connect(`127.0.0.1:${server.port}`);
   const big = Buffer.alloc(size);

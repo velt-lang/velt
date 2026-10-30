@@ -8,9 +8,7 @@ fills.push(() => {
 });
 
 function invoke(list: any[], props?: any): any[] {
-  if (props === "bad") {
-    throw new TypeError("bad props");
-  }
+  if (props === "bad") throw new TypeError("bad props");
   return list.map((i) => String(i) + String(props));
 }
 

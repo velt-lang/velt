@@ -7,7 +7,6 @@ function swallow(tag: string): void {
     console.log("caught", (e as Error).message);
   }
 }
-
 function f(): void {
   try {
     try {
@@ -17,15 +16,10 @@ function f(): void {
         swallow("one");
       }
     } finally {
-      try {
-        throw new Error("two");
-      } catch (e) {
-        console.log("caught two");
-      }
+      try { throw new Error("two"); } catch (e) { console.log("caught two"); }
     }
   } finally {
     swallow("three");
   }
 }
-
 f();

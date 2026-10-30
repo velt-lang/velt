@@ -3,8 +3,8 @@
 // local one that captures nothing is a generic function nested in its function (used as a value,
 // it is a generic function value); `this` keeps it from being either.
 
-const untypedParam = <T>(x) => x;
-const selfReturning = <T>(x: T) => selfReturning(x);
+const untypedParam = <T,>(x) => x;
+const selfReturning = <T,>(x: T) => selfReturning(x);
 
 function apply(f: (x: i64) => i64): i64 {
   return f(1);
@@ -12,15 +12,15 @@ function apply(f: (x: i64) => i64): i64 {
 
 function main() {
   const k = 3;
-  const id = <T>(x: T): T => x;
+  const id = <T,>(x: T): T => x;
   const asValue = id;
-  console.log(apply(<T>(x: T): T => x), k);
+  console.log(apply(<T,>(x: T): T => x), k);
 }
 
 class Holder {
   n: i64 = 1;
   get(): i64 {
-    const withThis = <T>(x: T): i64 => this.n;
+    const withThis = <T,>(x: T): i64 => this.n;
     return withThis(0);
   }
 }

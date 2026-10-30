@@ -12,20 +12,10 @@ type R = {
 };
 
 function t(r: R): string {
-  if (r.p instanceof A) {
-    console.log("p", r.p.a);
-  }
-  if (typeof r.v === "string") {
-    return r.v.toUpperCase();
-  }
-  if (r.o instanceof A) {
-    return "A" + r.o.a;
-  }
+  if (r.p instanceof A) console.log("p", r.p.a);
+  if (typeof r.v === "string") return r.v.toUpperCase();
+  if (r.o instanceof A) return "A" + r.o.a;
   return "-";
 }
 
-console.log(
-  t({ v: "x", o: null }),
-  t({ v: 1, o: new A(), p: new A() }),
-  t({ v: undefined, o: undefined }),
-);
+console.log(t({ v: "x", o: null }), t({ v: 1, o: new A(), p: new A() }), t({ v: undefined, o: undefined }));

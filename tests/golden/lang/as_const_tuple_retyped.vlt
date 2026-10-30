@@ -8,5 +8,4 @@ function run(): void {
   const [m] = e;
   console.log(m + 1);
 }
-
 run();

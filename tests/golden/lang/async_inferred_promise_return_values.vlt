@@ -4,23 +4,19 @@ async function v(n: number): Promise<number> {
   await Promise.resolve(0);
   return n;
 }
-
 const a = async () => v(1);
 const b = async () => {
   return v(2);
 };
-
 async function inf2() {
   return v(7);
 }
-
 async function inferred(x: number) {
   if (x > 0) {
     return v(x);
   }
   return 0;
 }
-
 async function main() {
   console.log(await a(), await b(), await inf2());
   console.log(await inferred(5), await inferred(-1));

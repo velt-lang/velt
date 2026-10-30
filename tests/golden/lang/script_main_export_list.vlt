@@ -1,6 +1,5 @@
 // A script whose `const main` is exported by an export list (#1567): the constant stays at
 // module level, as `export const main` does, and the statements use it.
 const main = (n: number): number => n * 2;
-
 export { main };
 console.log(main(21));

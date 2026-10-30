@@ -48,13 +48,8 @@ function main(): void {
   console.log(p.x, p.y, first, rest);
 
   const ps: P[] = [{ a: 1 }, { a: 2, b: "x" }];
-  for (const { a, b = "dflt" } of ps) {
-    console.log(a, b);
-  }
-  const pairs: [number, number | undefined][] = [
-    [1, undefined],
-    [2, 3],
-  ];
+  for (const { a, b = "dflt" } of ps) console.log(a, b);
+  const pairs: [number, number | undefined][] = [[1, undefined], [2, 3]];
   for (const [k, v = 9] of pairs) {
     const a = k * 10;
     console.log(k, v, a);

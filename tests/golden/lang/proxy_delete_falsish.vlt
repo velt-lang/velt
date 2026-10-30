@@ -1,15 +1,12 @@
 // A `deleteProperty` trap that returns `false`: `Reflect.deleteProperty` answers `false`, and
 // `delete` throws, as in strict code in Node.
 function main(): void {
-  const p: any = new Proxy(
-    { n: 1 },
-    {
-      deleteProperty(t, k) {
-        console.log("refused", k);
-        return false;
-      },
+  const p: any = new Proxy({ n: 1 }, {
+    deleteProperty(t, k) {
+      console.log("refused", k);
+      return false;
     },
-  );
+  });
   console.log(Reflect.deleteProperty(p, "n"));
   delete p.n;
   console.log("not reached");

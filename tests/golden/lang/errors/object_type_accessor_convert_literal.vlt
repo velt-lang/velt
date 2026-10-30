@@ -1,10 +1,6 @@
 // An object literal with accessors for an alias with accessors: converting its values to
 // `{ v: number }` would need a copy of the literal's object (#1501).
-type T = {
-  get v(): number;
-  set v(x: number);
-};
-
+type T = { get v(): number; set v(x: number) };
 let store = 5;
 const t: T = {
   get v() {

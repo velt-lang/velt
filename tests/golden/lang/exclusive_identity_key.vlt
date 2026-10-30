@@ -9,12 +9,10 @@ interface Dep {
   owners: Map<Sub, number>;
   version: number;
 }
-
 interface Link {
   dep: Dep;
   version: number;
 }
-
 interface Sub {
   name: string;
   deps: Link[];

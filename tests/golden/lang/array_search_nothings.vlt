@@ -15,7 +15,6 @@ console.log(s.indexOf("k2"), s.lastIndexOf("k0"), s.includes("zz"));
 function eqp<T>(x: T, y: T): string {
   return `${x == y} ${x != y} ${x === y} ${x !== y}`;
 }
-
 function find<T>(xs: T[], x: T): number {
   for (let i = 0; i < xs.length; i++) {
     if (xs[i] == x) {
@@ -24,16 +23,7 @@ function find<T>(xs: T[], x: T): number {
   }
   return -1;
 }
-
 console.log(eqp<unknown>(null, undefined), eqp<unknown>(1, 1), eqp<any>(undefined, null));
 console.log(eqp<number | null | undefined>(null, undefined), eqp<string>("a", "a"));
-console.log(
-  eqp<string | undefined>(undefined, undefined),
-  eqp<unknown>(0, null),
-  eqp<number>(1, 2),
-);
-console.log(
-  find<unknown>([1, null], undefined),
-  find<string>(["a", "b"], "b"),
-  find<any>([0], null),
-);
+console.log(eqp<string | undefined>(undefined, undefined), eqp<unknown>(0, null), eqp<number>(1, 2));
+console.log(find<unknown>([1, null], undefined), find<string>(["a", "b"], "b"), find<any>([0], null));

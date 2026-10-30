@@ -1,6 +1,6 @@
 // check: no leaks
 // A union alias that names itself behind an array or an index signature (JSON-like data).
-type Json = string | number | boolean | null | (readonly Json[]) | { readonly [key: string]: Json };
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
 
 type Tree = number | Tree[];
 
@@ -54,12 +54,6 @@ function sum(n: Node): number {
   return s;
 }
 
-const n: Node = {
-  kind: "node",
-  kids: [
-    { kind: "leaf", v: 1 },
-    { kind: "node", kids: [{ kind: "leaf", v: 2 }] },
-  ],
-};
+const n: Node = { kind: "node", kids: [{ kind: "leaf", v: 1 }, { kind: "node", kids: [{ kind: "leaf", v: 2 }] }] };
 console.log(sum(n), JSON.stringify(n));
 console.log(n);

@@ -5,7 +5,6 @@
 class Holder {
   x: any = null;
 }
-
 class S {
   name: string;
   h: Holder;
@@ -18,23 +17,19 @@ class S {
     console.log("set on", this.name, n);
   }
 }
-
 class Child {
   id: number;
   constructor(id: number) {
     this.id = id;
   }
 }
-
 class Parent {
   child: Child = new Child(1);
   kids: Child[] = [new Child(2), new Child(3)];
 }
-
 class Box {
   p: any = new Parent();
 }
-
 function main(): void {
   const holder = new Holder();
   holder.x = new S("first", holder);

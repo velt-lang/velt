@@ -4,32 +4,13 @@
 
 class T {
   label: string = "t" + String(1);
-  get g(): number {
-    G = null;
-    return 1;
-  }
-  m(): string {
-    G = null;
-    return this.label + "m";
-  }
-  get h(): string {
-    G = 5;
-    return this.label + "h";
-  }
+  get g(): number { G = null; return 1; }
+  m(): string { G = null; return this.label + "m"; }
+  get h(): string { G = 5; return this.label + "h"; }
 }
-
 let G: any = new T();
-
-function clearG(): number {
-  G = null;
-  return 3;
-}
-
-function useAny(x: any): string {
-  G = null;
-  return String(x.label);
-}
-
+function clearG(): number { G = null; return 3; }
+function useAny(x: any): string { G = null; return String(x.label); }
 function main(): void {
   console.log(G.g);
   G = new T();

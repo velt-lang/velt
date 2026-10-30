@@ -3,8 +3,5 @@
 const ht: { t: [number, string] | null } = { t: [1, "h"] };
 ht.t![0] = 2;
 console.log(ht.t);
-ht.t![0] = (() => {
-  ht.t = null;
-  return 5;
-})();
+ht.t![0] = (() => { ht.t = null; return 5; })();
 console.log(ht.t);

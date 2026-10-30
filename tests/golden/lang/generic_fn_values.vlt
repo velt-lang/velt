@@ -13,15 +13,13 @@ function make(n: number): Wrap {
   return <T>(x: T): T[] => {
     count += n;
     const out: T[] = [];
-    for (let i = 0; i < count; i++) {
-      out.push(x);
-    }
+    for (let i = 0; i < count; i++) out.push(x);
     return out;
   };
 }
 
 function inGeneric<U>(u: U): Wrap {
-  return <T>(x: T): T[] => {
+  return <T,>(x: T): T[] => {
     console.log("u", u);
     return [x];
   };
@@ -39,9 +37,7 @@ function scope(): Scope {
   let runs = 0;
   return {
     run<T>(fn: () => T): T | undefined {
-      if (!active) {
-        return undefined;
-      }
+      if (!active) return undefined;
       runs++;
       return fn();
     },
@@ -57,9 +53,7 @@ function scopeOf(): { run<T>(fn: () => T): T | undefined; stop(): void } {
   let active = true;
   const scope = {
     run<T>(fn: () => T): T | undefined {
-      if (!active) {
-        return undefined;
-      }
+      if (!active) return undefined;
       return fn();
     },
     stop() {
@@ -88,9 +82,7 @@ function main(): void {
   const h: Holder = { w: make(2), name: "h" };
   console.log(h.w(9), h.name);
   const ws: Wrap[] = [w, (x) => [x, x]];
-  for (const f of ws) {
-    console.log(f("z"));
-  }
+  for (const f of ws) console.log(f("z"));
   console.log(typeof w);
   const g = inGeneric(5);
   console.log(g(1), g("b"));
@@ -103,9 +95,9 @@ function main(): void {
   s2.stop();
   console.log(s2.run(() => 2));
   applyId(id);
-  applyId(<U>(y: U): U => y);
-  console.log(applyNumber(<T>(x: T): T => x));
+  applyId(<U,>(y: U): U => y);
+  console.log(applyNumber(<T,>(x: T): T => x));
   let k = 10;
-  const local = <T>(x: T): [T, number] => [x, k++];
+  const local = <T,>(x: T): [T, number] => [x, k++];
   console.log(local("q"), local(true), k);
 }

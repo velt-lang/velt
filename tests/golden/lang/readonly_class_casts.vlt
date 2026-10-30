@@ -12,7 +12,6 @@ class C {
     m.add("w");
   }
 }
-
 const c = new C();
 (c.items as Set<string>).add("a");
 (c.xs as string[]).push("b");

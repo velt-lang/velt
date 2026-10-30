@@ -1,39 +1,13 @@
 // A generic method of a bound called through a type parameter given a class whose method a
 // subclass overrides would need dynamic dispatch of a generic method (#1132): an error at each
 // instantiation, as calling it on that class directly is.
-interface Mapper {
-  apply<U>(f: (n: number) => U): U;
-}
-
-class A implements Mapper {
-  apply<U>(f: (n: number) => U): U {
-    return f(1);
-  }
-}
-
-class B extends A {
-  override apply<U>(f: (n: number) => U): U {
-    return f(2);
-  }
-}
-
-function run<T extends Mapper>(m: T): number {
-  return m.apply((n) => n);
-}
-
+interface Mapper { apply<U>(f: (n: number) => U): U; }
+class A implements Mapper { apply<U>(f: (n: number) => U): U { return f(1); } }
+class B extends A { override apply<U>(f: (n: number) => U): U { return f(2); } }
+function run<T extends Mapper>(m: T): number { return m.apply((n) => n); }
 const a: A = new B();
 console.log(run<A>(new B()), run(a));
-
-class Holder<T extends Mapper> {
-  m: T;
-  constructor(m: T) {
-    this.m = m;
-  }
-  go(): number {
-    return this.m.apply((n) => n);
-  }
-}
-
+class Holder<T extends Mapper> { m: T; constructor(m: T) { this.m = m; } go(): number { return this.m.apply((n) => n); } }
 console.log(new Holder<A>(new B()).go());
 const xs: A[] = [new A(), new B()];
 console.log(xs.map((x) => run(x)).join(","));

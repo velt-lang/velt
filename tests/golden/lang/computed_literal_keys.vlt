@@ -8,7 +8,10 @@ interface Headers {
   ["k"]?: number;
 }
 
-type Row = { id: number; ["label"]: string };
+type Row = {
+  id: number
+  ["label"]: string
+};
 
 class Box {
   ["size"] = 3;

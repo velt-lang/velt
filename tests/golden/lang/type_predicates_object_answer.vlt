@@ -5,13 +5,9 @@
 function isNumber(v: unknown): v is number {
   return true;
 }
-
 function show<T>(x: T): string {
-  if (isNumber(x)) {
-    return "number";
-  }
+  if (isNumber(x)) return "number";
   return "other";
 }
-
 console.log(show(1));
 console.log(show({ a: 1 }));

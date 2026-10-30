@@ -4,10 +4,8 @@ function emptyP<T>(o: T): Partial<T> {
   const r = {} as Partial<T>;
   return r;
 }
-
 function nonePicked<T, K extends keyof T>(o: T, ks: K[]): Partial<Pick<T, K>> {
   const r = {} as Partial<Pick<T, K>>;
   return r;
 }
-
 console.log(emptyP({ a: 1 }), nonePicked({ a: 1, b: "x" }, ["a"]));

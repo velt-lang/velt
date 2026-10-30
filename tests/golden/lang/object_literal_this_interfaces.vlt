@@ -59,7 +59,6 @@ function bump(k: Counter): string {
   k.inc(10);
   return k.show();
 }
-
 console.log(bump(c), c.count);
 const both = [c, counter("d")];
 for (const k of both) {
@@ -72,11 +71,9 @@ interface Named {
   name: string;
   greet(): string;
 }
-
 function hello(x: Named): string {
   return x.greet();
 }
-
 console.log(
   hello({
     name: "arg",
@@ -85,13 +82,12 @@ console.log(
     },
   }),
 );
-const cast =
-  {
-    name: "cast",
-    greet() {
-      return "hi " + this.name;
-    },
-  } as Named;
+const cast = {
+  name: "cast",
+  greet() {
+    return "hi " + this.name;
+  },
+} as Named;
 console.log(cast.greet());
 const named: Named = {
   name: "var",
@@ -109,7 +105,6 @@ interface Plugin {
   install(app: string[]): void;
   get summary(): string;
 }
-
 const plugin: Plugin = {
   name: "router",
   installs: 0,
@@ -132,7 +127,6 @@ interface Range {
   hi: number;
   values(): Generator<number>;
 }
-
 const range: Range = {
   lo: 2,
   hi: 5,

@@ -4,7 +4,6 @@ function value(): number {
   console.log("value");
   return 1;
 }
-
 function main(): void {
   const a: any = undefined;
   a.f = value();

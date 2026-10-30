@@ -38,18 +38,13 @@ async function main() {
       x.n += 1;
     }
   });
-  console.log(
-    "stored:",
-    m.with((d) => d.items.length),
-    "sum:",
-    m.with((d) => {
-      let s: i64 = 0;
-      for (const x of d.items) {
-        s += x.n;
-      }
-      return s;
-    }),
-  );
+  console.log("stored:", m.with((d) => d.items.length), "sum:", m.with((d) => {
+    let s: i64 = 0;
+    for (const x of d.items) {
+      s += x.n;
+    }
+    return s;
+  }));
 
   // An item the batch shares with another variable goes in as a copy.
   const seen = new Item();

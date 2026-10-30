@@ -2,7 +2,6 @@
 function twice(x: number): number {
   return x * 2;
 }
-
 function twice(x: string): string {
   return x + x;
 }

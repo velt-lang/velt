@@ -79,15 +79,12 @@ function main(): void {
 
   // A proxy of a proxy: the receiver is the outer proxy.
   let outer: any = null;
-  const inner = new Proxy(
-    { v: 1 },
-    {
-      get(t, k, r) {
-        console.log("inner get", k, r === outer);
-        return Reflect.get(t, k, r);
-      },
+  const inner = new Proxy({ v: 1 }, {
+    get(t, k, r) {
+      console.log("inner get", k, r === outer);
+      return Reflect.get(t, k, r);
     },
-  );
+  });
   outer = new Proxy(inner, {
     get(t, k, r) {
       console.log("outer get", k);

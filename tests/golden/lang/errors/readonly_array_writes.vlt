@@ -5,7 +5,6 @@ function f(xs: readonly number[]): void {
   xs[0] = 2;
   xs.sort();
 }
-
 const ro: ReadonlyArray<string> = ["b"];
 ro.pop();
 const g = (ys: readonly string[]) => ys.reverse();

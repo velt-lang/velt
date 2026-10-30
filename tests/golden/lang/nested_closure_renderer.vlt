@@ -47,12 +47,8 @@ function createRenderer<E>(options: RendererOptions<E>) {
 
   function unmount(vnode: VNode, container: E): void {
     const el = els.get(vnode.key);
-    if (el == null) {
-      return;
-    }
-    for (const c of vnode.children) {
-      unmount(c, el);
-    }
+    if (el == null) return;
+    for (const c of vnode.children) unmount(c, el);
     unmounts++;
     els.delete(vnode.key);
     hostRemove(el, container);
@@ -69,28 +65,18 @@ function createRenderer<E>(options: RendererOptions<E>) {
       return;
     }
     const el = els.get(oldV.key);
-    if (el == null) {
-      return;
-    }
+    if (el == null) return;
     els.delete(oldV.key);
     els.set(newV.key, el);
-    if (oldV.text !== newV.text) {
-      options.setText(el, newV.text);
-    }
+    if (oldV.text !== newV.text) options.setText(el, newV.text);
     patchChildren(oldV.children, newV.children, el);
   }
 
   function patchChildren(olds: VNode[], news: VNode[], el: E) {
     const n = Math.min(olds.length, news.length);
-    for (let i = 0; i < n; i++) {
-      patch(olds[i], news[i], el);
-    }
-    for (let i = n; i < news.length; i++) {
-      patch(null, news[i], el);
-    }
-    for (let i = n; i < olds.length; i++) {
-      unmount(olds[i], el);
-    }
+    for (let i = 0; i < n; i++) patch(olds[i], news[i], el);
+    for (let i = n; i < news.length; i++) patch(null, news[i], el);
+    for (let i = n; i < olds.length; i++) unmount(olds[i], el);
   }
 
   let current: VNode | null = null;
@@ -116,23 +102,14 @@ const renderer = createRenderer<HostEl>({
   },
   remove: (child: HostEl, parent: HostEl): void => {
     const i = parent.kids.indexOf(child);
-    if (i >= 0) {
-      parent.kids.splice(i, 1);
-    }
+    if (i >= 0) parent.kids.splice(i, 1);
   },
   setText: (el: HostEl, text: string): void => {
     el.text = text;
   },
 });
 const root = new HostEl("root");
-renderer.render(
-  h("div", "a", "", [
-    h("p", "b", "one"),
-    h("p", "c", "two"),
-    h("ul", "d", "", [h("li", "e", "x")]),
-  ]),
-  root,
-);
+renderer.render(h("div", "a", "", [h("p", "b", "one"), h("p", "c", "two"), h("ul", "d", "", [h("li", "e", "x")])]), root);
 console.log(show(root));
 console.log(renderer.stats());
 renderer.render(h("div", "a2", "", [h("p", "b2", "uno"), h("span", "c2", "dos")]), root);

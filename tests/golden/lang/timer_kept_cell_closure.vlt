@@ -28,13 +28,10 @@ function deep(n: number): number {
 function run(): void {
   setup();
   const g = kept[0];
-  setTimeout(
-    () => {
-      console.log("direct", g());
-      later(g, "named");
-    },
-    1,
-  );
+  setTimeout(() => {
+    console.log("direct", g());
+    later(g, "named");
+  }, 1);
   console.log(deep(2000));
 }
 

@@ -2,7 +2,6 @@
 function g(): never {
   return;
 }
-
 const h = (): never => {
   return;
 };

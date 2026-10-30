@@ -15,9 +15,7 @@ function k(i: number): void {
   const mixed = [1, "a", i > 0];
   console.log(mixed, mixed.length, typeof mixed[0], typeof mixed[1]);
   const w = [a, d];
-  for (const x of w) {
-    console.log(x ?? "none");
-  }
+  for (const x of w) console.log(x ?? "none");
 }
 
 function main(): void {

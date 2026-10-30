@@ -10,9 +10,7 @@ function main(): void {
   const xs: "a"[] = ["a", "a"];
   const ys = [...xs];
   console.log(ys, ys.length, xs.slice());
-  for (const x of xs) {
-    console.log(x);
-  }
+  for (const x of xs) console.log(x);
   show(xs);
 
   // An array in a variable a closure reassigns: the loop reads the variable's array each time.
@@ -29,18 +27,14 @@ function main(): void {
   // An array reached through a shared object.
   const box = { items: ["c"] as "c"[] };
   const other = box;
-  for (const c of box.items) {
-    console.log(c, other.items.length);
-  }
+  for (const c of box.items) console.log(c, other.items.length);
 
   const cs = ["a"] as const;
   const one: "a" = cs[0];
   console.log(cs, cs.length, one, [...cs]);
   show(cs);
   const twice = ["d", "d"] as const;
-  for (const d of twice) {
-    console.log(d.toUpperCase());
-  }
+  for (const d of twice) console.log(d.toUpperCase());
 
   const ns: 1[] = [1, 1, 1];
   console.log([...ns].map((v) => v + 1));

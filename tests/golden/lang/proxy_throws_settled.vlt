@@ -23,13 +23,7 @@ async function run(): Promise<void> {
   const tests = await Promise.allSettled([test(h, "bad"), test(h, "a")]);
   for (const x of tests) {
     if (x.status === "rejected") {
-      console.log(
-        "reason",
-        x.reason.message,
-        x.reason instanceof E2,
-        String(x.reason),
-        x.reason.toString(),
-      );
+      console.log("reason", x.reason.message, x.reason instanceof E2, String(x.reason), x.reason.toString());
       const r = x.reason;
       console.log("local", r.message);
     } else {
@@ -44,9 +38,7 @@ async function run(): Promise<void> {
   const p = test(h, "bad");
   const q = p.then((v) => !v);
   await q.catch((e) => console.log("then-catch", e.message));
-  await test(h, "bad")
-    .finally(() => console.log("finally"))
-    .catch((e) => console.log("after finally", e.message));
+  await test(h, "bad").finally(() => console.log("finally")).catch((e) => console.log("after finally", e.message));
 }
 
 run();

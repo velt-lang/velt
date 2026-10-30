@@ -1,39 +1,29 @@
 // Copies and swaps through a key union between fields of counted types (a class instance, an
 // array, a Map, a Set, a closure): the stored member is owned once, and both fields share it.
-class Box {
-  v = 1;
-}
-
+class Box { v = 1; }
 type R = { z: number; c: Box; d: Box };
 type L = { z: number; l: number[] };
 type M = { z: number; m: Map<string, number> };
 type S = { z: number; s: Set<number> };
 type F = { z: number; f: () => number };
-
 function copyKey<T, K extends keyof T>(from: T, to: T, k: K): void {
   to[k] = from[k];
 }
-
 function swap<T, K extends keyof T>(o: T, x: K, y: K): void {
   const v = o[x];
   o[x] = o[y];
   o[y] = v;
 }
-
 function swapDirect<T, K extends keyof T>(o: T, x: K, y: K): void {
   o[x] = o[y];
 }
-
 function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
   o[k] = v;
 }
-
 function main() {
   const a: R = { z: 1, c: new Box(), d: new Box() };
   const b: R = { z: 2, c: new Box(), d: new Box() };
-  for (let i = 0; i < 3; i++) {
-    copyKey(a, b, "c" as keyof R);
-  }
+  for (let i = 0; i < 3; i++) copyKey(a, b, "c" as keyof R);
   b.c.v = 7;
   console.log(a.c.v, b.c.v, a.c === b.c);
   swap(a, "c" as keyof R, "d" as keyof R);

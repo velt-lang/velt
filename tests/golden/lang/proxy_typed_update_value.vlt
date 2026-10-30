@@ -17,7 +17,6 @@ function traced(target: any): any {
 class S {
   count: number = 1;
 }
-
 type O = { k: number };
 
 const s = traced(new S()) as S;

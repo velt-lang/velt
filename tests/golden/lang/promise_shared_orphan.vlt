@@ -3,16 +3,13 @@
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(() => r(), ms));
 }
-
 async function val(ms: number): Promise<number> {
   await delay(ms);
   return 7;
 }
-
 async function waiter(name: string, p: Promise<number>): Promise<void> {
   console.log(name, await p);
 }
-
 async function main() {
   const p = val(20);
   const q = p;

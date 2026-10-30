@@ -5,11 +5,9 @@ function patchA<T>(o: T): number {
   const p: Partial<T> | null = null;
   return p === null ? 1 : 0;
 }
-
 function patchB<T>(o: T): number {
   const q: Required<T> | null = null;
   return q === null ? 2 : 0;
 }
-
 console.log(patchA([1]));
 console.log(patchB(["s"]));

@@ -7,7 +7,6 @@ class Failed extends Error {
     this.name = "Failed";
   }
 }
-
 function attempt(f: () => void) {
   try {
     f();
@@ -15,19 +14,14 @@ function attempt(f: () => void) {
     console.log("caught", (e as Error).message);
   }
 }
-
 function later(cb: () => void, ms: number) {
   setTimeout(cb, ms);
 }
-
 attempt(() => {
   throw new Failed("now");
 });
 later(() => console.log("tick"), 0);
-later(
-  () => {
-    throw new Failed("late");
-  },
-  5,
-);
+later(() => {
+  throw new Failed("late");
+}, 5);
 console.log("end");

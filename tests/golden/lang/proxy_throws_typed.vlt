@@ -4,18 +4,14 @@
 class TrapError extends Error {}
 
 function main(): void {
-  const s =
-    new Proxy(
-      { n: 1 },
-      {
-        get(t, k, r) {
-          if (k === "n" && Reflect.get(t, "n", r) === 2) {
-            throw new TrapError("n is 2");
-          }
-          return Reflect.get(t, k, r);
-        },
-      },
-    ) as { n: number };
+  const s = new Proxy({ n: 1 }, {
+    get(t, k, r) {
+      if (k === "n" && Reflect.get(t, "n", r) === 2) {
+        throw new TrapError("n is 2");
+      }
+      return Reflect.get(t, k, r);
+    },
+  }) as { n: number };
   console.log(s.n);
   s.n = 2;
   console.log("written");

@@ -6,19 +6,16 @@ class A {
     return "A" + a + b + "|" + r.length;
   }
 }
-
 class B extends A {
   override m(a: number = 3, b: number = 4, ...r: (number | undefined)[]): string {
     return "B" + a + b + "|" + r.length;
   }
 }
-
 class C extends A {
   override m(a: number = 1, b: number = 6, ...r: (number | undefined)[]): string {
     return "C" + a + b + "|" + r.length;
   }
 }
-
 const xs: A[] = [new A(), new B(), new C()];
 const us: (number | undefined)[] = [undefined];
 for (const x of xs) {
@@ -32,13 +29,11 @@ class P {
     return "P" + a + b + "|" + r.length;
   }
 }
-
 class Q extends P {
   override m(a: number, b: number = 4, ...r: number[]): string {
     return "Q" + a + b + "|" + r.length;
   }
 }
-
 const p: P = new Q();
 console.log(p.m(1), p.m(1, 5, 6), p.m(1, undefined));
 
@@ -48,17 +43,10 @@ class E {
     return "E" + a + "|" + r.length;
   }
 }
-
 class F extends E {
   override m(a: number = 2, ...r: (number | undefined)[]): string {
     return "F" + a + "|" + r.length;
   }
 }
-
 const e: E = new F();
-console.log(
-  e.m(undefined, undefined),
-  e.m(1, undefined),
-  e.m(undefined, undefined, undefined),
-  e.m(),
-);
+console.log(e.m(undefined, undefined), e.m(1, undefined), e.m(undefined, undefined, undefined), e.m());

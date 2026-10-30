@@ -27,7 +27,6 @@ function computed<T>(read: () => T, writable: boolean) {
   }
   return { obj: computedObj, reads: () => reads };
 }
-
 let base = 2;
 const c = computed(() => base * 10, true);
 console.log(c.obj.value, c.obj.label);

@@ -7,20 +7,16 @@ console.log(handled.has("server"), handled.has("x"), none.size, [...handled]);
 function unknownKeys(opts: string[], core: ReadonlySet<string>): string[] {
   const out: string[] = [];
   for (const k of opts) {
-    if (!core.has(k)) {
-      out.push(k);
-    }
+    if (!core.has(k)) out.push(k);
   }
   core.forEach((v) => out.push("core:" + v));
   return out;
 }
-
 console.log(unknownKeys(["server", "lazy"], handled));
 
 interface Ctx {
   boundaries(): ReadonlyMap<number, string>;
 }
-
 function makeCtx(): Ctx {
   const boundaries = new Map<number, string>();
   boundaries.set(2, "b");
@@ -31,12 +27,9 @@ function makeCtx(): Ctx {
     },
   };
 }
-
 const b = makeCtx().boundaries();
 console.log(b.size, b.get(1), b.has(3), [...b.keys()], [...b.values()]);
-for (const [id, rec] of b) {
-  console.log(id, rec);
-}
+for (const [id, rec] of b) console.log(id, rec);
 const copy = new Map(b);
 copy.set(3, "c");
 console.log(copy.size, b.size, b);

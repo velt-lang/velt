@@ -5,11 +5,7 @@ function main(): void {
   let n!: number;
   let s!: string;
   let k!: number;
-  const init = (): void => {
-    n = 1;
-    s = "a";
-    k = 5;
-  };
+  const init = (): void => { n = 1; s = "a"; k = 5; };
   init();
   n++;
   ++n;
@@ -19,9 +15,7 @@ function main(): void {
   const old = k--;
   console.log(n, s, k, old);
   let late!: string;
-  const set = (): void => {
-    late = "x";
-  };
+  const set = (): void => { late = "x"; };
   set();
   late += "y";
   console.log(late);

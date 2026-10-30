@@ -8,7 +8,6 @@ interface Base {
   refresh(): number;
   readonly state: string;
 }
-
 interface Named {
   name(): string;
 }
@@ -16,7 +15,6 @@ interface Named {
 type Wide = Base & { readonly errors: number };
 
 let calls = 0;
-
 function make(): Wide {
   return {
     get state() {
@@ -47,7 +45,6 @@ class Both implements Base, Named {
 interface StateBase<T> {
   refresh(): T;
 }
-
 type Errored<T> = StateBase<T> & { readonly state: "errored"; readonly error: string };
 
 function errored<T>(v: T): Errored<T> {
@@ -56,25 +53,22 @@ function errored<T>(v: T): Errored<T> {
 
 // `T & { … }` at an interface `T`, inferred from an argument of the intersection.
 type Signal<T> = T & { $set: (v: T) => void };
-
 function relay<T extends object>(s: Signal<T>): Signal<T> {
   return s;
 }
 
 // `T & object` at an interface or class `T` is `T`: the same value.
 function asObject<T>(t: T): T & object {
-  return t as (T & object);
+  return t as T & object;
 }
 
 // An interface value converts to an interface it extends, as the same object.
 interface Small {
   a(): number;
 }
-
 interface Large extends Small {
   b(): string;
 }
-
 class K implements Large {
   a() {
     return 1;
@@ -88,7 +82,6 @@ function* counter(): IterableIterator<number> {
   yield 1;
   yield 2;
 }
-
 function step(it: Iterator<number>): number {
   const r = it.next();
   return r.done ? -1 : r.value;

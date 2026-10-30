@@ -5,20 +5,17 @@ let cur = () => 10;
 const boom = () => {
   throw new Error("boom");
 };
-
 class K {
   f: () => number = fine;
   c: () => number = cur;
   h: () => void = boom;
 }
-
 class J {
   f: () => number;
   constructor() {
     this.f = fine;
   }
 }
-
 const k = new K();
 console.log("field", k.f === fine, new J().f === fine, new K().f === new K().f, k.c === cur);
 const top: () => number = fine;

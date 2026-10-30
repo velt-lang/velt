@@ -6,32 +6,26 @@
 function wait(ms: number, v: number): Promise<number> {
   return new Promise((resolve) => setTimeout(() => resolve(v), ms));
 }
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(() => resolve(), ms));
 }
-
 async function after(ms: number, v: number): Promise<number> {
   await sleep(ms);
   return v;
 }
-
 async function fail(ms: number, v: number): Promise<number> {
   await sleep(ms);
   throw new Error("failed " + v);
 }
-
 async function returns(v: number): Promise<number> {
   return v;
 }
-
 async function ticks(n: number, v: number): Promise<number> {
   for (let i = 0; i < n; i++) {
     await Promise.resolve();
   }
   return v;
 }
-
 async function main(): Promise<void> {
   // `a` settles only when the program says so: two timers' order is not reliable under load.
   let settleA: (v: number) => void = () => {};
@@ -96,5 +90,4 @@ async function main(): Promise<void> {
   console.log("race then vs settled", await Promise.race([h.then((v) => v + 100), h]));
   console.log("race ticks vs resolve", await Promise.race([ticks(1, 35), Promise.resolve(36)]));
 }
-
 main();

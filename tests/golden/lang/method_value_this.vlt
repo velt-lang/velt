@@ -34,9 +34,7 @@ class Counter {
   }
   run(times: number): void {
     const step = this.inc.bind(this);
-    for (let i = 0; i < times; i++) {
-      step();
-    }
+    for (let i = 0; i < times; i++) step();
     const again = this.inc;
     again();
   }

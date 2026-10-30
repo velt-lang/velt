@@ -3,19 +3,11 @@
 // an array of a literal, never the copy (#1240).
 type Size = { w: number; h: number };
 type Rect = { x: number; y: number; w: number; h: number };
-
-function area(s: Size): number {
-  return s.w * s.h;
-}
-
+function area(s: Size): number { return s.w * s.h; }
 const r: Rect = { x: 1, y: 2, w: 3, h: 4 };
 console.log(area(r));
 const unit: Size = { w: 1, h: 1 };
 const all: unknown[] = [unit];
-
-function log(x: unknown): void {
-  console.log(x);
-}
-
+function log(x: unknown): void { console.log(x); }
 log("done");
 console.log(all.length);

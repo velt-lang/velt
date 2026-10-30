@@ -6,9 +6,7 @@
 // value read from the array.
 function flips(n: number, seed: number): number {
   const perm: number[] = [];
-  for (let i = 0; i < n; i++) {
-    perm.push((i * seed + 3) % n);
-  }
+  for (let i = 0; i < n; i++) perm.push((i * seed + 3) % n);
   let total = 0;
   let k = perm[0];
   while (k !== 0) {
@@ -39,13 +37,9 @@ function rotations(n: number): number {
   for (let step = 0; step < 20; step++) {
     const r = (step % n) + 1;
     const first = perm1[0];
-    for (let i = 0; i < r - 1; i++) {
-      perm1[i] = perm1[i + 1];
-    }
+    for (let i = 0; i < r - 1; i++) perm1[i] = perm1[i + 1];
     perm1[r - 1] = first;
-    for (let i = 0; i < n; i++) {
-      perm[i] = perm1[i];
-    }
+    for (let i = 0; i < n; i++) perm[i] = perm1[i];
     checksum += perm[0] * (step + 1) - perm[n - 1];
   }
   return checksum;
@@ -55,12 +49,8 @@ function rotations(n: number): number {
 // reading them.
 function mixed(): string {
   const xs: number[] = [];
-  for (let i = 0; i < 6; i++) {
-    xs.push(i - 3);
-  }
-  for (let i = 0; i < xs.length; i++) {
-    xs[i] = ((xs[i] + 5) % 4) - 1;
-  }
+  for (let i = 0; i < 6; i++) xs.push(i - 3);
+  for (let i = 0; i < xs.length; i++) xs[i] = ((xs[i] + 5) % 4) - 1;
   let s = 0;
   let text = "";
   for (let i = 0; i < xs.length; i++) {

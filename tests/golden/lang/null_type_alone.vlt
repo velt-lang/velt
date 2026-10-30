@@ -39,9 +39,7 @@ function main() {
     { st: "ready", value: 41, error: null },
     { st: "failed", value: null, error: new Error("boom") },
   ];
-  for (const s of states) {
-    console.log(show(s));
-  }
+  for (const s of states) console.log(show(s));
   const n: null = always();
   const u: string | null = n;
   console.log(n, u, JSON.stringify(states[0]), typeof n, n === null, n ?? "fallback");

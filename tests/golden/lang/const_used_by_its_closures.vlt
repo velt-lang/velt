@@ -61,8 +61,7 @@ function ticker(prefix: string): Ticker {
 }
 
 const a = makeApp("x");
-a
-  .use((x) => console.log("plugin", x.name))
+a.use((x) => console.log("plugin", x.name))
   .hook("h1")
   .use((x) => console.log("again", x.name, x.plugins.length));
 console.log(a.hook("h2") === a, a.plugins);

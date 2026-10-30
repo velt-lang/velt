@@ -14,11 +14,8 @@ function inert(): { aborted: boolean } {
 
 reg(() => console.log("a"));
 reg(() => console.log("b"));
-
 function runAll(): void {
-  for (const f of xs ?? []) {
-    f();
-  }
+  for (const f of xs ?? []) f();
 }
 
 runAll();

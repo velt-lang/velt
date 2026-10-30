@@ -19,9 +19,7 @@ let victims: u8[][] = [];
 // Grow `g` past its capacity (its bytes move), then fill blocks of the old size, which reuse
 // the freed one.
 function grow(): i64 {
-  for (let i = 0; i < 200000; i++) {
-    g.push(1);
-  }
+  for (let i = 0; i < 200000; i++) g.push(1);
   for (let i = 0; i < 64; i++) {
     const x: u8[] = Buffer.alloc(4096);
     x.fill(9);
@@ -38,9 +36,7 @@ function replace(): i64 {
 
 class Holder {
   v: Uint8Array;
-  constructor(v: Uint8Array) {
-    this.v = v;
-  }
+  constructor(v: Uint8Array) { this.v = v; }
 }
 
 function reset() {

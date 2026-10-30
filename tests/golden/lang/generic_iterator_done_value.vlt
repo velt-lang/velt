@@ -1,29 +1,11 @@
 // `next().value` of a finished iterator in generic code is `undefined`, for any `T`
 // (issue #1215).
-function* gen(): Generator<number> {
-  yield 1;
-}
-
-function* genAny(): Generator<any> {
-  yield "a";
-}
-
-function first<T>(it: Iterator<T>): T | undefined {
-  return it.next().value;
-}
-
-function isUndef<T>(it: Iterator<T>): boolean {
-  return it.next().value === undefined;
-}
-
-function kind<T>(it: Iterator<T>): string {
-  return typeof it.next().value;
-}
-
-function firstAny(it: Iterator<any>): any {
-  return it.next().value;
-}
-
+function* gen(): Generator<number> { yield 1; }
+function* genAny(): Generator<any> { yield "a"; }
+function first<T>(it: Iterator<T>): T | undefined { return it.next().value; }
+function isUndef<T>(it: Iterator<T>): boolean { return it.next().value === undefined; }
+function kind<T>(it: Iterator<T>): string { return typeof it.next().value; }
+function firstAny(it: Iterator<any>): any { return it.next().value; }
 function main(): void {
   const g = gen();
   g.next();

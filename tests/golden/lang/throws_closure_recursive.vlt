@@ -8,25 +8,17 @@ class Node2 {
 }
 
 function depth(v: Node2, d: number): number {
-  if (d > 3) {
-    throw new TypeError("too deep");
-  }
+  if (d > 3) throw new TypeError("too deep");
   let max = d;
   v.kids.map((x) => depth(x, d + 1)).forEach((n) => {
-    if (n > max) {
-      max = n;
-    }
+    if (n > max) max = n;
   });
   return max;
 }
 
 function encode(value: number[] | number, level: number): string {
-  if (level > 2) {
-    throw new RangeError("nesting");
-  }
-  if (typeof value === "number") {
-    return `${value}`;
-  }
+  if (level > 2) throw new RangeError("nesting");
+  if (typeof value === "number") return `${value}`;
   return `[${value.map((item) => encode(item, level + 1)).join(",")}]`;
 }
 

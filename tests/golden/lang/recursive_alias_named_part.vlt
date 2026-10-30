@@ -26,17 +26,15 @@ function labels(m: Menu): string[] {
 }
 
 function main() {
-  const t: Tree = {
-    value: 1,
-    kids: [
-      { value: 2, kids: [] },
-      { value: 3, kids: [] },
-    ],
-  };
+  const t: Tree = { value: 1, kids: [{ value: 2, kids: [] }, { value: 3, kids: [] }] };
   console.log(total(t), JSON.stringify(t));
   const b: Base = t;
   console.log(b.value);
-  const m: Menu = { items: [{ items: [], value: 2, label: "open" }], value: 1, label: "file" };
+  const m: Menu = {
+    items: [{ items: [], value: 2, label: "open" }],
+    value: 1,
+    label: "file",
+  };
   console.log(labels(m).join(","), JSON.stringify(m));
   const root: Folder = { up: null, name: "/" };
   const home: Folder = { up: root, name: "home" };

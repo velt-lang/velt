@@ -15,7 +15,6 @@ class A {
     return #x in s;
   }
 }
-
 class B extends A {
   read(): number {
     return this.#x;
@@ -24,15 +23,12 @@ class B extends A {
     return 2;
   }
 }
-
 function outside(a: A): number {
   return a.#x;
 }
-
 function brand(a: A): boolean {
   return #x in a;
 }
-
 function main() {
   const a = JSON.parse<A>("{}");
 }

@@ -3,17 +3,9 @@
 // spread always copies it, as JavaScript does (#350): over an earlier value of a field that
 // can hold `undefined` it overrides with its `undefined`, in a concrete spread and in a
 // generic one alike.
-class C {
-  n?: number;
-  s = "c";
-}
-
+class C { n?: number; s = "c"; }
 type V = { n?: number; s: string };
-
-function both<A extends object, B extends object>(a: A, b: B) {
-  return { ...a, ...b };
-}
-
+function both<A extends object, B extends object>(a: A, b: B) { return { ...a, ...b }; }
 const v: V = { n: 1, s: "a" };
 const c = new C();
 const t: V = { ...v, ...c };

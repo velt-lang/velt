@@ -9,7 +9,6 @@ console.log((o as Record<symbol, unknown>)["a"], (o as Record<symbol, unknown>).
 const w = {} as Record<symbol, unknown>;
 (o as Record<symbol, unknown>)[K] = 1;
 console.log(n, w);
-
 function byString(k: "a" | "b", s: string, j: symbol | string): void {
   console.log((o as Record<symbol, unknown>)[k], (o as Record<symbol, unknown>)[s]);
   console.log((o as Record<symbol, unknown>)[j]);

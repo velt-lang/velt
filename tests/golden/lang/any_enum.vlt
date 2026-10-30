@@ -6,12 +6,10 @@ enum Color {
   Green,
   Blue = 10,
 }
-
 enum Dir {
   Up = "UP",
   Down = "DOWN",
 }
-
 const c: any = Color.Green;
 const d: any = Dir.Down;
 console.log(c, d, typeof c, typeof d, c === 1, d === "DOWN", c === Color.Green, d === Dir.Down);

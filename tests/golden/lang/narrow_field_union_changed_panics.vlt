@@ -9,15 +9,11 @@ let saved: Opt | null = null;
 
 function mut(): void {
   const s = saved;
-  if (s !== null) {
-    s.f = () => "changed";
-  }
+  if (s !== null) s.f = () => "changed";
 }
 
 function opt1(p: Opt): string {
-  if (typeof p.f === "function") {
-    return "fn";
-  }
+  if (typeof p.f === "function") return "fn";
   mut();
   const r: string | number | undefined = p.f;
   return typeof r;

@@ -11,7 +11,5 @@ class Base {
     return this.inc();
   }
 }
-
 class Sub extends Base {}
-
 console.log(Sub.twice());

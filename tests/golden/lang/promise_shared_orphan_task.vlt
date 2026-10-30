@@ -3,19 +3,16 @@
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(() => r(), ms));
 }
-
 class Obj {
   n: number;
   constructor(n: number) {
     this.n = n;
   }
 }
-
 async function val(n: number): Promise<Obj> {
   await delay(20);
   return new Obj(n);
 }
-
 async function work(): Promise<number> {
   const p = val(7);
   const q = p;
@@ -23,12 +20,10 @@ async function work(): Promise<number> {
   p.then((o) => console.log("p", o.n));
   return 1;
 }
-
 async function last(p: Promise<Obj>): Promise<void> {
   const o = await p;
   console.log("last", o.n);
 }
-
 async function main() {
   const n = await spawn(work());
   await delay(400);

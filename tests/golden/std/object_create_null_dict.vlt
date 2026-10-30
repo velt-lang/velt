@@ -3,32 +3,24 @@
 // with obj[key] ||= v and obj.k = v, read with `in` and obj[key], iterated with for...in (#925).
 
 const kebabCache: Record<string, string> = Object.create(null);
-
 function camelToKebab(str: string): string {
-  if (str.startsWith("--")) {
-    return str;
-  }
-  return kebabCache[str] ||= str.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+    if (str.startsWith('--')) return str;
+    return kebabCache[str] ||= str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }
-
 function stringifyStyle(style: Record<string, any>): string {
-  let ret = "";
-  for (const key in style) {
-    const value = style[key];
-    if (value != null && value !== "") {
-      ret += `${camelToKebab(key)}:${value};`;
+    let ret = '';
+    for (const key in style) {
+        const value = style[key];
+        if (value != null && value !== '') {
+            ret += `${camelToKebab(key)}:${value};`;
+        }
     }
-  }
-  return ret;
+    return ret;
 }
-
 console.log(stringifyStyle({ backgroundColor: "red", fontSize: 12, "--x": "1", empty: "" }));
 console.log(camelToKebab("constructor"), camelToKebab("toString"), camelToKebab("marginTop"));
 console.log("toString" in kebabCache, "marginTop" in kebabCache, kebabCache["marginTop"]);
 const d: Record<string, number> = Object.create(null);
-d["a"] = 1;
-d.b = 2;
-for (const k in d) {
-  console.log(k, d[k]);
-}
+d["a"] = 1; d.b = 2;
+for (const k in d) console.log(k, d[k]);
 console.log(d, Object.keys(d), "a" in d, "hasOwnProperty" in d);

@@ -17,20 +17,16 @@ class Chain {
     return this.parts.join(s) + "!";
   }
 }
-
 const c: any = new Chain(["a", "b"]);
 console.log(c.join("-"));
 
 let order = "";
-
 function list(): any {
   order += "l";
   return ["x", "y"];
 }
-
 function glue(): string {
   order += "g";
   return "+";
 }
-
 console.log(list().join(glue()), order);

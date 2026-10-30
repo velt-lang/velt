@@ -4,9 +4,7 @@
 async function main() {
   const xs = ["a", "b"];
   for (let x of xs) {
-    const f = () => {
-      x = x + "!";
-    };
+    const f = () => { x = x + "!"; };
     f();
     const t = spawn(async () => x.length);
     console.log(await t);

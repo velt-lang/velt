@@ -2,23 +2,19 @@
 // its own block, a nested namespace does not hide a type of the same name, and namespace
 // members inside conditional, mapped and template literal types.
 type A = string;
-
 namespace N {
   type A = number;
   export type X = A;
 }
-
 namespace N {
   export type Y = A; // the outer `A`: `N`'s `A` is not exported
 }
 
 type B = { x: number };
-
 namespace Outer {
   export namespace B {
     export type T = string;
   }
-
   export type Q = B; // the type `B`, not the namespace
   export type R = B.T;
 }

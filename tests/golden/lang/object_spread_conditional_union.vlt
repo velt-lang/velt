@@ -2,26 +2,11 @@
 // Conditional spreads whose branches write a key with different types (TypeScript spreads
 // `k: number | string`) or with a getter, read where the spread is written.
 function pick(c: boolean) {
-  return { a: 0, ...(c ? { k: 1 } : { k: "s" }) };
+    return { a: 0, ...(c ? { k: 1 } : { k: "s" }) };
 }
-
 console.log(pick(true), pick(false));
 let reads = 0;
-
 function g(c: boolean) {
-  return {
-    a: 1,
-    ...(
-      c
-        ? {
-          get v() {
-            reads++;
-            return 7;
-          },
-        }
-        : {}
-    ),
-  };
+    return { a: 1, ...(c ? { get v() { reads++; return 7; } } : {}) };
 }
-
 console.log(g(true), g(false), reads);

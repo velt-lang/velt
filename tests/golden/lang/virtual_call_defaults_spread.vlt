@@ -5,13 +5,11 @@ class B {
     return "B" + a + b;
   }
 }
-
 class D extends B {
   override m(a: number = 3, b: number = 4): string {
     return "D" + a + b;
   }
 }
-
 const one: [number] = [9];
 const two: [number, number] = [5, 6];
 const none: [] = [];

@@ -59,12 +59,12 @@ interface C {
 }
 
 function ab(u: A | B | C | undefined): string {
-  const v = u as (A | B);
+  const v = u as A | B;
   return v.kind === "a" ? `a ${v.x}` : `b ${v.y}`;
 }
 
 function bc(u: A | B | C | null | undefined): string {
-  return (u as (B | C)).kind;
+  return (u as B | C).kind;
 }
 
 function nul<T>(v: T | null): string {

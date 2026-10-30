@@ -2,9 +2,7 @@
 class P {
   x = 1;
 }
-
 function take(o: object): void {}
-
 function body(): void {
   take(5);
   take("s");
@@ -19,9 +17,7 @@ function body(): void {
   const u: unknown = 1;
   const ou: object = u;
 }
-
 function onlyObjects<T extends object>(v: T): T {
   return v;
 }
-
 onlyObjects(1);

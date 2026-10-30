@@ -2,24 +2,18 @@
 // number[] indexed with number variables.
 function dot(a: number[], b: number[]): number {
   let s = 0.0;
-  for (let i = 0; i < a.length; i++) {
-    s += a[i] * b[i];
-  }
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;
 }
 
 function sieve(n: number): number {
   const flags: boolean[] = [];
-  for (let i = 0; i <= n; i++) {
-    flags.push(true);
-  }
+  for (let i = 0; i <= n; i++) flags.push(true);
   let count = 0;
   for (let i = 2; i <= n; i++) {
     if (flags[i]) {
       count++;
-      for (let j = i * i; j <= n; j += i) {
-        flags[j] = false;
-      }
+      for (let j = i * i; j <= n; j += i) flags[j] = false;
     }
   }
   return count;
@@ -33,9 +27,7 @@ function main() {
     b.push(((i * 104729) % 1000) / 1000 - 0.5);
   }
   let d = 0.0;
-  for (let r = 0; r < 50; r++) {
-    d += dot(a, b);
-  }
+  for (let r = 0; r < 50; r++) d += dot(a, b);
   let integral = 0.0;
   const n = 20000000;
   const h = 1 / n;

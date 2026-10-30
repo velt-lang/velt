@@ -6,22 +6,18 @@
 async function len(s: string): Promise<number> {
   return s.length;
 }
-
 function both(t: string): Promise<number>[] {
   const g = () => len(t);
   return [spawn(g()), spawn(g())];
 }
-
 function either(c: boolean, t: string): Promise<number>[] {
   const g = () => len(t);
   return [spawn(c ? g() : g()), spawn(g())];
 }
-
 function pick(c: boolean, t: string): Promise<number> {
   const g = () => len(t);
   return spawn(c ? g() : g());
 }
-
 function many(t: string): Promise<number>[] {
   const g = () => len(t);
   const ps: Promise<number>[] = [];
@@ -30,7 +26,6 @@ function many(t: string): Promise<number>[] {
   }
   return ps;
 }
-
 async function main(): Promise<void> {
   const s = "ab".repeat(3);
   const f = async () => s.length;

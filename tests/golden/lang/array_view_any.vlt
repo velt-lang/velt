@@ -38,7 +38,6 @@ function total(xs: JSXChild[]): number {
   }
   return n;
 }
-
 console.log(total(kids as JSXChild[]), total(k2));
 
 // Nested arrays are views too.

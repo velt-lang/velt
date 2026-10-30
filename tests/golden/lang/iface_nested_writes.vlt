@@ -66,12 +66,7 @@ function fill(x: T, n: number): void {
 }
 
 function run(): void {
-  const a: T = {
-    t: [1, "a"],
-    get(): string {
-      return "g";
-    },
-  };
+  const a: T = { t: [1, "a"], get(): string { return "g"; } };
   setT(a);
   console.log(a.t[0], a.t[1]);
   const c: T = new C();
@@ -129,15 +124,7 @@ function run(): void {
 // The right-hand side drops every other reference to the receiver: the write still lands in
 // the object the target named, which stays alive until the write is done.
 function dropped(): void {
-  const holder: T[] = [
-    new C(),
-    {
-      t: [1, "x".repeat(4)],
-      get(): string {
-        return "lit";
-      },
-    },
-  ];
+  const holder: T[] = [new C(), { t: [1, "x".repeat(4)], get(): string { return "lit"; } }];
   const keep = holder[0];
   const f = (): string => {
     holder.pop();
@@ -160,12 +147,7 @@ function dropped(): void {
 // kept (JS writes into the array the object holds when the element is assigned). A compound
 // assignment reads the old element first.
 function order(): void {
-  const y: T = {
-    t: [1, "a"],
-    get(): string {
-      return "y";
-    },
-  };
+  const y: T = { t: [1, "a"], get(): string { return "y"; } };
   y.t[0] = (() => {
     y.t[1] = "rhs";
     return 2;
@@ -177,12 +159,7 @@ function order(): void {
     return "!";
   })();
   console.log(y.t[0], y.t[1]);
-  const n: N = {
-    m: [null, 1],
-    tag(): string {
-      return "n";
-    },
-  };
+  const n: N = { m: [null, 1], tag(): string { return "n"; } };
   n.m[0] ??= (() => {
     n.m[1] = 2;
     return 5;
@@ -193,13 +170,10 @@ function order(): void {
   })();
   console.log(n.m[0], n.m[1]);
   const c: T = new C();
-  const v =
-    (
-      c.t[0] = (() => {
-        c.t[1] = "v";
-        return 8;
-      })()
-    );
+  const v = (c.t[0] = (() => {
+    c.t[1] = "v";
+    return 8;
+  })());
   console.log(v, c.get(), c.t[1]);
 }
 
@@ -210,12 +184,7 @@ interface N {
 
 // Receivers that are not a plain path: evaluated once, in order, and the write lands.
 function receivers(): void {
-  const lit = (n: number, s: string): T => ({
-    t: [n, s],
-    get(): string {
-      return s;
-    },
-  });
+  const lit = (n: number, s: string): T => ({ t: [n, s], get(): string { return s; } });
   const xs: T[] = [lit(1, "a"), lit(2, "b")];
   let i = 0;
   xs[i++].t[0] = 50;
@@ -248,12 +217,7 @@ async function val(n: number): Promise<number> {
 }
 
 async function raced(): Promise<void> {
-  const x: T = {
-    t: [1, "a"],
-    get(): string {
-      return "x";
-    },
-  };
+  const x: T = { t: [1, "a"], get(): string { return "x"; } };
   const p = (async () => {
     x.t[0] = await val(100);
   })();

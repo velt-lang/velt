@@ -6,7 +6,7 @@ class E {
   name: string = "the class E";
 }
 
-extend<R> () => R {
+extend<R> (() => R) {
   bad(): number {
     return this;
   }

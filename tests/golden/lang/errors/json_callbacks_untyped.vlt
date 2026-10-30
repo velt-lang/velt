@@ -4,11 +4,7 @@
 function main() {
   const o = { a: 1, b: "x" };
   console.log(JSON.stringify(o, (k, v) => (typeof v === "number" ? undefined : v)));
-  console.log(
-    JSON.stringify([1], function (k, v) {
-      return v;
-    }),
-  );
+  console.log(JSON.stringify([1], function (k, v) { return v; }));
   const r = JSON.parseValue("[1]").revive((k, v) => v);
   const p = JSON.parse<i64[]>("[1]", (k: string, v: JsonValue) => v);
   // Accepted: the value parameter annotated, or no value parameter.

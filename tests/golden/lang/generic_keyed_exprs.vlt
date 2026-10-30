@@ -6,46 +6,36 @@
 // on a `T[K]` value test the instantiation's value.
 type Pt = { x: number; y: number };
 type Opt = { n?: number; s: string };
-
 const log: string[] = [];
-
 function key<K>(ks: K[], i: number): K {
   log.push("key" + i);
   return ks[i];
 }
-
 function first<T>(os: T[]): T {
   log.push("obj");
   return os[0];
 }
-
 function val<V>(v: V): V {
   log.push("val");
   return v;
 }
-
 function pick<T extends object, K extends keyof T>(os: T[], ks: K[]): T[K] {
   return first(os)[key(ks, 0)];
 }
-
 function put<T extends object, K extends keyof T>(os: T[], ks: K[], v: T[K]): void {
   first(os)[key(ks, 1)] = val(v);
 }
-
 function putTo<T extends object, K extends keyof T>(o: T, ks: K[], v: T[K]): void {
   o[key(ks, 1)] = v;
 }
-
 function get<T extends object, K extends keyof T>(o: T, k: K): T[K] {
   return o[k];
 }
-
 function swap<T extends object, K extends keyof T>(o: T, a: K, b: K): void {
   const t = o[a];
   o[a] = o[b];
   o[b] = t;
 }
-
 const p: Pt = { x: 1, y: 2 };
 const ks: ("x" | "y")[] = ["y", "x"];
 console.log(pick([p], ks));
@@ -61,52 +51,37 @@ const q = { s: ["a"], t: ["b"] };
 const s0 = q.s;
 swap(q, "s", "t");
 console.log(q.s[0], q.t[0], q.t === s0);
-
 function isUndef<T extends object, K extends keyof T>(o: T, k: K): boolean {
   const v = o[k];
   return v === undefined;
 }
-
 function isDef<T extends object, K extends keyof T>(o: T, k: K): boolean {
   const v = o[k];
   return v !== undefined;
 }
-
 function tag<T extends object, K extends keyof T>(o: T, k: K): string {
   const v = o[k];
   return typeof v;
 }
-
 function isNullish<T extends object, K extends keyof T>(o: T, k: K): boolean {
   const v = o[k];
   return v == null;
 }
-
 function tagOf<T extends object, K extends keyof T>(o: T, k: K, v: T[K]): string {
   return typeof v + (v === undefined);
 }
-
 function isNum<T extends object, K extends keyof T>(o: T, k: K): boolean {
   return typeof o[k] === "number";
 }
-
 function tagRead<T extends object, K extends keyof T>(o: T, k: K): string {
   return typeof o[k];
 }
-
 function orDef<T extends object, K extends keyof T>(o: T, k: K, d: T[K]): T[K] {
   const v = o[k];
   return v === undefined ? d : v;
 }
-
 const o3: Opt = { n: 3, s: "b" };
 console.log(isUndef(o, "n"), tag(o, "n"), tag(o, "s"), isNullish(o, "n"), tagOf(o, "n", undefined));
 console.log(isDef(o, "n"), isDef(o, "s"), isNum(o, "n"), tagRead(o, "n"));
 console.log(isUndef(o3, "n"), tag(o3, "n"), isNullish(o3, "n"), isDef(o3, "n"), isNum(o3, "n"));
-console.log(
-  tagRead(o3, "n"),
-  tagOf(o3, "s", "z"),
-  orDef(o, "n", 5),
-  orDef(o3, "n", 5),
-  orDef(o, "s", "z"),
-);
+console.log(tagRead(o3, "n"), tagOf(o3, "s", "z"), orDef(o, "n", 5), orDef(o3, "n", 5), orDef(o, "s", "z"));

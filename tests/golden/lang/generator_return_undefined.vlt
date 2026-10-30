@@ -8,12 +8,10 @@ function* g(): Generator<string> {
     console.log("closed");
   }
 }
-
 async function* ag(): AsyncGenerator<string> {
   yield "x";
   yield "y";
 }
-
 async function main() {
   const it = g();
   console.log(it.next().value);

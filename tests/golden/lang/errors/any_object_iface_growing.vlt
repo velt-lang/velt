@@ -6,25 +6,18 @@ interface Box<T> {
   value: T;
   show(): string;
 }
-
 interface W1<T> {
   a: T;
 }
-
 interface W2<T> {
   b: T;
 }
-
 interface W3<T> {
   c: T;
 }
-
 function f<T>(o: unknown, n: number): string {
   const b = o as Box<T>;
-  if (n <= 0) {
-    return b.show();
-  }
+  if (n <= 0) return b.show();
   return f<W1<T>>(o, n - 1) + f<W2<T>>(o, n - 1) + f<W3<T>>(o, n - 1) + f<T[]>(o, n - 1);
 }
-
 console.log(f<number>({ value: 1, show: () => "x" } as unknown, 1));

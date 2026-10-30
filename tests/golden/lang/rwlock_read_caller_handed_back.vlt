@@ -7,19 +7,15 @@ class Item {
     this.v = v;
   }
 }
-
 class St {
   items: Item[] = [new Item(1)];
 }
-
 function mv(dst: Item[], src: Item[]) {
   dst.push(src.pop()!);
 }
-
 function keepIt(dst: Item[][], src: Item[]) {
   dst.push(src);
 }
-
 function main() {
   const rw = shared(new RwLock<St>(new St()));
   const out: Item[] = [new Item(1), new Item(2)];
@@ -39,14 +35,5 @@ function main() {
     mv(got, l3);
     return [l.length, n2, l3.length, mine.v, l[1].v];
   });
-  console.log(
-    r.join(","),
-    got.length,
-    got[0] === got[0],
-    g.length,
-    g[0][0] === out[0],
-    g[0].length,
-    got[2] === out[1],
-    g[1][0].v,
-  );
+  console.log(r.join(","), got.length, got[0] === got[0], g.length, g[0][0] === out[0], g[0].length, got[2] === out[1], g[1][0].v);
 }

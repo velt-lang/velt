@@ -5,70 +5,27 @@
 // prints 100).
 type Inner = { v: number };
 type Outer = { inner: Inner };
-
-class D {
-  f: () => number;
-  constructor(f: () => number) {
-    this.f = f;
-  }
-  [Symbol.dispose](): void {
-    this.f();
-  }
-}
-
+class D { f: () => number; constructor(f: () => number) { this.f = f; } [Symbol.dispose](): void { this.f(); } }
 // 01: the right-hand side drops the last reference to a key.
-class K_01 {
-  n: number = 1;
-}
-
-class H_01 {
-  k: K_01 | null;
-  constructor(k: K_01) {
-    this.k = k;
-  }
-}
-
-function forget_01(h: H_01): number {
-  h.k = null;
-  return 13;
-}
-
+class K_01 { n: number = 1; }
+class H_01 { k: K_01 | null; constructor(k: K_01) { this.k = k; } }
+function forget_01(h: H_01): number { h.k = null; return 13; }
 function t01(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const wm = new WeakMap<K_01, D>();
   const h = new H_01(new K_01());
   wm.set(h.k!, new D(bump));
   o.inner.v = forget_01(h);
   console.log(o.inner.v, wm.has(new K_01()));
 }
-
 // 02: the right-hand side drops a map, which drops its values.
-class K_02 {
-  n: number = 1;
-}
-
-class M_02 {
-  wm: WeakMap<K_02, D> | null;
-  constructor(wm: WeakMap<K_02, D>) {
-    this.wm = wm;
-  }
-}
-
-function clear_02(m: M_02): number {
-  m.wm = null;
-  return 13;
-}
-
+class K_02 { n: number = 1; }
+class M_02 { wm: WeakMap<K_02, D> | null; constructor(wm: WeakMap<K_02, D>) { this.wm = wm; } }
+function clear_02(m: M_02): number { m.wm = null; return 13; }
 function t02(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const k = new K_02();
   const wm = new WeakMap<K_02, D>();
   wm.set(k, new D(bump));
@@ -76,5 +33,4 @@ function t02(): void {
   o.inner.v = clear_02(m);
   console.log(o.inner.v, k.n);
 }
-
 function main(): void {}

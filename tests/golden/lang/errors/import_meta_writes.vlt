@@ -3,9 +3,7 @@
 import.meta.url = "x";
 const m = import.meta;
 m.url = "x";
-
 function meta() {
   return import.meta;
 }
-
 meta().dirname = "/";

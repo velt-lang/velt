@@ -30,10 +30,8 @@ function main() {
   const g = h;
   h.bytes[0] = 3;
   console.log(viaQuiet(h));
-  console.log(
-    viaCallback(h, () => {
-      g.bytes = Buffer.alloc(8);
-    }),
-  );
+  console.log(viaCallback(h, () => {
+    g.bytes = Buffer.alloc(8);
+  }));
   console.log(h.bytes[0]);
 }

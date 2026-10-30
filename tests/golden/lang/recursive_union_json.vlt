@@ -1,6 +1,6 @@
 // A JSON-like recursive union alias: an object holding arrays and objects. (No leak check: a
 // `Record` value of an optional heap type leaks a reference, #1228.)
-type Json = string | number | boolean | null | (readonly Json[]) | { readonly [key: string]: Json };
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
 
 const v: Json = { a: [1, "x", { b: null }], c: { d: [true] } };
 console.log(JSON.stringify(v));

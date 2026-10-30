@@ -12,18 +12,11 @@ console.log(second, missing, n);
 const nested: string[][] = [["a", "b"], ["c"]];
 const { 1: [inner], 0: { length: l0 } } = nested;
 console.log(inner, l0);
-const pairs: [string, number][] = [
-  ["k", 1],
-  ["j", 2],
-];
-for (const { 0: k, 1: v } of pairs) {
-  console.log(k, v);
-}
-
+const pairs: [string, number][] = [["k", 1], ["j", 2]];
+for (const { 0: k, 1: v } of pairs) console.log(k, v);
 function f({ 0: a, length }: number[]): number {
   return a + length;
 }
-
 console.log(f([10, 20]));
 const objs = { 0: "zero", 1: 1 };
 const { 0: o0, 1: o1 } = objs;

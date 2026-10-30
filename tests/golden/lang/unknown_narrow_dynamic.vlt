@@ -10,11 +10,9 @@ class Box<T> {
     return [this.v, this.v];
   }
 }
-
 class Plain {
   n: number = 4;
 }
-
 function describe(u: unknown): string {
   if (Array.isArray(u)) {
     return `array of ${u.length}, first ${u[0]}`;
@@ -36,7 +34,6 @@ function describe(u: unknown): string {
   }
   return "other";
 }
-
 function main(): void {
   console.log(describe([7, 8, 9]));
   console.log(describe(["x"]));

@@ -10,7 +10,6 @@ class Money {
     return this.cents;
   }
 }
-
 class Label {
   text: string;
   constructor(text: string) {
@@ -20,11 +19,9 @@ class Label {
     return `<${this.text}>`;
   }
 }
-
 class Plain {
   x = 1;
 }
-
 const m: any = new Money(250);
 const l: any = new Label("hi");
 const p: any = new Plain();
@@ -38,13 +35,7 @@ console.log(p + "", p * 2, p == "[object Object]");
 console.log(d - 0, d * 1, d > 500, d < 2000, +d);
 console.log(mp * 1, st + 1, mp + "");
 console.log(f * 1, f < 1, f > 1);
-console.log(
-  [1] == (1 as any),
-  ([] as any) == 0,
-  ([1, 2] as any) == "1,2",
-  (null as any) == 0,
-  (undefined as any) == null,
-);
+console.log([1] == (1 as any), ([] as any) == 0, ([1, 2] as any) == "1,2", (null as any) == 0, (undefined as any) == null);
 const nums: any[] = [1, 2, 3];
 let total: any = 0;
 for (const n of nums) {
@@ -100,14 +91,7 @@ console.log(w);
 const typed: number = (n as any) * 2;
 console.log(typed);
 console.log(1 / (-0 as any), (-0 as any) * 1, 5 % (0 as any), 2 ** (0.5 as any));
-console.log(
-  "3" as any > 12,
-  ("3" as any) > "12",
-  "b" > ("a" as any),
-  (null as any) >= 0,
-  (undefined as any) < 1,
-);
-
+console.log("3" as any > 12, ("3" as any) > "12", "b" > ("a" as any), (null as any) >= 0, (undefined as any) < 1);
 // `ToPrimitive` keeps a number `valueOf()` gives, and passes `[Symbol.toPrimitive]` the hint.
 class Cents {
   cents: number;
@@ -118,36 +102,29 @@ class Cents {
     return this.cents;
   }
 }
-
-const c10: any = new Cents(10);
-const c9: any = new Cents(9);
+const c10: any = new Cents(10),
+  c9: any = new Cents(9);
 console.log(c10 + 1, 1 + c10, c10 + c9, c10 + "!", "$" + c10, `${c10}`);
 console.log(c10 < c9, c10 < "9", c10 > 9.5, c10 <= 10, c9 >= c10);
 console.log(c10 == "10.0", c10 == 10, c10 != 11, c10 == c9, c10 == c10);
-
 class TP {
   [Symbol.toPrimitive](h: string): any {
     return h === "number" ? 42 : "dflt";
   }
 }
-
 const tp: any = new TP();
 console.log(+tp, tp * 1, tp < 50, tp + 1, tp == "dflt", `${tp}`);
-
 class B {
   valueOf(): any {
     return true;
   }
 }
-
 console.log((new B() as any) * 2, (new B() as any) + 1);
-
 class S {
   toString(): string {
     return "7";
   }
 }
-
 const s7: any = new S();
 console.log(s7 * 2, s7 + 1, s7 == 7, s7 < 10);
 const lit: any = { valueOf: () => 5 };
@@ -156,8 +133,8 @@ const fn: any = function () {};
 console.log(fn == 0, fn == 1, fn != 0, fn == null, fn * 1);
 const d2: any = new Date(1000);
 console.log(d2 - 0, d2 < 2000, typeof (d2 + 1));
-const two: any = [2];
-const none: any = [];
-const ab: any = ["a"];
-const pair: any = [1, 2];
+const two: any = [2],
+  none: any = [],
+  ab: any = ["a"],
+  pair: any = [1, 2];
 console.log(two == 2, none == 0, ab == "a", pair == "1,2", none == false, 2 == two, two != 3);

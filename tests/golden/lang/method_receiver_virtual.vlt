@@ -4,65 +4,31 @@
 // that holder (#1188). Calls on locals, parameters and `this` are unchanged. Identical to Node.
 class Shape {
   tag: string;
-  constructor(t: string) {
-    this.tag = t;
-  }
-  describe(): string {
-    return "shape " + this.tag;
-  }
+  constructor(t: string) { this.tag = t; }
+  describe(): string { return "shape " + this.tag; }
 }
-
 class Circle extends Shape {
-  override describe(): string {
-    swap();
-    return "circle " + this.tag;
-  }
+  override describe(): string { swap(); return "circle " + this.tag; }
 }
-
 class Square extends Shape {
-  override describe(): string {
-    holder.shape = new Shape("plain");
-    return "square " + this.tag;
-  }
+  override describe(): string { holder.shape = new Shape("plain"); return "square " + this.tag; }
 }
-
 class Tri extends Shape {
-  override describe(): string {
-    shapes.length = 0;
-    return "tri " + this.tag;
-  }
+  override describe(): string { shapes.length = 0; return "tri " + this.tag; }
 }
-
 class Hex extends Shape {
-  override describe(): string {
-    again();
-    return "hex " + this.tag;
-  }
+  override describe(): string { again(); return "hex " + this.tag; }
 }
-
-class Holder {
-  shape: Shape = new Square("sq" + String(1));
-}
-
+class Holder { shape: Shape = new Square("sq" + String(1)); }
 let current: Shape = new Circle("c" + String(1));
-
-function swap(): void {
-  current = new Shape("swapped");
-}
-
+function swap(): void { current = new Shape("swapped"); }
 let holder = new Holder();
 const shapes: Shape[] = [new Tri("t" + String(1))];
 let again: () => void = () => {};
-
-function viaParam(s: Shape): string {
-  return s.describe();
-}
-
+function viaParam(s: Shape): string { return s.describe(); }
 class Group {
   first: Shape = new Shape("g" + String(1));
-  each(): string {
-    return this.first.describe();
-  }
+  each(): string { return this.first.describe(); }
 }
 
 function main(): void {
@@ -70,9 +36,7 @@ function main(): void {
   console.log(holder.shape.describe(), holder.shape.tag);
   console.log(shapes[0].describe(), shapes.length);
   let local: Shape = new Hex("h" + String(1));
-  again = () => {
-    local = new Shape("closure");
-  };
+  again = () => { local = new Shape("closure"); };
   console.log(local.describe(), local.tag);
   const mine: Shape = new Shape("local");
   console.log(mine.describe(), viaParam(mine), new Group().each());

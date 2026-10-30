@@ -14,9 +14,7 @@ function main() {
   for (const maybe of inputs) {
     for (const flag of [true, false]) {
       for (const some of [true, false]) {
-        console.log(
-          `maybe=${maybe === null ? "null" : JSON.stringify(maybe)} flag=${flag} el=${some}`,
-        );
+        console.log(`maybe=${maybe === null ? "null" : JSON.stringify(maybe)} flag=${flag} el=${some}`);
         const a = generic.cases(maybe, flag, some, ra);
         const b = precompiled.cases(maybe, flag, some, rb);
         for (let i: usize = 0; i < a.length; i++) {

@@ -60,10 +60,7 @@ function arrays() {
 }
 
 function loops() {
-  const ps: [number[], number[]][] = [
-    [[1], [2]],
-    [[3], [4]],
-  ];
+  const ps: [number[], number[]][] = [[[1], [2]], [[3], [4]]];
   for (const [a, b] of ps) {
     append(a, b);
   }
@@ -90,9 +87,7 @@ all([
   ["a", "b"],
   ["c", "d"],
 ]);
-for (const f of later) {
-  f();
-}
+for (const f of later) f();
 tuples();
 objects();
 nested();

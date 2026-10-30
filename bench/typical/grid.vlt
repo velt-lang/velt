@@ -5,9 +5,7 @@ function matmul(a: number[][], b: number[][], n: number): number[][] {
     const row: number[] = [];
     for (let j = 0; j < n; j++) {
       let s = 0.0;
-      for (let k = 0; k < n; k++) {
-        s += a[i][k] * b[k][j];
-      }
+      for (let k = 0; k < n; k++) s += a[i][k] * b[k][j];
       row.push(s);
     }
     c.push(row);
@@ -23,14 +21,10 @@ function life(g: boolean[][], n: number): boolean[][] {
       let c = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) {
-            continue;
-          }
+          if (dx === 0 && dy === 0) continue;
           const yy = (y + dy + n) % n;
           const xx = (x + dx + n) % n;
-          if (g[yy][xx]) {
-            c++;
-          }
+          if (g[yy][xx]) c++;
         }
       }
       row.push(g[y][x] ? c === 2 || c === 3 : c === 3);
@@ -56,28 +50,16 @@ function main() {
   }
   const c = matmul(a, b, n);
   let tr = 0.0;
-  for (let i = 0; i < n; i++) {
-    tr += c[i][i];
-  }
+  for (let i = 0; i < n; i++) tr += c[i][i];
   let g: boolean[][] = [];
   const m = 256;
   for (let y = 0; y < m; y++) {
     const row: boolean[] = [];
-    for (let x = 0; x < m; x++) {
-      row.push((x * 7 + y * 13) % 5 === 0);
-    }
+    for (let x = 0; x < m; x++) row.push((x * 7 + y * 13) % 5 === 0);
     g.push(row);
   }
-  for (let gen = 0; gen < 100; gen++) {
-    g = life(g, m);
-  }
+  for (let gen = 0; gen < 100; gen++) g = life(g, m);
   let alive = 0;
-  for (const row of g) {
-    for (const cell of row) {
-      if (cell) {
-        alive++;
-      }
-    }
-  }
+  for (const row of g) for (const cell of row) if (cell) alive++;
   console.log(tr, alive);
 }

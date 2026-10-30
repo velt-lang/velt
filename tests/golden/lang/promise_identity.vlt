@@ -63,11 +63,7 @@ async function main() {
     many.add(r);
   }
   let found = 0;
-  for (const r of list) {
-    if (many.has(r)) {
-      found++;
-    }
-  }
+  for (const r of list) if (many.has(r)) found++;
   console.log("many", many.size, found);
   const all = await Promise.all(list);
   console.log("values", all.reduce((a, b) => a + b, 0), await p, await arr[0], await q, await t);

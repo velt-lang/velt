@@ -22,9 +22,7 @@ function keep<U>(x: U): U | null {
 
 function wrap<T>(target: T, depth: number): string {
   if (isPrimitive(target)) {
-    if (depth > 9) {
-      throw new Fail(target);
-    }
+    if (depth > 9) throw new Fail(target);
     const k = keep(target);
     return `${k === null}:` + wrap({ value: target }, depth + 1);
   }
@@ -32,9 +30,7 @@ function wrap<T>(target: T, depth: number): string {
 }
 
 async function later<T>(t: T): Promise<string> {
-  if (isPrimitive(t)) {
-    return await later({ value: t });
-  }
+  if (isPrimitive(t)) return await later({ value: t });
   return JSON.stringify(t);
 }
 
@@ -43,16 +39,12 @@ class Box<T> {
 }
 
 function boxed<T>(t: T): string {
-  if (isPrimitive(t)) {
-    return "box(" + boxed(new Box(t)) + ")";
-  }
+  if (isPrimitive(t)) return "box(" + boxed(new Box(t)) + ")";
   return "object";
 }
 
 function listed<T>(t: T): number {
-  if (isPrimitive(t)) {
-    return listed([t, t]);
-  }
+  if (isPrimitive(t)) return listed([t, t]);
   return 1;
 }
 

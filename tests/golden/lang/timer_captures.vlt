@@ -19,12 +19,9 @@ class CC implements Ctr {
 
 async function main() {
   const k: Ctr = new CC();
-  setTimeout(
-    () => {
-      k.inc();
-    },
-    1,
-  );
+  setTimeout(() => {
+    k.inc();
+  }, 1);
   const xs = [1];
   setTimeout(() => console.log("length", xs.length), 1);
   xs.push(2);
@@ -34,14 +31,11 @@ async function main() {
   // Created after the 1 ms timers and with a longer delay, so its deadline is later whatever
   // the time between the calls (a slow run must not reorder it before the last 1 ms timer).
   setTimeout(() => console.log("count", k.get()), 5);
-  const every = setInterval(
-    () => {
-      xs.push(xs.length + 1);
-      if (xs.length == 4) {
-        clearInterval(every);
-        console.log("interval", xs.join(","));
-      }
-    },
-    10,
-  );
+  const every = setInterval(() => {
+    xs.push(xs.length + 1);
+    if (xs.length == 4) {
+      clearInterval(every);
+      console.log("interval", xs.join(","));
+    }
+  }, 10);
 }

@@ -4,70 +4,34 @@ interface Sh {
   area<U>(u: U): number;
   name(): string;
 }
-
 class Sq implements Sh {
-  area<U>(u: U): number {
-    return 1;
-  }
-  name(): string {
-    return "sq";
-  }
+  area<U>(u: U): number { return 1; }
+  name(): string { return "sq"; }
 }
-
 class Sq3 extends Sq {
-  override area<U>(u: U): number {
-    return 30;
-  }
+  override area<U>(u: U): number { return 30; }
 }
-
 class Sq4 extends Sq3 {}
-
 class Sq5 extends Sq4 {
-  override area<U>(u: U): number {
-    return 500;
-  }
-  override name(): string {
-    return "sq5";
-  }
+  override area<U>(u: U): number { return 500; }
+  override name(): string { return "sq5"; }
 }
 
-function go<S extends Sh>(s: S): number {
-  return s.area<string>("k");
-}
+function go<S extends Sh>(s: S): number { return s.area<string>("k"); }
+function both<S extends Sh>(s: S): string { return `${s.name()} ${s.area(2)}`; }
 
-function both<S extends Sh>(s: S): string {
-  return `${s.name()} ${s.area(2)}`;
-}
-
-interface Boxy<T> {
-  wrap<U>(u: U): string;
-  get(): T;
-}
-
+interface Boxy<T> { wrap<U>(u: U): string; get(): T; }
 class Box<T> implements Boxy<T> {
   constructor(public v: T) {}
-  wrap<U>(u: U): string {
-    return `box(${this.v}, ${u})`;
-  }
-  get(): T {
-    return this.v;
-  }
+  wrap<U>(u: U): string { return `box(${this.v}, ${u})`; }
+  get(): T { return this.v; }
 }
-
 class Labeled<T> extends Box<T> {
-  constructor(v: T, public label: string) {
-    super(v);
-  }
-  override wrap<U>(u: U): string {
-    return `${this.label}(${this.v}, ${u})`;
-  }
+  constructor(v: T, public label: string) { super(v); }
+  override wrap<U>(u: U): string { return `${this.label}(${this.v}, ${u})`; }
 }
-
 class Num extends Labeled<number> {}
-
-function wrapIt<T, B extends Boxy<T>>(b: B, u: boolean): string {
-  return b.wrap(u);
-}
+function wrapIt<T, B extends Boxy<T>>(b: B, u: boolean): string { return b.wrap(u); }
 
 console.log(go(new Sq()), go(new Sq3()), go(new Sq4()), go(new Sq5()));
 console.log(both(new Sq()), both(new Sq3()), both(new Sq4()), both(new Sq5()));

@@ -10,19 +10,13 @@ interface B {
 }
 
 function t5(x: A | B | number | null): string {
-  if (typeof x === "number" || x === null) {
-    return "prim";
-  }
-  if ("a" in x) {
-    return `A ${x.a}`;
-  }
+  if (typeof x === "number" || x === null) return "prim";
+  if ("a" in x) return `A ${x.a}`;
   return `B ${x.m}`;
 }
 
 function t6(x: A | B | string): string {
-  if (typeof x === "string") {
-    return "str";
-  }
+  if (typeof x === "string") return "str";
   return "m" in x ? `B ${x.m}` : `A ${x.a}`;
 }
 

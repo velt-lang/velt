@@ -2,7 +2,6 @@
 class P {
   x: number = 1;
 }
-
 function main(): void {
   const p: any = new P();
   console.log(p.x);

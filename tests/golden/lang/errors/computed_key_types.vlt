@@ -3,7 +3,6 @@ function f() {
   const t = true;
   return { [t]: 1 };
 }
-
 const a = { [[1, 2]]: 1 };
 const b = { [{}]: 1 };
 console.log(f(), a, b);

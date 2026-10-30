@@ -2,11 +2,9 @@
 // property: the `undefined` read is not a `string`, a `TypeError` (Node keeps `undefined`).
 type V = { type: string; props: number };
 type C = V | string[];
-
 function f(c: C): string {
   const t: string = (c as V).type;
   return t;
 }
-
 console.log(f({ type: "div", props: 1 }));
 console.log(f(["a"]));

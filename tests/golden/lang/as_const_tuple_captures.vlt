@@ -3,7 +3,6 @@
 // function, a closure in a closure) and where it is a module constant. Expected output: Node's.
 const c = [1, "s"] as const;
 const d = [true, 2, "t"] as const;
-
 function useModule(): string {
   const [n, s] = c;
   let a = 0;
@@ -12,7 +11,6 @@ function useModule(): string {
   const [x, , z] = d;
   return s.toUpperCase() + (n + a) + b + x + z.toUpperCase();
 }
-
 function run(): void {
   const e = [1, "s"] as const;
   const g = () => {
@@ -35,6 +33,5 @@ function run(): void {
   const [u, v] = c;
   console.log(u + v);
 }
-
 console.log(useModule());
 run();

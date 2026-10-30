@@ -17,13 +17,7 @@ function fmt(prefix: string, ...xs: number[]): string {
 
 function main() {
   let count = 0;
-  const handlers: Log[] = [
-    fmt,
-    (p, ...xs) => {
-      count += xs.length;
-      return p + count;
-    },
-  ];
+  const handlers: Log[] = [fmt, (p, ...xs) => { count += xs.length; return p + count; }];
   for (const h of handlers) {
     console.log(h("a"), h("b", 1, 2));
   }

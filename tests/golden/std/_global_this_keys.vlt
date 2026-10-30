@@ -1,6 +1,5 @@
 // The key and type of a hook other modules share through `globalThis` (global_this).
 export const HOOK_KEY = "__HOOK__";
-
 export interface Hook {
   events: string[];
 }

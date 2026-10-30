@@ -46,12 +46,10 @@ class Counter {
 // The issue's program.
 let holder = new Box("h1");
 const other = new Box("h2");
-
 function swap(): string {
   holder = other;
   return "!";
 }
-
 holder.val += swap();
 console.log(holder.val, other.val);
 
@@ -69,16 +67,13 @@ console.log(keepA.val, a.val);
 let c = new Counter("c1");
 const c1 = c;
 const c2 = new Counter("c2");
-
 function toC2(k: number): number {
   c = c2;
   return k;
 }
-
 function back(): void {
   c = c1;
 }
-
 c.n += toC2(5);
 console.log(c1.label, c1.n, c2.label, c2.n);
 back();
@@ -107,13 +102,10 @@ const v1 = (c.n -= toC2(1));
 console.log(v1, c1.n, c2.n);
 back();
 c1.name = null;
-const v2 =
-  (
-    c.name ??= ((): string => {
-      c = c2;
-      return "again";
-    })()
-  );
+const v2 = (c.name ??= ((): string => {
+  c = c2;
+  return "again";
+})());
 console.log(v2, c1.name, c2.name);
 
 // A plain assignment through a setter, as a statement and as a value.
@@ -124,13 +116,10 @@ c.name = ((): string => {
 })();
 console.log(c1.name, c2.name);
 back();
-const v3 =
-  (
-    c.name = ((): string => {
-      c = c2;
-      return "value";
-    })()
-  );
+const v3 = (c.name = ((): string => {
+  c = c2;
+  return "value";
+})());
 console.log(v3, c1.name, c2.name);
 
 // A right-hand side that leaves the variable alone, and `++` / `--`.

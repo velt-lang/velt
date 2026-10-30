@@ -2,56 +2,23 @@
 // A module array that nothing reassigns, emptied in place by the callback of one of its
 // methods (#1161): each element is shared for the call, as for an array in a closure's cell.
 
-class T {
-  constructor(public name: string) {}
-}
-
+class T { constructor(public name: string) {} }
 const XS: T[] = [];
 let YS: T[] = [];
-
-function clr(): void {
-  XS.length = 0;
-  YS.length = 0;
-}
-
+function clr(): void { XS.length = 0; YS.length = 0; }
 function fill(): void {
   for (let k = 0; k < 3; k++) {
     XS.push(new T("x" + String(k)));
     YS.push(new T("y" + String(k)));
   }
 }
-
 fill();
-XS.forEach((x) => {
-  clr();
-  console.log("forEach", x.name, XS.length);
-});
+XS.forEach((x) => { clr(); console.log("forEach", x.name, XS.length); });
 fill();
-YS.forEach((y, i) => {
-  clr();
-  console.log("forEach", y.name, i, YS.length);
-});
+YS.forEach((y, i) => { clr(); console.log("forEach", y.name, i, YS.length); });
 fill();
-console.log(
-  XS.some((x) => {
-    clr();
-    return x.name === "x1";
-  }),
-);
+console.log(XS.some((x) => { clr(); return x.name === "x1"; }));
 fill();
-console.log(
-  XS.every((x) => {
-    clr();
-    return x.name.startsWith("x");
-  }),
-);
+console.log(XS.every((x) => { clr(); return x.name.startsWith("x"); }));
 fill();
-console.log(
-  XS.reduce(
-    (acc, x) => {
-      clr();
-      return acc + x.name;
-    },
-    "",
-  ),
-);
+console.log(XS.reduce((acc, x) => { clr(); return acc + x.name; }, ""));

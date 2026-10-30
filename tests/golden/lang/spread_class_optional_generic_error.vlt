@@ -1,17 +1,9 @@
 // A class's unset optional field spread over a required field in a generic body (#350): as
 // for a concrete spread, the `undefined` is copied, and the result's `n: number` can't hold
 // it, so the program stops with a `TypeError` (Node keeps `undefined` in the field).
-class C {
-  n?: number;
-  s = "c";
-}
-
+class C { n?: number; s = "c"; }
 type U = { n: number; s: string };
-
-function both<A extends object, B extends object>(a: A, b: B) {
-  return { ...a, ...b };
-}
-
+function both<A extends object, B extends object>(a: A, b: B) { return { ...a, ...b }; }
 const u: U = { n: 1, s: "a" };
 const g = both(u, new C());
 console.log("not reached", g.n);

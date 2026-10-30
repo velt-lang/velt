@@ -3,24 +3,23 @@
 function run() {
   const b = 100;
   {
-    const a = 1;
-    const b = 2;
-    const c = () => {
-      const p = 10;
-      const q = 20;
-      return p + q;
-    };
+    const a = 1,
+      b = 2,
+      c = () => {
+        const p = 10,
+          q = 20;
+        return p + q;
+      };
     console.log(a, b, c());
   }
   console.log(b);
 }
-
 run();
-let x = 1;
-let f = (n: number) => {
-  let y = n;
-  let z = n * 2;
-  return y + z;
-};
-let w = f(x);
+let x = 1,
+  f = (n: number) => {
+    let y = n,
+      z = n * 2;
+    return y + z;
+  },
+  w = f(x);
 console.log(x, w);

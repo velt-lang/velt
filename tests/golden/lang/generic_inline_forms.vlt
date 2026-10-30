@@ -5,18 +5,15 @@
 interface Box<V> {
   value: V;
 }
-
 function boxAll<M extends object>(m: M, wrap: (m: M) => { [K in keyof M]: Box<M[K]> }) {
   return wrap(m);
 }
-
 const boxed = boxAll({ a: 1, b: "x" }, (m) => ({ a: { value: m.a }, b: { value: m.b } }));
 console.log(boxed.a.value, boxed.b.value);
 
 function update<T extends object>(x: T, patch: Partial<T>): T {
   return { ...x, ...patch };
 }
-
 const u = update({ id: 1, name: "a", tags: ["t"] }, { name: "b" });
 console.log(JSON.stringify(u));
 
@@ -26,17 +23,14 @@ function make<R extends object>(setup: () => R): R & { dispose: () => void } {
   const inst: Instance = { ...r, dispose: () => console.log("disposed") };
   return inst;
 }
-
 const i = make(() => ({ n: 3 }));
 console.log(i.n);
 i.dispose();
 
 type Token<T> = symbol & { readonly __type?: T };
-
 function token<T>(d: string): Token<T> {
   return Symbol(d) as Token<T>;
 }
-
 const t = token<number>("tok");
 const s: symbol = t;
 console.log(String(t.description), typeof s);
@@ -44,12 +38,9 @@ console.log(String(t.description), typeof s);
 interface Def<T> {
   __d?: T;
 }
-
 type Names<E> = { [K in keyof E]: E[K] extends Def<any> | undefined ? K : never }[keyof E] & string;
 const n: Names<{ click: Def<number>; other: number }> = "click";
-
 function show(x: Names<{ a?: number }> | string): string {
   return String(x);
 }
-
 console.log(n, show("z"));

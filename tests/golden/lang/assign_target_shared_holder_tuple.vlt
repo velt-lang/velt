@@ -3,7 +3,6 @@
 // the write lands in the old object as in JavaScript.
 type Inner = { v: number };
 type Outer = { inner: Inner };
-
 function main() {
   const o: Outer = { inner: { v: 0 } };
   const g = (): number => {

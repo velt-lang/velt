@@ -14,7 +14,6 @@ class Impl implements Ctx<number> {
 }
 
 const kept: Impl[] = [];
-
 function keep(c: Ctx<any>): void {
   if (c instanceof Impl) {
     kept.push(c);

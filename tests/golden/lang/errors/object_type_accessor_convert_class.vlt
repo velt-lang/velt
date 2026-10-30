@@ -1,14 +1,9 @@
 // An alias with accessors that a class implements: converting its values to `{ v: number }`
 // would need a copy of the class's object (#1501).
-type T = {
-  get v(): number;
-  set v(x: number);
-};
-
+type T = { get v(): number; set v(x: number) };
 class C implements T {
   v = 3;
 }
-
 const t: T = new C();
 const back: { v: number } = t;
 console.log(back.v);

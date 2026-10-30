@@ -21,13 +21,10 @@ function main() {
   const a = setTimeout(() => console.log("never A"), 300);
   setTimeout(() => console.log("timeout: C 310"), 310);
   busy(200);
-  setTimeout(
-    () => {
-      console.log("timeout: B 300 (due 500)");
-      intervalVariant();
-    },
-    300,
-  );
+  setTimeout(() => {
+    console.log("timeout: B 300 (due 500)");
+    intervalVariant();
+  }, 300);
   clearTimeout(a);
   console.log("main end");
 }

@@ -2,9 +2,7 @@
 // `unknown` narrowed by `typeof`, and `T | null` at `T = unknown` taking an `unknown` (#924;
 // sigx's renderer and server renderer: `typeof vnode.type === "string"`, `isServerFnDataRef`).
 const Fragment = Symbol("Fragment");
-
 type VNode = { type: string | typeof Fragment | Function; props: Record<string, any> };
-
 const VOID = new Set<string>(["br"]);
 
 function tagOf(v: VNode, ns?: (t: string) => boolean): string {
@@ -25,46 +23,29 @@ interface Ref {
   (): number;
   __key: string;
 }
-
 function isRef(value: unknown): value is Ref {
   return typeof value === "function" && typeof (value as any).__key === "string";
 }
-
 interface Named {
   name: string;
 }
-
 function isNamed(value: unknown): value is Named {
   return typeof value === "object" && value !== null && "name" in value;
 }
-
 function canon(value: unknown): string {
   if (typeof value !== "object") {
-    if (isRef(value)) {
-      return JSON.stringify(value.__key) + " " + value();
-    }
+    if (isRef(value)) return JSON.stringify(value.__key) + " " + value();
     return String(value);
   }
-  if (isNamed(value)) {
-    return "named " + value.name;
-  }
+  if (isNamed(value)) return "named " + value.name;
   return "obj";
 }
-
 function field(o: { t: unknown; n: unknown }): string {
   let out = "";
-  if (typeof o.t === "string") {
-    out += o.t.toUpperCase();
-  }
-  if (typeof o.n === "number") {
-    out += " " + (o.n + 1);
-  }
-  if (typeof o.n === "boolean") {
-    out += " " + !o.n;
-  }
-  if (isNamed(o.t)) {
-    out += " named " + o.t.name;
-  }
+  if (typeof o.t === "string") out += o.t.toUpperCase();
+  if (typeof o.n === "number") out += " " + (o.n + 1);
+  if (typeof o.n === "boolean") out += " " + !o.n;
+  if (isNamed(o.t)) out += " named " + o.t.name;
   return out;
 }
 
@@ -74,46 +55,35 @@ interface ComponentLike {
   __setup: Function;
   __name?: string;
 }
-
 function isComponent(type: unknown): type is ComponentLike {
   return typeof type === "function" && "__setup" in type;
 }
-
 function mkNode(type: string | symbol | Function): { type: Function | string } {
   if (isComponent(type)) {
     return { type: type as Function };
   }
-  if (typeof type === "string") {
-    return { type: type as string };
-  }
+  if (typeof type === "string") return { type: type as string };
   return { type: "none" };
 }
 
 // A member of a narrowed `unknown` is read from the value held, also when that is a function
 // with properties (sigx's renderer: `isComponent(vnode.type)`, then `vnode.type.__setup`).
 function nameOf(type: string | symbol | Function): string {
-  if (isComponent(type)) {
-    return "component " + type.__name + " " + typeof type.__setup;
-  }
+  if (isComponent(type)) return "component " + type.__name + " " + typeof type.__setup;
   return "-";
 }
-
 function setupOf(v: VNode): string {
-  if (isComponent(v.type)) {
-    return "setup " + (v.type.__setup as () => number)() + " " + v.type.__name;
-  }
+  if (isComponent(v.type)) return "setup " + (v.type.__setup as () => number)() + " " + v.type.__name;
   return "-";
 }
 
 function v(x: number): unknown {
   return x === 0 ? null : x === 1 ? undefined : x === 2 ? "s" : { k: x };
 }
-
 interface Impl<T> {
   readonly value: T | null;
   get(): T | undefined;
 }
-
 function mk(x: number): Impl<unknown> {
   return {
     get value() {
@@ -125,92 +95,47 @@ function mk(x: number): Impl<unknown> {
   };
 }
 
-console.log(
-  tagOf({ type: "br", props: {} }),
-  tagOf({ type: "div", props: {} }),
-  tagOf({ type: "svg", props: {} }, (t) => t === "svg"),
-);
-console.log(
-  tagOf({ type: "p", props: {} }, () => false),
-  tagOf({ type: () => 1, props: {} }),
-  tagOf({ type: Fragment, props: {} }),
-);
+console.log(tagOf({ type: "br", props: {} }), tagOf({ type: "div", props: {} }), tagOf({ type: "svg", props: {} }, (t) => t === "svg"));
+console.log(tagOf({ type: "p", props: {} }, () => false), tagOf({ type: () => 1, props: {} }), tagOf({ type: Fragment, props: {} }));
 const ref = Object.assign(() => 3, { __key: "k1" });
 console.log(canon(ref), canon(5), canon({ name: "n" }), canon({}), canon(null));
-console.log(
-  field({ t: "x", n: 1 }),
-  "|",
-  field({ t: { name: "m" }, n: true }),
-  "|",
-  field({ t: 1, n: "1" }),
-);
+console.log(field({ t: "x", n: 1 }), "|", field({ t: { name: "m" }, n: true }), "|", field({ t: 1, n: "1" }));
 for (let i = 0; i < 4; i++) {
   const m = mk(i);
-  console.log(
-    m.value,
-    m.get(),
-    m.value === null,
-    m.get() === undefined,
-    typeof m.value,
-    JSON.stringify({ a: m.value }),
-  );
+  console.log(m.value, m.get(), m.value === null, m.get() === undefined, typeof m.value, JSON.stringify({ a: m.value }));
 }
 const comp = Object.assign(() => 1, { __setup: () => 2, __name: "C" });
 console.log(typeof mkNode(comp).type, mkNode("div").type, mkNode(Symbol("x")).type);
-console.log(
-  nameOf(comp),
-  nameOf("p"),
-  setupOf({ type: comp, props: {} }),
-  setupOf({ type: "p", props: {} }),
-);
+console.log(nameOf(comp), nameOf("p"), setupOf({ type: comp, props: {} }), setupOf({ type: "p", props: {} }));
 
 // A method of a narrowed `unknown` called in place (`vnode.type.__setup(…)`).
 interface Comp {
   __setup: () => string;
   name2: string;
 }
-
 function isComp(x: unknown): x is Comp {
   return typeof x === "function" && "__setup" in (x as object);
 }
-
 interface Obj {
   run: () => string;
   tag: string;
 }
-
 function isObj(x: unknown): x is Obj {
   return typeof x === "object" && x !== null && "run" in x;
 }
-
 function mkComp(): any {
   return Object.assign(() => "called", { __setup: () => "setup!", name2: "C1" });
 }
-
 function callLocal(t: unknown): string {
-  if (isComp(t)) {
-    return t.__setup() + " " + t.name2;
-  }
+  if (isComp(t)) return t.__setup() + " " + t.name2;
   return "no";
 }
-
 function callPath(v: { type: string | symbol | Function }): string {
-  if (isComp(v.type)) {
-    return v.type.__setup();
-  }
+  if (isComp(v.type)) return v.type.__setup();
   return "no";
 }
-
 function callObj(h: { v: unknown }): string {
-  if (isObj(h.v)) {
-    return h.v.run() + h.v.tag;
-  }
+  if (isObj(h.v)) return h.v.run() + h.v.tag;
   return "no";
 }
-
-console.log(
-  callLocal(mkComp()),
-  callLocal(3),
-  callPath({ type: mkComp() }),
-  callObj({ v: { run: () => "R", tag: "T" } }),
-);
+console.log(callLocal(mkComp()), callLocal(3), callPath({ type: mkComp() }), callObj({ v: { run: () => "R", tag: "T" } }));

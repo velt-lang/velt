@@ -2,9 +2,7 @@
 // Three traps that throw, reached through `Promise.allSettled` (also nested), `Promise.all`,
 // `Promise.race` and `Promise.any`.
 class E1 extends Error {}
-
 class E2 extends Error {}
-
 class E3 extends Error {}
 
 function make(): any {
@@ -33,20 +31,16 @@ function make(): any {
 async function rd(p: any): Promise<number> {
   return p.g;
 }
-
 async function wr(p: any): Promise<number> {
   p.s = 1;
   return 1;
 }
-
 async function hs(p: any): Promise<number> {
   return "h" in p ? 1 : 0;
 }
-
 async function ok(p: any): Promise<number> {
   return p.a;
 }
-
 async function own(p: any): Promise<number> {
   if (p.a === 2) {
     throw new E2("own");

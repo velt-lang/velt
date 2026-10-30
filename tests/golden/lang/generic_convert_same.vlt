@@ -8,11 +8,9 @@ type Tagged<T> = T & { tag: string };
 function unwrap<T>(s: Tagged<T>): T {
   return s;
 }
-
 function copy<T extends object>(t: T): T {
   return { ...t };
 }
-
 function same<T extends object>(t: T): T {
   const s: T = t;
   return s;

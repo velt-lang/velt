@@ -4,18 +4,14 @@
 function f(): number {
   return g() + 1;
 }
-
 function g(): number {
   return B;
 }
-
 function h(): number {
   return A;
 }
-
 const A: number = f();
 const B: number = h();
-
 function main() {
   console.log(A, B);
 }

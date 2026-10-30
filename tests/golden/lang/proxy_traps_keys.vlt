@@ -7,16 +7,12 @@ const log: string[] = [];
 function virtualProps(keys: string[]): Record<string, any> {
   return new Proxy({} as Record<string, any>, {
     get(_target, key) {
-      if (typeof key === "symbol") {
-        return undefined;
-      }
+      if (typeof key === "symbol") return undefined;
       log.push("get " + key);
       return keys.includes(key) ? key.toUpperCase() : undefined;
     },
     has(_target, key) {
-      if (typeof key === "symbol") {
-        return false;
-      }
+      if (typeof key === "symbol") return false;
       return keys.includes(key);
     },
     ownKeys() {
@@ -24,19 +20,10 @@ function virtualProps(keys: string[]): Record<string, any> {
       return keys;
     },
     getOwnPropertyDescriptor(_target, key) {
-      if (typeof key === "symbol") {
-        return undefined;
-      }
+      if (typeof key === "symbol") return undefined;
       log.push("describe " + key);
-      if (!keys.includes(key)) {
-        return undefined;
-      }
-      return {
-        value: key.toUpperCase(),
-        enumerable: key !== "hidden",
-        configurable: true,
-        writable: false,
-      };
+      if (!keys.includes(key)) return undefined;
+      return { value: key.toUpperCase(), enumerable: key !== "hidden", configurable: true, writable: false };
     },
   });
 }
@@ -93,16 +80,13 @@ function main(): void {
 
   // A `get` trap telling protocol keys apart from the names it answers for, as sigx's topic
   // groups do.
-  const topics: any = new Proxy(
-    {},
-    {
-      get(target, key) {
-        if (typeof key !== "string" || key in Object.prototype || key === "then") {
-          return Reflect.get(target, key);
-        }
-        return "topic " + key;
-      },
+  const topics: any = new Proxy({}, {
+    get(target, key) {
+      if (typeof key !== "string" || key in Object.prototype || key === "then") {
+        return Reflect.get(target, key);
+      }
+      return "topic " + key;
     },
-  );
+  });
   console.log(topics.saved, topics.then, "toString" in topics);
 }

@@ -84,12 +84,5 @@ async function main() {
   stop.add(1);
   const reads = await Promise.all(ps);
   const writes = await Promise.all(ws);
-  console.log(
-    "bad",
-    bad.get(),
-    "reads",
-    reads.every((r) => r > 0),
-    "writes",
-    writes.every((w) => w > 0),
-  );
+  console.log("bad", bad.get(), "reads", reads.every((r) => r > 0), "writes", writes.every((w) => w > 0));
 }

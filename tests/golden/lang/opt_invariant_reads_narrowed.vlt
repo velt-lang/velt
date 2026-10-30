@@ -1,34 +1,16 @@
 // A read under a type test in a loop nest that writes nothing stays under its test: the
 // pointer may hold another class, whose object has no such field (opt `invariant_reads`).
-class Inner {
-  v: number = 5;
-}
-
-class A {
-  x: number = 1.5;
-}
-
-class B extends A {
-  pad: number = 0;
-  inner: Inner = new Inner();
-}
-
-class C extends A {
-  inner2: Inner = new Inner();
-}
+class Inner { v: number = 5; }
+class A { x: number = 1.5; }
+class B extends A { pad: number = 0; inner: Inner = new Inner(); }
+class C extends A { inner2: Inner = new Inner(); }
 
 // A subclass's field after `instanceof`.
 function scan(a: A, n: number): number {
   let s = 0;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      if (a instanceof B) {
-        s += a.inner.v;
-      } else if (a instanceof C) {
-        s += a.inner2.v;
-      } else {
-        s += a.x;
-      }
+      if (a instanceof B) { s += a.inner.v; } else if (a instanceof C) { s += a.inner2.v; } else { s += a.x; }
     }
   }
   return s;
@@ -40,22 +22,17 @@ function whileB(a: A, n: number): number {
   for (let i = 0; i < n; i++) {
     let j = 0;
     while (a instanceof B) {
-      if (j >= n) {
-        break;
-      }
+      if (j >= n) break;
       s += a.inner.v;
       j++;
     }
   }
   return s;
 }
-
 function forAnd(a: A, n: number): number {
   let s = 0;
   for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n && a instanceof B; j++) {
-      s += a.inner.v;
-    }
+    for (let j = 0; j < n && a instanceof B; j++) s += a.inner.v;
   }
   return s;
 }
@@ -65,97 +42,45 @@ function early(a: A, n: number): number {
   let s = 0;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      if (!(a instanceof B)) {
-        break;
-      }
+      if (!(a instanceof B)) break;
       s += a.inner.v;
     }
   }
   return s;
 }
 
-class Holder {
-  readonly item: A;
-  constructor(item: A) {
-    this.item = item;
-  }
-}
-
+class Holder { readonly item: A; constructor(item: A) { this.item = item; } }
 // A readonly field narrowed in the loop.
 function viaField(h: Holder, n: number): number {
   let s = 0;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      if (h.item instanceof B) {
-        s += h.item.inner.v;
-      } else {
-        s += 1;
-      }
+      if (h.item instanceof B) s += h.item.inner.v; else s += 1;
     }
   }
   return s;
 }
 
-interface Shape {
-  kind(): number;
-}
-
-class Small implements Shape {
-  x: number = 1.5;
-  kind(): number {
-    return 0;
-  }
-}
-
-class Wide implements Shape {
-  x: number = 0;
-  pad: number = 0;
-  inner: Inner = new Inner();
-  kind(): number {
-    return 1;
-  }
-}
-
+interface Shape { kind(): number; }
+class Small implements Shape { x: number = 1.5; kind(): number { return 0; } }
+class Wide implements Shape { x: number = 0; pad: number = 0; inner: Inner = new Inner(); kind(): number { return 1; } }
 // A union of unrelated classes.
 function viaUnion(a: Small | Wide, n: number): number {
   let s = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      if (a instanceof Wide) {
-        s += a.inner.v;
-      } else {
-        s += a.x;
-      }
-    }
-  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { if (a instanceof Wide) s += a.inner.v; else s += a.x; }
   return s;
 }
-
 // An interface.
 function viaIface(a: Shape, n: number): number {
   let s = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      if (a instanceof Wide) {
-        s += a.inner.v;
-      } else {
-        s += 1;
-      }
-    }
-  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { if (a instanceof Wide) s += a.inner.v; else s += 1; }
   return s;
 }
 
 function main() {
   const as: A[] = [];
-  for (let k = 0; k < 3000; k++) {
-    as.push(k % 50 == 0 ? new B() : k % 50 == 1 ? new C() : new A());
-  }
-  let t = 0;
-  let w = 0;
-  let f = 0;
-  let e = 0;
-  let h = 0;
+  for (let k = 0; k < 3000; k++) as.push(k % 50 == 0 ? new B() : k % 50 == 1 ? new C() : new A());
+  let t = 0, w = 0, f = 0, e = 0, h = 0;
   for (const a of as) {
     t += scan(a, 3);
     w += whileB(a, 3);
@@ -164,8 +89,7 @@ function main() {
     h += viaField(new Holder(a), 3);
   }
   console.log(t, w, f, e, h);
-  let u = 0;
-  let v = 0;
+  let u = 0, v = 0;
   for (let k = 0; k < 3000; k++) {
     const wide = k % 50 == 0;
     u += viaUnion(wide ? new Wide() : new Small(), 3);

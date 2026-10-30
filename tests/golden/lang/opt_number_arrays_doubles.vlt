@@ -6,9 +6,7 @@
 
 function halves(): number {
   const fractions: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    fractions.push(i);
-  }
+  for (let i = 0; i < 4; i++) fractions.push(i);
   fractions[2] = 0.5;
   return fractions[0] + fractions[1] + fractions[2] + fractions[3];
 }
@@ -23,17 +21,13 @@ function negativeZero(): string {
 
 function total(xs: number[]): number {
   let s = 0;
-  for (const x of xs) {
-    s += x;
-  }
+  for (const x of xs) s += x;
   return s;
 }
 
 function passedOn(): number {
   const squares: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    squares.push(i * i);
-  }
+  for (let i = 0; i < 5; i++) squares.push(i * i);
   return total(squares);
 }
 
@@ -61,9 +55,7 @@ function distance(a: string, b: string): number {
 // A count down has no lower bound the compiler can prove (fannkuch-redux's `count`).
 function countDown(n: number): number {
   const count: number[] = [];
-  for (let i = 0; i < n; i++) {
-    count.push(i);
-  }
+  for (let i = 0; i < n; i++) count.push(i);
   let steps = 0;
   for (let r = n - 1; r > 0; r--) {
     while (count[r] > 0) {
@@ -77,9 +69,7 @@ function countDown(n: number): number {
 // An array handed to `join`.
 function joined(): string {
   const triples: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    triples.push(i * 3);
-  }
+  for (let i = 0; i < 4; i++) triples.push(i * 3);
   return triples.join(",");
 }
 
@@ -87,9 +77,7 @@ function joined(): string {
 // per copy and remove none.
 function spreadInto(): number {
   const ints: number[] = [];
-  for (let k = 0; k < 8; k++) {
-    ints.push(k);
-  }
+  for (let k = 0; k < 8; k++) ints.push(k);
   let total = 0;
   for (let i = 0; i < 3; i++) {
     const mixed = [...ints, i + 0.5];

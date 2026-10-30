@@ -6,7 +6,6 @@ class C {
     this.v = v;
   }
 }
-
 function f(a: C, b: C): number {
   let o = a;
   if (o.v !== undefined) {
@@ -15,5 +14,4 @@ function f(a: C, b: C): number {
   }
   return 0;
 }
-
 console.log(f(new C("x"), new C(undefined)));

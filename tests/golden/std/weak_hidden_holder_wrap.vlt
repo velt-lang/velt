@@ -1,33 +1,9 @@
 // A generic function converts a generic class to an interface; instantiated with a WeakRef.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-interface Peek {
-  peek(): number;
-}
-
-class Holder<T> implements Peek {
-  x: T;
-  constructor(x: T) {
-    this.x = x;
-  }
-  peek(): number {
-    return 1;
-  }
-}
-
-function wrap<T>(x: T): Peek {
-  return new Holder<T>(x);
-}
-
-async function run(p: Peek): Promise<number> {
-  return p.peek();
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
+class Holder<T> implements Peek { x: T; constructor(x: T) { this.x = x; } peek(): number { return 1; } }
+function wrap<T>(x: T): Peek { return new Holder<T>(x); }
+async function run(p: Peek): Promise<number> { return p.peek(); }
 async function main() {
   const keep = new V(7);
   const p = wrap(new WeakRef(keep));

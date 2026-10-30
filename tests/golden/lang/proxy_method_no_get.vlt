@@ -16,11 +16,10 @@ function main(): void {
     },
   });
   console.log(p.inc(), p.inc(), Object.keys(p));
-  const q =
-    new Proxy(new Counter() as any, {
-      deleteProperty(t, k) {
-        return false;
-      },
-    }) as Counter;
+  const q = new Proxy(new Counter() as any, {
+    deleteProperty(t, k) {
+      return false;
+    },
+  }) as Counter;
   console.log(q.inc(), q.n);
 }

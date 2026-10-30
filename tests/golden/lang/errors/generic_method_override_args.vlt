@@ -1,36 +1,12 @@
 // A value of the type parameter that arrives inside another argument (a closure's result, an
 // array, an object's field) may be of the subclass whose generic method JavaScript would run, even
 // when the first argument is a `new` of the class itself (#1132).
-interface Mapper {
-  apply<U>(f: (n: number) => U): U;
-}
-
-class A implements Mapper {
-  apply<U>(f: (n: number) => U): U {
-    return f(1);
-  }
-}
-
-class B extends A {
-  override apply<U>(f: (n: number) => U): U {
-    return f(2);
-  }
-}
-
-function f<T extends Mapper>(x: T, get: () => T): string {
-  return String(x.apply((n) => n)) + "," + String(get().apply((n) => n));
-}
-
+interface Mapper { apply<U>(f: (n: number) => U): U; }
+class A implements Mapper { apply<U>(f: (n: number) => U): U { return f(1); } }
+class B extends A { override apply<U>(f: (n: number) => U): U { return f(2); } }
+function f<T extends Mapper>(x: T, get: () => T): string { return String(x.apply((n) => n)) + "," + String(get().apply((n) => n)); }
 console.log(f(new A(), () => new B()));
-
-function g<T extends Mapper>(x: T, ys: T[]): string {
-  return [x, ...ys].map((y) => y.apply((n) => n)).join(",");
-}
-
+function g<T extends Mapper>(x: T, ys: T[]): string { return [x, ...ys].map((y) => y.apply((n) => n)).join(","); }
 console.log(g(new A(), [new B()]));
-
-function h<T extends Mapper>(x: T, o: { m: T }): string {
-  return String(x.apply((n) => n)) + "," + String(o.m.apply((n) => n));
-}
-
+function h<T extends Mapper>(x: T, o: { m: T }): string { return String(x.apply((n) => n)) + "," + String(o.m.apply((n) => n)); }
 console.log(h(new A(), { m: new B() }));

@@ -2,19 +2,11 @@
 // through another reference to its object: the map stays alive until the loop ends.
 function mk(n: number): Map<number, number> {
   const m = new Map<number, number>();
-  for (let i = 1; i <= n; i++) {
-    m.set(i, i * 10);
-  }
+  for (let i = 1; i <= n; i++) m.set(i, i * 10);
   return m;
 }
-
-class Inner {
-  m: Map<number, number> = mk(3);
-}
-
-class Outer {
-  inner: Inner = new Inner();
-}
+class Inner { m: Map<number, number> = mk(3); }
+class Outer { inner: Inner = new Inner(); }
 
 function keys(): void {
   const o = new Outer();
@@ -22,9 +14,7 @@ function keys(): void {
   const seen: number[] = [];
   for (const k of o.inner.m.keys()) {
     seen.push(k);
-    if (k === 1) {
-      inn.m = mk(4);
-    }
+    if (k === 1) inn.m = mk(4);
   }
   console.log("keys", seen.join(","), o.inner.m.size);
 }
@@ -35,9 +25,7 @@ function entries(): void {
   const seen: string[] = [];
   for (const [k, _v] of o.inner.m) {
     seen.push(`${k}`);
-    if (k === 1) {
-      inn.m = mk(5);
-    }
+    if (k === 1) inn.m = mk(5);
   }
   console.log("entries", seen.join(","), o.inner.m.size);
 }
@@ -48,10 +36,7 @@ function values(): void {
   const seen: number[] = [];
   for (const v of o.inner.m.values()) {
     seen.push(v);
-    if (v === 10) {
-      inn.m.set(9, 90);
-      inn.m = mk(2);
-    }
+    if (v === 10) { inn.m.set(9, 90); inn.m = mk(2); }
   }
   console.log("values", seen.join(","), o.inner.m.size);
 }
@@ -59,16 +44,12 @@ function values(): void {
 class Walker {
   inner: Inner = new Inner();
   alias: Inner;
-  constructor() {
-    this.alias = this.inner;
-  }
+  constructor() { this.alias = this.inner; }
   walk(): string {
     const seen: number[] = [];
     for (const k of this.inner.m.keys()) {
       seen.push(k);
-      if (k === 2) {
-        this.alias.m = mk(1);
-      }
+      if (k === 2) this.alias.m = mk(1);
     }
     return `${seen.join(",")} ${this.inner.m.size}`;
   }

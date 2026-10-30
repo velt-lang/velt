@@ -18,7 +18,7 @@ class Store {
 }
 
 class Registry {
-  handlers: Map<string, (xs: i64[]) => void> = new Map<string, (xs: i64[]) => void>();
+  handlers = new Map<string, (xs: i64[]) => void>();
 
   on(name: string, h: (xs: i64[]) => void) {
     this.handlers.set(name, h);
@@ -66,11 +66,9 @@ function main() {
   console.log(m.with((s) => s.n));
 
   const counts = shared(new Mutex<i64[]>([1, 2]));
-  const add = [
-    (xs: i64[]) => {
-      xs.push(3);
-    },
-  ];
+  const add = [(xs: i64[]) => {
+    xs.push(3);
+  }];
   counts.with(add[0]);
   console.log(counts.with((xs) => xs.length));
 

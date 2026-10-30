@@ -3,13 +3,10 @@
 class A {
   a = 1;
 }
-
 class C {
   c = 2;
 }
-
 type Color = "red" | "green";
-
 function main(): void {
   const vals: any[] = [new A(), new C(), null];
   for (const x of vals) {

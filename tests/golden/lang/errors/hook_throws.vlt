@@ -4,7 +4,6 @@ class Loud {
     throw new Error("no");
   }
 }
-
 class Picky {
   toJSON(): number {
     if (Math.random() > 2) {
@@ -13,5 +12,4 @@ class Picky {
     return 1;
   }
 }
-
 console.log(`${new Loud()}`, JSON.stringify(new Picky()));

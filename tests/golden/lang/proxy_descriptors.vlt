@@ -35,11 +35,7 @@ function main(): void {
     },
   });
   const d = Reflect.getOwnPropertyDescriptor(acc, "x");
-  console.log(
-    d !== undefined && d.get !== undefined ? d.get() : -1,
-    d?.enumerable,
-    d?.configurable,
-  );
+  console.log(d !== undefined && d.get !== undefined ? d.get() : -1, d?.enumerable, d?.configurable);
   console.log(Object.keys(acc));
 
   // An array target: its `length` is not configurable.
@@ -66,13 +62,6 @@ function main(): void {
   const deepRaw: Record<string, number> = { a: 1, b: 2 };
   const deep = logged(logged(deepRaw, inner, "inner"), inner, "outer");
   console.log(Object.keys(deep));
-  console.log(
-    Reflect.defineProperty(deep, "c", {
-      value: 3,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    }),
-  );
+  console.log(Reflect.defineProperty(deep, "c", { value: 3, writable: true, enumerable: true, configurable: true }));
   console.log(inner.join("\n"));
 }

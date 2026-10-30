@@ -31,35 +31,27 @@ type I = ReturnType<number>;
 function me(z: ReturnType<typeof me>) {
   return z;
 }
-
 function ping(x: ReturnType<typeof pong>) {
   return x;
 }
-
 function pong(y: ReturnType<typeof ping>) {
   return y;
 }
-
 function n1(x: Parameters<typeof n2>) {
   return 1;
 }
-
 function n2(y: ReturnType<typeof n3>) {
   return 2;
 }
-
 function n3(w: ReturnType<typeof n1>) {
   return w;
 }
-
 function selfRet(): ReturnType<typeof selfRet> {
   return 1;
 }
-
 function viaBody(x: ReturnType<typeof caller>) {
   return x + 1;
 }
-
 function caller() {
   return viaBody(1);
 }
@@ -67,15 +59,12 @@ function caller() {
 function restf(...xs: number[]) {
   return xs.length;
 }
-
 function opt(a: number, b?: number) {
   return a;
 }
-
 function dflt(a: number, b: number = 2) {
   return a + b;
 }
-
 type J = Parameters<typeof restf>;
 type K = Parameters<typeof opt>;
 type L = typeof dflt;

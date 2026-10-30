@@ -19,7 +19,6 @@ function isPrimitive(v: unknown): v is Primitive {
 
 // `Signal<{ value: V }>` in a generic function is `{ value: V; $set(v: { value: V }): void }`.
 let sets = 0;
-
 function boxed<V>(x: V): Signal<{ value: V }> {
   const s: Signal<{ value: V }> = {
     value: x,
@@ -37,18 +36,17 @@ function signalOf<V>(x: V): Signal<{ value: V }> {
 
 // `target as T & object` after a primitive test: the same value, not a copy.
 const raws = new WeakMap<object, string>();
-
 function remember<T>(target: T, name: string): number {
   if (isPrimitive(target)) {
     return 0;
   }
-  const objectTarget = target as (T & object);
+  const objectTarget = target as T & object;
   raws.set(objectTarget, name);
   return 1;
 }
 
 function asObject<T>(target: T): T & object {
-  return target as (T & object);
+  return target as T & object;
 }
 
 const n = signalOf(1);
@@ -61,17 +59,10 @@ console.log(t.value, marked.has(t), marked.has({}));
 class Point {
   x = 1;
 }
-
 const o = { a: 1 };
 const p = new Point();
 const xs = [1, 2];
-console.log(
-  remember(o, "o"),
-  remember(p, "p"),
-  remember(xs, "xs"),
-  remember(3, "n"),
-  remember(true, "b"),
-);
+console.log(remember(o, "o"), remember(p, "p"), remember(xs, "xs"), remember(3, "n"), remember(true, "b"));
 console.log(remember(null, "z"), remember(undefined, "u"));
 console.log(raws.get(o), raws.get(p), raws.get(xs), raws.has({}));
 

@@ -8,19 +8,16 @@ class C {
     return this.n * 10;
   }
 }
-
 class D extends C {
   k(): number {
     return super.m() + 1;
   }
 }
-
 class E extends D {
   override m(): number {
     return 99;
   }
 }
-
 class F extends E {
   override m(): number {
     return super.m() + 1000;
@@ -29,7 +26,6 @@ class F extends E {
     return super.k() + super.m();
   }
 }
-
 function wrap(o: any): any {
   return new Proxy(o, {
     get(t: any, k: string | symbol, r: any): any {
@@ -38,7 +34,6 @@ function wrap(o: any): any {
     },
   });
 }
-
 const d = wrap(new D()) as D;
 console.log(d.k());
 const e = wrap(new E()) as E;

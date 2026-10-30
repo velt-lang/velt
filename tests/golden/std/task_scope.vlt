@@ -90,7 +90,10 @@ async function main() {
   try {
     await taskScope(async (scope: TaskScope<ScopeError>): Promise<string[]> throws ScopeError => {
       const signal = scope.signal;
-      return await Promise.all([scope.spawn(step("c", 60000, signal)), scope.spawn(failing(20))]);
+      return await Promise.all([
+        scope.spawn(step("c", 60000, signal)),
+        scope.spawn(failing(20)),
+      ]);
     });
   } catch (e) {
     console.log("scope 3 failed:", e.message);

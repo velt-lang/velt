@@ -12,16 +12,12 @@ function main() {
       .filter((x) => x % 3 < 1)
       .reduce((a, b) => a + b, 0);
     const lim: number = 499990 + round;
-    if (xs.some((x) => x > lim)) {
-      total += 1;
-    }
+    if (xs.some((x) => x > lim)) total += 1;
     const f = xs.find((x) => x > 1000 * k);
     total += f ?? 0;
   }
   const ys: number[] = [];
-  for (let i = 0; i < 2000000; i++) {
-    ys.push(i % 1000);
-  }
+  for (let i = 0; i < 2000000; i++) ys.push(i % 1000);
   const doubled = ys.map((y) => y * 2).filter((y) => y > 500);
   console.log(total, doubled.length, doubled.reduce((a, b) => a + b, 0));
 }

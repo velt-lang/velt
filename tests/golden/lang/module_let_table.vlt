@@ -2,7 +2,6 @@
 // may replace the array or change it, and every read sees that.
 let arr = [1, 2, 3];
 const table = [4, 5];
-
 function main() {
   console.log(arr.length, arr[0], table.length);
   arr = [9];

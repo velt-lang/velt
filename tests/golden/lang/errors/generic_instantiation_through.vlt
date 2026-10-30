@@ -5,9 +5,7 @@ function patchA<T>(o: T): number {
   const p: Partial<T> | null = null;
   return p === null ? 1 : 0;
 }
-
 function outer<U>(o: U): number {
   return patchA(o);
 }
-
 console.log(outer([1]));

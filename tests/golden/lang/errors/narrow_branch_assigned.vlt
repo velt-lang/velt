@@ -11,41 +11,25 @@ class B {
 
 function f1(x: string | null): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  } else {
-    p = null;
-  }
+  if (p == null) { return 0; } else { p = null; }
   return p.length;
 }
 
 function f2(x: string | null | undefined): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  } else {
-    p = undefined;
-  }
+  if (p == null) { return 0; } else { p = undefined; }
   return p.length;
 }
 
 function f3(x: string | null): number {
   let p = x;
-  if (p != null) {
-    p = null;
-  } else {
-    return 0;
-  }
+  if (p != null) { p = null; } else { return 0; }
   return p.length;
 }
 
 function f4(x: string | null, c: boolean): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  } else if (c) {
-    p = null;
-  }
+  if (p == null) { return 0; } else if (c) { p = null; }
   return p.length;
 }
 
@@ -53,11 +37,7 @@ function f5(xs: (string | null)[]): number {
   let n = 0;
   for (const x of xs) {
     let p = x;
-    if (p == null) {
-      continue;
-    } else {
-      p = null;
-    }
+    if (p == null) { continue; } else { p = null; }
     n += p.length;
   }
   return n;
@@ -69,11 +49,7 @@ function f6(xs: (string | null)[]): number {
   while (i < xs.length) {
     let p = xs[i];
     i++;
-    if (p == null) {
-      break;
-    } else {
-      p = null;
-    }
+    if (p == null) { break; } else { p = null; }
     n += p.length;
   }
   return n;
@@ -81,88 +57,52 @@ function f6(xs: (string | null)[]): number {
 
 function f7(x: string | null, c: boolean): number {
   let p = x;
-  if (p == null || c) {
-    return 0;
-  } else {
-    p = null;
-  }
+  if (p == null || c) { return 0; } else { p = null; }
   return p.length;
 }
 
 function f8(x: string | null, c: boolean): number {
   let p = x;
-  if (p != null && c) {
-    p = null;
-  } else {
-    return 0;
-  }
+  if (p != null && c) { p = null; } else { return 0; }
   return p.length;
 }
 
 function f9(x: string | null): number {
   let p = x;
   switch (p) {
-    case null:
-      return 0;
-    default:
-      p = null;
+    case null: return 0;
+    default: p = null;
   }
   return p.length;
 }
 
 function f10(x: string | null | undefined, c: boolean): number {
   let p = x;
-  if (p === undefined) {
-    return 0;
-  } else if (p === null) {
-    return 1;
-  } else {
-    if (c) {
-      p = null;
-    }
-  }
+  if (p === undefined) { return 0; } else if (p === null) { return 1; } else { if (c) { p = null; } }
   return p.length;
 }
 
 function f11(x: A | B): number {
   let p = x;
-  if (p instanceof A) {
-    return 0;
-  } else {
-    p = new A();
-  }
+  if (p instanceof A) { return 0; } else { p = new A(); }
   return p.b;
 }
 
 function f12(x: string | number): number {
   let p = x;
-  if (typeof p === "number") {
-    return 0;
-  } else {
-    p = 5;
-  }
+  if (typeof p === "number") { return 0; } else { p = 5; }
   return p.length;
 }
 
 function f13(x: string | null): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  } else {
-    try {
-      p = null;
-    } catch (e) {}
-  }
+  if (p == null) { return 0; } else { try { p = null; } catch (e) { } }
   return p.length;
 }
 
 function f14(x: string | null, c: boolean): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  } else {
-    c ? (p = null) : 0;
-  }
+  if (p == null) { return 0; } else { c ? (p = null) : 0; }
   return p.length;
 }
 
@@ -172,47 +112,29 @@ class O {
 }
 
 function f15(o: O): number {
-  if (o.p == null) {
-    return 0;
-  } else {
-    o.p = null;
-  }
+  if (o.p == null) { return 0; } else { o.p = null; }
   return o.p.length;
 }
 
 function f16(x: string | null | undefined): number {
   let p = x;
-  if (p === undefined) {
-    return 0;
-  } else {
-    p = undefined;
-  }
-  if (p === null) {
-    return 1;
-  }
+  if (p === undefined) { return 0; } else { p = undefined; }
+  if (p === null) { return 1; }
   return p.length;
 }
 
 function f17(o: O): number {
-  if (o.q === undefined || o.q === null) {
-    return 0;
-  } else {
-    o.q = undefined;
-  }
+  if (o.q === undefined || o.q === null) { return 0; } else { o.q = undefined; }
   return o.q.length;
 }
 
 function f18(x: string | null, k: number, c: boolean): number {
   let p = x;
-  if (p == null) {
-    return 0;
-  }
+  if (p == null) { return 0; }
   sw: switch (k) {
     default:
       p = null;
-      while (c) {
-        break sw;
-      }
+      while (c) { break sw; }
       p = "abc";
   }
   return p.length;
@@ -220,28 +142,20 @@ function f18(x: string | null, k: number, c: boolean): number {
 
 function f19(k: number, y: string | null): number {
   let x = y;
-  if (x == null) {
-    return -1;
-  }
+  if (x == null) return -1;
   switch (k) {
-    case 1:
-      x = null;
-    case 2:
-      return x.length;
+    case 1: x = null;
+    case 2: return x.length;
   }
   return 0;
 }
 
 function f20(k: number, y: string | null): number {
   let x = y;
-  if (x == null) {
-    return -1;
-  }
+  if (x == null) return -1;
   switch (k) {
-    case 1:
-      x = null;
-    default:
-      k = 3;
+    case 1: x = null;
+    default: k = 3;
   }
   return x.length;
 }

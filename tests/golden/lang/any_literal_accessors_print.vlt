@@ -2,26 +2,9 @@
 // `[Getter]`, `[Setter]` or `[Getter/Setter]` without running them, serialized with what the
 // getter returns (with `this`), and listed by `Object.keys` once per property.
 let n = 0;
-const lit = {
-  tag: "t",
-  get value(): number {
-    return ++n;
-  },
-};
-const withThis = {
-  base: 2,
-  get twice(): number {
-    return this.base * 2;
-  },
-  set twice(v: number) {
-    this.base = v / 2;
-  },
-};
-const deep = {
-  get inner(): { a: number; b: string } {
-    return { a: 1, b: "x" };
-  },
-};
+const lit = { tag: "t", get value(): number { return ++n; } };
+const withThis = { base: 2, get twice(): number { return this.base * 2; }, set twice(v: number) { this.base = v / 2; } };
+const deep = { get inner(): { a: number; b: string } { return { a: 1, b: "x" }; } };
 const holder: any = { items: [lit, lit], one: withThis, d: deep };
 console.log(holder);
 console.log(JSON.stringify(holder));
@@ -34,14 +17,6 @@ console.log(JSON.stringify(arr));
 // A property with only a setter is left out of JSON; a field holding a literal with a getter
 // is written with the getter called.
 const setOnly = { tag: "t", set only(v: number) {} };
-const nest = {
-  tag: "t",
-  nested: {
-    k: [1, 2],
-    get double(): number {
-      return this.k.length * 2;
-    },
-  },
-};
+const nest = { tag: "t", nested: { k: [1, 2], get double(): number { return this.k.length * 2; } } };
 console.log(JSON.stringify(setOnly as any), JSON.stringify(nest as any));
 console.log(nest as any);

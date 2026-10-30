@@ -11,26 +11,21 @@ class P {
     return `P${this.x}`;
   }
 }
-
 class Q extends P {}
-
 class R extends P {
   override toString(): string {
     return "R!";
   }
 }
-
 class Plain {
   y: number;
   constructor(y: number) {
     this.y = y;
   }
 }
-
 function show<T>(x: T): string {
   return `${x}`;
 }
-
 function join<T>(label: string, xs: T[]) {
   console.log(`${label}: ${xs.join("/")}`);
 }

@@ -12,6 +12,8 @@ export interface Ctx<P extends Record<string, any> = {}> {
 
 export type Setup<P extends Record<string, any> = {}> = (ctx: Ctx<P>) => string;
 
-export type Factory<T extends Record<string, any>> = ((props: Partial<T> & {
-  key?: string;
-}) => string) & { __setup: Setup<Strip<T>>; __name?: string; __kind: string };
+export type Factory<T extends Record<string, any>> = ((props: Partial<T> & { key?: string }) => string) & {
+  __setup: Setup<Strip<T>>;
+  __name?: string;
+  __kind: string;
+};

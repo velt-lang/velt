@@ -61,15 +61,12 @@ console.log(kept.a, JSON.stringify(none));
 class Pt {
   x = 1;
 }
-
 function same<T extends object>(x: T & object): T {
   return x;
 }
-
 function keepObj<T>(x: T & object): T & object {
   return x;
 }
-
 same(new Pt()).x = 5;
 const pt = same(new Pt());
 pt.x = 7;

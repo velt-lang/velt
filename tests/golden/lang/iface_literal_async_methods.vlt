@@ -3,7 +3,6 @@
 // (#1154): their promises reject with what their bodies throw, as a class's async method's
 // do, also when the interface's other implementations reject with other errors or not at all.
 class NotFound extends Error {}
-
 class Gone extends Error {}
 
 interface Loader {

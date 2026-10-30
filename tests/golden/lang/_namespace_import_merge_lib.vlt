@@ -1,5 +1,4 @@
 export type N = number;
 export type P = string;
 export type Q = boolean;
-
 export const v = 5;

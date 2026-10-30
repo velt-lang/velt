@@ -47,5 +47,8 @@ function main() {
     (a: number, b: number) => console.log("two", a, b),
     (a: string, b: string) => console.log("two", a, b),
   );
-  assigning((a: number) => console.log("one", a), (a: string) => console.log("one", a));
+  assigning(
+    (a: number) => console.log("one", a),
+    (a: string) => console.log("one", a),
+  );
 }

@@ -1,12 +1,5 @@
 // Built-in number and boolean methods called through `any` (#924).
 const n: any = 3.14159;
-console.log(
-  n.toFixed(2),
-  n.toFixed(),
-  n.toString(),
-  (255 as any).toString(16),
-  n.toPrecision(3),
-  n.valueOf(),
-);
+console.log(n.toFixed(2), n.toFixed(), n.toString(), (255 as any).toString(16), n.toPrecision(3), n.valueOf());
 const b: any = true;
 console.log(b.toString(), b.valueOf());

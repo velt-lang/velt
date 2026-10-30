@@ -2,17 +2,12 @@
 // An optional `any` / `unknown` field keeps "absent" apart from a present `undefined` (#1319):
 // `console.log`, `Object.keys`, `in`, spreads, `for...in` and JSON as in Node; destructuring
 // defaults on `any` places apply on `undefined` only. Expected output: Node's.
-interface Q {
-  a?: any;
-  b: number;
-}
-
+interface Q { a?: any; b: number }
 function show(q: Q): void {
   console.log(q, Object.keys(q), "a" in q, JSON.stringify(q), q.a === undefined);
   const c = { ...q };
   console.log(c, Object.keys(c), "a" in c);
 }
-
 function main1(): void {
   const p: { a?: any; b: number } = { a: undefined, b: 1 };
   console.log(p, Object.keys(p));
@@ -26,13 +21,11 @@ function main1(): void {
   const { a = 7 } = q;
   console.log(a);
 }
-
 function main2(): void {
   const xs: any[] = [undefined, null, 3];
   const [a = 1, b = 2, c = 4, d = 5] = xs;
   console.log(a, b, c, d);
-  let p: any = 0;
-  let q: any = 0;
+  let p: any = 0, q: any = 0;
   [p = "dp", q = "dq"] = xs;
   console.log(p, q);
   const o: { a?: any; b: any } = { b: null };
@@ -52,18 +45,13 @@ function main3(): void {
   console.log(n, JSON.stringify(n));
   const ns = [n];
   console.log(JSON.stringify(ns));
-  for (const k in x) {
-    console.log(k);
-  }
-  for (const k in y) {
-    console.log(k);
-  }
+  for (const k in x) console.log(k);
+  for (const k in y) console.log(k);
   const z: Q = { ...y, a: null };
   console.log(z, JSON.stringify(z));
   const arr: Q[] = [{ b: 1 }, { a: "s", b: 2 }, { a: undefined, b: 3 }];
   console.log(arr, arr.map((q) => Object.keys(q).length));
 }
-
 function main(): void {
   main1();
   main2();

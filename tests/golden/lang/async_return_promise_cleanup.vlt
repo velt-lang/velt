@@ -11,7 +11,6 @@ class Res {
     console.log("dispose", this.name);
   }
 }
-
 class AsyncRes {
   name: string;
   constructor(name: string) {
@@ -21,19 +20,16 @@ class AsyncRes {
     console.log("async dispose", this.name);
   }
 }
-
 async function slow(n: number): Promise<number> {
   await Promise.resolve(0);
   console.log("slow done", n);
   return n;
 }
-
 async function bad(): Promise<number> {
   await Promise.resolve(0);
   console.log("bad done");
   throw new Error("bad");
 }
-
 function* numbers(): Generator<number> {
   try {
     yield 1;
@@ -50,7 +46,6 @@ async function inTry(): Promise<number> {
     console.log("finally");
   }
 }
-
 async function notCaught(): Promise<number> {
   try {
     return bad();
@@ -59,7 +54,6 @@ async function notCaught(): Promise<number> {
     return 0;
   }
 }
-
 async function inCatch(): Promise<number> {
   try {
     throw new Error("t");
@@ -69,24 +63,20 @@ async function inCatch(): Promise<number> {
     console.log("finally after catch");
   }
 }
-
 async function inForOf(): Promise<number> {
   for (const x of numbers()) {
     return slow(x * 10);
   }
   return 0;
 }
-
 async function withUsing(): Promise<number> {
   using r = new Res("r");
   return slow(3);
 }
-
 async function withAwaitUsing(): Promise<number> {
   await using r = new AsyncRes("a");
   return slow(4);
 }
-
 async function nested(): Promise<number> {
   using outer = new Res("outer");
   try {
@@ -101,13 +91,11 @@ async function nested(): Promise<number> {
   }
   return 0;
 }
-
 async function v(n: number): Promise<number> {
   await Promise.resolve(0);
   console.log("v", n);
   return n;
 }
-
 async function overridden(): Promise<number> {
   try {
     return v(1);
@@ -115,7 +103,6 @@ async function overridden(): Promise<number> {
     return v(2);
   }
 }
-
 async function continued(x: number): Promise<number> {
   for (let i = 0; i < 3; i++) {
     try {
@@ -130,14 +117,12 @@ async function continued(x: number): Promise<number> {
   }
   return v(99);
 }
-
 async function slower(): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await Promise.resolve(0);
   }
   console.log("slower done");
 }
-
 async function fallsOff(): Promise<void> {
   for (let i = 0; i < 1; i++) {
     try {

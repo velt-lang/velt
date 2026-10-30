@@ -27,7 +27,6 @@ async function twice(): Promise<void> {
 }
 
 const cache = new Map<number, Promise<User>>();
-
 function cached(id: number): Promise<User> {
   let p = cache.get(id);
   if (!p) {

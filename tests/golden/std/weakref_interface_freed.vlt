@@ -5,7 +5,6 @@ interface Inst {
   name: string;
   render(): string;
 }
-
 class Comp implements Inst {
   name: string;
   constructor(n: string) {
@@ -25,18 +24,14 @@ function main(): void {
   const r = make("gone");
   const d = r.deref();
   console.log(d === undefined);
-  if (d !== undefined) {
-    console.log(d.render());
-  }
+  if (d !== undefined) console.log(d.render());
   console.log(r.deref()?.render() ?? "freed");
 
   const kept: Inst[] = [];
   const refs: WeakRef<Inst>[] = [];
   for (let k = 0; k < 5; k++) {
     const c: Inst = new Comp("c" + k);
-    if (k % 2 === 0) {
-      kept.push(c);
-    }
+    if (k % 2 === 0) kept.push(c);
     refs.push(new WeakRef(c));
   }
   for (const w of refs) {

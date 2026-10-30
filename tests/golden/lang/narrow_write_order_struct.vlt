@@ -1,66 +1,26 @@
 // check: no leaks
 // `narrow_write_order` with a struct (#1280): the writes land in the object the field held.
-struct P {
-  x: number;
-  y: number;
-}
-
+struct P { x: number; y: number }
 class Box {
   ts: [number, number][] = [[1, 2]];
   p: P = { x: 1, y: 2 };
   pts: P[] = [{ x: 3, y: 4 }];
   items: number[] = [7, 8, 9];
 }
-
 const st: { b: Box | null; t: [number, number] | null } = { b: new Box(), t: [1, 2] };
-
-function change(): number {
-  st.b = null;
-  return 9;
-}
-
-function five(): number {
-  st.b = null;
-  return 5;
-}
-
+function change(): number { st.b = null; return 9; }
+function five(): number { st.b = null; return 5; }
 function run(): void {
-  if (st.b) {
-    const b = st.b;
-    st.b.ts[0][1] = change();
-    console.log(b.ts);
-  }
+  if (st.b) { const b = st.b; st.b.ts[0][1] = change(); console.log(b.ts); }
   st.b = new Box();
-  if (st.b) {
-    const b = st.b;
-    st.b.p.x = change();
-    console.log(b.p);
-  }
+  if (st.b) { const b = st.b; st.b.p.x = change(); console.log(b.p); }
   st.b = new Box();
-  if (st.b) {
-    const b = st.b;
-    st.b.p.y += change();
-    console.log(b.p);
-  }
+  if (st.b) { const b = st.b; st.b.p.y += change(); console.log(b.p); }
   st.b = new Box();
-  if (st.b) {
-    const b = st.b;
-    st.b.pts[0].x = change();
-    console.log(b.pts);
-  }
+  if (st.b) { const b = st.b; st.b.pts[0].x = change(); console.log(b.pts); }
   st.b = new Box();
-  if (st.b) {
-    const b = st.b;
-    st.b.items[0] = st.b.items[1] = five();
-    console.log(b.items);
-  }
+  if (st.b) { const b = st.b; st.b.items[0] = st.b.items[1] = five(); console.log(b.items); }
   st.b = new Box();
-  if (st.b) {
-    const b = st.b;
-    let i = 0;
-    st.b.ts[i++][0] += change();
-    console.log(b.ts, i);
-  }
+  if (st.b) { const b = st.b; let i = 0; st.b.ts[i++][0] += change(); console.log(b.ts, i); }
 }
-
 run();

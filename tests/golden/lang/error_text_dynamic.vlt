@@ -3,24 +3,11 @@
 // write it as Error.prototype.toString does (#1242), also for subclasses with their own name.
 // Expected output: Node's.
 class MyErr extends Error {
-  constructor(m: string) {
-    super(m);
-    this.name = "MyErr";
-  }
+  constructor(m: string) { super(m); this.name = "MyErr"; }
 }
-
-function f(): any {
-  return new Error("boom");
-}
-
-function g(): unknown {
-  return new MyErr("bad");
-}
-
-function h(): any {
-  return new TypeError("tt");
-}
-
+function f(): any { return new Error("boom"); }
+function g(): unknown { return new MyErr("bad"); }
+function h(): any { return new TypeError("tt"); }
 const e = f();
 console.log(String(e), `${e}`, "" + e, e + "!");
 const u = g();
@@ -41,19 +28,11 @@ try {
 const n: any = 5;
 const s: any = "str";
 console.log(String(n), `${s}`, "x" + n, s + "!");
-
-function plus(): any {
-  return new Error("plus");
-}
-
+function plus(): any { return new Error("plus"); }
 let acc = "s";
 acc += n;
 acc += plus();
-
-class Row {
-  out = "";
-}
-
+class Row { out = ""; }
 const row = new Row();
 row.out += plus();
 const cells: string[] = ["a"];

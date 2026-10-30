@@ -1,10 +1,8 @@
 // A module that brands the cells it makes (define_property_in_place).
 export const CELL: unique symbol = Symbol("cell");
-
 export interface Cell {
   n: number;
 }
-
 export function makeCell(n: number): Cell {
   const c: Cell = { n };
   Object.defineProperty(c, CELL, { value: true });

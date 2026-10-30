@@ -1,69 +1,26 @@
 // An interface value holding a WeakRef to a part of the locked value is returned from `with`.
-class K {
-  n: number;
-  pad: number[];
-  constructor(n: number) {
-    this.n = n;
-    this.pad = [n, n, n];
-  }
-}
-
-class Box {
-  k: K;
-  constructor(k: K) {
-    this.k = k;
-  }
-}
-
-interface Peek {
-  peek(): number;
-}
-
+class K { n: number; pad: number[]; constructor(n: number) { this.n = n; this.pad = [n, n, n]; } }
+class Box { k: K; constructor(k: K) { this.k = k; } }
+interface Peek { peek(): number; }
 class H implements Peek {
   r: WeakRef<K>;
-  constructor(r: WeakRef<K>) {
-    this.r = r;
-  }
-  peek(): number {
-    const k = this.r.deref();
-    if (k === null) {
-      return -1;
-    }
-    return k.n + k.pad[2];
-  }
+  constructor(r: WeakRef<K>) { this.r = r; }
+  peek(): number { const k = this.r.deref(); if (k === null) return -1; return k.n + k.pad[2]; }
 }
-
 async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
-  m.with((v) => {
-    v.k = new K(i);
-  });
+  m.with((v) => { v.k = new K(i); });
   return i;
 }
-
 async function main() {
   const m = shared(new Mutex<Box>(new Box(new K(5))));
-  let live = 0;
-  let dead = 0;
-  let bad = 0;
+  let live = 0; let dead = 0; let bad = 0;
   for (let round = 0; round < 300; round++) {
-    const p: Peek = m.with((v): Peek => {
-      v.k = new K(5);
-      return new H(new WeakRef(v.k));
-    });
+    const p: Peek = m.with((v): Peek => { v.k = new K(5); return new H(new WeakRef(v.k)); });
     const ps: Promise<number>[] = [];
-    for (let t = 1; t < 5; t++) {
-      ps.push(spawn(swap(m.clone(), t)));
-    }
+    for (let t = 1; t < 5; t++) ps.push(spawn(swap(m.clone(), t)));
     for (let j = 0; j < 100000; j++) {
       const x = p.peek();
-      if (x >= 0) {
-        live++;
-        if (x != 10) {
-          bad++;
-        }
-      } else {
-        dead++;
-      }
+      if (x >= 0) { live++; if (x != 10) bad++; } else { dead++; }
     }
     await Promise.all(ps);
   }

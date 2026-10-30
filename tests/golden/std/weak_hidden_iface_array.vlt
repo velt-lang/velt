@@ -1,39 +1,9 @@
 // An array of interface values passed to spawn.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-interface Peek {
-  peek(): number;
-}
-
-class H implements Peek {
-  r: WeakRef<V>;
-  constructor(r: WeakRef<V>) {
-    this.r = r;
-  }
-  peek(): number {
-    return 1;
-  }
-}
-
-class N implements Peek {
-  peek(): number {
-    return 0;
-  }
-}
-
-async function run(ps: Peek[]): Promise<number> {
-  let s = 0;
-  for (const p of ps) {
-    s += p.peek();
-  }
-  return s;
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
+class H implements Peek { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } peek(): number { return 1; } }
+class N implements Peek { peek(): number { return 0; } }
+async function run(ps: Peek[]): Promise<number> { let s = 0; for (const p of ps) s += p.peek(); return s; }
 async function main() {
   const keep = new V(7);
   const ps: Peek[] = [new N(), new H(new WeakRef(keep))];

@@ -11,9 +11,7 @@ function main() {
   names.push("a");
   names[0] = "b";
   const more = ["a", "c"] as const;
-  for (const m of more) {
-    console.log(f(m));
-  }
+  for (const m of more) console.log(f(m));
   console.log(f(names[1]));
   console.log(grow(names));
 }

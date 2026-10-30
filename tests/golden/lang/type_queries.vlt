@@ -59,11 +59,9 @@ function props(n: number): string[] {
 function chainA(x: ReturnType<typeof chainB>) {
   return x + 1;
 }
-
 function chainB(y: ReturnType<typeof chainC>) {
   return y * 10;
 }
-
 function chainC() {
   return 1;
 }
@@ -100,6 +98,6 @@ function main() {
   console.log(chainA(chainB(chainC())));
   let total: typeof RATE = RATE;
   console.log(total / 2);
-  const rates: typeof RATE[] = [RATE];
+  const rates: (typeof RATE)[] = [RATE];
   console.log(rates.map((x) => x / 4));
 }

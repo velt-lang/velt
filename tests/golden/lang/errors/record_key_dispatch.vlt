@@ -3,13 +3,11 @@
 interface I {
   m(s: string): string;
 }
-
 class G<K> implements I {
   m(s: string): string {
     return JSON.stringify(JSON.parse<Record<K, i64>>(s));
   }
 }
-
 function viaInterface(i: I): string {
   return i.m('{"1":2}');
 }
@@ -19,17 +17,14 @@ class B {
     return s;
   }
 }
-
 class H<K> extends B {
   override m(s: string): string {
     return JSON.stringify(JSON.parse<Record<K, i64>>(s));
   }
 }
-
 function viaBase(b: B): string {
   return b.m('{"1":2}');
 }
-
 function wrap<K>(): B {
   return new H<K>();
 }

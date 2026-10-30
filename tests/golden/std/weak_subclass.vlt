@@ -1,13 +1,7 @@
 // check: no leaks
 // Classes that extend WeakMap, WeakSet and WeakRef, with fields and methods of their own, used
 // on one task (also as their base class).
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
 class Cache extends WeakMap<V, string> {
   hits: number = 0;
   lookup(k: V): string {
@@ -15,40 +9,25 @@ class Cache extends WeakMap<V, string> {
     return this.get(k) ?? "none";
   }
 }
-
 class Seen extends WeakSet<V> {
   count: number = 0;
   mark(x: V): boolean {
-    if (this.has(x)) {
-      return false;
-    }
+    if (this.has(x)) return false;
     this.add(x);
     this.count += 1;
     return true;
   }
 }
-
 class Tagged extends WeakRef<V> {
   tag: string;
-  constructor(v: V, tag: string) {
-    super(v);
-    this.tag = tag;
-  }
-  describe(): string {
-    return this.tag + ":" + (this.deref()?.n ?? -1);
-  }
+  constructor(v: V, tag: string) { super(v); this.tag = tag; }
+  describe(): string { return this.tag + ":" + (this.deref()?.n ?? -1); }
 }
-
 function size(m: WeakMap<V, string>, ks: V[]): number {
   let n = 0;
-  for (const k of ks) {
-    if (m.has(k)) {
-      n += 1;
-    }
-  }
+  for (const k of ks) if (m.has(k)) n += 1;
   return n;
 }
-
 async function main() {
   const a = new V(1);
   const b = new V(2);

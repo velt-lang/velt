@@ -5,18 +5,8 @@
 const K2 = "a";
 let KL = "b";
 const SYM = Symbol("s");
-
-interface I {
-  a: number;
-  b: string;
-  [SYM]: number;
-}
-
-class C {
-  a = 5;
-  b = "cb";
-}
-
+interface I { a: number; b: string; [SYM]: number }
+class C { a = 5; b = "cb"; }
 function run(): void {
   const r: Record<string, number> = { a: 1, b: 2 };
   const { [K2]: v = 0 } = r;
@@ -45,9 +35,7 @@ function run(): void {
   const lit = { [KL]: 6 };
   console.log(w2, lit);
 }
-
 const R2: Record<string, number> = { a: 1, b: 2 };
-
 function onlyKey(): number {
   const KK = "b";
   function inner(): number {
@@ -64,7 +52,6 @@ function onlyKey(): number {
   }
   return inner() * 100 + param(R2) * 10 + assign();
 }
-
 function main(): void {
   run();
 }

@@ -2,59 +2,29 @@
 // A class converts to an intersection whose object part's field it provides through a
 // `get`/`set` accessor pair (own, overridden or inherited, of a generic class too): reads
 // and writes through the intersection run the accessors.
-interface Base {
-  refresh(): number;
-}
-
+interface Base { refresh(): number }
 class Counted implements Base {
   private _n = 0;
-  get n(): number {
-    return this._n;
-  }
-  set n(v: number) {
-    this._n = v * 2;
-  }
-  refresh() {
-    return this._n;
-  }
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v * 2; }
+  refresh() { return this._n; }
 }
-
 class Tripled extends Counted {
   private _m = 0;
-  override get n(): number {
-    return this._m + 1;
-  }
-  override set n(v: number) {
-    this._m = v * 3;
-  }
+  override get n(): number { return this._m + 1; }
+  override set n(v: number) { this._m = v * 3; }
 }
-
 class Named extends Counted {
-  get label(): string {
-    return "c" + this.refresh();
-  }
+  get label(): string { return "c" + this.refresh(); }
 }
-
-interface Get<T> {
-  get(): T;
-}
-
+interface Get<T> { get(): T }
 class Cell<T> implements Get<T> {
   private v: T;
-  constructor(v: T) {
-    this.v = v;
-  }
-  get(): T {
-    return this.v;
-  }
-  get value(): T {
-    return this.v;
-  }
-  set value(v: T) {
-    this.v = v;
-  }
+  constructor(v: T) { this.v = v; }
+  get(): T { return this.v; }
+  get value(): T { return this.v; }
+  set value(v: T) { this.v = v; }
 }
-
 const k = new Counted();
 const jn: Base & { n: number } = k;
 jn.n = 5;
@@ -70,28 +40,12 @@ const c = new Cell("a");
 const g: Get<string> & { value: string } = c;
 g.value = "b";
 console.log(g.get(), c.value, g.value);
-
 // A getter-only class and a plain field next to the accessor pair: reads through the same
 // intersection work for all three, and writes for the two that can store the field.
-class Cnt implements Base {
-  get n() {
-    return 1;
-  }
-  refresh() {
-    return 0;
-  }
-}
-
+class Cnt implements Base { get n() { return 1; } refresh() { return 0; } }
 const cc: Base & { n: number } = new Cnt();
 console.log(cc.n, cc.refresh());
-
-class Plain implements Base {
-  n = 0;
-  refresh() {
-    return this.n;
-  }
-}
-
+class Plain implements Base { n = 0; refresh() { return this.n; } }
 const pp: Base & { n: number } = new Plain();
 pp.n = 3;
 console.log(pp.n, pp.refresh());

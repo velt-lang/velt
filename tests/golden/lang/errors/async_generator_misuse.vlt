@@ -57,7 +57,6 @@ class Bad {
 class Sub extends AsyncGenerator<i64> {}
 
 class Read extends Error {}
-
 class Other extends Error {}
 
 async function* reads(): AsyncGenerator<string, Read> {

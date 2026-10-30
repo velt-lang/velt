@@ -5,31 +5,26 @@
 // it, and awaits a copy of each result made on this task. Node (with a channel built on
 // promises) prints the same.
 import { channel, Channel } from "velt/sync";
-
 class Obj {
   n: number;
   constructor(n: number) {
     this.n = n;
   }
 }
-
 class Box {
   p: Promise<Obj>;
   constructor(p: Promise<Obj>) {
     this.p = p;
   }
 }
-
 async function make(n: number): Promise<Obj> {
   await sleep(5);
   return new Obj(n);
 }
-
 async function count(n: number): Promise<number> {
   await sleep(5);
   return n;
 }
-
 async function takeBox(ch: Channel<Box>): Promise<number> {
   const b = await ch.receive();
   if (b == null) {
@@ -38,7 +33,6 @@ async function takeBox(ch: Channel<Box>): Promise<number> {
   const o = await b.p;
   return o.n;
 }
-
 async function takeArray(ch: Channel<Promise<number>[]>): Promise<number> {
   const a = await ch.receive();
   if (a == null) {
@@ -46,7 +40,6 @@ async function takeArray(ch: Channel<Promise<number>[]>): Promise<number> {
   }
   return (await a[0]) + (await a[1]);
 }
-
 async function takeFn(ch: Channel<() => Promise<number>>): Promise<number> {
   const f = await ch.receive();
   if (f == null) {
@@ -54,7 +47,6 @@ async function takeFn(ch: Channel<() => Promise<number>>): Promise<number> {
   }
   return (await f()) + (await f());
 }
-
 async function main() {
   const boxes = channel<Box>();
   const t1 = spawn(takeBox(boxes));

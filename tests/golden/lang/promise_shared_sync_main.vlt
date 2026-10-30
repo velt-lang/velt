@@ -6,17 +6,14 @@ async function make(n: number): Promise<number> {
   await sleep(5);
   return n;
 }
-
 async function use(s: string, p: Promise<number>): Promise<string> {
   return `${s} ${await p}`;
 }
-
 async function report(a: Promise<string>, b: Promise<string>, keep: Timer): Promise<void> {
   console.log(await a);
   console.log(await b);
   clearInterval(keep);
 }
-
 function main() {
   const p = make(3);
   const q = p;

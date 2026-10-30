@@ -1,82 +1,50 @@
 // A `finally` that throws and catches, left by `return`, `break`, `continue` or an error caught
 // further out, runs once and keeps the value or error that leaves through it (#1404).
 function noisy(): void {
-  try {
-    throw new Error("noise");
-  } catch (e) {}
+  try { throw new Error("noise"); } catch (e) { }
 }
-
 function ret(): number {
   try {
     return 1;
   } finally {
-    try {
-      throw new Error("in finally");
-    } catch (e) {
-      console.log("ret finally caught");
-    }
+    try { throw new Error("in finally"); } catch (e) { console.log("ret finally caught"); }
   }
 }
-
 console.log(ret());
-
 function loops(): number {
   let n = 0;
   for (let i = 0; i < 5; i++) {
     try {
-      if (i === 1) {
-        continue;
-      }
-      if (i === 3) {
-        break;
-      }
+      if (i === 1) continue;
+      if (i === 3) break;
       n += 10;
     } finally {
-      try {
-        throw new Error("x");
-      } catch (e) {
-        n += 1;
-      }
+      try { throw new Error("x"); } catch (e) { n += 1; }
     }
   }
   return n;
 }
-
 console.log(loops());
-
 async function aret(): Promise<number> {
   try {
     return 2;
   } finally {
-    try {
-      noisy();
-      throw new Error("a");
-    } catch (e) {
-      console.log("aret finally caught");
-    }
+    try { noisy(); throw new Error("a"); } catch (e) { console.log("aret finally caught"); }
   }
 }
-
 console.log(await aret());
-
 function caught(): string {
   try {
     try {
       throw new RangeError("outer");
     } finally {
-      try {
-        throw new Error("inner");
-      } catch (e) {
-        console.log("inner caught");
-      }
+      try { throw new Error("inner"); } catch (e) { console.log("inner caught"); }
     }
   } catch (e) {
     return (e as Error).message;
   }
 }
-
 console.log(caught());
-
 function replaced(): void {
   try {
     throw new RangeError("first");
@@ -84,9 +52,4 @@ function replaced(): void {
     noisy();
   }
 }
-
-try {
-  replaced();
-} catch (e) {
-  console.log("got", (e as Error).message);
-}
+try { replaced(); } catch (e) { console.log("got", (e as Error).message); }

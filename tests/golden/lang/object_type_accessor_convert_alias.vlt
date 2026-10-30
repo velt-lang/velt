@@ -1,20 +1,8 @@
 // Values of an alias with accessors that come from another alias of the same shape convert
 // back to the object type as the object they hold, when every one holds such an object (#1501).
-type T = {
-  get v(): number;
-  set v(x: number);
-};
-
-type U = {
-  get v(): number;
-  set v(x: number);
-};
-
-type W = {
-  get v(): number;
-  set v(x: number);
-};
-
+type T = { get v(): number; set v(x: number) };
+type U = { get v(): number; set v(x: number) };
+type W = { get v(): number; set v(x: number) };
 const p: { v: number } = { v: 3 };
 const u: U = p;
 const w: W = { v: 5 };

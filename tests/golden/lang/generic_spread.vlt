@@ -9,11 +9,9 @@ type Signal<T> = T & { $set: (v: T) => void };
 function addTag<T extends object>(t: T): Tagged<T> {
   return { ...t, tag: "x" };
 }
-
 function copy<T extends object>(t: T): T {
   return { ...t };
 }
-
 function withSet<T extends object>(t: T, log: string[]): Signal<T> {
   return {
     ...t,
@@ -22,7 +20,6 @@ function withSet<T extends object>(t: T, log: string[]): Signal<T> {
     },
   };
 }
-
 function retag<T extends object>(t: Tagged<T>): Tagged<T> {
   return { ...t, tag: t.tag + "!" };
 }
@@ -43,5 +40,5 @@ s.n = 4;
 console.log(s.n, s.name, log);
 const r = retag(retag(w));
 console.log(r.tag, w.tag, r.a);
-const p = copy({ id: 7, opt: undefined as (string | undefined) });
+const p = copy({ id: 7, opt: undefined as string | undefined });
 console.log(p, JSON.stringify(p));

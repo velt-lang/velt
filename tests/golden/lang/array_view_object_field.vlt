@@ -5,7 +5,6 @@ interface VNode {
   type: string;
   children: JSXChild[];
 }
-
 type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
 type Child = string | number | null | Child[];
 
@@ -13,7 +12,6 @@ class Raw {
   name: string = "raw";
   items: string[] = ["a", "b"];
 }
-
 type View = { name: string; items: Child[] };
 
 class RawNode {

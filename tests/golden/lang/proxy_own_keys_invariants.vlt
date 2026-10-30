@@ -1,13 +1,10 @@
 // Node's checks on what an `ownKeys` trap answers: each key a string or a symbol, at most once.
 function keysOf(answer: any): void {
-  const p = new Proxy(
-    {},
-    {
-      ownKeys() {
-        return answer;
-      },
+  const p = new Proxy({}, {
+    ownKeys() {
+      return answer;
     },
-  );
+  });
   console.log(Reflect.ownKeys(p));
 }
 

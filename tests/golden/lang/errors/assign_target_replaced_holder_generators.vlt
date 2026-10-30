@@ -5,288 +5,147 @@
 // (JavaScript writes into the old object and prints 100).
 type Inner = { v: number };
 type Outer = { inner: Inner };
-
 // 01 (r16)
-function* g_01(f: () => number): Generator<number> {
-  yield f();
-}
-
+function* g_01(f: () => number): Generator<number> { yield f(); }
 function t01(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_01(bump);
   o.inner.v = [...gen][0];
   console.log(o.inner.v);
 }
-
 // 02 (s01)
-function* g_02(f: () => number): Generator<number> {
-  yield f();
-}
-
+function* g_02(f: () => number): Generator<number> { yield f(); }
 function t02(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_02(bump);
   o.inner.v = gen.next().value ?? 0;
   console.log(o.inner.v);
 }
-
 // 03 (s02)
-function* g_03(f: () => number): Generator<number> {
-  yield f();
-}
-
-function first_03(it: Generator<number>): number {
-  for (const x of it) {
-    return x;
-  }
-  return 0;
-}
-
+function* g_03(f: () => number): Generator<number> { yield f(); }
+function first_03(it: Generator<number>): number { for (const x of it) return x; return 0; }
 function t03(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_03(bump);
   o.inner.v = first_03(gen);
   console.log(o.inner.v);
 }
-
 // 04 (s03)
-function* g_04(f: () => number): Generator<number> {
-  yield f();
-}
-
+function* g_04(f: () => number): Generator<number> { yield f(); }
 function t04(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_04(bump);
   o.inner.v = Array.from(gen)[0];
   console.log(o.inner.v);
 }
-
 // 05 (s05)
-function* g_05(o: Outer): Generator<number> {
-  o.inner = { v: 100 };
-  yield 13;
-}
-
+function* g_05(o: Outer): Generator<number> { o.inner = { v: 100 }; yield 13; }
 function t05(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_05(o);
   o.inner.v = [...gen][0];
   console.log(o.inner.v);
 }
-
 // 06 (s06)
-function* g_06(f: () => number): Generator<number> {
-  yield f();
-}
-
+function* g_06(f: () => number): Generator<number> { yield f(); }
 function t06(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gens = [g_06(bump)];
   o.inner.v = [...gens[0]][0];
   console.log(o.inner.v);
 }
-
 // 07 (s07)
-class It_07 {
-  f: () => number;
-  constructor(f: () => number) {
-    this.f = f;
-  }
-  *[Symbol.iterator](): Generator<number> {
-    yield this.f();
-  }
-}
-
+class It_07 { f: () => number; constructor(f: () => number) { this.f = f; } *[Symbol.iterator](): Generator<number> { yield this.f(); } }
 function t07(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = new It_07(bump)[Symbol.iterator]();
   o.inner.v = [...gen][0];
   console.log(o.inner.v);
 }
-
 // 08 (e08)
-interface It_08 {
-  next(): IteratorResult<number>;
-}
-
-function* g_08(f: () => number): Generator<number> {
-  yield f();
-}
-
-function pull_08(it: Iterator<number>): number {
-  const r = it.next();
-  return r.done ? 0 : r.value;
-}
+interface It_08 { next(): IteratorResult<number> }
+function* g_08(f: () => number): Generator<number> { yield f(); }
+function pull_08(it: Iterator<number>): number { const r = it.next(); return r.done ? 0 : r.value; }
 
 function t08(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_08(bump);
   o.inner.v = pull_08(gen);
   console.log(o.inner.v);
 }
-
 // 09 (e09)
-function* g_09(f: () => number): Generator<number> {
-  yield f();
-}
-
-function sum_09(xs: Iterable<number>): number {
-  let s = 0;
-  for (const x of xs) {
-    s += x;
-  }
-  return s;
-}
+function* g_09(f: () => number): Generator<number> { yield f(); }
+function sum_09(xs: Iterable<number>): number { let s = 0; for (const x of xs) s += x; return s; }
 
 function t09(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_09(bump);
   o.inner.v = sum_09(gen);
   console.log(o.inner.v);
 }
-
 // 10 (e10)
-function* g_10(f: () => number): Generator<number> {
-  yield f();
-}
-
-function firstOf_10(it: Generator<number>): number {
-  const [a] = it;
-  return a;
-}
+function* g_10(f: () => number): Generator<number> { yield f(); }
+function firstOf_10(it: Generator<number>): number { const [a] = it; return a; }
 
 function t10(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_10(bump);
   o.inner.v = firstOf_10(gen);
   console.log(o.inner.v);
 }
-
 // 11 (e11)
-function* g_11(f: () => number): Generator<number> {
-  yield f();
-}
-
-function* outer_11(f: () => number): Generator<number> {
-  yield* g_11(f);
-}
+function* g_11(f: () => number): Generator<number> { yield f(); }
+function* outer_11(f: () => number): Generator<number> { yield* g_11(f); }
 
 function t11(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = outer_11(bump);
   o.inner.v = gen.next().value ?? 0;
   console.log(o.inner.v);
 }
-
 // 12 (e12)
-function* g_12(f: () => number): Generator<number> {
-  try {
-    yield 1;
-  } finally {
-    f();
-  }
-}
-
-function close_12(it: Generator<number>): number {
-  it.return();
-  return 13;
-}
+function* g_12(f: () => number): Generator<number> { try { yield 1; } finally { f(); } }
+function close_12(it: Generator<number>): number { it.return(); return 13; }
 
 function t12(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const gen = g_12(bump);
   gen.next();
   o.inner.v = close_12(gen);
   console.log(o.inner.v);
 }
-
 // 13 (e18)
-function* g_13(f: () => number): Generator<number> {
-  yield f();
-}
-
+function* g_13(f: () => number): Generator<number> { yield f(); }
 type Holder_13 = { gen: Generator<number> };
 
 function t13(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const h: Holder_13 = { gen: g_13(bump) };
   o.inner.v = [...h.gen][0];
   console.log(o.inner.v);
 }
-
 // 14 (e19)
-class Q_14 {
-  f: () => number;
-  constructor(f: () => number) {
-    this.f = f;
-  }
-  *items(): Generator<number> {
-    yield this.f();
-  }
-}
+class Q_14 { f: () => number; constructor(f: () => number) { this.f = f; } *items(): Generator<number> { yield this.f(); } }
 
 function t14(): void {
   const o: Outer = { inner: { v: 0 } };
-  const bump = (): number => {
-    o.inner = { v: 100 };
-    return 13;
-  };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
   const q = new Q_14(bump);
   const it = q.items();
   o.inner.v = Array.from(it)[0];
   console.log(o.inner.v);
 }
-
 function main(): void {}

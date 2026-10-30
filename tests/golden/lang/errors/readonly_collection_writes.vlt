@@ -7,6 +7,5 @@ function f(s: ReadonlySet<string>, m: ReadonlyMap<string, number>): void {
   m.clear();
   console.log(s.has("x"), m.get("a"));
 }
-
 const ro: ReadonlySet<number> = new Set([1]);
 ro.clear();

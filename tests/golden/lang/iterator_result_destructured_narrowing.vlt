@@ -22,9 +22,7 @@ async function main() {
   const it = gen();
   for (;;) {
     const { value, done } = await it.next();
-    if (done) {
-      break;
-    }
+    if (done) break;
     const s: string = value;
     console.log(s.toUpperCase());
   }

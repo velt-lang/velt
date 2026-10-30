@@ -5,14 +5,11 @@ interface Box<T> {
   value: T;
   show(): string;
 }
-
 function inObj<P>(setup: (c: Box<P>) => string): any {
   return { setup: setup } as any;
 }
-
 function inArr<P>(setup: (c: Box<P>) => string): any {
   return [setup] as any;
 }
-
 console.log(inObj<number>((b) => b.show() + b.value).setup({ value: 2, show: () => "obj" }));
 console.log(inArr<boolean>((b) => b.show())[0]({ value: true, show: () => "arr" }));

@@ -1,9 +1,7 @@
 // An error thrown by a function called through `any`, through two more calls through `any`,
 // that nothing catches: Node's `Uncaught` report and exit code 1 (#1938).
 const leaf: any = (n: number) => {
-  if (n === 3) {
-    throw new TypeError("three");
-  }
+  if (n === 3) throw new TypeError("three");
   return n * 10;
 };
 const mid: any = (n: number) => leaf(n) + 1;

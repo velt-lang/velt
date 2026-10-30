@@ -4,7 +4,15 @@
 // `typeof x === "bigint"` and `case "bigint"` are always false.
 // check: no leaks
 type Primitive = string | number | boolean | symbol | bigint | null | undefined;
-type Widen<T> = T extends boolean ? boolean : T extends number ? number : T extends string ? string : T extends bigint ? bigint : T;
+type Widen<T> = T extends boolean
+  ? boolean
+  : T extends number
+    ? number
+    : T extends string
+      ? string
+      : T extends bigint
+        ? bigint
+        : T;
 type PrimitiveSignal<T> = { value: T };
 
 function wrapPrimitive<T>(target: T): { value: T } {
@@ -26,16 +34,14 @@ state.st = "ready";
 state.has = true;
 console.log(state.st, state.has);
 
-function label<T extends (string | bigint)>(x: T): string {
+function label<T extends string | bigint>(x: T): string {
   return "label " + String(x);
 }
-
 console.log(label("a"));
 
 function size(x: number | bigint): number {
   return typeof x === "number" ? x * 2 : 0;
 }
-
 console.log(size(21));
 
 const n: Widen<5> = 7;
@@ -43,20 +49,14 @@ const s: Widen<"x"> = "seven";
 console.log(n, s);
 
 function kind(x: string | bigint): string {
-  if (typeof x === "string") {
-    return "string " + x;
-  }
-  if (typeof x === "bigint") {
-    return "bigint";
-  }
+  if (typeof x === "string") return "string " + x;
+  if (typeof x === "bigint") return "bigint";
   const rest: never = x;
   return rest;
 }
 
 function next(x: number | bigint): number {
-  if (typeof x === "bigint") {
-    return -1;
-  }
+  if (typeof x === "bigint") return -1;
   return x + 1;
 }
 
@@ -74,5 +74,4 @@ function describe(x: string | number | bigint): string {
 function isBig(a: any): boolean {
   return typeof a === "bigint";
 }
-
 console.log(kind("a"), next(2), describe(3), describe("s"), isBig(1), isBig("x"));

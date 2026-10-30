@@ -2,21 +2,10 @@
 // Writes into tuple fields on receivers that are not a plain path (an index with an effect, a
 // conditional, a call with a closure argument, a non-null assertion), for classes, object
 // types and interface values alike: evaluated once, in order, and the write lands.
-interface T {
-  t: [number, string];
-  m(): number;
-}
-
-class C {
-  t: [number, string] = [1, "a"];
-}
-
+interface T { t: [number, string]; m(): number; }
+class C { t: [number, string] = [1, "a"]; }
 type O = { t: [number, string] };
-
-function mk(): C {
-  return new C();
-}
-
+function mk(): C { return new C(); }
 const cs: C[] = [new C(), new C()];
 let i = 0;
 cs[i++].t[0] = 5;
@@ -31,23 +20,11 @@ os[j++].t[0] = 9;
 os[j].t[1] = "q";
 console.log(os[0].t[0], os[1].t[1], j);
 const m: Map<string, T> = new Map();
-m.set("a", {
-  t: [1, "a"],
-  m(): number {
-    return 1;
-  },
-});
+m.set("a", { t: [1, "a"], m(): number { return 1; } });
 m.get("a")!.t[0] = 33;
 m.get("a")!.t[1] += "z";
 console.log(m.get("a")!.t[0], m.get("a")!.t[1]);
-const xs: T[] = [
-  {
-    t: [1, "a"],
-    m(): number {
-      return 1;
-    },
-  },
-];
+const xs: T[] = [{ t: [1, "a"], m(): number { return 1; } }];
 let k = 0;
 const vv = (xs[k++].t[1] += "!");
 const ww = xs[--k].t[0]++;
@@ -58,18 +35,8 @@ console.log(xs[0].t[0]);
 
 // With an await or a throw in the right-hand side, and a right-hand side (or another task)
 // that drops every other reference to the receiver.
-const lit = (n: number, s: string): T => ({
-  t: [n, s],
-  m(): number {
-    return n;
-  },
-});
-
-async function val(n: number): Promise<number> {
-  await Promise.resolve(0);
-  return n;
-}
-
+const lit = (n: number, s: string): T => ({ t: [n, s], m(): number { return n; } });
+async function val(n: number): Promise<number> { await Promise.resolve(0); return n; }
 async function go(): Promise<void> {
   const xs: T[] = [lit(1, "a"), lit(2, "b")];
   let i = 0;
@@ -77,31 +44,19 @@ async function go(): Promise<void> {
   xs.find((q) => q.t[1] === "b")!.t[0] += await val(4);
   console.log(xs[0].t[0], xs[1].t[0], i);
   try {
-    xs[i--].t[1] = (() => {
-      xs.length = 0;
-      if (i < 5) {
-        throw new Error("boom");
-      }
-      return "z";
-    })();
-  } catch (e) {
-    console.log((e as Error).message, i, xs.length);
-  }
+    xs[i--].t[1] = (() => { xs.length = 0; if (i < 5) throw new Error("boom"); return "z"; })();
+  } catch (e) { console.log((e as Error).message, i, xs.length); }
   const ys: T[] = [lit(1, "y".repeat(3))];
-  const p = (async () => {
-    ys.find((q) => q.t[0] === 1)!.t[0] = await val(9);
-  })();
+  const p = (async () => { ys.find((q) => q.t[0] === 1)!.t[0] = await val(9); })();
   ys.pop();
   await p;
   console.log(ys.length);
 }
-
 await go();
 
 // Object-type and class receivers behind `as`, `!`, a conditional, `find(…)!` or a call write
 // into the object they name, also when an interface has a field of the same name (`t`).
 type S = { s: [number, string] };
-
 function objects(): void {
   const os: O[] = [{ t: [1, "a"] }, { t: [2, "b"] }];
   const ss: S[] = [{ s: [1, "a"] }, { s: [2, "b"] }];
@@ -131,21 +86,14 @@ function objects(): void {
   (cs[0] as C).t[1] += "x";
   console.log(os[0].t[0], os[1].t[1], ss[0].s[0], ss[1].s[0], ss[1].s[1], cs[0]!.t[0], cs[0]!.t[1]);
 }
-
 objects();
 
 // An element or member assignment used as a value: the receiver and indexes run once.
 function values(): void {
   let n = 0;
-  const at = (): number => {
-    n++;
-    return 0;
-  };
+  const at = (): number => { n++; return 0; };
   const c = new C();
-  const get = (): C => {
-    n += 10;
-    return c;
-  };
+  const get = (): C => { n += 10; return c; };
   const arr = [1, 2];
   const strs = ["x"];
   const v = (c.t[0] = 5);
@@ -159,7 +107,6 @@ function values(): void {
   const k = ((os.length > 0 ? os[0] : os[0]).t[1] += "k");
   console.log(v, z, a, b, g, s, w, k, n, c.t[0], c.t[1], arr[0], strs[0], os[0].t[0], os[0].t[1]);
 }
-
 values();
 
 // Used as a value on a tuple held behind `!` or `as`: the write lands in the held tuple.
@@ -169,10 +116,7 @@ function heldTuples(): void {
   let u: [number, string] | number = [1, "u"];
   const ht: { t: [number, string] | null } = { t: [1, "h"] };
   let n = 0;
-  const at = (): number => {
-    n++;
-    return 0;
-  };
+  const at = (): number => { n++; return 0; };
   const a = (opt![0] = 5);
   const b = (ts[0]![0] += 1);
   const c = ((u as [number, string])[0] = 9);
@@ -189,10 +133,7 @@ function heldTuples(): void {
   (hs[0] as [number, string])[0] = 7;
   console.log(ht.t, hs[0]);
   // Effectful indexes behind `!` / `as` run once.
-  const ys: ([number, string] | null)[] = [
-    [1, "a"],
-    [2, "b"],
-  ];
+  const ys: ([number, string] | null)[] = [[1, "a"], [2, "b"]];
   let k = 0;
   ys[k++]![0] += 5;
   ys[k++]![1] = "q";
@@ -205,51 +146,26 @@ function heldTuples(): void {
   g[gk--][gk++]![1] = 20;
   const gv = (g[gk--][gk++]![1] = 30);
   console.log(JSON.stringify(g), gk, gv);
-  const m: ([number, number] | null)[][] = [
-    [
-      [0, 0],
-      [0, 0],
-    ],
-    [
-      [0, 0],
-      [0, 0],
-    ],
-  ];
-  let r = 1;
-  let c2 = 0;
-  m[r--][c2++]![1] = 7;
-  m[r++][c2--]![0]++;
+  const m: ([number, number] | null)[][] = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]];
+  let r = 1, c2 = 0;
+  m[r--][c2++]![1] = 7; m[r++][c2--]![0]++;
   console.log(JSON.stringify(m));
   // A variable index the right-hand side changes: the write and its check use the slot the
   // index named before.
   let wk = 0;
   const ws: ([number, string] | null)[] = [[1, "a"], null];
-  ws[wk]![0] = (() => {
-    wk = 1;
-    return 5;
-  })();
-  (ws[wk - 1] as [number, string])[1] += (() => {
-    wk = 2;
-    return "b";
-  })();
+  ws[wk]![0] = (() => { wk = 1; return 5; })();
+  (ws[wk - 1] as [number, string])[1] += (() => { wk = 2; return "b"; })();
   console.log(ws, wk);
   // An index behind an inner `!` is bound too.
   const hh: { t: [number, string] | null }[] = [{ t: [0, "h"] }, { t: null }];
   let hn = 0;
-  hh[hn]!.t![0] = (() => {
-    hn = 1;
-    return 9;
-  })();
-  (hh[hn - 1]! as { t: [number, string] | null }).t![1] += (() => {
-    hn = 5;
-    return "i";
-  })();
+  hh[hn]!.t![0] = (() => { hn = 1; return 9; })();
+  (hh[hn - 1]! as { t: [number, string] | null }).t![1] += (() => { hn = 5; return "i"; })();
   console.log(JSON.stringify(hh), hn);
   // A variable a closure assigns.
   let held: [number, string] | null = [1, "o"];
-  const replace = (): void => {
-    held = [2, "n"];
-  };
+  const replace = (): void => { held = [2, "n"]; };
   const x = (held![1] = "x");
   (held as [number, string])[0] = 5;
   held![0] += 1;
@@ -257,14 +173,11 @@ function heldTuples(): void {
   replace();
   console.log(held);
 }
-
 heldTuples();
 
 // The same with a module-level variable.
 let modHeld: [number, string] | null = [1, "m"];
-const clearMod = (): void => {
-  modHeld = null;
-};
+const clearMod = (): void => { modHeld = null; };
 const my = (modHeld![1] = "y");
 (modHeld as [number, string])[0] = 7;
 console.log(my, modHeld);

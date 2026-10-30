@@ -4,11 +4,7 @@
 function main(): void {
   const hasOwn = Object.prototype.hasOwnProperty;
   const slots: Record<string, number> = { header: 1 };
-  console.log(
-    hasOwn.call(slots, "header"),
-    hasOwn.call(slots, "toString"),
-    hasOwn.call(slots, "footer"),
-  );
+  console.log(hasOwn.call(slots, "header"), hasOwn.call(slots, "toString"), hasOwn.call(slots, "footer"));
   const o: any = { a: 1 };
   console.log(hasOwn.call(o, "a"), hasOwn.call(o, "b"));
 }

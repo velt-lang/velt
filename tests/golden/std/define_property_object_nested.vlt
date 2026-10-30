@@ -25,5 +25,4 @@ function make(): Pair {
   Object.defineProperty(o, "k", { get: () => 2 });
   return o;
 }
-
 console.log(local(), make().k);

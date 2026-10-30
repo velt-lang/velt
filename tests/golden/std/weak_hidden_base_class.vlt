@@ -1,33 +1,11 @@
 // A plain base class (not an abstract one) whose subclass holds a WeakRef, passed to spawn.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-class Base {
-  peek(): number {
-    return 0;
-  }
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Base { peek(): number { return 0; } }
 class H extends Base {
-  r: WeakRef<V>;
-  constructor(r: WeakRef<V>) {
-    super();
-    this.r = r;
-  }
-  override peek(): number {
-    const x = this.r.deref();
-    return x === null ? -1 : x.n;
-  }
+  r: WeakRef<V>; constructor(r: WeakRef<V>) { super(); this.r = r; }
+  override peek(): number { const x = this.r.deref(); return x === null ? -1 : x.n; }
 }
-
-async function run(p: Base): Promise<number> {
-  return p.peek();
-}
-
+async function run(p: Base): Promise<number> { return p.peek(); }
 async function main() {
   const keep = new V(7);
   const b: Base = new H(new WeakRef(keep));

@@ -5,7 +5,6 @@
 class A {
   x: number = 1;
 }
-
 function main(): void {
   let total = 0;
   for (let i = 0; i < 100; i++) {
@@ -22,14 +21,7 @@ function main(): void {
     const g: (q: number) => number = f;
     const u: number | string = s;
     const unused: any | null = w;
-    total +=
-      k +
-      t.length +
-      o.x +
-      (n !== null ? 1 : 0) +
-      ys.length +
-      g(1) +
-      (typeof u === "string" ? 1 : 0);
+    total += k + t.length + o.x + (n !== null ? 1 : 0) + ys.length + g(1) + (typeof u === "string" ? 1 : 0);
   }
   console.log(total);
 }

@@ -1,20 +1,8 @@
 // check: no leaks
 // A value written through an interface may be reachable from the receiver (`a.self = a`,
 // `arr[0].self = arr[1]`): the setter takes its own reference, as a class setter does.
-interface L {
-  self: L | null;
-  n: number;
-  m(): number;
-}
-
-class Li implements L {
-  self: L | null = null;
-  n: number = 0;
-  m(): number {
-    return 0;
-  }
-}
-
+interface L { self: L | null; n: number; m(): number; }
+class Li implements L { self: L | null = null; n: number = 0; m(): number { return 0; } }
 const a: L = new Li();
 const b: L = new Li();
 const arr: L[] = [a, b];
@@ -25,12 +13,7 @@ console.log(a.self === a, arr[0].self === a);
 arr[1].self = arr[1];
 arr[1].n = arr[0].n + 2;
 console.log(b.self === b, b.n);
-
-function link<T extends L>(x: T, y: L): void {
-  x.self = y;
-  x.n = y.n + 1;
-}
-
+function link<T extends L>(x: T, y: L): void { x.self = y; x.n = y.n + 1; }
 const c = new Li();
 link(c, b);
 console.log(c.self === b, c.n);

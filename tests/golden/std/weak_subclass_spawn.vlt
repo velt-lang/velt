@@ -1,20 +1,10 @@
 // A class that extends a weak collection is one: it cannot go to a spawned task.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-class Cache extends WeakMap<V, V> {
-  hits: number = 0;
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Cache extends WeakMap<V, V> { hits: number = 0; }
 async function use(c: Cache, k: V): Promise<number> {
   const x = c.get(k);
   return x === null ? -1 : x.n;
 }
-
 async function main() {
   const keep = new V(7);
   const c = new Cache();

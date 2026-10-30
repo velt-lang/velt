@@ -1,25 +1,5 @@
 // A getter followed by a call value in a conditional spread is not supported yet (Node calls the getter after it).
 const log: string[] = [];
-
-function tr(s: string): number {
-  log.push(s);
-  return 1;
-}
-
-function f(c: boolean) {
-  return {
-    ...(
-      c
-        ? {
-          get g() {
-            log.push("g");
-            return 1;
-          },
-          v: tr("v"),
-        }
-        : {}
-    ),
-  };
-}
-
+function tr(s: string): number { log.push(s); return 1; }
+function f(c: boolean) { return { ...(c ? { get g() { log.push("g"); return 1; }, v: tr("v") } : {}) }; }
 console.log(JSON.stringify(f(true)), log.join(","));

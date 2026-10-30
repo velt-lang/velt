@@ -8,15 +8,8 @@
 type G = <T>(x: T) => T;
 type N = (x: number) => number;
 type A = <T>(f: () => T) => Promise<T>;
-
-function id<T>(x: T): T {
-  return x;
-}
-
-async function go<T>(f: () => T): Promise<T> {
-  return f();
-}
-
+function id<T>(x: T): T { return x; }
+async function go<T>(f: () => T): Promise<T> { return f(); }
 const gg: G = id;
 const P: N = gg;
 const Q: N = gg;
@@ -58,7 +51,7 @@ async function main(): Promise<void> {
   const p: N = g;
   const q: N = g;
   console.log(p === q, [p].includes(p), p(4), P === Q, new Set<N>([P, Q]).size, [P].indexOf(Q));
-  const ga = <T>(x: T): T => x;
+  const ga = <T,>(x: T): T => x;
   const pa: N = ga;
   const qa: N = ga;
   console.log(pa === qa);
@@ -67,10 +60,7 @@ async function main(): Promise<void> {
   const qt: N = gt;
   console.log(pt === qt);
   const s = new Set<N>();
-  for (let i = 0; i < 3; i++) {
-    const pi: N = g;
-    s.add(pi);
-  }
+  for (let i = 0; i < 3; i++) { const pi: N = g; s.add(pi); }
   console.log(s.size);
   const a: A = go;
   const n: (f: () => number) => Promise<number> = a;
@@ -90,14 +80,7 @@ async function main(): Promise<void> {
   const o2: N | null = k;
   const arr: N[] = [k, k];
   const asN = { p: k as N, q: k as N };
-  console.log(
-    eq(o1, o2),
-    Object.is(o1, o2),
-    same(k, k),
-    made() === made(),
-    arr[0] === arr[1],
-    asN.p === asN.q,
-  );
+  console.log(eq(o1, o2), Object.is(o1, o2), same(k, k), made() === made(), arr[0] === arr[1], asN.p === asN.q);
   const k2: G = k;
   const r: N = id;
   const fromK2: N = k2;

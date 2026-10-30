@@ -6,7 +6,6 @@ interface Runner {
   (): number;
   stop(): void;
 }
-
 const runner = (() => 1) as Runner;
 console.log(runner());
 runner.stop = () => {};

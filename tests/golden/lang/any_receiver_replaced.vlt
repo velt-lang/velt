@@ -4,7 +4,6 @@
 class Box {
   g: any = null;
 }
-
 class A {
   v: number[] = [1, 2, 3];
   box: Box;
@@ -20,11 +19,9 @@ class A {
     return this.v[1];
   }
 }
-
 class Holder {
   x: any = null;
 }
-
 class S {
   name: string;
   h: Holder;
@@ -37,7 +34,6 @@ class S {
     return this.name;
   }
 }
-
 function main(): void {
   const box = new Box();
   box.g = new A(box);

@@ -14,24 +14,18 @@ console.log(Reflect.set(p, "b", "y", p), target.b);
 const forward = new Proxy({ a: 1 }, {});
 console.log(Reflect.set(forward, "a", 3), forward.a);
 
-const refuse = new Proxy(
-  { a: 1 },
-  {
-    set() {
-      return false;
-    },
+const refuse = new Proxy({ a: 1 }, {
+  set() {
+    return false;
   },
-);
+});
 console.log(Reflect.set(refuse, "a", 9), refuse.a);
 
-const typed: { a: number } = new Proxy(
-  { a: 1 },
-  {
-    set(t, k, v) {
-      log.push("typed set " + String(k));
-      return k === "a" ? Reflect.set(t, k, v) : false;
-    },
+const typed: { a: number } = new Proxy({ a: 1 }, {
+  set(t, k, v) {
+    log.push("typed set " + String(k));
+    return k === "a" ? Reflect.set(t, k, v) : false;
   },
-);
+});
 console.log(Reflect.set(typed, "a", 4), typed.a);
 console.log(log.join("\n"));

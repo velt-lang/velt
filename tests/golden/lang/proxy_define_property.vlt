@@ -9,34 +9,18 @@ function main(): void {
   const p: any = new Proxy(target, {
     defineProperty(t, k, d) {
       log.push(`define ${String(k)} ${JSON.stringify(d)}`);
-      if (k === "frozen") {
-        return false;
-      }
+      if (k === "frozen") return false;
       return Reflect.defineProperty(t, k, d);
     },
   });
   console.log(Reflect.defineProperty(p, "a", { value: 5 }));
-  console.log(
-    Reflect.defineProperty(p, "b", {
-      value: 6,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    }),
-  );
+  console.log(Reflect.defineProperty(p, "b", { value: 6, writable: true, enumerable: true, configurable: true }));
   console.log(Reflect.defineProperty(p, "frozen", { value: 7 }));
   console.log(raw, log.join("\n"));
 
   // Forwarded: no trap.
   const q: any = new Proxy(target, {});
-  console.log(
-    Reflect.defineProperty(q, "c", {
-      value: 8,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    }),
-  );
+  console.log(Reflect.defineProperty(q, "c", { value: 8, writable: true, enumerable: true, configurable: true }));
   console.log(Reflect.defineProperty(q, "a", { value: 9 }), raw);
 
   // An array's `length` may be written but not made enumerable.

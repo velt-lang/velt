@@ -6,7 +6,6 @@ class Item {
     this.v = v;
   }
 }
-
 class St {
   items: Item[] = [new Item(1)];
 }

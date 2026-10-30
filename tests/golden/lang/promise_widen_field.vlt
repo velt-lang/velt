@@ -2,7 +2,6 @@
 // Converting a promise held in a class field to a wider error type: the field keeps its
 // promise and the converted value is another holder of it (#212).
 class Oops extends Error {}
-
 class Other extends Error {}
 
 async function value(): Promise<string> throws Oops {

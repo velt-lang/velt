@@ -24,14 +24,12 @@ const des = (): string => {
     return (e as Error).message + K;
   }
 };
-
 class Box {
   static readonly make: () => number = (): number => K * 10;
   get(): number {
     return K;
   }
 }
-
 const local = (): number => {
   function K(): number {
     return 1;

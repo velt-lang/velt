@@ -1,19 +1,16 @@
 // `instanceof` tests that can never be true, generic subclasses whose type arguments do not
 // follow from the tested type, and mutable field paths (not narrowed).
 class Animal {}
-
 class Dog extends Animal {
   bark(): string {
     return "woof";
   }
 }
-
 class Rock {}
 
 interface Named {
   name(): string;
 }
-
 class Pet implements Named {
   name(): string {
     return "pet";
@@ -21,7 +18,6 @@ class Pet implements Named {
 }
 
 class Box<T> {}
-
 class Pair<A, B> extends Box<A> {}
 
 class Kennel {
@@ -57,7 +53,6 @@ class Tagged<T> implements Named {
     return "tagged";
   }
 }
-
 class Litter<T> extends Animal {}
 
 function genericUnderInterface(n: Named): bool {
@@ -71,7 +66,6 @@ function genericUnderPlainBase(a: Animal): bool {
 interface Holder<T> {
   get(): T;
 }
-
 class Cell<T, U> implements Holder<T> {
   constructor(public v: T) {}
   get(): T {

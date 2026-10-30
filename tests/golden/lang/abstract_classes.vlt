@@ -23,9 +23,7 @@ class Square extends Shape {
 }
 
 const shapes: Shape[] = [new Square(2), new Square(3)];
-for (const s of shapes) {
-  console.log(s.describe());
-}
+for (const s of shapes) console.log(s.describe());
 
 // An abstract getter, an abstract subclass implementing some members and adding its own, and a
 // concrete class overriding an implementation of an abstract method.
@@ -99,9 +97,7 @@ abstract class Source<T> {
   abstract next(): T;
   take(n: number): T[] {
     const out: T[] = [];
-    for (let i = 0; i < n; i++) {
-      out.push(this.next());
-    }
+    for (let i = 0; i < n; i++) out.push(this.next());
     return out;
   }
 }
@@ -167,9 +163,7 @@ const rex: Animal = new Dog("rex");
 console.log(rex.speak());
 const owned: Owned = new Dog("fido");
 console.log(owned.owner());
-if (rex instanceof Pet) {
-  console.log("a pet of", rex.owner());
-}
+if (rex instanceof Pet) console.log("a pet of", rex.owner());
 
 // `abstract override`: a concrete method made abstract again; subclasses must implement it.
 class Plain {
@@ -198,14 +192,11 @@ extend Shape {
     return this.area() * 2;
   }
 }
-
 console.log(shapes[1].doubled());
 
 // An abstract class without abstract members.
 abstract class Base {}
-
 class Leaf extends Base {}
-
 console.log(new Leaf() instanceof Base);
 
 // Abstract properties: implemented by fields or by accessors, read and written through the
@@ -282,22 +273,16 @@ class Quad extends Fig {
 function nameOf(c: abstract new () => Fig): string {
   return c.name;
 }
-
 console.log(nameOf(Fig), nameOf(Tri));
 
 const kinds: ShapeClass[] = [Fig, Tri, Quad];
 const someFig: Fig = new Quad();
-for (const k of kinds) {
-  console.log(k.name, someFig instanceof k);
-}
+for (const k of kinds) console.log(k.name, someFig instanceof k);
 
 function cornersIf(v: unknown, c: ShapeClass): number {
-  if (v instanceof c) {
-    return v.corners();
-  }
+  if (v instanceof c) return v.corners();
   return 0;
 }
-
 console.log(cornersIf(new Tri(), Tri), cornersIf(new Tri(), Quad), cornersIf("x", Fig));
 
 // An abstract class declared in a function; `abstract` is still an ordinary name.
@@ -313,7 +298,6 @@ function local(): string {
   const s: Step = new Hop();
   return s.run();
 }
-
 console.log(local());
 const abstract = "just a name";
 console.log(abstract);

@@ -10,9 +10,7 @@ function canonical(record: Record<string, number>): string {
   const keys = Object.keys(record).sort();
   let out = "{";
   for (let i = 0; i < keys.length; i++) {
-    if (i > 0) {
-      out += ",";
-    }
+    if (i > 0) out += ",";
     out += JSON.stringify(keys[i]) + ":" + record[keys[i]];
   }
   return out + "}";
@@ -57,10 +55,5 @@ function main() {
   console.log(none ? [] : [2, 1].sort(), sortedCopy(["z", "y"], (a, b) => (a < b ? -1 : 1)));
   const scores = new Scores();
   console.log(scores.ranked(), scores.items);
-  console.log(
-    [
-      [2, 1],
-      [4, 3],
-    ].map((p) => p.slice().sort()),
-  );
+  console.log([[2, 1], [4, 3]].map((p) => p.slice().sort()));
 }

@@ -7,18 +7,15 @@ class Item {
     this.v = v;
   }
 }
-
 class Pair {
   a: Item;
   constructor(a: Item) {
     this.a = a;
   }
 }
-
 class Bag {
   items: Item[] = [];
 }
-
 class St {
   items: Item[] = [new Item(1)];
 }
@@ -40,13 +37,7 @@ function main() {
     });
   }
   out[0].v = 5;
-  console.log(
-    g.length,
-    g.map((l) => l[0].v).join(","),
-    m.get("k")![0].v,
-    ps[1].a.v,
-    g[3][0] === out[0],
-  );
+  console.log(g.length, g.map((l) => l[0].v).join(","), m.get("k")![0].v, ps[1].a.v, g[3][0] === out[0]);
 
   const h: Item[][] = [];
   const n = rw.read((s) => {

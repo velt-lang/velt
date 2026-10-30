@@ -12,9 +12,7 @@ class Obj {
     this.n = n;
   }
 }
-
 const cache = new Map<string, Promise<Obj>>();
-
 async function make(i: number): Promise<Obj> {
   if (i % 2 == 0) {
     await sleep(2);
@@ -23,7 +21,6 @@ async function make(i: number): Promise<Obj> {
   }
   return new Obj(i);
 }
-
 async function worker(k: string): Promise<number> {
   const o = await cache.get(k)!;
   for (let j = 0; j < 50; j++) {
@@ -34,11 +31,9 @@ async function worker(k: string): Promise<number> {
   }
   return o.items.length + o.n;
 }
-
 async function use(p: Promise<Obj>): Promise<number> {
   return (await p).n;
 }
-
 async function report(ws: Promise<number>[], us: Promise<number>[], keep: Timer): Promise<void> {
   let w = 0;
   for (const t of ws) {
@@ -51,7 +46,6 @@ async function report(ws: Promise<number>[], us: Promise<number>[], keep: Timer)
   console.log("workers", w, "holders", u);
   clearInterval(keep);
 }
-
 function main() {
   const ws: Promise<number>[] = [];
   const us: Promise<number>[] = [];

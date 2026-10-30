@@ -4,7 +4,6 @@
 // member reads and calls, instanceof, switch, a template, a spread, JSON.stringify and an index
 // key.
 class E1 extends Error {}
-
 class E2 extends Error {}
 
 function make(): any {
@@ -27,23 +26,19 @@ function make(): any {
 async function rd(p: any): Promise<number> {
   return p.g;
 }
-
 async function wr(p: any): Promise<number> {
   p.s = 1;
   return 1;
 }
-
 async function pl(p: any): Promise<number> {
   if (p.a === 1) {
     throw new E2("plain");
   }
   return 0;
 }
-
 function label(e: unknown): string {
   return e instanceof E1 ? "E1" : e instanceof E2 ? "E2" : "other";
 }
-
 async function pl1(p: any): Promise<number> {
   if (p.a === 1) {
     throw new E1("plain1");
@@ -84,108 +79,108 @@ async function run(): Promise<void> {
     }
   }
   await rd(p).catch((r) => {
-    console.log("typeof", typeof r);
-    if (r) {
-      console.log("truthy");
-    }
-    console.log("not", !r, Boolean(r));
-    console.log("eq", r == null, r === undefined, r != null);
-    console.log("opt", r?.message, r?.name);
-    console.log("nullish", (r ?? "none").toString());
-    console.log("members", r.message, r.name, r.toString());
-    console.log("instanceof", r instanceof Error, label(r));
-    switch (r.message) {
-      case "get":
-        console.log("switch get");
-        break;
-      default:
-        console.log("switch other");
-    }
-    console.log(`template ${r}`);
-    const o = { ...{ k: 1 }, m: r.message };
-    console.log("spread", o.k, o.m);
-    console.log("json", JSON.stringify({ m: r.message }));
-    const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
-    console.log("index", tbl[r.message]);
+      console.log("typeof", typeof r);
+      if (r) {
+        console.log("truthy");
+      }
+      console.log("not", !r, Boolean(r));
+      console.log("eq", r == null, r === undefined, r != null);
+      console.log("opt", r?.message, r?.name);
+      console.log("nullish", (r ?? "none").toString());
+      console.log("members", r.message, r.name, r.toString());
+      console.log("instanceof", r instanceof Error, label(r));
+      switch (r.message) {
+        case "get":
+          console.log("switch get");
+          break;
+        default:
+          console.log("switch other");
+      }
+      console.log(`template ${r}`);
+      const o = { ...{ k: 1 }, m: r.message };
+      console.log("spread", o.k, o.m);
+      console.log("json", JSON.stringify({ m: r.message }));
+      const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
+      console.log("index", tbl[r.message]);
   });
   try {
     await rd(p);
   } catch (r) {
-    console.log("typeof", typeof r);
-    if (r) {
-      console.log("truthy");
-    }
-    console.log("not", !r, Boolean(r));
-    console.log("eq", r == null, r === undefined, r != null);
-    console.log("opt", r?.message, r?.name);
-    console.log("nullish", (r ?? "none").toString());
-    console.log("members", r.message, r.name, r.toString());
-    console.log("instanceof", r instanceof Error, label(r));
-    switch (r.message) {
-      case "get":
-        console.log("switch get");
-        break;
-      default:
-        console.log("switch other");
-    }
-    console.log(`template ${r}`);
-    const o = { ...{ k: 1 }, m: r.message };
-    console.log("spread", o.k, o.m);
-    console.log("json", JSON.stringify({ m: r.message }));
-    const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
-    console.log("index", tbl[r.message]);
+      console.log("typeof", typeof r);
+      if (r) {
+        console.log("truthy");
+      }
+      console.log("not", !r, Boolean(r));
+      console.log("eq", r == null, r === undefined, r != null);
+      console.log("opt", r?.message, r?.name);
+      console.log("nullish", (r ?? "none").toString());
+      console.log("members", r.message, r.name, r.toString());
+      console.log("instanceof", r instanceof Error, label(r));
+      switch (r.message) {
+        case "get":
+          console.log("switch get");
+          break;
+        default:
+          console.log("switch other");
+      }
+      console.log(`template ${r}`);
+      const o = { ...{ k: 1 }, m: r.message };
+      console.log("spread", o.k, o.m);
+      console.log("json", JSON.stringify({ m: r.message }));
+      const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
+      console.log("index", tbl[r.message]);
   }
   await wr(p).catch((r) => {
-    console.log("typeof", typeof r);
-    if (r) {
-      console.log("truthy");
-    }
-    console.log("not", !r, Boolean(r));
-    console.log("eq", r == null, r === undefined, r != null);
-    console.log("opt", r?.message, r?.name);
-    console.log("nullish", (r ?? "none").toString());
-    console.log("members", r.message, r.name, r.toString());
-    console.log("instanceof", r instanceof Error, label(r));
-    switch (r.message) {
-      case "get":
-        console.log("switch get");
-        break;
-      default:
-        console.log("switch other");
-    }
-    console.log(`template ${r}`);
-    const o = { ...{ k: 1 }, m: r.message };
-    console.log("spread", o.k, o.m);
-    console.log("json", JSON.stringify({ m: r.message }));
-    const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
-    console.log("index", tbl[r.message]);
+      console.log("typeof", typeof r);
+      if (r) {
+        console.log("truthy");
+      }
+      console.log("not", !r, Boolean(r));
+      console.log("eq", r == null, r === undefined, r != null);
+      console.log("opt", r?.message, r?.name);
+      console.log("nullish", (r ?? "none").toString());
+      console.log("members", r.message, r.name, r.toString());
+      console.log("instanceof", r instanceof Error, label(r));
+      switch (r.message) {
+        case "get":
+          console.log("switch get");
+          break;
+        default:
+          console.log("switch other");
+      }
+      console.log(`template ${r}`);
+      const o = { ...{ k: 1 }, m: r.message };
+      console.log("spread", o.k, o.m);
+      console.log("json", JSON.stringify({ m: r.message }));
+      const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
+      console.log("index", tbl[r.message]);
   });
   try {
     await wr(p);
   } catch (r) {
-    console.log("typeof", typeof r);
-    if (r) {
-      console.log("truthy");
-    }
-    console.log("not", !r, Boolean(r));
-    console.log("eq", r == null, r === undefined, r != null);
-    console.log("opt", r?.message, r?.name);
-    console.log("nullish", (r ?? "none").toString());
-    console.log("members", r.message, r.name, r.toString());
-    console.log("instanceof", r instanceof Error, label(r));
-    switch (r.message) {
-      case "get":
-        console.log("switch get");
-        break;
-      default:
-        console.log("switch other");
-    }
-    console.log(`template ${r}`);
-    const o = { ...{ k: 1 }, m: r.message };
-    console.log("spread", o.k, o.m);
-    console.log("json", JSON.stringify({ m: r.message }));
-    const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
-    console.log("index", tbl[r.message]);
+      console.log("typeof", typeof r);
+      if (r) {
+        console.log("truthy");
+      }
+      console.log("not", !r, Boolean(r));
+      console.log("eq", r == null, r === undefined, r != null);
+      console.log("opt", r?.message, r?.name);
+      console.log("nullish", (r ?? "none").toString());
+      console.log("members", r.message, r.name, r.toString());
+      console.log("instanceof", r instanceof Error, label(r));
+      switch (r.message) {
+        case "get":
+          console.log("switch get");
+          break;
+        default:
+          console.log("switch other");
+      }
+      console.log(`template ${r}`);
+      const o = { ...{ k: 1 }, m: r.message };
+      console.log("spread", o.k, o.m);
+      console.log("json", JSON.stringify({ m: r.message }));
+      const tbl: Record<string, number> = { get: 1, set: 2, plain: 3, plain1: 4 };
+      console.log("index", tbl[r.message]);
   }
 }
 

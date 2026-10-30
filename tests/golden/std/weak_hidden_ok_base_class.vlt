@@ -1,56 +1,22 @@
 // No false positive: a subclass holding a WeakRef that is never used as its base does not make
 // base-class values crossing threads an error; nor does a closure without weak captures stored
 // into the locked value, or one with weak captures used under the lock only.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-class Base {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-  peek(): number {
-    return this.n;
-  }
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Base { n: number; constructor(n: number) { this.n = n; } peek(): number { return this.n; } }
 class H extends Base {
   r: WeakRef<V>;
-  constructor(r: WeakRef<V>) {
-    super(0);
-    this.r = r;
-  }
-  override peek(): number {
-    const x = this.r.deref();
-    return x === undefined ? -1 : x.n;
-  }
+  constructor(r: WeakRef<V>) { super(0); this.r = r; }
+  override peek(): number { const x = this.r.deref(); return x === undefined ? -1 : x.n; }
 }
-
-class Box {
-  f: () => number;
-  constructor() {
-    this.f = () => 0;
-  }
-}
-
-async function run(b: Base): Promise<number> {
-  return b.peek();
-}
-
+class Box { f: () => number; constructor() { this.f = () => 0; } }
+async function run(b: Base): Promise<number> { return b.peek(); }
 async function main() {
   const keep = new V(7);
   const h = new H(new WeakRef(keep));
   const m = shared(new Mutex<Box>(new Box()));
   const got = m.with((v) => {
     const r = new WeakRef(keep);
-    const look = (): number => {
-      const x = r.deref();
-      return x === undefined ? -1 : x.n;
-    };
+    const look = (): number => { const x = r.deref(); return x === undefined ? -1 : x.n; };
     const n = look();
     v.f = () => n + 1;
     return n + 1;

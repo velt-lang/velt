@@ -6,7 +6,6 @@ class VNode {
     this.type = type;
   }
 }
-
 type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
 
 function count(c: JSXChild): number {

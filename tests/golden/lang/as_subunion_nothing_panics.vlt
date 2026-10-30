@@ -13,7 +13,7 @@ interface C {
 }
 
 function pick(u: A | B | C | undefined): string {
-  return (u as (A | B)).kind;
+  return (u as A | B).kind;
 }
 
 function main() {

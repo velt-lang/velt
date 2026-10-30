@@ -9,9 +9,7 @@ function makeDefer(log: string[]): { collector: DeferCollector; pending: () => n
   const tracked = new Set<Promise<unknown>>();
   const collector: DeferCollector = {
     add(p) {
-      if (tracked.has(p)) {
-        return;
-      }
+      if (tracked.has(p)) return;
       tracked.add(p);
       queueMicrotask(() => {
         state.pending++;

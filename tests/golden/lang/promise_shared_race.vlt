@@ -8,18 +8,15 @@ class Obj {
     this.n = n;
   }
 }
-
 async function tick(n: number): Promise<void> {
   for (let i = 0; i < n; i++) {
     await Promise.resolve();
   }
 }
-
 async function make(i: number, n: number): Promise<Obj> {
   await tick(n);
   return new Obj(i);
 }
-
 async function main() {
   for (let k = 1; k <= 3; k++) {
     const r = make(9, 1);

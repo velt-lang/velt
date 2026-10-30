@@ -37,8 +37,6 @@ function main() {
   const s: Sink = store;
   const tag = "x".repeat(2);
   s.put(() => tag);
-  for (const k of kept) {
-    console.log(k());
-  }
+  for (const k of kept) console.log(k());
   console.log(store.fs[0]());
 }

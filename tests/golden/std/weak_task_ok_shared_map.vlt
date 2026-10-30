@@ -1,48 +1,14 @@
 // A shared Mutex of a Map of class instances, updated by spawned tasks.
-class Account {
-  id: string;
-  bal: number;
-  hist: number[];
-  constructor(id: string) {
-    this.id = id;
-    this.bal = 0;
-    this.hist = [];
-  }
-}
-
-async function deposit(
-  m: shared<Mutex<Map<string, Account>>>,
-  id: string,
-  n: number,
-): Promise<number> {
-  for (let i = 0; i < 1000; i++) {
-    m.with((mp) => {
-      if (!mp.has(id)) {
-        mp.set(id, new Account(id));
-      }
-      const a = mp.get(id)!;
-      a.bal += n;
-      if (i % 100 == 0) {
-        a.hist.push(n);
-      }
-    });
-  }
+class Account { id: string; bal: number; hist: number[]; constructor(id: string) { this.id = id; this.bal = 0; this.hist = []; } }
+async function deposit(m: shared<Mutex<Map<string, Account>>>, id: string, n: number): Promise<number> {
+  for (let i = 0; i < 1000; i++) m.with((mp) => { if (!mp.has(id)) mp.set(id, new Account(id)); const a = mp.get(id)!; a.bal += n; if (i % 100 == 0) a.hist.push(n); });
   return n;
 }
-
 async function main() {
   const m = shared(new Mutex(new Map<string, Account>()));
   const ps: Promise<number>[] = [];
-  for (let t = 0; t < 8; t++) {
-    ps.push(spawn(deposit(m.clone(), "a" + (t % 3), t + 1)));
-  }
+  for (let t = 0; t < 8; t++) ps.push(spawn(deposit(m.clone(), "a" + (t % 3), t + 1)));
   await Promise.all(ps);
-  const total = m.with((mp) => {
-    let s = 0;
-    for (const [k, a] of mp) {
-      s += a.bal;
-    }
-    return s;
-  });
+  const total = m.with((mp) => { let s = 0; for (const [k, a] of mp) s += a.bal; return s; });
   console.log(total);
 }

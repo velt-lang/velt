@@ -3,7 +3,6 @@
 // the record and the key are evaluated once, the value only when it is stored, and the
 // expression's value is the value stored or kept. Expected output: Node's.
 const kebabCache: Record<string, string> = {};
-
 function kebab(str: string): string {
   let out = "";
   for (const ch of str) {
@@ -12,20 +11,13 @@ function kebab(str: string): string {
   }
   return out;
 }
-
 function camelToKebab(str: string): string {
   return kebabCache[str] ||= kebab(str);
 }
-
-console.log(camelToKebab("backgroundColor"), camelToKebab("backgroundColor"));
+console.log(camelToKebab('backgroundColor'), camelToKebab('backgroundColor'));
 const counts: Record<string, number> = { a: 0, b: 2 };
 let calls = 0;
-
-function v(n: number): number {
-  calls++;
-  return n;
-}
-
+function v(n: number): number { calls++; return n; }
 counts.a ||= v(5);
 counts.b ||= v(6);
 counts["c"] ||= v(7);
@@ -44,13 +36,7 @@ const r3 = names.b ??= "z";
 console.log(r1, r2, r3, names);
 const r4 = names.a &&= "w";
 console.log(r4, names);
-
-class Box {
-  s = "";
-  n = 0;
-  o: string | null = null;
-}
-
+class Box { s = ""; n = 0; o: string | null = null; }
 const b = new Box();
 b.s ||= "filled";
 b.n ||= 3;
@@ -58,32 +44,14 @@ b.o ??= "set";
 const r5 = (b.s &&= "again");
 console.log(b.s, b.n, b.o, r5);
 let order: string[] = [];
-
-function obj(): Record<string, number> {
-  order.push("obj");
-  return counts;
-}
-
-function key(): string {
-  order.push("key");
-  return "q";
-}
-
-function val(): number {
-  order.push("val");
-  return 4;
-}
-
+function obj(): Record<string, number> { order.push("obj"); return counts; }
+function key(): string { order.push("key"); return "q"; }
+function val(): number { order.push("val"); return 4; }
 obj()[key()] ||= val();
 obj()[key()] ||= val();
 console.log(order.join(","), counts.q);
 let kk = "m";
-
-function setK(): number {
-  kk = "n";
-  return 1;
-}
-
+function setK(): number { kk = "n"; return 1; }
 counts[kk] ||= setK();
 console.log(counts.m, "n" in counts, kk);
 const lim: Record<"a" | "b", number> = { a: 0, b: 1 };

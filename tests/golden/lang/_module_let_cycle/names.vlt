@@ -1,12 +1,9 @@
 import { first } from "./first";
-
 let names: string[] = ["x"];
-
 export function addName(n: string): number {
   names.push(n);
   return names.length;
 }
-
 export function firstName(): string {
   return first;
 }

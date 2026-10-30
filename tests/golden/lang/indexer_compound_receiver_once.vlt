@@ -25,5 +25,4 @@ function run(): void {
   ta[0] &&= sw(7);
   console.log(first[0], second[0]);
 }
-
 run();

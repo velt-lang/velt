@@ -14,17 +14,13 @@ function logged(target: any): any {
 interface Shape {
   area(): number;
 }
-
 class Base {
   n: number = 1;
 }
-
 class Sub extends Base {
   m: number = 2;
 }
-
 class Other extends Base {}
-
 class Sq implements Shape {
   side: number = 3;
   area(): number {

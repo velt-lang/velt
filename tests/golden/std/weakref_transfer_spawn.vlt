@@ -1,25 +1,12 @@
 // A function value (not a closure literal at the crossing, so sema cannot see what it
 // captured) whose closure owns a WeakRef, passed to a spawned task: its transfer panics, also
 // when the environment is moved rather than copied.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
-  return () => {
-    const x = r.deref();
-    return x === undefined ? -1 : x.n;
-  };
+  return () => { const x = r.deref(); return x === undefined ? -1 : x.n; };
 }
-
-async function run(f: () => number): Promise<number> {
-  return f();
-}
-
+async function run(f: () => number): Promise<number> { return f(); }
 async function main() {
   const keep = new V(7);
   console.log("before");

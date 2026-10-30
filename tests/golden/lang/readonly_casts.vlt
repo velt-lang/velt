@@ -7,7 +7,6 @@ function pushed(xs: readonly string[]): string[] {
   (xs as string[]).push("e");
   return ys;
 }
-
 const base = ["a"];
 console.log(pushed(base), base);
 
@@ -18,7 +17,6 @@ function added(s: ReadonlySet<string>, m: ReadonlyMap<string, number>): number {
   (m as Map<string, number>).set("k", 1);
   return s.size + m.size;
 }
-
 const set = new Set<string>();
 const map = new Map<string, number>();
 console.log(added(set, map), [...set], [...map]);
@@ -31,6 +29,5 @@ function narrowed(s: ReadonlySet<string>, m: ReadonlyMap<string, number> | null)
     m.set("n", 2);
   }
 }
-
 narrowed(set, map);
 console.log([...set], [...map]);

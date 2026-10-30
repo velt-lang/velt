@@ -15,17 +15,13 @@ function main(): void {
   t.delete("a");
   t.add("a");
   console.log(t, [...t], Array.from(t));
-  for (const x of t) {
-    console.log(x);
-  }
+  for (const x of t) console.log(x);
   const m = new Map<"a", number>();
   m.set("a", 1);
   console.log(m, m.get("a"));
   const lit = new Map<"a", "b">();
   lit.set("a", "b");
-  for (const [k, v] of lit) {
-    console.log(k, v);
-  }
+  for (const [k, v] of lit) console.log(k, v);
   console.log([...lit.keys()], [...lit.values()], lit.has("a"));
   lit.delete("a");
   console.log(lit.size);

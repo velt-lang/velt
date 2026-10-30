@@ -10,12 +10,8 @@ function u(z?: string, n?: number) {
 }
 
 function three(p?: string | null): string {
-  if (p === undefined) {
-    return "undef";
-  }
-  if (p === null) {
-    return "null";
-  }
+  if (p === undefined) return "undef";
+  if (p === null) return "null";
   return p;
 }
 
@@ -78,9 +74,7 @@ function chain(p: Item | null) {
 }
 
 function nested(p: Item | null | undefined) {
-  if (p !== undefined) {
-    console.log(p?.n);
-  }
+  if (p !== undefined) console.log(p?.n);
 }
 
 function maybeLen(s?: string): number | undefined {

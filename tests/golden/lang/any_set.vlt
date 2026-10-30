@@ -16,16 +16,13 @@ class Point {
     this._scale = v * 10;
   }
 }
-
 class Named extends Point {
   name: string = "n";
 }
-
 class Line {
   from: Point = new Point();
   to: Point | null = null;
 }
-
 function main(): void {
   const p = new Point();
   const a: any = p;

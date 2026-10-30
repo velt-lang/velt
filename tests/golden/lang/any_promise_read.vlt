@@ -1,19 +1,16 @@
 // A promise read back from `any`: the table of `Promise` compares promises by identity, which
 // built no equality glue (an ICE, #379).
 async function one(): Promise<number> {
-  return 1;
+    return 1;
 }
-
 function take(x: any): Promise<number> {
-  return x.p as Promise<number>;
+    return x.p as Promise<number>;
 }
-
 async function main(): Promise<void> {
-  const p = one();
-  if (Math.random() > 2) {
-    console.log(take({ p }) === p);
-  }
-  console.log(await p);
+    const p = one();
+    if (Math.random() > 2) {
+        console.log(take({ p }) === p);
+    }
+    console.log(await p);
 }
-
 main();

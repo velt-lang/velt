@@ -3,45 +3,22 @@
 // empties it in place (#1161): the array's type is counted, as for an array in a closure's
 // cell, so the callee's loop and callbacks share each element.
 
-class T {
-  constructor(public name: string) {}
-}
-
+class T { constructor(public name: string) {} }
 const XS: T[] = [];
 let OS: T[] | null = [];
-
 function clr(): void {
   XS.length = 0;
   OS!.length = 0;
 }
-
 function fill(): void {
   for (let k = 0; k < 3; k++) {
     XS.push(new T("x" + String(k)));
     OS!.push(new T("o" + String(k)));
   }
 }
-
-function walk(xs: T[]): void {
-  for (const x of xs) {
-    clr();
-    console.log("walk", x.name, xs.length);
-  }
-}
-
-function each(xs: T[]): void {
-  xs.forEach((x) => {
-    clr();
-    console.log("each", x.name, xs.length);
-  });
-}
-
-function first(xs: T[], f: () => void): string {
-  const x = xs[0];
-  f();
-  return x.name;
-}
-
+function walk(xs: T[]): void { for (const x of xs) { clr(); console.log("walk", x.name, xs.length); } }
+function each(xs: T[]): void { xs.forEach((x) => { clr(); console.log("each", x.name, xs.length); }); }
+function first(xs: T[], f: () => void): string { const x = xs[0]; f(); return x.name; }
 fill();
 walk(XS);
 fill();

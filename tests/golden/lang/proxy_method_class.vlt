@@ -9,7 +9,6 @@ class C {
     return this.x;
   }
 }
-
 function main(): void {
   const plain = new Proxy(new C(), {});
   console.log(plain.m());

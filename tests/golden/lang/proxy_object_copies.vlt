@@ -4,11 +4,9 @@
 // `const` whose trap forwards with `Reflect.get` compiles too.
 type AB = { a: number; b: number };
 type BA = { b: number; a: number };
-
 function show(x: BA): number {
   return x.a + x.b;
 }
-
 function main(): void {
   const ab: AB = { a: 1, b: 2 };
   console.log(show(ab));

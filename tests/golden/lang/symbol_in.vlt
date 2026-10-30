@@ -60,11 +60,7 @@ function main() {
   console.log(TAG in t, TAG in u, TAG === Symbol.for("velt:tag"));
   console.log(pick({ a: 1, [CELL]: true }), pick({ b: 2 }));
   const m = new Map<string, number>();
-  console.log(
-    Symbol.iterator in [1, 2],
-    Symbol.iterator in m,
-    Symbol.iterator in new Set<number>(),
-  );
+  console.log(Symbol.iterator in [1, 2], Symbol.iterator in m, Symbol.iterator in new Set<number>());
   console.log(Symbol.iterator in count(), Symbol.asyncIterator in ticks());
   const n = new Named();
   console.log(n[Symbol.toStringTag], Symbol.toStringTag in n, Symbol.iterator in n, CELL in n);

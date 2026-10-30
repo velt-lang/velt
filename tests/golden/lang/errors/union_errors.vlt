@@ -3,9 +3,7 @@ class Cat {
     return "meow";
   }
 }
-
 class Animal {}
-
 class Dog extends Animal {}
 
 function f(v: i64 | string): usize {

@@ -5,18 +5,10 @@
 let st = 1;
 const lit = {
   tag: "t",
-  get u(): string | number {
-    return st;
-  },
-  get mixed(): number | boolean[] {
-    return st > 1 ? [true, false] : st;
-  },
-  get opt(): number | undefined {
-    return st > 1 ? st : undefined;
-  },
-  get obj(): { a: number } | string {
-    return st > 1 ? "s" : { a: st };
-  },
+  get u(): string | number { return st; },
+  get mixed(): number | boolean[] { return st > 1 ? [true, false] : st; },
+  get opt(): number | undefined { return st > 1 ? st : undefined; },
+  get obj(): { a: number } | string { return st > 1 ? "s" : { a: st }; },
 };
 const A: any = lit;
 console.log(A.u, A.tag);
@@ -24,7 +16,5 @@ console.log(JSON.stringify(A));
 st = 2;
 console.log(JSON.stringify(A));
 console.log(A);
-if (st > 100) {
-  console.log(JSON.stringify(A as any));
-}
+if (st > 100) console.log(JSON.stringify(A as any));
 console.log("done");

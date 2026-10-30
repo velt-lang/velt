@@ -6,11 +6,9 @@ class P {
     return v instanceof P;
   }
 }
-
 class Q extends P {
   y = 2;
 }
-
 const t = (v: unknown): number => (P.is(v) ? v.x : 0);
 const both = (v: unknown): string => (P.is(v) && v instanceof Q ? `${v.x}${v.y}` : "-");
 console.log(t(new P()), t(new Q()), t("p"), both(new Q()), both(new P()));

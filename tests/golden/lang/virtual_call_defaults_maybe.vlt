@@ -6,17 +6,14 @@ class B {
     return "B" + x;
   }
 }
-
 class D extends B {
   override m(x: number = 2): string {
     return "D" + x;
   }
 }
-
 function pick(n: number): number | undefined {
   return n > 0 ? n : undefined;
 }
-
 const xs: B[] = [new B(), new D()];
 for (const b of xs) {
   const u = pick(0);

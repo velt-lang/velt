@@ -3,22 +3,11 @@
 // keys, quoted and numeric keys, and an `any` property read once before its default (in a
 // declaration and an assignment). Expected output: Node's.
 let reads = 0;
-
 class G {
-  get x(): string | undefined {
-    reads++;
-    return undefined;
-  }
-  get y(): number | null {
-    reads++;
-    return null;
-  }
+  get x(): string | undefined { reads++; return undefined; }
+  get y(): number | null { reads++; return null; }
 }
-
-interface Idx {
-  [key: string]: number;
-}
-
+interface Idx { [key: string]: number }
 function run(): void {
   const r: Record<string, number> = { a: 1 };
   const { zz = 0, a = 7 } = r;
@@ -35,12 +24,10 @@ function run(): void {
   const g: any = new G();
   const { x = "dx" } = g;
   console.log(x, reads);
-  let ax = "";
-  let ay: any = 0;
+  let ax = "", ay: any = 0;
   ({ x: ax = "e", y: ay = 3 } = g);
   console.log(ax, ay, reads);
 }
-
 function main(): void {
   run();
 }

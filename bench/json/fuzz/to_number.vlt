@@ -33,21 +33,7 @@ function literal(): string {
     return "0b" + digits(rnd(70)).replace(/[2-9]/g, "1");
   }
   if (k == 3) {
-    return [
-      "Infinity",
-      "-Infinity",
-      "+Infinity",
-      "Infinityx",
-      "infinity",
-      "NaN",
-      "",
-      ".",
-      "e5",
-      "-",
-      "+-1",
-      "0x",
-      "1_000",
-    ][rnd(13)];
+    return ["Infinity", "-Infinity", "+Infinity", "Infinityx", "infinity", "NaN", "", ".", "e5", "-", "+-1", "0x", "1_000"][rnd(13)];
   }
   const sign = ["", "-", "+"][rnd(3)];
   const intDigits = rnd(4) == 0 ? 0 : 1 + rnd(k >= 10 ? 30 : 12);
@@ -82,5 +68,4 @@ function run() {
     console.log(JSON.stringify(s), show(Number(s)), show(parseFloat(s)), json);
   }
 }
-
 run();

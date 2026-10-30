@@ -3,30 +3,19 @@
 // docs/internals/design/deferred-types.md). Keys of an optional field read as `F | undefined`.
 function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
   const r = {} as Pick<T, K>;
-  for (const k of ks) {
-    r[k] = o[k];
-  }
+  for (const k of ks) r[k] = o[k];
   return r;
 }
-
 function only<T>(src: T, keys: (keyof T)[]): Partial<T> {
   const out = {} as Partial<T>;
-  for (const k of keys) {
-    out[k] = src[k];
-  }
+  for (const k of keys) out[k] = src[k];
   return out;
 }
-
 function omit<T, K extends keyof T>(o: T, drop: string[], all: (keyof T)[]): Omit<T, K> {
   const r = {} as Omit<T, K>;
-  for (const k of all) {
-    if (!drop.includes(k as string)) {
-      (r as any)[k] = o[k];
-    }
-  }
+  for (const k of all) if (!drop.includes(k as string)) (r as any)[k] = o[k];
   return r;
 }
-
 type User = { id: number; name: string; nick?: string };
 const u: User = { id: 1, name: "a", nick: "n" };
 console.log(pick(u, ["id", "name"]), pick(u, ["name"]));

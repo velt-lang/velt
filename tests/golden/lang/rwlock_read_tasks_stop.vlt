@@ -4,16 +4,13 @@
 class Item {
   v: number = 1;
 }
-
 class St {
   items: Item[] = [new Item()];
 }
-
 async function hold(i: Item): Promise<number> {
   await Promise.resolve(0);
   return i.v;
 }
-
 async function main() {
   const rw = shared(new RwLock<St>(new St()));
   const p = await hold(new Item());

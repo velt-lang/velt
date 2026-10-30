@@ -8,12 +8,10 @@ class Item {
     this.v = v;
   }
 }
-
 class St {
   items: Item[] = [new Item(1), new Item(2)];
   m: Map<string, Item> = new Map<string, Item>();
 }
-
 function main() {
   const st = new St();
   st.m.set("a", st.items[1]);

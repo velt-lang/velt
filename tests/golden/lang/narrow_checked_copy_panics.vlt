@@ -4,13 +4,10 @@
 class Box {
   n: number = 1;
 }
-
 let x: Box | null = new Box();
-
 function clear(): void {
   x = null;
 }
-
 function f(): void {
   if (x) {
     clear();
@@ -19,5 +16,4 @@ function f(): void {
     console.log(c.n);
   }
 }
-
 f();

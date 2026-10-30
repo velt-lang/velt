@@ -3,7 +3,7 @@
 // `undefined` for a missing key) compiles.
 
 function getProvided<T>(provides: Map<string, T> | null | undefined, token: string): T | undefined {
-  return provides?.get(token) as (T | undefined);
+  return provides?.get(token) as T | undefined;
 }
 
 function size(p: Missing | null): number {

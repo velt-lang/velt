@@ -6,28 +6,22 @@ interface VNode {
   type: string;
   children: VNode[];
 }
-
 interface IV extends VNode {
   _ns?: boolean;
   _sub?: VNode | null;
   _cb?: () => string;
 }
-
 const ROOT: VNode = { type: "root", children: [] };
-
 class Holder {
   v: VNode = { type: "held", children: [] };
 }
-
 async function mountAsync(v: VNode): Promise<void> {
   await Promise.resolve();
   (v as IV)._ns = true;
 }
-
 function maybe(v: VNode | null): IV | null {
   return v as IV | null;
 }
-
 async function run(): Promise<void> {
   await mountAsync(ROOT);
   const h = new Holder();
@@ -50,5 +44,4 @@ async function run(): Promise<void> {
   }
   console.log(JSON.stringify(list));
 }
-
 run();

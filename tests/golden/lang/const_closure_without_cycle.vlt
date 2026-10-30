@@ -26,5 +26,4 @@ function run(): void {
   const second: Handle = reg.add(() => `second is ${second.id}, after ${first.id}`);
   console.log(reg.run());
 }
-
 run();

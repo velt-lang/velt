@@ -4,7 +4,6 @@
 // prints 100).
 type Inner = { v: number };
 type Outer = { inner: Inner };
-
 class T {
   f: () => number;
   constructor(f: () => number) {
@@ -15,11 +14,9 @@ class T {
     return "abcdefghijklm";
   }
 }
-
 function show<X>(x: X): string {
   return `${x}`;
 }
-
 function main(): void {
   const o: Outer = { inner: { v: 0 } };
   const bump = (): number => {

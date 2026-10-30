@@ -3,13 +3,11 @@
 interface Tree {
   get size(): string;
 }
-
 class Leaf implements Tree {
   get size(): string {
     return "1";
   }
 }
-
 class Pair implements Tree {
   constructor(public left: Tree) {}
   get size(): string {
@@ -20,12 +18,9 @@ class Pair implements Tree {
       console.log("inner");
       throw e;
     }
-    if (n === "") {
-      throw { code: "empty" };
-    }
+    if (n === "") throw { code: "empty" };
     return n + "+1";
   }
 }
-
 const t: Tree = new Pair(new Pair(new Leaf()));
 console.log(t.size);

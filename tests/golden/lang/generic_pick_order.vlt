@@ -9,7 +9,6 @@ function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
   }
   return r;
 }
-
 const src = { id: 1, name: "a", age: 3 };
 console.log(pick(src, ["id", "name"]), JSON.stringify(pick(src, ["id", "age"])));
 console.log(pick(src, ["name", "id"]));

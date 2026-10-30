@@ -7,7 +7,7 @@ interface I {
 }
 
 class X implements I {
-  m(a: number, b: number | undefined = a + 5): number {
+  m(a: number, b: number = a + 5): number {
     return a + b;
   }
 }
@@ -19,7 +19,7 @@ class B1 {
 }
 
 class D1 extends B1 {
-  override m(a: number, b: number | undefined = a - 3): number {
+  override m(a: number, b: number = a - 3): number {
     return a + b;
   }
 }

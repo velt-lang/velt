@@ -5,7 +5,6 @@ class C {
   readonly xs: readonly string[] = [];
   readonly ys: string[] = [];
 }
-
 const c = new C();
 (c.items as Set<string>).add("a");
 (c.xs as string[]).push("b");

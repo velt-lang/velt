@@ -2,7 +2,6 @@
 // `x.f++` / `++x.f` used as a value on a typed proxy (#823) reached through an element, a
 // narrowed `| null` and a nested field: the `get` trap runs once per update, as in JavaScript.
 let gets = 0;
-
 function counted(target: any): any {
   return new Proxy(target, {
     get(t: any, key: string | symbol, receiver: any): any {
@@ -15,7 +14,6 @@ function counted(target: any): any {
 class S {
   n: number = 0;
 }
-
 class Box {
   s: S;
   constructor(s: S) {

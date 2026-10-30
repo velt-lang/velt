@@ -1,4 +1,4 @@
 // `JSON.stringify` of a class instance brand is that of its class: a `Set` has no JSON form in
 // Velt (Node writes `{}`), with or without an object part.
-const s = new Set<number>([1]) as (Set<number> & { tag?: string });
+const s = new Set<number>([1]) as Set<number> & { tag?: string };
 console.log(JSON.stringify(s));

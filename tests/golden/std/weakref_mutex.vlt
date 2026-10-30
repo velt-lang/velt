@@ -1,52 +1,23 @@
 // An error: a WeakRef to a key inside a shared Mutex would escape `with`, and main would deref it
 // outside the lock while a task on another thread replaces (and frees) the key.
-class K {
-  n: number;
-  pad: number[];
-  constructor(n: number) {
-    this.n = n;
-    this.pad = [n, n, n];
-  }
-}
-
-class Box {
-  k: K;
-  constructor(k: K) {
-    this.k = k;
-  }
-}
-
+class K { n: number; pad: number[]; constructor(n: number) { this.n = n; this.pad = [n, n, n]; } }
+class Box { k: K; constructor(k: K) { this.k = k; } }
 async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
-  m.with((v) => {
-    v.k = new K(i);
-  });
+  m.with((v) => { v.k = new K(i); });
   return i;
 }
-
 async function main() {
   const m = shared(new Mutex<Box>(new Box(new K(5))));
   let live = 0;
   let dead = 0;
   let bad = 0;
   for (let round = 0; round < 300; round++) {
-    const r = m.with((v) => {
-      v.k = new K(5);
-      return new WeakRef(v.k);
-    });
+    const r = m.with((v) => { v.k = new K(5); return new WeakRef(v.k); });
     const ps: Promise<number>[] = [];
-    for (let t = 1; t < 5; t++) {
-      ps.push(spawn(swap(m.clone(), t)));
-    }
+    for (let t = 1; t < 5; t++) ps.push(spawn(swap(m.clone(), t)));
     for (let j = 0; j < 100000; j++) {
       const k = r.deref();
-      if (k !== null) {
-        live++;
-        if (k.n != 5 || k.pad[2] != 5) {
-          bad++;
-        }
-      } else {
-        dead++;
-      }
+      if (k !== null) { live++; if (k.n != 5 || k.pad[2] != 5) bad++; } else { dead++; }
     }
     await Promise.all(ps);
   }

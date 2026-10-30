@@ -2,10 +2,6 @@
 // a key constant declared after the class, as TypeScript allows.
 type H = { __KA__?: number; __KB__?: number };
 (globalThis as H).__KB__ = 2;
-
-class C {
-  v: number = (globalThis as H)[K]!;
-}
-
+class C { v: number = (globalThis as H)[K]!; }
 const K = "__KB__";
 console.log(new C().v);

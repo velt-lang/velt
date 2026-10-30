@@ -1,62 +1,22 @@
 // Getters and setters in object types (#1501): an alias of an object type with accessors is
 // the interface it spells out (object literals with accessors and classes implement it); an
 // object type written in place reads them as fields.
-type T = {
-  get v(): number;
-};
-
-const t: T = {
-  get v() {
-    return 4;
-  },
-};
+type T = { get v(): number };
+const t: T = { get v() { return 4; } };
 console.log(t.v);
-
-type U = {
-  get n(): number;
-  set n(x: number);
-  label: string;
-};
-
+type U = { get n(): number; set n(x: number); label: string };
 let store = 1;
-const u: U = {
-  get n() {
-    return store * 10;
-  },
-  set n(x: number) {
-    store = x;
-  },
-  label: "u",
-};
+const u: U = { get n() { return store * 10; }, set n(x: number) { store = x; }, label: "u" };
 u.n = 3;
 console.log(u.n, u.label);
 const plain: T = { v: 9 };
 console.log(plain.v);
-
-type Sized<T> = {
-  get size(): number;
-  item: T;
-  describe(): string;
-};
-
-class Bag implements Sized<string> {
-  item: string = "x";
-  get size(): number {
-    return 2;
-  }
-  describe(): string {
-    return `${this.item}:${this.size}`;
-  }
-}
-
+type Sized<T> = { get size(): number; item: T; describe(): string };
+class Bag implements Sized<string> { item: string = "x"; get size(): number { return 2; } describe(): string { return `${this.item}:${this.size}`; } }
 const sz: Sized<string> = new Bag();
 console.log(sz.size, sz.item, sz.describe());
-type Plain = { a: number; b: string };
+type Plain = { a: number, b: string };
 const pl: Plain = { a: 1, b: "s" };
 console.log(pl.a, pl.b, JSON.stringify(pl));
-
-function show(x: { get size(): number }): number {
-  return x.size + 1;
-}
-
+function show(x: { get size(): number }): number { return x.size + 1; }
 console.log(show({ size: 2 }));

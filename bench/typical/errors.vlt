@@ -2,18 +2,12 @@
 // and tuple returns with destructuring.
 function parseAge(s: string): number {
   const n = parseInt(s);
-  if (Number.isNaN(n) || n < 0) {
-    throw new Error(`bad age: ${s}`);
-  }
+  if (Number.isNaN(n) || n < 0) throw new Error(`bad age: ${s}`);
   return n;
 }
 
 function find(xs: number[], v: number): number | null {
-  for (let i = 0; i < xs.length; i++) {
-    if (xs[i] === v) {
-      return i;
-    }
-  }
+  for (let i = 0; i < xs.length; i++) if (xs[i] === v) return i;
   return null;
 }
 
@@ -23,9 +17,7 @@ function divmod(a: number, b: number): [number, number] {
 
 function main() {
   const inputs: string[] = [];
-  for (let i = 0; i < 1000; i++) {
-    inputs.push(i % 50 === 0 ? "x" : `${i % 120}`);
-  }
+  for (let i = 0; i < 1000; i++) inputs.push(i % 50 === 0 ? "x" : `${i % 120}`);
   let ok = 0.0;
   let bad = 0;
   for (let round = 0; round < 1000; round++) {
@@ -38,15 +30,11 @@ function main() {
     }
   }
   const xs: number[] = [];
-  for (let i = 0; i < 1000; i++) {
-    xs.push((i * 31) % 1000);
-  }
+  for (let i = 0; i < 1000; i++) xs.push((i * 31) % 1000);
   let hits = 0.0;
   for (let i = 0; i < 20000; i++) {
     const r = find(xs, i % 1500);
-    if (r !== null) {
-      hits += r;
-    }
+    if (r !== null) hits += r;
   }
   let qs = 0.0;
   for (let i = 1; i < 10000000; i++) {

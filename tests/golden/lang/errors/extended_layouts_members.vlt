@@ -4,15 +4,12 @@ interface VNode {
   type: string;
   dom: string | null;
 }
-
 interface IV extends VNode {
   _ns?: boolean;
 }
-
 function mount(a: VNode): boolean | undefined {
   (a as IV)._ns = true;
   return a._ns;
 }
-
 const b: VNode = { type: "a", dom: null, _ns: true };
 console.log(mount(b));

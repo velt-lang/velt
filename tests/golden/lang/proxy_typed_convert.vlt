@@ -40,6 +40,4 @@ console.log(raw.count, raw.label);
 const t: State = s;
 console.log((t as any) === (s as any));
 const states: State[] = [s, raw];
-for (const x of states) {
-  console.log(render(x));
-}
+for (const x of states) console.log(render(x));

@@ -2,7 +2,10 @@
 // JavaScript tests it for truthiness, like a condition (`0`, `NaN` and `""` are falsy).
 
 class Item {
-  constructor(public name: string, public count: number) {}
+  constructor(
+    public name: string,
+    public count: number,
+  ) {}
 }
 
 function main() {

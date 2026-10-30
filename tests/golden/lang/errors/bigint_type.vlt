@@ -4,7 +4,6 @@
 function f(x: bigint): number {
   return 1;
 }
-
 const a: bigint = 5;
 console.log(f(1), a);
 const n: any = 1;

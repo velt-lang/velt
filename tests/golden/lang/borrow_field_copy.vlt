@@ -60,12 +60,9 @@ function main() {
   console.log(r.sum(10), other.sum(5));
   console.log(r.swap(4), db.data.length, bytes.length);
   db.data = [1, 2, 3];
-  console.log(
-    r.each((i: usize) => {
-      if (i == 1) {
-        db.data = [9];
-      }
-    }),
-    db.data.length,
-  );
+  console.log(r.each((i: usize) => {
+    if (i == 1) {
+      db.data = [9];
+    }
+  }), db.data.length);
 }

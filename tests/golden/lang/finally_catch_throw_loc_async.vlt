@@ -11,5 +11,4 @@ async function g(): Promise<void> {
     }
   }
 }
-
 await g();

@@ -4,7 +4,6 @@ const K: unique symbol = Symbol("k");
 const C: unique symbol = Symbol("c");
 const N: unique symbol = Symbol("n");
 const Z: unique symbol = Symbol("z");
-
 interface Box {
   n: number;
   [K]?: string;
@@ -12,7 +11,6 @@ interface Box {
   [N]?: number;
   [Z]?: number;
 }
-
 const b: Box = { n: 1 };
 Object.defineProperty(b, K, { value: "a" });
 Object.defineProperty(b, K, { value: "a" });

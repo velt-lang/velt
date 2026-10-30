@@ -50,6 +50,5 @@ function leaf<T>(v: T): unknown {
   n.kids.push(new Node1<T>(v));
   return n;
 }
-
 const s = leaf("s") as Tree<any>;
 console.log(s.value, s.kids[0].value, s.kids.map((k) => k.label()));

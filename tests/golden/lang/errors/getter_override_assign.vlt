@@ -3,18 +3,11 @@
 // (TS2540; through the base class it throws, `getter_override_write.vlt`).
 class P {
   private _n = 3;
-  get n(): number {
-    return this._n;
-  }
-  set n(v: number) {
-    this._n = v;
-  }
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v; }
 }
-
 class S extends P {
-  override get n(): number {
-    return 42;
-  }
+  override get n(): number { return 42; }
 }
 
 function main() {

@@ -4,9 +4,7 @@ function outer(n: number): number {
   const cache = new Map<string, number>();
   function get(k: string): number {
     const hit = cache.get(k);
-    if (hit != null) {
-      return hit;
-    }
+    if (hit != null) return hit;
     cache.set(k, n);
     return n;
   }
@@ -68,9 +66,7 @@ async function fetchAll(names: string[]): Promise<string[]> {
     return prefix + n;
   }
   const out: string[] = [];
-  for (const n of names) {
-    out.push(await one(n));
-  }
+  for (const n of names) out.push(await one(n));
   return out;
 }
 

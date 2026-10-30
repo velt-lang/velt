@@ -9,5 +9,4 @@ class A {
     return #x in o;
   }
 }
-
 console.log(A.s("hi"), A.n(new A()));

@@ -1,14 +1,10 @@
 // A field holding a function, called through `any`: one of type `any`, and a function field
 // that replaces itself while it runs (the closure stays alive until it returns) (#924).
 // check: no leaks
-class H {
-  f: any = null;
-}
-
+class H { f: any = null; }
 class K {
   f: (n: number) => string = (n: number): string => "x" + n;
 }
-
 function main(): void {
   const tag = "cap" + String(1);
   const h = new H();

@@ -1,45 +1,18 @@
 // Moving an element out of a tuple that a parameter, a call, a `for of` entry or a field or
 // element behind `!` holds: the rest of the tuple is dropped, and the element read stays
 // shared (#871).
-class A {
-  v = 1;
-}
-
-function use(x: [A, number]): number {
-  const a = x[0];
-  return a.v + x[1];
-}
-
+class A { v = 1; }
+function use(x: [A, number]): number { const a = x[0]; return a.v + x[1]; }
 console.log(use([new A(), 2]));
-
-class P {
-  n: string;
-  constructor(n: string) {
-    this.n = n;
-  }
-  toString(): string {
-    return this.n;
-  }
-}
-
+class P { n: string; constructor(n: string) { this.n = n; } toString(): string { return this.n; } }
 const pair = (): [P, P] => [new P("p"), new P("q")];
 const ps: P[] = [];
-const e = pair();
-ps.push(e[0]);
+const e = pair(); ps.push(e[0]);
 const m = new Map<string, number>([["k", 1]]);
 const ks: string[] = [];
-for (const kv of m) {
-  ks.push(kv[0]);
-}
+for (const kv of m) { ks.push(kv[0]); }
 console.log(ps.join(","), ks.join(","));
-
-class Box {
-  s: string;
-  constructor(s: string) {
-    this.s = s;
-  }
-}
-
+class Box { s: string; constructor(s: string) { this.s = s; } }
 const bt: { t: [Box, string] | null } = { t: [new Box("a"), "x"] };
 const saved = bt.t![0];
 const arr: ([Box, Box] | null)[] = [[new Box("b"), new Box("c")]];

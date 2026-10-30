@@ -37,6 +37,7 @@ function churn(): number {
   return t;
 }
 
+
 function direct(): string {
   let s = shared(mk(50));
   let t = 0;

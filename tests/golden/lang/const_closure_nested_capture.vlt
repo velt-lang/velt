@@ -18,7 +18,6 @@ function mk(f: () => () => number): H {
 }
 
 let ready = false;
-
 function call(f: () => number): number {
   return f();
 }
@@ -43,5 +42,4 @@ function run(): void {
   ready = true;
   console.log(x, y);
 }
-
 run();

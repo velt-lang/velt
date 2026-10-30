@@ -9,26 +9,20 @@ function busy(ms: number) {
 
 function main() {
   setTimeout(() => console.log("t1 10"), 10);
-  setTimeout(
-    () => {
-      console.log("t2 10");
-      // Created in the pass that runs `t2`: due after that pass's check phase however late the
-      // loop gets there.
-      setTimeout(
-        () => {
-          console.log("t3 100");
-          setImmediate(() => {
-            console.log("t3 immediate");
-            setTimeout(() => console.log("timeout from immediate"), 1);
-            setImmediate(() => console.log("nested immediate"));
-            busy(10);
-          });
-        },
-        100,
-      );
-    },
-    10,
-  );
+  setTimeout(() => {
+    console.log("t2 10");
+    // Created in the pass that runs `t2`: due after that pass's check phase however late the
+    // loop gets there.
+    setTimeout(() => {
+      console.log("t3 100");
+      setImmediate(() => {
+        console.log("t3 immediate");
+        setTimeout(() => console.log("timeout from immediate"), 1);
+        setImmediate(() => console.log("nested immediate"));
+        busy(10);
+      });
+    }, 100);
+  }, 10);
   setImmediate(() => console.log("main immediate"));
   const c = setTimeout(() => console.log("never"), 500);
   clearTimeout(c);

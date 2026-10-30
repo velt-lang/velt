@@ -3,11 +3,9 @@
 // supported yet (TypeScript accepts a symbol one).
 export const S: unique symbol = Symbol("s");
 const o: unknown = { [S]: 5, a: 1 };
-
 function mk(): symbol {
   return S;
 }
-
 function g(k0: 0, kn: number, kb: boolean): void {
   console.log((o as Record<symbol, unknown>)[k0]);
   console.log((o as Record<symbol, unknown>)[kn]);
@@ -16,5 +14,4 @@ function g(k0: 0, kn: number, kb: boolean): void {
   console.log((o as Record<symbol, unknown>)[kb ? "a" : "b"]);
   console.log((o as Record<symbol, unknown>)[mk()]);
 }
-
 console.log(typeof g, (o as Record<symbol, unknown>)[Symbol.iterator]);

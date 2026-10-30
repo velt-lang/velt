@@ -14,12 +14,8 @@ function cell(value: number): Cell {
 }
 
 function describe(x: VNode | Cell | null | undefined): string {
-  if ((x as any)?.[VNODE] === true) {
-    return "vnode";
-  }
-  if (x && CELL in x) {
-    return "cell";
-  }
+  if ((x as any)?.[VNODE] === true) return "vnode";
+  if (x && CELL in x) return "cell";
   return "other";
 }
 
@@ -31,7 +27,5 @@ function main() {
   const copy = { ...cell(4) };
   console.log(copy, CELL in copy, JSON.stringify(copy), Object.keys(copy));
   const arr: VNode[] = [el("a", [])];
-  for (const v of arr) {
-    console.log(VNODE in v);
-  }
+  for (const v of arr) console.log(VNODE in v);
 }

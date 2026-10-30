@@ -7,82 +7,39 @@
 
 class Base {
   constructor(public name: string) {}
-  m(n: number): string {
-    return "base " + this.name + " " + String(n);
-  }
+  m(n: number): string { return "base " + this.name + " " + String(n); }
 }
-
 class Sub extends Base {
-  override m(n: number): string {
-    return "sub " + this.name + " " + String(n);
-  }
+  override m(n: number): string { return "sub " + this.name + " " + String(n); }
 }
-
 class Plain {
   constructor(public name: string) {}
-  m(n: number): string {
-    return "plain " + this.name + " " + String(n);
-  }
+  m(n: number): string { return "plain " + this.name + " " + String(n); }
 }
-
 class Reg {
   items: Base[] = [];
-  fill(): void {
-    this.items.push(new Sub("r" + String(0)));
-  }
-  callFirst(): string {
-    return this.items[0].m(reset());
-  }
+  fill(): void { this.items.push(new Sub("r" + String(0))); }
+  callFirst(): string { return this.items[0].m(reset()); }
 }
-
 const arr: Base[] = [];
 const ps: Plain[] = [];
 let one: Base | null = null;
 const REG = new Reg();
-
 function fill(): void {
   arr.push(new Sub("s" + String(0)));
   arr.push(new Base("b" + String(1)));
   ps.push(new Plain("p" + String(0)));
 }
-
-function clear(): number {
-  arr.length = 0;
-  ps.length = 0;
-  return 7;
-}
-
-function clearOne(): number {
-  one = null;
-  return 8;
-}
-
-function reset(): number {
-  REG.items = [];
-  return 3;
-}
-
-function viaP(r: Reg): string {
-  return r.items[0].m(reset());
-}
-
-function viaArr(xs: Base[]): string {
-  return xs[0].m(clear());
-}
-
-fill();
-console.log(arr[0].m(clear()));
-fill();
-console.log(arr[1].m(clear()));
-fill();
-console.log(ps[0].m(clear()));
-fill();
-console.log(viaArr(arr));
-one = new Sub("o" + String(2));
-console.log(one!.m(clearOne()));
-REG.fill();
-console.log(REG.callFirst());
-REG.fill();
-console.log(viaP(REG));
-REG.fill();
-console.log(REG.items[0].m(reset()));
+function clear(): number { arr.length = 0; ps.length = 0; return 7; }
+function clearOne(): number { one = null; return 8; }
+function reset(): number { REG.items = []; return 3; }
+function viaP(r: Reg): string { return r.items[0].m(reset()); }
+function viaArr(xs: Base[]): string { return xs[0].m(clear()); }
+fill(); console.log(arr[0].m(clear()));
+fill(); console.log(arr[1].m(clear()));
+fill(); console.log(ps[0].m(clear()));
+fill(); console.log(viaArr(arr));
+one = new Sub("o" + String(2)); console.log(one!.m(clearOne()));
+REG.fill(); console.log(REG.callFirst());
+REG.fill(); console.log(viaP(REG));
+REG.fill(); console.log(REG.items[0].m(reset()));

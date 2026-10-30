@@ -28,10 +28,7 @@ function main(): void {
   it.next();
   const last = it.next();
   console.log(last.done);
-  const m = new Map<string, number>([
-    ["x", 1],
-    ["y", 2],
-  ]);
+  const m = new Map<string, number>([["x", 1], ["y", 2]]);
   console.log([...entriesOf(m)]);
   let n = 0;
   for (const _ of entriesOf(m)) {

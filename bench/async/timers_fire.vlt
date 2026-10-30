@@ -3,13 +3,10 @@
 function main() {
   const n = 100000;
   for (let i = 0; i < n; i++) {
-    setTimeout(
-      () => {
-        if (i == n - 1) {
-          console.log("fired", n);
-        }
-      },
-      1,
-    );
+    setTimeout(() => {
+      if (i == n - 1) {
+        console.log("fired", n);
+      }
+    }, 1);
   }
 }

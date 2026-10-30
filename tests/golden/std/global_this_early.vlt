@@ -3,7 +3,6 @@
 import { current, early } from "./_global_this_early";
 
 type Seam = { __EARLY__?: number };
-
 const here = (globalThis as Seam).__EARLY__;
 let k = 1;
 const first = k;

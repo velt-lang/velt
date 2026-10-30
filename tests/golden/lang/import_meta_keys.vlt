@@ -8,7 +8,6 @@ console.log(Object.keys(import.meta).join(","));
 console.log(import.meta.main, libMeta(), typeof import.meta.resolve);
 const base = import.meta.url.slice(0, import.meta.url.lastIndexOf("/") + 1);
 const parent = base.slice(0, base.slice(0, base.length - 1).lastIndexOf("/") + 1);
-
 function shown(specifier: string): string {
   const r = import.meta.resolve(specifier);
   if (r.startsWith(base)) {
@@ -16,26 +15,18 @@ function shown(specifier: string): string {
   }
   return r.startsWith(parent) ? `<parent>/${r.slice(parent.length)}` : r;
 }
-
 console.log(shown("./a b.ts"), shown("./a?x=1#h"), shown("./a#b"));
 console.log(shown("./a[1]{x}|`"), shown("../m/./n.ts"), shown("."));
 console.log(shown("node:fs"), shown("fs"), shown("fs/promises"), shown("node:test"));
 console.log(shown("HTTPS://Example.com/a"), shown("data:text/plain,x"));
 // `/abs` keeps a Windows drive letter, so only the end is the same everywhere.
-console.log(
-  import.meta.resolve("/abs/x.js").endsWith(":///abs/x.js") ||
-    import.meta.resolve("/abs/x.js").endsWith(":/abs/x.js"),
-);
+console.log(import.meta.resolve("/abs/x.js").endsWith(":///abs/x.js") || import.meta.resolve("/abs/x.js").endsWith(":/abs/x.js"));
 const meta = import.meta;
 console.log(meta.resolve("./q") === import.meta.resolve("./q"), meta.main);
 const resolve = (specifier: string) => import.meta.resolve(specifier);
 console.log(resolve("./z") === import.meta.resolve("./z"));
 const json = JSON.stringify(import.meta);
-console.log(
-  json.startsWith('{"dirname":'),
-  json.includes('"main":true,"url":'),
-  json.includes("resolve"),
-);
+console.log(json.startsWith('{"dirname":'), json.includes('"main":true,"url":'), json.includes("resolve"));
 if (import.meta.url === "") {
   // Never runs: the paths differ between machines (import_meta_print.vlt shows the form).
   console.log(import.meta);

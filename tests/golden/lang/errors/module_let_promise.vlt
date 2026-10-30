@@ -3,13 +3,11 @@
 async function later(): Promise<number> {
   return 1;
 }
-
 let p = later();
 let t = spawn(later());
 let maybe: Promise<number> | null = null;
 let o: { p: Promise<number> | null } = { p: null };
 let pair: { inner: { p: Promise<number> } } | null = null;
-
 async function main() {
   console.log(await p, await t, maybe == null);
   o = { p: later() };

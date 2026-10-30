@@ -5,8 +5,5 @@ class Shown extends Error {
     return "shown";
   }
 }
-
 const es: Error[] = [new Shown("x"), new Error("y")];
-for (const e of es) {
-  console.log(String(e), e.toString(), `${e}`);
-}
+for (const e of es) console.log(String(e), e.toString(), `${e}`);

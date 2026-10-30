@@ -1,63 +1,33 @@
 // Field reads of an assertion on variables narrowed by earlier tests, on field paths and in
 // loops (sigx's `normalizeChildren`, #379), and in generic code, where the assertion is checked.
-interface VNode {
-  type: string;
-  props: number;
-}
-
+interface VNode { type: string; props: number }
 type C = VNode | string | number | boolean | null | undefined | C[];
-
 function norm(children: C): string {
-  if (children == null || children === false || children === true) {
-    return "none";
-  }
-  if (typeof children === "string" || typeof children === "number") {
-    return "text";
-  }
-  if ((children as VNode).type) {
-    return "node";
-  }
-  if (Array.isArray(children)) {
-    return "list " + children.length;
-  }
+  if (children == null || children === false || children === true) return "none";
+  if (typeof children === "string" || typeof children === "number") return "text";
+  if ((children as VNode).type) return "node";
+  if (Array.isArray(children)) return "list " + children.length;
   return "?";
 }
-
 console.log(norm([1]), norm({ type: "a", props: 1 }), norm(null), norm("x"));
-
 class Holder {
   c: C;
-  constructor(c: C) {
-    this.c = c;
-  }
-  kind(): string {
-    return (this.c as VNode).type ? "node" : "not";
-  }
+  constructor(c: C) { this.c = c; }
+  kind(): string { return (this.c as VNode).type ? "node" : "not"; }
 }
-
 const h = new Holder([2]);
 console.log(h.kind(), new Holder({ type: "b", props: 0 }).kind());
 console.log((h.c as VNode).type ? 1 : 2);
 const o = { inner: { c: ["q"] as C } };
 console.log(!(o.inner.c as VNode).type);
 let n = 0;
-while (!(o.inner.c as VNode).type && n < 2) {
-  n++;
-}
+while (!(o.inner.c as VNode).type && n < 2) n++;
 console.log(n);
-
-function g<T>(x: T | VNode): string {
-  return (x as VNode).type ? "y" : "n";
-}
-
+function g<T>(x: T | VNode): string { return (x as VNode).type ? "y" : "n"; }
 console.log(g<number[]>({ type: "a", props: 1 }));
 type W = { type: string | number; props: number };
 type D = W | string[];
-
-function mk(i: number): D {
-  return i ? ["z"] : { type: 5, props: 1 };
-}
-
+function mk(i: number): D { return i ? ["z"] : { type: 5, props: 1 }; }
 const d = mk(1);
 const w = mk(0);
 console.log((d as W).type ? "t" : "f", (w as W).type ? "t" : "f", (w as W).type);

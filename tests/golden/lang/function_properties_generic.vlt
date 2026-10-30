@@ -2,7 +2,7 @@
 // A function with properties built in a generic function (#921): the alias's call signature
 // takes a parameter type known only per instantiation, the members are written right after
 // the cast, and the value is accepted where a `Function` is expected.
-import type { Ctx, Factory, Strip } from "./_function_properties_generic_types";
+import { type Ctx, type Factory, type Strip } from "./_function_properties_generic_types";
 
 const registry = new Map<Function, string>();
 
@@ -14,10 +14,9 @@ function define<T extends Record<string, any>>(
   setup: (ctx: Ctx<Strip<T>>) => string,
   name?: string,
 ): Factory<T> {
-  const factory =
-    function (props: any) {
-      return "render " + JSON.stringify(props);
-    } as unknown as Factory<T>;
+  const factory = function (props: any) {
+    return "render " + JSON.stringify(props);
+  } as unknown as Factory<T>;
   factory.__setup = setup;
   factory.__name = name;
   factory.__kind = "component";

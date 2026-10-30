@@ -13,7 +13,6 @@ class Doubler implements Iterator<number> {
     return { value: this.xs[this.i++] * 2, done: false };
   }
 }
-
 function nextOf(it: Iterator<number>): IteratorResult<number> {
   const r = it.next();
   if (r.done) {
@@ -21,7 +20,6 @@ function nextOf(it: Iterator<number>): IteratorResult<number> {
   }
   return r;
 }
-
 class Countdown implements Iterator<number> {
   constructor(private n: number) {}
   next(): IteratorResult<number> {
@@ -32,7 +30,6 @@ class Countdown implements Iterator<number> {
     return { value: this.n + 1, done: false };
   }
 }
-
 class Doubled implements Iterator<number> {
   constructor(private inner: Iterator<number>) {}
   next(): IteratorResult<number> {
@@ -43,16 +40,13 @@ class Doubled implements Iterator<number> {
     return { value: r.value * 2, done: false };
   }
 }
-
 class Range implements Iterable<number> {
   constructor(private n: number) {}
   [Symbol.iterator](): Iterator<number> {
     return new Doubled(new Countdown(this.n));
   }
 }
-
 type Pair = { value: number | undefined; done: boolean };
-
 function main() {
   const d = new Doubler([1, 2, 3]);
   for (let r = nextOf(d); !r.done; r = nextOf(d)) {

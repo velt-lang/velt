@@ -1,9 +1,5 @@
 // A computed key on a `null` `any`: the key is evaluated first, then Node's `TypeError` names it.
-function side(): number {
-  console.log("side");
-  return 1;
-}
-
+function side(): number { console.log("side"); return 1; }
 function main(): void {
   const n: any = null;
   console.log(n[side()]);

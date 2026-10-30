@@ -21,32 +21,9 @@ function mixed(a: number | null | undefined, b: number | null, c: number | undef
 }
 
 function main(): void {
-  console.log(
-    eq(null, undefined),
-    eq(undefined, null),
-    ne(null, undefined),
-    eq(null, null),
-    eq("a", null),
-  );
-  console.log(
-    eq("a", "a"),
-    eq("a", "b"),
-    ne("a", undefined),
-    eq(undefined, undefined),
-    ne(undefined, undefined),
-  );
+  console.log(eq(null, undefined), eq(undefined, null), ne(null, undefined), eq(null, null), eq("a", null));
+  console.log(eq("a", "a"), eq("a", "b"), ne("a", undefined), eq(undefined, undefined), ne(undefined, undefined));
   const x = new Box(1);
-  console.log(
-    eqBox(null, undefined),
-    eqBox(x, x),
-    eqBox(x, new Box(1)),
-    eqBox(x, null),
-    eqBox(undefined, x),
-  );
-  console.log(
-    mixed(undefined, null, undefined),
-    mixed(null, null, 3),
-    mixed(3, 3, 3),
-    mixed(3, null, undefined),
-  );
+  console.log(eqBox(null, undefined), eqBox(x, x), eqBox(x, new Box(1)), eqBox(x, null), eqBox(undefined, x));
+  console.log(mixed(undefined, null, undefined), mixed(null, null, 3), mixed(3, 3, 3), mixed(3, null, undefined));
 }

@@ -2,35 +2,16 @@
 // A function that throws its own error and reads through a throwing `get` trap: the reason of
 // `Promise.allSettled` holds both (`instanceof` of the trap's class is not always false).
 class E1 extends Error {}
-
 class E2 extends Error {}
-
 function make(): any {
   return new Proxy({ a: 1 } as any, {
-    get(t, k, r) {
-      if (k === "g") {
-        throw new E1("get");
-      }
-      return Reflect.get(t, k, r);
-    },
+    get(t, k, r) { if (k === "g") { throw new E1("get"); } return Reflect.get(t, k, r); },
   });
 }
-
-async function one(p: any): Promise<number> {
-  if (p.a === 2) {
-    throw new E2("own");
-  }
-  return p.g;
-}
-
+async function one(p: any): Promise<number> { if (p.a === 2) { throw new E2("own"); } return p.g; }
 async function run(): Promise<void> {
   const p = make();
   const rs = await Promise.allSettled([one(p)]);
-  for (const x of rs) {
-    if (x.status === "rejected") {
-      console.log(x.reason instanceof E1, String(x.reason));
-    }
-  }
+  for (const x of rs) { if (x.status === "rejected") { console.log(x.reason instanceof E1, String(x.reason)); } }
 }
-
 run();

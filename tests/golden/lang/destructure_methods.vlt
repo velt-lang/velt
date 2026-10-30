@@ -45,9 +45,7 @@ function main() {
   const r = createRenderer<string[]>({
     insert(c, p, anchor) {
       p.push(...c);
-      if (anchor != null) {
-        p.push(anchor);
-      }
+      if (anchor != null) p.push(anchor);
     },
     createText(t) {
       return [t];

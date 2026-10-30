@@ -7,32 +7,25 @@
 import { twice, type Keyed, type Wrap } from "./_generic_fn_types_lib";
 
 type Id = <T>(x: T) => T;
-
 const id: Id = (x) => x;
 
 type Pair<K> = <V>(k: K, v: V) => [K, V];
-
 const pair: Pair<string> = (k, v) => [k, v];
 
 interface Mapper {
   <A, B>(xs: A[], f: (a: A) => B): B[];
 }
-
 const map: Mapper = (xs, f) => xs.map((x) => f(x));
 
 const first: <T>(xs: T[], fallback?: T) => T | undefined = (xs, fallback) =>
   xs.length > 0 ? xs[0] : fallback;
-const count: <T>(label: string, ...items: T[]) => string = (
-  label,
-  ...items,
-) => `${label}:${items.length}`;
+const count: <T>(label: string, ...items: T[]) => string = (label, ...items) =>
+  `${label}:${items.length}`;
 const ignore: <T>(x: T, y: number) => number = (x) => 7;
 const later: <T>(x: T) => Promise<T> = async (x) => x;
-
 interface Named {
   name: string;
 }
-
 const bounded: <T extends Named>(x: T) => string = (x) => x.name.toUpperCase();
 
 const thrice: Wrap = (v) => [v, v, v];
@@ -41,7 +34,6 @@ const entry: Keyed<number> = (key, value) => ({ key, value });
 // A name asserted to a generic function type: `Symbol` is the function, the token type a
 // branded `symbol` that carries its value type.
 type InjectionToken<T> = symbol & { readonly __tokenType?: T };
-
 const createToken = Symbol as unknown as <T>(description: string) => InjectionToken<T>;
 
 function local(n: number): string {

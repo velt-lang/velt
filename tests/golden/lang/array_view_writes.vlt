@@ -15,9 +15,7 @@ function main() {
   console.log(raw[0]);
   const v2 = raw as Child[];
   v.forEach((c, i) => {
-    if (typeof c === "number") {
-      v2[i] = c + 100;
-    }
+    if (typeof c === "number") v2[i] = c + 100;
   });
   console.log(raw);
   let k = 1;
@@ -34,9 +32,7 @@ function main() {
   orig[0] = "s";
   console.log(v[0], v.length);
   for (const x of v) {
-    if (x === 8) {
-      orig.push(9);
-    }
+    if (x === 8) orig.push(9);
     console.log(x);
   }
   console.log(JSON.stringify(v), String(v), `${w.length}`);

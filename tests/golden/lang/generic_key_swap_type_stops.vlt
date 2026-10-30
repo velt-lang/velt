@@ -1,13 +1,11 @@
 // A number swapped into a `string | null` field through a key union stops with a `TypeError`
 // naming the field's type as written (decision 4).
 type Q = { n: number; s: string | null };
-
 function swap<T, K extends keyof T>(o: T, x: K, y: K): void {
   const v = o[x];
   o[x] = o[y];
   o[y] = v;
 }
-
 function main() {
   const q: Q = { n: 1, s: null };
   swap(q, "s" as keyof Q, "n" as keyof Q);

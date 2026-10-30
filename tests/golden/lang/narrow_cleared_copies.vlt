@@ -5,13 +5,10 @@
 class Box {
   n: number = 1;
 }
-
 let x: Box | null = new Box();
-
 function clear(): void {
   x = null;
 }
-
 function copyInClosure(): () => string {
   if (x) {
     const c = x;
@@ -25,10 +22,8 @@ function copyInClosure(): () => string {
   }
   return () => "";
 }
-
 console.log(copyInClosure()());
 let o: { f: Box | null } = { f: new Box() };
-
 function ret(): Box | null {
   if (o.f) {
     const t = `${o.f.n}`;
@@ -38,5 +33,4 @@ function ret(): Box | null {
   }
   return null;
 }
-
 console.log(ret());

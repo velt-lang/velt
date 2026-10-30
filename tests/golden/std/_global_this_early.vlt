@@ -1,8 +1,6 @@
 // Reads a property of `globalThis` while it is evaluated (global_this_early).
 type Seam = { __EARLY__?: number };
-
 export const early = (globalThis as Seam).__EARLY__;
-
 export function current(): number | undefined {
   return (globalThis as Seam).__EARLY__;
 }

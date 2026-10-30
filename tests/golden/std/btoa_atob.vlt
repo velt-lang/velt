@@ -24,64 +24,16 @@ function tryBtoa(s: string): string {
   }
 }
 
-console.log(
-  btoa("hello"),
-  JSON.stringify(btoa("")),
-  btoa("\xff\x00"),
-  btoa("a"),
-  btoa("ab"),
-  btoa("abc"),
-);
+console.log(btoa("hello"), JSON.stringify(btoa("")), btoa("\xff\x00"), btoa("a"), btoa("ab"), btoa("abc"));
 console.log(atob("aGVsbG8="), atob(" aGVs bG8 "), atob("aGVsbG8"), JSON.stringify(atob("")));
 
 // atob: whitespace, padding and the characters it refuses.
 const inputs: string[] = [
-  "YQ==",
-  "YR==",
-  "YQ",
-  "YQ=",
-  "YQ= =",
-  "YQ=\n=",
-  "YWI=",
-  "YWI",
-  "YWJj",
-  "YWJjZA",
-  "aGVs\tbG8\n",
-  "\x0cYQ==\r\n",
-  " Y Q = = ",
-  "   ",
-  "=",
-  "==",
-  "===",
-  "====",
-  "Y===",
-  "YQ==YQ==",
-  "Y=Q=",
-  "YQ===",
-  "a",
-  "abcde",
-  "ab\x0bcd",
-  "ab\u00a0cd",
-  "ab-_",
-  "ab+/",
-  "€",
-  "Y\u0100Q=",
-  "*",
-  "aGVsbG8==",
-  "ab=c",
-  "ab===",
-  "/w==",
-  "/+8=",
-  "AAAA",
-  "A=",
-  "A==",
-  "A=\n",
-  "Y\x0c==",
-  "YQ=Y",
-  "9YABa=",
-  "9YABa==",
-  "YWJjZA=",
-  "YWJjZA==\n",
+  "YQ==", "YR==", "YQ", "YQ=", "YQ= =", "YQ=\n=", "YWI=", "YWI", "YWJj", "YWJjZA",
+  "aGVs\tbG8\n", "\x0cYQ==\r\n", " Y Q = = ", "   ", "=", "==", "===", "====", "Y===",
+  "YQ==YQ==", "Y=Q=", "YQ===", "a", "abcde", "ab\x0bcd", "ab\u00a0cd", "ab-_", "ab+/",
+  "€", "Y\u0100Q=", "*", "aGVsbG8==", "ab=c", "ab===", "/w==", "/+8=", "AAAA",
+  "A=", "A==", "A=\n", "Y\x0c==", "YQ=Y", "9YABa=", "9YABa==", "YWJjZA=", "YWJjZA==\n",
 ];
 for (const s of inputs) {
   console.log(JSON.stringify(s), tryAtob(s));
@@ -136,63 +88,28 @@ console.log(wrapped.length, atob(wrapped) == long, btoa(atob(wrapped)) == enc);
 
 // DOMException on its own.
 const plain = new DOMException();
-console.log(
-  JSON.stringify(plain.name),
-  JSON.stringify(plain.message),
-  plain.code,
-  JSON.stringify(String(plain)),
-);
+console.log(JSON.stringify(plain.name), JSON.stringify(plain.message), plain.code, JSON.stringify(String(plain)));
 const m = new DOMException("just a message");
 console.log(m.name, m.code, String(m));
 const names: string[] = [
-  "IndexSizeError",
-  "DOMStringSizeError",
-  "HierarchyRequestError",
-  "WrongDocumentError",
-  "InvalidCharacterError",
-  "NoDataAllowedError",
-  "NoModificationAllowedError",
-  "NotFoundError",
-  "NotSupportedError",
-  "InUseAttributeError",
-  "InvalidStateError",
-  "SyntaxError",
-  "InvalidModificationError",
-  "NamespaceError",
-  "InvalidAccessError",
-  "ValidationError",
-  "TypeMismatchError",
-  "SecurityError",
-  "NetworkError",
-  "AbortError",
-  "URLMismatchError",
-  "QuotaExceededError",
-  "TimeoutError",
-  "InvalidNodeTypeError",
-  "DataCloneError",
-  "EncodingError",
-  "Error",
-  "MyOwnName",
+  "IndexSizeError", "DOMStringSizeError", "HierarchyRequestError", "WrongDocumentError",
+  "InvalidCharacterError", "NoDataAllowedError", "NoModificationAllowedError", "NotFoundError",
+  "NotSupportedError", "InUseAttributeError", "InvalidStateError", "SyntaxError",
+  "InvalidModificationError", "NamespaceError", "InvalidAccessError", "ValidationError",
+  "TypeMismatchError", "SecurityError", "NetworkError", "AbortError", "URLMismatchError",
+  "QuotaExceededError", "TimeoutError", "InvalidNodeTypeError", "DataCloneError",
+  "EncodingError", "Error", "MyOwnName",
 ];
 const codes: string[] = [];
 for (const n of names) {
   codes.push(`${n}=${new DOMException("x", n).code}`);
 }
 console.log(codes.join(" "));
-console.log(
-  DOMException.INDEX_SIZE_ERR,
-  DOMException.INVALID_CHARACTER_ERR,
-  DOMException.NOT_FOUND_ERR,
-  DOMException.ABORT_ERR,
-  DOMException.TIMEOUT_ERR,
-  DOMException.DATA_CLONE_ERR,
-  DOMException.VALIDATION_ERR,
-);
-
+console.log(DOMException.INDEX_SIZE_ERR, DOMException.INVALID_CHARACTER_ERR, DOMException.NOT_FOUND_ERR,
+  DOMException.ABORT_ERR, DOMException.TIMEOUT_ERR, DOMException.DATA_CLONE_ERR, DOMException.VALIDATION_ERR);
 function abort(): number {
   throw new DOMException("This operation was aborted", "AbortError");
 }
-
 try {
   abort();
 } catch (e) {

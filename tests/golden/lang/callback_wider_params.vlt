@@ -15,9 +15,7 @@ class Box {
 }
 
 function each<T>(xs: T[], f: (x: T) => void): void {
-  for (const x of xs) {
-    f(x);
-  }
+  for (const x of xs) f(x);
 }
 
 function apply<T, R>(x: T, f: (x: T) => R): R {
@@ -59,11 +57,9 @@ nums.forEach(log);
 each(["r"], log);
 const stored: (s: string) => void = log;
 stored("s");
-
 function plain(v: unknown): void {
   console.log("plain", v);
 }
-
 each([11], plain);
 const viaVar: (n: number) => void = plain;
 viaVar(12);
@@ -89,9 +85,7 @@ console.log(ys.reduce((acc, x, i: any) => acc + (i as number), 0));
 console.log(ys.findIndex((x, i: object | number) => typeof i === "number" && i > 0));
 const f = (x: number, i: any) => console.log("f", typeof i, i);
 ys.forEach(f);
-
 function g(x: unknown, i: unknown) {
   console.log("g", typeof x, typeof i, i);
 }
-
 ys.forEach(g);

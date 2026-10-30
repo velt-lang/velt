@@ -6,33 +6,24 @@
 // `new` / `instanceof` work through a static field and a module constant's field. Node prints
 // the same.
 import { A, type Ctor, libCtors, isA } from "./_ctor_value_lib";
-
 class B extends A {}
-
 class Reg {
   static readonly DEF: Ctor = B;
 }
-
 const M: { k: Ctor } = { k: B };
 
 function same(x: Ctor, y: Ctor): boolean {
   return x === y;
 }
-
 function mk<T>(C: new (n: number) => T, n: number): T {
   return new C(n);
 }
-
 function fact(n: number, c: Ctor): number {
-  if (n <= 1) {
-    return new c(1).n;
-  }
+  if (n <= 1) return new c(1).n;
   const k: Ctor = A;
   return n * fact(n - 1, k);
 }
-
 const pick = (b: boolean): Ctor => (b ? A : B);
-
 async function later(): Promise<Ctor> {
   return B;
 }

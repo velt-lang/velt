@@ -7,7 +7,6 @@ class Svc {
     return this.n * x;
   }
 }
-
 function wrap(o: any): any {
   return new Proxy(o, {
     get(t: any, k: string | symbol, r: any): any {
@@ -16,10 +15,8 @@ function wrap(o: any): any {
     },
   });
 }
-
 async function run(): Promise<void> {
   const p = wrap(new Svc()) as Svc;
   console.log(await p.m(3));
 }
-
 await run();

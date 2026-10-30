@@ -1,87 +1,27 @@
 // A worker pool: jobs of interface type sent on a channel, results back on another.
 import { channel, Channel, ChannelClosed } from "velt/sync";
-
-interface Job {
-  run(): number;
-  name(): string;
-}
-
-class Square implements Job {
-  x: number;
-  constructor(x: number) {
-    this.x = x;
-  }
-  run(): number {
-    return this.x * this.x;
-  }
-  name(): string {
-    return "sq";
-  }
-}
-
-class Sum implements Job {
-  xs: number[];
-  constructor(xs: number[]) {
-    this.xs = xs;
-  }
-  run(): number {
-    let s = 0;
-    for (const x of this.xs) {
-      s += x;
-    }
-    return s;
-  }
-  name(): string {
-    return "sum";
-  }
-}
-
-class Res {
-  name: string;
-  v: number;
-  constructor(name: string, v: number) {
-    this.name = name;
-    this.v = v;
-  }
-}
-
+interface Job { run(): number; name(): string; }
+class Square implements Job { x: number; constructor(x: number) { this.x = x; } run(): number { return this.x * this.x; } name(): string { return "sq"; } }
+class Sum implements Job { xs: number[]; constructor(xs: number[]) { this.xs = xs; } run(): number { let s = 0; for (const x of this.xs) s += x; return s; } name(): string { return "sum"; } }
+class Res { name: string; v: number; constructor(name: string, v: number) { this.name = name; this.v = v; } }
 async function worker(jobs: Channel<Job>, out: Channel<Res>): Promise<number> {
   let n = 0;
-  for await (const j of jobs) {
-    try {
-      await out.send(new Res(j.name(), j.run()));
-      n++;
-    } catch (e) {
-      return n;
-    }
-  }
+  for await (const j of jobs) { try { await out.send(new Res(j.name(), j.run())); n++; } catch (e) { return n; } }
   return n;
 }
-
 async function main() {
   const jobs = channel<Job>(8);
   const out = channel<Res>();
   const ws: Promise<number>[] = [];
-  for (let i = 0; i < 4; i++) {
-    ws.push(spawn(worker(jobs, out)));
-  }
+  for (let i = 0; i < 4; i++) ws.push(spawn(worker(jobs, out)));
   let total = 0;
   for (let i = 0; i < 100; i++) {
     const j: Job = i % 2 == 0 ? new Square(i) : new Sum([i, i, 1]);
-    try {
-      await jobs.send(j);
-    } catch (e) {}
+    try { await jobs.send(j); } catch (e) { }
   }
   jobs.close();
-  for (let i = 0; i < 100; i++) {
-    const r = await out.receive();
-    if (r !== null) {
-      total += r.v;
-    }
-  }
+  for (let i = 0; i < 100; i++) { const r = await out.receive(); if (r !== null) total += r.v; }
   let done = 0;
-  for (const c of await Promise.all(ws)) {
-    done += c;
-  }
+  for (const c of await Promise.all(ws)) done += c;
   console.log(total, done);
 }

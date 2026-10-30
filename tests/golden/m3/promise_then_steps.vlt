@@ -33,15 +33,21 @@ async function main() {
   value(1)
     .finally(() => console.log("finally runs"))
     .then((v) => console.log(`finally passes ${v} on`));
-  fail("x").finally(async () => console.log("async finally runs")).catch((e) => {
-    console.log(`async finally passes ${e.message} on`);
-    return 0;
-  });
+  fail("x")
+    .finally(async () => console.log("async finally runs"))
+    .catch((e) => {
+      console.log(`async finally passes ${e.message} on`);
+      return 0;
+    });
   await settle();
 
   ticks("flat", 5);
-  value(10).then((v) => value(v + 1)).then((v) => console.log(`flat ${v}`));
-  fail("y").catch((e) => value(7)).then((v) => console.log(`catch flat ${v}`));
+  value(10)
+    .then((v) => value(v + 1))
+    .then((v) => console.log(`flat ${v}`));
+  fail("y")
+    .catch((e) => value(7))
+    .then((v) => console.log(`catch flat ${v}`));
   await settle();
 
   ticks("combinators", 4);

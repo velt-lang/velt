@@ -62,7 +62,7 @@ const weak = new WeakMap<object, number>();
 weak.set(c, 1);
 console.log(weak.get(c));
 
-const s = new Set<string>(["x"]) as (Set<string> & { tag?: string });
+const s = new Set<string>(["x"]) as Set<string> & { tag?: string };
 s.add("y");
 console.log(s.size, s.has("y"), [...s].join("|"));
 
@@ -81,7 +81,6 @@ set(new Counter());
 function reset<T extends object>(s: S<T>, v: T): void {
   s.$set(v);
 }
-
 reset(box, new Counter());
 const maybe: S<Counter> | null = Math.random() > 2 ? null : box;
 console.log(maybe?.inc(), maybe === box);
@@ -92,7 +91,6 @@ class Pt {
   x = 1;
   y = "s";
 }
-
 const pt = new Pt() as S<Pt>;
 const ks: string[] = [];
 for (const k in pt) {
@@ -111,7 +109,6 @@ class Twice {
     return this.v * 2;
   }
 }
-
 const tp = sig(new Twice());
 console.log(tp.v, tp.twice);
 tp.v = 4;
@@ -128,7 +125,6 @@ class Cn {
     return this.x * 2;
   }
 }
-
 const b1: Cn & { y?: number } = new Cn();
 const b2: Cn & { inc(): number } = new Cn();
 const b3: Cn & { readonly dbl: number } = new Cn();

@@ -7,7 +7,6 @@ interface Config {
   name: string;
   limit: u64;
 }
-
 const CFG = new Atomic<shared<Config> | null>(null);
 
 function config(limit: u64): shared<Config> {

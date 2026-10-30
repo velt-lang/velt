@@ -30,9 +30,7 @@ extend u64 {
 extend string {
   static repeatJoin(s: string, n: i64, sep: string): string {
     const parts: string[] = [];
-    for (let i = 0; i < n; i++) {
-      parts.push(s);
-    }
+    for (let i = 0; i < n; i++) parts.push(s);
     return parts.join(sep);
   }
 }

@@ -3,24 +3,19 @@
 // time (#1036).
 // check: no leaks
 function g<T>(x: T): T | number {
-  if (typeof x === "object") {
-    return 1;
-  }
+  if (typeof x === "object") return 1;
   return x;
 }
-
 console.log(g("s"), g(5), g({ a: 1 }), g<string | null>(null));
 
 function tag<T>(x: T): string {
   return typeof x;
 }
-
 console.log(tag("s"), tag(2), tag(true), tag([1]), tag<number | undefined>(undefined));
 
 function describe(o: object): string {
   return typeof o;
 }
-
 const o: object = () => 1;
 if (typeof o === "object") {
   console.log("an object");
@@ -29,11 +24,8 @@ if (typeof o === "object") {
 }
 
 function size(s: string): number {
-  if (typeof s === "string") {
-    return s.length;
-  }
+  if (typeof s === "string") return s.length;
   const rest: never = s;
   return rest;
 }
-
 console.log(size("four"));

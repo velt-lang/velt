@@ -2,19 +2,10 @@
 class C {
   static n: number = 0;
   static log: string[] = [];
-  static inc(): number {
-    return ++this.n;
-  }
-  static add(k: number): number {
-    this.n += k;
-    this.log.push("add " + k);
-    return this.n;
-  }
-  static reset(): void {
-    this.n = 0;
-  }
+  static inc(): number { return ++this.n; }
+  static add(k: number): number { this.n += k; this.log.push("add " + k); return this.n; }
+  static reset(): void { this.n = 0; }
 }
-
 console.log(C.inc(), C.inc(), C.n);
 console.log(C.add(5), C.n, C.log.join());
 C.reset();

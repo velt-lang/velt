@@ -17,9 +17,7 @@ async function main() {
   ac.abort("stop");
   console.log("spawned task saw:", await waiter, "| local:", s.aborted);
 
-  const escaped = await taskScope(
-    async (scope: TaskScope<never>): Promise<TaskScope<never>> => scope,
-  );
+  const escaped = await taskScope(async (scope: TaskScope<never>): Promise<TaskScope<never>> => scope);
   console.log("escaped scope signal:", escaped.signal.aborted);
   escaped.cancel("late");
   console.log("after cancel:", escaped.signal.aborted, escaped.signal.reason);

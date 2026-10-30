@@ -4,13 +4,11 @@
 interface I {
   m(s: string): string;
 }
-
 class G<T> implements I {
   m(s: string): string {
     return JSON.stringify(JSON.parse<T>(s));
   }
 }
-
 function use(i: I): string {
   return i.m("{}");
 }
@@ -20,9 +18,7 @@ interface D<T> {
     return JSON.stringify(JSON.parse<T>(s));
   }
 }
-
 class H implements D<Map<i64, i64>> {}
-
 function useDefault(x: D<Map<i64, i64>>): string {
   return x.d("{}");
 }

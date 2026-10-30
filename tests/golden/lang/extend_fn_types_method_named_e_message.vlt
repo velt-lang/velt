@@ -2,7 +2,7 @@
 // parameters of the block's methods: in a method `bad<E>`, a message about `this` shows it as
 // `E1`. TypeScript has no `extend`, so there is no Node comparison.
 
-extend<R> () => R {
+extend<R> (() => R) {
   bad<E>(x: E): number {
     return this;
   }

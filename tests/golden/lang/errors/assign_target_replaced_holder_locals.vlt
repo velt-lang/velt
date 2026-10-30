@@ -3,34 +3,21 @@
 // (JavaScript writes into the old object and prints 100).
 type Inner = { v: number };
 type Outer = { inner: Inner };
-
-function keep(o: Outer): number {
-  return 13;
-}
-
+function keep(o: Outer): number { return 13; }
 function t01(): void {
   let o: Outer = { inner: { v: 0 } };
   o.inner.v = keep(o = { inner: { v: 100 } });
   console.log(o.inner.v);
 }
-
 function t02(): void {
   let o: Outer = { inner: { v: 0 } };
-  const reset = (): number => {
-    o = { inner: { v: 100 } };
-    return 13;
-  };
+  const reset = (): number => { o = { inner: { v: 100 } }; return 13; };
   o.inner.v = reset();
   console.log(o.inner.v);
 }
-
 function t04(): void {
   let o: Outer = { inner: { v: 0 } };
-  o.inner.v = [1].map((k) => {
-    o = { inner: { v: 100 } };
-    return 13;
-  })[0];
+  o.inner.v = [1].map((k) => { o = { inner: { v: 100 } }; return 13; })[0];
   console.log(o.inner.v);
 }
-
 function main(): void {}

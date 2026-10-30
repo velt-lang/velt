@@ -12,7 +12,6 @@ class C<T> {
     this.n = out.length;
   }
 }
-
 console.log(new C<string>("a").n);
 console.log(new C<number>(1).n);
 
@@ -21,7 +20,6 @@ class Init<T> {
   items: IsString<T>[] = [];
   count: number = ([] as IsString<T>[]).length;
 }
-
 console.log(new Init<string>().count, new Init<boolean>().items.length);
 
 // A base class's constructor, through `super(...)` of a generic subclass.
@@ -32,20 +30,17 @@ class Base<T> {
     this.k = out.length + 10;
   }
 }
-
 class Derived<U> extends Base<U> {
   constructor(x: U) {
     super(x);
   }
 }
-
 console.log(new Derived<string>("d").k);
 
 // `new` inside a generic function, instantiated by the caller.
 function make<T>(x: T): number {
   return new C<T>(x).n + 1;
 }
-
 console.log(make<string>("m"), make(5));
 
 // A generic function used as a value.
@@ -53,7 +48,6 @@ function wrap<T>(x: T): number {
   const out: IsString<T>[] = [];
   return out.length + 2;
 }
-
 const f: (x: string) => number = wrap;
 console.log(f("w"));
 
@@ -62,7 +56,6 @@ function viaRef<T>(x: T): number {
   const g: (x: T) => number = wrap;
   return g(x);
 }
-
 console.log(viaRef<string>("r"), viaRef(true));
 
 // A static generic method as a value.
@@ -72,7 +65,6 @@ class S {
     return out.length + 3;
   }
 }
-
 const h: (x: number) => number = S.size;
 console.log(h(1));
 
@@ -80,30 +72,25 @@ console.log(h(1));
 interface Sh {
   area<U>(u: U): number;
 }
-
 class Sq implements Sh {
   area<U>(u: U): number {
     const o: IsString<U>[] = [];
     return o.length + 1;
   }
 }
-
 class Circle implements Sh {
   area<U>(u: U): number {
     const o: IsString<U>[] = [];
     return o.length + 4;
   }
 }
-
 function go<S extends Sh>(s: S): number {
   return s.area<string>("k");
 }
-
 console.log(go(new Sq()), go(new Circle()));
 
 // ... where the method's type argument is the caller's own type parameter.
 function goWith<S extends Sh, V>(s: S, v: V): number {
   return s.area<V>(v);
 }
-
 console.log(goWith(new Sq(), 1), goWith<Circle, string>(new Circle(), "c"));

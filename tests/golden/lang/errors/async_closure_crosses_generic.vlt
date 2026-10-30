@@ -49,33 +49,25 @@ function wrap<T>(x: T): shared<Mutex<T>> {
 async function main() {
   let d = 0;
   const ch = channel<Sent>();
-  await ch.send(
-    new Sent(async (): Promise<void> => {
-      d += 1;
-    }),
-  );
+  await ch.send(new Sent(async (): Promise<void> => {
+    d += 1;
+  }));
 
   let e = 0;
-  const h = new Holder(
-    new Field(async (n: i64): Promise<void> => {
-      e += n;
-    }),
-  );
+  const h = new Holder(new Field(async (n: i64): Promise<void> => {
+    e += n;
+  }));
   await h.send();
 
   let f = 0;
-  const w = wrap<Wrapped>(
-    new Wrapped(async (s: string): Promise<void> => {
-      f += 1;
-    }),
-  );
+  const w = wrap<Wrapped>(new Wrapped(async (s: string): Promise<void> => {
+    f += 1;
+  }));
 
   let g = 0;
   const { promise, resolve } = Promise.withResolvers<Settled>();
-  resolve(
-    new Settled(async (a: i64, b: i64): Promise<void> => {
-      g += a;
-    }),
-  );
+  resolve(new Settled(async (a: i64, b: i64): Promise<void> => {
+    g += a;
+  }));
   await promise;
 }

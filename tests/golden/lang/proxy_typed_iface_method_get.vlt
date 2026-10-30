@@ -18,7 +18,6 @@ function traced(target: any): any {
 interface I {
   show(): string;
 }
-
 class C implements I {
   n: number = 1;
   show(): string {

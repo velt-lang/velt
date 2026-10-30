@@ -5,14 +5,12 @@
 class Holder<T> {
   v: T | null = null;
 }
-
 function pick(flag: boolean): any | null {
   if (flag) {
     return undefined;
   }
   return null;
 }
-
 const m = new Map<string, any>();
 m.set("nil", null);
 m.set("u", undefined);

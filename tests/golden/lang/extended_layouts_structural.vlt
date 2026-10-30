@@ -6,17 +6,13 @@ interface VNode {
   type: string;
   dom: string | null;
 }
-
 interface IV extends VNode {
   _ns?: boolean;
 }
-
 type Other = { type: string; dom: string | null; _ns: string };
-
 function mount(v: VNode): void {
   (v as IV)._ns = v.type === "svg";
 }
-
 const o: Other = { type: "o", dom: "d", _ns: "x" };
 const v: VNode = o;
 mount({ type: "svg", dom: null });

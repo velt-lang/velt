@@ -2,19 +2,17 @@
 interface Formatter {
   (value: number, unit: string): string;
 }
-
-type Predicate = { (x: number): boolean };
-
+type Predicate = {
+  (x: number): boolean
+};
 interface Handler<T> {
-  (event: T): void;
+  (event: T): void
 }
 
 const fmt: Formatter = (value, unit) => `${value} ${unit}`;
-
 function isEven(x: number): boolean {
   return x % 2 === 0;
 }
-
 const even: Predicate = isEven;
 const log: Handler<string> = (event) => {
   console.log("event:", event);

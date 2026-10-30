@@ -5,9 +5,7 @@ type Tagged<T> = T & { tag: string };
 //
 //
 const p: Tagged<string[]> | null = null;
-
 function sig<V>(r: Record<string, V>): void {
   const s: (Record<string, V> & { $set: () => void }) | null = null;
 }
-
 console.log(p);

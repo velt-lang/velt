@@ -13,19 +13,12 @@ type NR2 = NR | null;
 
 function f(c: C, m: RM2, r: RO<number>, a: RA<string>, o: Opt<number>, n: NR2): void {
   c?.add("x");
-  if (c) {
-    c.delete("x");
-  }
+  if (c) c.delete("x");
   m?.set("k", 1);
-  if (m) {
-    m.clear();
-  }
+  if (m) m.clear();
   r.add(1);
   a.push("y");
   o?.push(2);
-  if (n) {
-    console.log(n["abc"]);
-  }
+  if (n) console.log(n["abc"]);
 }
-
 console.log(typeof f);

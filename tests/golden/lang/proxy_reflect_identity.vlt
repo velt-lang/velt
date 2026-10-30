@@ -5,20 +5,15 @@
 // through it are visible, and a weak cache of proxies of those objects (an ephemeron cycle
 // through each proxy's target) keeps its entries while the objects live.
 type Inner = { n: number };
-
 class Box {
   v: number = 1;
 }
-
 type Outer = { inner: Inner; box: Box; items: Inner[] };
 
 const proxies: WeakMap<object, any> = new WeakMap();
-
 function wrap(o: any): any {
   const hit = proxies.get(o);
-  if (hit != null) {
-    return hit;
-  }
+  if (hit != null) return hit;
   const p = new Proxy(o, {
     set(t: any, key: string | symbol, value: any, receiver: any): boolean {
       return Reflect.set(t, key, value);
@@ -76,5 +71,4 @@ function run(): void {
   Reflect.set(t, "inner", { n: 7 });
   console.log(o.inner.n, w.n, o.box.v, items[0].n, proxies.has(w), proxies.has(o.inner));
 }
-
 run();

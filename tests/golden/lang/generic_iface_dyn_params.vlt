@@ -12,9 +12,7 @@ interface Named extends Sq {
 class A implements Named {
   sq<T>(x: T, n: number): T[] {
     const o: T[] = [];
-    for (let i = 0; i < n; i++) {
-      o.push(x);
-    }
+    for (let i = 0; i < n; i++) o.push(x);
     return o;
   }
   name(): string {

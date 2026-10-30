@@ -1,73 +1,30 @@
 // The guarded value holds an interface; `with` stores in it a WeakRef to main's object, and tasks
 // on other threads deref it under the lock while main churns the object's count.
-class V {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-interface Peek {
-  peek(): number;
-}
-
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
 class H implements Peek {
   r: WeakRef<V>;
-  constructor(r: WeakRef<V>) {
-    this.r = r;
-  }
-  peek(): number {
-    const x = this.r.deref();
-    if (x === null) {
-      return -1;
-    }
-    return x.n;
-  }
+  constructor(r: WeakRef<V>) { this.r = r; }
+  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
 }
-
-class Nop implements Peek {
-  peek(): number {
-    return 0;
-  }
-}
-
-class Box {
-  h: Peek;
-  constructor() {
-    this.h = new Nop();
-  }
-}
-
+class Nop implements Peek { peek(): number { return 0; } }
+class Box { h: Peek; constructor() { this.h = new Nop(); } }
 async function look(m: shared<Mutex<Box>>, i: number): Promise<number> {
   let s = 0;
-  for (let j = 0; j < 20000; j++) {
-    s += m.with((v) => v.h.peek());
-  }
+  for (let j = 0; j < 20000; j++) s += m.with((v) => v.h.peek());
   return s;
 }
-
 async function main() {
   const m = shared(new Mutex<Box>(new Box()));
   const keep = new V(7);
-  m.with((v) => {
-    v.h = new H(new WeakRef(keep));
-  });
+  m.with((v) => { v.h = new H(new WeakRef(keep)); });
   let total = 0;
   for (let round = 0; round < 50; round++) {
     const ps: Promise<number>[] = [];
-    for (let t = 1; t < 5; t++) {
-      ps.push(spawn(look(m.clone(), t)));
-    }
+    for (let t = 1; t < 5; t++) ps.push(spawn(look(m.clone(), t)));
     const a: V[] = [];
-    for (let j = 0; j < 200000; j++) {
-      a.push(keep);
-      if (a.length > 8) {
-        a.length = 0;
-      }
-    }
-    for (const x of await Promise.all(ps)) {
-      total += x;
-    }
+    for (let j = 0; j < 200000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
+    for (const x of await Promise.all(ps)) { total += x; }
   }
   console.log(total, keep.n);
 }

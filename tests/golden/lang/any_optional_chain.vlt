@@ -8,12 +8,10 @@ class C {
     return 5;
   }
 }
-
 function arg(): number {
   console.log("arg evaluated");
   return 1;
 }
-
 function main(): void {
   const u: any = undefined;
   const nul: any = null;

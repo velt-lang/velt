@@ -4,12 +4,9 @@
 class N1 {
   name = "n";
 }
-
 type MountFn = (tag: string, before?: N1 | null) => void;
-
 function mount(tag: string, before: N1 | null): void {
   console.log(tag, before);
 }
-
 const o: { m: MountFn } = { m: mount };
 o.m("a");

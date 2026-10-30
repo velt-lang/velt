@@ -3,11 +3,7 @@
 // fields stay; a present one's fields override, and its own optional fields only while set.
 type V = { n: number; s?: string };
 type A0 = { n: number; k: string };
-
-function g<A extends object>(a: A, v: V | undefined) {
-  return { ...a, ...v };
-}
-
+function g<A extends object>(a: A, v: V | undefined) { return { ...a, ...v }; }
 const a: A0 = { n: 1, k: "a" };
 const r1 = g(a, undefined);
 console.log(JSON.stringify(r1));
@@ -15,9 +11,5 @@ const r2 = g(a, { n: 2 });
 console.log(JSON.stringify(r2));
 const r3 = g(a, { n: 3, s: "x" });
 console.log(JSON.stringify(r3), r3.n);
-
-function h<A extends object>(v: V | null, a: A) {
-  return { ...v, ...a };
-}
-
+function h<A extends object>(v: V | null, a: A) { return { ...v, ...a }; }
 console.log(JSON.stringify(h(null, a)), JSON.stringify(h({ n: 9, s: "y" }, a)));

@@ -2,24 +2,18 @@
 // `new RegExp` of a template literal whose holes are string literal types, numbers or a `const`
 // of one string: the groups are counted from the written parts (a one-string hole as written),
 // so a replacer may take them.
-function merge(html: string, tag: "html" | "body", extra: string): string {
-  const tagRe = new RegExp(`<${tag}(\\s[^>]*)?>`, "i");
-  return html.replace(tagRe, (_match, existing: string | undefined) => {
-    return `<${tag}${existing ?? ''} ${extra}>`;
-  });
+function merge(html: string, tag: 'html' | 'body', extra: string): string {
+    const tagRe = new RegExp(`<${tag}(\\s[^>]*)?>`, 'i');
+    return html.replace(tagRe, (_match, existing: string | undefined) => {
+        return `<${tag}${existing ?? ''} ${extra}>`;
+    });
 }
-
-console.log(merge("<html><body class=\"a\">x</body></html>", "body", 'id="b"'));
-console.log(merge("<html><body>x</body></html>", "html", 'lang="en"'));
-
+console.log(merge("<html><body class=\"a\">x</body></html>", 'body', 'id="b"'));
+console.log(merge("<html><body>x</body></html>", 'html', 'lang="en"'));
 function tagged(s: string, n: number): string {
-  const re = new RegExp(`a{${n}}(b+)(c)?`, "g");
-  return s.replace(
-    re,
-    (m, bs: string, c: string | undefined, at: number) => `[${m}|${bs}|${c ?? '-'}|${at}]`,
-  );
+    const re = new RegExp(`a{${n}}(b+)(c)?`, 'g');
+    return s.replace(re, (m, bs: string, c: string | undefined, at: number) => `[${m}|${bs}|${c ?? '-'}|${at}]`);
 }
-
 console.log(tagged("xaabbcaab", 2));
 // A hole of one known string counts as written: `(?:a)` is not a capturing group.
 const nc = "?:";

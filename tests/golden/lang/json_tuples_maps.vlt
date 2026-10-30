@@ -1,8 +1,7 @@
 // JSON.parse<T> / JSON.stringify of tuples (fixed-length arrays) and Map<string, V> (objects
 // with arbitrary keys, insertion order) (issue #17).
 type Pair = [string, i64];
-type Row = { id: i64; at: [f64, f64]; tag: [string, "x", bool] };
-
+type Row = { id: i64, at: [f64, f64], tag: [string, "x", bool] };
 function showRow(text: string) {
   try {
     const r = JSON.parse<Row>(text);
@@ -11,7 +10,6 @@ function showRow(text: string) {
     console.log(e.message);
   }
 }
-
 function tuples() {
   const p = JSON.parse<Pair[]>('[["a",1],["b",2]]');
   console.log(p, p[1][0], JSON.stringify(p));
@@ -23,8 +21,7 @@ function tuples() {
   showRow('{"id":1,"at":{},"tag":["t","x",true]}');
 }
 
-type Doc = { name: string; counts: Map<string, i64>; nested: Map<string, string[]> };
-
+type Doc = { name: string, counts: Map<string, i64>, nested: Map<string, string[]> };
 function show(text: string) {
   try {
     const d = JSON.parse<Doc>(text);
@@ -34,7 +31,6 @@ function show(text: string) {
     console.log(e.message);
   }
 }
-
 function maps() {
   show('{"name":"x","counts":{"a":1,"b":2,"a":3},"nested":{"k":["v","w"],"e\\"q":[]}}');
   show('{"name":"x","counts":{},"nested":{}}');

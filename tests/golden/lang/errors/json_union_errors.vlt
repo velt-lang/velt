@@ -2,27 +2,22 @@
 type A = { x: i64; y?: string };
 type B = { x: i64; z: f64 | null };
 type C = { a: i64 };
-
 enum E {
   A = "a",
 }
-
 enum F {
   B = "b",
   A2 = "a",
 }
-
 enum N {
   Zero = 0,
   One = 1,
 }
-
 // A discriminant whose values are distinct types but the same JSON number.
 class K1 {
   kind: 1 = 1;
   a: i64 = 0;
 }
-
 class K2 {
   kind: 1.0 = 1.0;
   b: i64 = 0;

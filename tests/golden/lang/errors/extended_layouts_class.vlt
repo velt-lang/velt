@@ -4,20 +4,16 @@ interface VNode {
   type: string;
   dom: string | null;
 }
-
 interface IV extends VNode {
   _ns?: boolean;
 }
-
 class K implements VNode {
   type = "k";
   dom: string | null = null;
 }
-
 function mount(v: VNode): void {
   (v as IV)._ns = true;
 }
-
 const k = new K();
 const v: VNode = k;
 mount(v);

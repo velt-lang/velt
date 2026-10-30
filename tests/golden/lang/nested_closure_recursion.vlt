@@ -39,9 +39,7 @@ function countDown(n: number): string {
   function step(k: number): void {
     calls++;
     seen.push(k);
-    if (k > 0) {
-      step(k - 1);
-    }
+    if (k > 0) step(k - 1);
   }
   step(n);
   calls += 100;
@@ -83,16 +81,12 @@ function tree(depth: number): string {
   const prefix = "n";
   function visit(d: number, path: string, mark: string = "!"): void {
     out.push(prefix + path + mark);
-    if (d <= 0) {
-      return;
-    }
+    if (d <= 0) return;
     [0, 1].forEach((i: number) => visit(d - 1, path + i));
     side(d - 1, path);
   }
   function side(d: number, path: string): void {
-    if (d < 0) {
-      return;
-    }
+    if (d < 0) return;
     const kids = [path + "b"];
     kids.map((k: string): number => {
       visit(d - 1, k, "?");
@@ -108,9 +102,7 @@ function tree(depth: number): string {
 // Errors thrown deep in the recursion.
 function thrower(limit: number): number {
   function f(n: number): number {
-    if (n > limit) {
-      throw new Error("too deep " + n);
-    }
+    if (n > limit) throw new Error("too deep " + n);
     return g(n + 1);
   }
   function g(n: number): number {
@@ -136,10 +128,7 @@ class Doc {
 // A stored member, called later through the object holding it.
 function outline(indent: string): { print: (d: Doc) => string } {
   function line(d: Doc, depth: number): string {
-    return indent.repeat(depth) +
-      d.title +
-      "\n" +
-      d.kids.map((k: Doc): string => line(k, depth + 1)).join("");
+    return indent.repeat(depth) + d.title + "\n" + d.kids.map((k: Doc): string => line(k, depth + 1)).join("");
   }
   function print(d: Doc): string {
     return line(d, 0);

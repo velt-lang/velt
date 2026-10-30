@@ -6,14 +6,12 @@ class Counter {
     return this.n;
   }
 }
-
 const a = new Counter();
 const b = new Counter();
 console.log(a.inc.call(b, 1));
 const f = a.inc;
 console.log(f.call(a, 1));
 console.log(f.apply(b, [1]));
-
 // `null` / `undefined` as `this` of a method using it: Node throws a TypeError.
 class Box {
   n = 1;
@@ -21,18 +19,15 @@ class Box {
     return this.n;
   }
 }
-
 class Base {
   static readonly base: number = 1;
   static make(): number {
     return this.base;
   }
 }
-
 class Derived extends Base {
   static readonly base: number = 2;
 }
-
 const box = new Box();
 console.log(box.get1.call(null));
 console.log(Derived.make.call(null));

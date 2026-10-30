@@ -2,7 +2,6 @@
 function add(a: number, b: number): number {
   return a + b;
 }
-
 const nums: number[] = [1, 2];
 console.log(add.call(null, "x", 1));
 console.log(add.apply(null, [1]));

@@ -9,54 +9,42 @@ class Obj {
     this.n = n;
   }
 }
-
 async function val(n: number): Promise<Obj> {
   await sleep(5);
   return new Obj(n);
 }
-
 async function count(n: number): Promise<number> {
   await sleep(5);
   return n;
 }
-
 async function main() {
   const p = val(7);
   const q = p;
   const t = Promise.withResolvers<void>();
   const tDone = t.resolve;
-  setTimeout(
-    async () => {
-      console.log("t", (await q).n);
-      tDone();
-    },
-    10,
-  );
+  setTimeout(async () => {
+    console.log("t", (await q).n);
+    tDone();
+  }, 10);
   await t.promise;
   const c = count(3);
   const d = c;
   const u = Promise.withResolvers<void>();
   const uDone = u.resolve;
-  setTimeout(
-    async () => {
-      const again = d;
-      console.log("c", (await d) + (await again));
-      uDone();
-    },
-    10,
-  );
+  setTimeout(async () => {
+    const again = d;
+    console.log("c", (await d) + (await again));
+    uDone();
+  }, 10);
   await u.promise;
   const r = val(9);
   const s = r;
   const v = Promise.withResolvers<void>();
   const vDone = v.resolve;
-  const every = setInterval(
-    async () => {
-      console.log("i", (await s).n);
-      vDone();
-    },
-    300,
-  );
+  const every = setInterval(async () => {
+    console.log("i", (await s).n);
+    vDone();
+  }, 300);
   await v.promise;
   clearInterval(every);
   console.log("m", (await p).n, await c, (await r).n);

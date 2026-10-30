@@ -12,7 +12,6 @@ function keep<T extends object>(v: T): number {
 }
 
 const reg = new Map<object, number>();
-
 function track<T extends object>(v: T): void {
   reg.set(v, reg.size);
 }

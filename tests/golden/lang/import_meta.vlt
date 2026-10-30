@@ -11,14 +11,11 @@ console.log(filename.slice(dirname.length + 1).split(".")[0]);
 function where(): string {
   return import.meta.url.split("/").pop() ?? "";
 }
-
 console.log(where().split(".")[0]);
 
 // `import.meta` as a value of its own is the same object.
 const meta = import.meta;
-
 function metaOf() {
   return import.meta;
 }
-
 console.log(meta.url === import.meta.url, metaOf().dirname === dirname, typeof meta);

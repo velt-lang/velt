@@ -1,5 +1,5 @@
 // `as` takes a whole type, as in TypeScript: `x as number | y` is a union type naming `y`, not
 // a bitwise or (write `(x as number) | y`).
 const y = 2;
-const x = 3 as (number | y);
+const x = 3 as number | y;
 console.log(x);

@@ -49,7 +49,7 @@ function wrap<F extends (...args: any[]) => any>(f: F): F {
 }
 
 type Rest = Parameters<(...xs: number[]) => void>;
-type Args<F> = F extends ((...a: infer A) => any) ? A : never;
+type Args<F> = F extends (...a: infer A) => any ? A : never;
 
 function main() {
   const h: (a: number, b: number) => number = sum;

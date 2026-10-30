@@ -9,16 +9,13 @@ class Obj {
     this.n = n;
   }
 }
-
 const inflight = new Map<string, Promise<Obj>>();
 let computed = 0;
-
 async function compute(k: string): Promise<Obj> {
   computed++;
   await sleep(5);
   return new Obj(k.length);
 }
-
 function load(k: string): Promise<Obj> {
   const hit = inflight.get(k);
   if (hit != undefined) {
@@ -28,12 +25,10 @@ function load(k: string): Promise<Obj> {
   inflight.set(k, p);
   return p;
 }
-
 async function worker(k: string): Promise<number> {
   const o = await load(k);
   return o.n;
 }
-
 async function main() {
   const a = load("abc");
   const t1 = spawn(worker("abc"));

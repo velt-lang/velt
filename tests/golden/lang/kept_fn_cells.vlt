@@ -149,26 +149,14 @@ function run(): void {
   const logger = new KeepingLogger();
   viaOverride(logger);
   console.log(deep(2000));
-  for (const k of kept) {
-    console.log(k());
-  }
-  for (const f of store.fs) {
-    console.log(f());
-  }
+  for (const k of kept) console.log(k());
+  for (const f of store.fs) console.log(f());
   const l = last;
-  if (l) {
-    console.log(l());
-  }
-  for (const g of gstore.items) {
-    console.log(g());
-  }
-  for (const h of logger.hs) {
-    console.log(h());
-  }
+  if (l) console.log(l());
+  for (const g of gstore.items) console.log(g());
+  for (const h of logger.hs) console.log(h());
   console.log(deep(2000));
-  for (const k of kept) {
-    console.log(k());
-  }
+  for (const k of kept) console.log(k());
 }
 
 run();

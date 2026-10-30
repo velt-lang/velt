@@ -9,35 +9,20 @@ const escapeRE = /[&<>"']/;
 
 function escapeHtml(s: string): string {
   const match = escapeRE.exec(s);
-  if (!match) {
-    return s;
-  }
+  if (!match) return s;
   let html = "";
   let lastIndex = 0;
   let escaped: string;
   for (let i = match.index; i < s.length; i++) {
     switch (s.charCodeAt(i)) {
-      case 38:
-        escaped = "&amp;";
-        break;
-      case 60:
-        escaped = "&lt;";
-        break;
-      case 62:
-        escaped = "&gt;";
-        break;
-      case 34:
-        escaped = "&quot;";
-        break;
-      case 39:
-        escaped = "&#39;";
-        break;
-      default:
-        continue;
+      case 38: escaped = "&amp;"; break;
+      case 60: escaped = "&lt;"; break;
+      case 62: escaped = "&gt;"; break;
+      case 34: escaped = "&quot;"; break;
+      case 39: escaped = "&#39;"; break;
+      default: continue;
     }
-    if (lastIndex !== i) {
-      html += s.slice(lastIndex, i);
-    }
+    if (lastIndex !== i) html += s.slice(lastIndex, i);
     html += escaped;
     lastIndex = i + 1;
   }

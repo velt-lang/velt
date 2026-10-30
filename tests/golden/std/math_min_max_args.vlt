@@ -32,21 +32,10 @@ function main() {
   const k: number = 7;
   console.log(show(Math.min(1, 2)), show(Math.max(1, 2)));
   console.log(show(Math.min(3, 1, 2)), show(Math.max(3, 1, 2, 9, -4)));
-  console.log(
-    show(Math.min(0, -0)),
-    show(Math.min(-0, 0)),
-    show(Math.max(0, -0)),
-    show(Math.max(-0, 0)),
-  );
+  console.log(show(Math.min(0, -0)), show(Math.min(-0, 0)), show(Math.max(0, -0)), show(Math.max(-0, 0)));
   console.log(show(Math.min(-0, 0, 0)), show(Math.max(-0, -0, 0)));
   console.log(show(Math.min(1, NaN, 0)), show(Math.max(NaN, 1)), show(Math.min(2, 1, NaN)));
-  console.log(
-    show(Math.min(...xs)),
-    show(Math.max(...xs)),
-    show(Math.min(5)),
-    show(Math.min()),
-    show(Math.max()),
-  );
+  console.log(show(Math.min(...xs)), show(Math.max(...xs)), show(Math.min(5)), show(Math.min()), show(Math.max()));
   console.log(show(Math.min(k, 2.5, Infinity)), show(Math.max(-Infinity, k)));
   let order = 0;
   const next = (v: number): number => {
@@ -54,9 +43,5 @@ function main() {
     return v;
   };
   console.log(show(Math.min(next(1), next(2), next(3))), order);
-  console.log(
-    editDistance("kitten", "sitting"),
-    editDistance("", "abc"),
-    editDistance("flaw", "lawn"),
-  );
+  console.log(editDistance("kitten", "sitting"), editDistance("", "abc"), editDistance("flaw", "lawn"));
 }

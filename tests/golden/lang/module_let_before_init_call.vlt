@@ -1,17 +1,6 @@
 // A module-level `let` read through a call before its initializer ran: Node throws a
 // `ReferenceError` (here it cannot be caught; the program stops).
-class Config {
-  name = "cfg";
-  n = 3;
-}
-
-let a = first();
-let cfg = new Config();
-
-function first(): number {
-  return cfg.name.length + cfg.n;
-}
-
-function main() {
-  console.log(a, cfg.n);
-}
+class Config { name = "cfg"; n = 3; }
+let a = first(); let cfg = new Config();
+function first(): number { return cfg.name.length + cfg.n; }
+function main() { console.log(a, cfg.n); }

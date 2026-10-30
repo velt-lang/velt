@@ -29,29 +29,17 @@ async function awaited(): Promise<string> {
 
 function main() {
   // 9 and 11 arguments: levels of 5, 3, 2 and 1 values, an unpaired value at the odd ones.
-  console.log(
-    show(Math.max(at(1), at(2), at(3), at(4), at(5), at(6), at(7), at(8), at(9))),
-    trace.join(","),
-  );
+  console.log(show(Math.max(at(1), at(2), at(3), at(4), at(5), at(6), at(7), at(8), at(9))), trace.join(","));
   trace = [];
-  console.log(
-    show(Math.min(at(9), at(8), at(7), at(6), at(5), at(4), at(3), at(2), at(1), at(0), at(-1))),
-    trace.join(","),
-  );
+  console.log(show(Math.min(at(9), at(8), at(7), at(6), at(5), at(4), at(3), at(2), at(1), at(0), at(-1))), trace.join(","));
   trace = [];
-  console.log(
-    show(Math.max(at(3), at(30), at(-2))),
-    show(Math.min(at(3), at(30), at(-2))),
-    trace.join(","),
-  );
+  console.log(show(Math.max(at(3), at(30), at(-2))), show(Math.min(at(3), at(30), at(-2))), trace.join(","));
 
   // NaN at each position of 7 arguments.
   const nan: string[] = [];
   for (let i = 0; i < 7; i++) {
     const v = (j: number): number => (j === i ? NaN : j);
-    nan.push(
-      `${show(Math.max(v(0), v(1), v(2), v(3), v(4), v(5), v(6)))}/${show(Math.min(v(0), v(1), v(2), v(3), v(4), v(5), v(6)))}`,
-    );
+    nan.push(`${show(Math.max(v(0), v(1), v(2), v(3), v(4), v(5), v(6)))}/${show(Math.min(v(0), v(1), v(2), v(3), v(4), v(5), v(6)))}`);
   }
   console.log(nan.join(" "));
 
@@ -60,185 +48,33 @@ function main() {
   for (let i = 0; i < 5; i++) {
     const p = (j: number): number => (j === i ? 0 : -0);
     const n = (j: number): number => (j === i ? -0 : 0);
-    zeros.push(
-      `${show(Math.max(p(0), p(1), p(2), p(3), p(4)))},${show(Math.min(p(0), p(1), p(2), p(3), p(4)))},${show(Math.max(n(0), n(1), n(2), n(3), n(4)))},${show(Math.min(n(0), n(1), n(2), n(3), n(4)))}`,
-    );
+    zeros.push(`${show(Math.max(p(0), p(1), p(2), p(3), p(4)))},${show(Math.min(p(0), p(1), p(2), p(3), p(4)))},${show(Math.max(n(0), n(1), n(2), n(3), n(4)))},${show(Math.min(n(0), n(1), n(2), n(3), n(4)))}`);
   }
   console.log(zeros.join(" "));
-  console.log(
-    show(Math.max(-0, -0, -0, -0, -0)),
-    show(Math.min(0, 0, 0, 0, 0, 0)),
-    show(Math.max(-0, -0, -0)),
-    show(Math.min(0, -0, 0)),
-  );
+  console.log(show(Math.max(-0, -0, -0, -0, -0)), show(Math.min(0, 0, 0, 0, 0, 0)), show(Math.max(-0, -0, -0)), show(Math.min(0, -0, 0)));
 
   // Infinities, and no or one argument.
-  console.log(
-    Math.max(-Infinity, -Infinity, -Infinity),
-    Math.min(Infinity, Infinity, Infinity, Infinity),
-  );
+  console.log(Math.max(-Infinity, -Infinity, -Infinity), Math.min(Infinity, Infinity, Infinity, Infinity));
   console.log(Math.max(-Infinity, 1e308, -1e308), Math.min(Infinity, -1e308, 5e-324, -Infinity, 0));
-  console.log(
-    show(Math.min()),
-    show(Math.max()),
-    show(Math.min(-0)),
-    show(Math.max(NaN)),
-    show(Math.max(4)),
-  );
+  console.log(show(Math.min()), show(Math.max()), show(Math.min(-0)), show(Math.max(NaN)), show(Math.max(4)));
 
   // A table of 64 values, in one call each.
   console.log(
-    Math.max(
-      17,
-      4,
-      99,
-      -3,
-      250,
-      8,
-      61,
-      0,
-      12,
-      7,
-      300,
-      -45,
-      2,
-      88,
-      13,
-      21,
-      34,
-      55,
-      89,
-      144,
-      233,
-      377,
-      610,
-      987,
-      1597,
-      6,
-      5,
-      4,
-      3,
-      2,
-      1,
-      0,
-      -1,
-      -2,
-      -3,
-      -4,
-      -5,
-      -6,
-      -7,
-      -8,
-      4181,
-      2584,
-      1,
-      1,
-      2,
-      3,
-      5,
-      8,
-      13,
-      21,
-      42,
-      43,
-      44,
-      45,
-      46,
-      47,
-      48,
-      49,
-      50,
-      51,
-      52,
-      53,
-      54,
-      4180,
-    ),
-    Math.min(
-      17,
-      4,
-      99,
-      -3,
-      250,
-      8,
-      61,
-      0,
-      12,
-      7,
-      300,
-      -45,
-      2,
-      88,
-      13,
-      21,
-      34,
-      55,
-      89,
-      144,
-      233,
-      377,
-      610,
-      987,
-      1597,
-      6,
-      5,
-      4,
-      3,
-      2,
-      1,
-      0,
-      -1,
-      -2,
-      -3,
-      -4,
-      -5,
-      -6,
-      -7,
-      -8,
-      4181,
-      2584,
-      1,
-      1,
-      2,
-      3,
-      5,
-      8,
-      13,
-      21,
-      42,
-      43,
-      44,
-      45,
-      46,
-      47,
-      48,
-      49,
-      50,
-      51,
-      52,
-      53,
-      54,
-      -46,
-    ),
+    Math.max(17, 4, 99, -3, 250, 8, 61, 0, 12, 7, 300, -45, 2, 88, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 6, 5, 4, 3, 2, 1, 0,
+      -1, -2, -3, -4, -5, -6, -7, -8, 4181, 2584, 1, 1, 2, 3, 5, 8, 13, 21, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 4180),
+    Math.min(17, 4, 99, -3, 250, 8, 61, 0, 12, 7, 300, -45, 2, 88, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 6, 5, 4, 3, 2, 1, 0,
+      -1, -2, -3, -4, -5, -6, -7, -8, 4181, 2584, 1, 1, 2, 3, 5, 8, 13, 21, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, -46),
   );
 
   // Spread among plain arguments keeps the ordinary call, in the same order.
   const xs = [3, 1, 2];
   const ys: number[] = [];
   trace = [];
-  console.log(
-    show(Math.max(at(1), ...xs, at(2))),
-    show(Math.min(...xs, -0, ...ys)),
-    show(Math.max(...ys)),
-    trace.join(","),
-  );
+  console.log(show(Math.max(at(1), ...xs, at(2))), show(Math.min(...xs, -0, ...ys)), show(Math.max(...ys)), trace.join(","));
 
   // Nested calls, and a call that throws part way: later arguments are not evaluated.
   trace = [];
-  console.log(
-    show(Math.max(Math.min(at(4), at(9), at(6)), Math.min(at(5), at(8)), at(1))),
-    trace.join(","),
-  );
+  console.log(show(Math.max(Math.min(at(4), at(9), at(6)), Math.min(at(5), at(8)), at(1))), trace.join(","));
   trace = [];
   try {
     console.log(Math.min(at(1), at(2), boom(), at(4), at(5)));

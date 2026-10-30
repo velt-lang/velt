@@ -1,9 +1,9 @@
 // Generic arrow functions in TSX spelling (`<T,>`): a module-level constant with typed
 // parameters and a return type is a generic function.
 
-const identity = <T>(x: T): T => x;
+const identity = <T,>(x: T): T => x;
 
-export const firstOr = <T>(xs: T[], fallback: T): T => {
+export const firstOr = <T,>(xs: T[], fallback: T): T => {
   if (xs.length === 0) {
     return fallback;
   }
@@ -12,7 +12,7 @@ export const firstOr = <T>(xs: T[], fallback: T): T => {
 
 const pair = <A, B>(a: A, b: B): [A, B] => [a, b];
 
-const later = async <T>(x: T): Promise<T> => x;
+const later = async <T,>(x: T): Promise<T> => x;
 
 async function main() {
   console.log(identity(42), identity("text"));

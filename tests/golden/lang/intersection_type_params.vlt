@@ -2,7 +2,9 @@
 // Intersections with a type parameter part (#350): `T & { … }` in a generic signature is reduced
 // to the object type with both parts' fields once `T` is known, so callers see every member.
 // `any`, `unknown` and `object` parts intersect as in TypeScript. Expected output: Node's.
-type Signal<T> = T & { $set: (newValue: T) => void };
+type Signal<T> = T & {
+  $set: (newValue: T) => void;
+};
 type WithId<T> = T & { id: string };
 
 function relay<T extends object>(s: Signal<T>): Signal<T> {
@@ -34,11 +36,9 @@ function parseLike<T>(_: T & { id: string }, s: string): T {
 interface Id {
   id: string;
 }
-
 function viaIface<T>(_: T & Id, s: string): T {
   return JSON.parse(s);
 }
-
 function viaLit<T>(_: T & { id: string }, s: string): T {
   return JSON.parse(s);
 }

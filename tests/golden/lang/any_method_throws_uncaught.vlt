@@ -6,17 +6,13 @@ class AppError extends Error {
     this.name = "AppError";
   }
 }
-
 class Store {
   items: string[] = ["a"];
   at(i: number): string {
-    if (i >= this.items.length) {
-      throw new AppError(`no item ${i}`);
-    }
+    if (i >= this.items.length) throw new AppError(`no item ${i}`);
     return this.items[i];
   }
 }
-
 const s: any = new Store();
 console.log(s.at(0));
 console.log(s.at(1));

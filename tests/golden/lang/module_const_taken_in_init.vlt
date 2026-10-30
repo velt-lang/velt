@@ -154,19 +154,15 @@ console.log(ws.has(K!.a));
 // A function handing its parameter to `fill`, and a `static readonly` field initialized with
 // `??`.
 export const U: J = { v: 1, a: { b: 1 } };
-
 function fillAll(xs: { b: number }[], v: { b: number }): void {
   xs.fill(v);
 }
-
 const arr2 = [{ b: 0 }];
 fillAll(arr2, U.a);
 arr2[0].b = 3;
 console.log(U.a.b);
-
 class Cls {
   static readonly X: P = q ?? d;
 }
-
 Cls.X.x = 40;
 console.log(q!.x, Cls.X === q);

@@ -2,13 +2,16 @@
 // An object type extended with optional fields shares one layout with the extension (#1383):
 // `vnode as InternalVNode` is the same object, as in TypeScript, so a field written through the
 // extension's type is there through every view (sigx's renderer keeps its internal state so).
-type VNode = { type: string; children: VNode[]; dom: string | null; text?: string };
-
+type VNode = {
+  type: string;
+  children: VNode[];
+  dom: string | null;
+  text?: string;
+};
 interface InternalVNode extends VNode {
   _ns?: boolean;
   _subTree?: VNode | null;
 }
-
 // A second extension of the same base, with a field of the first one of the same type.
 interface KeyedVNode extends VNode {
   _key?: number;
@@ -53,19 +56,13 @@ interface Point {
   x: number;
   y: number;
 }
-
 interface TaggedPoint extends Point {
   tag?: string;
 }
-
 function tag(p: TaggedPoint, t: string): void {
   p.tag = t;
 }
-
-const pts: Point[] = [
-  { x: 1, y: 2 },
-  { x: 3, y: 4 },
-];
+const pts: Point[] = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
 tag(pts[0] as TaggedPoint, "first");
 for (const p of pts) {
   console.log(p, (p as TaggedPoint).tag ?? "-");

@@ -1,12 +1,9 @@
 // A `return;` in a function returning `never` is rejected, as in TypeScript (TS2322): its
 // callers take it as never returning, so nothing would follow the call.
 function f(x: number): never {
-  if (x > 0) {
-    return;
-  }
+  if (x > 0) return;
   throw new Error("p");
 }
-
 try {
   f(1);
   console.log("returned");

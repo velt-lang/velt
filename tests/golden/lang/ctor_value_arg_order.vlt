@@ -5,7 +5,6 @@
 class A {
   n: number = 1;
 }
-
 class B extends A {
   m: number = 2;
 }
@@ -13,27 +12,21 @@ class B extends A {
 function mk<T>(C: new () => T, x: T): T {
   return x;
 }
-
 function mk2<T>(x: T, C: new () => T): T {
   return x;
 }
-
 function make<T>(C: new () => T, x: T): T {
   return new C();
 }
-
 function reg<T>(C: new () => T): T {
   return new C();
 }
-
 function same<T>(C: new () => T, D: new () => T): boolean {
   return C === D;
 }
-
 function idOf<T>(C: new () => T, x: T): new () => T {
   return C;
 }
-
 function mkArrow<T>(C: new () => T, f: (x: T) => number): number {
   return f(new C());
 }
@@ -56,13 +49,10 @@ class Box<T> {
     this.v = v;
   }
 }
-
 function arrowFirst<T>(f: (x: T) => number, C: new () => T): number {
   return f(new C());
 }
-
 function boxed<T>(f: (b: Box<T>) => T, C: new (v: T) => Box<T>, v: T): T {
   return f(new C(v));
 }
-
 console.log(arrowFirst((b) => b.m, B), boxed((b) => b.v, Box, 5));

@@ -11,10 +11,7 @@ function main() {
   const xs = ["a", "<b>", "c's"];
   const ns: i64[] = [1, -2, 9007199254740993];
   const fs: f64[] = [1.5, -0.0, 1e21, 1 / 0, 0 / 0, 0.1 + 0.2];
-  for (const input of [
-    ["a", "b"],
-    ["a", "!"],
-  ]) {
+  for (const input of [["a", "b"], ["a", "!"]]) {
     try {
       console.log(renderToStringSync(precompiled.throwing(input)));
     } catch (e) {

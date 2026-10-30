@@ -1,52 +1,17 @@
 // As r04d, but the WeakRef targets a part of the locked value: everything stays under the lock.
-class K {
-  n: number;
-  constructor(n: number) {
-    this.n = n;
-  }
-}
-
-class Box {
-  k: K;
-  f: () => number;
-  constructor() {
-    this.k = new K(3);
-    this.f = () => 0;
-  }
-}
-
+class K { n: number; constructor(n: number) { this.n = n; } }
+class Box { k: K; f: () => number; constructor() { this.k = new K(3); this.f = () => 0; } }
 async function look(m: shared<Mutex<Box>>, i: number): Promise<number> {
   let s = 0;
-  for (let j = 0; j < 20000; j++) {
-    s += m.with((v) => {
-      if (j % 7 == 0) {
-        v.k = new K(3);
-      }
-      return v.f();
-    });
-  }
+  for (let j = 0; j < 20000; j++) s += m.with((v) => { if (j % 7 == 0) v.k = new K(3); return v.f(); });
   return s;
 }
-
 async function main() {
   const m = shared(new Mutex<Box>(new Box()));
-  m.with((v) => {
-    const r = new WeakRef(v.k);
-    v.f = () => {
-      const x = r.deref();
-      if (x === null) {
-        return 0;
-      }
-      return x.n;
-    };
-  });
+  m.with((v) => { const r = new WeakRef(v.k); v.f = () => { const x = r.deref(); if (x === null) return 0; return x.n; }; });
   const ps: Promise<number>[] = [];
-  for (let t = 1; t < 5; t++) {
-    ps.push(spawn(look(m.clone(), t)));
-  }
+  for (let t = 1; t < 5; t++) ps.push(spawn(look(m.clone(), t)));
   let total = 0;
-  for (const x of await Promise.all(ps)) {
-    total += x > 0 ? 1 : 0;
-  }
+  for (const x of await Promise.all(ps)) { total += x > 0 ? 1 : 0; }
   console.log(total);
 }

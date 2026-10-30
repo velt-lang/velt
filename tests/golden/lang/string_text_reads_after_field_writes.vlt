@@ -28,9 +28,7 @@ class Holder {
     while (this.pos < utf8Length(this.s)) {
       this.count++;
       const b = utf8ByteAt(this.s, this.pos);
-      if (b == 34) {
-        break;
-      }
+      if (b == 34) break;
       this.pos++;
     }
     return this.count;

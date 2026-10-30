@@ -2,19 +2,8 @@
 // statement of the constructor's body itself, once: never on a path that could skip it or run it
 // twice (#330).
 class Oops extends Error {}
-
-class Item {
-  v: i64 = 7;
-}
-
-class B {
-  constructor(n: i64) throws Oops {
-    if (n < 0) {
-      throw new Oops("b");
-    }
-  }
-}
-
+class Item { v: i64 = 7; }
+class B { constructor(n: i64) throws Oops { if (n < 0) { throw new Oops("b"); } } }
 class InIf extends B {
   it: Item = new Item();
   constructor(f: bool) {
@@ -23,7 +12,6 @@ class InIf extends B {
     }
   }
 }
-
 class InTry extends B {
   it: Item = new Item();
   constructor(n: i64) {
@@ -34,7 +22,6 @@ class InTry extends B {
     }
   }
 }
-
 class InLoop extends B {
   constructor() {
     for (let i = 0; i < 2; i++) {
@@ -42,7 +29,6 @@ class InLoop extends B {
     }
   }
 }
-
 class InBlock extends B {
   constructor() {
     {
@@ -50,7 +36,6 @@ class InBlock extends B {
     }
   }
 }
-
 class InSwitch extends B {
   constructor(n: i64) {
     switch (n) {
@@ -59,7 +44,6 @@ class InSwitch extends B {
     }
   }
 }
-
 class InWhile extends B {
   constructor() {
     while (true) {
@@ -68,7 +52,6 @@ class InWhile extends B {
     }
   }
 }
-
 class InClosure extends B {
   constructor() {
     super(1);
@@ -77,14 +60,12 @@ class InClosure extends B {
     };
   }
 }
-
 class Twice extends B {
   constructor() {
     super(1);
     super(2);
   }
 }
-
 class InExpr extends B {
   n: i64;
   constructor() {
@@ -92,19 +73,16 @@ class InExpr extends B {
     this.n = 1;
   }
 }
-
 class InArgs extends B {
   constructor() {
     super(super(1));
   }
 }
-
 class NoBase {
   constructor() {
     super();
   }
 }
-
 class Method extends B {
   constructor() {
     super(1);
@@ -113,5 +91,4 @@ class Method extends B {
     super(1);
   }
 }
-
 function main() {}

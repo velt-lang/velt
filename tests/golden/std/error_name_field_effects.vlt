@@ -1,11 +1,7 @@
 // Error classes whose `name` initializers have side effects: a constructor parameter property,
 // a generic class, an initializer that throws, a subclass of a class setting `name` in its
 // constructor, and `catch` over several classes. Expected output from Node.
-function log(s: string): string {
-  console.log("init " + s);
-  return s;
-}
-
+function log(s: string): string { console.log("init " + s); return s; }
 class P extends Error {
   name: string = log("PName");
   constructor(public code: number, msg: string) {
@@ -13,7 +9,6 @@ class P extends Error {
     console.log("P body " + this.code + " " + this.name);
   }
 }
-
 class Q extends P {
   extra: number = log("Q.extra").length;
   constructor(public tag: string) {
@@ -21,75 +16,36 @@ class Q extends P {
     console.log("Q body " + this.tag + " " + this.name);
   }
 }
-
 const q = new Q("t");
 console.log(`${q}`, q.code, q.tag, q.extra);
-
-function boom(): string {
-  throw new RangeError("from init");
-}
-
+function boom(): string { throw new RangeError("from init"); }
 class GE<T> extends Error {
   first: string = log("GE.first");
   name: string = log("GE:dyn");
-  constructor(public v: T, m: string) {
-    super(m);
-    console.log("GE body " + this.name);
-  }
+  constructor(public v: T, m: string) { super(m); console.log("GE body " + this.name); }
 }
-
 class GE2 extends GE<number> {
   name: string = log("GE2:dyn");
   later: string = log("GE2.later");
 }
-
 const g = new GE2(7, "msg");
 console.log(`${g}`, g.first, g.later, g.v);
-
 class Thrower extends Error {
   name: string = boom();
 }
-
-try {
-  new Thrower("t");
-  console.log("no");
-} catch (e) {
-  console.log("caught", `${e}`);
-}
-
-class Base2 extends Error {
-  constructor() {
-    super("b2");
-    this.name = "SetInCtor";
-  }
-}
-
-class Sub2 extends Base2 {
-  name = "SubInit";
-}
-
+try { new Thrower("t"); console.log("no"); } catch (e) { console.log("caught", `${e}`); }
+class Base2 extends Error { constructor() { super("b2"); this.name = "SetInCtor"; } }
+class Sub2 extends Base2 { name = "SubInit"; }
 console.log(`${new Sub2()}`, new Sub2().name);
-
-class Sub3 extends Base2 {}
-
+class Sub3 extends Base2 { }
 console.log(`${new Sub3()}`);
-
 function thrower(k: number): void {
-  if (k == 0) {
-    throw new Sub2();
-  }
-  if (k == 1) {
-    throw new TypeError("tt");
-  }
+  if (k == 0) throw new Sub2();
+  if (k == 1) throw new TypeError("tt");
   throw new GE2(1, "x");
 }
-
 for (let k = 0; k < 3; k++) {
-  try {
-    thrower(k);
-  } catch (e) {
-    if (e instanceof Error) {
-      console.log(k, `${e}`, e.name, String(e), e.message);
-    }
+  try { thrower(k); } catch (e) {
+    if (e instanceof Error) console.log(k, `${e}`, e.name, String(e), e.message);
   }
 }

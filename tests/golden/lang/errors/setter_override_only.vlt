@@ -3,27 +3,15 @@
 // `undefined`, which the getter's type can't hold. Overriding both is fine.
 class P {
   _n = 3;
-  get n(): number {
-    return this._n;
-  }
-  set n(v: number) {
-    this._n = v + 100;
-  }
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v + 100; }
 }
-
 class S extends P {
-  override set n(v: number) {
-    this._n = v;
-  }
+  override set n(v: number) { this._n = v; }
 }
-
 class T extends P {
-  override get n(): number {
-    return this._n;
-  }
-  override set n(v: number) {
-    this._n = v;
-  }
+  override get n(): number { return this._n; }
+  override set n(v: number) { this._n = v; }
 }
 
 function main() {
