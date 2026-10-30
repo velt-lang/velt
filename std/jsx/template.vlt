@@ -43,12 +43,14 @@ export function jsxTemplateString(html: string): Element {
   return new Element(html);
 }
 
-// The complete node `open children </tag>` (no end tag for tag "": a fragment) when a child is
-// a template node or an array (`childrenText` makes the others one string), or null when a
-// child waits for an async component (the children are then left as they are). Text and
-// numbers are escaped into the strings, and so is a child node of one string (copied: it is
-// short, typically); other child nodes and the elements of arrays become slots, moved out of
-// `children` rather than copied.
+/**
+ * The complete node `open children </tag>` (no end tag for tag "": a fragment) when a child is
+ * a template node or an array (`childrenText` makes the others one string), or null when a
+ * child waits for an async component (the children are then left as they are). Text and
+ * numbers are escaped into the strings, and so is a child node of one string (copied: it is
+ * short, typically); other child nodes and the elements of arrays become slots, moved out of
+ * `children` rather than copied.
+ */
 export function templateOf(open: string, children: Child[], tag: string): Element | null {
   for (const child of children) {
     if (!isCompleteChild(child)) {
@@ -107,8 +109,10 @@ function addToTemplate(child: Child, text: string, strings: string[], slots: Ele
   return `${text}${formatNumber(child)}`;
 }
 
-// The markup of `children` when they are text, nodes of one string and arrays of them, else
-// null.
+/**
+ * The markup of `children` when they are text, nodes of one string and arrays of them, else
+ * null.
+ */
 export function childrenText(children: Child[]): string | null {
   if (children.length == 1) {
     return childText(children[0]);
@@ -148,13 +152,15 @@ function childText(child: Child): string | null {
   return formatNumber(child);
 }
 
-// Whether `child` is a complete element or an array of them.
+/** Whether `child` is a complete element or an array of them. */
 export function isNodeChild(child: Child): bool {
   return child != null && typeof child === "object" && isCompleteChild(child);
 }
 
-// The node of a child `isNodeChild` accepted: the element itself, or a template node with the
-// array as its slots.
+/**
+ * The node of a child `isNodeChild` accepted: the element itself, or a template node with the
+ * array as its slots.
+ */
 export function nodeOfChild(child: Child): Element {
   if (child instanceof Element) {
     return child;

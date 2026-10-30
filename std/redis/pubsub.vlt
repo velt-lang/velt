@@ -5,7 +5,8 @@
 // `for await (const m of sub)` (the runtime stores no callbacks). `close()` (from any task)
 // makes pending and later `next()` calls return null, which ends a `for await` loop.
 
-import { IoResult, IoStatus } from "velt/native/result";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
 import { RedisError } from "velt/redis";
 import { redisError } from "velt/redis/reply";
 

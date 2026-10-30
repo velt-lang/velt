@@ -95,7 +95,7 @@ export function sha1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
   return sha1Digest(s.abcd, s.e);
 }
 
-// HMAC-SHA1 on ARMv8 (`k` at most a block): the outer block is made from the inner state.
+/** HMAC-SHA1 on ARMv8 (`k` at most a block): the outer block is made from the inner state. */
 export function hmac1Arm(k: u8[], data: u8[]): u8[] {
   __intrinsic_target("sha-arm");
   const inner = state1Arm(k, 0x36, true, data);
@@ -211,7 +211,7 @@ function initial1X86(): Pair {
   return { a: u32x4.shuffle(dcba, dcba, 3, 2, 1, 0), b: u32x4.splat(0).withLane(3, H1[4]) };
 }
 
-// HMAC-SHA1 with x86 SHA-NI (`k` at most a block); see `hmac1Arm`.
+/** HMAC-SHA1 with x86 SHA-NI (`k` at most a block); see `hmac1Arm`. */
 export function hmac1X86(k: u8[], data: u8[]): u8[] {
   __intrinsic_target("sha-x86");
   const inner = state1X86(k, 0x36, true, data);

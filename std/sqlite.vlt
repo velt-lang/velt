@@ -23,7 +23,8 @@
 // "SQLITE_MISUSE".
 
 import { JSON } from "velt/prelude/json/json";
-import { IoResult, IoStatus } from "velt/native/result";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
 
 // `RunResult` as the driver returns it (`velt_std_sqlite::statement::RunInfo`).
 struct RunSlot {

@@ -9,8 +9,6 @@ import { TextDecoderOptions } from "velt/encoding/text_decoder_options";
 import { firstInvalid, utf8DecodeLossy, validToString } from "velt/encoding/utf8";
 
 // For the globals' module (std/prelude/global/encoding.vlt), which imports them from here.
-export { TextDecoderOptions } from "velt/encoding/text_decoder_options";
-export { TextEncoder } from "velt/encoding/text_encoder";
 
 // Whether `label` names UTF-8 in the WHATWG Encoding standard (ASCII case-insensitive, with
 // surrounding whitespace ignored).

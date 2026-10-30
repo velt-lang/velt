@@ -55,9 +55,11 @@ export function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
   return out;
 }
 
-// HMAC-SHA256 on ARMv8 (`k` at most a block): the inner hash's state is the outer message's
-// words already, so the outer block is made from it in registers and nothing is allocated but
-// the digest.
+/**
+ * HMAC-SHA256 on ARMv8 (`k` at most a block): the inner hash's state is the outer message's
+ * words already, so the outer block is made from it in registers and nothing is allocated but
+ * the digest.
+ */
 export function hmac256Arm(k: u8[], data: u8[]): u8[] {
   __intrinsic_target("sha-arm");
   const inner = state256Arm(k, 0x36, true, data);
@@ -174,7 +176,7 @@ function digest256X86(s: Pair): u8[] {
   return out;
 }
 
-// HMAC-SHA256 with x86 SHA-NI (`k` at most a block); see `hmac256Arm`.
+/** HMAC-SHA256 with x86 SHA-NI (`k` at most a block); see `hmac256Arm`. */
 export function hmac256X86(k: u8[], data: u8[]): u8[] {
   __intrinsic_target("sha-x86");
   const inner = unswapped256X86(state256X86(k, 0x36, true, data));

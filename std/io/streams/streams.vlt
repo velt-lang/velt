@@ -23,13 +23,6 @@ import { ReadableStreamDefaultReader } from "velt/io/streams/reader";
 import { CancelReason, QueuingStrategy, Reason, UnderlyingSource } from "velt/io/streams/types";
 
 // For the globals' module (std/prelude/global/streams.vlt), which imports them from here.
-export { ReadableStreamDefaultController } from "velt/io/streams/controller";
-export { ReadableStreamDefaultReader } from "velt/io/streams/reader";
-export type {
-  QueuingStrategy,
-  ReadableStreamReadResult,
-  UnderlyingSource,
-} from "velt/io/streams/types";
 
 /**
  * A stream of chunks (JS `ReadableStream`): made from a source (`new ReadableStream({ start,

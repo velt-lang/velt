@@ -17,15 +17,4 @@ export { AbortError } from "velt/task/errors";
 export { ScopeOptions, TaskScope, taskScope } from "velt/task/scope";
 export { AbortSignal } from "velt/task/signal";
 export { timeout, TimeoutError } from "velt/task/timeout";
-export { currentWorker, workerCount } from "velt/task/workers";
-
-// `SpawnOptions` is defined here rather than re-exported: velt/process/child exports a
-// `SpawnOptions` too, and a re-exported name has one import path (std-lint). Which one keeps the
-// name is an API decision left open; until then this index keeps code
-// (scripts/std-lint/allow.vlt).
-
-/**
- * The options of `spawn(p, options)`: `worker` pins the task to that worker (`0` to
- * `workerCount() - 1`), where it starts and stays.
- */
-export type SpawnOptions = { worker?: i64 };
+export { currentWorker, SpawnOptions, workerCount } from "velt/task/workers";

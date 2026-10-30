@@ -3,13 +3,13 @@
 
 import { u32x4 } from "velt/simd";
 
-// `(uint64_t n, VeltBytes* out)`: `n` bytes from the OS CSPRNG.
+/** `(uint64_t n, VeltBytes* out)`: `n` bytes from the OS CSPRNG. */
 export declare function velt_rt_random_bytes(n: u64): u8[];
 
-// A uniformly random `u64` from the OS CSPRNG.
+/** A uniformly random `u64` from the OS CSPRNG. */
 export declare function velt_rt_random_u64(): u64;
 
-// The SHA instructions (std/simd/sha.vlt), called bare in the gated functions below.
+/** The SHA instructions (std/simd/sha.vlt), called bare in the gated functions below. */
 export declare function velt_simd_u32x4_sha1c(abcd: u32x4, e: u32, wk: u32x4): u32x4;
 
 export declare function velt_simd_u32x4_sha1p(abcd: u32x4, e: u32, wk: u32x4): u32x4;

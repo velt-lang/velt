@@ -31,7 +31,8 @@
 // separate connections) and release them once with `close()` / `end()`.
 
 import { JSON } from "velt/prelude/json/json";
-import { IoResult, IoStatus } from "velt/native/result";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
 
 declare async function velt_std_postgres__connect(url: string): Promise<IoResult<u64>>;
 declare async function velt_std_postgres__execute(

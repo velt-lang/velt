@@ -9,7 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 
-// The states of a stream.
+/** The states of a stream. */
 export const READABLE: u8 = 0;
 
 export const CLOSED: u8 = 1;

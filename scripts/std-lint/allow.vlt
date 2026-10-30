@@ -116,8 +116,6 @@ export const allow: Allow = {
     "net/url/index.vlt",
     "net/websocket/index.vlt",
     "package/index.vlt",
-    "random/index.vlt",
-    "task/index.vlt",
   ],
   unowned: [
     "postgres.vlt",

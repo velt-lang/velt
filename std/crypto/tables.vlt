@@ -1,6 +1,6 @@
 // velt/crypto (internal): the initial hash values and SHA-256's round constants (FIPS 180-4).
 
-// The initial hash values (FIPS 180-4 5.3.3, 5.3.1).
+/** The initial hash values (FIPS 180-4 5.3.3, 5.3.1). */
 export const H256: u32[] = [
   0x6a09e667,
   0xbb67ae85,
@@ -14,8 +14,10 @@ export const H256: u32[] = [
 
 export const H1: u32[] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
 
-// The 64 SHA-256 round constants (first 32 bits of the fractional parts of the cube roots of the
-// first 64 primes).
+/**
+ * The 64 SHA-256 round constants (first 32 bits of the fractional parts of the cube roots of the
+ * first 64 primes).
+ */
 export const K256: u32[] = [
   0x428a2f98,
   0x71374491,

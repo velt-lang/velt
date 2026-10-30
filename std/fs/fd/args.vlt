@@ -8,7 +8,7 @@ export const MAX_SAFE: number = 9007199254740991;
 /** The largest 32-bit signed integer: the largest file descriptor and `open` flags. */
 export const MAX_INT32: number = 2147483647;
 
-// The value of an integer argument as Node checks it (`validateInteger`).
+/** The value of an integer argument as Node checks it (`validateInteger`). */
 export function integer(name: string, v: number, min: number, max: number): i64 {
   if (v >= min && v <= max && Math.floor(v) == v) {
     return v as i64;
@@ -27,7 +27,7 @@ export function descriptor(fd: number): i32 {
   return integer("fd", fd, 0, MAX_INT32) as i32;
 }
 
-// `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it).
+/** `path` as a C string: its UTF-8 bytes and a 0 (Node's `TypeError` for a 0 inside it). */
 export function cPath(path: string): u8[] {
   if (path.includes("\0")) {
     throw new TypeError(
@@ -39,9 +39,11 @@ export function cPath(path: string): u8[] {
   return c;
 }
 
-// The byte offset in a buffer of `size` bytes, as Node validates it: `null` or left out is 0
-// (Node's options default), else an integer in [0, size] for a write (a write may start at the
-// end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
+/**
+ * The byte offset in a buffer of `size` bytes, as Node validates it: `null` or left out is 0
+ * (Node's options default), else an integer in [0, size] for a write (a write may start at the
+ * end) or [0, MAX_SAFE] for a read (`offset + length <= size` is checked afterwards).
+ */
 export function bufferOffset(size: usize, offset: number | null | undefined, read: bool): i64 {
   if (offset == null) {
     return 0;
@@ -53,11 +55,13 @@ export function bufferOffset(size: usize, offset: number | null | undefined, rea
   return off;
 }
 
-// How many bytes of a `size`-byte buffer a `readSync` reads from `off`: left out is the rest
-// (Velt's typed API has no options object, so omitting `length` reads to the end); `null` is 0
-// (Node's `length |= 0` of `null`); a number is truncated to a 32-bit integer (`1.5` → 1,
-// `2**32` → 0, `2**32 + 3` → 3). Checked by `checkRead` after the zero-length and empty-buffer
-// cases, in Node's order.
+/**
+ * How many bytes of a `size`-byte buffer a `readSync` reads from `off`: left out is the rest
+ * (Velt's typed API has no options object, so omitting `length` reads to the end); `null` is 0
+ * (Node's `length |= 0` of `null`); a number is truncated to a 32-bit integer (`1.5` → 1,
+ * `2**32` → 0, `2**32 + 3` → 3). Checked by `checkRead` after the zero-length and empty-buffer
+ * cases, in Node's order.
+ */
 export function readLength(size: usize, off: i64, length: number | null | undefined): i64 {
   if (length === undefined) {
     const rest = (size as i64) - off;
@@ -66,7 +70,7 @@ export function readLength(size: usize, off: i64, length: number | null | undefi
   return length == null ? 0 : ((length | 0) as i64);
 }
 
-// Node's `validateOffsetLengthRead`: the length is `>= 0` and fits `size - off`.
+/** Node's `validateOffsetLengthRead`: the length is `>= 0` and fits `size - off`. */
 export function checkRead(size: usize, off: i64, len: i64) {
   if (len < 0) {
     throw outOfRangeAtLeast("length", 0, len);
@@ -76,9 +80,11 @@ export function checkRead(size: usize, off: i64, len: i64) {
   }
 }
 
-// How many bytes of a `size`-byte buffer a `writeSync` writes from `off`: left out or `null` is
-// the rest (Node's `typeof length !== 'number'`); a number is used as it is (truncated), and
-// must fit `size - off`.
+/**
+ * How many bytes of a `size`-byte buffer a `writeSync` writes from `off`: left out or `null` is
+ * the rest (Node's `typeof length !== 'number'`); a number is used as it is (truncated), and
+ * must fit `size - off`.
+ */
 export function writeLength(size: usize, off: i64, length: number | null | undefined): i64 {
   if (length == null) {
     const rest = (size as i64) - off;
@@ -103,9 +109,11 @@ export function outOfRangeAtLeast(name: string, min: i64, v: i64): RangeError {
   );
 }
 
-// A `readSync` position: left out, `null` or `undefined` is the file's own position, which the
-// read advances; otherwise the byte to start at, validated strictly (an integer in [-1,
-// MAX_SAFE]; `1.5` or `-2` is a `RangeError`, as Node's `validatePosition`).
+/**
+ * A `readSync` position: left out, `null` or `undefined` is the file's own position, which the
+ * read advances; otherwise the byte to start at, validated strictly (an integer in [-1,
+ * MAX_SAFE]; `1.5` or `-2` is a `RangeError`, as Node's `validatePosition`).
+ */
 export function readPosition(p: number | null | undefined): i64 {
   if (p == null) {
     return -1;
@@ -113,9 +121,11 @@ export function readPosition(p: number | null | undefined): i64 {
   return integer("position", p, -1, MAX_SAFE);
 }
 
-// A `writeSync` position: left out, `null` or `undefined`, or any value that is not a
-// non-negative integer within range (a negative, a fraction, too large), is the file's own
-// position (as Node's write binding uses -1 for those); otherwise the byte to write at.
+/**
+ * A `writeSync` position: left out, `null` or `undefined`, or any value that is not a
+ * non-negative integer within range (a negative, a fraction, too large), is the file's own
+ * position (as Node's write binding uses -1 for those); otherwise the byte to write at.
+ */
 export function writePosition(p: number | null | undefined): i64 {
   if (p != null && p >= 0 && p <= MAX_SAFE && Math.floor(p) == p) {
     return p as i64;

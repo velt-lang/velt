@@ -6,7 +6,7 @@ import { Deferred } from "velt/jsx/deferred";
 import { Child, Element } from "velt/jsx/node";
 import { markupOf } from "velt/jsx/tree";
 
-// Appends finished markup after everything `node` holds.
+/** Appends finished markup after everything `node` holds. */
 export function appendHtml(node: Element, html: string) {
   if (node.rest == null) {
     if (node.html == "") {
@@ -24,7 +24,7 @@ export function appendHtml(node: Element, html: string) {
   }
 }
 
-// Appends a child node: its markup when it is complete, else the node itself as a part.
+/** Appends a child node: its markup when it is complete, else the node itself as a part. */
 export function appendElement(node: Element, child: Element) {
   if (child.isComplete) {
     appendHtml(node, markupOf(child));
@@ -65,7 +65,7 @@ function appendElements(node: Element, elements: Element[]) {
   }
 }
 
-// Appends children, moving the incomplete ones into `node` (the slow path of `templateOf`).
+/** Appends children, moving the incomplete ones into `node` (the slow path of `templateOf`). */
 export function appendChildren(node: Element, children: Child[]) {
   const n = children.length;
   children.reverse();
@@ -101,8 +101,10 @@ function childHtml(child: Child): string | null {
   return formatNumber(child);
 }
 
-// `${n}`. A separate function because formatting the narrowed union in place fails: the
-// declared union holds an Element, whose promise cannot be formatted.
+/**
+ * `${n}`. A separate function because formatting the narrowed union in place fails: the
+ * declared union holds an Element, whose promise cannot be formatted.
+ */
 export function formatNumber(n: i64 | f64): string {
   return `${n}`;
 }

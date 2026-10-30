@@ -20,7 +20,8 @@
 // clients fall back to HTTP/1.1 for WebSockets).
 
 import { IoError } from "velt/io/error";
-import { IoResult, ioError } from "velt/native/result";
+import { IoResult } from "velt/native/result";
+import { ioError } from "velt/native/error";
 import { isUpgradeRequest, upgradeConnection } from "velt/net/http/server/upgrade";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse } from "velt/net/http/server/response";

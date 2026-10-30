@@ -1,7 +1,8 @@
 // velt/net/udp: UDP sockets (rt_abi_async.md §14.6). Addresses are "host:port" strings, like
 // std/net; a received datagram names its sender as "ip:port".
 
-import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";
+import { IoResult, unwrapIo } from "velt/native/result";
+import { IoStatus, checkIo } from "velt/native/status";
 import { utf8Encode, utf8DecodeLossy } from "velt/encoding";
 
 // The runtime's `VeltDatagram`.

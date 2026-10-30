@@ -1,15 +1,15 @@
 // velt/process/child (internal): `CommandSpec`, what the runtime is told to run: the program, its
 // arguments and environment, and where its standard streams go.
 
-// The runtime's `VeltCommand`, field by field (the layout must match child/command.rs).
+/** The runtime's `VeltCommand`, field by field (the layout must match child/command.rs). */
 export struct CommandSpec {
   program: string;
   args: string[];
-  // "" = the parent's working directory.
+  /** "" = the parent's working directory. */
   cwd: string;
-  // name, value, name, value, …
+  /** name, value, name, value, … */
   env: string[];
-  // stdin | stdout << 2 | stderr << 4; each 0 = inherit, 1 = pipe, 2 = ignore.
+  /** stdin | stdout << 2 | stderr << 4; each 0 = inherit, 1 = pipe, 2 = ignore. */
   stdio: u32;
   clearEnv: bool;
 }

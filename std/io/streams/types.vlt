@@ -27,11 +27,13 @@ export interface QueuingStrategy {
   highWaterMark?: number;
 }
 
-// What a stream errors with: any value, as in JS (`controller.error(reason?: any)`). Named,
-// since `AsyncIterator<R, unknown>` is TypeScript's spelling of a return type.
+/**
+ * What a stream errors with: any value, as in JS (`controller.error(reason?: any)`). Named,
+ * since `AsyncIterator<R, unknown>` is TypeScript's spelling of a return type.
+ */
 export type Reason = unknown;
 
-// A source's `pull` and `cancel`, as the controller keeps them.
+/** A source's `pull` and `cancel`, as the controller keeps them. */
 export type PullCallback<R> =
   | ((controller: ReadableStreamDefaultController<R>) => void throws unknown)
   | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown>);

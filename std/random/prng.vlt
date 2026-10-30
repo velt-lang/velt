@@ -1,8 +1,13 @@
-// velt/random (internal): the per-thread fast generator: floats in [0, 1).
+// velt/random (internal): the per-thread fast generator: floats in [0, 1) and integers in a range.
 
-import { velt_rt_prng_f64 } from "velt/random/rt";
+import { velt_rt_prng_f64, velt_rt_prng_range } from "velt/random/rt";
 
 /** A number in [0, 1) (53 random bits), like `Math.random()`. */
 export function random(): f64 {
   return velt_rt_prng_f64();
+}
+
+/** An integer in [min, max), uniformly distributed; `min` when `max <= min`. */
+export function randomInt(min: i64, max: i64): i64 {
+  return velt_rt_prng_range(min, max);
 }

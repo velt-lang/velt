@@ -20,8 +20,10 @@ export function sha256(data: u8[]): u8[] {
   return sha256Of([], 0, false, data);
 }
 
-// SHA-256 of `data`, after a first block when `keyed`: `key` (at most a block) zero-padded and
-// XORed with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
+/**
+ * SHA-256 of `data`, after a first block when `keyed`: `key` (at most a block) zero-padded and
+ * XORed with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
+ */
 export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
   if (u32x4.hasShaArm()) {
     return sha256Arm(key, pad, keyed, data);

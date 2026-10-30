@@ -19,3 +19,9 @@ export function workerCount(): i64 {
 export function currentWorker(): i64 {
   return velt_rt_current_worker() as i64;
 }
+
+/**
+ * The options of `spawn(p, options)`: `worker` pins the task to that worker (`0` to
+ * `workerCount() - 1`), where it starts and stays.
+ */
+export type SpawnOptions = { worker?: i64 };

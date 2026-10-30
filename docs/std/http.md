@@ -113,7 +113,7 @@ it throws.
     await server.shutdown();
   }
   ```
-- A handler that throws gets a 500 response (`Internal HttpServer Error`) and its error is printed to
+- A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 
 ## The request

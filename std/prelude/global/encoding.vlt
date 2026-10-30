@@ -1,3 +1,5 @@
 // Global (loaded when a module names one of these): the WHATWG `TextEncoder` and `TextDecoder`
 // (docs/std/encoding.md).
-export { TextEncoder, TextDecoder, TextDecoderOptions } from "velt/encoding/text";
+export { TextEncoder } from "velt/encoding/text_encoder";
+export { TextDecoder } from "velt/encoding/text";
+export { TextDecoderOptions } from "velt/encoding/text_decoder_options";

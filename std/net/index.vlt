@@ -14,7 +14,8 @@
 //   conn.write(...)` would not compile. The runtime keeps a socket alive while an operation is
 //   in flight, so `close()` may be called at any time.
 
-import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";
+import { IoResult, unwrapIo } from "velt/native/result";
+import { IoStatus, checkIo } from "velt/native/status";
 import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";

@@ -28,8 +28,8 @@ fn every_std_module_type_checks() {
 
 #[test]
 fn std_async_functions_own_their_params() {
-    let p = ok_src("import { readFile } from \"velt/fs\";\nfunction main() {}");
-    let f = func(&p, "std/fs::readFile");
+    let p = ok_src("import { readFile } from \"velt/fs\";\nasync function main() { console.log(await readFile(\"x\")); }");
+    let f = func(&p, "std/fs/files::readFile");
     assert!(f.is_async);
     assert_eq!(
         f.ret,

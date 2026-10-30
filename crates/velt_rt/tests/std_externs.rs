@@ -97,7 +97,10 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
         let mut rest = text.as_str();
         while let Some(i) = rest.find("declare ") {
             let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
-            if !rest[line_start..i].trim().is_empty() {
+            // `export declare …`: a module's bindings file (`rt.vlt`) shares them with the
+            // module's other files.
+            let lead = rest[line_start..i].trim();
+            if !lead.is_empty() && lead != "export" {
                 // Prose (a comment) mentioning `declare`, not a declaration.
                 rest = &rest[i + "declare ".len()..];
                 continue;

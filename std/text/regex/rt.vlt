@@ -17,7 +17,7 @@ export declare function velt_rt_regex_group_names(re: u64): string[];
 
 export declare function velt_rt_regex_test(re: u64, s: string, from: u64): bool;
 
-// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
+/** `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings"). */
 export declare function velt_rt_regex_exec(re: u64, s: string, from: u64, out: i64[]): bool;
 
 export declare function velt_rt_regex_exec_all(re: u64, s: string): i64[];

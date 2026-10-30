@@ -12,8 +12,6 @@ import { ioError } from "velt/native/error";
 
 // For the std modules that still import them from here: `IoStatus` and `checkIo` are defined in
 // velt/native/status, `ioError` in velt/native/error.
-export { checkIo, IoStatus } from "velt/native/status";
-export { ioError } from "velt/native/error";
 
 /** Result slot of a runtime operation producing a `T` (layout documented above). */
 export struct IoResult<T> {
