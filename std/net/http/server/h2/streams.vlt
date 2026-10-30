@@ -1,0 +1,335 @@
+// velt/net/http (internal): what HTTP/2 frames do to streams: a request head opens one and
+// starts its handler (or refuses it, past the concurrency limit), DATA feeds its body within the
+// receive windows, trailers end it, WINDOW_UPDATE lets its response continue (RFC 9113 §5.1,
+// §5.2, §8.1).
+//
+// Receive windows are given back as the handler reads (`consumed`), in WINDOW_UPDATEs of at
+// least half a window, so a handler that reads slowly slows its client down (backpressure) and
+// one that does not read holds at most a window of its body. A body the handler leaves unread
+// when it returns is given back at once.
+
+import { H2Connection } from "velt/net/http/server/h2/connection";
+import {
+  COMPRESSION_ERROR,
+  END_STREAM,
+  FLOW_CONTROL_ERROR,
+  FRAME_SIZE_ERROR,
+  MAX_WINDOW,
+  NO_ERROR,
+  PADDED,
+  PROTOCOL_ERROR,
+  REFUSED_STREAM,
+  STREAM_CLOSED,
+  readU32,
+} from "velt/net/http/server/h2/frame";
+import { endBody, pumpAll, pumpStream, writeHead } from "velt/net/http/server/h2/outbound";
+import { H2Request } from "velt/net/http/server/h2/request";
+import { H2Response } from "velt/net/http/server/h2/response";
+import { CLOSED, H2Stream } from "velt/net/http/server/h2/stream";
+import { checkRequest, checkTrailers } from "velt/net/http/server/h2/validate";
+
+/// Resets stream `id` with `code` (a stream error, RFC 9113 §5.4.2).
+export function streamError(c: H2Connection, id: i64, code: i64) {
+  c.out.rstStream(id, code);
+  // Streams the server has to reset cost allowance too ("MadeYouReset", CVE-2025-8671).
+  c.spend();
+  const s = c.streams.get(id);
+  if (s != undefined) {
+    giveBack(c, s);
+    s.resetNow();
+    c.release(s);
+  }
+}
+
+/// `n` bytes of the body of `s` were read (or dropped): window to give back.
+export function consumed(c: H2Connection, s: H2Stream, n: i64) {
+  c.recvConsumed += n;
+  if (c.recvConsumed * 2 >= c.opts.connectionWindow) {
+    c.out.windowUpdate(0, c.recvConsumed);
+    c.recvWindow += c.recvConsumed;
+    c.recvConsumed = 0;
+  }
+  if (!s.remoteEnded && !s.reset) {
+    s.consumed += n;
+    if (s.consumed * 2 >= c.opts.streamWindow) {
+      c.out.windowUpdate(s.id, s.consumed);
+      s.recvWindow += s.consumed;
+      s.consumed = 0;
+    }
+  }
+}
+
+/// Gives back the connection window of what `s` holds unread, and drops it.
+function giveBack(c: H2Connection, s: H2Stream) {
+  let piece = s.take();
+  while (piece != null) {
+    consumed(c, s, piece.length as i64);
+    piece = s.take();
+  }
+}
+
+/// Connection window for a payload no stream takes.
+function dropped(c: H2Connection, n: i64) {
+  c.recvConsumed += n;
+  if (c.recvConsumed * 2 >= c.opts.connectionWindow) {
+    c.out.windowUpdate(0, c.recvConsumed);
+    c.recvWindow += c.recvConsumed;
+    c.recvConsumed = 0;
+  }
+}
+
+/// A DATA frame (RFC 9113 §6.1).
+export function onData(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
+  if (id == 0) {
+    c.fail(PROTOCOL_ERROR, "DATA on stream 0");
+    return;
+  }
+  let start = p;
+  let end = p + len;
+  if ((flags & PADDED) != 0) {
+    const pad = len < 1 ? len : c.rbuf[p] as i64;
+    if (len < 1 || pad >= len) {
+      c.fail(PROTOCOL_ERROR, "padding longer than the frame");
+      return;
+    }
+    start++;
+    end -= pad;
+  }
+  if (len > c.recvWindow) {
+    c.fail(FLOW_CONTROL_ERROR, "DATA beyond the connection window");
+    return;
+  }
+  c.recvWindow -= len;
+  const s = c.streams.get(id);
+  if (s == undefined || s.remoteEnded) {
+    if (s == undefined && id > c.lastStreamId) {
+      c.fail(PROTOCOL_ERROR, "DATA on an idle stream");
+      return;
+    }
+    dropped(c, len);
+    streamError(c, id, STREAM_CLOSED);
+    return;
+  }
+  if (len > s.recvWindow) {
+    dropped(c, len);
+    streamError(c, id, FLOW_CONTROL_ERROR);
+    return;
+  }
+  s.recvWindow -= len;
+  const n = end - start;
+  // Padding is given back at once.
+  if (len > n) {
+    consumed(c, s, len - n);
+  }
+  s.received += n;
+  const want = s.info.contentLength;
+  if (want >= 0 && s.received > want) {
+    dropped(c, n);
+    streamError(c, id, PROTOCOL_ERROR);
+    return;
+  }
+  if (n > 0) {
+    if (s.running) {
+      s.push(c.rbuf.slice(start, end));
+    } else {
+      // The handler has returned: nobody reads it.
+      consumed(c, s, n);
+    }
+  } else if ((flags & END_STREAM) == 0) {
+    // Empty DATA frames cost the server and nothing to the peer (CVE-2019-9518).
+    c.spend();
+  }
+  if ((flags & END_STREAM) != 0) {
+    endRequest(c, s);
+  }
+}
+
+/// The request of `s` ended: its length checked against `content-length` (RFC 9113 §8.1.1).
+function endRequest(c: H2Connection, s: H2Stream) {
+  const want = s.info.contentLength;
+  if (want >= 0 && s.received != want) {
+    streamError(c, s.id, PROTOCOL_ERROR);
+    return;
+  }
+  s.endRemote();
+  s.wake();
+  if (s.state == CLOSED) {
+    c.release(s);
+  }
+}
+
+/// A WINDOW_UPDATE frame (RFC 9113 §6.9).
+export function onWindowUpdate(c: H2Connection, id: i64, p: i64, len: i64) {
+  if (len != 4) {
+    c.fail(FRAME_SIZE_ERROR, "WINDOW_UPDATE of a length other than 4");
+    return;
+  }
+  const inc = readU32(c.rbuf, p) & 0x7fffffff;
+  if (id == 0) {
+    if (inc == 0) {
+      c.fail(PROTOCOL_ERROR, "a WINDOW_UPDATE of 0");
+      return;
+    }
+    c.sendWindow += inc;
+    if (c.sendWindow > MAX_WINDOW) {
+      c.fail(FLOW_CONTROL_ERROR, "the connection window above 2^31-1");
+      return;
+    }
+    pumpAll(c);
+    return;
+  }
+  const s = c.streams.get(id);
+  if (s == undefined) {
+    if (id > c.lastStreamId) {
+      c.fail(PROTOCOL_ERROR, "WINDOW_UPDATE on an idle stream");
+    }
+    return;
+  }
+  if (inc == 0) {
+    streamError(c, id, PROTOCOL_ERROR);
+    return;
+  }
+  s.sendWindow += inc;
+  if (s.sendWindow > MAX_WINDOW) {
+    streamError(c, id, FLOW_CONTROL_ERROR);
+    return;
+  }
+  pumpStream(c, s);
+}
+
+/// A complete header block of stream `id` in `src[start..end)`; `flags` holds END_STREAM, and
+/// 0x100 for a priority that made the stream depend on itself.
+export function onHeaderBlock(
+  c: H2Connection,
+  id: i64,
+  flags: i64,
+  src: u8[],
+  start: i64,
+  end: i64,
+) {
+  const existing = c.streams.get(id);
+  if (existing != undefined) {
+    trailers(c, existing, flags, src, start, end);
+    return;
+  }
+  if ((id & 1) == 0 || id <= c.lastStreamId) {
+    discard(c, src, start, end);
+    if (!c.done) {
+      const closed = (id & 1) == 1 && c.wasOpen(id);
+      c.fail(closed ? STREAM_CLOSED : PROTOCOL_ERROR, "HEADERS on a closed or unexpected stream");
+    }
+    return;
+  }
+  if (c.goingAway) {
+    // Beyond the last stream GOAWAY announced: decoded for the table, not served.
+    discard(c, src, start, end);
+    return;
+  }
+  c.lastStreamId = id;
+  if (c.inUse >= c.opts.maxConcurrentStreams) {
+    discard(c, src, start, end);
+    c.out.rstStream(id, REFUSED_STREAM);
+    c.spend();
+    return;
+  }
+  const s = c.takeStream();
+  s.fields.clear();
+  if (!c.decoder.decode(src, start, end, s.fields)) {
+    c.pool.push(s);
+    c.fail(COMPRESSION_ERROR, "a header block HPACK cannot decode");
+    return;
+  }
+  s.open(id, c.opts.streamWindow, c.peerInitialWindow);
+  c.inUse++;
+  c.streams.set(id, s);
+  if ((flags & 0x100) != 0 || !checkRequest(s.fields, s.info)) {
+    streamError(c, id, PROTOCOL_ERROR);
+    return;
+  }
+  if ((flags & END_STREAM) != 0) {
+    endRequest(c, s);
+    if (s.reset) {
+      return;
+    }
+  }
+  if (s.fields.overflow) {
+    // A head larger than SETTINGS_MAX_HEADER_LIST_SIZE: answered without the handler.
+    writeHead(c, s, 431, "", 0, [], true);
+    if (!s.remoteEnded) {
+      c.out.rstStream(id, NO_ERROR);
+      s.resetNow();
+      c.release(s);
+    }
+    return;
+  }
+  // Its handler starts after the frames of this read (`startHandlers`): a frame right behind
+  // the head that is an error on its stream resets it before the handler answers.
+  s.running = true;
+  c.starting.push(s);
+}
+
+/// Starts the handlers of the streams opened by the frames just processed. Each runs as a
+/// promise on the connection's task, between the connection's own waits.
+export function startHandlers(c: H2Connection) {
+  const list = c.starting;
+  c.starting = [];
+  for (const s of list) {
+    if (s.reset) {
+      s.running = false;
+      if (c.streams.get(s.id) !== s) {
+        c.recycle(s);
+      }
+    } else {
+      const running = serve(c, s);
+    }
+  }
+}
+
+/// Decodes a block nobody keeps (HPACK state only).
+function discard(c: H2Connection, src: u8[], start: i64, end: i64) {
+  c.scratch.clear();
+  if (!c.decoder.decode(src, start, end, c.scratch)) {
+    c.fail(COMPRESSION_ERROR, "a header block HPACK cannot decode");
+  }
+}
+
+/// Trailers of an open stream: they end its request (RFC 9113 §8.1).
+function trailers(c: H2Connection, s: H2Stream, flags: i64, src: u8[], start: i64, end: i64) {
+  discard(c, src, start, end);
+  if (c.done) {
+    return;
+  }
+  if (s.remoteEnded) {
+    streamError(c, s.id, STREAM_CLOSED);
+  } else if ((flags & END_STREAM) == 0 || !checkTrailers(c.scratch)) {
+    streamError(c, s.id, PROTOCOL_ERROR);
+  } else {
+    endRequest(c, s);
+  }
+}
+
+/// Runs the handler of `s`, then ends its response and gives back what it left unread.
+async function serve(c: H2Connection, s: H2Stream) {
+  const req = new H2Request(c, s);
+  const res = new H2Response(c, s);
+  await c.handler(req, res);
+  try {
+    await res.complete();
+  } catch (e) {
+    // The stream was reset or the connection ended meanwhile.
+  }
+  s.running = false;
+  if (!s.reset) {
+    giveBack(c, s);
+    if (!s.remoteEnded && s.localEnded) {
+      // The response is complete: the rest of the request is not needed (RFC 9113 §8.1).
+      c.out.rstStream(s.id, NO_ERROR);
+      s.resetNow();
+      c.release(s);
+    }
+  }
+  if (c.streams.get(s.id) !== s) {
+    c.recycle(s);
+  }
+  c.written();
+}

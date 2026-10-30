@@ -1,0 +1,164 @@
+// velt/net/http's HTTP/2 server against the protocol's rules (RFC 9113): connection errors end
+// the connection with GOAWAY, stream errors reset the stream, malformed requests never reach the
+// handler, and the settings, PING and flow control as the peer drives them.
+import { timeout } from "velt/task";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { H2Request } from "velt/net/http/server/h2/request";
+import { H2Response } from "velt/net/http/server/h2/response";
+import { bytes, Client, endOf, goaway, startServer, TestServer } from "./_h2";
+
+async function handler(req: H2Request, res: H2Response) {
+  if (req.pathIs("/big")) {
+    res.send("x".repeat(100));
+  } else {
+    res.send("ok");
+  }
+}
+
+describe("HTTP/2 connection rules", () => {
+  let server: TestServer | null = null;
+  let port = 0;
+  beforeAll(async () => {
+    const s = await startServer(handler);
+    port = s.port;
+    server = s;
+  });
+  afterAll(() => {
+    server!.close();
+  });
+
+  async function after(frames: (c: Client) => void): Promise<string> {
+    const c = await Client.open(port);
+    frames(c);
+    await c.flush();
+    const out = await c.until(goaway);
+    c.close();
+    return out;
+  }
+
+  it("acknowledges SETTINGS and PING", async () => {
+    const c = await Client.open(port);
+    c.frame(6, 0, 0, bytes("12345678"));
+    await c.flush();
+    expect(await c.until((f) => f.type == 6, true)).toBe(
+      "SETTINGS 4\nWINDOW_UPDATE 0 983041\nSETTINGS ack\nPING ack",
+    );
+    c.close();
+  });
+
+  it("ends the connection for frames that break its rules", async () => {
+    expect(await after((c) => c.frame(0, 0, 0, bytes("x")))).toBe("GOAWAY 0 PROTOCOL_ERROR");
+    expect(await after((c) => c.frame(6, 0, 0, bytes("123")))).toBe("GOAWAY 0 FRAME_SIZE_ERROR");
+    expect(await after((c) => c.frame(4, 0, 1, []))).toBe("GOAWAY 0 PROTOCOL_ERROR");
+    expect(await after((c) => c.frame(4, 0, 0, [0, 2, 0, 0, 0, 2]))).toBe(
+      "GOAWAY 0 PROTOCOL_ERROR",
+    );
+    expect(await after((c) => c.frame(5, 4, 1, [0, 0, 0, 2]))).toBe("GOAWAY 0 PROTOCOL_ERROR");
+    expect(await after((c) => c.frame(8, 0, 0, [0, 0, 0, 0]))).toBe("GOAWAY 0 PROTOCOL_ERROR");
+    // A frame larger than SETTINGS_MAX_FRAME_SIZE (16384).
+    expect(await after((c) => c.frame(0, 0, 1, new Array<u8>(16385).fill(0)))).toBe(
+      "GOAWAY 0 FRAME_SIZE_ERROR",
+    );
+    // HPACK that cannot be decoded (index 0).
+    expect(await after((c) => c.frame(1, 5, 1, [0x80]))).toBe("GOAWAY 1 COMPRESSION_ERROR");
+    // An even (server) stream id, and a block interrupted by another frame.
+    expect(await after((c) => c.get(2, "/"))).toBe("GOAWAY 0 PROTOCOL_ERROR");
+    expect(
+      await after((c) => {
+        c.frame(1, 0, 1, [0x82]);
+        c.frame(6, 0, 0, bytes("12345678"));
+      }),
+    ).toBe("GOAWAY 0 PROTOCOL_ERROR");
+  });
+
+  it("closes after a connection error that came in the same read as a new request", async () => {
+    // Regression: the request's handler had not started yet, and the connection waited for it
+    // for ever instead of closing.
+    const c = await Client.open(port);
+    c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 0, 0, bytes("x"));
+    await c.flush();
+    expect(await timeout(c.until((f) => false), 3000)).toBe("GOAWAY 1 PROTOCOL_ERROR\nEOF");
+    c.close();
+  });
+
+  it("refuses a flood of CONTINUATION frames", async () => {
+    const out = await after((c) => {
+      c.frame(1, 0, 1, [0x82]);
+      for (let i = 0; i < 200; i++) {
+        c.frame(9, 0, 1, []);
+      }
+    });
+    expect(out).toBe("GOAWAY 0 ENHANCE_YOUR_CALM");
+  });
+
+  it("resets malformed requests without running the handler", async () => {
+    const c = await Client.open(port);
+    const base = [":method", "GET", ":scheme", "http", ":authority", "x"];
+    c.headers(1, [":method", "GET", ":scheme", "http", ":authority", "x"], true);
+    c.headers(3, [":method", "GET", ":scheme", "http", ":path", "/", "Upper", "1"], true);
+    c.headers(5, [":method", "GET", ":scheme", "http", ":path", "/", "connection", "close"], true);
+    c.headers(7, [":method", "GET", ":scheme", "http", ":path", "/", "x", "a\nb"], true);
+    c.headers(9, [":method", "GET", "x", "1", ":scheme", "http", ":path", "/"], true);
+    c.headers(11, [":method", "GET", ":method", "GET", ":scheme", "http", ":path", "/"], true);
+    c.headers(13, [":method", "GET", ":scheme", "http", ":path", "/", "te", "gzip"], true);
+    c.headers(
+      15,
+      [":method", "POST", ":scheme", "http", ":path", "/", "content-length", "5"],
+      true,
+    );
+    c.get(17, "/");
+    await c.flush();
+    expect(await c.until(endOf(17))).toBe(
+      "RST 1 PROTOCOL_ERROR\nRST 3 PROTOCOL_ERROR\nRST 5 PROTOCOL_ERROR\nRST 7 PROTOCOL_ERROR\n" +
+        "RST 9 PROTOCOL_ERROR\nRST 11 PROTOCOL_ERROR\nRST 13 PROTOCOL_ERROR\nRST 15 PROTOCOL_ERROR\n" +
+        "HEADERS 17 :status=200\nDATA 17 es 2:ok",
+    );
+    c.close();
+  });
+
+  it("answers a head larger than SETTINGS_MAX_HEADER_LIST_SIZE with 431", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/", ["x-big", "v".repeat(20000)]);
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe("HEADERS 1 es :status=431");
+    c.close();
+  });
+
+  it("sends within the client's windows, and the rest after WINDOW_UPDATE", async () => {
+    // SETTINGS_INITIAL_WINDOW_SIZE 30: 30 of the 100 bytes, then 70 more after the update.
+    const c = await Client.open(port, [4, 30]);
+    c.get(1, "/big");
+    await c.flush();
+    expect(await c.until((f) => f.type == 0)).toBe(
+      "HEADERS 1 :status=200\nDATA 1 30:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    c.frame(8, 0, 1, [0, 0, 0, 40]);
+    await c.flush();
+    expect(await c.until((f) => f.type == 0)).toBe(
+      "DATA 1 40:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    // A larger initial window lets the rest go.
+    c.frame(4, 0, 0, [0, 4, 0, 0, 0, 100]);
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe("DATA 1 es 30:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    c.close();
+  });
+
+  it(
+    "resets a stream whose window would pass 2^31-1, and one sending beyond its window",
+    async () => {
+      const c = await Client.open(port);
+      c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/x", ":authority", "x"], false);
+      c.frame(8, 0, 1, [0x7f, 0xff, 0xff, 0xff]);
+      await c.flush();
+      expect(await c.until((f) => f.type == 3)).toBe("RST 1 FLOW_CONTROL_ERROR");
+      c.close();
+      const d = await Client.open(port);
+      d.frame(8, 0, 0, [0x7f, 0xff, 0xff, 0xff]);
+      await d.flush();
+      expect(await d.until(goaway)).toBe("GOAWAY 0 FLOW_CONTROL_ERROR");
+      d.close();
+    },
+  );
+});

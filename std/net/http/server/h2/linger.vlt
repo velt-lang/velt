@@ -1,0 +1,28 @@
+// velt/net/http (internal): the lingering close after an HTTP/2 connection error, as the HTTP/1.1
+// server's (and nginx's) after an error response to input it did not read.
+
+import { TcpStream } from "velt/net";
+
+/// After a connection error: reads (and drops) what the peer still sends, up to 1 MiB for 2 s,
+/// so closing with unread input does not reset the connection before the peer read the GOAWAY.
+export async function linger(conn: TcpStream, scratch: u8[]) {
+  const until = Date.now() + 2000;
+  let left: i64 = 1048576;
+  while (left > 0) {
+    const wait = until - Date.now();
+    if (wait <= 0) {
+      return;
+    }
+    const n = conn.tryRead(scratch);
+    if (n == null) {
+      return;
+    }
+    if (n == 0) {
+      if (!(await conn.readableWithin(wait as number))) {
+        return;
+      }
+      continue;
+    }
+    left -= n as i64;
+  }
+}
