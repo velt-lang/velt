@@ -1,7 +1,4 @@
-// check: unfreed blocks at most 8
-// (The 8 blocks, kept until the program exits: `velt/sync/epoch`'s registry of thread slots, 4,
-// made at the first section, and this thread's list of retired values, 4 (its `shared` box, the
-// `Mutex`'s `Garbage` and its two arrays), made at its first retirement.)
+// check: no leaks
 // What an `Atom` owns is freed: values it replaced (once the epoch drops them), values a failed
 // compare-and-swap in `update` made, values a throwing `update` never published, and the `Atom`
 // itself. Everything runs in `exercise`, so `main` holds no section while it drains.

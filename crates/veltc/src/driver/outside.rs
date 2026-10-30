@@ -62,6 +62,7 @@ const PURE_RUNTIME: &[&str] = &[
     "signal",
     "sleep",
     "spawn",
+    "statics",
     "stdout",
     "str",
     "strbuf",

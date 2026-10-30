@@ -9,6 +9,9 @@
 //! on that task, as in Node, where `main end` prints before the callbacks `main` queued. A
 //! program that never does calls `main` directly.
 //!
+//! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
+//! hold at exit, when there are any (static_atomic.rs).
+//!
 //! Before anything else, `velt_main` initializes the native libraries of packages
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
 //! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
@@ -40,6 +43,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
+            lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -70,6 +74,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             lw.call_main(def, None)
         };
+        lw.register_statics_drop();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()

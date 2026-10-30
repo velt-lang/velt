@@ -1,6 +1,4 @@
-// check: unfreed blocks at most 8
-// (The 8 blocks, kept until the program exits: `velt/sync/epoch`'s registry of thread slots, 4,
-// and this thread's list of retired values, 4.)
+// check: no leaks
 // A `ConcurrentMap` with values other than `u64`: each is boxed once by `set`, copied by `get`,
 // read in place by `read`, and dropped once replaced or deleted (when the epoch drops it: `main`
 // drains it at the end, outside any section). Enough keys to split leaves and inner nodes, so

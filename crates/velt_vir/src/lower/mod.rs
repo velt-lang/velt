@@ -385,6 +385,8 @@ enum Work {
     /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
     /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
     ModuleInit(u32, u32),
+    /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
+    StaticsDrop,
 }
 
 /// Program-level lowering state.

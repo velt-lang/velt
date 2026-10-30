@@ -162,6 +162,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
+            Work::StaticsDrop => Self::build_statics_drop(cx),
         }
     }
 

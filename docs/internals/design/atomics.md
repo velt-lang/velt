@@ -186,7 +186,10 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   starting as the literal (`vir::StaticData::mutable`), and its methods act on it directly,
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
-  per constant, so a swap keeps its value.
+  per constant, so a swap keeps its value. `new Atomic<shared<T> | null>(null)` is one too, and
+  its word owns the reference it holds: as the runtime drops the module state at exit for the
+  leak counters (`VELT_RC_STATS=1`), it calls a function `velt_main` handed it
+  (`velt_rt_statics_drop`, velt_vir `lower/static_atomic.rs`) that releases those references.
 - ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
   (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
@@ -521,7 +524,8 @@ on the pointer's bits, so backends see nothing new.
   an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
   `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes
   at its first `retire` (a thread that only reads makes none). Slots live in chunks of 64,
-  linked from a static `Atomic<shared<Chunk> | null>` and never freed; their states are 16
+  linked from a static `Atomic<shared<Chunk> | null>` and freed only at exit, for the leak
+  counters, with the values still retired (a static atomic, above); their states are 16
   words apart, a 128-byte line each. A thread finds its slot through `ThreadLocal<u64>`, its
   number + 1.
 - **`pin` / `unpin`:** store the global epoch with the bit into this thread's state, then a

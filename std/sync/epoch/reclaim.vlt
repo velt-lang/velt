@@ -20,7 +20,10 @@ const EVERY: u64 = 64;
 const EPOCH = new Atomic<u64>(0);
 /** The slots handed out: threads `0..REGISTERED` have one each. */
 const REGISTERED = new Atomic<u64>(0);
-/** The first chunk of slots; each links the next. Chunks are never freed. */
+/**
+ * The first chunk of slots; each links the next. Chunks are freed only at exit, for the leak
+ * counters (a static atomic's reference: velt_vir `static_atomic.rs`).
+ */
 const FIRST = new Atomic<shared<Chunk> | null>(null);
 /** This thread's slot number + 1 (0: none yet). */
 const MINE = new ThreadLocal<u64>(0);

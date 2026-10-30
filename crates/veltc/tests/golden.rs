@@ -28,7 +28,7 @@
 //!   unfreed).
 //! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
 //!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
-//!   they exit (`velt/sync/epoch`'s registry of thread slots, made once and never freed).
+//!   they exit.
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).

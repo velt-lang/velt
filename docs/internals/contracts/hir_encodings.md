@@ -835,11 +835,14 @@ counted. The method bodies in the prelude (`seqcst` intrinsics) are reached only
 function value of a method, which sema rejects too.
 
 **Static atomics.** A module `const` (not a class's static field) whose initializer is
-`new Atomic<T>(literal)` (a number literal, negated or not, or `true`/`false`), in the program
+`new Atomic<T>(literal)` (a number literal, negated or not, `true`/`false`, or `null` for an
+`Atomic<shared<T> | null>`), in the program
 or in std, has no slot: it is a `GlobalDef` with `slot: None` and that `AdtLit` as `init`.
 Lowering gives it one writable 8-byte-or-smaller `StaticData` (`mutable: Some(id)`, `id` the
 `tls::stable_id` of its qualified name and value type) starting as the literal, made once, and its `Global` is
-the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock.
+the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock. The
+references such words hold are released at exit by a function `velt_main` hands the runtime
+(rt_abi.md "Static atomics at exit").
 
 ## Module state
 

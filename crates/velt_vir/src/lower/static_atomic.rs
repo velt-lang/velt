@@ -2,14 +2,20 @@
 //! `new Atomic<T>(literal)` (sema `static_atomic_init`) has no module state slot. Its word is
 //! writable data (`StaticData::mutable`) that starts as the literal, one per program, and the
 //! `velt_atomic_*` externs change it in place: no module block, so no module lock.
+//!
+//! An `Atomic<shared<T> | null>` made with `null` is one too, and its word owns the reference it
+//! holds. Module state is dropped at exit for the leak counters, and so are these references:
+//! `velt_main` hands the runtime a function releasing them (`velt_rt_statics_drop`,
+//! `Work::StaticsDrop`), which it calls then. `velt/sync/epoch`'s registry is one of them.
 
 use velt_sema::hir::{self, ExprKind as K, TyKind};
 
 use super::atomic::is_atomic;
 use super::operand::proj;
+use super::rt::Rt;
 use super::thread_local::literal_word;
-use super::FnLower;
-use crate::vir::{Const, Operand, Place, Proj, StaticData, StaticId, Ty};
+use super::{FnLower, ScopeKind, Work};
+use crate::vir::{Const, Function, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 impl FnLower<'_, '_> {
     /// The place of global `d`'s `Atomic` when `d` is a static atomic.
@@ -70,6 +76,76 @@ impl FnLower<'_, '_> {
         });
         self.cx.static_atomics.insert(d, id);
         id
+    }
+}
+
+impl<'c, 'h> FnLower<'c, 'h> {
+    /// Before `velt_main` returns: hands the runtime the function releasing the references
+    /// static atomics hold, when the program has any.
+    pub(super) fn register_statics_drop(&mut self) {
+        if self.cx.reference_statics().is_empty() {
+            return;
+        }
+        let f = self.cx.func(Work::StaticsDrop);
+        self.call_rt(Rt::StaticsDrop, vec![super::cfunc(f)], None);
+    }
+
+    /// `()`: releases the reference each static atomic holds, and empties its word.
+    pub(super) fn build_statics_drop(cx: &'c mut super::Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        lw.push_scope(ScopeKind::Block);
+        for (d, t) in lw.cx.reference_statics() {
+            let Some(atomic) = lw.static_atomic(d) else {
+                continue;
+            };
+            // The word is the `Atomic`'s one field.
+            let addr = lw.addr(atomic);
+            let word = proj(&lw.operand_place(addr, Ty::Ptr), Proj::Deref(Ty::Ptr));
+            let old = lw.copy_to_temp(Operand::Copy(word.clone()), Ty::Ptr);
+            let null = Operand::Const(Const::Int(0), Ty::Ptr);
+            lw.assign(word, Rvalue::Use(null));
+            lw.drop_glue(Place::local(old), t);
+        }
+        lw.terminate(crate::vir::Terminator::Return(super::unit()));
+        lw.scopes.clear();
+        lw.finish("_Gstatics_drop".into(), vec![], Ty::Unit)
+    }
+}
+
+impl super::Cx<'_> {
+    /// The static atomics of the checked program that hold a reference (an
+    /// `Atomic<shared<T> | null>` made with `null`), in definition order, with their value type.
+    /// Read from the program, not from the static data made so far: a function lowered after
+    /// `velt_main` may be the first to use one.
+    fn reference_statics(&mut self) -> Vec<(hir::DefId, hir::TyId)> {
+        let mut out = vec![];
+        let hir = self.hir;
+        for (i, def) in hir.defs.iter().enumerate() {
+            let hir::Def::Global(g) = def else {
+                continue;
+            };
+            let static_atomic = g.slot.is_none()
+                && matches!(&g.init.kind, K::AdtLit { def, fields, .. }
+                    if is_atomic(self, *def) && fields.len() == 1 && literal(&fields[0]));
+            if !static_atomic {
+                continue;
+            }
+            let TyKind::Adt(_, targs) = self.kind(g.ty) else {
+                continue;
+            };
+            let Some(&t) = targs.first() else {
+                continue;
+            };
+            let reference = match self.kind(t) {
+                TyKind::Shared(_) => true,
+                TyKind::Option(inner, _) => matches!(self.kind(inner), TyKind::Shared(_)),
+                _ => false,
+            };
+            if reference {
+                out.push((hir::DefId(i as u32), t));
+            }
+        }
+        out
     }
 }
 

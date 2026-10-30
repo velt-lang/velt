@@ -1,5 +1,4 @@
-// check: unfreed blocks at most 4
-// (The 4 blocks: `velt/sync/epoch`'s registry of thread slots, kept until the program exits.)
+// check: no leaks
 // What an `Atomic<string>` owns is freed when nothing replaces it: loads into a binding and as
 // a temporary, failed compare-and-swaps (contents differ), and the `Atomic` dropped as a local,
 // a class field and in an array, with heap strings throughout.

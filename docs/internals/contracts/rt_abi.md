@@ -535,6 +535,19 @@ the same block, still initialized up to `s`, with the lock still held. The compi
 instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
 [additive, #1571].
 
+## Static atomics at exit [additive]
+
+```c
+void velt_rt_statics_drop(void (*f)(void));
+```
+
+A program with static atomics holding a reference (a module `const X = new Atomic<shared<T> |
+null>(null)`, hir_encodings.md "Static atomics") calls it from `velt_main` before returning,
+with a generated function that releases the reference each such word holds and stores null
+into it. The runtime calls `f` once at exit, after dropping the module state, and only when it
+drops the module state (the leak counters of the debug runtime, `VELT_RC_STATS=1`; § Module
+state). The WebAssembly runtime ignores it.
+
 ## Array length limit [additive, #1572]
 
 An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its

@@ -1,7 +1,4 @@
-// check: unfreed blocks at most 140
-// (Kept until the program exits: `velt/sync/epoch`'s registry of thread slots, 4 blocks, and a
-// list of retired values per thread that retired one, 4 blocks each: 140 covers 34 threads. A
-// key string or value a `set`, `delete` or split failed to retire, or dropped, is thousands more.)
+// check: no leaks
 // A `ConcurrentMap<string, string>` on worker threads: two writers each set and delete their own
 // keys over and over, so slots empty and refill with other strings while readers compare against
 // them, and leaves split, empty, unlink and are reused. The keys come in three families: all
