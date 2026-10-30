@@ -109,7 +109,7 @@ have their own docs page.
 | `velt/mem` | `needsDrop`, `Arena` (mem, arena) |
 | `velt/net` | TCP and TLS: `listen`, `connect`, `TcpStream` (net, net_bytes) |
 | `velt/net/dns`, `velt/net/udp` | dns, udp |
-| `velt/net/http` | the client: `fetch`, `Request`, `Response`, `Headers`, status texts (fetch, fetch/*) |
+| `velt/net/http` | HTTP both ways, as in Node, Deno, Bun and Go: the client (`fetch`, `Request`, `Response`, `Headers`) and the server written in Velt (`serve` with web-standard handlers `(req: Request) => Response`, and the lower-level `HttpRequest`/`HttpResponse`) (fetch, fetch/*, http/server) |
 | `velt/net/url` | `URL`, `URLSearchParams`, `encodeURIComponent` … (url) |
 | `velt/net/websocket` | websocket |
 | `velt/os` | os |
@@ -133,13 +133,16 @@ APIs (no `__intrinsic_*`, no `declare`d runtime functions it does not own):
 
 | Package | From |
 |---|---|
-| `packages/http` | the HTTP/1.1 server written in Velt (`velt/http/server`, #1533) and the server side of WebSocket (upgrading a request); the protocol itself (framing, the client) stays in `velt/net/websocket` |
 | `packages/sqlite` | the SQLite driver (`velt/sqlite` + crate `velt_std_sqlite` as its native part), merged with today's prototype `packages/sqlite`; the pure-Velt query engine (#1726) comes along |
 | `packages/postgres` | `velt/postgres` + crate `velt_std_postgres` |
 | `packages/redis` | `velt/redis` + crate `velt_std_redis` |
 
-The hyper-based server (`velt/http` `serve`, `crates/velt_rt/src/http/`, the `hyper` crates) is
-removed: the Velt server replaces it (#1533 is merged).
+The HTTP server stays in std (decided 2026-10-30): it is pure Velt on public APIs, it is what
+`velt new api`, the docs tour, hot reload and the example apps are built on, and every
+comparable runtime ships one. The hyper-based server (`velt:http` `serve`,
+`crates/velt_rt/src/http/`, the `hyper` crates) is removed: the Velt server (#1533) replaces
+it, with a web-standard `serve((req: Request) => Response)` on top of its `HttpRequest` /
+`HttpResponse`. It speaks HTTP/1.1 (and TLS); HTTP/2 written in Velt is a follow-up issue.
 
 Every row maps to entries in `layout.vlt`; that file is authoritative where they differ. The
 whole tree after the move is in the appendix.
@@ -370,12 +373,14 @@ building and passing its tests:
 2. Compiler: `velt/` specifiers, `velt:` an error, `velt` reserved as a package name.
 3. The move: the script's run, the new `index.vlt` files, `velt/io`'s plumbing split from its
    API (`io/error.vlt`, `io/result.vlt`), and the fixes the tests need.
-4. The hyper server removed (`velt/http` `serve`, `crates/velt_rt/src/http/`, the hyper
-   crates); its tests move to the Velt server.
+4. The hyper server removed (`velt:http` `serve`, `crates/velt_rt/src/http/`, the hyper
+   crates, the `http_handler` intrinsic); the Velt server moves into `velt/net/http` with a
+   web-standard `serve`; its users and tests follow; the handler-capture error goldens test the
+   general task analysis (`spawn`) instead.
 5. The public APIs packages need (§10): row and parameter binding in `velt/db`, byte and
    capacity APIs, status texts in `velt/net/http`, a WebSocket from an upgraded stream.
-6. `packages/http`, `packages/sqlite`, `packages/postgres`, `packages/redis`, with their tests
-   and how the repository's tests and examples depend on them.
+6. `packages/sqlite`, `packages/postgres`, `packages/redis`, each owning its tests and docs, run
+   by a test that runs `velt test` in every package (as for the example apps).
 7. Intrinsics declared in `std/lang/intrinsics` (§10); compiler hooks moved to `std/lang/hooks`
    with one table in the compiler, and no `__` names left in std's public surface (§10b).
 8. The prelude's load order explicit (`prelude/index.vlt`), the `z_` file names gone; the
