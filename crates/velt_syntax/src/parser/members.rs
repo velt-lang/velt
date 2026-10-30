@@ -421,6 +421,7 @@ impl<'a> Parser<'a> {
             throws,
             is_async: false,
             is_system: false,
+            generator: None,
             is_generator: false,
             this_param: None,
             span: self.span_from(lo),

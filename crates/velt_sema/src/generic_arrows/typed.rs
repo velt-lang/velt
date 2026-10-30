@@ -469,6 +469,7 @@ fn decl(
             throws,
             is_async,
             is_system: false,
+            generator: None,
             is_generator: false,
             this_param: None,
             span,

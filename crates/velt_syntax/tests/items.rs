@@ -103,6 +103,35 @@ fn declare_system_function() {
     assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
 }
 
+/// `declare generated("<spec>") function`: a generic function with an empty body whose
+/// generator module is the string; `generated` is a word only there.
+#[test]
+fn declare_generated_function() {
+    let src =
+        "export declare generated(\"./gen/write\") function write<T>(out: string, v: T): void;
+         declare generated(\"g\") async function load<T>(s: string): T;
+         function generated(): i32 { return 1; }
+         declare function generated2(): i32;";
+    let m = parse_ok(src);
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!("{:?}", m.items[0].kind)
+    };
+    let g = f.sig.generator.as_ref().expect("a generator");
+    assert_eq!(g.spec, "./gen/write");
+    assert_eq!(
+        &src[g.span.lo as usize..g.span.hi as usize],
+        "\"./gen/write\""
+    );
+    assert!(m.items[0].exported && f.body.stmts.is_empty() && f.sig.generics.len() == 1);
+    assert_eq!(f.sig.name.name, "write");
+    let ItemKind::Function(f) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(f.sig.is_async && f.sig.generator.as_ref().is_some_and(|g| g.spec == "g"));
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.generator.is_none()));
+    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if s.generator.is_none()));
+}
+
 #[test]
 fn structs_and_classes() {
     let m = parse_ok(

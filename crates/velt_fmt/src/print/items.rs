@@ -2,7 +2,7 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl, VarKind,
+    Augment, FnDecl, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl, VarKind,
 };
 
 use super::lists::delimited;
@@ -14,11 +14,12 @@ use crate::source::{slice, string_literal};
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
 /// every other pair of top-level items is separated by a blank line.
 fn compact_kind(item: &Item) -> Option<u8> {
-    match item.kind {
+    match &item.kind {
         ItemKind::Import(_) => Some(0),
         ItemKind::Var(_) => Some(1),
         ItemKind::TypeAlias(_) => Some(2),
         ItemKind::ExternFn(_) => Some(3),
+        ItemKind::Function(f) if f.sig.generator.is_some() => Some(3),
         _ => None,
     }
 }
@@ -41,6 +42,7 @@ impl<'a> Printer<'a> {
         let export = if item.exported { "export " } else { "" };
         let body = match &item.kind {
             ItemKind::Import(import) => self.import(import, item.exported),
+            ItemKind::Function(f) if f.sig.generator.is_some() => self.generated_fn(f),
             ItemKind::Function(f) => return self.fn_decl_with(f, "function ", export),
             ItemKind::Struct(decl) => self.type_decl("struct ", decl),
             ItemKind::Class(decl) if decl.is_abstract => self.type_decl("abstract class ", decl),
@@ -65,6 +67,17 @@ impl<'a> Printer<'a> {
             ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
+    }
+
+    /// `declare generated("<spec>") [async] function f<T>(…): R;`.
+    fn generated_fn(&mut self, f: &FnDecl) -> Doc {
+        let Some(g) = &f.sig.generator else {
+            return text("");
+        };
+        let spec = text(string_literal(slice(self.src, g.span)));
+        let asyncness = if f.sig.is_async { "async " } else { "" };
+        let sig = self.fn_sig(&f.sig, "function ", f.sig.span.hi);
+        cat!["declare generated(", spec, ") ", asyncness, sig, ";"]
     }
 
     /// `declare global { … }` / `declare module "…" { … }` (the item ends at `end`).

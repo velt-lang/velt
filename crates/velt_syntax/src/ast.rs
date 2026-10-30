@@ -161,11 +161,23 @@ pub struct FnSig {
     /// compiler's table of system functions (docs/reference/system-functions.md). Always `false`
     /// for anything but a `declare` item.
     pub is_system: bool,
+    /// `declare generated("./gen") function f<T>(…): R;`: a function whose body a source
+    /// generator writes per instance (docs/internals/design/source-generators.md). Parsed as a
+    /// [`FnDecl`] with an empty body; `None` for every other function. Additive.
+    pub generator: Option<GeneratorSpec>,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
     /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
     pub this_param: Option<Box<TypeExpr>>,
+    pub span: Span,
+}
+
+/// The generator module of a generated function: the specifier string of
+/// `declare generated("<spec>") function`, resolved like an import of the declaring module.
+#[derive(Clone, Debug)]
+pub struct GeneratorSpec {
+    pub spec: String,
     pub span: Span,
 }
 

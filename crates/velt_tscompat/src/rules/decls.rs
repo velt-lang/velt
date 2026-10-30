@@ -35,6 +35,20 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             ],
         ),
         I::Interface(i) => interface(i, cx),
+        I::Function(f) if f.sig.generator.is_some() => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            format!(
+                "`declare generated function {}` gets its body from a source generator at compile time, which TypeScript doesn't have",
+                f.sig.name.name
+            ),
+            &[
+                "TypeScript accepts a `declare function` and assumes JavaScript provides it; \
+                 `generated(…)` is not TypeScript syntax",
+                "keep generated functions in the library that declares them, and call the \
+                 functions that use them from shared code",
+            ],
+        ),
         I::ExternFn(sig) => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),

@@ -127,6 +127,8 @@ fn items_and_types() {
 import { a as b, } from 'x';
 export const X: [i64, string] = [1, \"a\"];
 export declare async function ext(a: i64): i64;
+export declare generated('./gen/write') function write<T>(out: string, v: T): void;
+declare generated(\"g\") async function load<T>(s: string): T;
 export type F = (x: i64) => (y: i64) => Map<string, (z: i64) => void>;
 type G<T> = T[][] | ((A | B)[]) | null;
 class Empty {}
