@@ -1,0 +1,67 @@
+// velt/test (internal): `Rejects`, the matchers of `expect(p).rejects`.
+
+import { Pattern } from "velt/text/regex/pattern";
+import { Expect } from "velt/test/expect";
+import { errorMessage, thrownWhy } from "velt/test/matchers";
+
+/** `expect(p).rejects`: each matcher awaits `p` and checks its error; fails if it resolves. */
+export class Rejects<V, E> {
+  readonly promise: Promise<V, E>;
+  readonly negated: bool;
+
+  constructor(promise: Promise<V, E>, negated: bool) {
+    this.promise = promise;
+    this.negated = negated;
+  }
+
+  /** The same matchers, each checking the opposite. */
+  get not(): Rejects<V, E> {
+    return new Rejects<V, E>(this.promise, !this.negated);
+  }
+
+  /** The matchers for the error, once the promise rejects (for matchers added with `extend`). */
+  async settled(): Promise<Expect<E>, unknown> {
+    let value: V;
+    try {
+      value = await this.promise;
+    } catch (e) {
+      return new Expect<E>(e, this.negated);
+    }
+    throw new AssertionError(
+      `promise resolved "${__intrinsic_error_text(value)}" instead of rejecting`,
+    );
+  }
+
+  /**
+   * The promise rejects; with `expected`, with an error whose message contains it (a string)
+   * or matches it (a `RegExp`).
+   */
+  async toThrow(expected?: string | Pattern): Promise<void, unknown> {
+    let rejected = false;
+    let message = "";
+    let text = "";
+    let value = "";
+    try {
+      value = __intrinsic_error_text(await this.promise);
+    } catch (e) {
+      rejected = true;
+      message = errorMessage(e);
+      text = __intrinsic_error_text(e);
+    }
+    if (!rejected && !this.negated) {
+      throw new AssertionError(`promise resolved "${value}" instead of rejecting`);
+    }
+    const why = thrownWhy(rejected, message, text, expected, this.negated);
+    if (why != null) {
+      throw new AssertionError(why);
+    }
+  }
+
+  async toBe(expected: E): Promise<void, unknown> {
+    (await this.settled()).toBe(expected);
+  }
+
+  async toEqual(expected: E): Promise<void, unknown> {
+    (await this.settled()).toEqual(expected);
+  }
+}

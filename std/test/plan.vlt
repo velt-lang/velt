@@ -1,0 +1,378 @@
+// velt/test (internal): the runner: the plan `velt test` hands it, a process per test file
+// (several at once), and the reports read back from them, in file order.
+
+import { JSON } from "velt/prelude/json/json";
+import { exec } from "velt/process/child/exec";
+import { ExecResult } from "velt/process/child/exec_result";
+import { spawn } from "velt/process/child/child_process";
+import { writeFileSync } from "velt/fs/files";
+import { Paint } from "velt/test/paint";
+import { MARK } from "velt/test/run";
+
+/** What `velt test` hands the runner (`$VELT_TEST_PLAN`). */
+export struct Plan {
+  /** How many files run at once. */
+  workers: number;
+  /** Whether stdout and stderr are terminals that take colors. */
+  colorOut: bool;
+  colorErr: bool;
+  /** Tests that failed before anything ran (files that do not parse). */
+  failed: number;
+  /** `--filter`, and whether it names a test exactly (`--exact`): for the tests registered at run time. */
+  filter: string | null;
+  exact: bool;
+  files: PlanFile[];
+  /** Where to write how each file that ran went (`Ran[]`), for `velt test` to keep; `null`: nowhere. */
+  results: string | null;
+}
+
+/** How a file's tests went, as `velt test` keeps it for a program that didn't change. */
+struct Ran {
+  /** The file's index in `Plan.files`. */
+  index: number;
+  lines: string[];
+  passed: number;
+  failed: number;
+}
+
+/** A test file of the run. */
+struct PlanFile {
+  /** As `running <path>` shows it. */
+  path: string;
+  /** Its absolute path, the test program's `process.argv[1]`. */
+  script: string;
+  /** The test program that holds its tests, `null` when it did not build. */
+  exe: string | null;
+  /** Its index among that program's files. */
+  index: number;
+  /** Its `test_*` functions (the process lists every test it runs, these and the others). */
+  tests: string[];
+  /** Whether its top level calls `describe`, `it`, `test` or a hook. */
+  registers: bool;
+  /** `test_*` functions that cannot run, with the reason. */
+  skipped: Skipped[];
+  /** How its tests went last time, when its program is the same and can't have changed its mind. */
+  cached: Ran | null;
+  /** Why its result isn't kept (`the network`): what its program reaches; `null` when it is. */
+  uncacheable: string | null;
+}
+
+struct Skipped {
+  name: string;
+  reason: string;
+}
+
+/** What a test file printed, read back, and how its tests went. */
+class Report {
+  lines: string[] = [];
+  passed: usize = 0;
+  failed: usize = 0;
+}
+
+/** Run every file of `plan`, `plan.workers` at once, printing each report in file order. */
+export async function runPlan(plan: Plan): Promise<bool> {
+  const paint = new Paint(plan.colorOut, plan.colorErr);
+  const reports: (Report | null)[] = plan.files.map((_) => null);
+  const ran: Ran[] = [];
+  let started: usize = 0;
+  let printed: usize = 0;
+  let passed: usize = 0;
+  let failed = plan.failed as usize;
+  const worker = async () => {
+    while (started < plan.files.length) {
+      const i = started;
+      started++;
+      const cached = plan.files[i].cached;
+      if (cached != null) {
+        const r = new Report();
+        r.lines = cached.lines;
+        r.passed = cached.passed as usize;
+        r.failed = cached.failed as usize;
+        reports[i] = r;
+      } else {
+        const r = await runFile(plan.files[i], plan, paint);
+        ran.push({
+          index: i as number,
+          lines: r.lines,
+          passed: r.passed as number,
+          failed: r.failed as number,
+        });
+        reports[i] = r;
+      }
+      while (printed < reports.length && reports[printed] != null) {
+        const f = plan.files[printed];
+        const r = reports[printed]!;
+        // With a filter, a file none of whose tests it selected says nothing.
+        if (plan.filter != null && r.passed + r.failed == 0 && r.lines.length == 0) {
+          printed++;
+          continue;
+        }
+        const why = f.uncacheable;
+        const note =
+          f.cached != null
+            ? " (cached)"
+            : why != null ? ` (ran: not cacheable, it uses ${why})` : "";
+        console.log(`running ${f.path}${note}`);
+        for (const s of f.skipped) {
+          console.error(
+            `${paint.warning("warning:")} skipping \`${s.name}\` in ${f.path}: ${s.reason}`,
+          );
+        }
+        for (const line of r.lines) {
+          console.log(line);
+        }
+        passed += r.passed;
+        failed += r.failed;
+        printed++;
+      }
+    }
+  };
+  const workers: Promise<void>[] = [];
+  const n = Math.max(1, Math.min(plan.workers, plan.files.length as number));
+  for (let w = 0; w < n; w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  // Files that register their tests at run time list them only here (`velt test` says this
+  // itself when no file does).
+  const filter = plan.filter;
+  if (filter != null && passed + failed == 0) {
+    console.error(`no tests match \`${filter}\``);
+  }
+  const results = plan.results;
+  if (results != null) {
+    writeFileSync(results, JSON.stringify(ran));
+  }
+  const verdict = failed == 0 ? paint.good("ok") : paint.failed();
+  console.log(`\ntest result: ${verdict}. ${passed} passed; ${failed} failed`);
+  return failed == 0;
+}
+
+/** Run the tests of `f`, starting its program again after each test that ends the process. */
+async function runFile(f: PlanFile, plan: Plan, paint: Paint): Promise<Report> {
+  const report = new Report();
+  const exe = f.exe;
+  if (exe == null) {
+    for (const t of f.tests) {
+      report.lines.push(`${paint.failed()} ${t} (build failed)`);
+    }
+    if (f.registers) {
+      report.lines.push(`${paint.failed()} ${f.path} (build failed)`);
+    }
+    report.failed = f.tests.length + (f.registers ? 1 : 0);
+    return report;
+  }
+  const mark = `${MARK}${token()}:: `;
+  const run = new FileRun(f, exe, plan, mark);
+  let from: usize = 0;
+  // Until a process lists the file's tests, there is one to start.
+  while (from < (run.tests?.length ?? from + 1)) {
+    from = await runFrom(run, from, report, paint);
+  }
+  return report;
+}
+
+/** What the processes running one file's tests share. */
+class FileRun {
+  readonly f: PlanFile;
+  readonly exe: string;
+  readonly plan: Plan;
+  readonly mark: string;
+  /** The file's tests, as its first process listed them; `null` before. */
+  tests: string[] | null = null;
+
+  constructor(f: PlanFile, exe: string, plan: Plan, mark: string) {
+    this.f = f;
+    this.exe = exe;
+    this.plan = plan;
+    this.mark = mark;
+  }
+}
+
+/** A token no test is likely to print, different in each run. */
+function token(): string {
+  return Math.floor(Math.random() * 1e15).toString(36);
+}
+
+/** One process running the tests of the file from `from` on; returns where the next one starts. */
+async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint): Promise<usize> {
+  const f = run.f;
+  const mark = run.mark;
+  const env = new Map<string, string>([
+    ["VELT_SCRIPT", f.script],
+    ["VELT_TEST_FILE", String(f.index)],
+    ["VELT_TEST_FROM", String(from)],
+    ["VELT_TEST_MARK", mark.slice(MARK.length as i64, (mark.length as i64) - 3)],
+  ]);
+  const filter = run.plan.filter;
+  if (filter != null) {
+    env.set("VELT_TEST_FILTER", filter);
+    env.set("VELT_TEST_EXACT", run.plan.exact ? "1" : "0");
+  }
+  // Counting blocks, the process returns from `main` after its tests and waits for what is
+  // still running, as Node does: one that is still running after `LEAK_WAIT` is ended.
+  const counting = process.env.VELT_RC_STATS == "1";
+  let r: ExecResult;
+  let ended = false;
+  try {
+    if (counting) {
+      const timed = await runTimed(run.exe, env, LEAK_WAIT);
+      r = timed.result;
+      ended = timed.ended;
+    } else {
+      r = await exec(run.exe, [], { env: env });
+    }
+  } catch (e) {
+    const text = __intrinsic_error_text(e);
+    report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
+    const left = (run.tests?.length ?? f.tests.length) - from;
+    report.failed += left > 0 ? left : 1;
+    run.tests = run.tests ?? [];
+    return run.tests.length;
+  }
+  let next = from;
+  let started = false;
+  const listed: string[] = [];
+  const lines = r.stdout.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] == "") {
+    lines.pop();
+  }
+  for (const line of lines) {
+    // A test's output without a final newline runs into the marker after it.
+    const at = line.indexOf(mark);
+    if (at < 0) {
+      report.lines.push(line);
+      continue;
+    }
+    if (at > 0) {
+      report.lines.push(line.slice(0, at));
+    }
+    const rest = line.slice(at + (mark.length as i64));
+    const known = run.tests ?? listed;
+    const name = next < known.length ? known[next] : null;
+    if (rest == "start") {
+      started = true;
+    } else if (rest.startsWith("test ")) {
+      listed.push(rest.slice(5));
+    } else if (rest == `ok ${name}`) {
+      report.lines.push(`${paint.good("ok")} ${name}`);
+      report.passed++;
+      next++;
+    } else if (rest == `fail ${name}`) {
+      report.lines.push(`${paint.failed()} ${name}`);
+      report.failed++;
+      next++;
+    } else if (rest.startsWith("| ")) {
+      report.lines.push(`    ${rest.slice(2)}`);
+    }
+  }
+  if (!started) {
+    // It ended before running a test: in a module's top-level code, or collecting the tests.
+    report.lines.push(`${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`);
+    pushStderr(report, r.stderr);
+    const left = (run.tests?.length ?? f.tests.length) - from;
+    report.failed += left > 0 ? left : 1;
+    run.tests = run.tests ?? [];
+    return run.tests.length;
+  }
+  const tests = run.tests ?? listed;
+  run.tests = tests;
+  if (ended) {
+    report.lines.push(
+      `${paint.failed()} ${f.path} (still running ${LEAK_WAIT / 1000} s after its tests: a server, a connection or a timer left open)`,
+    );
+    report.failed++;
+    return tests.length;
+  }
+  const leaked = counting ? leakedBlocks(r.stderr) : 0;
+  if (leaked != null && leaked > 0) {
+    report.lines.push(`${paint.failed()} ${f.path} (${leaked} blocks not freed)`);
+    report.failed++;
+  }
+  if (next >= tests.length) {
+    if (r.code != 0) {
+      report.lines.push(
+        `${paint.failed()} (test harness exited with code ${r.code} after all tests ran)`,
+      );
+      report.failed++;
+    } else if (leaked == null) {
+      // As the goldens' leak check: a file whose process reported no counts is not leak-free.
+      report.lines.push(
+        `${paint.failed()} ${f.path} (no block counts on its stderr; VELT_RC_STATS=1 counts blocks in debug builds)`,
+      );
+      report.failed++;
+    }
+    return tests.length;
+  }
+  // The process ended inside test `next`.
+  report.lines.push(`${paint.failed()} ${tests[next]} (exit code ${r.code})`);
+  pushStderr(report, r.stderr);
+  report.failed++;
+  return next + 1;
+}
+
+/** How long a test process counting blocks may keep running after its tests (ms). */
+const LEAK_WAIT = 120000;
+
+/** What `runTimed` ran: as `exec` returns it, and whether it was ended for taking too long. */
+struct Timed {
+  result: ExecResult;
+  ended: bool;
+}
+
+/** Run `exe` with `env` to its end, as `exec` does, but end it after `limit` ms. */
+async function runTimed(exe: string, env: Map<string, string>, limit: number): Promise<Timed> {
+  const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const ended = shared(0 as i64);
+  const timer = setTimeout(
+    () => {
+      ended.set(1);
+      child.kill("SIGKILL");
+    },
+    limit as i64,
+  );
+  const out = await Promise.all([drain(() => child.readStdout()), drain(() => child.readStderr())]);
+  const code = await child.wait();
+  clearTimeout(timer);
+  child.close();
+  return { result: new ExecResult(code as number, out[0], out[1]), ended: ended.get() == 1 };
+}
+
+/** Everything `read` gives until it gives `""` (the end of the output). */
+async function drain(read: () => Promise<string, unknown>): Promise<string, unknown> {
+  let all = "";
+  while (true) {
+    const chunk = await read();
+    if (chunk == "") {
+      return all;
+    }
+    all += chunk;
+  }
+}
+
+/**
+ * The blocks a test process allocated and didn't free, from the runtime's report on its stderr
+ * (`rc stats: … blocks=A/F …`, `VELT_RC_STATS=1` with the debug runtime); `null` without one.
+ */
+function leakedBlocks(stderr: string): number | null {
+  const at = stderr.lastIndexOf(" blocks=");
+  if (at < 0 || !stderr.includes("rc stats:")) {
+    return null;
+  }
+  const field = stderr.slice(at + 8).split(" ")[0];
+  const counts = field.split("/");
+  if (counts.length != 2) {
+    return null;
+  }
+  const allocated = Number(counts[0]);
+  const freed = Number(counts[1]);
+  return Number.isNaN(allocated) || Number.isNaN(freed) ? null : allocated - freed;
+}
+
+function pushStderr(report: Report, stderr: string) {
+  for (const line of stderr.split("\n")) {
+    if (line != "") {
+      report.lines.push(`    ${line}`);
+    }
+  }
+}

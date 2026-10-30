@@ -1,5 +1,5 @@
 //! The generated root module of a test program: it imports the test files and registers their
-//! tests with `velt/test` (`std/test/index.vlt`), which runs them. For `math.test.vlt` and
+//! tests with `velt/test` (`std/test/registry.vlt`, `std/test/run.vlt`), which runs them. For `math.test.vlt` and
 //! `io.test.vlt` it is (a virtual file in a directory above both)
 //! ```text
 //! import { __file, __test, __testAsync, __run } from "velt/test";

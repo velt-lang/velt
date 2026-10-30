@@ -1,0 +1,201 @@
+// velt/test (internal): the matchers of particular kinds of values: arrays, strings, numbers and
+// other `Comparable`s, functions that throw, and promises (`resolves`, `rejects`). `extend`
+// blocks, loaded with `Expect` (velt/test/expect imports this module).
+
+import { Pattern } from "velt/text/regex/pattern";
+import { Expect, pattern, show } from "velt/test/expect";
+import { Rejects } from "velt/test/rejects";
+import { Resolves } from "velt/test/resolves";
+
+extend<E> Expect<E[]> {
+  /** `actual.length` is `n`. */
+  toHaveLength(n: number) {
+    this.check(
+      this.actual.length == n,
+      `expected ${show(this.actual)} to have a length of ${n} but got ${this.actual.length}`,
+      `expected ${show(this.actual)} to not have a length of ${n}`,
+    );
+  }
+
+  /** `actual.includes(item)`. */
+  toContain(item: E) {
+    this.check(
+      this.actual.includes(item),
+      `expected ${show(this.actual)} to include ${show(item)}`,
+      `expected ${show(this.actual)} to not include ${show(item)}`,
+    );
+  }
+}
+
+extend Expect<string> {
+  /** `actual.length` is `n`. */
+  toHaveLength(n: number) {
+    this.check(
+      this.actual.length == n,
+      `expected ${show(this.actual)} to have a length of ${n} but got ${this.actual.length}`,
+      `expected ${show(this.actual)} to not have a length of ${n}`,
+    );
+  }
+
+  /** `actual.includes(part)`. */
+  toContain(part: string) {
+    this.check(
+      this.actual.includes(part),
+      `expected ${show(this.actual)} to contain ${show(part)}`,
+      `expected ${show(this.actual)} not to contain ${show(part)}`,
+    );
+  }
+
+  /** `pattern` matches `actual` (a string: `actual` contains it). */
+  toMatch(expected: string | Pattern) {
+    const pass =
+      typeof expected == "string" ? this.actual.includes(expected) : expected.test(this.actual);
+    const a = show(this.actual);
+    this.check(
+      pass,
+      `expected ${a} to match ${pattern(expected)}`,
+      `expected ${a} not to match ${pattern(expected)}`,
+    );
+  }
+}
+
+extend<N extends Comparable<N>> Expect<N> {
+  /** `actual > n`. */
+  toBeGreaterThan(n: N) {
+    const a = show(this.actual);
+    this.check(
+      this.actual > n,
+      `expected ${a} to be greater than ${show(n)}`,
+      `expected ${a} to be not greater than ${show(n)}`,
+    );
+  }
+
+  /** `actual >= n`. */
+  toBeGreaterThanOrEqual(n: N) {
+    this.check(
+      this.actual >= n,
+      `expected ${show(this.actual)} to be greater than or equal to ${show(n)}`,
+      `expected ${show(this.actual)} to be not greater than or equal to ${show(n)}`,
+    );
+  }
+
+  /** `actual < n`. */
+  toBeLessThan(n: N) {
+    const a = show(this.actual);
+    this.check(
+      this.actual < n,
+      `expected ${a} to be less than ${show(n)}`,
+      `expected ${a} to be not less than ${show(n)}`,
+    );
+  }
+
+  /** `actual <= n`. */
+  toBeLessThanOrEqual(n: N) {
+    this.check(
+      this.actual <= n,
+      `expected ${show(this.actual)} to be less than or equal to ${show(n)}`,
+      `expected ${show(this.actual)} to be not less than or equal to ${show(n)}`,
+    );
+  }
+}
+
+extend<R, E> Expect<() => R throws E> {
+  /**
+   * Calling `actual` throws; with `expected`, an error whose message contains it (a string) or
+   * matches it (a `RegExp`).
+   */
+  toThrow(expected?: string | Pattern) {
+    let thrown = false;
+    let message = "";
+    let text = "";
+    try {
+      this.actual();
+    } catch (e) {
+      thrown = true;
+      message = errorMessage(e);
+      text = __intrinsic_error_text(e);
+    }
+    const why = thrownWhy(thrown, message, text, expected, this.negated);
+    if (why != null) {
+      throw new AssertionError(why);
+    }
+  }
+}
+
+/**
+ * Why a `toThrow` check fails, in Vitest's words (which it uses for `.rejects` too); `null` if it
+ * passes. `thrown`: whether it threw (or the promise rejected), with an error whose message is
+ * `message` and whose text (`Name: message`) is `text`; `expected`: what the message must
+ * include or match.
+ */
+export function thrownWhy(
+  thrown: bool,
+  message: string,
+  text: string,
+  expected: string | Pattern | null | undefined,
+  negated: bool,
+): string | null {
+  const subject = "[Function]";
+  const verb = "throw";
+  if (expected == null) {
+    if (thrown == negated) {
+      return negated
+        ? `expected ${subject} to not ${verb} an error but ${show(text)} was thrown`
+        : `expected ${subject} to ${verb} an error`;
+    }
+    return null;
+  }
+  const what =
+    typeof expected == "string"
+      ? `error including ${show(expected)}`
+      : `error matching ${pattern(expected)}`;
+  if (!thrown) {
+    // `.not`: it was not to throw that error, and threw none.
+    return negated ? null : `expected ${subject} to ${verb} an error`;
+  }
+  const matches = typeof expected == "string" ? message.includes(expected) : expected.test(message);
+  if (matches == negated) {
+    return negated
+      ? `expected ${subject} to ${verb} ${what.replace("error ", "error not ")}`
+      : `expected ${subject} to ${verb} ${what} but got ${show(message)}`;
+  }
+  return null;
+}
+
+/**
+ * The message of a thrown value: an `Error`'s `message` (the error's text after its name), a
+ * string or a number as it is, anything else as `console.log` writes it.
+ */
+export function errorMessage<E>(e: E): string {
+  const text = __intrinsic_error_text(e);
+  if (typeof e != "object") {
+    return text;
+  }
+  // `Name: message`, the text of an `Error` (and of its subclasses).
+  const colon = text.indexOf(": ");
+  return colon > 0 && isName(text.slice(0, colon)) ? text.slice(colon + 2) : text;
+}
+
+/** Whether `s` is an identifier (an error's name). */
+function isName(s: string): bool {
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s[i];
+    const letter = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || c == "$";
+    if (!letter && !(i > 0 && c >= "0" && c <= "9")) {
+      return false;
+    }
+  }
+  return s.length > 0;
+}
+
+extend<V, E> Expect<Promise<V, E>> {
+  /** The matchers for what the promise resolves to: `await expect(p).resolves.toBe(1)`. */
+  get resolves(): Resolves<V, E> {
+    return new Resolves<V, E>(this.actual, this.negated);
+  }
+
+  /** The matchers for the promise's error: `await expect(p).rejects.toThrow("boom")`. */
+  get rejects(): Rejects<V, E> {
+    return new Rejects<V, E>(this.actual, this.negated);
+  }
+}

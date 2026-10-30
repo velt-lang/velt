@@ -60,8 +60,6 @@ export const allow: Allow = {
     "sqlite/sql/parser.vlt",
     "sqlite/sql/statement.vlt",
     "sqlite/sql/table.vlt",
-    "test/expect.vlt",
-    "test/index.vlt",
   ],
   multiClass: [
     "encoding/json/tape.vlt",
@@ -111,8 +109,6 @@ export const allow: Allow = {
     "sqlite/schema.vlt",
     "sqlite/sql/ast.vlt",
     "sqlite/sql/lexer.vlt",
-    "test/expect.vlt",
-    "test/suite.vlt",
   ],
   indexCode: [
     "db/index.vlt",
@@ -125,7 +121,6 @@ export const allow: Allow = {
     "package/index.vlt",
     "random/index.vlt",
     "task/index.vlt",
-    "test/index.vlt",
   ],
   unowned: [
     "postgres.vlt",
