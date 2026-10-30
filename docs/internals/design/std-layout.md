@@ -109,9 +109,10 @@ have their own docs page.
 | `velt/mem` | `needsDrop`, `Arena` (mem, arena) |
 | `velt/net` | TCP and TLS: `listen`, `connect`, `TcpStream` (net, net_bytes) |
 | `velt/net/dns`, `velt/net/udp` | dns, udp |
-| `velt/net/http` | HTTP both ways, as in Node, Deno, Bun and Go: the client (`fetch`, `Request`, `Response`, `Headers`) and the server written in Velt (`serve` with web-standard handlers `(req: Request) => Response`, and the lower-level `HttpRequest`/`HttpResponse`) (fetch, fetch/*, http/server) |
+| `velt/net/http` | the HTTP client and the web types both sides share, as the web globals of Node, Deno and Bun: `fetch`, `Request`, `Response`, `Headers` and their bodies (fetch, fetch/*) |
+| `velt/net/http/hpack` | HPACK (RFC 7541) and HTTP/2 frames, for the client and for servers outside std |
+| `velt/net/websocket` | the WebSocket client, and a `WebSocket` over an upgraded stream for servers (websocket) |
 | `velt/net/url` | `URL`, `URLSearchParams`, `encodeURIComponent` … (url) |
-| `velt/net/websocket` | websocket |
 | `velt/os` | os |
 | `velt/package` | the manifest types (package) |
 | `velt/path` | path |
@@ -137,12 +138,26 @@ APIs (no `__intrinsic_*`, no `declare`d runtime functions it does not own):
 | `packages/postgres` | `velt/postgres` + crate `velt_std_postgres` |
 | `packages/redis` | `velt/redis` + crate `velt_std_redis` |
 
-The HTTP server stays in std (decided 2026-10-30): it is pure Velt on public APIs, it is what
-`velt new api`, the docs tour, hot reload and the example apps are built on, and every
-comparable runtime ships one. The hyper-based server (`velt:http` `serve`,
-`crates/velt_rt/src/http/`, the `hyper` crates) is removed: the Velt server (#1533) replaces
-it, with a web-standard `serve((req: Request) => Response)` on top of its `HttpRequest` /
-`HttpResponse`. It speaks HTTP/1.1 (and TLS); HTTP/2 written in Velt is a follow-up issue.
+| `packages/http-server` | the HTTP server written in Velt (#1533, HTTP/1.1, HTTP/2, TLS): `"http-server"` with `serve` (web-standard handlers, `(req: Request) => Response`) and the lower-level `serveHttp`, `HttpRequest`, `HttpResponse`; `"http-server/websocket"`, the WebSocket server (`upgradeWebSocket`, on the client's `WebSocket` over an upgraded stream) |
+
+The HTTP server leaves std too (decided 2026-10-30, after first keeping it): a server is a
+library, and the one Velt ships is the proof that anyone can write one on public APIs. Moving
+it out removes what only std could do for it:
+
+- `Request` and `Response` gain public API for a server: a `Request` over a body read when
+  asked for (`RequestSource`), a `Response`'s parts read for writing (status, headers, body
+  kind), and `101 Switching Protocols`. No `private` member is called from another module.
+- Hot reload's graceful stop is `velt/dev` (`stopRequested`, `drained`), not the runtime
+  functions declared in the server.
+- HPACK and HTTP/2 frames are `velt/net/http/hpack`, which the `fetch` client uses too.
+- The concurrency checks for callbacks that run on other threads (a handler must not change
+  what it captures, nor capture a resource) apply to any function outside the caller's
+  package, not to std's functions only; the handler error tests check that rule with a
+  function of their own that spawns its callback.
+
+The hyper-based server (`velt:http` `serve`, `crates/velt_rt/src/http/`, the `hyper` crates) is
+removed. The examples and `velt new` templates depend on the package by path, as the sqlite
+examples do.
 
 Every row maps to entries in `layout.vlt`; that file is authoritative where they differ. The
 whole tree after the move is in the appendix.
@@ -399,9 +414,8 @@ building and passing its tests:
 3. The move: the script's run, the new `index.vlt` files, `velt/io`'s plumbing split from its
    API (`io/error.vlt`, `io/result.vlt`), and the fixes the tests need.
 4. The hyper server removed (`velt:http` `serve`, `crates/velt_rt/src/http/`, the hyper
-   crates, the `http_handler` intrinsic); the Velt server moves into `velt/net/http` with a
-   web-standard `serve`; its users and tests follow; the handler-capture error goldens test the
-   general task analysis (`spawn`) instead.
+   crates, the `http_handler` intrinsic); the Velt server gets a web-standard `serve`, HTTP/2,
+   and moves to `packages/http-server` on public APIs (§3).
 5. The public APIs packages need (§10): row and parameter binding in `velt/db`, byte and
    capacity APIs, status texts in `velt/net/http`, a WebSocket from an upgraded stream.
 6. `packages/sqlite`, `packages/postgres`, `packages/redis`, each owning its tests and docs, run
