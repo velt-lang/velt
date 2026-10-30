@@ -304,7 +304,14 @@ fn run(
         })).collect::<Vec<_>>(),
     });
     let host_root = dir.join("__velt_generate_host.vlt");
-    let output = match spawn_host(&host_root, &src, &input.to_string(), depth + 1) {
+    let input = input.to_string();
+    let key = output_key(&src, &input);
+    let cached = key.as_ref().and_then(cached_output);
+    let fresh = cached.is_none();
+    let output = match cached
+        .map(Ok)
+        .unwrap_or_else(|| spawn_host(&host_root, &src, &input, depth + 1))
+    {
         Ok(out) => out,
         Err(msg) => {
             let f = &demand.functions[demand.requests[0].function];
@@ -326,6 +333,9 @@ fn run(
         })
         .collect();
     let mut errors: Diagnostics = vec![];
+    if let (true, Some(key)) = (fresh, &key) {
+        store_output(key, &output);
+    }
     if let Err(msg) = parse_frames(&output, &mut written, &mut errors, demand, first_at) {
         let d =
             Diagnostic::error("a generator's output could not be read", first_at).with_note(msg);
@@ -500,6 +510,77 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
     )
 }
 
+/// What a generator run's output depends on: the compiler, the host program (which generators)
+/// and the requests with their model. The files the host's build read are checked when the
+/// entry is used ([`cached_output`]): a generator is a pure function of its request, so equal
+/// keys and unchanged files mean equal output (docs/internals/design/source-generators.md §9).
+fn output_key(src: &str, input: &str) -> Option<velt_build_cache::Key> {
+    crate::build_cache::cache()?;
+    let mut h = velt_build_cache::KeyHasher::new();
+    h.part(b"generate-output-v1");
+    h.part(&crate::build_cache::compiler_identity().0);
+    h.part(src.as_bytes());
+    h.part(input.as_bytes());
+    Some(h.finish())
+}
+
+fn file_hash(path: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(velt_build_cache::Key::of(&[&bytes]).hex())
+}
+
+/// The host's output for `key` from the cache, when every file its build read is unchanged.
+/// An entry is the list of those files with their hashes, a blank line, then the output.
+fn cached_output(key: &velt_build_cache::Key) -> Option<Vec<u8>> {
+    let entry = crate::build_cache::cache()?.get_key(GENERATED_KIND, key)?;
+    let split = entry.windows(2).position(|w| w == b"\n\n")?;
+    let list = std::str::from_utf8(&entry[..split]).ok()?;
+    for line in list.lines() {
+        let (hash, path) = line.split_once('\t')?;
+        if file_hash(path)? != hash {
+            return None;
+        }
+    }
+    Some(entry[split + 2..].to_vec())
+}
+
+fn store_output(key: &velt_build_cache::Key, output: &[u8]) {
+    let Some(cache) = crate::build_cache::cache() else {
+        return;
+    };
+    let Some(files) = read_files_record(output) else {
+        return;
+    };
+    let mut entry = String::new();
+    for f in files {
+        let Some(h) = file_hash(&f) else {
+            return;
+        };
+        entry.push_str(&format!("{h}\t{f}\n"));
+    }
+    entry.push('\n');
+    let mut bytes = entry.into_bytes();
+    bytes.extend_from_slice(output);
+    cache.put_key(GENERATED_KIND, key, &bytes);
+}
+
+/// The paths of the host's `#files` record (its first).
+fn read_files_record(output: &[u8]) -> Option<Vec<String>> {
+    let end = output.iter().position(|&b| b == b'\n')?;
+    let header = std::str::from_utf8(&output[..end]).ok()?;
+    let len: usize = header.strip_prefix("#files ")?.parse().ok()?;
+    let list = std::str::from_utf8(output.get(end + 1..end + 1 + len)?).ok()?;
+    Some(
+        list.lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect(),
+    )
+}
+
+/// The build cache's kind for generator output.
+const GENERATED_KIND: &str = "generated";
+
 /// Run the host and return its standard output.
 fn spawn_host(root: &Path, src: &str, input: &str, depth: u32) -> Result<Vec<u8>, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find `velt`: {e}"))?;
@@ -577,6 +658,7 @@ fn parse_frames(
         };
         match words.as_slice() {
             ["done"] => done = true,
+            ["files"] => {}
             ["instance", name, key, function, args] => {
                 let args = (args.split(',').filter(|a| !a.is_empty()))
                     .map(|a| a.parse::<u32>().map_err(|e| e.to_string()))
@@ -657,6 +739,15 @@ pub fn host_main(root: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // The files the build read, for the output cache (`cached_output`), before any output.
+    let files: Vec<String> = (sess.sm.files())
+        .map(|(_, f)| f.path.clone())
+        .filter(|p| p.is_file())
+        .map(|p| p.display().to_string())
+        .collect();
+    let list = files.join("\n");
+    print!("#files {}\n{list}\n", list.len());
+    let _ = std::io::stdout().flush();
     velt_rt_host::process::set_args(vec![root.display().to_string()]);
     let code = velt_rt_host::entry::run_main(loaded.main());
     std::process::exit(code)
