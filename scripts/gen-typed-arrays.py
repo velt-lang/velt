@@ -339,7 +339,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * @N@;
-      @WRITE@;
+      @FAST_WRITE@;
     }
   }
 
@@ -810,10 +810,11 @@ UINT8_EXTRA = """
 """
 
 
-# `xs[i]` of wider elements: the tests of `count`, the same as a loop up to `length` makes, so
-# the compiler drops them in such a loop (and vectorizes it).
-INDEX_WIDE = """\
-    // One test per branch, so the compiler knows `i` is in range where it converts it.
+# `xs[i]`: the tests of `count`, the same as a loop up to `length` makes, so the compiler drops
+# them in such a loop (and vectorizes it), also in one up to `length` inclusive that reads
+# `xs[i - 1]`; then a read with no check of its own (`count` keeps the element inside the
+# buffer's bytes, even when they are a `u8[]` that became shorter).
+INDEX = """    // One test per branch, so the compiler knows `i` is in range where it converts it.
     if (!(i >= 0)) {
       this.outOfBounds(i);
     }
@@ -825,31 +826,7 @@ INDEX_WIDE = """\
     }
     // Inside the view, which is inside its buffer's bytes (`count`).
     const o = this.off + (i as usize) * @N@;
-    return @READ@;"""
-
-# `xs[i]` of bytes: `i` whole below 2^52 first, then one integer test that the byte is inside
-# the view and inside its buffer's bytes (`count`), which the byte read's own check then follows
-# from: one test per read where the index is not a loop's counter (a page's cells).
-INDEX_BYTE = """\
-    // One test per branch, so the compiler knows `i` is a whole number from 0 below 2^52 where
-    // it converts it (no position computed from it can wrap).
-    if (!(i >= 0)) {
-      this.outOfBounds(i);
-    }
-    if (!(i < 4503599627370496)) {
-      this.outOfBounds(i);
-    }
-    if (i != Math.trunc(i)) {
-      this.outOfBounds(i);
-    }
-    // Inside the view and inside its buffer's bytes (`count`), in one test.
-    const o = this.off + (i as usize);
-    const end = this.off + this.len;
-    const n = this.buf.bytes.length as usize;
-    if (!(o < (end < n ? end : n))) {
-      this.outOfBounds(i);
-    }
-    return @READ@;"""
+    return @FAST_READ@;"""
 
 GONE = """
   // Element bytes at `o` past the end of the buffer's bytes (cold): its bytes are a `u8[]`
@@ -862,8 +839,8 @@ GONE = """
 """
 
 
-BUFFER_NAMES = ["ArrayBuffer", "element16", "element32", "elementF32", "elementF64", "load16",
-                "load32", "loadF32", "loadF64", "relative", "setElement16", "setElement32",
+BUFFER_NAMES = ["ArrayBuffer", "element8", "element16", "element32", "elementF32", "elementF64", "load16",
+                "load32", "loadF32", "loadF64", "relative", "setElement8", "setElement16", "setElement32",
                 "setElementF32", "setElementF64", "store16", "store32", "storeF32", "storeF64",
                 "toIndex", "toInteger", "toUint32", "toUint8", "toUint8Clamp"]
 BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "layout", "localeNumber"]
@@ -901,11 +878,15 @@ def main():
             "\n    if (!(o + %d <= (this.buf.bytes.length as usize))) {\n      this.gone(o);\n    }" % n)
         t = t.replace("@INSIDE@", inside)
         t = t.replace("@GONE@", "" if n == 1 else GONE)
-        t = t.replace("@INDEX_BODY@", INDEX_BYTE if n == 1 else INDEX_WIDE)
+        t = t.replace("@INDEX_BODY@", INDEX)
         write_ = "const x = %s;\n    %s" % (convert, store)
+        # `xs[i]` and `xs[i] = v` test `count`, so a byte needs no check of its own there.
+        fast_read = read.replace("b[o]", "element8(b, o)")
+        fast_write = write_.replace("b[o] = x", "setElement8(b, o, x)")
         for k, v in [("@K@", str(kind)), ("@C@", c), ("@N@", str(n)),
-                     ("@READ@", read), ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
-            t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@") else v)
+                     ("@FAST_READ@", fast_read), ("@FAST_WRITE@", fast_write), ("@READ@", read),
+                     ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
+            t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@", "@FAST_READ@", "@FAST_WRITE@") else v)
         doc = CLASS_DOC.replace("@SNAKE@", snake(c)).replace("@C@", c).replace("@WHAT@", what)
         head = imports(t, BUFFER_NAMES, "velt:typed_array/buffer") + imports(t, BASE_NAMES, "velt:typed_array/base")
         write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
