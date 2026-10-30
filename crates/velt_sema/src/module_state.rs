@@ -18,7 +18,7 @@ mod locked_props;
 #[path = "module_state_reach.rs"]
 mod reach;
 
-use reach::{propagate, vars_reached, Reach};
+use reach::{callee_root, propagate, vars_reached, Reach};
 
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
@@ -358,7 +358,8 @@ impl crate::body::FnCx<'_, '_> {
 /// whose class hooks it may run without a call (`replaced_holders::implicit`).
 struct Facts {
     direct: Option<String>,
-    vars: Vec<DefId>, // every module state variable it uses (`script_locals`)
+    vars: Vec<DefId>,    // every module state variable it uses (`script_locals`)
+    called: Vec<String>, // the root file's variables whose function values it calls (same)
     edges: Vec<DefId>,
     tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
@@ -379,7 +380,8 @@ struct Facts {
 /// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
 /// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
 /// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` otherwise).
-/// Every variable a refused callback reaches is recorded (`script_locals`).
+/// Every variable a refused callback reaches is recorded, and the variables whose function
+/// values it calls (`script_locals`).
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // Without `any`, no function has properties (locked_props.rs).
     let props = cx.any.is_some_and(|a| a.imp.is_some());
@@ -408,7 +410,16 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             v.facts.tys.extend(f.body.locals.iter().map(|l| l.ty));
         }
         crate::visit::block(&mut f.body.block, &mut v);
-        let (fd, ws) = (v.facts, v.withs);
+        let (mut fd, ws) = (v.facts, v.withs);
+        if cx.fn_info(d).module == cx.root {
+            let names = v
+                .called_locals
+                .iter()
+                .filter_map(|l| f.body.locals.get(l.0 as usize));
+            fd.called.extend(names.map(|l| l.name.clone()));
+        } else {
+            fd.called.clear();
+        }
         callbacks.extend(v.callbacks);
         proxies.add(v.proxies);
         cx.defs[d.0 as usize] = Some(hir::Def::Fn(f));
@@ -512,7 +523,9 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             .with_note(format!("read what you need before `{method}` and pass it in, and store what it returns after")),
         );
     }
-    cx.state_refused.extend(vars_reached(&facts, refused));
+    let (vars, called) = vars_reached(&facts, refused);
+    cx.state_refused.extend(vars);
+    cx.state_called.extend(called);
 }
 
 /// How a diagnostic names a node of the reach graph: a function, an object type's field
@@ -546,6 +559,7 @@ struct FactsOf<'a, 'm> {
     std: bool,
     facts: Facts,
     withs: Vec<(hir::Expr, velt_common::Span, &'static str)>,
+    called_locals: Vec<hir::LocalId>, // the locals whose function values it calls
     /// The callbacks of every `with`, `read` and `write` written as a closure or a named
     /// function, also the standard library's (locked_props.rs).
     callbacks: Vec<DefId>,
@@ -561,6 +575,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
             facts: Facts {
                 direct: None,
                 vars: vec![],
+                called: vec![],
                 edges: vec![],
                 tys: FxHashSet::default(),
                 resumes: false,
@@ -568,6 +583,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
                 slots: vec![],
             },
             withs: vec![],
+            called_locals: vec![],
             callbacks: vec![],
             proxies: Default::default(),
         }
@@ -703,7 +719,17 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                         }
                     }
                 }
-                hir::Callee::Indirect(_) => self.unknown("calls a function value"),
+                hir::Callee::Indirect(x) => {
+                    match callee_root(x).map(|x| &x.kind) {
+                        Some(E::Local(l, _)) => self.called_locals.push(*l),
+                        Some(E::Global(d)) => {
+                            let name = self.cx.global(*d).map(|g| g.name.clone());
+                            self.facts.called.extend(name);
+                        }
+                        _ => {}
+                    }
+                    self.unknown("calls a function value")
+                }
                 hir::Callee::Virtual { slot } => {
                     self.passed(args);
                     self.dynamic_args(args);

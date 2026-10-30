@@ -5,7 +5,9 @@
 //! so such a variable may be one that module state can't hold: a promise (`let p =
 //! Promise.resolve(1)`, `body::driver::promise_in_state`), or one that a `Mutex` `with` callback
 //! uses (`module_state::check_locked_access`). Those checks record the variable
-//! (`Ctx::state_refused`: all of them, every variable a refused `with` callback reaches too).
+//! (`Ctx::state_refused`: all of them, every variable a refused `with` callback reaches too, and
+//! `Ctx::state_called`: the variables whose function values it calls, whose initializers'
+//! variables go with them, [`called_uses`]).
 //! Those that are variables of the root file's statements that only they use move into the
 //! generated `main` as locals, where they were before #1872 (closures capture them), with the
 //! variables below whose initializers use them, and the program is checked again: one extra
@@ -22,22 +24,35 @@ use crate::hir;
 use crate::SourceModule;
 use velt_common::{Diagnostics, Span};
 
-/// What one check returns: the program, the diagnostics, and the names of the root module's
-/// variables that module state refused ([`refused`]).
-pub(crate) type Checked = ((Option<hir::Program>, Diagnostics), Vec<String>);
+/// What one check returns: the program, the diagnostics, and the variables module state
+/// refused ([`refused`]).
+pub(crate) type Checked = ((Option<hir::Program>, Diagnostics), Refused);
 
-/// The names of the root module's variables that module state refused in `cx`, when it found
-/// errors.
-pub(crate) fn refused(cx: &Ctx, root: usize) -> Vec<String> {
+/// The root module's variables that module state refused in a check.
+#[derive(Default)]
+pub(crate) struct Refused {
+    /// Their names.
+    pub vars: Vec<String>,
+    /// The names of the variables (module-level, or locals of `main`) whose function values a
+    /// refused `with` callback calls: the variables their initializers use move ([`called_uses`]).
+    pub called: Vec<String>,
+}
+
+/// The root module's variables that module state refused in `cx`, when it found errors.
+pub(crate) fn refused(cx: &Ctx, root: usize) -> Refused {
     if crate::error_count(cx) == 0 {
-        return vec![];
+        return Refused::default();
     }
-    (cx.state_refused.iter())
+    let vars = (cx.state_refused.iter())
         .filter_map(|d| match cx.info.get(d.0 as usize) {
             Some(DefInfo::Global(g)) if g.module == root => Some(g.name.clone()),
             _ => None,
         })
-        .collect()
+        .collect();
+    Refused {
+        vars,
+        called: cx.state_called.clone(),
+    }
 }
 
 /// Check `modules` with `check`, and again with the refused script variables that can move
@@ -46,7 +61,7 @@ pub(crate) fn refused(cx: &Ctx, root: usize) -> Vec<String> {
 pub(crate) fn check<T>(
     modules: &[SourceModule],
     root: usize,
-    mut check: impl FnMut(&[SourceModule]) -> (T, Vec<String>),
+    mut check: impl FnMut(&[SourceModule]) -> (T, Refused),
 ) -> T {
     let mut moved: FxHashSet<String> = FxHashSet::default();
     loop {
@@ -57,13 +72,59 @@ pub(crate) fn check<T>(
         let Some(module) = modules.get(root) else {
             return out;
         };
-        let candidates = moved.iter().cloned().chain(refused).collect();
+        let called = called_uses(&module.ast, refused.called);
+        let candidates = (moved.iter().cloned())
+            .chain(refused.vars)
+            .chain(called)
+            .collect();
         let more = movable(&module.ast, candidates);
         if more.is_subset(&moved) {
             return out;
         }
         moved.extend(more);
     }
+}
+
+/// The variables a refused `with` callback reaches through the function values it calls, which
+/// the check can't follow (a call through a function value has no edges): `called`, the
+/// variables (module-level, or statements of the generated `main`) that hold them, and those
+/// their initializers name, and so on, so that a module-level variable such a closure uses moves
+/// into `main`, where the callback captures it.
+fn called_uses(m: &ast::Module, called: Vec<String>) -> Vec<String> {
+    let stmts = script_main(&m.items).map_or(&[][..], |at| match &m.items[at].kind {
+        ast::ItemKind::Function(f) => &f.body.stmts[..],
+        _ => &[],
+    });
+    let init_of = |name: &str| {
+        let local = stmts.iter().find_map(|s| match &s.kind {
+            ast::StmtKind::Var(v) => {
+                let named = matches!(&v.pattern.kind, ast::PatternKind::Ident(i) if i.name == name);
+                named.then_some(v.init.as_ref()).flatten()
+            }
+            _ => None,
+        });
+        local.or_else(|| match &var_named(&m.items, name)?.1.kind {
+            ast::ItemKind::Var(v) => v.init.as_ref(),
+            _ => None,
+        })
+    };
+    let (mut seen, mut out) = (FxHashSet::default(), vec![]);
+    let mut todo = called;
+    while let Some(name) = todo.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(init) = init_of(&name) else {
+            continue;
+        };
+        todo.extend(
+            velt_syntax::expr_free_uses(init)
+                .into_iter()
+                .map(|u| u.name),
+        );
+        out.push(name);
+    }
+    out
 }
 
 /// The generated `main` of a root file's statements: its index among `items`.
@@ -268,11 +329,17 @@ mod tests {
             };
             let mut locals: Vec<String> = originally.iter().filter(|n| local(n)).cloned().collect();
             locals.sort();
-            let refusing = (items.iter().filter_map(var_name))
+            let vars = (items.iter().filter_map(var_name))
                 .filter(|n| refused.iter().any(|r| n.starts_with(r)))
                 .map(String::from)
                 .collect();
-            (locals, refusing)
+            (
+                locals,
+                Refused {
+                    vars,
+                    called: vec![],
+                },
+            )
         });
         (count, moved)
     }

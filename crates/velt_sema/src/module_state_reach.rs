@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Facts;
-use crate::hir::DefId;
+use crate::hir::{self, DefId};
 
 /// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
 /// function value whose body is not known; with the calls that lead there.
@@ -53,15 +53,32 @@ pub(super) fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Rea
 }
 
 /// Every module state variable the code from `todo` may reach (along the edges), so a
-/// refused variable moves in one extra check however many a callback reaches (`script_locals`).
-pub(super) fn vars_reached(facts: &FxHashMap<DefId, Facts>, mut todo: Vec<DefId>) -> Vec<DefId> {
-    let (mut seen, mut vars) = (FxHashSet::default(), vec![]);
+/// refused variable moves in one extra check however many a callback reaches (`script_locals`);
+/// and the names of the variables whose function values that code calls, whose initializers'
+/// variables move too: a call through a function value has no edges.
+pub(super) fn vars_reached(
+    facts: &FxHashMap<DefId, Facts>,
+    mut todo: Vec<DefId>,
+) -> (Vec<DefId>, Vec<String>) {
+    let (mut seen, mut vars, mut called) = (FxHashSet::default(), vec![], vec![]);
     while let Some(d) = todo.pop() {
         let Some(f) = facts.get(&d).filter(|_| seen.insert(d)) else {
             continue;
         };
         vars.extend(&f.vars);
+        called.extend(f.called.iter().cloned());
         todo.extend(&f.edges);
     }
-    vars
+    (vars, called)
+}
+
+/// The variable a call through a function value reads it from: `f()`, `o.f()`, `fs[0]()`.
+pub(super) fn callee_root(mut e: &hir::Expr) -> Option<&hir::Expr> {
+    loop {
+        match &e.kind {
+            hir::ExprKind::Field { base, .. } | hir::ExprKind::Index { base, .. } => e = base,
+            hir::ExprKind::Local(..) | hir::ExprKind::Global(_) => return Some(e),
+            _ => return None,
+        }
+    }
 }

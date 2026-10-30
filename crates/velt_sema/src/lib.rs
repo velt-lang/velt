@@ -311,7 +311,7 @@ fn check_timed(
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
-        return ((None, vec![d]), vec![]);
+        return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
     let null_proto = modules
@@ -481,7 +481,7 @@ fn check_timed(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
     };
-    ((Some(program), diags), vec![])
+    ((Some(program), diags), Default::default())
 }
 
 /// How many times at most a program is checked again for the error types of function types

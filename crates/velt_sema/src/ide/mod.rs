@@ -98,7 +98,7 @@ fn analyze(
     modules: &[SourceModule],
     root: usize,
     stack_budget: usize,
-) -> (Analysis, bool, Vec<String>) {
+) -> (Analysis, bool, crate::script_locals::Refused) {
     let lifted = crate::generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = crate::overloads::rewrite(modules);

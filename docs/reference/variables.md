@@ -266,7 +266,7 @@ function main() {
   holds a new object (so a `serve` handler or a test's callback may assign or change it); its
   initializer runs where it stands, after the statements above it, as in Node. When the rules
   above rule out module state for one that only closures keep there (it holds a promise, or a
-  `Mutex` `with` callback uses it), it stays a local of `main` instead, with the variables below
+  `Mutex` `with` callback uses it, also through a closure it calls), it stays a local of `main` instead, with the variables below
   it whose initializers read it.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
   task that never uses it. A read or write of a module-level `let`, or of a constant kept as
