@@ -13,7 +13,7 @@ use velt_sema::hir::{self, TyId, TyKind};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{FnLower, Glue};
-use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, UnOp};
+use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
@@ -73,14 +73,46 @@ impl FnLower<'_, '_> {
         if !self.is_enum(inner) {
             return same;
         }
-        // A union (`f64 | u8`, `f64 | string`): two values that are each not `===` themselves
-        // hold a `NaN`. Its other members compare as `===` does (an object by identity, where
-        // the key comparison would compare a `struct` by content).
-        let a_self = self.same_values(a, a, ty);
-        let b_self = self.same_values(b, b, ty);
-        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, a_self, b_self));
-        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Unary(UnOp::Not, both));
+        // A union (`f64 | u8`, `f64 | string`): two values that each hold a `NaN` in a float
+        // member are equal. Its other members compare as `===` does (an object by identity,
+        // where the key comparison would compare a `struct` by content; a tuple holding a `NaN`
+        // is not `===` itself, yet holds no `NaN` number).
+        let a_nan = self.holds_nan(a, ty);
+        let b_nan = self.holds_nan(b, ty);
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_nan, b_nan));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, nans))
+    }
+
+    /// Does the union value at `p` (of type `ty`, or an option of a union) hold a `NaN` in one
+    /// of its float members (Bool operand)?
+    fn holds_nan(&mut self, p: &Place, ty: TyId) -> Operand {
+        let r = self.temp(Ty::Bool);
+        let no = Operand::Const(Const::Bool(false), Ty::Bool);
+        self.assign(Place::local(r), Rvalue::Use(no));
+        let done = self.new_block();
+        let (p, union) = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => {
+                let some = self.option_is_some(p, ty);
+                self.when(some, done);
+                (self.some_payload(p, ty), inner)
+            }
+            _ => (p.clone(), ty),
+        };
+        self.for_each_variant(&p, union, |lw, _, parts| {
+            let [(x, t)] = &parts[..] else {
+                return;
+            };
+            let vt = lw.cx.ty(*t);
+            if !vt.is_float() {
+                return;
+            }
+            let (x, y) = (Operand::Copy(x.clone()), Operand::Copy(x.clone()));
+            let nan = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x, y));
+            lw.assign(Place::local(r), Rvalue::Use(nan));
+        });
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(Place::local(r))
     }
 
     /// `Object.is(a, b)` (`Intrinsic::SameValue`) for the values of concrete type `ty` at two

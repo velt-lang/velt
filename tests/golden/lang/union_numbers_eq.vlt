@@ -123,6 +123,12 @@ function main() {
   const nans: N[] = [NaN, 1u8];
   const mixed: (f64 | string)[] = ["a", NaN];
   console.log(nans.includes(NaN), mixed.includes(NaN), nans.indexOf(NaN), mixed.indexOf(NaN));
+  const us: (number | [number, number])[] = [[NaN, 1]];
+  console.log(us.includes(NaN), us.indexOf(NaN));
+  const vs: (number | [number, number])[] = [NaN];
+  console.log(vs.includes([NaN, 5]), vs.includes(NaN));
+  const ts: ([f64, i32] | string)[] = [[NaN, 1]];
+  console.log(ts.includes([NaN, 2]), ts.includes([NaN, 1]));
 
   console.log(
     weq(9007199254740993i64, 9007199254740992.0),
