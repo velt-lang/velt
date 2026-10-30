@@ -148,7 +148,8 @@ fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
                 std_modules(std, &path, out);
             }
         } else if let Some(module) = rel.strip_suffix(".vlt") {
-            out.push(module.to_string());
+            // A folder module's file is its folder: `cli/index.vlt` is `velt/cli`.
+            out.push(module.strip_suffix("/index").unwrap_or(module).to_string());
         }
     }
 }

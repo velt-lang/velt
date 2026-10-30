@@ -110,7 +110,7 @@ mod tests {
         for (pattern, target) in [
             ("*", "src/*"),
             ("./x/*", "src/*"),
-            ("velt:*", "src/*"),
+            ("velt/*", "src/*"),
             ("@a/*/b", "src/*"),
             ("@a/*", "src"),
             ("@a/*", "../outside/*"),
