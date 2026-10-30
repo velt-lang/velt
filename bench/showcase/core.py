@@ -204,8 +204,11 @@ def tsx_servers(ctx, server_threads):
     verr = velt_build(ctx, os.path.join(here, "server.vlt"), velt)
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     js = os.path.join(here, "server.mjs")
-    servers = [("Velt TSX", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(server_threads)}, verr, MT),
-               ("Velt TSX (1 thread)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": "1"}, verr, ST)]
+    # tsx/server.vlt serves through velt:http/server, written in Velt on std/net.
+    servers = [("Velt TSX on velt:http/server (written in Velt)", "velt", lambda p: [[velt, str(p)]],
+                {"VELT_THREADS": str(server_threads)}, verr, MT),
+               ("Velt TSX on velt:http/server (written in Velt, 1 thread)", "velt", lambda p: [[velt, str(p)]],
+                {"VELT_THREADS": "1"}, verr, ST)]
     n = server_threads
     node_err = nerr or (None if ctx.node else "node not found")
     bun_err = nerr or (None if ctx.bun else "bun not found")

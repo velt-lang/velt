@@ -46,8 +46,8 @@ sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It 
    `-C target-cpu=native` and Velt gets `--cpu native`. Node and Bun run without flags (React
    with `NODE_ENV=production`). Velt's runtime library (`velt_rt`, the Rust part: tokio, hyper,
    the allocator) is linked prebuilt, built by `cargo build --release` with its own profile (thin
-   LTO, baseline x86-64), so in the server rows Rust's fat LTO over tokio and hyper is if
-   anything the stronger build.
+   LTO, baseline x86-64); the Velt servers do not use its hyper (below), and Rust's fat LTO over
+   axum, hyper and tokio is if anything the stronger build.
 3. **No warm-up tricks.** Every process is timed from start to exit (start-up, JIT and file
    reading included), except where a suite times its own loop for every language alike (the
    SQLite workloads, the fetch scenarios, `concurrent_map`: the program prints its own time).
@@ -111,10 +111,10 @@ processes; `VmHWM`, each process's own peak).
 | `core` | collections, strings, language features: `bench/typical` (19 TypeScript programs, each with a Rust port), `bench/iter`, `bench/strings_utf16`, `bench/key_order`, `bench/any_ops`, `bench/any_text`, `bench/typed_array`, `bench/structs`, `bench/btree`, `bench/atomics`, `bench/stdport` (below) | ✓ | most | most | most |
 | `sqlite` | insert in a transaction, point select, range select, autocommit insert (`bench/db`, file database, WAL) | ✓ | ✓ (rusqlite) | ✓ (better-sqlite3) | ✓ (bun:sqlite, `bun/sqlite.ts`) |
 | `sqlite` | rows to JSON: the feed and post queries of `bench/feed` (`bench/sqlite`) | ✓ | ✓ (rusqlite + serde_json) | | |
-| `compile` | hello world, nbody, the TechEmpower server: Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
-| `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (velt:http) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
-| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt`, `tsx/server.mjs`) | ✓ | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
-| `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ (server cores, and 1 thread) | | ✓ (ws, 1 process) | ✓ (1 process) |
+| `compile` | hello world, nbody, the TechEmpower server (`velt/techempower_server.vlt` against axum): Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
+| `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Velt in `velt/techempower_server.vlt`, Bun.serve in `bun/techempower.ts`) | ✓ (velt:http/server, written in Velt) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
+| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt` on velt:http/server, `tsx/server.mjs`) | ✓ (velt:http/server) | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
+| `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, Velt in `velt/chat_server.vlt`, load from `chat/load`) | ✓ (velt:http/server + velt:websocket; server cores, and 1 thread) | | ✓ (ws, 1 process) | ✓ (1 process) |
 | memory | peak RSS of every benchmark above, one table (`memory.md`) | | | | |
 
 The JSON rows say which Velt API they use; all of them run the JSON engine written in Velt
@@ -154,9 +154,17 @@ generator's limit, not the server's); a loss line in the results' README says
 "(load-bound)" when either row was. Every server table, the TechEmpower routes and the TSX
 pages alike, has each JavaScript server twice: as one process (one core) and on every server
 core (`node:cluster` with one worker per core; Bun with `reusePort` and one process per core).
-Velt (`VELT_THREADS` set to the server CPUs) and axum use every server core, and Velt runs a
-second time on one thread (`VELT_THREADS=1`), the row the one-process servers are compared
-with. Before any timing, every server is started once
+The Velt servers are written in Velt: `velt:http/server`, the HTTP/1.1 server on std/net
+(`std/http/server.vlt`), and for the chat `velt:websocket`'s `acceptWebSocket` on it, not
+`velt:http`, whose `serve` is hyper in the Rust runtime. `velt/techempower_server.vlt` has the
+routes of `bench/http/techempower/server.vlt`, `velt/chat_server.vlt` is
+`bench/chat/velt/server.vlt` with the server swapped (both suites' own programs stay on
+`velt:http`), and `tsx/server.vlt` serves the TSX page. They use the server as a program would:
+`serve` with its defaults (one accept loop, one task per connection on the runtime's threads,
+keep-alive and pipelining as for any client), no options the other servers do not get. Velt
+(`VELT_THREADS` set to the server CPUs) and axum use every server core, and Velt runs a second
+time on one thread (`VELT_THREADS=1`), the row the one-process servers are compared with.
+Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
 response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,
 which the `tsx` category compares with React's and Preact's byte for byte). A server that fails

@@ -1,0 +1,294 @@
+// chatbench (bench/chat/SPEC.md) on the servers written in Velt: bench/chat/velt/server.vlt
+// with velt:http/server (the HTTP/1.1 server on std/net) and velt:websocket's
+// `acceptWebSocket` in place of velt:http (hyper in the runtime) and `upgradeWebSocket`; the
+// rest (rooms, SQLite, messages) is that program's. All cores, one process. Rooms are shared
+// state behind a Mutex; a broadcast is a loop of queued sends (std/websocket sends return once
+// queued). Plain HTTP/WS only (the showcase runs no TLS).
+// Usage: chat_server [port]; env PORT, HOST (127.0.0.1), DB (chat.db).
+
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { WebSocket, WsMessage, acceptWebSocket } from "velt:websocket";
+import { hmacSha256 } from "velt:crypto";
+import { hexEncode, utf8Encode } from "velt:encoding";
+import { open, Database } from "velt:sqlite";
+import { args } from "velt:process";
+import { existsSync, removeSync } from "velt:fs";
+
+const KEY = "chatbench-secret";
+
+const SCHEMA = `
+  PRAGMA journal_mode=WAL;
+  PRAGMA synchronous=NORMAL;
+  CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    room TEXT NOT NULL,
+    user TEXT NOT NULL,
+    text TEXT NOT NULL,
+    ts INTEGER NOT NULL
+  );
+  CREATE INDEX messages_room_id ON messages(room, id);`;
+
+const INSERT = "INSERT INTO messages (room, user, text, ts) VALUES (:room, :user, :text, :ts)";
+const HISTORY = "SELECT id, user, text, ts FROM messages WHERE room = :room ORDER BY id DESC LIMIT 20";
+
+type ClientMessage = { type: "say"; text: string } | { type: "ping"; t: number };
+
+type Row = { id: i64; user: string; text: string; ts: i64 };
+type Welcome = { type: "welcome"; user: string; room: string; history: Row[] };
+type Message = { type: "message"; id: i64; room: string; user: string; text: string; ts: i64 };
+type Pong = { type: "pong"; t: number };
+type Stats = { connections: i64; rooms: i64; messages: i64 };
+
+function badMessage(): string {
+  return `{"type":"error","error":"bad message"}`;
+}
+
+// Who is in which room.
+class Rooms {
+  rooms: Map<string, Map<i64, WebSocket>> = new Map<string, Map<i64, WebSocket>>();
+
+  join(room: string, id: i64, ws: WebSocket) {
+    const members = this.rooms.get(room);
+    if (members == null) {
+      const m = new Map<i64, WebSocket>();
+      m.set(id, ws);
+      this.rooms.set(room, m);
+    } else {
+      members.set(id, ws);
+    }
+  }
+
+  leave(room: string, id: i64) {
+    const members = this.rooms.get(room);
+    if (members != null) {
+      members.delete(id);
+      if (members.size == 0) {
+        this.rooms.delete(room);
+      }
+    }
+  }
+
+  members(room: string): WebSocket[] {
+    const out: WebSocket[] = [];
+    const members = this.rooms.get(room);
+    if (members != null) {
+      for (const s of members.values()) {
+        out.push(s);
+      }
+    }
+    return out;
+  }
+
+  count(): i64 {
+    return this.rooms.size as i64;
+  }
+}
+
+type SharedRooms = shared<Mutex<Rooms>>;
+
+// `[a-z0-9]{1,32}`.
+function validName(s: string): bool {
+  if (s.length < 1 || s.length > 32) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (!((c >= 97 && c <= 122) || (c >= 48 && c <= 57))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The user of a valid token `<user>.<hex HMAC-SHA256(user)>`, or null.
+function verify(token: string): string | null {
+  const dot = token.indexOf(".");
+  if (dot <= 0) {
+    return null;
+  }
+  const user = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  return sig == hexEncode(hmacSha256(utf8Encode(KEY), utf8Encode(user))) ? user : null;
+}
+
+// Characters as code points, like the other implementations.
+function codePoints(s: string): i64 {
+  let n: i64 = 0;
+  for (const _ of s) {
+    n++;
+  }
+  return n;
+}
+
+async function receive(ws: WebSocket): Promise<WsMessage | null> {
+  try {
+    return await ws.receive();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function sendQuietly(ws: WebSocket, text: string) {
+  try {
+    await ws.send(text);
+  } catch (e) {
+    return;
+  }
+}
+
+async function say(
+  ws: WebSocket,
+  user: string,
+  room: string,
+  text: string,
+  db: Database,
+  rooms: SharedRooms,
+  messages: shared<i64>,
+) {
+  const n = codePoints(text);
+  if (n < 1 || n > 1000) {
+    await sendQuietly(ws, badMessage());
+    return;
+  }
+  const ts = Date.now() as i64;
+  const r = db.prepare(INSERT).runWith({ room: room, user: user, text: text, ts: ts });
+  messages.add(1);
+  const msg: Message = {
+    type: "message",
+    id: r.lastInsertRowid,
+    room: room,
+    user: user,
+    text: text,
+    ts: ts,
+  };
+  const out = JSON.stringify(msg);
+  for (const s of rooms.with((m) => m.members(room))) {
+    await sendQuietly(s, out);
+  }
+}
+
+async function handle(
+  ws: WebSocket,
+  user: string,
+  room: string,
+  text: string,
+  db: Database,
+  rooms: SharedRooms,
+  messages: shared<i64>,
+) {
+  let msg: ClientMessage | null = null;
+  try {
+    msg = JSON.parse<ClientMessage>(text);
+  } catch (e) {
+    msg = null;
+  }
+  if (msg == null) {
+    await sendQuietly(ws, badMessage());
+    return;
+  }
+  switch (msg.type) {
+    case "ping": {
+      const pong: Pong = { type: "pong", t: msg.t };
+      await sendQuietly(ws, JSON.stringify(pong));
+      return;
+    }
+    case "say":
+      await say(ws, user, room, msg.text, db, rooms, messages);
+      return;
+  }
+}
+
+async function session(
+  ws: WebSocket,
+  user: string,
+  room: string,
+  id: i64,
+  db: Database,
+  rooms: SharedRooms,
+  connections: shared<i64>,
+  messages: shared<i64>,
+) {
+  connections.add(1);
+  try {
+    const rows: Row[] = db.prepare(HISTORY).allWith({ room: room });
+    rows.reverse();
+    const welcome: Welcome = { type: "welcome", user: user, room: room, history: rows };
+    await ws.send(JSON.stringify(welcome));
+    rooms.with((m) => m.join(room, id, ws));
+    let m = await receive(ws);
+    while (m != null) {
+      if (m.isBinary) {
+        await sendQuietly(ws, badMessage());
+      } else {
+        await handle(ws, user, room, m.text, db, rooms, messages);
+      }
+      m = await receive(ws);
+    }
+  } catch (e) {
+    // A database failure ends this connection only.
+  }
+  rooms.with((m) => m.leave(room, id));
+  connections.add(-1);
+  try {
+    await ws.close();
+  } catch (e) {
+    return;
+  }
+}
+
+function portArg(): number {
+  const argv = args();
+  const raw = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
+  return parseInt(raw, 10);
+}
+
+async function main() {
+  const path = process.env.DB ?? "chat.db";
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+  const db = open(path);
+  db.exec(SCHEMA);
+  const rooms: SharedRooms = shared(new Mutex<Rooms>(new Rooms()));
+  const connections = shared(0);
+  const messages = shared(0);
+  const ids = shared(0);
+  const host = process.env.HOST ?? "127.0.0.1";
+  const server = await serve({ port: portArg(), host: host }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/stats")) {
+      const stats: Stats = {
+        connections: connections.get(),
+        rooms: rooms.with((m) => m.count()),
+        messages: messages.get(),
+      };
+      res.json(JSON.stringify(stats));
+      return;
+    }
+    if (!req.pathIs("/ws")) {
+      res.status(404);
+      res.send("not found");
+      return;
+    }
+    const params = new URLSearchParams(req.query());
+    const user = verify(params.get("token") ?? "");
+    if (user == null) {
+      res.status(401);
+      res.send("unauthorized");
+      return;
+    }
+    const room = params.get("room") ?? "";
+    if (!validName(user) || !validName(room)) {
+      res.status(400);
+      res.send("bad request");
+      return;
+    }
+    // A request that is not a WebSocket handshake gets 426 (or 400) from acceptWebSocket.
+    const ws = acceptWebSocket(req, res);
+    if (ws != null) {
+      spawn(session(ws, user, room, ids.add(1), db, rooms, connections, messages));
+    }
+  });
+  console.log(`listening on http://127.0.0.1:${server.port}`);
+}

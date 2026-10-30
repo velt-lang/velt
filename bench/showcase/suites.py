@@ -448,10 +448,11 @@ def compile_benchmarks(ctx):
                       impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
                            [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache, threads=UNPAIRED)],
         })
-    # The HTTP server: velt:http against axum. Cargo compiles axum, hyper and tokio from source
+    # The HTTP server: velt:http/server (written in Velt, velt/techempower_server.vlt) against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
     # rebuild row (main.rs touched, dependencies built) is the comparable edit-compile time.
     te = os.path.join(ctx.bench, "http", "techempower")
+    vte = os.path.join(ctx.here, "velt", "techempower_server.vlt")
     axum_src = os.path.join(out, "axum-src")
     shutil.rmtree(axum_src, ignore_errors=True)
     shutil.copytree(os.path.join(te, "axum"), axum_src, ignore=shutil.ignore_patterns("target"))
@@ -461,9 +462,9 @@ def compile_benchmarks(ctx):
     cargo_cmd = ["cargo", "build", "--release", "-q", "--offline", "--locked"]
     relenv = {**nocache, **rust_profile()}
     benches.append({
-        "category": "compile", "name": "HTTP server (techempower: velt:http vs axum)", "check": "none",
-        "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", os.path.join(te, "server.vlt"), "-o", o + "-vd"], env=cold, threads=UNPAIRED),
-                  impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", os.path.join(te, "server.vlt"), "-o", o + "-vr"], env=cold, threads=UNPAIRED),
+        "category": "compile", "name": "HTTP server (techempower: velt:http/server vs axum)", "check": "none",
+        "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", vte, "-o", o + "-vd"], env=cold, threads=UNPAIRED),
+                  impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", vte, "-o", o + "-vr"], env=cold, threads=UNPAIRED),
                   impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--locked", "--target-dir", clean_t],
                        env=nocache, cwd=axum_src, pre=_rmtree(clean_t), threads=UNPAIRED),
                   impl("cargo build --release (fat LTO, as the runtime rows), clean: axum + deps", "rust",
