@@ -62,28 +62,42 @@ extend string {
   }
 
   /**
-   * Returns true if `needle` appears as a substring of this string; otherwise, returns false.
-   * Unlike JS, there is no `position` argument.
+   * Returns true if `needle` appears as a substring of this string at or after `position` (a
+   * code-unit index, clamped to the string); otherwise, returns false.
    * @param needle - search string
    */
-  includes(needle: string): bool {
-    return velt_rt_str_includes(this, needle);
+  includes(needle: string, position: i64 = 0): bool {
+    if (position <= 0) {
+      return velt_rt_str_includes(this, needle);
+    }
+    return velt_rt_str_index_of(this, needle, position) >= 0;
   }
 
   /**
-   * Returns true if this string starts with `prefix`. Otherwise returns false. Unlike JS, there
-   * is no `position` argument.
+   * Returns true if this string has `prefix` at `position` (a code-unit index, clamped to the
+   * string). Otherwise returns false.
    */
-  startsWith(prefix: string): bool {
-    return velt_rt_str_starts_with(this, prefix);
+  startsWith(prefix: string, position: i64 = 0): bool {
+    if (position <= 0) {
+      return velt_rt_str_starts_with(this, prefix);
+    }
+    const len = this.length as i64;
+    const start = position < len ? position : len;
+    return this.slice(start, start + (prefix.length as i64)) == prefix;
   }
 
   /**
-   * Returns true if this string ends with `suffix`. Otherwise returns false. Unlike JS, there is
-   * no `endPosition` argument.
+   * Returns true if the first `endPosition` code units of this string (all of it by default)
+   * end with `suffix`. Otherwise returns false.
    */
-  endsWith(suffix: string): bool {
-    return velt_rt_str_ends_with(this, suffix);
+  endsWith(suffix: string, endPosition: i64 = END): bool {
+    const len = this.length as i64;
+    if (endPosition >= len) {
+      return velt_rt_str_ends_with(this, suffix);
+    }
+    const end = endPosition > 0 ? endPosition : 0;
+    const n = suffix.length as i64;
+    return end >= n && this.slice(end - n, end) == suffix;
   }
 
   /**
