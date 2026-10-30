@@ -29,7 +29,8 @@ const SCHEMA = `
   CREATE INDEX messages_room_id ON messages(room, id);`;
 
 const INSERT = "INSERT INTO messages (room, user, text, ts) VALUES (:room, :user, :text, :ts)";
-const HISTORY = "SELECT id, user, text, ts FROM messages WHERE room = :room ORDER BY id DESC LIMIT 20";
+const HISTORY =
+  "SELECT id, user, text, ts FROM messages WHERE room = :room ORDER BY id DESC LIMIT 20";
 
 type ClientMessage = { type: "say"; text: string } | { type: "ping"; t: number };
 
@@ -256,7 +257,10 @@ async function main() {
   const messages = shared(0);
   const ids = shared(0);
   const host = process.env.HOST ?? "127.0.0.1";
-  const server = await serve({ port: portArg(), host: host }, async (req: HttpRequest, res: HttpResponse) => {
+  const server = await serve({ port: portArg(), host: host }, async (
+    req: HttpRequest,
+    res: HttpResponse,
+  ) => {
     if (req.pathIs("/stats")) {
       const stats: Stats = {
         connections: connections.get(),
