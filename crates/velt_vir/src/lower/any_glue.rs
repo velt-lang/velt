@@ -137,6 +137,13 @@ impl FnLower<'_, '_> {
 
     /// Member `m` of a value of type `ty`, when it can be called from glue.
     pub(super) fn ready(&mut self, ty: TyId, m: &DynMember) -> Option<Ready> {
+        self.ready_with(ty, m, false)
+    }
+
+    /// [`ready`](Self::ready), also for a member that throws when `throwing` (a method called,
+    /// a getter read or a setter written through `any`: its error leaves the slot as uncaught,
+    /// `finish_ready_call`).
+    pub(super) fn ready_with(&mut self, ty: TyId, m: &DynMember, throwing: bool) -> Option<Ready> {
         let (_, args) = self.plain_adt(ty)?;
         let owner = self.cx.subst(m.owner, &args);
         let TyKind::Adt(_, targs) = self.cx.kind(owner) else {
@@ -150,7 +157,7 @@ impl FnLower<'_, '_> {
             return None;
         }
         let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
-        (throws.is_none() || self.literal_accessor(owner, m) || self.is_proxy(owner))
+        (throws.is_none() || throwing || self.literal_accessor(owner, m) || self.is_proxy(owner))
             .then_some(())?;
         let (ret, _) = self.cx.call_sig(f);
         let ret = self.cx.subst(ret, &targs);
@@ -327,10 +334,13 @@ impl FnLower<'_, '_> {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         };
-        if self.cx.error_ty(Some(throws)).is_some() || !self.cx.any_boxable(ret) {
+        if !self.cx.any_boxable(ret) {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
+        // What the function throws leaves the slot as uncaught (`finish_ready_call`): the
+        // slot's status has no error to carry back to the caller's `catch` yet.
+        let throws = self.cx.error_ty(Some(throws));
         let slots = match (rest, params.split_last()) {
             // A rest parameter gets the arguments past the fixed ones, packed (`any_rest`).
             (true, Some((&last, fixed))) => {
@@ -368,7 +378,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        let abi = self.cx.ret_abi(ret, None);
+        let abi = self.cx.ret_abi(ret, throws);
         if abi.out.is_some() {
             pt.push(Ty::Ptr);
         }
@@ -377,7 +387,9 @@ impl FnLower<'_, '_> {
             params: pt,
             ret: abi.ret,
         };
-        let v = self.finish_call(callee, av, ret, None);
+        self.push_scope(super::ScopeKind::Uncaught);
+        let v = self.finish_call(callee, av, ret, throws);
+        self.scopes.pop();
         for (p, t) in slots {
             self.drop_glue(p, t);
         }
@@ -456,7 +468,8 @@ impl FnLower<'_, '_> {
                     continue;
                 }
                 let next = self.on_key(key, &m.name);
-                match (m.kind, self.ready(ty, &m)) {
+                let throwing = m.kind == DynMemberKind::Getter;
+                match (m.kind, self.ready_with(ty, &m, throwing)) {
                     (DynMemberKind::Getter, Some(r)) => {
                         let this = self.any_this(data, ty);
                         self.any_invoke(&r, this, vec![], &outp);
@@ -661,7 +674,13 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
-            match (m.kind, self.ready(ty, &m)) {
+            // A method that throws only when the program calls one of that name through `any`
+            // (`""`: a computed name), so the classes of the standard library held as `any` do
+            // not bring in every one of their throwing methods.
+            let keys = &self.cx.boxing.any_call_keys;
+            let throwing =
+                m.kind == DynMemberKind::Method && (keys.contains(&m.name) || keys.contains(""));
+            match (m.kind, self.ready_with(ty, &m, throwing)) {
                 (DynMemberKind::Method, Some(r)) => {
                     let f = self.cx.fn_def(r.def);
                     let params: Vec<TyId> = f.params[1..]

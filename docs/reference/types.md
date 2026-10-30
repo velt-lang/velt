@@ -2542,7 +2542,10 @@ does is an error saying it is not supported yet, never a quiet difference.
   expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
   `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
   Where an `any` is expected (`const slots: any = Object.create(null)`), it is a
-  `Record<string, any>`.
+  `Record<string, any>`; a function stored into it is called as its member through the `any`
+  (`slots.default = () => [];` then `slots.default()`), as is one in any record held by an
+  `any`, and calling a key that holds no function is Node's `TypeError: slots.k is not a
+  function`.
   `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
@@ -3367,7 +3370,12 @@ except a standard-library class's, which implement it and which Node's built-ins
 `x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
-call, string indexing, methods that throw or are generic, and members whose type is an enum.
+call, string indexing, generic methods, and members whose type is an enum. A function or method
+whose type says it may throw is called as any other, and returns its value when it doesn't
+throw; an error it throws through `any` can't be caught yet (#1938): it ends the process with
+Node's `Uncaught …` report and exit code 1, what Node does when nothing catches it, but without
+running the `finally` blocks around the call first, which Node does. An `async`
+function held by an `any` can't be called through it yet (its promise has no `any` form).
 The built-in methods of a string, an array, a number or a boolean held are called as in
 JavaScript (see "Operators and built-in methods on `any`" below). A member of a literal type (`kind: "ok"`), a union or an
 interface reads as the value it holds.

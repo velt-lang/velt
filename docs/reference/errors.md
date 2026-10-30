@@ -160,6 +160,11 @@ what a function stored there may throw.
   do this, so
   `xs.map((x) => parse(x))` throws what `parse` throws, and nothing when the callback cannot
   throw. Sort comparators and `Mutex.with` callbacks cannot throw.
+- A function or method that may throw can be called through an `any` (`const f: any = parse;
+  f("x")`, `o.m()` on an `any`), and returns its value when it doesn't throw. An error it throws
+  there can't be caught yet (#1938): like an error nothing catches, it ends the process with
+  `Uncaught <header>` and exit code 1, also inside a `try`, and the `finally` blocks around
+  the call (in this function or a caller) don't run first, where Node runs them.
 
 ## Errors as values
 

@@ -1,0 +1,19 @@
+// A class getter and setter that may throw, read and written through `any`: an error the setter
+// throws that nothing catches is Node's `Uncaught` report and exit code 1 (#1938).
+class Temp {
+  #c = 20;
+  get celsius(): number {
+    if (this.#c < -273) throw new RangeError("below absolute zero");
+    return this.#c;
+  }
+  set celsius(v: number) {
+    if (v < -273) throw new RangeError(`${v} is below absolute zero`);
+    this.#c = v;
+  }
+}
+const t: any = new Temp();
+console.log(t.celsius);
+t.celsius = 25;
+console.log(t.celsius);
+t.celsius = -300;
+console.log("not reached");
