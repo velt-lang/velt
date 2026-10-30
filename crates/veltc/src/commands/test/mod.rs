@@ -15,6 +15,7 @@
 mod cache;
 pub(crate) mod discover;
 mod harness;
+pub(crate) mod member_stamp;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -80,6 +81,11 @@ struct Run<'o> {
     diagnostics: Vec<Value>,
     /// The modules the test files import, as read so far.
     scanned: discover::Scanned,
+    /// The package's root, where a run whose every result is kept leaves its member stamp
+    /// (`member_stamp`); `None` outside a package.
+    root: Option<PathBuf>,
+    /// The directories test discovery listed, with the hash of their names.
+    listed: Vec<(PathBuf, String)>,
 }
 
 /// What one `velt test` run found.
@@ -136,7 +142,10 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
     )?;
     let base = project.as_ref().map_or(cwd.clone(), |p| p.root.clone());
     let search = path.map_or(base.clone(), Path::to_path_buf);
-    let files = discover::find_test_files(&search)?;
+    // What discovery listed, for the member stamp: a new test file is a change.
+    let (files, seen) = vpm::probe::record(|| discover::find_test_files(&search));
+    let files = files?;
+    let listed: Vec<(PathBuf, String)> = seen.listed.into_iter().collect();
     let mut watched = files.clone();
     if project.is_some() {
         watched.push(base.join(vpm::manifest::MANIFEST_FILE));
@@ -176,6 +185,7 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         opts,
         out_dir,
         cpu: super::cpu::for_running_here(cpu, &host, opts.release),
+        root: project.as_ref().map(|p| p.root.clone()),
         packages: project.map(|p| p.graph),
         failed: 0,
         watched,
@@ -185,6 +195,7 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         harnesses: vec![],
         diagnostics: vec![],
         scanned: discover::Scanned::default(),
+        listed,
     };
     let mut planned = vec![];
     for file in &files {
@@ -353,8 +364,47 @@ impl Run<'_> {
         if let Some(results) = &results {
             keep_passed(results, &built, &mut harnesses);
         }
+        let passed = status.as_ref().is_ok_and(|s| s.success());
+        self.leave_member_stamp(planned, &built, &harnesses, passed);
         let status = status.map_err(|e| format!("cannot run `{}`: {e}", runner.display()))?;
         Ok(status.success())
+    }
+
+    /// After a run in a package: a member stamp when it `passed` with every file's result kept
+    /// (built, and reaching nothing outside: its tests pass again while nothing changes), so the
+    /// workspace command can skip the package next time (`member_stamp`); else none.
+    fn leave_member_stamp(
+        &self,
+        planned: &[Planned],
+        built: &[Option<(PathBuf, usize)>],
+        harnesses: &BTreeMap<PathBuf, cache::Harness>,
+        passed: bool,
+    ) {
+        let Some(root) = &self.root else {
+            return;
+        };
+        let all_kept = !planned.is_empty()
+            && built.iter().all(|b| {
+                b.as_ref()
+                    .is_some_and(|(exe, i)| harnesses.get(exe).is_some_and(|h| h.keeps(*i)))
+            });
+        if !(passed && all_kept && self.failed == 0) {
+            member_stamp::remove(root);
+            return;
+        }
+        // Every file's report is kept by now (it passed), so they count every test.
+        let tests: usize = built
+            .iter()
+            .flatten()
+            .filter_map(|(exe, i)| harnesses[exe].cached(*i))
+            .map(|r| r["passed"].as_u64().unwrap_or(0) as usize)
+            .sum();
+        let args = crate::commands::members::command_line();
+        let stamps: Vec<Option<&str>> = harnesses
+            .values()
+            .map(cache::Harness::build_stamp)
+            .collect();
+        member_stamp::write(root, &args, tests, &stamps, &self.listed);
     }
 
     /// Build one harness for the files `group` of `planned` and record it in `built`. When a

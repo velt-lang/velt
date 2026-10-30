@@ -14,6 +14,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use vpm::workspace::{Member, Workspace};
 
 use super::{member_deps, shown};
+use crate::commands::test::member_stamp;
 use crate::style::{self, Stream};
 
 /// What a member's run printed and how it ended.
@@ -78,6 +79,19 @@ pub(super) fn run(
         .collect();
     let color = style::enabled(Stream::Stderr);
     let mut states = vec![State::Waiting; selected.len()];
+    // A member whose last `velt test` passed with every result kept, and of which nothing
+    // changed, passes again without a `velt` of its own (`test::member_stamp`).
+    if cmd == "test" {
+        let mut command = vec![OsString::from(cmd)];
+        command.extend(args.iter().cloned());
+        for (i, m) in selected.iter().enumerate() {
+            if let Some(tests) = member_stamp::up_to_date(&m.dir, &command) {
+                let name = format!("{} ({})", m.name(), shown(ws, &m.dir));
+                style::status("Unchanged", &format!("{name}: {tests} passed"));
+                states[i] = State::Passed;
+            }
+        }
+    }
     let mut first_failure: Option<i32> = None;
     let (tx, rx) = mpsc::channel::<(usize, Outcome)>();
     std::thread::scope(|scope| {

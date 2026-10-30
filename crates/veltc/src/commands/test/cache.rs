@@ -24,12 +24,17 @@ pub(super) struct Harness {
     key: String,
     /// The kept reports by the file's index in the harness.
     reports: BTreeMap<String, Value>,
+    /// The harness's build stamp as it was before the runner started: what the member stamp is
+    /// made of, so another run rebuilding the harness meanwhile doesn't lend it its sources.
+    build_stamp: Option<String>,
 }
 
 impl Harness {
     /// What is known of the harness `exe`, run with `filter`/`exact`; `enabled` is false for
     /// `--no-cache`.
     pub fn of(exe: &Path, filter: Option<&str>, exact: bool, enabled: bool) -> Harness {
+        // Before the program is read: the stamp's `link` entry then catches a relink after.
+        let build_stamp = std::fs::read_to_string(stamp::path(exe)).ok();
         let record = (enabled && stamp::enabled())
             .then(|| stamp::outside(exe))
             .flatten();
@@ -51,7 +56,13 @@ impl Harness {
             record,
             key,
             reports,
+            build_stamp,
         }
+    }
+
+    /// The harness's build stamp, as it was when the run began.
+    pub fn build_stamp(&self) -> Option<&str> {
+        self.build_stamp.as_deref()
     }
 
     /// What the tests of the file at `index` reach, for the runner to show (`the network`).

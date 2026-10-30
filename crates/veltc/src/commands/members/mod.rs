@@ -135,16 +135,33 @@ fn positional(args: &[OsString]) -> Option<String> {
     None
 }
 
+/// The command line `velt` goes on with after [`intercept`] (`velt test -p core` runs as
+/// `velt test` in `core`): what a member's test stamp is keyed by, as the workspace command
+/// keys its check.
+static COMMAND: std::sync::OnceLock<Vec<OsString>> = std::sync::OnceLock::new();
+
+/// The command line this `velt` runs (without the program name), after [`intercept`].
+pub fn command_line() -> Vec<OsString> {
+    match COMMAND.get() {
+        Some(args) => args.clone(),
+        None => std::env::args_os().skip(1).collect(),
+    }
+}
+
 /// Apply the member selection of `args` (the whole command line, without the program name).
 pub fn intercept(args: Vec<OsString>) -> Intercept {
-    match try_intercept(&args) {
+    let result = match try_intercept(&args) {
         Ok(Some(done)) => done,
         Ok(None) => Intercept::Continue(args),
         Err(e) => {
             style::error(&e);
             Intercept::Done(ExitCode::from(2))
         }
+    };
+    if let Intercept::Continue(args) = &result {
+        let _ = COMMAND.set(args.clone());
     }
+    result
 }
 
 fn try_intercept(args: &[OsString]) -> Result<Option<Intercept>, String> {
@@ -223,14 +240,20 @@ fn try_intercept(args: &[OsString]) -> Result<Option<Intercept>, String> {
         let rest = absolute_output(rest, &cwd);
         std::env::set_current_dir(&member.dir)
             .map_err(|e| format!("cannot enter `{}`: {e}", member.dir.display()))?;
-        if multi {
-            style::status(
-                "Member",
-                &format!("{} ({})", member.name(), shown(&ws, &member.dir)),
-            );
-        }
         let mut args = vec![OsString::from(cmd)];
         args.extend(rest);
+        let name = format!("{} ({})", member.name(), shown(&ws, &member.dir));
+        // As for several members (`run`): one whose tests can't have changed passes again.
+        if multi && cmd == "test" {
+            if let Some(tests) = crate::commands::test::member_stamp::up_to_date(&member.dir, &args)
+            {
+                style::status("Unchanged", &format!("{name}: {tests} passed"));
+                return Ok(Some(Intercept::Done(ExitCode::SUCCESS)));
+            }
+        }
+        if multi {
+            style::status("Member", &name);
+        }
         return Ok(Some(Intercept::Continue(args)));
     }
     if let Some(why) = one_member_only(&rest) {

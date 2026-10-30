@@ -250,7 +250,10 @@ every file of a shared harness, so a module that reads a file at its top level m
 run every time. A test whose result depends on how threads interleave, or on how long work takes
 against a timer, is pure by this rule, and a pass is kept: make such tests deterministic. A
 leak-checked run (`VELT_RC_STATS=1`, below) keeps its results apart from an ordinary run's, so a
-result kept without the check never skips it.
+result kept without the check never skips it. In a [workspace](../tooling/packages.md#workspaces),
+`velt test` at the root doesn't even start a member whose every test file was kept and of which
+nothing changed (a new test file is a change), and neither does `velt test -p <member>`: both print
+`Unchanged <member> (<dir>): N passed`. `--watch` always starts.
 
 ### Checking for leaks
 
