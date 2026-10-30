@@ -496,9 +496,9 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "doc",
-        summary: "Generate HTML API docs",
+        summary: "Generate HTML API docs (or JSON for other tools)",
         usage: &[
-            "doc [<file|dir>...] [--std] [-o <dir>]",
+            "doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file>]",
             "doc (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<doc options>]",
         ],
         about: "Documents exported items and the `///` comments above them. Without paths: the \
@@ -509,11 +509,22 @@ pub const COMMANDS: &[CommandHelp] = &[
             AFFECTED,
             FAIL_FAST,
             ("--std", "document the standard library"),
-            ("-o, --output <dir>", "output directory"),
+            (
+                "--format <html|json>",
+                "HTML pages (the default), or one JSON document (api.json) for tools",
+            ),
+            (
+                "-o, --output <dir|file>",
+                "output directory; with --format json also a .json file, or - for stdout",
+            ),
         ],
         examples: &[
             ("velt doc", "docs for the package"),
             ("velt doc --std -o std-docs", "standard library docs"),
+            (
+                "velt doc --std --format json -o std.json",
+                "standard library docs as JSON",
+            ),
         ],
     },
     CommandHelp {

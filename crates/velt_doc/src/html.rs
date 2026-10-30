@@ -62,41 +62,91 @@ fn anchor(item: &DocItem, parent: Option<&str>) -> String {
     }
 }
 
-/// Where documented types are, for links in signatures. All module pages live in one
-/// directory, so a link is `<page>#<anchor>`.
+/// A documented item that a signature or a doc comment links to: where it is declared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    /// The declaring module.
+    pub module: String,
+    /// What the item is.
+    pub kind: Kind,
+    /// Its name there.
+    pub name: String,
+}
+
+impl Target {
+    /// The link to its documentation (all module pages live in one directory).
+    pub fn href(&self) -> String {
+        format!(
+            "{}#{}.{}",
+            module_file(&self.module),
+            self.kind.label(),
+            self.name
+        )
+    }
+}
+
+/// Where documented items are, for links in signatures and doc comments.
 pub struct Links {
-    /// Per module: exported type name → link to its documentation.
-    types: Vec<HashMap<String, String>>,
+    /// Per module: exported name → where it is declared (types only in `types`).
+    types: Vec<HashMap<String, Target>>,
+    items: Vec<HashMap<String, Target>>,
     index: ModuleIndex,
 }
 
 impl Links {
-    /// The types `modules` export (after [`crate::resolve`]): classes, structs, interfaces,
-    /// enums and type aliases.
+    /// The items `modules` export (after [`crate::resolve`]); signatures link to the types
+    /// among them: classes, structs, interfaces, enums and type aliases.
     pub fn new(modules: &[DocModule]) -> Links {
+        let items: Vec<HashMap<String, Target>> = modules
+            .iter()
+            .map(|m| {
+                m.items
+                    .iter()
+                    .filter(|it| !matches!(it.kind, Kind::Extension | Kind::ReExport))
+                    .map(|it| (it.name.clone(), item_target(m, it)))
+                    .collect()
+            })
+            .collect();
+        // From the items themselves, not from `items`: a type and a value may share a name
+        // (`type Color = …; const Color = …`), and signatures link to the type.
         let types = modules
             .iter()
             .map(|m| {
                 m.items
                     .iter()
                     .filter(|it| is_type(it.kind))
-                    .map(|it| (it.name.clone(), item_href(m, it)))
+                    .map(|it| (it.name.clone(), item_target(m, it)))
                     .collect()
             })
             .collect();
         Links {
             types,
+            items,
             index: ModuleIndex::new(modules),
         }
     }
 
     /// The type names that signatures in module `m` can refer to: the prelude's, the ones it
     /// imports (`ns.T` for a namespace import), and its own (each shadowing the ones before).
-    pub fn scope(&self, modules: &[DocModule], m: &DocModule) -> HashMap<String, String> {
+    pub fn scope(&self, modules: &[DocModule], m: &DocModule) -> HashMap<String, Target> {
+        self.scope_in(&self.types, modules, m)
+    }
+
+    /// Like [`Links::scope`], for every kind of item: the names `{@link}` can refer to.
+    pub fn item_scope(&self, modules: &[DocModule], m: &DocModule) -> HashMap<String, Target> {
+        self.scope_in(&self.items, modules, m)
+    }
+
+    fn scope_in(
+        &self,
+        names: &[HashMap<String, Target>],
+        modules: &[DocModule],
+        m: &DocModule,
+    ) -> HashMap<String, Target> {
         let mut scope = HashMap::new();
         for (i, other) in modules.iter().enumerate() {
             if other.name.starts_with("std/prelude") {
-                scope.extend(self.types[i].clone());
+                scope.extend(names[i].clone());
             }
         }
         for imp in &m.imports {
@@ -105,108 +155,217 @@ impl Links {
             };
             match &imp.name {
                 Some(name) => {
-                    if let Some(href) = self.types[t].get(name) {
-                        scope.insert(imp.local.clone(), href.clone());
+                    if let Some(target) = names[t].get(name) {
+                        scope.insert(imp.local.clone(), target.clone());
                     }
                 }
                 None => scope.extend(
-                    self.types[t]
+                    names[t]
                         .iter()
-                        .map(|(name, href)| (format!("{}.{name}", imp.local), href.clone())),
+                        .map(|(name, target)| (format!("{}.{name}", imp.local), target.clone())),
                 ),
             }
         }
         if let Some(own) = self.index.resolve(&m.name, &m.name) {
-            scope.extend(self.types[own].clone());
+            scope.extend(names[own].clone());
         }
         scope
     }
 }
 
-fn is_type(kind: Kind) -> bool {
+/// Whether items of `kind` are types: classes, structs, interfaces, enums and type aliases.
+pub(crate) fn is_type(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::Class | Kind::Struct | Kind::Interface | Kind::Enum | Kind::TypeAlias
     )
 }
 
+/// Where an exported item is declared: its origin when it is re-exported.
+pub fn item_target(m: &DocModule, item: &DocItem) -> Target {
+    match &item.origin {
+        Some(o) => Target {
+            module: o.module.clone(),
+            kind: item.kind,
+            name: o.name.clone(),
+        },
+        None => Target {
+            module: m.name.clone(),
+            kind: item.kind,
+            name: item.name.clone(),
+        },
+    }
+}
+
 /// The link to an exported item: its declaration's documentation when it is re-exported.
 fn item_href(m: &DocModule, item: &DocItem) -> String {
-    match &item.origin {
-        Some(o) => format!(
-            "{}#{}.{}",
-            module_file(&o.module),
-            item.kind.label(),
-            o.name
-        ),
-        None => format!("{}#{}", module_file(&m.name), anchor(item, None)),
+    item_target(m, item).href()
+}
+
+/// A piece of a signature: text, or a type name that links to `target`.
+pub struct SigPart<'a> {
+    /// The text.
+    pub text: String,
+    /// What a type name links to.
+    pub target: Option<&'a Target>,
+}
+
+/// `signature` in pieces, with the type names that `scope` knows linked. Names in `generics`
+/// are type parameters, never links; neither are parameter and field names, strings, the name
+/// each line declares (`function Thing()` when a type is named `Thing` too), or the item being
+/// declared (`self_href`, a [`Target::href`]).
+pub fn signature_parts<'a>(
+    signature: &str,
+    generics: &[&str],
+    scope: &'a HashMap<String, Target>,
+    self_href: &str,
+) -> Vec<SigPart<'a>> {
+    let mut parts: Vec<SigPart> = vec![];
+    let text = |parts: &mut Vec<SigPart>, s: &str| match parts.last_mut() {
+        Some(last) if last.target.is_none() => last.text.push_str(s),
+        _ => parts.push(SigPart {
+            text: s.to_string(),
+            target: None,
+        }),
+    };
+    let chars: Vec<char> = signature.chars().collect();
+    let declared = declared_names(&chars);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if matches!(c, '"' | '\'' | '`') {
+            let start = i;
+            i += 1;
+            while i < chars.len() && chars[i] != c {
+                i += if chars[i] == '\\' { 2 } else { 1 };
+            }
+            i = (i + 1).min(chars.len());
+            text(&mut parts, &chars[start..i].iter().collect::<String>());
+            continue;
+        }
+        if !is_ident_start(c) {
+            text(&mut parts, &c.to_string());
+            i += 1;
+            continue;
+        }
+        // An identifier, with `.`-separated continuations (`ns.Type`).
+        let start = i;
+        while i < chars.len()
+            && (is_ident_char(chars[i])
+                || (chars[i] == '.' && chars.get(i + 1).is_some_and(|&n| is_ident_start(n))))
+        {
+            i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        // A parameter or field name (`name:`, `name?:`), not a type.
+        let next = (i..chars.len()).find(|&j| !chars[j].is_whitespace());
+        let is_name = next.is_some_and(|j| {
+            chars[j] == ':' || (chars[j] == '?' && chars.get(j + 1) == Some(&':'))
+        });
+        let preceded_by_dot = start > 0 && chars[start - 1] == '.';
+        let target = scope
+            .get(&word)
+            .filter(|_| !is_name && !preceded_by_dot && !generics.contains(&word.as_str()))
+            .filter(|_| !declared.contains(&start))
+            .filter(|t| t.href() != self_href);
+        match target {
+            Some(target) => parts.push(SigPart {
+                text: word,
+                target: Some(target),
+            }),
+            None => text(&mut parts, &word),
+        }
     }
+    parts
+}
+
+/// Words a declaration line may start with before the name it declares.
+const DECLARATION_WORDS: &[&str] = &[
+    "function",
+    "class",
+    "struct",
+    "interface",
+    "enum",
+    "type",
+    "const",
+    "let",
+    "var",
+    "declare",
+    "default",
+    "async",
+    "static",
+    "get",
+    "set",
+    "readonly",
+    "abstract",
+    "protected",
+    "public",
+    "private",
+    "mut",
+];
+
+/// Where (char index) the name each line of `chars` declares starts: the first word after the
+/// declaration words (`Thing` in `async function* Thing()`, `length` in `get length()`). An
+/// `extend Point` line declares nothing: `Point` is the type it extends.
+fn declared_names(chars: &[char]) -> Vec<usize> {
+    let mut out = vec![];
+    let mut line = 0;
+    while line < chars.len() {
+        let mut i = line;
+        loop {
+            while i < chars.len() && matches!(chars[i], ' ' | '\t' | '*') {
+                i += 1;
+            }
+            let start = i;
+            while i < chars.len() && is_ident_char(chars[i]) {
+                i += 1;
+            }
+            if start == i || !is_ident_start(chars[start]) {
+                break;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if word == "extend" {
+                break;
+            }
+            if !DECLARATION_WORDS.contains(&word.as_str()) {
+                out.push(start);
+                break;
+            }
+        }
+        line = match chars[line..].iter().position(|&c| c == '\n') {
+            Some(n) => line + n + 1,
+            None => chars.len(),
+        };
+    }
+    out
 }
 
 /// What a page needs to render signatures with links.
 struct Page<'a> {
     /// This page's file (links into it become `#anchor`).
     file: String,
-    scope: &'a HashMap<String, String>,
+    scope: &'a HashMap<String, Target>,
 }
 
 impl Page<'_> {
-    /// `signature` as HTML, with type names linked. Names in `generics` are type parameters,
-    /// never links; `self_href` (the item being declared) is not linked to itself.
+    /// `signature` as HTML, with type names linked ([`signature_parts`]).
     fn signature(&self, signature: &str, generics: &[&str], self_href: &str) -> String {
         let mut out = String::new();
-        let chars: Vec<char> = signature.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            if matches!(c, '"' | '\'' | '`') {
-                let start = i;
-                i += 1;
-                while i < chars.len() && chars[i] != c {
-                    i += if chars[i] == '\\' { 2 } else { 1 };
-                }
-                i = (i + 1).min(chars.len());
-                out.push_str(&escape(&chars[start..i].iter().collect::<String>()));
-                continue;
-            }
-            if !is_ident_start(c) {
-                out.push_str(&escape(&c.to_string()));
-                i += 1;
-                continue;
-            }
-            // An identifier, with `.`-separated continuations (`ns.Type`).
-            let start = i;
-            while i < chars.len()
-                && (is_ident_char(chars[i])
-                    || (chars[i] == '.' && chars.get(i + 1).is_some_and(|&n| is_ident_start(n))))
-            {
-                i += 1;
-            }
-            let word: String = chars[start..i].iter().collect();
-            // A parameter or field name (`name:`, `name?:`), not a type.
-            let next = (i..chars.len()).find(|&j| !chars[j].is_whitespace());
-            let is_name = next.is_some_and(|j| {
-                chars[j] == ':' || (chars[j] == '?' && chars.get(j + 1) == Some(&':'))
-            });
-            let preceded_by_dot = start > 0 && chars[start - 1] == '.';
-            let href = self
-                .scope
-                .get(&word)
-                .filter(|_| !is_name && !preceded_by_dot && !generics.contains(&word.as_str()))
-                .filter(|href| href.as_str() != self_href);
-            match href {
-                Some(href) => {
+        for part in signature_parts(signature, generics, self.scope, self_href) {
+            match part.target {
+                Some(target) => {
+                    let href = target.href();
                     let href = href
                         .strip_prefix(&self.file)
                         .filter(|h| h.starts_with('#'))
-                        .unwrap_or(href);
+                        .unwrap_or(&href);
                     out.push_str(&format!(
                         "<a href=\"{}\">{}</a>",
                         escape(href),
-                        escape(&word)
+                        escape(&part.text)
                     ));
                 }
-                None => out.push_str(&escape(&word)),
+                None => out.push_str(&escape(&part.text)),
             }
         }
         out
@@ -223,7 +382,7 @@ fn is_ident_char(c: char) -> bool {
 
 /// The body of a module's page; type names in signatures link to the types in `scope` (see
 /// [`Links::scope`]).
-pub fn module_body(m: &DocModule, scope: &HashMap<String, String>) -> String {
+pub fn module_body(m: &DocModule, scope: &HashMap<String, Target>) -> String {
     let page = Page {
         file: module_file(&m.name),
         scope,
@@ -279,12 +438,7 @@ fn item_html(page: &Page, m: &DocModule, item: &DocItem, parent: Option<&DocItem
         escape(&item.name),
     );
     if let Some(origin) = &item.origin {
-        let href = format!(
-            "{}#{}.{}",
-            module_file(&origin.module),
-            item.kind.label(),
-            origin.name
-        );
+        let href = item_href(m, item);
         let renamed = if origin.name == item.name {
             String::new()
         } else {

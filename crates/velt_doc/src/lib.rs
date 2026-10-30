@@ -7,14 +7,17 @@
 //! - [`markdown`]: the Markdown subset doc comments and the docs are written in;
 //! - [`html`]: page layout, module pages (type names in signatures link to their types),
 //!   index and the client-side search index;
+//! - [`json`]: the same documentation as one JSON document (`velt doc --format json`);
 //! - [`site`]: the website (the pages in `docs/site/pages.txt` + std API reference) built by
 //!   `velt-site`.
 //!
-//! [`write_api_docs`] is what `velt doc` runs: one page per module, an index with a search box.
+//! [`write_api_docs`] is what `velt doc` runs: one page per module, an index with a search box;
+//! [`api_json`] is `velt doc --format json`.
 
 pub mod comment;
 pub mod extract;
 pub mod html;
+pub mod json;
 pub mod markdown;
 pub mod resolve;
 mod sig;
@@ -31,18 +34,28 @@ pub struct Input {
     pub module: String,
     /// Its source text.
     pub source: String,
+    /// Its source file as the JSON output shows it (`std/fs.vlt`, `src/util.vlt`), with `/`
+    /// separators.
+    pub file: String,
 }
 
 /// Every source file under `dir` (`.vlt`, `.ts`, `.tsx` but not `.d.ts`; sorted; hidden
 /// directories, `target/` and `node_modules/` skipped) as a module named
-/// `<prefix>/<relative path without the extension>` (`x/index.vlt` → `<prefix>/x`).
+/// `<prefix>/<relative path without the extension>` (`x/index.vlt` → `<prefix>/x`), with its
+/// path relative to `dir` as its [`Input::file`].
 pub fn inputs_from_dir(dir: &Path, prefix: &str) -> Result<Vec<Input>, String> {
     let mut files = vec![];
     collect(dir, &mut files)?;
     files.sort();
     let mut inputs = vec![];
     for file in files {
-        let rel = file.strip_prefix(dir).unwrap_or(&file).with_extension("");
+        let rel_file = file.strip_prefix(dir).unwrap_or(&file);
+        let shown = rel_file
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        let rel = rel_file.with_extension("");
         let mut parts: Vec<String> = rel
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -57,7 +70,11 @@ pub fn inputs_from_dir(dir: &Path, prefix: &str) -> Result<Vec<Input>, String> {
             .join("/");
         let source = std::fs::read_to_string(&file)
             .map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
-        inputs.push(Input { module, source });
+        inputs.push(Input {
+            module,
+            source,
+            file: shown,
+        });
     }
     Ok(inputs)
 }
@@ -111,6 +128,13 @@ pub fn write_api_docs(
     write(&out.join("index.html"), &index)?;
     write_assets(out, &html::search_index(&modules, "", &[]))?;
     Ok(out.join("index.html"))
+}
+
+/// The documentation of `inputs` (titled `title`) as JSON ([`json`]).
+pub fn api_json(title: &str, inputs: &[Input]) -> String {
+    let modules = extract_all(inputs);
+    let files: Vec<String> = inputs.iter().map(|i| i.file.clone()).collect();
+    json::api_json(title, &modules, &files).pretty()
 }
 
 /// The documentation of `inputs`, with re-exports resolved among them.
@@ -184,6 +208,7 @@ mod tests {
         let inputs = inputs_from_dir(&src, "pkg").unwrap();
         let names: Vec<&str> = inputs.iter().map(|i| i.module.as_str()).collect();
         assert_eq!(names, ["pkg/card", "pkg/lib", "pkg/model", "pkg/util"]);
+        assert_eq!(inputs[3].file, "util/index.vlt");
         let out = tmp.path().join("doc");
         let index = write_api_docs("pkg", "API", &inputs, &out).unwrap();
         let html = std::fs::read_to_string(index).unwrap();

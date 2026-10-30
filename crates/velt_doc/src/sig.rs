@@ -71,7 +71,7 @@ impl Printer<'_> {
         out
     }
 
-    /// `<T, U extends A & B>`, or nothing.
+    /// `<T, U extends A & B, V = D>`, or nothing.
     pub(crate) fn generics(&self, generics: &[GenericParam]) -> String {
         if generics.is_empty() {
             return String::new();
@@ -79,11 +79,16 @@ impl Printer<'_> {
         let params: Vec<String> = generics
             .iter()
             .map(|g| {
-                if g.bounds.is_empty() {
-                    return g.name.name.clone();
+                let mut out = g.name.name.clone();
+                if !g.bounds.is_empty() {
+                    let bounds: Vec<String> =
+                        g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
+                    out.push_str(&format!(" extends {}", bounds.join(" & ")));
                 }
-                let bounds: Vec<String> = g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
-                format!("{} extends {}", g.name.name, bounds.join(" & "))
+                if let Some(default) = &g.default {
+                    out.push_str(&format!(" = {}", self.ty(default)));
+                }
+                out
             })
             .collect();
         format!("<{}>", params.join(", "))

@@ -20,7 +20,7 @@ prints every command's options and examples.
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
-| `velt doc` | generate HTML API documentation |
+| `velt doc` | generate HTML API documentation, or JSON for other tools ([`velt doc`](#velt-doc)) |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
@@ -295,7 +295,7 @@ a package, or to `--dir`), and never overwrites one.
 ## `velt doc`
 
 ```
-velt doc [<file|dir>...] [--std] [-o <dir>]
+velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file>]
 ```
 
 Generates HTML documentation for exported items: their signatures and the doc comment right
@@ -319,11 +319,89 @@ the standard library. The output has one page per module and a client-side searc
   declare or list itself, each with a link to where it is declared. A re-export from a module
   that isn't documented alongside (another package; std when documenting a package) is listed
   as one line. Names in a local `export { a, b as c };` list are documented too.
+  An interface declared more than once is documented once, with the members of every declaration.
 - **Tags** in doc comments are rendered as sections: `@param name - text` as a parameter list
   (a `{type}` is ignored, as the signature shows the type), `@returns` (`@return`), `@throws`,
   `@example` (code, shown in a code block), `@deprecated [text]` (the item is also marked
   deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
   the text; a URL target becomes a link. Other tags stay in the text as written.
+
+### JSON output
+
+`velt doc --format json` writes the same documentation as one JSON document, for tools that
+render API pages in their own design (the docs website builds its API reference, its search
+index and the standard library catalog from it). `-o` names a `.json` file, a directory (which
+gets `api.json`; the default is the same directory as the HTML) or `-` for stdout:
+
+```
+velt doc --std --format json -o std-api.json
+```
+
+The document is `{ "schemaVersion": 1, "title": …, "modules": [ … ] }`; `schemaVersion` changes
+when a field changes meaning or goes away (new fields may be added without it). Every field is
+always present (`null` or `[]` when empty). A module's record:
+
+| Field | |
+|---|---|
+| `module` | its name in the docs (`std/fs`, `mypkg/util`); targets refer to modules by it |
+| `specifier` | how it is imported (`velt:fs`, `mypkg/util`) |
+| `file` | its source file (`std/fs.vlt`, `src/util.vlt`); for files and directories given on the command line, relative to the current directory when they are under it (`velt doc ./lib` and `velt doc D:/pkg/lib` run in `D:/pkg` both give `lib/util.vlt`), otherwise the path as given |
+| `doc`, `summary` | the module doc (Markdown) and its first sentence |
+| `links` | the `{@link}`s in the module doc (as for items, below) |
+| `exports` | its exported items, in source order, then the re-exported ones |
+
+An item (an export, or a member in `members`, which has the same shape):
+
+| Field | |
+|---|---|
+| `id` | a key unique in the document: `<specifier>#<name>` (`velt:http#serve`), `#<Type>.<member>` for a member (`velt:http#Server.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
+| `name` | its exported name |
+| `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
+| `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
+| `signature` | the canonical signature (one line per overload, and per differing header of a merged interface) |
+| `spans` | the type names in `signature` (of members too) that link to their documentation: `{start, end, role, target}`, offsets in UTF-16 code units (JavaScript string indices); `role` is where the name is: `param`, `return`, `throws`, `extends`, `implements`, `typeArg` (a bound or default of the item's own type parameters), `field` (a field's type) or `type` (a constant's or type alias's type, the type an `extend` block extends); a type argument has the role of the type it belongs to (`Promise<Point>` as a return type: `return`) |
+| `doc`, `summary` | the doc comment's text without its tags (Markdown; `{@link}` already rendered as in HTML) and its first sentence |
+| `tags` | `params` (`[{name, doc}]`), `returns`, `throws` (`[…]`), `examples` (`[…]`, verbatim), `deprecated` (`null` without a `@deprecated` tag, `""` for a tag without text, otherwise its text), `see` (`[…]`) |
+| `links` | the `{@link}`s in the doc comment and its tags: `{text, ref, target}`, `text` as the Markdown shows it, `ref` as written, `target` `null` when nothing documented has that name; a name that is both a type and a value (`type Color` and `const Color`) links to the value |
+| `source` | `{file, line}` of the declaration (a re-exported item's is where it is declared); `null` for a `re-export`; for an interface declared more than once (the declarations merge, and are one item with the members of all), the first declaration |
+| `reexportedFrom` | `{module, name}` where a re-exported item is declared, else `null` |
+| `members` | the public fields, accessors, constructor and methods (static ones too) of a class, struct or interface; an enum's members; an `extend` block's methods |
+
+A `target` is `{id, module, kind, name, member}`: the item `name` that `module` declares, with
+that `kind` (and its member `member`, or `null`); `id` is that item's (or member's) `id`, so
+cards and backlinks can key on it. For example, a method of a class in a package:
+
+```json
+{
+  "id": "pkg/lib#Point.moved",
+  "name": "moved",
+  "kind": "method",
+  "modifiers": [],
+  "signature": "moved(dx: f64, dy: f64): Point",
+  "spans": [
+    {"start": 25, "end": 30, "role": "return", "target": {"id": "pkg/lib#Point", "module": "pkg/lib", "kind": "class", "name": "Point", "member": null}}
+  ],
+  "doc": "The point moved by `dx`, `dy`.",
+  "summary": "The point moved by `dx`, `dy`.",
+  "tags": {
+    "params": [
+      {"name": "dx", "doc": "how far along x"},
+      {"name": "dy", "doc": "how far along y; see `Point.length`"}
+    ],
+    "returns": "a new point",
+    "throws": [],
+    "examples": [],
+    "deprecated": null,
+    "see": []
+  },
+  "links": [
+    {"text": "`Point.length`", "ref": "Point.length", "target": {"id": "pkg/lib#Point.length", "module": "pkg/lib", "kind": "class", "name": "Point", "member": "length"}}
+  ],
+  "source": {"file": "src/lib.vlt", "line": 64},
+  "reexportedFrom": null,
+  "members": []
+}
+```
 
 ## `velt toolchain`
 
