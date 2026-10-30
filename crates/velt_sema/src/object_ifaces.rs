@@ -46,9 +46,9 @@ pub(crate) struct ObjectImpls {
     seen: FxHashSet<TyId>,
     /// The interfaces (with their arguments) dynamic values are converted to.
     targets: Vec<(DefId, Vec<TyId>)>,
-    /// Is one of them written with type parameters (`o as Box<T>` in `view<T>`)? Then the
-    /// targets are also those it becomes where its definition is instantiated (#1909).
-    generic_targets: bool,
+    /// Those written with type parameters (`o as Box<T>` in `view<T>`, `o as T`): the targets
+    /// are also those they become where their definitions are instantiated (#1909).
+    generic_targets: FxHashSet<TyId>,
     /// The setters of fields read and written as a plain assignment converts them
     /// (`Ctx::assign_setter`).
     pub assign_setters: FxHashSet<DefId>,
@@ -139,7 +139,7 @@ impl Ctx<'_> {
             t = self.ty.opt_payload(e).unwrap_or(e);
         }
         if let TyKind::Param(_) = self.ty.kind(t) {
-            self.object_impls.generic_targets = true;
+            self.object_impls.generic_targets.insert(t);
             return;
         }
         let TyKind::Dyn(iface, args) = self.ty.kind(t).clone() else {
@@ -149,7 +149,7 @@ impl Ctx<'_> {
             return;
         }
         if args.iter().any(|a| self.has_type_params(*a)) {
-            self.object_impls.generic_targets = true;
+            self.object_impls.generic_targets.insert(t);
             return;
         }
         let known = &self.object_impls.targets;
@@ -159,8 +159,10 @@ impl Ctx<'_> {
     }
 
     /// Is `t` a type parameter, or an interface written with type parameters (or an option or
-    /// array of one), that a value converted to `any` may be filled as ([`Self::may_fill`])? Only those are carried to
-    /// their instantiations ([`make_dynamic_object_impls`]).
+    /// array of one), that a value converted to `any` may be filled as ([`Self::may_fill`])?
+    /// Only those are carried to their instantiations ([`make_dynamic_object_impls`]). A type
+    /// parameter may become any interface: it is carried when an object holding a function (one
+    /// that may fill a method) is converted to `any`.
     pub(crate) fn may_fill_generic(&self, t: TyId) -> bool {
         let mut t = self.ty.opt_payload(t).unwrap_or(t);
         if let TyKind::Array(e) = *self.ty.kind(t) {
@@ -168,7 +170,7 @@ impl Ctx<'_> {
         }
         // A type parameter (`o as T` in `conv<T>`), which a call may give an interface.
         if let TyKind::Param(_) = self.ty.kind(t) {
-            return !self.object_impls.sources.is_empty();
+            return (self.object_impls.sources.iter()).any(|s| self.holds_fn(*s));
         }
         let TyKind::Dyn(iface, args) = self.ty.kind(t) else {
             return false;
@@ -179,6 +181,22 @@ impl Ctx<'_> {
         (self.object_impls.sources.iter()).any(|s| match self.ty.kind(*s) {
             TyKind::Adt(d, _) => self.may_fill(*d, *iface),
             _ => true,
+        })
+    }
+
+    /// Is `t` (an object type converted to `any`) a literal's own interface or an object with a
+    /// field holding a function?
+    fn holds_fn(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.ty.kind(t) else {
+            return true;
+        };
+        let fields = self
+            .adt(*d)
+            .map(|a| a.fields.as_slice())
+            .unwrap_or_default();
+        (fields.iter()).any(|f| {
+            matches!(self.ty.kind(f.ty), TyKind::FnPtr { .. })
+                || matches!(self.dynamic(f.ty), Some(Dynamic::Function))
         })
     }
 
@@ -528,7 +546,8 @@ impl Ctx<'_> {
 pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
     // A target written with type parameters is each one it becomes at the sites instantiating
     // its definition (`view<number>` converts to `Box<number>`), as lowering converts there.
-    if std::mem::take(&mut cx.object_impls.generic_targets) && !cx.object_impls.sources.is_empty() {
+    let generic = std::mem::take(&mut cx.object_impls.generic_targets);
+    if generic.iter().any(|t| cx.may_fill_generic(*t)) {
         for t in crate::any_iface_sites::instantiated_conversions(cx) {
             cx.note_dyn_object_target(t);
         }
