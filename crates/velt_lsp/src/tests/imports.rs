@@ -60,7 +60,7 @@ fn fixture() -> Fixture {
     let root = tmp.path().canonicalize().unwrap();
     let files = [
         ("std/fs/index.vlt", FS),
-        ("std/collections/set.vlt", "// std/collections/set: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
+        ("std/collections/index.vlt", "// velt/collections: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
         ("std/net/url/index.vlt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
         ("std/net/url/encode.vlt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
         ("std/prelude/array.vlt", "// arrays\n"),
@@ -228,9 +228,9 @@ fn import_type_offers_types_only() {
 #[test]
 fn specifiers_offer_std_modules_and_files() {
     let fx = fixture();
-    let text = "import { readFile } from \"velt:\";\n";
+    let text = "import { readFile } from \"velt/\";\n";
     let (mut client, doc, _) = open(&fx, text);
-    let items = complete(&mut client, &doc, text, "velt:\"", 5, None);
+    let items = complete(&mut client, &doc, text, "velt/\"", 5, None);
     assert_eq!(
         labels(&items),
         ["velt/collections", "velt/fs", "velt/net/url"]

@@ -1,6 +1,8 @@
 // std/math: integer helpers (explicit import: `import { clamp } from "velt/math"`).
 // Float math lives on the prelude's `Math` class.
 
+export { BigInt, BigIntError } from "velt/math/bigint";
+
 /** `x` limited to [lo, hi] (assumes lo <= hi). */
 export function clamp(x: i64, lo: i64, hi: i64): i64 {
   if (x < lo) {

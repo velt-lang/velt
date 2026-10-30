@@ -132,7 +132,7 @@ fn bench_programs_compile() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The std modules under `dir` (`std/` paths without `.vlt`, as `velt:` names them), outside
+/// The std modules under `dir` (`std/` paths without `.vlt`, as `velt/` names them), outside
 /// the prelude.
 fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
@@ -168,10 +168,10 @@ fn all_std_imports_every_std_module() {
     assert!(!modules.is_empty(), "no modules under std/");
     let missing: Vec<String> = modules
         .into_iter()
-        .filter(|m| !src.contains(&format!("from \"velt:{m}\";")))
+        .filter(|m| !src.contains(&format!("from \"velt/{m}\";")))
         .map(|m| {
             format!(
-                "import * as std_{} from \"velt:{m}\";",
+                "import * as std_{} from \"velt/{m}\";",
                 m.replace(['/', '-'], "_")
             )
         })

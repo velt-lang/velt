@@ -204,9 +204,9 @@ mod tests {
     #[test]
     fn specifier_strings() {
         assert_eq!(
-            context("import { a } from \"velt:c|\";"),
+            context("import { a } from \"velt/c|\";"),
             Some(ImportContext::Specifier {
-                typed: "velt:c".into(),
+                typed: "velt/c".into(),
                 lo: 19,
                 hi: 25
             })

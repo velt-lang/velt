@@ -128,7 +128,7 @@ pub struct ModuleEntry {
 /// Where a [`ModuleEntry`] comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModuleKind {
-    /// The standard library (`velt:x`).
+    /// The standard library (`velt/x`).
     Std,
     /// A dependency of the importing file's package (`name`, `name/sub`).
     Dependency,

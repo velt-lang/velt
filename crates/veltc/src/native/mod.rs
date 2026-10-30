@@ -24,10 +24,10 @@ pub struct IoTypes {
 }
 
 impl IoTypes {
-    /// Find them: the ADTs named `IoResult`/`IoStatus` defined in `<std_root>/io.vlt`.
+    /// Find them: the ADTs named `IoResult`/`IoStatus` defined in `<std_root>/native/result.vlt`.
     pub fn find(p: &hir::Program, sm: &SourceMap, std_root: Option<&Path>) -> IoTypes {
         let mut io = IoTypes::default();
-        let Some(file) = std_root.map(|r| canonical(&r.join("io.vlt"))) else {
+        let Some(file) = std_root.map(|r| canonical(&r.join("native").join("result.vlt"))) else {
             return io;
         };
         for (i, def) in p.defs.iter().enumerate() {

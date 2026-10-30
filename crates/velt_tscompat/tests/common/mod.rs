@@ -1,6 +1,6 @@
 //! Linting a file the way `velt check --ts-compat` does, for the rule fixtures (cases.rs) and
 //! the `tsc` oracle (oracle.rs): the file is loaded with the prelude and what it imports (the
-//! standard library's `velt:` modules, files next to it, its JSX runtime), checked for the
+//! standard library's `velt/` modules, files next to it, its JSX runtime), checked for the
 //! editor (`velt_sema::ide::check_for_ide`) and linted as the only file in scope
 //! (`velt_tscompat::lint_program`).
 
@@ -158,12 +158,17 @@ impl Loader {
 
     /// The module `spec` names from module `from`, loaded if new.
     fn import(&mut self, from: usize, spec: &str) -> Option<usize> {
-        let (path, is_std, file) = match spec.strip_prefix("velt:") {
-            Some(rest) => (
-                format!("std/{rest}"),
-                true,
-                std_dir().join(format!("{rest}.vlt")),
-            ),
+        let (path, is_std, file) = match spec.strip_prefix("velt/") {
+            Some(rest) => {
+                let file = std_dir().join(format!("{rest}.vlt"));
+                // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                let file = if file.is_file() {
+                    file
+                } else {
+                    std_dir().join(rest).join("index.vlt")
+                };
+                (format!("std/{rest}"), true, file)
+            }
             None => {
                 let file = relative(self.files[from].parent()?, spec)?;
                 (file.to_string_lossy().into_owned(), false, file)

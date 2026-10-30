@@ -6,6 +6,15 @@
 // wide APIs on Windows).
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";
+export {
+  lines,
+  readAll,
+  readAllBytes,
+  readAllBytesSync,
+  readAllSync,
+  readLine,
+  readLineSync,
+} from "velt/process/stdin";
 
 declare function velt_rt_process_args(): string[];
 declare function velt_rt_env_set(name: string, value: string);

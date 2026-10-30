@@ -230,7 +230,8 @@ impl FnCx<'_, '_> {
             return false;
         };
         self.cx.adt(*d).is_some_and(|a| {
-            a.kind == hir::AdtKind::Class && self.cx.modules[a.module].path == "std/lang/import_meta"
+            a.kind == hir::AdtKind::Class
+                && self.cx.modules[a.module].path == "std/lang/import_meta"
         })
     }
 

@@ -8,6 +8,7 @@
 import { IoResult } from "velt/native/result";
 import { HEX_VALUES, STD_DIGITS, STD_VALUES, URL_DIGITS, URL_VALUES } from "velt/encoding/tables";
 import { validPrefix } from "velt/encoding/utf8";
+export { atob, btoa } from "velt/encoding/binary_string";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];

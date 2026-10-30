@@ -222,7 +222,7 @@ and the backends, not written in Rust:
   `json_escape.rs`'s `clean_run`.
 - **Whitespace.** A fast exit when the next byte is not whitespace (the common case in compact
   JSON), and a 16-byte skip for indented JSON.
-- **Reading numbers**, correctly rounded for every input as V8 is, in Velt (`velt/lang/number`):
+- **Reading numbers**, correctly rounded for every input as V8 is, in Velt (`std/lang/number`):
   exact arithmetic when the mantissa is at most 2^53 and the power of ten at most 10^22
   (Clinger), else Eisel-Lemire with its 128-bit power-of-five table. More than 19 significant
   digits, or a rounding Eisel-Lemire cannot decide, still goes to the runtime's parser: a

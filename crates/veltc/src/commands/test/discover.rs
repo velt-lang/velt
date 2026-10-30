@@ -196,7 +196,7 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
 
 /// Does a module that `module` (the file `file`) imports by a relative path, directly or through
 /// others, run code when it is evaluated? Its code would run in the process of every test file
-/// sharing a harness, and a failure there would end them all. Package and `velt:` imports are
+/// sharing a harness, and a failure there would end them all. Package and `velt/` imports are
 /// not followed; a module that cannot be read or parsed counts as running code (its file then
 /// gets a harness of its own, which reports the error).
 pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned) -> bool {

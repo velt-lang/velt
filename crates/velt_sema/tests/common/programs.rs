@@ -85,8 +85,15 @@ impl Loader {
             specs.extend(runtime.clone());
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
-                let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt:") {
-                    (format!("std/{rest}"), std_dir.join(format!("{rest}.vlt")))
+                let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt/") {
+                    let file = std_dir.join(format!("{rest}.vlt"));
+                    // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                    let file = if file.is_file() {
+                        file
+                    } else {
+                        std_dir.join(rest).join("index.vlt")
+                    };
+                    (format!("std/{rest}"), file)
                 } else {
                     let file =
                         normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));

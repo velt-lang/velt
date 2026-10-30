@@ -250,13 +250,13 @@ mod tests {
         let root = std::path::Path::new("/opt/velt/std");
         let mut sm = SourceMap::new();
         sm.add("/home/me/app.vlt", "x");
-        sm.add(root.join("json").join("scan.vlt"), "\n y");
+        sm.add(root.join("encoding/json").join("scan.vlt"), "\n y");
         let m = LocMap::new(&sm, Some(root));
         let loc = |file, line, col| SrcLoc { file, line, col };
         assert_eq!(m.describe(loc(0, 1, 1)), "/home/me/app.vlt:1:1");
         assert_eq!(m.describe(loc(1, 2, 2)), "std/encoding/json/scan.vlt:2:2");
         assert!(m.is_std_loc(loc(1, 2, 2)) && !m.is_std_loc(loc(0, 1, 1)));
         // Debug info keeps the path a debugger opens.
-        assert_eq!(m.files[1], "/opt/velt/std/json/scan.vlt");
+        assert_eq!(m.files[1], "/opt/velt/std/encoding/json/scan.vlt");
     }
 }

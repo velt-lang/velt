@@ -344,7 +344,7 @@ mod tests {
             ))
         );
         assert!(reexported_names(src).is_empty());
-        assert_eq!(load_when("export { A } from \"velt:a\";\n"), None);
+        assert_eq!(load_when("export { A } from \"velt/a\";\n"), None);
     }
 
     #[test]
@@ -353,8 +353,8 @@ mod tests {
         assert!(global_modules(tmp.path()).is_empty());
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("b.vlt"), "export { B } from \"velt:b\";\n").unwrap();
-        std::fs::write(dir.join("a.vlt"), "export { A } from \"velt:a\";\n").unwrap();
+        std::fs::write(dir.join("b.vlt"), "export { B } from \"velt/b\";\n").unwrap();
+        std::fs::write(dir.join("a.vlt"), "export { A } from \"velt/a\";\n").unwrap();
         let g = global_modules(tmp.path());
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].names, ["A"]);

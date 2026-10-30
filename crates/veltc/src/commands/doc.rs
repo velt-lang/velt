@@ -63,7 +63,8 @@ fn collect(args: &DocArgs) -> Result<Collected, String> {
     if args.std {
         let root =
             crate::loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
-        let intro = "`import { … } from \"velt:<name>\"`; `std/prelude/*` is available everywhere.";
+        let intro =
+            "`import { … } from \"velt/<module>\"`; `std/prelude/*` is available everywhere.";
         let inputs = under("std", velt_doc::inputs_from_dir(&root, "std")?);
         return Ok((
             "Velt standard library".into(),

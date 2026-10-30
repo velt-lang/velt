@@ -171,5 +171,8 @@ fn std_locations_are_relative_to_the_std_root() {
         .find(|l| l.replace('\\', "/").contains(&std_root));
     assert_eq!(absolute, None, "an absolute std path in the program");
     // gcd's `x % y` (its division-by-zero check).
-    assert!(vir.contains(" at std/math/index.vlt:"), "no std location at all");
+    assert!(
+        vir.contains(" at std/math/index.vlt:"),
+        "no std location at all"
+    );
 }

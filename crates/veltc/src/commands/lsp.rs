@@ -100,7 +100,7 @@ impl CliLoader {
         listed.unwrap_or_default()
     }
 
-    /// The public modules of the std root (listed on first use), as `velt:` specifiers resolve
+    /// The public modules of the std root (listed on first use), as `velt/` specifiers resolve
     /// them.
     fn std_modules(&self) -> Vec<ModuleEntry> {
         let Some(root) = loader::std_root() else {
@@ -165,7 +165,7 @@ impl ProgramLoader for CliLoader {
         // dependencies), as `load` resolves a dependency's imports. Nothing is installed here: a
         // dependency is never installed as a project of its own.
         let bare =
-            !spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:");
+            !spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt/");
         let graph = if bare {
             self.installed_graph(from)
         } else {
@@ -321,7 +321,7 @@ mod tests {
         }
     }
 
-    /// Import help against the real std: specifiers after `from "velt:`, the exports of a std
+    /// Import help against the real std: specifiers after `from "velt/`, the exports of a std
     /// module inside the braces, and auto-import of a std function.
     #[test]
     fn import_help_uses_the_std_modules() {
@@ -334,7 +334,7 @@ mod tests {
             std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
         request(&conn, 1, "initialize", json!({ "capabilities": {} }));
         notify(&conn, "initialized", json!({}));
-        let text = "import { readFile,  } from \"velt/fs\";\nimport { x } from \"velt:co\";\n\nfunction main() {\n  normali\n}\n";
+        let text = "import { readFile,  } from \"velt/fs\";\nimport { x } from \"velt/co\";\n\nfunction main() {\n  normali\n}\n";
         let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
         notify(
             &conn,

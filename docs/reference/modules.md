@@ -286,7 +286,7 @@ console.log(s.ends[1].x, s.length); // 3 5
 | Specifier | Resolves to |
 |---|---|
 | `"./file"`, `"../dir/file"` | relative to the importing file, without the extension: `file.vlt`, `file.ts` or `file.tsx` ([TypeScript files](#typescript-files-ts-and-tsx)). A folder is a module through its `index` file: `"./shapes"` is `shapes.vlt` (or `.ts`, `.tsx`), else `shapes/index.vlt` (or `.ts`, `.tsx`) |
-| `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt/fs"`, `"velt/collections"`) |
+| `"velt/x"` | the [standard library](../std/README.md) module `x` (`"velt/fs"`, `"velt/collections"`) |
 | an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` (or `.ts`, `.tsx`), resolved like a relative import ([`package.vlt`](../tooling/manifest.md)) |
 | `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, as for a relative import) ([Packages](../tooling/packages.md)) |
 | `"@scope/pkg"`, `"pkg/sub"` of an npm package | when no dependency has that name: the npm package in `node_modules` or the workspace, compiled from the TypeScript source its `package.json` `exports` point back to ([npm packages](../tooling/packages.md#npm-packages)) |

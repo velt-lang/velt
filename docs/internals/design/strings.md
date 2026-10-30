@@ -89,7 +89,7 @@ Byte counts and byte views keep their JavaScript names:
   carries a split sequence across calls; labels follow the Encoding Standard (`"latin1"` is
   windows-1252), and an unknown label throws `RangeError`.
 
-There is no Velt-only byte-offset string API. A `velt:bytes` module waits until a benchmark shows
+There is no Velt-only byte-offset string API. A `velt/bytes` module waits until a benchmark shows
 a gap that the standard APIs above can't close; even then `length` keeps one meaning.
 
 ### Representation: WTF-8 with the UTF-16 length in the value

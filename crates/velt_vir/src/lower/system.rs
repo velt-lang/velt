@@ -678,7 +678,7 @@ fn std_name(qualified: &str) -> String {
     match qualified.rsplit_once("::") {
         Some((module, name)) => {
             let module = module.strip_prefix("std/").unwrap_or(module);
-            format!("`{name}` (velt:{module})")
+            format!("`{name}` (velt/{module})")
         }
         None => format!("`{qualified}`"),
     }

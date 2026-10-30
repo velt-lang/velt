@@ -26,12 +26,12 @@ impl ModuleIndex {
         )
     }
 
-    /// The module that `spec`, written in module `from`, names: `velt:x` is `std/x`; `./x` and
+    /// The module that `spec`, written in module `from`, names: `velt/x` is `std/x`; `./x` and
     /// `../x` (or `./x.ts`, with any extension a relative import may name) are relative to
     /// `from`'s directory (or to `from` itself, when it is a directory's `index` file); anything
     /// else is a module name (`pkg`, `pkg/sub`). `None` when that module is not documented.
     pub fn resolve(&self, from: &str, spec: &str) -> Option<usize> {
-        if let Some(std) = spec.strip_prefix("velt:") {
+        if let Some(std) = spec.strip_prefix("velt/") {
             return self.0.get(&format!("std/{std}")).copied();
         }
         if spec.starts_with("./") || spec.starts_with("../") {

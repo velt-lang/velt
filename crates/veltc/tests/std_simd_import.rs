@@ -36,7 +36,7 @@ fn std_module_without_the_import_is_told_to_import() {
     let main = dir.path().join("main.vlt");
     std::fs::write(
         &main,
-        "import { probe } from \"velt:zz_probe\";\n\nfunction main() {\n  console.log(probe());\n}\n",
+        "import { probe } from \"velt/zz_probe\";\n\nfunction main() {\n  console.log(probe());\n}\n",
     )
     .unwrap();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))

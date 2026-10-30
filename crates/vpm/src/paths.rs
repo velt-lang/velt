@@ -19,8 +19,8 @@ pub(crate) fn check_alias(pattern: &str, target: &str) -> Result<(), &'static st
     if pattern.is_empty() || pattern == "*" {
         return Err("the pattern needs a prefix such as `@app/*`");
     }
-    if pattern.starts_with("./") || pattern.starts_with("../") || pattern.starts_with("velt:") {
-        return Err("relative and `velt:` specifiers cannot be aliased");
+    if pattern.starts_with("./") || pattern.starts_with("../") || pattern.starts_with("velt/") {
+        return Err("relative and `velt/` specifiers cannot be aliased");
     }
     if !wildcard_ok(pattern) || !wildcard_ok(target) {
         return Err("`*` may only appear once, at the end");

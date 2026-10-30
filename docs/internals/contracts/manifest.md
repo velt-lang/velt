@@ -196,10 +196,10 @@ dependent's
 directory (`NpmResolver::resolve_in`) before Node's search.
 
 ## Fields
-- `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
+- `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt/x"` and `"./x"`
   never do.
 - `paths`: a bare specifier matching a pattern resolves to the target, relative to the package
-  root, before `dependencies` are consulted (`"velt:x"` and `"./x"` are never aliased). A
+  root, before `dependencies` are consulted (`"velt/x"` and `"./x"` are never aliased). A
   pattern has at most one `*`, at its end, and so has its target (both or neither); the longest
   matching pattern wins (like TypeScript's `compilerOptions.paths`, but one target per pattern).
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
@@ -289,7 +289,7 @@ jsx: { importSource: "sigx" },  // or "velt/jsx" (the default), an "@alias" from
 - The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
   containing JSX imports `<importSource>/jsx-runtime`. A `/** @jsxImportSource x */` comment in a
   file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt/jsx`.
-- The value is a module specifier: a dependency (`"sigx"`), `"velt:x"`, a `paths` alias, or a
+- The value is a module specifier: a dependency (`"sigx"`), `"velt/x"`, a `paths` alias, or a
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only
   (`vpm::PackageGraph::jsx_import_source`).

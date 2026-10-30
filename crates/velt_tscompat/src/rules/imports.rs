@@ -24,13 +24,13 @@ pub(super) fn check(module: &LintModule, scope: &[&Path], cx: &mut Cx) {
 
 fn import_item(module: &LintModule, import: &ast::Import, scope: &[&Path], cx: &mut Cx) {
     let spec = import.from.as_str();
-    if spec.starts_with("velt:") {
+    if spec.starts_with("velt/") {
         cx.error(
             "velt-import",
             import.from_span,
             format!("`{spec}` is a Velt standard library module, which TypeScript can't import"),
             &[
-                "`tsc` resolves `velt:` specifiers to nothing; only Velt provides these modules",
+                "`tsc` finds no `velt` package; only Velt provides these modules",
                 "keep code that uses the Velt standard library out of the shared files, and \
                  pass what it computes in",
             ],

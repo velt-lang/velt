@@ -574,7 +574,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
   `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
   exit 1 if any. Unparsable files → exit 1.
-- Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
+- Imports: `velt/x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
   `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
   existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`

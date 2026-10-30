@@ -70,7 +70,7 @@ export function scaled(v: u32x4): u32x4 {
 #[test]
 fn guarded_and_same_target_calls_compile_and_run() {
     let dir = test_dir::TestDir::new();
-    let main = "import { scaled } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  console.log(scaled(u32x4.splat(3)).lane(2));\n}\n";
+    let main = "import { scaled } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  console.log(scaled(u32x4.splat(3)).lane(2));\n}\n";
     for release in [false, true] {
         let mut args = vec!["run"];
         if release {
@@ -99,7 +99,7 @@ fn check_fails(probe: &str, main: &str, messages: &[&str]) {
 }
 
 const MAIN_PROBE: &str =
-    "import { probe } from \"velt:zz_gated\";\n\nfunction main() {\n  console.log(probe());\n}\n";
+    "import { probe } from \"velt/zz_gated\";\n\nfunction main() {\n  console.log(probe());\n}\n";
 
 #[test]
 fn a_call_needs_the_check_of_its_target() {
@@ -226,7 +226,7 @@ export function gated(): i64 {
   return 1;
 }
 "#;
-    let main = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated());\n  }\n  console.log(gated());\n  const f = gated;\n}\n";
+    let main = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated());\n  }\n  console.log(gated());\n  const f = gated;\n}\n";
     check_fails(
         probe,
         main,
@@ -247,7 +247,7 @@ export function gated(x: i64): i64 {
 #[test]
 fn the_check_is_velt_simds_method_not_its_name() {
     // A user type named `u32x4` with a `hasShaArm` that returns true is not the CPU check.
-    let fake = "import { gated } from \"velt:zz_gated\";\n\nclass u32x4 {\n  static hasShaArm(): bool {\n    return true;\n  }\n}\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated(1));\n  }\n}\n";
+    let fake = "import { gated } from \"velt/zz_gated\";\n\nclass u32x4 {\n  static hasShaArm(): bool {\n    return true;\n  }\n}\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated(1));\n  }\n}\n";
     check_fails(
         ONE_GATED,
         fake,
@@ -255,7 +255,7 @@ fn the_check_is_velt_simds_method_not_its_name() {
     );
     // velt/simd's `u32x4` imported under another name is.
     let dir = test_dir::TestDir::new();
-    let alias = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 as V } from \"velt/simd\";\n\nfunction main() {\n  console.log(V.hasShaArm() ? gated(1) : 2);\n  if (V.hasShaArm()) {\n    console.log(gated(1));\n  } else {\n    console.log(2);\n  }\n}\n";
+    let alias = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 as V } from \"velt/simd\";\n\nfunction main() {\n  console.log(V.hasShaArm() ? gated(1) : 2);\n  if (V.hasShaArm()) {\n    console.log(gated(1));\n  } else {\n    console.log(2);\n  }\n}\n";
     let out = velt(&dir, ONE_GATED, alias, &["run"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -276,7 +276,7 @@ fn the_check_is_velt_simds_method_not_its_name() {
 
 #[test]
 fn call_and_apply_are_direct_calls() {
-    let main = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated.call(undefined, 1), gated.apply(undefined, [2]));\n  }\n  console.log(gated.call(undefined, 3));\n  console.log(gated.apply(undefined, [4]));\n}\n";
+    let main = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated.call(undefined, 1), gated.apply(undefined, [2]));\n  }\n  console.log(gated.call(undefined, 3));\n  console.log(gated.apply(undefined, [4]));\n}\n";
     let dir = test_dir::TestDir::new();
     let out = velt(&dir, ONE_GATED, main, &["check"]);
     let err = String::from_utf8_lossy(&out.stderr);
@@ -323,7 +323,7 @@ export function plain(a: u32x4): u32x4 {
 }
 "#;
 
-const SHA_MAIN: &str = "import { roundsArm, roundsX86, plain } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  const a = u32x4.splat(1);\n  if (u32x4.hasShaArm()) {\n    console.log(roundsArm(a, 3).lane(0));\n  }\n  if (u32x4.hasShaX86()) {\n    console.log(roundsX86(a, 3).lane(0));\n  }\n  console.log(plain(a).lane(0));\n}\n";
+const SHA_MAIN: &str = "import { roundsArm, roundsX86, plain } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  const a = u32x4.splat(1);\n  if (u32x4.hasShaArm()) {\n    console.log(roundsArm(a, 3).lane(0));\n  }\n  if (u32x4.hasShaX86()) {\n    console.log(roundsX86(a, 3).lane(0));\n  }\n  console.log(plain(a).lane(0));\n}\n";
 
 /// The LLVM functions of `ir` by name: `define … @name(…) … { body }`.
 fn llvm_functions(ir: &str) -> Vec<(String, &str)> {
@@ -452,7 +452,7 @@ export function foldArm(a: u64x2, n: i64): u64x2 {
 }
 "#;
 
-const CLMUL_MAIN: &str = "import { foldArm, foldX86 } from \"velt:zz_gated\";\nimport { u64x2 } from \"velt/simd\";\n\nfunction main() {\n  const a = u64x2.splat(3);\n  if (u64x2.hasClmulX86()) {\n    console.log(foldX86(a, 3).lane(0));\n  }\n  if (u64x2.hasClmulArm()) {\n    console.log(foldArm(a, 3).lane(0));\n  }\n}\n";
+const CLMUL_MAIN: &str = "import { foldArm, foldX86 } from \"velt/zz_gated\";\nimport { u64x2 } from \"velt/simd\";\n\nfunction main() {\n  const a = u64x2.splat(3);\n  if (u64x2.hasClmulX86()) {\n    console.log(foldX86(a, 3).lane(0));\n  }\n  if (u64x2.hasClmulArm()) {\n    console.log(foldArm(a, 3).lane(0));\n  }\n}\n";
 
 #[test]
 fn clmul_gated_functions_are_the_bare_instruction() {

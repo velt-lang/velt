@@ -2,11 +2,11 @@
 //! standard library root and the modules of a dependency. Shared by `veltc`'s loader and the
 //! tests' loader, so both list the same modules.
 //!
-//! A std module is internal (not offered) when its header comment says so (`std/url/encode
-//! (std-internal): …`, `Internal: import the public names from "velt/redis"`), or when it sits
-//! in the folder of a public module of the same name (`url/*.vlt` next to `url.vlt`); a JSX
-//! runtime (`jsx/jsx-runtime`) is public wherever it is. The prelude is imported implicitly and
-//! never listed.
+//! A std module is a folder's `index.vlt` (docs/internals/design/std-layout.md): any other file
+//! belongs to the module of the nearest folder above it that has one, and is internal (not
+//! offered), as is a module whose header comment says so (`Internal: …`) and everything in
+//! `lang/`. A JSX runtime (`jsx/jsx-runtime`) is public wherever it is. The prelude is imported
+//! implicitly and never listed.
 
 use std::path::{Path, PathBuf};
 
@@ -30,12 +30,12 @@ pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
                 return None;
             }
             let header = header(&path);
-            if is_internal(std_root, &rel, &header) {
+            if is_internal(std_root, &rel, &path, &header) {
                 return None;
             }
             Some(ModuleEntry {
                 doc: describe(&header),
-                spec: format!("velt:{rel}"),
+                spec: format!("velt/{rel}"),
                 path,
                 kind: ModuleKind::Std,
             })
@@ -106,7 +106,7 @@ fn module_rel(base: &Path, file: &Path) -> Option<String> {
     (rel != "index").then(|| rel.to_string())
 }
 
-/// A path a `velt:` specifier can spell: `/`-separated segments of `[a-z0-9_-]`.
+/// A path a `velt/` specifier can spell: `/`-separated segments of `[a-z0-9_-]`.
 fn is_std_rel(rel: &str) -> bool {
     rel.split('/').all(|s| {
         !s.is_empty()
@@ -115,19 +115,21 @@ fn is_std_rel(rel: &str) -> bool {
     })
 }
 
-fn is_internal(std_root: &Path, rel: &str, header: &str) -> bool {
-    if says_internal(header) {
+fn is_internal(std_root: &Path, rel: &str, path: &Path, header: &str) -> bool {
+    if says_internal(header) || rel == "lang" || rel.starts_with("lang/") {
         return true;
     }
-    if rel.ends_with("jsx-runtime") {
+    if rel.ends_with("jsx-runtime") || path.file_stem().is_some_and(|s| s == "index") {
         return false;
     }
-    // In the folder of a public module of the same name (`url/encode` next to `url.vlt`).
+    // Owned by the module of a folder above it (`fs/stream` in the folder of `fs/index.vlt`),
+    // or by a module file next to its folder (`sqlite/btree` next to `sqlite.vlt`, until the
+    // drivers leave std).
     let segments: Vec<&str> = rel.split('/').collect();
     (1..segments.len()).any(|n| {
-        std_root
-            .join(format!("{}.vlt", segments[..n].join("/")))
-            .is_file()
+        let prefix = segments[..n].join("/");
+        std_root.join(&prefix).join("index.vlt").is_file()
+            || std_root.join(format!("{prefix}.vlt")).is_file()
     })
 }
 
@@ -165,7 +167,11 @@ fn header(path: &Path) -> String {
 /// [`MAX_DOC_CHARS`].
 fn describe(header: &str) -> String {
     let text = match header.split_once(": ") {
-        Some((name, rest)) if name.starts_with("std/") && !name.contains(' ') => rest,
+        Some((name, rest))
+            if (name.starts_with("velt/") || name.starts_with("std/")) && !name.contains(' ') =>
+        {
+            rest
+        }
         _ => header,
     };
     if text.chars().count() <= MAX_DOC_CHARS {
@@ -191,28 +197,40 @@ mod tests {
         let root = tmp.path();
         write(
             root,
-            "fs.vlt",
-            "// std/fs: file system access (docs/internals/x.md).\n//\n// More.\n",
+            "fs/index.vlt",
+            "// velt/fs: file system access (docs/internals/x.md).\n//\n// More.\n",
         );
-        write(root, "url.vlt", "// std/url: URLs.\n");
-        write(root, "url/encode.vlt", "// std/url/encode: helpers.\n");
+        write(root, "fs/stream.vlt", "// velt/fs (internal): streams.\n");
+        write(root, "net/url/index.vlt", "// velt/net/url: URLs.\n");
         write(
             root,
-            "net_bytes.vlt",
-            "// std/net_bytes (std-internal): bytes.\n",
+            "net/url/encode.vlt",
+            "// velt/net/url (internal): helpers.\n",
         );
         write(
             root,
-            "collections/set.vlt",
-            "// std/collections/set: `Set<T>`.\n",
+            "net/bytes.vlt",
+            "// bytes, in no module's folder of its own\n",
         );
-        write(root, "jsx.vlt", "// std/jsx: rendering.\n");
+        write(root, "net/index.vlt", "// velt/net: TCP.\n");
+        write(
+            root,
+            "collections/index.vlt",
+            "// velt/collections: containers.\n",
+        );
+        write(root, "collections/set.vlt", "// `Set<T>`.\n");
+        write(root, "jsx/index.vlt", "// velt/jsx: rendering.\n");
         write(
             root,
             "jsx/jsx-runtime.vlt",
-            "// std/jsx/jsx-runtime: runtime.\n",
+            "// velt/jsx/jsx-runtime: runtime.\n",
         );
-        write(root, "package.vlt", "// std/package: manifest types.\n");
+        write(
+            root,
+            "package/index.vlt",
+            "// velt/package: manifest types.\n",
+        );
+        write(root, "lang/symbol/index.vlt", "// `Symbol`.\n");
         write(root, "prelude/array.vlt", "// arrays\n");
         write(root, "README.md", "# std\n");
         write(root, "Bad.vlt", "");
@@ -225,12 +243,13 @@ mod tests {
                 "velt/fs",
                 "velt/jsx",
                 "velt/jsx/jsx-runtime",
-                "velt/package",
-                "velt/net/url"
+                "velt/net",
+                "velt/net/url",
+                "velt/package"
             ]
         );
         assert_eq!(entries[1].doc, "file system access (docs/internals/x.md).");
-        assert_eq!(entries[1].path, root.join("fs.vlt"));
+        assert_eq!(entries[1].path, root.join("fs/index.vlt"));
     }
 
     /// The real std: modules marked internal, such as the one the parser imports for

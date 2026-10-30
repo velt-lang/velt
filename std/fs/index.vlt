@@ -9,6 +9,7 @@
 // runtime function returns nothing.
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";
+export { FileReader, FileWriter, openRead, openWrite, OpenWriteOptions } from "velt/fs/stream";
 
 declare async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>>;
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;

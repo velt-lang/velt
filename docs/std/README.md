@@ -87,9 +87,9 @@ what Velt can't do on its own:
 | `velt/postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt/redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem`, `velt/encoding/csv`, `velt/cli`,
-`velt/time` (built on `sleep`, `spawn` and `velt/task` signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx`
-too (escaping through `velt/text`). `velt/encoding`, `velt/net/url` and `velt/io` use only the
+Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem/arena`, `velt/encoding/csv`, `velt/cli`,
+`velt/time/timers` (built on `sleep`, `spawn` and `velt/task` signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx`
+too (escaping through `velt/text/html`). `velt/encoding`, `velt/net/url` and `velt/native/result` use only the
 runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 

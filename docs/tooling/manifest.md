@@ -103,7 +103,7 @@ a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with
 
 `import … from "json"` and `"json/sub"` resolve through `dependencies`: the dependency's
 `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
-import's files). Standard library imports (`"velt:x"`)
+import's files). Standard library imports (`"velt/x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
 a `path` or `git`). `{ git: "https://…", branch: "main", path: "packages/x" }` takes the package
@@ -119,7 +119,7 @@ for an [npm package](packages.md#npm-packages).
 Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../` chains:
 
 - A bare specifier that matches a pattern resolves to the target, relative to the package root,
-  before `dependencies` are consulted. `"velt:x"` and `"./x"` are never aliased.
+  before `dependencies` are consulted. `"velt/x"` and `"./x"` are never aliased.
 - A pattern has at most one `*`, at its end, and so does its target (both or neither). The
   longest matching pattern wins. Each pattern has one target.
 - Targets must stay inside the package (no `..`, not absolute).

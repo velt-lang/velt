@@ -647,7 +647,7 @@ fn ts_and_tsx_modules_in_a_package() {
         1,
     );
     let manifest = manifest
-        .replacen(", velt:", ",\n  velt:", 1)
+        .replacen(", velt/", ",\n  velt/", 1)
         .replacen(" };", ",\n};", 1);
     s.write("app/package.vlt", &manifest);
     s.write(

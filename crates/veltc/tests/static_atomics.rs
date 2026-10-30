@@ -80,7 +80,7 @@ fn std_constants_with_literal_and_computed_starts() {
     );
     let probe = "function start(): u64 {\n  return 10;\n}\nconst ONE = new Atomic<u64>(0);\nconst EACH = new Atomic<u64>(start());\n\nexport function bump(): u64 {\n  return ONE.add(1) + 1;\n}\n\nexport function each(): u64 {\n  return EACH.add(1) + 1;\n}\n";
     std::fs::write(std.join("zz_static_atomic.vlt"), probe).unwrap();
-    let main = "import { bump, each } from \"velt:zz_static_atomic\";\n\nfunction main() {\n  console.log(bump(), bump(), each());\n}\n";
+    let main = "import { bump, each } from \"velt/zz_static_atomic\";\n\nfunction main() {\n  console.log(bump(), bump(), each());\n}\n";
     std::fs::write(dir.path().join("main.vlt"), main).unwrap();
     for release in [false, true] {
         let mut args = vec!["run"];

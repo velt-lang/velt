@@ -4,6 +4,8 @@
 // concurrent tree keeps in every node (bbtree's `NodeLatch`). Both are plain Velt on the
 // public `Atomic` API: any package can write its own.
 
+export { Channel, channel, ChannelClosed } from "velt/sync/channel";
+
 declare function velt_rt_thread_yield(): void;
 
 /**

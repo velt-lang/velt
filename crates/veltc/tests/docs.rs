@@ -317,8 +317,8 @@ fn doc_snippets_compile() {
 
 #[test]
 fn completes_snippets_without_main() {
-    let src = "import { x } from \"velt:a\";\nconst MAX = 3;\n// note\nclass A {\n}\nconst a = new A();\nfor (const i of [1]) {\n  console.log(i);\n}\n";
-    let want = "import { x } from \"velt:a\";\nconst MAX = 3;\n// note\nclass A {\n}\n\nasync function main() {\n  const a = new A();\n  for (const i of [1]) {\n    console.log(i);\n  }\n}\n";
+    let src = "import { x } from \"velt/a\";\nconst MAX = 3;\n// note\nclass A {\n}\nconst a = new A();\nfor (const i of [1]) {\n  console.log(i);\n}\n";
+    let want = "import { x } from \"velt/a\";\nconst MAX = 3;\n// note\nclass A {\n}\n\nasync function main() {\n  const a = new A();\n  for (const i of [1]) {\n    console.log(i);\n  }\n}\n";
     assert_eq!(complete(src), want);
     assert_eq!(
         complete("function f() {}\n"),

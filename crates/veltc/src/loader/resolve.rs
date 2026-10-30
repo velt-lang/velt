@@ -22,7 +22,7 @@ pub fn resolve_module(
 ) -> Option<PathBuf> {
     let dir = importer.parent()?;
     let aliased =
-        (!spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:"))
+        (!spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt/"))
             .then(|| packages?.path_alias(importer, spec))
             .flatten();
     let module = match aliased {
@@ -98,9 +98,9 @@ mod tests {
         }
         let main = root.join("app/main.vlt");
         let resolve = |spec: &str| resolve_module(spec, &main, Some(&std), None);
-        assert_eq!(resolve("velt/fs"), Some(std.join("fs.vlt")));
+        assert_eq!(resolve("velt/fs"), Some(std.join("fs/index.vlt")));
         assert_eq!(
-            resolve("velt/collections"),
+            resolve("velt/collections/set"),
             Some(std.join("collections/set.vlt"))
         );
         assert_eq!(resolve("./util"), Some(root.join("app/util.vlt")));

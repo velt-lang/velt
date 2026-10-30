@@ -34,7 +34,7 @@ export function run(): u64 {
 }
 "#;
 
-const REAL: &str = r#"import { IoResult, IoStatus } from "velt/io";
+const REAL: &str = r#"import { IoResult, IoStatus } from "velt/native";
 
 declare function velt_demo__real(): IoResult<u64>;
 

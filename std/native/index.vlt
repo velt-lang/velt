@@ -1,0 +1,5 @@
+// velt/native: what the Velt side of a native package (docs/book/native-packages.md) binds its
+// Rust functions with: `IoResult<T>` and `IoStatus`, the C layouts a native function returns,
+// and `unwrapIo` / `checkIo`, which turn a failed one into an `IoError`.
+
+export { checkIo, ioError, IoResult, IoStatus, unwrapIo } from "velt/native/result";

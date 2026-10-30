@@ -412,7 +412,10 @@ fn load_with_std(t: &Tree, main: &str) -> (Loaded, Diagnostics) {
 #[test]
 fn only_files_below_the_std_root_are_std() {
     let t = Tree::new();
-    t.write("std/math/index.vlt", "export function one(): i64 { return 1; }\n");
+    t.write(
+        "std/math/index.vlt",
+        "export function one(): i64 { return 1; }\n",
+    );
     t.write(
         "std/escape.vlt",
         "import { x } from \"../outside\";\nexport function y() {}\n",
@@ -433,7 +436,7 @@ fn only_files_below_the_std_root_are_std() {
     // A std module whose relative import leaves the std root.
     let (_, d) = load_with_std(
         &t,
-        "import { y } from \"velt:escape\";\nfunction main() {}\n",
+        "import { y } from \"velt/escape\";\nfunction main() {}\n",
     );
     assert_eq!(
         messages(&d),
@@ -450,13 +453,16 @@ fn only_files_below_the_std_root_are_std() {
     );
 }
 
-/// On Windows, `\` and drive letters would let a `velt:` path leave the std root; the specifier is
+/// On Windows, `\` and drive letters would let a `velt/` path leave the std root; the specifier is
 /// rejected before any file is looked up.
 #[cfg(windows)]
 #[test]
 fn windows_std_specifiers_cannot_leave_the_std_root() {
     let t = Tree::new();
-    t.write("std/math/index.vlt", "export function one(): i64 { return 1; }\n");
+    t.write(
+        "std/math/index.vlt",
+        "export function one(): i64 { return 1; }\n",
+    );
     let evil = t.write("evil.vlt", "export function x() {}\n");
     let absolute = evil
         .with_extension("")
@@ -466,7 +472,7 @@ fn windows_std_specifiers_cannot_leave_the_std_root() {
     for spec in [
         r"velt:..\evil".to_string(),
         r"velt:..\std\..\evil".to_string(),
-        format!("velt:{absolute}"),
+        format!("velt/{absolute}"),
     ] {
         // In the source text a `\` is written `\\`.
         let quoted = spec.replace('\\', r"\\");

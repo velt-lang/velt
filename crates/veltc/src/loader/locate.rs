@@ -148,7 +148,7 @@ pub fn target(
             let Some(root) = std_root else {
                 let note = "the standard library was not found (set VELT_STD to its directory)"
                     .to_string();
-                return Err((format!("cannot find module `velt:{rel}`"), vec![note]));
+                return Err((format!("cannot find module `velt/{rel}`"), vec![note]));
             };
             Ok(Target {
                 candidates: std_files(root, &rel),
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(root.canonical(Path::new("/p/lib/math.vlt")), "lib/math");
         assert_eq!(root.canonical(Path::new("/q/x.vlt")), "../q/x");
         let std = Origin::Std(PathBuf::from("/std"));
-        assert_eq!(std.canonical(Path::new("/std/fs.vlt")), "std/fs");
+        assert_eq!(std.canonical(Path::new("/std/fs/index.vlt")), "std/fs");
         assert_eq!(std.canonical(Path::new("/std/net/index.vlt")), "std/net");
         assert_eq!(root.canonical(Path::new("/p/shapes/index.vlt")), "shapes");
         let pkg = Origin::Package {

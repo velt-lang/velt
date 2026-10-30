@@ -1,6 +1,8 @@
 // std/mem: facts about how values are stored, for code that manages memory layouts itself
 // (Rust's `std::mem`).
 
+export { Arena } from "velt/mem/arena";
+
 /**
  * Whether values of `value`'s type own memory that dropping one releases: strings, arrays,
  * objects and class instances (and structs or unions holding any) do; numbers, `bool` and

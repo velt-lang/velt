@@ -1,0 +1,17 @@
+// velt/time: `DateTime`, a UTC-first instant (JS `Date` without its local-time pitfalls), and
+// `Duration`; timers that run later (`setTimeout` and the others, also globals), `delay` and
+// `Ticker`. docs/std/time.md.
+
+export { DateParts, DateTime, DateTimeError, Duration } from "velt/time/datetime";
+export {
+  clearImmediate,
+  clearInterval,
+  clearTimeout,
+  delay,
+  setImmediate,
+  setInterval,
+  setTimeout,
+  Ticker,
+  TickerStop,
+  Timer,
+} from "velt/time/timers";

@@ -628,7 +628,7 @@ impl Loader<'_, '_> {
     }
 
     /// A module is std exactly when its file lies below the std root (`key`: its [`file_key`],
-    /// so symlinks and junctions are resolved): a `velt:` path must not leave the root, and user
+    /// so symlinks and junctions are resolved): a `velt/` path must not leave the root, and user
     /// code must not load a std file under a non-std origin (deduplication would hand that copy
     /// to std's own imports).
     fn std_membership(&self, origin: &Origin, key: &Path, spec: &str) -> Result<(), String> {
@@ -645,7 +645,7 @@ impl Loader<'_, '_> {
                 let rel = vpm::relpath::relative(key, std_key);
                 let rel = module_path(&rel);
                 Err(format!(
-                    "module `{spec}` is a file of the standard library: import it as `velt:{rel}`"
+                    "module `{spec}` is a file of the standard library: import it as `velt/{rel}`"
                 ))
             }
             _ => Ok(()),
@@ -653,9 +653,9 @@ impl Loader<'_, '_> {
     }
 
     /// The path a `paths` alias maps `spec` to, resolved like a relative import's (bare
-    /// specifiers only: relative and `velt:` imports are never aliased).
+    /// specifiers only: relative and `velt/` imports are never aliased).
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
-        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt:") {
+        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt/") {
             return None;
         }
         let file = self.opts.packages?.path_alias(importer, spec)?;
@@ -686,7 +686,7 @@ fn npm_module(
             packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
         }
         Ok(_) => false,
-        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt:"),
+        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt/"),
     };
     if !bare {
         return None;

@@ -94,7 +94,7 @@ const yieldNow = (): Promise<void> => new Promise((r) => setImmediate(r));
 #[test]
 fn node_prints_the_same_totals() {
     let src = std::fs::read_to_string(manifest().join(format!("{GOLDEN}.vlt"))).unwrap();
-    // The shim stands for the `velt:` imports.
+    // The shim stands for the `velt/` imports.
     let src: String = src
         .lines()
         .filter(|l| !l.starts_with("import "))

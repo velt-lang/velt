@@ -106,7 +106,8 @@ pub fn build_site(pages_file: &Path, std_dir: &Path, out: &Path) -> Result<usize
         .chain(module_nav(&modules, "std/"))
         .collect();
     write_module_pages(SITE, &modules, &std_nav, &out.join("std"), "../")?;
-    let intro = "The modules under `std/` are imported with `import { … } from \"velt:<name>\"`; \
+    let intro =
+        "The modules under `std/` are imported with `import { … } from \"velt/<module>\"`; \
                  `std/prelude/*` is available everywhere without an import.";
     let index = html::index_body("Standard library", intro, &modules);
     write(

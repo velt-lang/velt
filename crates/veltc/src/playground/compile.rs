@@ -68,14 +68,14 @@ fn build_in(dir: &Path, source: &str, optimize: bool) -> Result<Vec<u8>, Diagnos
     }
 }
 
-/// Reject imports other than `velt:…` (see the module docs).
+/// Reject imports other than `velt/…` (see the module docs).
 fn check_imports(source: &str) -> Result<(), Diagnostics> {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     for item in &module.items {
         if let ItemKind::Import(import) = &item.kind {
-            if !import.from.starts_with("velt:") {
+            if !import.from.starts_with("velt/") {
                 return Err(format!(
-                    "error: the playground only allows imports from \"velt:…\", not \"{}\"",
+                    "error: the playground only allows imports from \"velt/…\", not \"{}\"",
                     import.from
                 ));
             }
