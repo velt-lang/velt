@@ -84,4 +84,5 @@ Editors = ../tooling/editors.md
 Debugging = ../tooling/debugging.md
 WebAssembly = ../tooling/webassembly.md
 Platforms = ../tooling/platforms.md
+Benchmarks = ../tooling/benchmarks.md
 Internals = ../internals/README.md

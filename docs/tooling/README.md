@@ -13,5 +13,6 @@ Everything ships in one `velt` binary.
 | [Debugging](debugging.md) | debug info, LLDB, GDB, Visual Studio, VS Code |
 | [WebAssembly](webassembly.md) | WASI and browser targets, the playground |
 | [Platforms and installation](platforms.md) | supported platforms, prerequisites, distributions |
+| [Benchmarks](benchmarks.md) | how Velt is compared with Rust, Node and Bun, and how to run the comparison |
 
 Testing is covered in the Book: [Testing](../book/testing.md).
