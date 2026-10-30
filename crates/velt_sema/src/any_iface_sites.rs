@@ -167,6 +167,10 @@ pub(crate) fn instantiated_targets(
     cx: &mut Ctx,
     keep: &mut dyn FnMut(&mut Ctx, TyId) -> bool,
 ) -> Vec<TyId> {
+    // Reported later, as in `instantiated_conversions`.
+    if crate::instantiation_cycles::has_growing_cycle(cx) {
+        return vec![];
+    }
     let units = collect(cx);
     let callers = callers_of(&units);
     let mut convs = vec![];
