@@ -100,6 +100,12 @@ pub(crate) fn check(cx: &mut Ctx) {
 /// interfaces such a conversion reaches at run time (`object_ifaces::make_dynamic_object_impls`,
 /// #1909).
 pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
+    // A program whose generic recursion grows without end is reported later
+    // (`instantiation_cycles`): carrying targets around its cycles would only multiply the work
+    // up to `MAX_DEPTH`, before the same errors.
+    if crate::instantiation_cycles::has_growing_cycle(cx) {
+        return vec![];
+    }
     let units = collect(cx);
     let callers = callers_of(&units);
     let mut convs: Vec<(DefId, TyId, usize, Span)> = (units.iter())
@@ -177,20 +183,15 @@ fn carry(
     done: &mut dyn FnMut(&mut Ctx, TyId, usize, Span),
 ) {
     let mut needs: FxHashMap<DefId, FxHashSet<(TyId, usize)>> = FxHashMap::default();
-    // Each target carried: its definition, its size, and the one it was carried from.
-    let mut path: Vec<(DefId, u32, Option<usize>)> = vec![];
-    let mut work: Vec<(DefId, TyId, usize, usize)> = vec![];
+    let mut work: Vec<(DefId, TyId, usize)> = vec![];
     for (d, t, k, span) in start {
         match cx.has_type_params(t) {
-            true if needs.entry(d).or_default().insert((t, k)) => {
-                path.push((d, size(cx, t), None));
-                work.push((d, t, k, path.len() - 1));
-            }
+            true if needs.entry(d).or_default().insert((t, k)) => work.push((d, t, k)),
             true => {}
             false => done(cx, t, k, span),
         }
     }
-    while let Some((g, t, k, at)) = work.pop() {
+    while let Some((g, t, k)) = work.pop() {
         let Some(sites) = callers.get(&g) else {
             continue;
         };
@@ -201,55 +202,14 @@ fn carry(
             };
             if !cx.has_type_params(s) {
                 done(cx, s, k, *span);
-                continue;
-            }
-            // A target that comes back to a definition it was carried through, larger
-            // (`Box<W<T>>` from `Box<T>` in `f<T>` calling `f<W<T>>`), grows at each
-            // instantiation: the instantiation cycle `instantiation_cycles` reports. Carrying it
-            // on would multiply the work at each round (with several such calls), up to
-            // `MAX_DEPTH`.
-            let n = size(cx, s);
-            if depth(cx, s, 0) > MAX_DEPTH || grows(&path, at, *me, n) {
-                continue;
-            }
-            if needs.entry(*me).or_default().insert((s, k)) {
-                path.push((*me, n, Some(at)));
-                work.push((*me, s, k, path.len() - 1));
+            } else if depth(cx, s, 0) <= MAX_DEPTH && needs.entry(*me).or_default().insert((s, k)) {
+                // A target that grows at each instantiation (`conv<T[]>` in `conv<T>`) is the
+                // instantiation cycle `instantiation_cycles` reports: bounded here.
+                work.push((*me, s, k));
             }
         }
     }
 }
-
-/// Was a smaller target than one of size `n` carried through definition `me` on the way to
-/// `path[at]` ([`carry`])?
-fn grows(path: &[(DefId, u32, Option<usize>)], at: usize, me: DefId, n: u32) -> bool {
-    let mut cur = Some(at);
-    while let Some(i) = cur {
-        let (d, m, up) = path[i];
-        if d == me && m < n {
-            return true;
-        }
-        cur = up;
-    }
-    false
-}
-
-/// The number of types `t` is made of (bounded by `MAX_SIZE`).
-fn size(cx: &Ctx, t: TyId) -> u32 {
-    let mut n = 0;
-    let mut todo = vec![t];
-    while let Some(t) = todo.pop() {
-        n += 1;
-        if n >= MAX_SIZE {
-            break;
-        }
-        todo.extend(crate::types::children(cx.ty.kind(t)));
-    }
-    n
-}
-
-/// The size [`size`] counts up to.
-const MAX_SIZE: u32 = 4096;
 
 /// How deeply a carried target may nest types ([`check_any_ifaces`]).
 const MAX_DEPTH: u32 = 12;

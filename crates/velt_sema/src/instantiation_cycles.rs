@@ -66,6 +66,22 @@ struct Edge {
     allowed: bool,
 }
 
+/// Does [`check`] find a growing cycle (without reporting it)? For a pass that runs before it
+/// and would carry types around such a cycle (`any_iface_sites::instantiated_conversions`).
+pub(crate) fn has_growing_cycle(cx: &mut Ctx) -> bool {
+    let sites = collect(cx);
+    let edges = edges(cx, sites);
+    if !edges.iter().any(|e| e.grows) {
+        return false;
+    }
+    let graph = Graph::new(&edges);
+    let comp = graph.components();
+    (edges.iter()).any(|e| {
+        let (a, b) = (graph.index[&e.from], graph.index[&e.to]);
+        e.grows && !e.allowed && comp[a] == comp[b]
+    })
+}
+
 /// Reports every call that instantiates a generic function with ever-growing type arguments
 /// (`true`: something was reported; the requirement passes must not run then).
 pub(crate) fn check(cx: &mut Ctx) -> bool {
