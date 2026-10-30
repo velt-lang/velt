@@ -92,20 +92,81 @@ export function dirname(p: string): string {
 }
 
 /**
- * The last segment (trailing slashes ignored), without `suffix` if it ends with it and is
- * longer than it.
+ * The last segment (trailing slashes ignored), without `suffix` if it ends with it, as Node's
+ * `path.posix.basename` has it: a path that is the suffix gives "", a segment that is the
+ * suffix stays whole, and a suffix is matched against the segment's characters from its end
+ * (Node's algorithm, quirks included: `basename("txt/", ".txt")` is "txt/").
  */
 export function basename(p: string, suffix: string = ""): string {
-  let end = p.length as i64;
-  while (end > 1 && p.charCodeAt(end - 1) == SLASH) {
-    end--;
+  const n = p.length as i64;
+  if (suffix.length > 0 && suffix.length <= p.length) {
+    return basenameWithout(p, suffix);
   }
-  const start = end > 0 ? p.lastIndexOf("/", end - 1) + 1 : 0;
-  const base = p.slice(start, end);
-  if (suffix.length > 0 && base != suffix && base.endsWith(suffix)) {
-    return base.slice(0, (base.length - suffix.length) as i64);
+  let start: i64 = 0;
+  let end: i64 = -1;
+  let matchedSlash = true;
+  let i = n - 1;
+  while (i >= 0) {
+    if (p.charCodeAt(i) == SLASH) {
+      if (!matchedSlash) {
+        start = i + 1;
+        break;
+      }
+    } else if (end == -1) {
+      matchedSlash = false;
+      end = i + 1;
+    }
+    i--;
   }
-  return base;
+  return end == -1 ? "" : p.slice(start, end);
+}
+
+/** `basename(p, suffix)` for a suffix no longer than `p` (Node's loop, step by step). */
+function basenameWithout(p: string, suffix: string): string {
+  if (p == suffix) {
+    return "";
+  }
+  const n = p.length as i64;
+  let start: i64 = 0;
+  let end: i64 = -1;
+  let matchedSlash = true;
+  let extIdx = (suffix.length as i64) - 1;
+  let firstNonSlashEnd: i64 = -1;
+  let i = n - 1;
+  while (i >= 0) {
+    const code = p.charCodeAt(i);
+    if (code == SLASH) {
+      // A slash before the segment (not one of those at the end) ends it.
+      if (!matchedSlash) {
+        start = i + 1;
+        break;
+      }
+    } else {
+      if (firstNonSlashEnd == -1) {
+        matchedSlash = false;
+        firstNonSlashEnd = i + 1;
+      }
+      if (extIdx >= 0) {
+        if (code == suffix.charCodeAt(extIdx)) {
+          extIdx--;
+          if (extIdx == -1) {
+            end = i;
+          }
+        } else {
+          // Not the suffix: the whole segment.
+          extIdx = -1;
+          end = firstNonSlashEnd;
+        }
+      }
+    }
+    i--;
+  }
+  if (start == end) {
+    end = firstNonSlashEnd;
+  } else if (end == -1) {
+    end = n;
+  }
+  return p.slice(start, end);
 }
 
 /**
