@@ -35,7 +35,11 @@ fn built(dir: &Path) -> Vec<String> {
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| !n.contains('.') || n.ends_with(".exe"))
-        .map(|n| n.trim_end_matches(".exe").to_string())
+        // `<name>_<key>`: a harness is named by what it is built from.
+        .map(|n| {
+            let n = n.trim_end_matches(".exe");
+            n.rsplit_once('_').map_or(n, |(stem, _)| stem).to_string()
+        })
         .collect();
     stems.sort();
     stems
@@ -193,7 +197,7 @@ fn describe_it_and_expect() {
     );
     assert!(stdout.contains("6 passed; 4 failed"), "{stdout}");
     // Their top levels only register: one harness for the three, and the runner.
-    assert_eq!(built(dir), ["harness_1", "runner_0"]);
+    assert_eq!(built(dir), ["harness", "runner"]);
 
     // `--filter` matches the full names, which only the test programs know.
     let o = velt_test(dir, &["t", "--filter", "math > async"]);

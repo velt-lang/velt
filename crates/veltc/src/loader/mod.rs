@@ -540,56 +540,6 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// Load the JSX runtime of module `index` if it contains JSX.
-    fn jsx_runtime(&mut self, index: usize, queue: &mut VecDeque<usize>) {
-        let Some(span) = jsx::first_jsx(&self.modules[index].ast) else {
-            return;
-        };
-        let file = &self.origins[index].0;
-        if vpm::sources::is_plain_ts(file) {
-            let tsx = file.with_extension("tsx");
-            let note = format!(
-                "TypeScript allows JSX only in `.tsx` files: rename it to `{}`",
-                tsx.file_name().unwrap_or_default().to_string_lossy()
-            );
-            self.error(
-                "JSX is not allowed in a `.ts` file".to_string(),
-                vec![note],
-                span,
-            );
-        }
-        let (source, from) = match &self.modules[index].ast.jsx_import_source {
-            Some(s) => (s.clone(), "its `// @jsxImportSource` comment"),
-            None => match self
-                .opts
-                .packages
-                .and_then(|p| p.jsx_import_source(&self.origins[index].0))
-            {
-                Some(s) => (s, "`jsx.importSource` in package.vlt"),
-                None => (jsx::DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
-            },
-        };
-        let spec = jsx::runtime_spec(&source);
-        match self.import(index, &spec, span, true, queue) {
-            Some(target) => {
-                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone());
-                // The module's JSX uses the runtime as the namespace `JSX`: all of it, also
-                // when an import took one name of it before (`import { jsxEscape } from
-                // "velt/jsx/jsx-runtime"`), which followed only that re-export.
-                if self.wanted.request(target, None) && self.resolved.contains(&target) {
-                    queue.push_back(target);
-                }
-            }
-            None => {
-                if let Some(d) = self.diags.pop() {
-                    let note =
-                        format!("this module contains JSX: its runtime is `{spec}`, from {from}");
-                    self.diags.push(d.with_note(note));
-                }
-            }
-        }
-    }
-
     /// Locate (and load if new) the module `spec` imported by module `index`; `written`: the
     /// import is the source's, so std's visibility rule applies ([`visibility`]).
     fn import(
