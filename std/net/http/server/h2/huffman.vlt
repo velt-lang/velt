@@ -1,0 +1,117 @@
+// velt/net/http (internal): the HPACK Huffman code (RFC 7541 §5.2, Appendix B): decoding
+// through the tables of h2/huffman_table.vlt, and encoding.
+//
+// Decoding keeps up to 64 bits of input in a register: the next 8 bits find a code of 8 bits or
+// fewer (most characters of a header) in one lookup, a longer code is found by its length, as
+// the code is canonical. Nothing is allocated: the output goes into the caller's buffer.
+// Padding is checked as §5.2 asks: fewer than 8 bits, all ones, and EOS never appears.
+
+import {
+  HUFFMAN_CODES,
+  HUFFMAN_COUNT,
+  HUFFMAN_FAST,
+  HUFFMAN_FIRST,
+  HUFFMAN_LENGTHS,
+  HUFFMAN_OFFSET,
+  HUFFMAN_SYMBOLS,
+} from "velt/net/http/server/h2/huffman_table";
+
+/**
+ * Decodes the Huffman-coded bytes `src[start..end)` into `out` from `at`: the end of what was
+ * written, or -1 for input that is not a valid code (EOS, or padding that is not up to 7 one
+ * bits). `out` must have room for `(end - start) * 8 / 5` bytes (the shortest code is 5 bits).
+ */
+export function huffmanDecode(src: u8[], start: i64, end: i64, out: u8[], at: i64): i64 {
+  // `n` bits of input in the low bits of `acc`, most significant first.
+  let acc: u64 = 0;
+  let n: i64 = 0;
+  let i = start;
+  let o = at;
+  while (true) {
+    while (n <= 56 && i < end) {
+      acc = (acc << 8) | (src[i] as u64);
+      n += 8;
+      i++;
+    }
+    if (n == 0) {
+      return o;
+    }
+    // The next 8 bits (past the end: ones, as padding is).
+    const top =
+      n >= 8
+        ? ((acc >> ((n - 8) as u64)) & 255) as i64
+        : (((acc << ((8 - n) as u64)) | ((1u64 << ((8 - n) as u64)) - 1)) & 255) as i64;
+    const f = HUFFMAN_FAST[top] as i64;
+    let len = f >> 9;
+    let sym = f & 511;
+    if (f == 0) {
+      // A code longer than 8 bits: its length is the one whose range holds its first bits.
+      len = 0;
+      let l: i64 = 9;
+      while (l <= 30 && l <= n) {
+        const code = ((acc >> ((n - l) as u64)) & ((1u64 << (l as u64)) - 1)) as i64;
+        const k = code - (HUFFMAN_FIRST[l] as i64);
+        if (k >= 0 && k < (HUFFMAN_COUNT[l] as i64)) {
+          len = l;
+          sym = HUFFMAN_SYMBOLS[(HUFFMAN_OFFSET[l] as i64) + k] as i64;
+          break;
+        }
+        l++;
+      }
+      if (sym == 256) {
+        return -1;
+      }
+      if (len == 0) {
+        // No code fits in what is left.
+        len = 64;
+      }
+    }
+    if (len > n) {
+      // Only padding is left: fewer than 8 bits, all ones (no code of 7 bits or fewer is all
+      // ones, so `top` matched no code within them).
+      const ones = (1u64 << (n as u64)) - 1;
+      return n < 8 && (acc & ones) == ones ? o : -1;
+    }
+    out[o] = sym as u8;
+    o++;
+    n -= len;
+    acc = acc & ((1u64 << (n as u64)) - 1);
+  }
+}
+
+/// The number of bytes the Huffman code of `src[start..end)` takes.
+export function huffmanLength(src: u8[], start: i64, end: i64): i64 {
+  let bits: i64 = 0;
+  for (let i = start; i < end; i++) {
+    bits += HUFFMAN_LENGTHS[src[i] as i64] as i64;
+  }
+  return (bits + 7) >> 3;
+}
+
+/**
+ * Writes the Huffman code of `src[start..end)` into `out` from `at` (room for `huffmanLength`
+ * bytes), padded with one bits: the end of what was written.
+ */
+export function huffmanEncode(src: u8[], start: i64, end: i64, out: u8[], at: i64): i64 {
+  // Bits waiting to be written, most significant first, in the low `n` bits of `acc`.
+  let acc: u64 = 0;
+  let n: i64 = 0;
+  let o = at;
+  for (let i = start; i < end; i++) {
+    const s = src[i] as i64;
+    const len = HUFFMAN_LENGTHS[s] as i64;
+    acc = (acc << (len as u64)) | (HUFFMAN_CODES[s] as u64);
+    n += len;
+    while (n >= 8) {
+      n -= 8;
+      out[o] = ((acc >> (n as u64)) & 255) as u8;
+      o++;
+    }
+  }
+  if (n > 0) {
+    // The rest of the last byte: the most significant bits of EOS (all ones).
+    out[o] = (((acc << ((8 - n) as u64)) | ((1u64 << ((8 - n) as u64)) - 1)) & 255) as u8;
+    o++;
+  }
+  return o;
+}

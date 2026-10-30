@@ -1,0 +1,176 @@
+// velt/net/http (internal): `FrameWriter`, the frames a connection has to send, encoded
+// one after another into one buffer that leaves in one write (`TcpStream.writeBytesLater`): the
+// responses to every request one read brought go out together, as h1's pipelined responses do.
+
+import {
+  CONTINUATION,
+  END_HEADERS,
+  GOAWAY,
+  HEADER_LENGTH,
+  HEADERS,
+  PING,
+  RST_STREAM,
+  SETTINGS,
+  WINDOW_UPDATE,
+  ACK,
+} from "velt/net/http/server/h2/frame";
+
+/// An output buffer of frames.
+export class FrameWriter {
+  buf: u8[] = Buffer.alloc(16384);
+  length: i64 = 0;
+
+  /// Room for `n` more bytes.
+  reserve(n: i64) {
+    if (this.length + n <= (this.buf.length as i64)) {
+      return;
+    }
+    let size = (this.buf.length as i64) * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown: u8[] = Buffer.alloc(size as usize);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  /// A frame header (room for it is the caller's: `reserve`).
+  header(length: i64, type: i64, flags: i64, stream: i64) {
+    const b = this.buf;
+    const at = this.length;
+    b[at] = ((length >> 16) & 255) as u8;
+    b[at + 1] = ((length >> 8) & 255) as u8;
+    b[at + 2] = (length & 255) as u8;
+    b[at + 3] = type as u8;
+    b[at + 4] = flags as u8;
+    b[at + 5] = ((stream >> 24) & 127) as u8;
+    b[at + 6] = ((stream >> 16) & 255) as u8;
+    b[at + 7] = ((stream >> 8) & 255) as u8;
+    b[at + 8] = (stream & 255) as u8;
+    this.length = at + HEADER_LENGTH;
+  }
+
+  /// A 32-bit number (room for it is the caller's).
+  u32(v: i64) {
+    const b = this.buf;
+    const at = this.length;
+    b[at] = ((v >> 24) & 255) as u8;
+    b[at + 1] = ((v >> 16) & 255) as u8;
+    b[at + 2] = ((v >> 8) & 255) as u8;
+    b[at + 3] = (v & 255) as u8;
+    this.length = at + 4;
+  }
+
+  /// One byte (room for it is the caller's).
+  byte(v: i64) {
+    this.buf[this.length] = (v & 255) as u8;
+    this.length++;
+  }
+
+  /// A SETTINGS frame with `pairs` (identifier, value, ...).
+  settings(pairs: i64[]) {
+    const n = pairs.length as i64;
+    this.reserve(HEADER_LENGTH + n * 3);
+    this.header((n / 2) * 6, SETTINGS, 0, 0);
+    for (let i: i64 = 0; i < n; i += 2) {
+      this.byte(pairs[i] >> 8);
+      this.byte(pairs[i]);
+      this.u32(pairs[i + 1]);
+    }
+  }
+
+  /// A SETTINGS acknowledgement.
+  settingsAck() {
+    this.reserve(HEADER_LENGTH);
+    this.header(0, SETTINGS, ACK, 0);
+  }
+
+  /// A PING acknowledgement echoing `src[at..at + 8)`.
+  pingAck(src: u8[], at: i64) {
+    this.reserve(HEADER_LENGTH + 8);
+    this.header(8, PING, ACK, 0);
+    for (let i: i64 = 0; i < 8; i++) {
+      this.buf[this.length + i] = src[at + i];
+    }
+    this.length += 8;
+  }
+
+  /// A GOAWAY frame: the last stream processed, the error code and a debug text.
+  goaway(lastStream: i64, code: i64, debug: string) {
+    const n = Buffer.byteLength(debug) as i64;
+    this.reserve(HEADER_LENGTH + 8 + n);
+    this.header(8 + n, GOAWAY, 0, 0);
+    this.u32(lastStream & 0x7fffffff);
+    this.u32(code);
+    this.buf.write(debug, this.length as usize);
+    this.length += n;
+  }
+
+  /// RST_STREAM for `stream` with error `code`.
+  rstStream(stream: i64, code: i64) {
+    this.reserve(HEADER_LENGTH + 4);
+    this.header(4, RST_STREAM, 0, stream);
+    this.u32(code);
+  }
+
+  /// WINDOW_UPDATE of `stream` (0: the connection) by `increment`.
+  windowUpdate(stream: i64, increment: i64) {
+    this.reserve(HEADER_LENGTH + 4);
+    this.header(4, WINDOW_UPDATE, 0, stream);
+    this.u32(increment);
+  }
+
+  /// A DATA frame of `stream` carrying `src[start..end)`.
+  data(stream: i64, flags: i64, src: u8[], start: i64, end: i64) {
+    const n = end - start;
+    this.reserve(HEADER_LENGTH + n);
+    this.header(n, 0, flags, stream);
+    if (n > 0) {
+      src.copy(this.buf, this.length, start, end);
+      this.length += n;
+    }
+  }
+
+  /// Starts a HEADERS frame of `stream`: its header is filled in by `endHeaders`, once the block
+  /// (written after it) is known. Returns where the frame starts.
+  beginHeaders(): i64 {
+    this.reserve(HEADER_LENGTH + 256);
+    const at = this.length;
+    this.length += HEADER_LENGTH;
+    return at;
+  }
+
+  /**
+   * Ends the HEADERS frame begun at `at` (`flags` besides END_HEADERS: END_STREAM or none):
+   * a block larger than `maxFrame` is split into HEADERS and CONTINUATION frames, which leave
+   * together (RFC 9113 §4.3).
+   */
+  endHeaders(at: i64, stream: i64, flags: i64, maxFrame: i64) {
+    const blockStart = at + HEADER_LENGTH;
+    const total = this.length - blockStart;
+    if (total <= maxFrame) {
+      const end = this.length;
+      this.length = at;
+      this.header(total, HEADERS, flags | END_HEADERS, stream);
+      this.length = end;
+      return;
+    }
+    // Rare (a block over 16 KiB): copy the block out and write it again in pieces.
+    const block = this.buf.slice(blockStart, this.length);
+    this.length = at;
+    let off: i64 = 0;
+    let first = true;
+    while (off < total) {
+      const n = total - off < maxFrame ? total - off : maxFrame;
+      const last = off + n == total;
+      this.reserve(HEADER_LENGTH + n);
+      const type = first ? HEADERS : CONTINUATION;
+      const f = (first ? flags : 0) | (last ? END_HEADERS : 0);
+      this.header(n, type, f, stream);
+      block.copy(this.buf, this.length, off, off + n);
+      this.length += n;
+      off += n;
+      first = false;
+    }
+  }
+}

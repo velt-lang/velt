@@ -1,0 +1,264 @@
+// HPACK (RFC 7541) as the HTTP/2 server decodes requests and encodes responses: the examples of
+// Appendix C, Huffman coding, and the blocks a decoder must refuse.
+import { describe, expect, it } from "velt/test";
+import { FieldList } from "velt/net/http/server/h2/field_list";
+import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
+import { HpackDecoder } from "velt/net/http/server/h2/hpack_decoder";
+import { HpackEncoder } from "velt/net/http/server/h2/hpack_encoder";
+import { huffmanDecode, huffmanEncode, huffmanLength } from "velt/net/http/server/h2/huffman";
+
+function hex(s: string): u8[] {
+  const t = s.replaceAll(" ", "");
+  const out: u8[] = Buffer.alloc((t.length / 2) as usize);
+  for (let i = 0; i < t.length / 2; i++) {
+    out[i] = parseInt(t.substring(i * 2, i * 2 + 2), 16) as u8;
+  }
+  return out;
+}
+
+function toHex(b: u8[], start: i64, end: i64): string {
+  let s = "";
+  for (let i = start; i < end; i++) {
+    s += (b[i] as number).toString(16).padStart(2, "0");
+  }
+  return s;
+}
+
+// Decodes `block` with `d`: the fields as "name: value" lines, or "error".
+function decode(d: HpackDecoder, block: string): string {
+  const b = hex(block);
+  const out = new FieldList();
+  if (!d.decode(b, 0, b.length as i64, out)) {
+    return "error";
+  }
+  return out.pairs().map((p) => `${p[0]}: ${p[1]}`).join("\n");
+}
+
+describe("HPACK decoding (RFC 7541 Appendix C)", () => {
+  it("decodes the literal and indexed representations (C.2)", () => {
+    const d = new HpackDecoder();
+    expect(decode(d, "400a 6375 7374 6f6d 2d6b 6579 0d63 7573 746f 6d2d 6865 6164 6572")).toBe(
+      "custom-key: custom-header",
+    );
+    expect(d.table.size).toBe(55);
+    const d2 = new HpackDecoder();
+    expect(decode(d2, "040c 2f73 616d 706c 652f 7061 7468")).toBe(":path: /sample/path");
+    expect(d2.table.length).toBe(0);
+    const d3 = new HpackDecoder();
+    expect(decode(d3, "1008 7061 7373 776f 7264 0673 6563 7265 74")).toBe("password: secret");
+    expect(d3.table.length).toBe(0);
+    expect(decode(new HpackDecoder(), "82")).toBe(":method: GET");
+  });
+
+  it("decodes requests, without Huffman coding (C.3)", () => {
+    const d = new HpackDecoder();
+    expect(decode(d, "8286 8441 0f77 7777 2e65 7861 6d70 6c65 2e63 6f6d")).toBe(
+      ":method: GET\n:scheme: http\n:path: /\n:authority: www.example.com",
+    );
+    expect(d.table.size).toBe(57);
+    expect(decode(d, "8286 84be 5808 6e6f 2d63 6163 6865")).toBe(
+      ":method: GET\n:scheme: http\n:path: /\n:authority: www.example.com\ncache-control: no-cache",
+    );
+    expect(d.table.size).toBe(110);
+    expect(
+      decode(d, "8287 85bf 400a 6375 7374 6f6d 2d6b 6579 0c63 7573 746f 6d2d 7661 6c75 65"),
+    ).toBe(
+      ":method: GET\n:scheme: https\n:path: /index.html\n:authority: www.example.com\ncustom-key: custom-value",
+    );
+    expect(d.table.size).toBe(164);
+  });
+
+  it("decodes requests, with Huffman coding (C.4)", () => {
+    const d = new HpackDecoder();
+    expect(decode(d, "8286 8441 8cf1 e3c2 e5f2 3a6b a0ab 90f4 ff")).toBe(
+      ":method: GET\n:scheme: http\n:path: /\n:authority: www.example.com",
+    );
+    expect(decode(d, "8286 84be 5886 a8eb 1064 9cbf")).toBe(
+      ":method: GET\n:scheme: http\n:path: /\n:authority: www.example.com\ncache-control: no-cache",
+    );
+    expect(decode(d, "8287 85bf 4088 25a8 49e9 5ba9 7d7f 8925 a849 e95b b8e8 b4bf")).toBe(
+      ":method: GET\n:scheme: https\n:path: /index.html\n:authority: www.example.com\ncustom-key: custom-value",
+    );
+    expect(d.table.size).toBe(164);
+  });
+
+  it("decodes responses with evictions, without Huffman coding (C.5)", () => {
+    const d = new HpackDecoder(256);
+    expect(
+      decode(
+        d,
+        "4803 3330 3258 0770 7269 7661 7465 611d 4d6f 6e2c 2032 3120 4f63 7420 3230 3133 2032 303a 3133 3a32 3120 474d 546e 1768 7474 7073 3a2f 2f77 7777 2e65 7861 6d70 6c65 2e63 6f6d",
+      ),
+    ).toBe(
+      ":status: 302\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:21 GMT\nlocation: https://www.example.com",
+    );
+    expect(d.table.size).toBe(222);
+    expect(decode(d, "4803 3330 37c1 c0bf")).toBe(
+      ":status: 307\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:21 GMT\nlocation: https://www.example.com",
+    );
+    expect(d.table.size).toBe(222);
+    expect(
+      decode(
+        d,
+        "88c1 611d 4d6f 6e2c 2032 3120 4f63 7420 3230 3133 2032 303a 3133 3a32 3220 474d 54c0 5a04 677a 6970 7738 666f 6f3d 4153 444a 4b48 514b 425a 584f 5157 454f 5049 5541 5851 5745 4f49 553b 206d 6178 2d61 6765 3d33 3630 303b 2076 6572 7369 6f6e 3d31",
+      ),
+    ).toBe(
+      ":status: 200\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:22 GMT\nlocation: https://www.example.com\ncontent-encoding: gzip\nset-cookie: foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1",
+    );
+    expect(d.table.size).toBe(215);
+    expect(d.table.length).toBe(3);
+  });
+
+  it("decodes responses with evictions, with Huffman coding (C.6)", () => {
+    const d = new HpackDecoder(256);
+    expect(
+      decode(
+        d,
+        "4882 6402 5885 aec3 771a 4b61 96d0 7abe 9410 54d4 44a8 2005 9504 0b81 66e0 82a6 2d1b ff6e 919d 29ad 1718 63c7 8f0b 97c8 e9ae 82ae 43d3",
+      ),
+    ).toBe(
+      ":status: 302\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:21 GMT\nlocation: https://www.example.com",
+    );
+    expect(decode(d, "4883 640e ffc1 c0bf")).toBe(
+      ":status: 307\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:21 GMT\nlocation: https://www.example.com",
+    );
+    expect(
+      decode(
+        d,
+        "88c1 6196 d07a be94 1054 d444 a820 0595 040b 8166 e084 a62d 1bff c05a 839b d9ab 77ad 94e7 821d d7f2 e6c7 b335 dfdf cd5b 3960 d5af 2708 7f36 72c1 ab27 0fb5 291f 9587 3160 65c0 03ed 4ee5 b106 3d50 07",
+      ),
+    ).toBe(
+      ":status: 200\ncache-control: private\ndate: Mon, 21 Oct 2013 20:13:22 GMT\nlocation: https://www.example.com\ncontent-encoding: gzip\nset-cookie: foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1",
+    );
+    expect(d.table.size).toBe(215);
+  });
+});
+
+describe("HPACK errors", () => {
+  it("refuses index 0, an index past the tables, and integers cut short", () => {
+    expect(decode(new HpackDecoder(), "80")).toBe("error");
+    expect(decode(new HpackDecoder(), "be")).toBe("error");
+    expect(decode(new HpackDecoder(), "ff")).toBe("error");
+    expect(decode(new HpackDecoder(), "ff ff ff ff ff ff 01")).toBe("error");
+  });
+
+  it("refuses a string longer than the block, and bad Huffman padding", () => {
+    expect(decode(new HpackDecoder(), "0408 2f73")).toBe("error");
+    // ":path" literal, Huffman value of one byte 0x00 (a 0 bit pad is not EOS's prefix).
+    expect(decode(new HpackDecoder(), "0481 00")).toBe("error");
+    // Padding of 8 or more one bits: "a" (00011) then 0xff.
+    expect(decode(new HpackDecoder(), "0482 1fff")).toBe("error");
+    // "&" (8 bits: 11111000), then exactly 8 one bits.
+    expect(decode(new HpackDecoder(), "0482 f8ff")).toBe("error");
+    expect(decode(new HpackDecoder(), "0481 f8")).toBe(":path: &");
+    // EOS itself (30 one bits).
+    expect(decode(new HpackDecoder(), "0484 ffff ffff")).toBe("error");
+  });
+
+  it("allows a size update only at the start of a block, within the limit", () => {
+    expect(decode(new HpackDecoder(), "3f e1 1f 82")).toBe(":method: GET");
+    expect(decode(new HpackDecoder(), "82 20")).toBe("error");
+    // 4097 > the 4096 the decoder allows.
+    expect(decode(new HpackDecoder(), "3f e2 1f")).toBe("error");
+    const d = new HpackDecoder();
+    decode(d, "400a 6375 7374 6f6d 2d6b 6579 0d63 7573 746f 6d2d 6865 6164 6572");
+    expect(decode(d, "20 be")).toBe("error");
+  });
+
+  it("keeps the table in step when a block exceeds the list limit (an HPACK bomb)", () => {
+    // A 4000-byte value added to the table, then referred to many times in one small block.
+    const d = new HpackDecoder(4096, 8000);
+    const value = "x".repeat(3900);
+    const first: u8[] = Buffer.alloc(3920);
+    first[0] = 0x40;
+    first[1] = 1;
+    first[2] = 0x61;
+    // 3900 = 127 + 3773: 0x7f, then 3773 = 0x3d 0x1d... as base-128: 3773 & 127 = 61 (| 128), 29.
+    first[3] = 0x7f;
+    first[4] = 189;
+    first[5] = 29;
+    first.write(value, 6);
+    const out = new FieldList();
+    expect(d.decode(first, 0, 3906, out)).toBe(true);
+    expect(out.count).toBe(1);
+    const bomb: u8[] = Buffer.alloc(1000).fill(0xbe);
+    const out2 = new FieldList();
+    expect(d.decode(bomb, 0, 1000, out2)).toBe(true);
+    expect(out2.overflow).toBe(true);
+    expect(out2.count).toBe(2);
+    expect(out2.length < 10000).toBe(true);
+  });
+});
+
+describe("Huffman coding", () => {
+  it("encodes as RFC 7541 C.4.1 does, and decodes back", () => {
+    const s: u8[] = Buffer.alloc(15);
+    s.write("www.example.com", 0);
+    expect(huffmanLength(s, 0, 15)).toBe(12);
+    const out: u8[] = Buffer.alloc(32);
+    const end = huffmanEncode(s, 0, 15, out, 0);
+    expect(toHex(out, 0, end)).toBe("f1e3c2e5f23a6ba0ab90f4ff");
+    const back: u8[] = Buffer.alloc(32);
+    const n = huffmanDecode(out, 0, end, back, 0);
+    expect(back.utf8Slice(0, n)).toBe("www.example.com");
+  });
+
+  it("round-trips every byte value", () => {
+    const all: u8[] = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) {
+      all[i] = i as u8;
+    }
+    const coded: u8[] = Buffer.alloc(huffmanLength(all, 0, 256) as usize);
+    const end = huffmanEncode(all, 0, 256, coded, 0);
+    expect(end).toBe(coded.length as i64);
+    const back: u8[] = Buffer.alloc(512);
+    expect(huffmanDecode(coded, 0, end, back, 0)).toBe(256);
+    expect(toHex(back, 0, 256)).toBe(toHex(all, 0, 256));
+  });
+});
+
+describe("HPACK encoding", () => {
+  it("encodes responses a decoder reads back, indexing what repeats", () => {
+    const e = new HpackEncoder();
+    const d = new HpackDecoder();
+    const w = new FrameWriter();
+    for (let round = 0; round < 3; round++) {
+      w.length = 0;
+      e.begin(w);
+      e.status(w, round == 2 ? 418 : 200);
+      e.field(w, "server", "Velt");
+      e.field(w, "content-type", "text/plain; charset=utf-8");
+      e.contentLength(w, 1234 + round);
+      e.field(w, "set-cookie", "a=b");
+      const out = new FieldList();
+      expect(d.decode(w.buf, 0, w.length, out)).toBe(true);
+      expect(out.pairs().map((p) => `${p[0]}=${p[1]}`).join("|")).toBe(
+        `:status=${round == 2 ? 418 : 200}|server=Velt|content-type=text/plain; charset=utf-8|content-length=${1234 + round}|set-cookie=a=b`,
+      );
+      if (round == 1) {
+        // :status 200, two indexed fields, content-length (1 + 1 + 1 + 4), set-cookie never
+        // indexed (1 + 1 + 1 + 3 bytes at most).
+        expect(w.length <= 16).toBe(true);
+      }
+    }
+  });
+
+  it("announces a smaller table, and evicts as the decoder does", () => {
+    const e = new HpackEncoder();
+    const d = new HpackDecoder();
+    const w = new FrameWriter();
+    for (let i = 0; i < 200; i++) {
+      w.length = 0;
+      if (i == 100) {
+        e.setMaxSize(100);
+      }
+      e.begin(w);
+      e.field(w, `x-name-${i % 37}`, `value ${i % 53}`);
+      const out = new FieldList();
+      expect(d.decode(w.buf, 0, w.length, out)).toBe(true);
+      expect(out.value(0)).toBe(`value ${i % 53}`);
+    }
+    expect(d.table.maxSize).toBe(100);
+    expect(d.table.size <= 100).toBe(true);
+  });
+});

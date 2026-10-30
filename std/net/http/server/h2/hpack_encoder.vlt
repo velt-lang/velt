@@ -1,0 +1,211 @@
+// velt/net/http (internal): `HpackEncoder`, HPACK encoding (RFC 7541 §6) of response
+// header blocks into a connection's `FrameWriter`.
+//
+// What a server sends repeats from response to response (`server`, `content-type`, the `date`
+// of this second), so a field is added to the dynamic table the first time and sent as one index
+// byte after that. `content-length` changes with every response and is sent without indexing,
+// by its static name; `set-cookie` and `authorization` are never indexed (RFC 7541 §7.1.3), so
+// an intermediary does not compress them either. A literal string is Huffman-coded when that is
+// shorter.
+
+import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
+import { huffmanEncode, huffmanLength } from "velt/net/http/server/h2/huffman";
+import { staticNameIndex, staticStatusIndex } from "velt/net/http/server/h2/hpack_static";
+
+/// A field larger than this (name + value + 32) is not added to the table: it would evict much
+/// for little.
+const MAX_INDEXED: i64 = 1024;
+
+/// A connection's response header encoder.
+export class HpackEncoder {
+  // The dynamic table, as the peer's decoder keeps it: entries by insertion number (the oldest
+  // still there is `evicted`, the next one `inserted`).
+  private names: string[] = [];
+  private values: string[] = [];
+  private sizes: i64[] = [];
+  private first: i64 = 0;
+  private evicted: i64 = 0;
+  private inserted: i64 = 0;
+  private size: i64 = 0;
+  /// The entries' insertion numbers by name, for lookups.
+  private byName: Map<string, i64[]> = new Map();
+  /// The most the table may hold (the peer's SETTINGS_HEADER_TABLE_SIZE, at most 4096).
+  private maxSize: i64 = 4096;
+  /// A smaller size the next block must announce first (-1: none).
+  private pendingSize: i64 = -1;
+  /// The bytes of a string being encoded.
+  private scratch: u8[] = Buffer.alloc(256);
+
+  /// The peer's decoder allows `size` bytes of table (SETTINGS_HEADER_TABLE_SIZE): the encoder
+  /// uses at most 4096 of them, and announces a reduction with its next block.
+  setMaxSize(size: i64) {
+    const want = size < 4096 ? size : 4096;
+    if (want != this.maxSize) {
+      this.maxSize = want;
+      this.pendingSize = want;
+      this.evictTo(want);
+    }
+  }
+
+  /// Starts a block: a pending table size update goes first (RFC 7541 §4.2).
+  begin(out: FrameWriter) {
+    if (this.pendingSize >= 0) {
+      out.reserve(6);
+      integer(out, 0x20, 5, this.pendingSize);
+      this.pendingSize = -1;
+    }
+  }
+
+  /// `:status` `code`.
+  status(out: FrameWriter, code: i64) {
+    const i = staticStatusIndex(code);
+    out.reserve(8);
+    if (i > 0) {
+      out.byte(0x80 | i);
+      return;
+    }
+    this.field(out, ":status", `${code}`);
+  }
+
+  /// `content-length: n`, without indexing (static name 28).
+  contentLength(out: FrameWriter, n: i64) {
+    out.reserve(24);
+    out.byte(0x0f);
+    out.byte(28 - 15);
+    const digits = `${n}`;
+    out.byte(digits.length as i64);
+    out.length += out.buf.write(digits, out.length as usize) as i64;
+  }
+
+  /// Field `name: value` (`name` in lowercase).
+  field(out: FrameWriter, name: string, value: string) {
+    const found = this.find(name, value);
+    if (found > 0) {
+      out.reserve(6);
+      integer(out, 0x80, 7, found);
+      return;
+    }
+    const nameIndex = staticNameIndex(name);
+    const cost = (Buffer.byteLength(name) as i64) + (Buffer.byteLength(value) as i64) + 32;
+    const sensitive = name == "set-cookie" || name == "authorization" || name == "cookie";
+    if (sensitive) {
+      // Never indexed (0001).
+      this.literal(out, 0x10, 4, nameIndex, name, value);
+    } else if (cost <= MAX_INDEXED && cost <= this.maxSize) {
+      // With incremental indexing (01).
+      this.literal(out, 0x40, 6, nameIndex, name, value);
+      this.add(name, value, cost);
+    } else {
+      // Without indexing (0000).
+      this.literal(out, 0x00, 4, nameIndex, name, value);
+    }
+  }
+
+  /// A literal field: the pattern and prefix of its representation, its name by static index
+  /// (or as a string when 0) and its value.
+  private literal(
+    out: FrameWriter,
+    pattern: i64,
+    prefix: i64,
+    nameIndex: i64,
+    name: string,
+    value: string,
+  ) {
+    out.reserve(6);
+    integer(out, pattern, prefix, nameIndex);
+    if (nameIndex == 0) {
+      this.string(out, name);
+    }
+    this.string(out, value);
+  }
+
+  /// A string literal, Huffman-coded when shorter.
+  private string(out: FrameWriter, s: string) {
+    const n = Buffer.byteLength(s) as i64;
+    if ((this.scratch.length as i64) < n) {
+      this.scratch = Buffer.alloc((n * 2) as usize);
+    }
+    const scratch = this.scratch;
+    scratch.write(s, 0);
+    const h = huffmanLength(scratch, 0, n);
+    out.reserve(6 + n);
+    if (h < n) {
+      integer(out, 0x80, 7, h);
+      out.length = huffmanEncode(scratch, 0, n, out.buf, out.length);
+    } else {
+      integer(out, 0, 7, n);
+      scratch.copy(out.buf, out.length, 0, n);
+      out.length += n;
+    }
+  }
+
+  /// The HPACK index of the entry `name: value` in the dynamic table, or 0.
+  private find(name: string, value: string): i64 {
+    const ids = this.byName.get(name);
+    if (ids == undefined) {
+      return 0;
+    }
+    for (let k = (ids.length as i64) - 1; k >= 0; k--) {
+      const id = ids[k];
+      if (this.values[id - this.first] == value) {
+        return 62 + (this.inserted - 1 - id);
+      }
+    }
+    return 0;
+  }
+
+  private add(name: string, value: string, cost: i64) {
+    this.evictTo(this.maxSize - cost);
+    const id = this.inserted;
+    this.inserted++;
+    this.names.push(name);
+    this.values.push(value);
+    this.sizes.push(cost);
+    this.size += cost;
+    const ids = this.byName.get(name);
+    if (ids == undefined) {
+      this.byName.set(name, [id]);
+    } else {
+      ids.push(id);
+    }
+  }
+
+  /// Evicts the oldest entries until the table holds at most `max` bytes.
+  private evictTo(max: i64) {
+    while (this.size > max && this.evicted < this.inserted) {
+      const k = this.evicted - this.first;
+      this.size -= this.sizes[k];
+      const ids = this.byName.get(this.names[k])!;
+      // The oldest entry is the first of its name.
+      ids.shift();
+      if (ids.length == 0) {
+        this.byName.delete(this.names[k]);
+      }
+      this.evicted++;
+    }
+    const gone = this.evicted - this.first;
+    if (gone >= 64 && gone * 2 >= (this.names.length as i64)) {
+      this.names = this.names.slice(gone);
+      this.values = this.values.slice(gone);
+      this.sizes = this.sizes.slice(gone);
+      this.first = this.evicted;
+    }
+  }
+}
+
+/// An integer with an `n`-bit prefix after the bits `pattern` (RFC 7541 §5.1); room for 6 bytes
+/// is the caller's.
+function integer(out: FrameWriter, pattern: i64, n: i64, v: i64) {
+  const max = (1 << n) - 1;
+  if (v < max) {
+    out.byte(pattern | v);
+    return;
+  }
+  out.byte(pattern | max);
+  let rest = v - max;
+  while (rest >= 128) {
+    out.byte((rest & 127) | 128);
+    rest = rest >> 7;
+  }
+  out.byte(rest);
+}

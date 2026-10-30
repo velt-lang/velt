@@ -1,0 +1,131 @@
+// velt/net/http (internal): HTTP/2 frame types, flags, settings and error codes (RFC 9113
+// §6, §7, §11), and reading a frame header.
+
+/// The client connection preface (RFC 9113 §3.4): "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".
+export const PREFACE_LENGTH: i64 = 24;
+
+/// Whether `b[at..at + 24)` is the client preface.
+export function isPreface(b: u8[], at: i64): bool {
+  return b.utf8Equals("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", at, at + PREFACE_LENGTH);
+}
+
+/// Whether the bytes `b[at..end)` (fewer than 24) may still turn out to be the preface.
+export function mayBePreface(b: u8[], at: i64, end: i64): bool {
+  const p = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+  for (let i = at; i < end; i++) {
+    if (b[i] as i64 != (p.charCodeAt(i - at) as i64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// The frame header's length: 24-bit length, type, flags, 31-bit stream id.
+export const HEADER_LENGTH: i64 = 9;
+
+// Frame types (RFC 9113 §6).
+export const DATA: i64 = 0;
+export const HEADERS: i64 = 1;
+export const PRIORITY: i64 = 2;
+export const RST_STREAM: i64 = 3;
+export const SETTINGS: i64 = 4;
+export const PUSH_PROMISE: i64 = 5;
+export const PING: i64 = 6;
+export const GOAWAY: i64 = 7;
+export const WINDOW_UPDATE: i64 = 8;
+export const CONTINUATION: i64 = 9;
+
+// Flags.
+export const END_STREAM: i64 = 0x1;
+export const ACK: i64 = 0x1;
+export const END_HEADERS: i64 = 0x4;
+export const PADDED: i64 = 0x8;
+export const PRIORITY_FLAG: i64 = 0x20;
+
+// Settings (RFC 9113 §6.5.2).
+export const SETTINGS_HEADER_TABLE_SIZE: i64 = 1;
+export const SETTINGS_ENABLE_PUSH: i64 = 2;
+export const SETTINGS_MAX_CONCURRENT_STREAMS: i64 = 3;
+export const SETTINGS_INITIAL_WINDOW_SIZE: i64 = 4;
+export const SETTINGS_MAX_FRAME_SIZE: i64 = 5;
+export const SETTINGS_MAX_HEADER_LIST_SIZE: i64 = 6;
+
+// Error codes (RFC 9113 §7).
+export const NO_ERROR: i64 = 0;
+export const PROTOCOL_ERROR: i64 = 1;
+export const INTERNAL_ERROR: i64 = 2;
+export const FLOW_CONTROL_ERROR: i64 = 3;
+export const SETTINGS_TIMEOUT: i64 = 4;
+export const STREAM_CLOSED: i64 = 5;
+export const FRAME_SIZE_ERROR: i64 = 6;
+export const REFUSED_STREAM: i64 = 7;
+export const CANCEL: i64 = 8;
+export const COMPRESSION_ERROR: i64 = 9;
+export const CONNECT_ERROR: i64 = 10;
+export const ENHANCE_YOUR_CALM: i64 = 11;
+export const INADEQUATE_SECURITY: i64 = 12;
+export const HTTP_1_1_REQUIRED: i64 = 13;
+
+/// The default and smallest SETTINGS_MAX_FRAME_SIZE, and the largest allowed.
+export const MIN_MAX_FRAME_SIZE: i64 = 16384;
+export const MAX_MAX_FRAME_SIZE: i64 = 16777215;
+/// The default initial window, and the largest a window may be (RFC 9113 §6.9.1).
+export const DEFAULT_WINDOW: i64 = 65535;
+export const MAX_WINDOW: i64 = 0x7fffffff;
+
+/// The 24-bit payload length of the frame header at `b[at..]`.
+export function frameLength(b: u8[], at: i64): i64 {
+  return ((b[at] as i64) << 16) | ((b[at + 1] as i64) << 8) | (b[at + 2] as i64);
+}
+
+/// The 31-bit stream id at `b[at..at + 4)` (the reserved bit ignored).
+export function readStreamId(b: u8[], at: i64): i64 {
+  return (((b[at] as i64) & 0x7f) << 24) |
+    ((b[at + 1] as i64) << 16) |
+    ((b[at + 2] as i64) << 8) |
+    (b[at + 3] as i64);
+}
+
+/// The 32-bit number at `b[at..at + 4)`.
+export function readU32(b: u8[], at: i64): i64 {
+  return ((b[at] as i64) << 24) |
+    ((b[at + 1] as i64) << 16) |
+    ((b[at + 2] as i64) << 8) |
+    (b[at + 3] as i64);
+}
+
+/// The name of error code `code`, for messages.
+export function errorName(code: i64): string {
+  switch (code) {
+    case NO_ERROR:
+      return "NO_ERROR";
+    case PROTOCOL_ERROR:
+      return "PROTOCOL_ERROR";
+    case INTERNAL_ERROR:
+      return "INTERNAL_ERROR";
+    case FLOW_CONTROL_ERROR:
+      return "FLOW_CONTROL_ERROR";
+    case SETTINGS_TIMEOUT:
+      return "SETTINGS_TIMEOUT";
+    case STREAM_CLOSED:
+      return "STREAM_CLOSED";
+    case FRAME_SIZE_ERROR:
+      return "FRAME_SIZE_ERROR";
+    case REFUSED_STREAM:
+      return "REFUSED_STREAM";
+    case CANCEL:
+      return "CANCEL";
+    case COMPRESSION_ERROR:
+      return "COMPRESSION_ERROR";
+    case CONNECT_ERROR:
+      return "CONNECT_ERROR";
+    case ENHANCE_YOUR_CALM:
+      return "ENHANCE_YOUR_CALM";
+    case INADEQUATE_SECURITY:
+      return "INADEQUATE_SECURITY";
+    case HTTP_1_1_REQUIRED:
+      return "HTTP_1_1_REQUIRED";
+    default:
+      return `0x${code.toString(16)}`;
+  }
+}

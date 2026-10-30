@@ -1,0 +1,190 @@
+// velt/net/http (internal): `HpackDecoder`, HPACK header block decoding (RFC 7541 §6) into
+// a `FieldList`.
+//
+// One decoder per connection: every header block of the connection goes through it, in order,
+// since each may change the dynamic table the next ones refer to. Strings are written straight
+// into the list's buffer (Huffman-decoded there when coded); an entry added to the dynamic table
+// is copied out of it. A block whose fields exceed the list's limit is still decoded to its end,
+// so the table stays as the peer's encoder has it, but the fields beyond the limit are not kept
+// (`overflow`): a small block that refers to a large entry many times (an "HPACK bomb") costs
+// the time to read it and nothing more.
+
+import { DynamicTable } from "velt/net/http/server/h2/hpack_table";
+import { FieldList } from "velt/net/http/server/h2/field_list";
+import { huffmanDecode } from "velt/net/http/server/h2/huffman";
+import { STATIC_COUNT, staticName, staticValue } from "velt/net/http/server/h2/hpack_static";
+
+/// The largest integer a block may hold (a length or an index): beyond it the block is refused.
+const MAX_INT: i64 = 0x7fffffff;
+
+/// A header block's decoder for one connection.
+export class HpackDecoder {
+  /// The dynamic table (public for tests).
+  table: DynamicTable;
+  /// The most a block's fields may add up to (SETTINGS_MAX_HEADER_LIST_SIZE).
+  maxListSize: i64;
+  // Where the block being decoded is.
+  private src: u8[] = [];
+  private pos: i64 = 0;
+  private end: i64 = 0;
+
+  constructor(tableSize: i64 = 4096, maxListSize: i64 = 16384) {
+    this.table = new DynamicTable(tableSize);
+    this.maxListSize = maxListSize;
+  }
+
+  /**
+   * Decodes the block `src[start..end)` into `out` (appended): false when it is not valid HPACK
+   * (a COMPRESSION_ERROR, which ends the connection). Fields beyond `maxListSize` set
+   * `out.overflow` and are not kept.
+   */
+  decode(src: u8[], start: i64, end: i64, out: FieldList): bool {
+    this.src = src;
+    this.pos = start;
+    this.end = end;
+    let fields = false;
+    let ok = true;
+    while (this.pos < this.end) {
+      const b = src[this.pos];
+      if ((b & 0x80) != 0) {
+        const index = this.integer(7);
+        ok = index > 0 && this.indexed(index, out);
+      } else if ((b & 0xc0) == 0x40) {
+        ok = this.literal(6, true, out);
+      } else if ((b & 0xe0) == 0x20) {
+        // A size update only comes before the block's first field (RFC 7541 §4.2).
+        const size = this.integer(5);
+        ok = !fields && size >= 0 && this.table.resize(size);
+      } else {
+        // Without indexing (0000) or never indexed (0001): the same to a decoder that does not
+        // pass fields on.
+        ok = this.literal(4, false, out);
+      }
+      if (!ok) {
+        break;
+      }
+      fields = (b & 0xe0) != 0x20;
+    }
+    this.src = [];
+    return ok;
+  }
+
+  /// An integer with an `n`-bit prefix (RFC 7541 §5.1), or -1 when cut short or too large.
+  private integer(n: i64): i64 {
+    const max = (1 << n) - 1;
+    let v = (this.src[this.pos] as i64) & max;
+    this.pos++;
+    if (v < max) {
+      return v;
+    }
+    let shift: i64 = 0;
+    while (this.pos < this.end) {
+      const b = this.src[this.pos] as i64;
+      this.pos++;
+      v += (b & 0x7f) << shift;
+      if (v > MAX_INT) {
+        return -1;
+      }
+      if ((b & 0x80) == 0) {
+        return v;
+      }
+      shift += 7;
+      if (shift > 28) {
+        return -1;
+      }
+    }
+    return -1;
+  }
+
+  /// An indexed field (static or dynamic entry `index`).
+  private indexed(index: i64, out: FieldList): bool {
+    const mark = out.length;
+    const nameStart = out.length;
+    if (index <= STATIC_COUNT) {
+      out.text(staticName(index));
+      const nameEnd = out.length;
+      out.text(staticValue(index));
+      return this.keep(out, mark, nameStart, nameEnd, nameEnd, out.length);
+    }
+    const d = index - STATIC_COUNT - 1;
+    if (d >= this.table.length) {
+      return false;
+    }
+    out.bytes(this.table.name(d));
+    const nameEnd = out.length;
+    out.bytes(this.table.value(d));
+    return this.keep(out, mark, nameStart, nameEnd, nameEnd, out.length);
+  }
+
+  /// A literal field: a name index with an `n`-bit prefix (0: a literal name follows), a value.
+  private literal(n: i64, index: bool, out: FieldList): bool {
+    const nameIndex = this.integer(n);
+    if (nameIndex < 0) {
+      return false;
+    }
+    const mark = out.length;
+    const nameStart = out.length;
+    if (nameIndex == 0) {
+      if (!this.string(out)) {
+        return false;
+      }
+    } else if (nameIndex <= STATIC_COUNT) {
+      out.text(staticName(nameIndex));
+    } else {
+      const d = nameIndex - STATIC_COUNT - 1;
+      if (d >= this.table.length) {
+        return false;
+      }
+      out.bytes(this.table.name(d));
+    }
+    const nameEnd = out.length;
+    if (!this.string(out)) {
+      return false;
+    }
+    const valueEnd = out.length;
+    if (index) {
+      const b = out.buf;
+      this.table.add(b.slice(nameStart, nameEnd), b.slice(nameEnd, valueEnd));
+    }
+    return this.keep(out, mark, nameStart, nameEnd, nameEnd, valueEnd);
+  }
+
+  /// A string literal (RFC 7541 §5.2), appended to `out`.
+  private string(out: FieldList): bool {
+    if (this.pos >= this.end) {
+      return false;
+    }
+    const huffman = (this.src[this.pos] & 0x80) != 0;
+    const len = this.integer(7);
+    if (len < 0 || len > this.end - this.pos) {
+      return false;
+    }
+    const start = this.pos;
+    this.pos += len;
+    if (!huffman) {
+      out.reserve(len);
+      this.src.copy(out.buf, out.length, start, this.pos);
+      out.length += len;
+      return true;
+    }
+    out.reserve((len * 8) / 5 + 1);
+    const at = huffmanDecode(this.src, start, this.pos, out.buf, out.length);
+    if (at < 0) {
+      return false;
+    }
+    out.length = at;
+    return true;
+  }
+
+  /// Records the field just written (from `mark`), or drops it once the list is over its limit.
+  private keep(out: FieldList, mark: i64, ns: i64, ne: i64, vs: i64, ve: i64): bool {
+    out.size += ne - ns + (ve - vs) + 32;
+    if (out.overflow || out.size > this.maxListSize) {
+      out.overflow = true;
+      out.length = mark;
+      return true;
+    }
+    out.heads.push(ns, ne, vs, ve);
+    return true;
+  }
+}
