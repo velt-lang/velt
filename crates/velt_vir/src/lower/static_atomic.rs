@@ -90,11 +90,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::StaticsDrop, vec![super::cfunc(f)], None);
     }
 
-    /// `()`: releases the reference each static atomic holds, and empties its word.
+    /// `()`: releases the reference each static atomic the program uses holds, and empties its
+    /// word. Built after every other function (`lower_program`), so the uses are known.
     pub(super) fn build_statics_drop(cx: &'c mut super::Cx<'h>) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
         lw.push_scope(ScopeKind::Block);
         for (d, t) in lw.cx.reference_statics() {
+            // One no code uses has no word to release (and gets none here): a program that
+            // never holds a `shared` value in an `Atomic` keeps no static for epoch's registry.
+            if !matches!(lw.cx.static_atomics.get(&d), Some(Some(_))) {
+                continue;
+            }
             let Some(atomic) = lw.static_atomic(d) else {
                 continue;
             };

@@ -200,6 +200,12 @@ pub(crate) fn lower_program(
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
+            // The function releasing the static atomics at exit is built last: it releases the
+            // ones the program's code uses, which every other function has said by then.
+            if matches!(work, Work::StaticsDrop) && !cx.queue.is_empty() {
+                cx.queue.push_back((fid, work));
+                continue;
+            }
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
