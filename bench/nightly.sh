@@ -116,6 +116,14 @@ print(f"{name}\t{best['velt'] * 1000:.0f}\t{best['node'] * 1000:.0f}", flush=Tru
 EOF
 }
 
+# The compressed inputs of bench/stdport's decompression rows, made by its Rust side's encoders
+# as bench/stdport/run.sh makes them (only gen_inputs is built, in a directory of its own).
+echo "building bench/stdport's gen_inputs..." >&2
+cargo build --release -q --manifest-path "$ROOT/bench/stdport/rust/Cargo.toml" \
+  --target-dir "$OUT/stdport-rust" --bin gen_inputs
+export STDPORT_INPUTS="$OUT/stdport-inputs"
+"$OUT/stdport-rust/release/gen_inputs" "$STDPORT_INPUTS"
+
 NODE_FILE="${OUT_FILE%.tsv}.node.tsv"
 : > "$OUT_FILE"
 : > "$NODE_FILE"
