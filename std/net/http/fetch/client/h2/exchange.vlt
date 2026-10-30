@@ -15,13 +15,8 @@ import { dial, keyOf } from "velt/net/http/fetch/client/conn";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { Target } from "velt/net/http/fetch/client/target";
 import { Head } from "velt/net/http/fetch/client/wire";
-import {
-  CALL_REQUEST,
-  errorEvent,
-  EVENT_ERROR,
-  H2Call,
-  H2Event,
-} from "velt/net/http/fetch/client/h2/call";
+import { CALL_REQUEST, H2Call } from "velt/net/http/fetch/client/h2/call";
+import { errorEvent, EVENT_ERROR, H2Event } from "velt/net/http/fetch/client/h2/event";
 import { H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
 import { claim, forget, sessionOf } from "velt/net/http/fetch/client/h2/registry";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";

@@ -6,14 +6,8 @@
 import { IoError } from "velt/io/error";
 import { Channel } from "velt/sync";
 import { AbortError, AbortSignal } from "velt/task";
-import {
-  CALL_CANCEL,
-  CALL_CREDIT,
-  EVENT_DATA,
-  EVENT_ERROR,
-  H2Call,
-  H2Event,
-} from "velt/net/http/fetch/client/h2/call";
+import { CALL_CANCEL, CALL_CREDIT, H2Call } from "velt/net/http/fetch/client/h2/call";
+import { EVENT_DATA, EVENT_ERROR, H2Event } from "velt/net/http/fetch/client/h2/event";
 
 /// A control message for stream `id` (`events` only fills the field).
 export function control(kind: i64, id: i64, n: i64, events: Channel<H2Event>): H2Call {

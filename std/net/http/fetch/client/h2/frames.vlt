@@ -33,13 +33,8 @@ import {
   readStreamId,
   readU32,
 } from "velt/net/http/server/h2/frame";
-import {
-  EVENT_DATA,
-  EVENT_END,
-  EVENT_HEAD,
-  errorEvent,
-  H2Call,
-} from "velt/net/http/fetch/client/h2/call";
+import { H2Call } from "velt/net/http/fetch/client/h2/call";
+import { EVENT_DATA, EVENT_END, EVENT_HEAD, errorEvent } from "velt/net/http/fetch/client/h2/event";
 import { ClientSession, STREAM_WINDOW } from "velt/net/http/fetch/client/h2/session";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { applySettings } from "velt/net/http/fetch/client/h2/settings";

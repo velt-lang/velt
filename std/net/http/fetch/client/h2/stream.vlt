@@ -3,7 +3,7 @@
 // waiting for the server's window.
 
 import { Channel } from "velt/sync";
-import { H2Event } from "velt/net/http/fetch/client/h2/call";
+import { H2Event } from "velt/net/http/fetch/client/h2/event";
 
 /// One request on a session.
 export class ClientStream {
