@@ -4,6 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
+use crate::SourceModule;
 
 /// The prelude modules that are Velt's own API, JS having no counterpart: the ordering protocol
 /// (`compareTo`, classes.md) and the integer bit counts. Their integer results stay integers in
@@ -54,6 +55,16 @@ impl<'m> Ctx<'m> {
                     };
                     let names = reexported.entry(path.as_str()).or_default();
                     names.extend(imp.names.iter().map(|n| n.name.name.clone()));
+                    // And the module that defines each name, through std's own re-exports
+                    // (`fetch` → velt/net/http/fetch/fetch → `Response` from fetch/response).
+                    for n in &imp.names {
+                        if let Some(def) = defining_module(modules, path, &n.name.name) {
+                            reexported
+                                .entry(def)
+                                .or_default()
+                                .insert(n.name.name.clone());
+                        }
+                    }
                 }
             }
             let mut out = FxHashMap::default();
@@ -82,4 +93,34 @@ impl<'m> Ctx<'m> {
             out
         })
     }
+}
+
+/// The std module that defines `name`, starting at the module `path` and following its
+/// re-exports (`export { name } from "…"`); `None` when that module is not loaded.
+fn defining_module<'m>(modules: &'m [SourceModule], path: &'m str, name: &str) -> Option<&'m str> {
+    let mut path = path;
+    let mut name = name.to_string();
+    // A re-export chain is short; the bound only stops a cycle.
+    for _ in 0..16 {
+        let m = modules.iter().find(|m| m.path == path && m.is_std)?;
+        let next = m.ast.items.iter().find_map(|item| match &item.kind {
+            velt_syntax::ast::ItemKind::Import(imp) if item.exported && !imp.from.is_empty() => {
+                let n = imp
+                    .names
+                    .iter()
+                    .find(|n| n.alias.as_ref().unwrap_or(&n.name).name == name)?;
+                let (_, target) = m.imports.iter().find(|(spec, _)| *spec == imp.from)?;
+                Some((target.as_str(), n.name.name.clone()))
+            }
+            _ => None,
+        });
+        match next {
+            Some((target, original)) => {
+                path = target;
+                name = original;
+            }
+            None => return Some(path),
+        }
+    }
+    None
 }

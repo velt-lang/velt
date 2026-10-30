@@ -1,0 +1,12 @@
+// The globals' classes are the JavaScript API wherever std defines them: `Response.status`
+// (an integer in std, defined in a file the global `fetch` re-exports through another) reads
+// as a `number`.
+async function status(): Promise<number> {
+  const res = new Response("x", { status: 201 });
+  return res.status;
+}
+
+async function main() {
+  const s: number = await status();
+  console.log(s, s / 2);
+}
