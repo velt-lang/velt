@@ -205,7 +205,9 @@ pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned
     while let Some((from, specs)) = stack.pop() {
         let dir = from.parent().unwrap_or(Path::new(""));
         for spec in specs {
-            let Some(path) = resolve(&dir.join(&spec)) else {
+            // Lexically normal: a cycle through `../` would otherwise reach the same file under
+            // ever longer paths (`a/../b/../a.vlt`), each one walked again.
+            let Some(path) = resolve(&lexical(&dir.join(&spec))) else {
                 // Not a source file (JSON, an asset) or missing: the build says which.
                 continue;
             };
@@ -261,6 +263,25 @@ fn relative_imports(module: &ast::Module) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// `path` with its `.` and `..` components taken out where it names a folder to leave (a
+/// leading `..`, or one after the root, stays).
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
 }
 
 /// The source file a relative import `base` names: itself, with an extension, its `index`, or
@@ -620,5 +641,41 @@ mod tests {
             &module,
             &mut scanned
         ));
+    }
+
+    /// A cycle across folders reads each module once: its paths are normal, not
+    /// `x/../y/../x/m.vlt` (which walked a package's engine tens of thousands of times).
+    #[test]
+    fn a_cycle_through_parent_folders_reads_each_module_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let write = |rel: &str, src: &str| {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, src).unwrap();
+        };
+        write(
+            "x/a.vlt",
+            "import { b } from \"../y/b\";\nexport const a = 1;\n",
+        );
+        write(
+            "y/b.vlt",
+            "import { c } from \"../z/c\";\nexport const b = 2;\n",
+        );
+        write(
+            "z/c.vlt",
+            "import { a } from \"../x/a\";\nexport const c = 3;\n",
+        );
+        let src = "import { a } from \"../x/a\";\n";
+        write("t/a.test.vlt", src);
+        let (module, _) = velt_syntax::parse_file(FileId(0), src);
+        let mut scanned = Scanned::default();
+        assert!(!imports_run_code(
+            &d.join("t/a.test.vlt"),
+            &module,
+            &mut scanned
+        ));
+        assert_eq!(scanned.modules.len(), 3, "{:?}", scanned.modules.keys());
+        assert_eq!(lexical(Path::new("../a/./b/../c")), Path::new("../a/c"));
     }
 }
