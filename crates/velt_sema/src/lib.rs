@@ -264,7 +264,7 @@ fn program_or_demand_error(
                 diags.push(Diagnostic::error(
                     format!(
                         "`{}` is a generated function, and this command does not run generators",
-                        r.function
+                        d.functions[r.function].function
                     ),
                     r.at,
                 ));
