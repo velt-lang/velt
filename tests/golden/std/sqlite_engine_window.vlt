@@ -109,6 +109,38 @@ const QUERIES: string[] = [
   "SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT 1) PRECEDING) FROM users WHERE 0",
   "SELECT id, count(*) OVER (ORDER BY id ROWS -1 PRECEDING) FROM users WHERE 0",
   "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 + 1 PRECEDING AND CAST('1' AS INTEGER) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN (1) PRECEDING AND CASE WHEN 1 THEN 2 END FOLLOWING) FROM users",
+  // A non-constant part under a constant node (a cast, a minus, IS NULL) makes the offset NULL too.
+  "SELECT id, count(*) OVER (ORDER BY id ROWS CAST(id AS INTEGER) PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS -id PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND -id FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND id IS NULL FOLLOWING) FROM users",
+  // An offset gets numeric affinity first (OP_MustBeInt): TEXT that reads as an integer is one;
+  // a REAL counts only if it is an integer strictly inside i64's range.
+  "SELECT id, count(*) OVER (ORDER BY id ROWS '1' PRECEDING), count(*) OVER (ORDER BY id ROWS ' 1' PRECEDING), count(*) OVER (ORDER BY id ROWS '1 ' PRECEDING), count(*) OVER (ORDER BY id ROWS '1.0' PRECEDING), count(*) OVER (ORDER BY id ROWS '1e0' PRECEDING), count(*) OVER (ORDER BY id ROWS CAST(1 AS TEXT) PRECEDING), count(*) OVER (ORDER BY id ROWS '2' PRECEDING) FROM users WHERE id <= 4 ORDER BY id",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND ' 1' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1.0' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1e0 ' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND CAST(1 AS TEXT) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '2' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9.2233720368547748e18 FOLLOWING) FROM users WHERE id <= 4 ORDER BY id",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS 9223372036854775808 PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS 9223372036854775807.0 PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9223372036854775808 FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9223372036854775807.0 FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS 99999999999999999999 PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS -9223372036854775808 PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS '1.5' PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id ROWS 'abc' PRECEDING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '' FOLLOWING) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND x'31' FOLLOWING) FROM users",
+];
+
+// Offsets bound as parameters (TEXT here): numeric affinity applies to them as well.
+const BOUND: string[][] = [
+  [
+    "SELECT id, count(*) OVER (ORDER BY id ROWS ? PRECEDING) FROM users WHERE id <= 4 ORDER BY id",
+    "1",
+  ],
+  [
+    "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND ?1 FOLLOWING) FROM users WHERE id <= 4 ORDER BY id",
+    " 2",
+  ],
+  ["SELECT id, count(*) OVER (ORDER BY id ROWS ? PRECEDING) FROM users", "1.5"],
 ];
 
 /** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */
@@ -122,12 +154,15 @@ function shown(v: Val): string {
   return quote(v);
 }
 
-/** The rows of a query: each value as the shell's quote mode prints it, or the error. */
-function rows(db: Database, sql: string): string[] {
+/**
+ * The rows of a query (with `params` bound, if any): each value as the shell's quote mode
+ * prints it, or the error.
+ */
+function rows(db: Database, sql: string, params: string[]): string[] {
   const out: string[] = [];
   try {
     const st = db.prepare(sql);
-    const vals = st.values();
+    const vals = params.length == 0 ? st.values() : st.valuesWith(params);
     const n = st.columns().length as usize;
     const count: usize = n == 0 ? 0 : (vals.length as usize) / n;
     for (let r: usize = 0; r < count; r++) {
@@ -151,12 +186,18 @@ function main() {
   c.close();
   const db = openDatabase(path);
   for (const q of QUERIES) {
-    let r = rows(db, q);
+    let r = rows(db, q, []);
     if (!q.includes("ORDER BY")) {
       r = r.toSorted();
     }
     console.log(q);
     for (const line of r) {
+      console.log(`  ${line}`);
+    }
+  }
+  for (const b of BOUND) {
+    console.log(`${b[0]} -- ${b[1]}`);
+    for (const line of rows(db, b[0], b.slice(1))) {
       console.log(`  ${line}`);
     }
   }

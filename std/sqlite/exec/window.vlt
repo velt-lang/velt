@@ -9,6 +9,7 @@
 // EXCLUDE.
 
 import { INTEGER, NULL, REAL } from "velt:sqlite/btree";
+import { A_NUMERIC } from "velt:sqlite/schema";
 import {
   OrderTerm,
   BOUND_CURRENT,
@@ -43,6 +44,7 @@ type Ev = () => Val throws Error;
 
 import {
   Val,
+  applyAffinity,
   compareVals,
   intVal,
   nullVal,
@@ -611,14 +613,16 @@ export struct Frame {
   hi: i64;
 }
 
-// A frame bound's offset: checked once per run, as SQLite does.
+// A frame bound's offset: checked once per run, as SQLite does (OP_MustBeInt: numeric
+// affinity first, so TEXT that reads as an integer counts, and a REAL only if it is an integer
+// strictly inside i64's range).
 function offsetOf(e: Ev | null, kind: u8, start: bool): i64 {
   if (e == null || !(kind == BOUND_PRECEDING || kind == BOUND_FOLLOWING)) {
     return 0;
   }
-  const v = e!();
-  const off = toI64(v);
-  if (off < 0 || !(v.t == INTEGER || (v.t == REAL && (off as f64) == v.r))) {
+  const v = applyAffinity(e!(), A_NUMERIC);
+  const off = v.i;
+  if (v.t != INTEGER || off < 0) {
     throw new SqlRunError(
       start
         ? "frame starting offset must be a non-negative integer"
