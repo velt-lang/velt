@@ -19,7 +19,7 @@ use crate::system::Func;
 use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// The std function giving a view's length in bytes (std/lang/typed_array/core.vlt).
-const VIEW_BYTES: &str = "std/lang/typed_array/core::__viewBytes";
+const VIEW_BYTES: &str = velt_common::std_item!(lang_typed_array_core, "__viewBytes");
 
 impl FnLower<'_, '_> {
     /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).

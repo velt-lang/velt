@@ -28,9 +28,9 @@ pub(in crate::lower) enum WordKind {
 
 /// The prelude's weak classes, by qualified name.
 const WEAK_CLASSES: [&str; 3] = [
-    "std/prelude/weak::WeakMap",
-    "std/prelude/weak::WeakSet",
-    "std/prelude/weak::WeakRef",
+    velt_common::std_item!(prelude_weak, "WeakMap"),
+    velt_common::std_item!(prelude_weak, "WeakSet"),
+    velt_common::std_item!(prelude_weak, "WeakRef"),
 ];
 
 impl super::Cx<'_> {

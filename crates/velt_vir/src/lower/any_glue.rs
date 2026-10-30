@@ -189,7 +189,11 @@ impl FnLower<'_, '_> {
         args: Vec<(Place, TyId)>,
         out: &Place,
     ) {
-        let std_result = self.cx.fn_def(r.def).name.starts_with("std/");
+        let std_result = self
+            .cx
+            .fn_def(r.def)
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX);
         let v = self.invoke_ready(r, this, args);
         self.any_box_with(v, r.ret, out, std_result);
     }

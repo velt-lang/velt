@@ -322,7 +322,11 @@ fn iface_info(m: usize, d: &ast::InterfaceDecl, qual: String) -> DefInfo<'_> {
 
 fn collect_prelude(cx: &mut Ctx) {
     for m in 0..cx.modules.len() {
-        if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
+        if !cx.scopes[m].is_std
+            || !cx.modules[m]
+                .path
+                .starts_with(velt_common::std_dir!(prelude))
+        {
             continue;
         }
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.

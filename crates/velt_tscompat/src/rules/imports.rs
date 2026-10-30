@@ -24,7 +24,7 @@ pub(super) fn check(module: &LintModule, scope: &[&Path], cx: &mut Cx) {
 
 fn import_item(module: &LintModule, import: &ast::Import, scope: &[&Path], cx: &mut Cx) {
     let spec = import.from.as_str();
-    if spec.starts_with("velt/") {
+    if spec.starts_with(velt_common::std_modules::SPECIFIER_PREFIX) {
         cx.error(
             "velt-import",
             import.from_span,

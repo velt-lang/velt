@@ -14,9 +14,9 @@ use super::FnLower;
 use crate::vir::{BlockId, Callee, Terminator};
 
 /// `velt/sync/epoch`'s functions, by their qualified names.
-pub(super) const EPOCH_MODULE: &str = "std/sync/epoch/reclaim::";
-pub(super) const PIN: &str = "std/sync/epoch/reclaim::pin";
-pub(super) const UNPIN: &str = "std/sync/epoch/reclaim::unpin";
+pub(super) const EPOCH_MODULE: &str = concat!(velt_common::std_module!(sync_epoch_reclaim), "::");
+pub(super) const PIN: &str = velt_common::std_item!(sync_epoch_reclaim, "pin");
+pub(super) const UNPIN: &str = velt_common::std_item!(sync_epoch_reclaim, "unpin");
 
 impl FnLower<'_, '_> {
     /// Opens a section at the entry and closes it before every return, when this function

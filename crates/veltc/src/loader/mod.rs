@@ -53,7 +53,7 @@ mod wanted;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use velt_common::{Diagnostic, Diagnostics, SourceMap, Span};
+use velt_common::{std_modules, Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
@@ -689,7 +689,10 @@ impl Loader<'_, '_> {
     /// The path a `paths` alias maps `spec` to, resolved like a relative import's (bare
     /// specifiers only: relative and `velt/` imports are never aliased).
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
-        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt/") {
+        if spec.starts_with("./")
+            || spec.starts_with("../")
+            || spec.starts_with(std_modules::SPECIFIER_PREFIX)
+        {
             return None;
         }
         let file = self.opts.packages?.path_alias(importer, spec)?;
@@ -720,7 +723,11 @@ fn npm_module(
             packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
         }
         Ok(_) => false,
-        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt/"),
+        Err(_) => {
+            spec != "std"
+                && !std_modules::is_std(spec)
+                && !spec.starts_with(std_modules::SPECIFIER_PREFIX)
+        }
     };
     if !bare {
         return None;
@@ -736,7 +743,7 @@ fn npm_module(
 
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
 fn is_std_path(path: &str) -> bool {
-    path == "std" || path.starts_with("std/")
+    path == "std" || std_modules::is_std(path)
 }
 
 /// `file` as shown in a message: relative to its package's root (the directory with

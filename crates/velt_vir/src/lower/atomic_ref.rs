@@ -23,7 +23,7 @@ use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Ty};
 
 /// `velt/sync/epoch`'s `retire`, which every retired reference goes to.
-const RETIRE: &str = "std/sync/epoch/reclaim::retire";
+const RETIRE: &str = velt_common::std_item!(sync_epoch_reclaim, "retire");
 
 impl FnLower<'_, '_> {
     /// The `T` of the `Atomic<T>` receiver `a` when the word holds a reference.

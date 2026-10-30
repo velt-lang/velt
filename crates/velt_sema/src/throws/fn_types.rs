@@ -393,7 +393,7 @@ impl Ctx<'_> {
             Some(s) if s.is_std => self
                 .modules
                 .get(module)
-                .is_some_and(|m| m.path == "std/lang/proxy"),
+                .is_some_and(|m| m.path == velt_common::std_module!(lang_proxy)),
             Some(_) => true,
         }
     }

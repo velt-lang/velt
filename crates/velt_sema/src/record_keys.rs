@@ -346,6 +346,6 @@ fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
         (_, DefInfo::Adt(a)) => a.name.as_str(),
         _ => return None,
     };
-    let std = name.starts_with("std/");
+    let std = name.starts_with(velt_common::std_modules::CANONICAL_PREFIX);
     (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
 }

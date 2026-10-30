@@ -64,10 +64,10 @@ impl FnCx<'_, '_> {
         let Some((d, _)) = self.cx.class_of(t) else {
             return false;
         };
-        let std = self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.qual_name.starts_with("std/"));
+        let std = self.cx.adt(d).is_some_and(|a| {
+            a.qual_name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        });
         std && self.resolve_method(t, INDEX).is_some()
     }
 

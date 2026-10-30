@@ -240,7 +240,7 @@ fn keeps_null_apart(cx: &Ctx, d: DefId) -> bool {
     cx.scopes[f.module].is_std
         && matches!(
             cx.modules[f.module].path.as_str(),
-            "std/prelude/map" | "std/prelude/record"
+            velt_common::std_module!(prelude_map) | velt_common::std_module!(prelude_record)
         )
 }
 

@@ -1,13 +1,13 @@
 //! The JSX runtime import (docs/internals/contracts/jsx.md "Choosing the provider"): a module
 //! containing JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's `//
-//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `std/jsx`. A
+//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `velt/jsx`. A
 //! module without JSX loads no runtime.
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, StmtKind as S};
 
 /// The import source of modules that name none.
-pub const DEFAULT_IMPORT_SOURCE: &str = "velt/jsx";
+pub const DEFAULT_IMPORT_SOURCE: &str = velt_common::std_specifier!(jsx);
 
 /// The module a JSX import source provides its factories from.
 pub fn runtime_spec(source: &str) -> String {

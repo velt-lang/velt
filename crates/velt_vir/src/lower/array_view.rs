@@ -45,16 +45,17 @@ use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
 use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 
-pub(super) const VIEW_CLASS: &str = "std/prelude/adapt::__ArrayView";
-const VIEW_NEW: &str = "std/prelude/adapt::__arrayViewNew";
-const VIEW_SYNC: &str = "std/prelude/adapt::__arrayViewSync";
-pub(super) const VIEW_SYNC_AT: &str = "std/prelude/adapt::__arrayViewSyncAt";
-pub(super) const VIEW_SYNC_LEN: &str = "std/prelude/adapt::__arrayViewSyncLen";
-const VIEW_FLUSH: &str = "std/prelude/adapt::__arrayViewFlush";
-const VIEW_FLUSH_AT: &str = "std/prelude/adapt::__arrayViewFlushAt";
-pub(super) const VIEW_FLUSH_FROM: &str = "std/prelude/adapt::__arrayViewFlushFrom";
-pub(super) const VIEW_LEN: &str = "std/prelude/adapt::__arrayViewLen";
-pub(super) const VIEW_SORT: &str = "std/prelude/adapt::__arrayViewSort";
+pub(super) const VIEW_CLASS: &str = velt_common::std_item!(prelude_adapt, "__ArrayView");
+const VIEW_NEW: &str = velt_common::std_item!(prelude_adapt, "__arrayViewNew");
+const VIEW_SYNC: &str = velt_common::std_item!(prelude_adapt, "__arrayViewSync");
+pub(super) const VIEW_SYNC_AT: &str = velt_common::std_item!(prelude_adapt, "__arrayViewSyncAt");
+pub(super) const VIEW_SYNC_LEN: &str = velt_common::std_item!(prelude_adapt, "__arrayViewSyncLen");
+const VIEW_FLUSH: &str = velt_common::std_item!(prelude_adapt, "__arrayViewFlush");
+const VIEW_FLUSH_AT: &str = velt_common::std_item!(prelude_adapt, "__arrayViewFlushAt");
+pub(super) const VIEW_FLUSH_FROM: &str =
+    velt_common::std_item!(prelude_adapt, "__arrayViewFlushFrom");
+pub(super) const VIEW_LEN: &str = velt_common::std_item!(prelude_adapt, "__arrayViewLen");
+pub(super) const VIEW_SORT: &str = velt_common::std_item!(prelude_adapt, "__arrayViewSort");
 
 /// What an access to a view's contents needs of the mirror (`content_with`).
 pub(super) enum ViewSync {
@@ -101,7 +102,9 @@ impl Cx<'_> {
     /// Record an `AnyTo` to the array type `t` (not counted in the standard library).
     pub(super) fn note_array_view(&mut self, t: TyId) {
         let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f.name.starts_with("std/"),
+            hir::Def::Fn(f) => f
+                .name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
             _ => false,
         });
         let TyKind::Array(mut e) = self.types.kind(t).clone() else {

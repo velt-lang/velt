@@ -31,8 +31,9 @@ impl ModuleIndex {
     /// `from`'s directory (or to `from` itself, when it is a directory's `index` file); anything
     /// else is a module name (`pkg`, `pkg/sub`). `None` when that module is not documented.
     pub fn resolve(&self, from: &str, spec: &str) -> Option<usize> {
-        if let Some(std) = spec.strip_prefix("velt/") {
-            return self.0.get(&format!("std/{std}")).copied();
+        if let Some(std) = spec.strip_prefix(velt_common::std_modules::SPECIFIER_PREFIX) {
+            let canonical = format!("{}{std}", velt_common::std_modules::CANONICAL_PREFIX);
+            return self.0.get(&canonical).copied();
         }
         if spec.starts_with("./") || spec.starts_with("../") {
             // `./x.ts`, `./x.js` (TypeScript's spelling of `x.ts`): the module `x`.

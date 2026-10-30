@@ -16,7 +16,7 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, IntTy, Intrinsic, TyId, TyKind};
 
 /// The class every typed array and `DataView` extends (std/lang/typed_array/core.vlt).
-const BUFFER_VIEW: &str = "std/lang/typed_array/core::BufferView";
+const BUFFER_VIEW: &str = velt_common::std_item!(lang_typed_array_core, "BufferView");
 
 impl FnCx<'_, '_> {
     /// Is `t` `u8[]`?

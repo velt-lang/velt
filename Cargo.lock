@@ -2044,6 +2044,7 @@ version = "0.4.0"
 dependencies = [
  "rustc-hash",
  "velt_codegen_cl",
+ "velt_common",
  "velt_opt",
  "velt_vir",
 ]

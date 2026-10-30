@@ -41,9 +41,13 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (i, d) in self.cx.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = d else { continue };
-            let std_fn = ["std/prelude/", "std/lang/record/", "std/collections/"]
-                .iter()
-                .any(|r| f.name.starts_with(r));
+            let std_fn = [
+                velt_common::std_dir!(prelude),
+                velt_common::std_dir!(lang_record),
+                velt_common::std_dir!(collections),
+            ]
+            .iter()
+            .any(|r| f.name.starts_with(r));
             // `(value, args)`, or `(value, args, whole)` for a class's (`any_class_call`).
             if !std_fn || !(2..=3).contains(&f.params.len()) {
                 continue;
@@ -239,7 +243,7 @@ impl FnLower<'_, '_> {
                 hir::Def::Adt(a) => (a.name.clone(), a.base),
                 _ => return,
             };
-            if name.starts_with("std/") {
+            if name.starts_with(velt_common::std_modules::CANONICAL_PREFIX) {
                 match name.rsplit_once("::") {
                     Some((_, class)) => break class.to_string(),
                     None => return,

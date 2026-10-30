@@ -67,7 +67,10 @@ impl Ctx<'_> {
             Some(it) => Some(*it),
             None => (0..self.modules.len())
                 .filter(|&m| {
-                    self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/")
+                    self.scopes[m].is_std
+                        && self.modules[m]
+                            .path
+                            .starts_with(velt_common::std_dir!(prelude))
                 })
                 .find_map(|m| self.scopes[m].items.get(name).copied()),
         };
@@ -123,7 +126,7 @@ impl Ctx<'_> {
         let module = self
             .modules
             .iter()
-            .position(|m| m.is_std && m.path == "std/sync/channel");
+            .position(|m| m.is_std && m.path == velt_common::std_module!(sync_channel));
         let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
             Some(Item::Def(d)) => *d,
             _ => return vec![],

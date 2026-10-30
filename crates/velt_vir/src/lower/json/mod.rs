@@ -38,7 +38,7 @@ use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 /// Qualified name of the prelude's dynamic JSON value class.
-const PRELUDE_JSON_VALUE: &str = "std/prelude/json/json::JsonValue";
+const PRELUDE_JSON_VALUE: &str = velt_common::std_item!(prelude_json, "JsonValue");
 
 const STR: Ty = Ty::Agg(STR_AGG);
 /// `velt_rt_json_reader_new_with`'s flag: the source is a `u8[]` of binary rows (rt_abi.md).
@@ -92,7 +92,7 @@ enum Seg<'a> {
 }
 
 /// The name of the prelude's `JsonError` class.
-const PRELUDE_JSON_ERROR: &str = "std/prelude/json/json::JsonError";
+const PRELUDE_JSON_ERROR: &str = velt_common::std_item!(prelude_json, "JsonError");
 
 impl Cx<'_> {
     /// `{ expected: string, path: string }`, the decoders' failure context.
@@ -129,7 +129,7 @@ impl Cx<'_> {
                     .hir
                     .defs
                     .iter()
-                    .any(|d| matches!(d, hir::Def::Adt(a) if a.name.starts_with("std/prelude/")))
+                    .any(|d| matches!(d, hir::Def::Adt(a) if a.name.starts_with(velt_common::std_dir!(prelude))))
                 {
                     return None;
                 }

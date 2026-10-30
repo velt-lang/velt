@@ -23,17 +23,19 @@ use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
 /// classes are named after their modules, which are never under `std/`.
-pub(super) const PRELUDE_PROXY: &str = "std/lang/proxy::Proxy";
-pub(super) const PRELUDE_REFLECT: &str = "std/lang/proxy::Reflect";
+pub(super) const PRELUDE_PROXY: &str = velt_common::std_item!(lang_proxy, "Proxy");
+pub(super) const PRELUDE_REFLECT: &str = velt_common::std_item!(lang_proxy, "Reflect");
 /// The start of the names of `Reflect`'s methods.
-pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/lang/proxy::Reflect.";
+pub(super) const PRELUDE_REFLECT_METHODS: &str = velt_common::std_item!(lang_proxy, "Reflect.");
 /// The prelude's array method read through a proxy (std/lang/proxy/array.vlt).
-pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/lang/proxy/array::__ArrayMethod";
+pub(super) const PRELUDE_ARRAY_METHOD: &str =
+    velt_common::std_item!(lang_proxy_array, "__ArrayMethod");
 
 /// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/adapt.vlt)
 /// and its version that asks a proxy (std/lang/proxy/ops.vlt).
-pub(super) const PRELUDE_HAS_OWN: &str = "std/prelude/adapt::__HasOwnProperty";
-pub(super) const PROXY_HAS_OWN: &str = "std/lang/proxy/ops::__HasOwnPropertyProxy";
+pub(super) const PRELUDE_HAS_OWN: &str = velt_common::std_item!(prelude_adapt, "__HasOwnProperty");
+pub(super) const PROXY_HAS_OWN: &str =
+    velt_common::std_item!(lang_proxy_ops, "__HasOwnPropertyProxy");
 
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]

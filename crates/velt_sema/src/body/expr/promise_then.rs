@@ -187,7 +187,7 @@ impl FnCx<'_, '_> {
         {
             let name = &self.cx.fn_info(*d).name;
             return name
-                .strip_prefix("std/prelude/promise::")
+                .strip_prefix(concat!(velt_common::std_module!(prelude_promise), "::"))
                 .is_some_and(is_promise_callback_fn);
         }
         false

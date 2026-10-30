@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let std = self.cx.scopes[self.module].is_std;
-        if !std || self.cx.modules[self.module].path == "std/lang/proxy" {
+        if !std || self.cx.modules[self.module].path == velt_common::std_module!(lang_proxy) {
             let m = Self::proxy_method_of(i).and_then(|name| {
                 let p = self.cx.prelude_adt("Proxy")?;
                 let a = self.cx.adt(p)?;

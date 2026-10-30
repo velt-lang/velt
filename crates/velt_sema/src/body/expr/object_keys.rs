@@ -591,7 +591,7 @@ impl FnCx<'_, '_> {
         // fields are Node's keys of `import.meta`.
         if a.kind != AdtKind::Anon
             && self.cx.scopes[a.module].is_std
-            && self.cx.modules[a.module].path != "std/lang/import_meta"
+            && self.cx.modules[a.module].path != velt_common::std_module!(lang_import_meta)
         {
             return self.not_an_object(t, span);
         }

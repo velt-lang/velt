@@ -102,10 +102,10 @@ impl CpuTarget {
     /// The static method of velt/simd that checks for it, by its definition's full name.
     pub fn check(self) -> &'static str {
         match self {
-            CpuTarget::ShaArm => "std/simd/sha::u32x4.hasShaArm",
-            CpuTarget::ShaX86 => "std/simd/sha::u32x4.hasShaX86",
-            CpuTarget::ClmulX86 => "std/simd/clmul::u64x2.hasClmulX86",
-            CpuTarget::ClmulArm => "std/simd/clmul::u64x2.hasClmulArm",
+            CpuTarget::ShaArm => velt_common::std_item!(simd_sha, "u32x4.hasShaArm"),
+            CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
+            CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
+            CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
         }
     }
 

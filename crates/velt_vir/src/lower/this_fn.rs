@@ -15,7 +15,7 @@ use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 
 /// The qualified name of std/lang/this_fn/index.vlt's class.
-pub(super) const STD_THIS_FN: &str = "std/lang/this_fn::__ThisFn";
+pub(super) const STD_THIS_FN: &str = velt_common::std_item!(lang_this_fn, "__ThisFn");
 
 impl super::Cx<'_> {
     /// Is `t` std/lang/this_fn/index.vlt's `__ThisFn` (module docs)?

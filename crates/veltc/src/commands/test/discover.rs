@@ -99,7 +99,7 @@ const REGISTERING: [&str; 7] = [
 ];
 
 /// The modules that export them.
-const TEST_MODULES: [&str; 2] = ["velt/test", "vitest"];
+const TEST_MODULES: [&str; 2] = [velt_common::std_specifier!(test), "vitest"];
 
 /// The local names `module` imports the [`REGISTERING`] functions under.
 fn registering_names(module: &ast::Module) -> Vec<String> {

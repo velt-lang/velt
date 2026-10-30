@@ -21,7 +21,7 @@ use super::{cint, ice, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The prelude's `==` of an object and a primitive (std/prelude/any_ops.vlt).
-const LOOSE_EQ: &str = "std/prelude/any_ops::__anyLooseEq";
+const LOOSE_EQ: &str = velt_common::std_item!(prelude_any_ops, "__anyLooseEq");
 
 /// Is `e` the literal `null` or `undefined` made dynamic?
 fn nothing_lit(e: &hir::Expr) -> bool {

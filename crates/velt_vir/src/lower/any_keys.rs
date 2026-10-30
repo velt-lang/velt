@@ -163,7 +163,9 @@ impl FnLower<'_, '_> {
         let a = self.cx.adt_def(d);
         let (class, std, all) = (
             a.kind == hir::AdtKind::Class,
-            a.name.starts_with("std/") && a.kind != hir::AdtKind::Anon,
+            a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+                && a.kind != hir::AdtKind::Anon,
             a.fields.len(),
         );
         // Fields a standard library base class declares (an `Error`'s) are not the object's
@@ -242,7 +244,9 @@ impl FnLower<'_, '_> {
                 break;
             };
             let a = self.cx.adt_def(bd);
-            if a.name.starts_with("std/") {
+            if a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            {
                 return a.fields.len();
             }
             cur = a.base;

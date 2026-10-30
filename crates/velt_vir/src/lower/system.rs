@@ -686,7 +686,9 @@ impl super::Cx<'_> {
                     Some(m) => m.owner_module(module),
                     None => std::borrow::Cow::Borrowed(module),
                 };
-                let module = module.strip_prefix("std/").unwrap_or(&module);
+                let module = module
+                    .strip_prefix(velt_common::std_modules::CANONICAL_PREFIX)
+                    .unwrap_or(&module);
                 format!("`{name}` (velt/{module})")
             }
             None => format!("`{qualified}`"),

@@ -391,7 +391,7 @@ impl FnLower<'_, '_> {
 }
 
 /// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.vlt).
-const TLA_MARK: &str = "std/prelude/process::__topLevelAwaitAt";
+const TLA_MARK: &str = velt_common::std_item!(prelude_process, "__topLevelAwaitAt");
 
 impl super::super::Cx<'_> {
     /// The prelude's `__topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,

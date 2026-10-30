@@ -10,12 +10,15 @@ use crate::SourceModule;
 /// (`compareTo`, classes.md) and the integer bit counts. Their integer results stay integers in
 /// user code (`x.trailingZeros()` indexes an array as it is). A Velt-only prelude method goes in
 /// one of them, or in a new module listed here.
-const VELT_PRELUDE: &[&str] = &["std/prelude/compare", "std/prelude/bits"];
+const VELT_PRELUDE: &[&str] = &[
+    velt_common::std_module!(prelude_compare),
+    velt_common::std_module!(prelude_bits),
+];
 
 /// The modules of Velt-only globals (no JavaScript counterpart): like `VELT_PRELUDE`, their
 /// integer parameters and results stay integers (`StringBuilder.appendInt` takes an `i64`, so a
 /// `number` with a fraction is an error, not truncated).
-const VELT_GLOBAL_MODULES: &[&str] = &["std/text/string_builder"];
+const VELT_GLOBAL_MODULES: &[&str] = &[velt_common::std_module!(text_string_builder)];
 
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
@@ -43,7 +46,7 @@ impl<'m> Ctx<'m> {
             let mut reexported: FxHashMap<&str, FxHashSet<String>> = FxHashMap::default();
             for g in modules
                 .iter()
-                .filter(|g| g.is_std && g.path.starts_with("std/prelude/global/"))
+                .filter(|g| g.is_std && g.path.starts_with(velt_common::std_dir!(prelude_global)))
             {
                 for item in &g.ast.items {
                     let velt_syntax::ast::ItemKind::Import(imp) = &item.kind else {
@@ -72,7 +75,7 @@ impl<'m> Ctx<'m> {
                 if !m.is_std || VELT_GLOBAL_MODULES.contains(&m.path.trim_end_matches(".vlt")) {
                     continue;
                 }
-                if m.path.starts_with("std/prelude/") {
+                if m.path.starts_with(velt_common::std_dir!(prelude)) {
                     if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".vlt")) {
                         out.insert(i, None);
                     }

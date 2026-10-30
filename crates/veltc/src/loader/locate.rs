@@ -152,7 +152,10 @@ pub fn target(
             };
             Ok(Target {
                 candidates: std_files(root, &rel),
-                canonical: Some(format!("std/{rel}")),
+                canonical: Some(format!(
+                    "{}{rel}",
+                    velt_common::std_modules::CANONICAL_PREFIX
+                )),
                 origin: Origin::Std(root.to_path_buf()),
                 base: root.to_path_buf(),
             })

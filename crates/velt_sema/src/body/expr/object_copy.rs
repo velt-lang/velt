@@ -231,7 +231,7 @@ impl FnCx<'_, '_> {
         };
         self.cx.adt(*d).is_some_and(|a| {
             a.kind == hir::AdtKind::Class
-                && self.cx.modules[a.module].path == "std/lang/import_meta"
+                && self.cx.modules[a.module].path == velt_common::std_module!(lang_import_meta)
         })
     }
 

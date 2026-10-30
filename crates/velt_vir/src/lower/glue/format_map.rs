@@ -227,7 +227,9 @@ impl FnLower<'_, '_> {
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
             return None;
         };
-        if a.name.starts_with("std/") {
+        if a.name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        {
             return None;
         }
         let mut base = self.cx.subst(a.base?, &args);

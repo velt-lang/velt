@@ -1549,7 +1549,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
   and a field-only interface's object type, after `readonly` erasure; a type two names reach
   has none. Lowering's `TypeError`s use it.
-- `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
+- `object` and `Function` (issue #926) are two more interfaces of `prelude/dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
   `any_impl`, the same tables, `AnyTo` to convert out, and lowering's `is_dynamic` covers them.

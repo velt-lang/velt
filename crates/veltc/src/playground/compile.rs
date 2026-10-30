@@ -73,7 +73,10 @@ fn check_imports(source: &str) -> Result<(), Diagnostics> {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     for item in &module.items {
         if let ItemKind::Import(import) = &item.kind {
-            if !import.from.starts_with("velt/") {
+            if !import
+                .from
+                .starts_with(velt_common::std_modules::SPECIFIER_PREFIX)
+            {
                 return Err(format!(
                     "error: the playground only allows imports from \"velt/…\", not \"{}\"",
                     import.from

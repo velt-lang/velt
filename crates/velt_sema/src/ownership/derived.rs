@@ -166,14 +166,15 @@ pub(super) fn fresh(cx: &Ctx, e: &Expr) -> bool {
 /// What that is isn't followed: `xs.map((x) => x)` holds the receiver's parts unseen.
 fn builds(cx: &Ctx, d: crate::hir::DefId) -> bool {
     let name = &cx.fn_info(d).name;
-    name.starts_with("std/") && [".map", ".flatMap"].iter().any(|m| name.ends_with(m))
+    name.starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        && [".map", ".flatMap"].iter().any(|m| name.ends_with(m))
 }
 
 /// Is `d` a std method that returns a new container of the receiver's parts (`slice()`, a
 /// map's `entries()`)?
 fn copies(cx: &Ctx, d: crate::hir::DefId) -> bool {
     let name = &cx.fn_info(d).name;
-    name.starts_with("std/")
+    name.starts_with(velt_common::std_modules::CANONICAL_PREFIX)
         && [
             "slice",
             "concat",

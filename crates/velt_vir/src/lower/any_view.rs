@@ -31,7 +31,7 @@ use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
 
 /// The qualified name of the prelude function that makes a view.
-const PROXY_VIEW: &str = "std/lang/proxy::Proxy.__view";
+const PROXY_VIEW: &str = velt_common::std_item!(lang_proxy, "Proxy.__view");
 
 impl FnLower<'_, '_> {
     /// In `AnyTo` to the proxiable `ty`, once the `any` at `p` (owned) holds neither a `ty` nor

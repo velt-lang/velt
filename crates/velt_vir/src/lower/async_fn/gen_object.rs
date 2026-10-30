@@ -22,8 +22,8 @@ use crate::vir::{
 };
 
 /// Qualified names of the prelude's generator classes (std/prelude/iter.vlt).
-const PRELUDE_GENERATOR: &str = "std/prelude/iter::Generator";
-const PRELUDE_ASYNC_GENERATOR: &str = "std/prelude/iter::AsyncGenerator";
+const PRELUDE_GENERATOR: &str = velt_common::std_item!(prelude_iter, "Generator");
+const PRELUDE_ASYNC_GENERATOR: &str = velt_common::std_item!(prelude_iter, "AsyncGenerator");
 
 impl Cx<'_> {
     /// Is `t` the prelude's `Generator<T, E>` or `AsyncGenerator<T, E>` class?

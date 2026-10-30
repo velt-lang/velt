@@ -171,7 +171,7 @@ impl Cx<'_> {
         // A method of `Generator<T, E, never>` is spelled as `Generator<T, E>`'s, as before `N`.
         let targs = match targs {
             [_, _, n]
-                if name.starts_with("std/prelude/iter::Generator.")
+                if name.starts_with(velt_common::std_item!(prelude_iter, "Generator."))
                     && matches!(self.types.kind(*n), TyKind::Never) =>
             {
                 &targs[..2]

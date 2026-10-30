@@ -61,9 +61,12 @@ impl<'h> Cx<'h> {
         }
         let Some(d) = self.cur_def else { return false };
         match self.hir.def(d) {
-            hir::Def::Fn(f) => ["std/prelude/map::", "std/prelude/record::"]
-                .iter()
-                .any(|m| f.name.starts_with(m)),
+            hir::Def::Fn(f) => [
+                concat!(velt_common::std_module!(prelude_map), "::"),
+                concat!(velt_common::std_module!(prelude_record), "::"),
+            ]
+            .iter()
+            .any(|m| f.name.starts_with(m)),
             _ => false,
         }
     }
@@ -680,11 +683,15 @@ impl<'h> Cx<'h> {
     /// the prelude `error` class other than `Error` it extends, when declared outside the
     /// prelude's `error` module.
     pub(super) fn std_error_class(&self, d: DefId) -> Option<String> {
-        const ERRORS: &str = "std/prelude/error::";
+        const ERRORS: &str = concat!(velt_common::std_module!(prelude_error), "::");
         let hir::Def::Adt(a) = self.hir.def(d) else {
             return None;
         };
-        if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
+        if !a
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            || a.name.starts_with(ERRORS)
+        {
             return None;
         }
         let TyKind::Adt(p, _) = self.types.kind(a.base?) else {

@@ -135,10 +135,14 @@ pub(super) fn container(cx: &Ctx, t: TyId) -> Option<Container> {
         TyKind::Adt(d, args) => {
             let a = cx.adt(*d)?;
             match (a.qual_name.as_str(), args.as_slice()) {
-                ("std/prelude/map::Map", [k, v]) if unknown(*k) && unknown(*v) => {
+                (velt_common::std_item!(prelude_map, "Map"), [k, v])
+                    if unknown(*k) && unknown(*v) =>
+                {
                     Some(Container::Map)
                 }
-                ("std/collections/set::Set", [e]) if unknown(*e) => Some(Container::Set),
+                (velt_common::std_item!(collections_set, "Set"), [e]) if unknown(*e) => {
+                    Some(Container::Set)
+                }
                 _ => None,
             }
         }
@@ -167,8 +171,8 @@ fn dynamic_class(cx: &Ctx, t: TyId) -> bool {
         if let TyKind::Adt(d, args) = k {
             let class = cx.adt(*d).is_some_and(|a| {
                 a.kind == hir::AdtKind::Class
-                    && a.qual_name != "std/prelude/map::Map"
-                    && a.qual_name != "std/collections/set::Set"
+                    && a.qual_name != velt_common::std_item!(prelude_map, "Map")
+                    && a.qual_name != velt_common::std_item!(collections_set, "Set")
             });
             found |= class
                 && args

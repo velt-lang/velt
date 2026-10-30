@@ -177,10 +177,7 @@ pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
 /// specifier (`velt/prelude/core`) only identifies it.
 pub fn specifier(module: &str) -> String {
     let module = module.strip_suffix("/index").unwrap_or(module);
-    match module.strip_prefix("std/") {
-        Some(rest) => format!("velt/{rest}"),
-        None => module.to_string(),
-    }
+    velt_common::std_modules::specifier(module).unwrap_or_else(|| module.to_string())
 }
 
 /// What one module's record needs.

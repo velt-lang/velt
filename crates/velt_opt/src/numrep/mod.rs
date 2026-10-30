@@ -68,11 +68,11 @@ const ROUNDING: [&str; 4] = [
 /// `Math.abs` (`f64 -> f64`).
 const ABS: &str = "velt_rt_math_fabs";
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
-const FLOAT_INDEX: &str = "std/prelude/math::__floatIndex";
+const FLOAT_INDEX: &str = velt_common::std_item!(prelude_math, "__floatIndex");
 
 /// The prelude's int32 helpers (`std/prelude/math.vlt`), inlined in debug builds too so that
 /// `numrep` sees their integer paths.
-const INT32_HELPERS: [&str; 1] = ["std/prelude/math::__mulToInt32"];
+const INT32_HELPERS: [&str; 1] = [velt_common::std_item!(prelude_math, "__mulToInt32")];
 
 /// Per function: is it (an instance of) one of the prelude functions `names`? Instances made
 /// for a caller's location (panic messages) append `_L…` to the symbol.

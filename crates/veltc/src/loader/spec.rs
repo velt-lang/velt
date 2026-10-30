@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use velt_common::std_modules;
+
 /// What an import specifier refers to, before the file is looked up.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModuleRef {
@@ -32,7 +34,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     if spec.is_empty() {
         return Err("empty module specifier".into());
     }
-    if let Some(rel) = spec.strip_prefix("std/") {
+    if let Some(rel) = spec.strip_prefix(std_modules::CANONICAL_PREFIX) {
         return Err(format!(
             "standard library modules are imported as `velt/{rel}` (not `{spec}`)"
         ));
@@ -49,7 +51,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
              `velt/<module>` (`velt/fs`; docs/std/README.md lists them), not `velt:{rel}`"
         ));
     }
-    if let Some(rel) = spec.strip_prefix("velt/") {
+    if let Some(rel) = spec.strip_prefix(std_modules::SPECIFIER_PREFIX) {
         extension_check(spec)?;
         if !is_std_subpath(rel) {
             return Err(format!("invalid standard library module `{spec}`"));
@@ -61,7 +63,9 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     // Vitest's module is `velt/test`, which has its API (`describe`, `it`, `expect`), so a test
     // file written for Vitest runs as it is.
     if spec == "vitest" {
-        return Ok(ModuleRef::Std { rel: "test".into() });
+        return Ok(ModuleRef::Std {
+            rel: velt_common::std_rel!(test).into(),
+        });
     }
     if spec.starts_with("./") || spec.starts_with("../") {
         if spec.ends_with('/') || spec.contains('\\') {

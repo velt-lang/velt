@@ -67,7 +67,7 @@ const KIND_FLOAT: i128 = 3;
 const KIND_TEXT: i128 = 4;
 const KIND_BLOB: i128 = 5;
 /// The qualified name of std/db' `RowSource`.
-const ROW_SOURCE: &str = "std/db::RowSource";
+const ROW_SOURCE: &str = velt_common::std_item!(db, "RowSource");
 
 /// A value a column is read into before it is stored: a temp, or the field itself.
 enum Fetch {

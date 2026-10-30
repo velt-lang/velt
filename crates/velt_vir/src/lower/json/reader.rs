@@ -14,9 +14,9 @@ use crate::lower::{cint, ice, Cx, FnLower, ScopeKind};
 use crate::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Ty};
 
 /// Qualified name of the reader class.
-const READER: &str = "std/encoding/json/reader::Reader";
+const READER: &str = velt_common::std_item!(encoding_json_reader, "Reader");
 /// The module of the number and string writers.
-const WRITER: &str = "std/encoding/json/writer";
+const WRITER: &str = velt_common::std_module!(encoding_json_writer);
 
 impl Cx<'_> {
     /// The `Reader` method (or static function) `name`.
@@ -31,7 +31,9 @@ impl Cx<'_> {
             let mut fns = FxHashMap::default();
             for (i, d) in hir.defs.iter().enumerate() {
                 if let hir::Def::Fn(f) = d {
-                    if f.name.starts_with("std/") {
+                    if f.name
+                        .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+                    {
                         fns.entry(f.name.as_str()).or_insert(DefId(i as u32));
                     }
                 }

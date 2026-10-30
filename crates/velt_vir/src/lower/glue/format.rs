@@ -499,7 +499,7 @@ impl FnLower<'_, '_> {
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == "std/lang/typed_array/core::NativeInspect")
+            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_core, "NativeInspect"))
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an

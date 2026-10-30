@@ -413,7 +413,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
-        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/lang/proxy::");
+        self.proxy_routes = !f
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            || f.name
+                .starts_with(concat!(velt_common::std_module!(lang_proxy), "::"));
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

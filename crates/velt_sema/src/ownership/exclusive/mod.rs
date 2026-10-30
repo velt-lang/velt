@@ -599,10 +599,10 @@ impl Checker<'_, '_> {
 /// no use here): the callee reads its address, never what it points to.
 fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
     const METHODS: [&str; 4] = [
-        "std/prelude/map::Map.",
-        "std/collections/set::Set.",
-        "std/prelude/weak::WeakMap.",
-        "std/prelude/weak::WeakSet.",
+        velt_common::std_item!(prelude_map, "Map."),
+        velt_common::std_item!(collections_set, "Set."),
+        velt_common::std_item!(prelude_weak, "WeakMap."),
+        velt_common::std_item!(prelude_weak, "WeakSet."),
     ];
     let Callee::Def(d, _) = callee else {
         return false;
