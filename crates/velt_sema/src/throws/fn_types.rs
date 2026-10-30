@@ -239,7 +239,6 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
         }
-        let mut ret = self.resolve_type(ret, env);
         let never = self.ty.never;
         let throws_clause = throws;
         let err = throws.map(|t| {
@@ -247,6 +246,17 @@ impl Ctx<'_> {
             self.no_void_error(e, t.span);
             e
         });
+        // `Promise<T>` with a written `throws E`: the promise rejects with `E` and nothing else
+        // (docs/reference/async.md "Errors"), so `E` is what an argument's promise rejects with,
+        // not one member of a union with the inferred rejections of a `Promise<T>` site.
+        let mut ret = match (promise_payload_written(ret), err) {
+            (Some(payload), Some(e)) => {
+                let v = self.resolve_type(payload, env);
+                let e = self.canon_error(Some(e)).unwrap_or(never);
+                self.ty.promise_rejecting(v, e)
+            }
+            _ => self.resolve_type(ret, env),
+        };
         let inferred = throws.is_none();
         // A trap of std/proxy gets a variable in every check with variables, unless the previous
         // check seeded its set; the program's own sites only in a check without seeds.
@@ -777,5 +787,17 @@ impl Ctx<'_> {
             self.seed_fn_sites(to, have, site);
         }
         Some(false)
+    }
+}
+
+/// `T` of a result type written `Promise<T>` (no error type).
+fn promise_payload_written(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, args }
+            if path.len() == 1 && path[0].name == "Promise" && args.len() == 1 =>
+        {
+            args.first()
+        }
+        _ => None,
     }
 }
