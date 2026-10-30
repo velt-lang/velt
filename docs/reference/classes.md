@@ -81,7 +81,8 @@ hidden classes and no runtime shape checks.
 - **Abstract classes** (TypeScript's rules): `abstract class C` cannot be created with `new`
   (``cannot create an instance of abstract class `C` ``), only its subclasses can. It may declare
   abstract methods and accessors, `abstract area(): number;` / `abstract get name(): string;`,
-  which have no body and must declare their return type, and abstract properties, `abstract
+  which have no body and must declare their return type (and take no parameter defaults:
+  `x?: T`, the subclasses give the default; TypeScript's TS2371), and abstract properties, `abstract
   readonly name: string;` / `abstract count: number;` (an abstract getter, and a setter unless
   `readonly`). A subclass implements an abstract property with a field (`readonly name = "q"`) or
   accessors, and an abstract method with a method or a field of its function type (`run: () =>
@@ -423,7 +424,9 @@ console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
 
 - `this` as a method's result type (the polymorphic `this` type) is the class of the object
   the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
-  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  keep the subclass's methods, as in TypeScript; called on a value of a type parameter bounded
+  by the class (`x.register(n)` with `x: T` and `T extends Registry`), it gives a `T`. An
+  override returns `this` too: written
   (`override register(name: string): this`) or left out, when it returns `this` (or
   `super.register(name)`). An override with another result type (`override register(name:
   string): Registry`) is TypeScript's error TS2416.
@@ -560,7 +563,10 @@ console.log(p.len(), q.len());  // 4 4
   (``cannot assign to `id`: it is a readonly field``). Reads go through a getter in the
   interface's table and writes through a setter that only interfaces the program writes
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
-  object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  object literal implementing such an interface with `get f()` must give `set f(v)` too. A
+  class implements an optional field `x?: T` with a field `x?: T` or, as in TypeScript, with a
+  plain `x: T`: read through the interface it is present, and writing `undefined` through the
+  interface stops with a `TypeError` (the class's field holds no `undefined`).
   Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
   changes the field the object holds, as in JS: the field is read through its getter, the part
   changed and the field written back through its setter. The receiver is evaluated once, and a

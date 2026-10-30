@@ -141,7 +141,8 @@ fn check_impl(
     Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter and a setter
+/// The class must have every interface field (same type, or for an optional one its type
+/// without `undefined`); each gets a getter and a setter
 /// source (`crate::iface_writes`), or the implementation gets none (`None`: a writable field
 /// with a getter and no setter).
 fn field_getters(
@@ -174,6 +175,22 @@ fn field_getters(
                     self_ty: p.self_ty,
                     index: i,
                     ty,
+                });
+            }
+        } else if let Some((i, ty)) = have.filter(|(_, ty)| {
+            f.optional && cx.ty.opt_payload(want).is_some_and(|w| cx.same_ty(*ty, w))
+        }) {
+            // A required field provides an optional one (`x: number` for `x?: number`), as in
+            // TypeScript and as for an object type (`object_ifaces`): read, it is present;
+            // writing `undefined` through the interface stops with a `TypeError`.
+            getters.push(super::getters::field_getter_some(
+                cx, p.d, p.self_ty, i, ty, want,
+            ));
+            if let Some(setters) = setters.as_mut() {
+                setters.push(SetterSrc::Method {
+                    def: super::getters::some_setter(cx, p.d, p.self_ty, i, want),
+                    d: p.d,
+                    name: f.name.clone(),
                 });
             }
         } else if let Some((g, set)) = accessor_slots(cx, p.d, p.self_ty, &f.name, want) {

@@ -1,0 +1,25 @@
+// A class field of type `T` implements an interface's optional `x?: T` (and `readonly`), as in
+// TypeScript: read through the interface it is present, a value written through it lands in
+// the field, and writing `undefined` stops with a `TypeError` (the field holds no `undefined`).
+
+interface Opts {
+  x?: f64;
+  readonly label?: string;
+  describe(): string;
+}
+class Impl implements Opts {
+  x: f64 = 1;
+  label: string = "one";
+  describe(): string {
+    return `${this.label}=${this.x}`;
+  }
+}
+function main() {
+  const impl = new Impl();
+  const o: Opts = impl;
+  console.log(o.x, o.label, o.describe());
+  o.x = 2.5;
+  console.log(impl.x, o.x);
+  o.x = undefined;
+  console.log("not reached");
+}
