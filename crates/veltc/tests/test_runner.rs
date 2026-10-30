@@ -30,14 +30,32 @@ fn write(dir: &Path, rel: &str, text: &str) {
 
 /// The test programs built in `dir`, without their extension, sorted.
 fn built(dir: &Path) -> Vec<String> {
-    let mut stems: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
+    let mut stems: Vec<String> = built_files(dir)
+        .into_iter()
+        .map(|n| {
+            // `<name>_<16 hex digits>`: a harness is named by what it is built from.
+            let (stem, key) = n.rsplit_once('_').expect("a harness name");
+            assert!(
+                key.len() == 16 && key.chars().all(|c| c.is_ascii_hexdigit()),
+                "{n}"
+            );
+            stem.to_string()
+        })
+        .collect();
+    stems.sort();
+    stems
+}
+
+/// The harness executables in `dir`'s `target/velt/test`, as named there.
+fn built_files(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir.join("target/velt/test"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| !n.contains('.') || n.ends_with(".exe"))
         .map(|n| n.trim_end_matches(".exe").to_string())
         .collect();
-    stems.sort();
-    stems
+    names.sort();
+    names
 }
 
 /// The lines of `stdout` from `running <file>` up to the next `running` line.
@@ -193,7 +211,7 @@ fn shared_harness_parallel_files_and_failures() {
 
     // a, b and e share one harness, built once whatever failed; c has one of its own, and the
     // runner one without test files.
-    assert_eq!(built(dir), ["c_test_2", "harness_1", "runner_0"]);
+    assert_eq!(built(dir), ["c_test", "harness", "runner"]);
 
     // The same output one file at a time.
     let one = velt_test(dir, &["t", "-j", "1"]);
@@ -209,7 +227,7 @@ fn shared_harness_parallel_files_and_failures() {
     let o = velt_test(dir, &["t"]);
     // The shared harness (1) fails in d, which is built alone (2, reporting its errors); a, b
     // and e share one again (3).
-    assert_eq!(built(dir), ["c_test_4", "harness_3", "runner_0"]);
+    assert_eq!(built(dir), ["c_test", "harness", "runner"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(
         block(&stdout, "d.test.vlt")[1..],
@@ -433,4 +451,30 @@ fn the_location_follows_a_multi_line_message() {
         ],
         "{stdout}"
     );
+}
+
+/// Two runs of different tests in one package build harnesses of their own (std's tests run
+/// each folder of tests/std at once): a harness is named by what it is built from, not by its
+/// place in the run, where both folders' shared harnesses were `harness_1` and one run linked
+/// over the other's.
+#[test]
+fn runs_of_different_tests_build_harnesses_of_their_own() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    for folder in ["a", "b"] {
+        for file in ["x", "y"] {
+            let test = format!("export function test_{folder}{file}() {{}}\n");
+            write(dir, &format!("t/{folder}/{file}.test.vlt"), &test);
+        }
+    }
+    for folder in ["t/a", "t/b"] {
+        let o = velt_test(dir, &[folder]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    }
+    let harnesses: Vec<String> = built_files(dir)
+        .into_iter()
+        .filter(|n| n.starts_with("harness_"))
+        .collect();
+    assert_eq!(harnesses.len(), 2, "{harnesses:?}");
 }
