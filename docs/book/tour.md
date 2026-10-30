@@ -206,7 +206,7 @@ they can't modify captured variables, so they share state through `shared(...)` 
 ## An HTTP server
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const hits = shared(0);

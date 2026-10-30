@@ -1,18 +1,16 @@
 // velt/net/http (internal): the WHATWG `Request` and `RequestInit` (docs/std/fetch.md): a request
-// `fetch` can send, made from a URL and the same options `fetch` takes, or one a server received
-// (std/http.vlt hands it to the handler).
+// `fetch` can send, made from a URL and the same options `fetch` takes, or one the server received
+// (`serve` hands it to the handler, std/net/http/server/standard.vlt).
 //
-// A received request reads the runtime request (`VeltReq`, a registry key) lazily, as a
-// fetched `Response` does: its URL, method and headers are copied out the first time they are
-// read, and its body is received while it is read (`text()`, `json()`, `bytes()`, or chunk by
-// chunk through `req.body`). So a handler pays only for what it looks at, and the state only a
-// request made here has (body, redirect mode, signal, CA) is one null field. It is valid until
-// its handler settles (the server then releases the runtime request); what was read stays
-// readable.
+// A received request reads the connection's request (`Received`) lazily, as a fetched
+// `Response` does: its URL, method and headers are made the first time they are read, and its
+// body is received while it is read (`text()`, `json()`, `bytes()`, or chunk by chunk through
+// `req.body`). So a handler pays only for what it looks at, and the state only a request made
+// here has (body, redirect mode, signal, CA) is one null field. It is valid until its handler
+// settles; what was read stays readable.
 
 import { JSON, JsonError } from "velt/prelude/json/json";
 import { IoError } from "velt/io/error";
-import { IoResult, unwrapIo } from "velt/native/result";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { URL } from "velt/net/url";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
@@ -27,13 +25,7 @@ import {
 } from "velt/net/http/fetch/body";
 import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { tee } from "velt/net/http/fetch/tee";
-
-declare function velt_rt_http_req_method(r: u64): string;
-declare function velt_rt_http_req_url(r: u64): string;
-declare function velt_rt_http_req_has_body(r: u64): bool;
-declare async function velt_rt_http_req_text(r: u64): Promise<IoResult<string>>;
-declare async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>>;
-declare async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>>;
+import { Received } from "velt/net/http/server/received";
 
 /** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";
@@ -102,8 +94,8 @@ function noBody(): BodyParts {
 export class Request {
   // Null until `headers` is first read.
   #fields: Headers | null = null;
-  // A received request: its runtime key (0 for one made with `new Request`).
-  #raw: u64 = 0;
+  // A request the server received (null for one made with `new Request`).
+  #received: Received | null = null;
   // The URL and method; a received request's are null until first read (a request made here
   // has its URL, and a null method is "GET").
   #target: string | null = null;
@@ -173,11 +165,11 @@ export class Request {
     }
   }
 
-  // The request a server received, behind runtime key `raw` (std only: std/http).
-  private static adopt(raw: u64): Request {
+  // A request the server received (std only: std/net/http/server/standard.vlt).
+  private static ofReceived(received: Received): Request {
     const r = new Request("");
     r.#target = null;
-    r.#raw = raw;
+    r.#received = received;
     return r;
   }
 
@@ -200,7 +192,7 @@ export class Request {
         "Cannot construct a Request with a Request object that has already been used.",
       );
     }
-    if (input.fromRuntime()) {
+    if (input.fromServer() != null) {
       const body = BodyStream.adopt(input.chunks());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
@@ -265,7 +257,8 @@ export class Request {
     if (known != null) {
       return known;
     }
-    const s = velt_rt_http_req_url(this.#raw);
+    const received = this.#received;
+    const s = received == null ? "" : received.url();
     this.#target = s;
     return s;
   }
@@ -275,10 +268,11 @@ export class Request {
     if (known != null) {
       return known;
     }
-    if (this.#raw == 0) {
+    const received = this.#received;
+    if (received == null) {
       return "GET";
     }
-    const s = velt_rt_http_req_method(this.#raw);
+    const s = received.method();
     this.#verb = s;
     return s;
   }
@@ -289,7 +283,8 @@ export class Request {
     if (known != null) {
       return known;
     }
-    const h = this.#raw != 0 ? Headers.ofRequest(this.#raw) : new Headers();
+    const received = this.#received;
+    const h = received != null ? Headers.ofReceived(received) : new Headers();
     this.#fields = h;
     return h;
   }
@@ -332,8 +327,9 @@ export class Request {
   /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
-    if (this.fromRuntime()) {
-      return unwrapIo(await velt_rt_http_req_text(this.#raw));
+    const received = this.fromServer();
+    if (received != null) {
+      return utf8DecodeLossy(await received.body());
     }
     const body = this.made();
     if (body == null) {
@@ -354,8 +350,9 @@ export class Request {
   // The body's bytes, as Velt's byte array.
   private async rawBytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
-    if (this.fromRuntime()) {
-      return unwrapIo(await velt_rt_http_req_bytes(this.#raw));
+    const received = this.fromServer();
+    if (received != null) {
+      return await received.body();
     }
     const body = this.made();
     if (body == null) {
@@ -371,27 +368,34 @@ export class Request {
   // `bytes()` and `arrayBuffer()` are in velt/net/http/fetch/typed, loaded with the typed arrays they
   // give (std/prelude/global/fetch_bytes.vlt).
 
-  // A received request's body as the runtime receives it, chunk by chunk.
+  // A received request's body as the connection receives it, chunk by chunk.
   private async *received(): AsyncIterator<u8[], IoError | AbortError> {
-    const raw = this.#raw;
+    const received = this.#received;
+    if (received == null) {
+      return;
+    }
     while (true) {
-      const chunk = unwrapIo(await velt_rt_http_req_chunk(raw));
-      if (chunk.length == 0) {
+      const chunk = await received.read();
+      if (chunk == null) {
         return;
       }
-      yield chunk;
+      if (chunk.length > 0) {
+        yield chunk;
+      }
     }
   }
 
-  // Whether the body is read from the runtime: a received request's, unless `clone` teed it.
-  private fromRuntime(): bool {
-    return this.#raw != 0 && this.made() == null;
+  // Where the body is read from when it is a received request's, unless `clone` teed it: the
+  // server's side of the request; null otherwise.
+  private fromServer(): Received | null {
+    return this.made() == null ? this.#received : null;
   }
 
   // Whether there is a body (a received request without one, a GET, has none).
   private hasBody(): bool {
-    if (this.#raw != 0) {
-      return velt_rt_http_req_has_body(this.#raw);
+    const received = this.#received;
+    if (received != null && this.made() == null) {
+      return received.hasBody();
     }
     return this.made() != null;
   }
@@ -399,7 +403,7 @@ export class Request {
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
   private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
     this.claim();
-    if (this.fromRuntime()) {
+    if (this.fromServer() != null) {
       const source = this.received();
       while (true) {
         const r = await source.next();
@@ -472,10 +476,10 @@ export class Request {
     return s == null ? "" : s.ca;
   }
 
-  // The runtime key of a received request, 0 for one made with `new Request` (std only:
-  // std/websocket and std/http read the server-only state with it).
-  private serverKey(): u64 {
-    return this.#raw;
+  // The server's side of a received request, null for one made with `new Request` (std only:
+  // the upgrades of std/net/http/server/upgrade.vlt read it).
+  private serverSide(): Received | null {
+    return this.#received;
   }
 
   private claim() throws IoError {

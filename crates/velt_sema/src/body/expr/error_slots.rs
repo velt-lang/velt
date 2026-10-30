@@ -36,11 +36,6 @@ impl FnCx<'_, '_> {
         if is_async || (arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_))) {
             return None;
         }
-        // A server's handler is checked as an async arrow (`FnCx::thread_arrow`), which infers
-        // its error type itself.
-        if self.thread_task == Some(arg.span) || self.thread_callback == Some(arg.span) {
-            return None;
-        }
         let fn_ty = self.cx.ty.core(pty).unwrap_or(pty);
         let TyKind::FnPtr {
             params,

@@ -301,8 +301,6 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, slots, args, exp, span);
         self.void_task = None;
         self.task_callback = None;
-        self.thread_task = None;
-        self.thread_callback = None;
         if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
             if let Some(a) = ck.args.first() {
                 self.check_structured_clone(a.ty, a.span);

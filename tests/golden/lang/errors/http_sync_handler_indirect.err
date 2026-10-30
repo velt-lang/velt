@@ -1,10 +1,20 @@
-http_sync_handler_indirect.vlt:16:5: error: this handler modifies captured `made`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:38:20: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:28:5: error: this handler modifies captured `a`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:31:20: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:34:5: error: this handler modifies captured `b`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:37:20: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:41:5: error: this handler modifies captured `c`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:22:16: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:46:5: error: this handler modifies captured `d`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:45:20: but it handles HTTP requests here, which run on several threads
+http_sync_handler_indirect.vlt:16:5: error: this function can be called on another thread, and it changes `made`
+http_sync_handler_indirect.vlt:38:20: but it is passed here to a function that runs it on other threads
+  = note: fix: const made = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `made.with((v) => v)` and change it with `made.with((v) => { v = … })`
+http_sync_handler_indirect.vlt:28:5: error: this function can be called on another thread, and it changes `a`
+http_sync_handler_indirect.vlt:31:20: but it is passed here to a function that runs it on other threads
+  = note: fix: const a = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `a.with((v) => v)` and change it with `a.with((v) => { v = … })`
+http_sync_handler_indirect.vlt:34:5: error: this function can be called on another thread, and it changes `b`
+http_sync_handler_indirect.vlt:37:20: but it is stored in a `(Request) => Response`, which is passed here to a function that runs it on other threads
+  = note: fix: const b = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `b.with((v) => v)` and change it with `b.with((v) => { v = … })`
+http_sync_handler_indirect.vlt:41:5: error: this function can be called on another thread, and it changes `c`
+http_sync_handler_indirect.vlt:22:16: but it is passed here to a function that runs it on other threads
+  = note: fix: const c = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `c.with((v) => v)` and change it with `c.with((v) => { v = … })`
+http_sync_handler_indirect.vlt:46:5: error: this function can be called on another thread, and it changes `d`
+http_sync_handler_indirect.vlt:45:20: but it is passed here to a function that runs it on other threads
+  = note: fix: const d = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `d.with((v) => v)` and change it with `d.with((v) => { v = … })`

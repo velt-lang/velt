@@ -3,7 +3,7 @@
 import { channel } from "velt/sync";
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { connect } from "velt/net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "velt/test";

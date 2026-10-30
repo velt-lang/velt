@@ -1,7 +1,7 @@
 // A sync closure that an HTTP handler runs, however it gets there, may not modify a capture:
 // through a variable, a field, a function's result, a parameter of a wrapper of `serve`, a
 // conditional. The same holds for async ones.
-import { serve, Server } from "velt/http";
+import { serve, HttpServer } from "velt/net/http";
 
 class Box {
   h: (req: Request) => Response;
@@ -18,7 +18,7 @@ function made(): (req: Request) => Response {
   };
 }
 
-async function start(h: (req: Request) => Response): Promise<Server> {
+async function start(h: (req: Request) => Response): Promise<HttpServer> {
   return await serve({ port: 0 }, h);
 }
 

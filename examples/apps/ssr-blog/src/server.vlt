@@ -2,7 +2,7 @@
 // the post before the comments have loaded.
 
 import { Channel } from "velt/sync";
-import { serve, Server } from "velt/http";
+import { serve, HttpServer } from "velt/net/http";
 import { BodyStream } from "velt/net/http";
 import { IoError } from "velt/io";
 import { AbortError } from "velt/task";
@@ -34,7 +34,10 @@ async function handle(req: Request, gate: Channel<i64> | null): Promise<Response
  * Serves the blog on `port` (0 = any free port). With `gate`, a post's comments load only once a
  * value arrives on it (for demo.vlt).
  */
-export async function startServer(port: i64, gate: Channel<i64> | null = null): Promise<Server> {
+export async function startServer(
+  port: i64,
+  gate: Channel<i64> | null = null,
+): Promise<HttpServer> {
   return await serve(
     { port: port as number },
     async (req: Request): Promise<Response> => await handle(req, gate),

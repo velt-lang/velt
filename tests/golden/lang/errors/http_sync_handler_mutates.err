@@ -1,2 +1,4 @@
-http_sync_handler_mutates.vlt:8:5: error: this handler modifies captured `count`, so it must stay on the task that created it
-http_sync_handler_mutates.vlt:7:24: but it handles HTTP requests here, which run on several threads
+http_sync_handler_mutates.vlt:8:5: error: this function can be called on another thread, and it changes `count`
+http_sync_handler_mutates.vlt:7:24: but it is passed here to a function that runs it on other threads
+  = note: fix: const count = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `count.with((v) => v)` and change it with `count.with((v) => { v = … })`

@@ -2,7 +2,7 @@
 // pinned to its version); requests that start after the swap run the new code. `/slow` waits
 // until `/release` (new in version 2) closes the gate, so it is in flight across the swap.
 import { channel } from "velt/sync";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const gate = channel<bool>();

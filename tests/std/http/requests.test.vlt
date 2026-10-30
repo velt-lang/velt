@@ -1,6 +1,6 @@
 // velt/http's requests as a handler sees them: url, method, headers, where it came from, and
 // its body.
-import { serve, ServeInfo } from "velt/http";
+import { serve, ServeInfo } from "velt/net/http";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
 

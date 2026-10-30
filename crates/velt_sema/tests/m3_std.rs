@@ -14,7 +14,7 @@ fn every_std_module_type_checks() {
         ("velt/fs", "readFile"),
         ("velt/net", "listen"),
         ("velt/net/bytes", "writeBytesTo"),
-        ("velt/http", "serve"),
+        ("velt/net/http", "serve"),
         ("velt/process", "argv"),
         ("velt/path", "join"),
         ("velt/encoding/json", "Value"),
@@ -41,15 +41,13 @@ fn std_async_functions_own_their_params() {
 
 #[test]
 fn std_handles_release_in_drop_hooks() {
-    let p = ok_src(
-        "import { serve } from \"velt/http\";\nimport { fetch } from \"velt/net/http\";\nfunction main() {}",
+    let p = ok_src("import { fetch } from \"velt/net/http\";\nfunction main() {}");
+    assert!(
+        adt(&p, "std/net/http/fetch/response::Response")
+            .dispose
+            .is_some(),
+        "Response has no dispose hook"
     );
-    for class in ["std/http::Server", "std/net/http/fetch/response::Response"] {
-        assert!(
-            adt(&p, class).dispose.is_some(),
-            "{class} has no dispose hook"
-        );
-    }
     let text = func(&p, "std/net/http/fetch/response::Response.text");
     assert!(text.is_async);
     assert_eq!(

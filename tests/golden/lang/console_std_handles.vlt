@@ -1,8 +1,8 @@
-// std classes keep runtime handles in ES private fields (`#handle`), which `console.log` leaves
-// out, as Node does; public fields still print.
-import { Server } from "velt/http";
+// std classes keep runtime handles in ES private fields (`#h`), which `console.log` leaves out,
+// as Node does; public state still prints.
+import { AbortController } from "velt/task";
 
 function main() {
-  console.log(new Server());
+  console.log(new AbortController().signal);
   console.log(JSON.parseValue('{"a":[1]}'));
 }

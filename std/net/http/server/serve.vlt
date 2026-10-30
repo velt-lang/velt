@@ -9,7 +9,8 @@
 
 import { IoError } from "velt/io/error";
 import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt/net";
-import { AbortController, AbortSignal } from "velt/task";
+import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
+import { devStop, drained } from "velt/net/http/server/dev";
 import { delay } from "velt/time/timers";
 import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/net/http/server/parse";
 import { HttpRequest } from "velt/net/http/server/request";
@@ -58,11 +59,14 @@ export class HttpServer {
   port: number = 0;
   private listener: TcpListener;
   private stop: AbortController;
+  // Settles once the server stopped accepting and every connection finished.
+  private done: Promise<void>;
 
-  constructor(listener: TcpListener, stop: AbortController) {
+  constructor(listener: TcpListener, stop: AbortController, done: Promise<void>) {
     this.listener = listener;
     this.port = listener.port;
     this.stop = stop;
+    this.done = done;
   }
 
   /**
@@ -72,6 +76,16 @@ export class HttpServer {
   close() {
     this.listener.close();
     this.stop.abort();
+  }
+
+  /**
+   * `close()`, then waits until every connection has finished (its request answered) and the
+   * handler, with everything it captured, was dropped.
+   */
+  async shutdown() {
+    this.close();
+    const done = this.done;
+    await done;
   }
 }
 
@@ -97,27 +111,71 @@ export async function serveHttp<E>(
     maxHeaders: maxHeaders,
   };
   const stop = new AbortController();
-  const stopped = stop.signal;
-  const accepting = listener;
-  spawn(async () => {
-    // Only `close()` ends the loop. Another failure (out of file descriptors, a connection reset
-    // before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
-    let backoff: i64 = 0;
-    while (!stopped.aborted) {
-      try {
-        const conn = await accepting.accept();
-        backoff = 0;
-        spawn(connection(conn, handler, maxHead, maxBody, idle, limits, stopped));
-      } catch (e) {
-        if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
-          break;
+  // Under `velt dev` the server also stops when the next version is about to start (dev.vlt).
+  const dev = devStop();
+  const stopped = dev == null ? stop.signal : AbortSignal.any([stop.signal, dev]);
+  if (dev != null) {
+    const closing = spawn(closeWhen(stopped, listener));
+  }
+  const reload = dev != null;
+  const done = spawn(acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload));
+  return new HttpServer(listener, stop, done);
+}
+
+/** Stops accepting once `stopped` is aborted (`close()` stops the listener itself). */
+async function closeWhen(stopped: AbortSignal, listener: TcpListener) {
+  await stopped.whenAborted();
+  listener.close();
+}
+
+/**
+ * Accepts connections until `stopped` (`close()`, or `velt dev`'s stop request with `reload`),
+ * each served on a task of its own in one task scope, so this settles only once the last of them
+ * finished. Only stopping ends the loop: another failure (out of file descriptors, a connection
+ * reset before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
+ */
+async function acceptAll<E>(
+  listener: TcpListener,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  maxHead: i64,
+  maxBody: i64,
+  idle: i64,
+  limits: Limits,
+  stopped: AbortSignal,
+  reload: bool,
+): Promise<void> {
+  await taskScope(
+    async (scope: TaskScope<never>): Promise<void> => {
+      let backoff: i64 = 0;
+      while (!stopped.aborted) {
+        try {
+          const conn = await listener.accept();
+          backoff = 0;
+          // The scope waits for it: nothing awaits the handle.
+          const served = connection(conn, handler, maxHead, maxBody, idle, limits, stopped);
+          const task = scope.spawn(guarded(served));
+        } catch (e) {
+          if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
+            break;
+          }
+          backoff = backoff == 0 ? 5 : backoff >= 500 ? 1000 : backoff * 2;
+          await delay(backoff);
         }
-        backoff = backoff == 0 ? 5 : backoff >= 500 ? 1000 : backoff * 2;
-        await delay(backoff);
       }
-    }
-  });
-  return new HttpServer(listener, stop);
+    },
+    { cancelOnError: false },
+  );
+  if (reload) {
+    // Every connection finished: the program may stop for the next version.
+    drained();
+  }
+}
+
+/** A connection's task: what it throws ends only that connection. */
+async function guarded(served: Promise<void>): Promise<void> {
+  try {
+    await served;
+  } catch (e) {}
 }
 
 /// How long a connection waits for its next request by default (Node's `keepAliveTimeout`).

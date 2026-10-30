@@ -41,8 +41,6 @@ pub(super) enum Node {
 pub(super) enum Boundary {
     /// Spawned: a closure literal, the callee or an argument of a spawned call.
     Spawn,
-    /// The handler of an HTTP server (requests run on every core).
-    Handler,
     /// `shared(...)`.
     Shared,
     /// The value of a `Mutex`, which other threads lock once it is shared.
@@ -65,6 +63,10 @@ pub(super) struct Why {
     pub boundary: Boundary,
     /// `span` is in the standard library.
     pub std: bool,
+    /// The boundary is in the standard library, reached through the user's call at `span`: a
+    /// std function that hands a callback to other threads runs a copy of it on each (a
+    /// server's handler, a connection per task).
+    pub in_std: bool,
     /// A value of this type reaches the boundary, and the closure is stored in it.
     pub via: Option<TyId>,
 }
@@ -85,6 +87,7 @@ impl Why {
             Some((span, false)) if self.std => Why {
                 span,
                 std: false,
+                in_std: true,
                 ..self
             },
             _ => self,
@@ -214,6 +217,7 @@ impl Walk<'_, '_> {
             span,
             boundary,
             std: self.std,
+            in_std: false,
             via: None,
         })
     }
@@ -569,7 +573,6 @@ impl Walk<'_, '_> {
                 }
                 return self.unknown(e, to);
             }
-            Intrinsic::HttpHandler => Some(Boundary::Handler),
             Intrinsic::SharedNew => Some(Boundary::Shared),
             Intrinsic::MutexNew | Intrinsic::RwLockNew => Some(Boundary::Mutex),
             Intrinsic::ChanSend | Intrinsic::ChanTrySend => Some(Boundary::Channel),

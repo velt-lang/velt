@@ -2,7 +2,7 @@
 // error (#873): a field holding `T | null`, an interface value, a method calling `this.cb`, a
 // setter keeping it, a `Map` value, a generic box, `setTimeout` in the handler, a handler
 // factory's parameter.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 class Opt {
   cb: (() => void) | null = null;

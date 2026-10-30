@@ -6,8 +6,8 @@
 // missing and that all of std checks without diagnostics. A small main touches a few modules and names the globals
 // loaded on demand whose modules nothing imports (`Proxy` and `Reflect`,
 // std/prelude/global/proxy.vlt).
+import { HttpServeOptions } from "velt/net/http";
 import { existsSync } from "velt/fs";
-import { ServeOptions } from "velt/http";
 import { ioError } from "velt/native/result";
 import { Value } from "velt/encoding/json";
 import { clamp, gcd } from "velt/math";
@@ -65,11 +65,6 @@ import * as std_encoding_utf8 from "velt/encoding/utf8";
 import * as std_fs_fd from "velt/fs/fd";
 import * as std_fs_stream from "velt/fs/stream";
 import * as std_hash from "velt/hash";
-import * as std_net_http_server_serve from "velt/net/http/server/serve";
-import * as std_http_server_parse from "velt/net/http/server/parse";
-import * as std_http_server_request from "velt/net/http/server/request";
-import * as std_http_server_response from "velt/net/http/server/response";
-import * as std_http_stream from "velt/http/stream";
 import * as std_io from "velt/io";
 import * as std_io_error from "velt/io/error";
 import * as std_streams_byte_source from "velt/io/streams/byte_source";
@@ -148,6 +143,16 @@ import * as std_fetch_response from "velt/net/http/fetch/response";
 import * as std_fetch_streams from "velt/net/http/fetch/streams";
 import * as std_fetch_tee from "velt/net/http/fetch/tee";
 import * as std_fetch_typed from "velt/net/http/fetch/typed";
+import * as std_net_http_server_dev from "velt/net/http/server/dev";
+import * as std_net_http_server_errors from "velt/net/http/server/errors";
+import * as std_http_server_parse from "velt/net/http/server/parse";
+import * as std_net_http_server_received from "velt/net/http/server/received";
+import * as std_http_server_request from "velt/net/http/server/request";
+import * as std_http_server_response from "velt/net/http/server/response";
+import * as std_net_http_server_serve from "velt/net/http/server/serve";
+import * as std_net_http_server_serve_info from "velt/net/http/server/serve_info";
+import * as std_net_http_server_standard from "velt/net/http/server/standard";
+import * as std_net_http_server_upgrade from "velt/net/http/server/upgrade";
 import * as std_udp from "velt/net/udp";
 import * as std_url from "velt/net/url";
 import * as std_url_encode from "velt/net/url/encode";
@@ -250,7 +255,7 @@ function main() {
   const p = join("a", "b");
   console.log(`${p} ${existsSync(p)} ${clamp(gcd(12, 18), 0, 5)} ${argv().length}`);
   console.log(process.env.HOME ?? "");
-  const opts: ServeOptions = { port: 0 };
+  const opts: HttpServeOptions = { port: 0 };
   const r = new Response("ok");
   r.headers.set("x-a", "1");
   console.log(`${opts.port} ${r.headers.get("x-a")}`);

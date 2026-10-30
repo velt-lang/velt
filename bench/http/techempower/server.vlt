@@ -4,7 +4,7 @@
 // Usage: server <port> (bench/http/techempower/run.sh picks the port).
 
 import { escapeHtml } from "velt/text";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { args } from "velt/process";
 
 class Fortune {

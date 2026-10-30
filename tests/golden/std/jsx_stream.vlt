@@ -8,7 +8,7 @@
 import { jsx, Fragment, jsxAsyncComponent } from "velt/jsx/jsx-runtime";
 import { Element, renderToString, renderToStream } from "velt/jsx";
 import { BodyStream } from "velt/net/http";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { IoError } from "velt/io";
 import { AbortError } from "velt/task";
 import { connect } from "velt/net";

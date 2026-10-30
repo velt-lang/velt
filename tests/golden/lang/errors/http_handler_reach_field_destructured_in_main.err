@@ -1,4 +1,5 @@
-http_handler_reach_field_destructured_in_main.vlt:17:5: error: this handler calls `onClick`, which changes `last`; requests run at the same time
+http_handler_reach_field_destructured_in_main.vlt:17:5: error: this code runs on another thread and calls `onClick`, which changes `last`
 http_handler_reach_field_destructured_in_main.vlt:14:32: `last` is changed here
-  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+http_handler_reach_field_destructured_in_main.vlt:16:19: but it is stored in a `(string) => void`, which is passed here to a function that runs it on other threads
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value every thread shares, as in Node
   = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`

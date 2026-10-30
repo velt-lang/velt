@@ -57,6 +57,14 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Signal {
+    /// Aborts with reason `text` (for the runtime's own signals: a no-op if aborted already).
+    pub(crate) fn abort_with(&self, text: &str) {
+        self.abort(&Reason {
+            text: text.to_string(),
+            timeout_ms: None,
+        });
+    }
+
     fn abort(&self, reason: &Reason) {
         crate::io::publish_before_handoff();
         {

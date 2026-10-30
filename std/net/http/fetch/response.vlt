@@ -1,5 +1,5 @@
 // velt/net/http (internal): the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to,
-// what a server handler returns (std/http.vlt), or a response built with `new Response(body, init)`
+// what a server handler returns (`serve`), or a response built with `new Response(body, init)`
 // / `Response.json(data)`.
 //
 // A fetched response holds the client's response (`Fetched`, std/net/http/fetch/client/fetched.vlt) whose
@@ -30,43 +30,19 @@ import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { tee } from "velt/net/http/fetch/tee";
 
-declare function velt_rt_http_resp_drop(r: u64);
-// A server response (std/http): the text body is taken (moved out, left empty), the bytes copied.
-declare function velt_rt_http_resp_build(
-  status: u32,
-  reason: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  implied: u32,
-): u64;
-// The response a handler returns for server request `raw`, with no body or a text one (`kind`
-// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
-// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
-// (`headers`), and takes a bytes body (`kind` 2) too.
-declare function velt_rt_http_req_respond(
-  raw: u64,
-  status: u32,
-  reason: string,
-  name: string,
-  value: string,
-  kind: u32,
-  text: string,
-  implied: u32,
-): u64;
-declare function velt_rt_http_req_respond_list(
-  raw: u64,
-  status: u32,
-  reason: string,
-  name: string,
-  value: string,
-  headers: string[],
-  kind: u32,
-  text: string,
-  bytes: u8[],
-  implied: u32,
-): u64;
+/** What a server writes for a response (std only: std/net/http/server/standard.vlt). */
+export interface ServerBody {
+  status: i64;
+  /** `[name, value, …]`, lowercase names. */
+  headers: string[];
+  /** The `content-type` the body implies, written unless `headers` names one. */
+  type: string | null;
+  /** 0 none, 1 `text`, 2 `bytes`, 3 `stream`. */
+  kind: i64;
+  text: string;
+  bytes: u8[];
+  stream: BodyStream | null;
+}
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
@@ -75,16 +51,14 @@ export struct ResponseInit {
   headers?: HeadersInit;
 }
 
-// Where a response's body is (`Response.#source`); the first five are also the `kind` a server
-// builds a response with (`velt_rt_http_resp_build`).
+// Where a response's body is (`Response.#source`); the first four are also a `ServerBody`'s
+// `kind`.
 const NONE: i64 = 0;
 const TEXT: i64 = 1;
 const BYTES: i64 = 2;
 const STREAM: i64 = 3;
-// A fetched response's body, in the runtime.
+// A fetched response's body, received by the `fetch` client.
 const RUNTIME: i64 = 4;
-// A server response the runtime built (a WebSocket upgrade's 101): `#handle` is its key.
-const BUILT: i64 = 5;
 
 export class Response {
   #code: i64 = 200;
@@ -102,7 +76,6 @@ export class Response {
   // A bytes body (null for any other), so a response without one allocates no array.
   #data: u8[] | null = null;
   #stream: BodyStream | null = null;
-  #handle: u64 = 0;
   // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
   #fetched: Fetched | null = null;
 
@@ -195,18 +168,8 @@ export class Response {
     return r;
   }
 
-  // A server response with status `status` the runtime built, behind key `handle` (std only:
-  // std/websocket's 101).
-  private static built(handle: u64, status: i64): Response {
-    const r = new Response();
-    r.#code = status;
-    r.#source = BUILT;
-    r.#handle = handle;
-    return r;
-  }
-
-  // A `101 Switching Protocols` response with `headers` (std only: std/http's
-  // `upgradeConnection`; the constructor takes 200-599).
+  // A `101 Switching Protocols` response with `headers` (std only: `upgradeConnection`,
+  // std/net/http/server/upgrade.vlt; the constructor takes 200-599).
   private static switching(headers: Headers): Response {
     const r = new Response();
     r.#code = 101;
@@ -392,7 +355,7 @@ export class Response {
   private streams(): bool {
     const code = this.#code;
     const none = code == 101 || code == 103 || code == 204 || code == 205;
-    return !(none || code == 304 || this.#source == NONE || this.#source == BUILT);
+    return !(none || code == 304 || this.#source == NONE);
   }
 
   /** Whether the body has been read. */
@@ -483,65 +446,14 @@ export class Response {
     }
   }
 
-  // This response as what a server handler returns for request `raw` (std only: std/http): a
-  // complete body goes straight to the request (`velt_rt_http_req_respond`); a response the
-  // runtime built is given up as it is; a streamed body (a `BodyStream`, or a fetched
-  // response's body) gets a runtime response for std/http to copy the body into
-  // (`serverStream`). 0 if a header name or value is not valid HTTP.
-  private toServer(raw: u64): u64 {
+  // What the server writes for this response (std only: std/net/http/server/standard.vlt): a
+  // streamed body (a `BodyStream`, or a fetched response's body) is used up, as sending it does
+  // in JS. A fetched body arrives decoded, so the coding it was sent in is not passed on.
+  private serverBody(): ServerBody throws IoError {
     const source = this.#source;
-    if (source == BUILT) {
-      const h = this.#handle;
-      this.#handle = 0;
-      return h;
-    }
-    const fields = this.#fields;
-    if (source == STREAM || source == RUNTIME) {
-      return this.streamed(fields);
-    }
-    let name = "";
-    let value = "";
-    let list: string[] | null = null;
-    let implied = this.#implied;
-    if (fields != null) {
-      const [n, v, l, type] = fields.serverList();
-      name = n;
-      value = v;
-      list = l;
-      implied = type;
-    }
-    let text = this.#str;
-    const data = this.#data;
-    if (list == null && data == null) {
-      return velt_rt_http_req_respond(
-        raw,
-        this.#code as u32,
-        this.#reason ?? "",
-        name,
-        value,
-        source as u32,
-        text,
-        implied,
-      );
-    }
-    return velt_rt_http_req_respond_list(
-      raw,
-      this.#code as u32,
-      this.#reason ?? "",
-      name,
-      value,
-      list ?? [],
-      source as u32,
-      text,
-      data ?? [],
-      implied,
-    );
-  }
-
-  // `toServer` of a streamed body: a runtime response std/http copies the body into.
-  private streamed(fields: Headers | null): u64 {
     let headers: string[] = [];
-    let implied: u32 = 0;
+    let implied = this.#implied;
+    const fields = this.#fields;
     if (fields != null) {
       const [list, type] = fields.serverFlat();
       headers = list;
@@ -550,19 +462,31 @@ export class Response {
       headers = this.headers.raw();
     }
     if (this.decoded()) {
-      // The body arrives decoded: the coding it was sent in no longer applies.
       headers = withoutCoding(headers);
     }
-    let none = "";
-    return velt_rt_http_resp_build(
-      this.#code as u32,
-      this.#reason ?? "",
-      headers,
-      this.#source as u32,
-      none,
-      [],
-      implied,
-    );
+    let stream: BodyStream | null = null;
+    if (source == STREAM || source == RUNTIME) {
+      if (this.#used) {
+        throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+      }
+      if (source == STREAM) {
+        this.#used = true;
+        stream = this.#stream;
+        this.#stream = null;
+      } else {
+        // `chunks` marks the body used when it starts.
+        stream = BodyStream.adopt(this.chunks());
+      }
+    }
+    return {
+      status: this.#code,
+      headers: headers,
+      type: impliedType(implied),
+      kind: source == RUNTIME ? STREAM : source,
+      text: this.#str,
+      bytes: this.#data ?? [],
+      stream: stream,
+    };
   }
 
   // Whether a fetched body arrives decoded (its `content-encoding` no longer applies).
@@ -575,19 +499,10 @@ export class Response {
     return remote != null && remote.decoded;
   }
 
-  // The body std/http copies into a server response once `toServer` built it (std only): null
-  // when the body is not streamed.
-  private serverStream(): BodyStream | null {
-    if (this.#source == RUNTIME) {
-      return this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null;
-    }
-    return this.#stream;
-  }
-
   // Marks the body read; throws if it was already. A response without a body can be read any
   // number of times, as in JS.
   private claim() throws IoError {
-    if (this.#source == NONE || this.#source == BUILT) {
+    if (this.#source == NONE) {
       return;
     }
     if (this.#used) {
@@ -612,15 +527,8 @@ export class Response {
     };
   }
 
-  /**
-   * Drop hook: releases the runtime response, or closes the connection of a fetched body nobody
-   * finished reading.
-   */
+  /** Drop hook: closes the connection of a fetched body nobody finished reading. */
   [Symbol.dispose]() {
-    if (this.#handle != 0) {
-      velt_rt_http_resp_drop(this.#handle);
-      this.#handle = 0;
-    }
     const f = this.#fetched;
     if (f != null) {
       f.close();

@@ -37,41 +37,22 @@ const SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(5);
 /// The future that sets a lazy stream up.
 pub(crate) type Start = Pin<Box<dyn Future<Output = io::Result<Ready>> + Send>>;
 
-/// A lazy stream once it is set up.
-pub(crate) enum Ready {
-    /// A raw socket, and bytes already read from it that the first reads deliver.
-    Tcp {
-        stream: TcpStream,
-        prefix: Mutex<Vec<u8>>,
-        has_prefix: AtomicBool,
-    },
-    /// Any other transport, split (boxed: a raw socket's stream object stays small).
-    Split(Box<Split>),
-}
-
-/// The two halves of a transport that is not a raw socket.
-pub(crate) struct Split {
+/// A lazy stream once it is set up: a transport that is not a raw socket (TLS), split into its
+/// two halves.
+pub(crate) struct Ready {
     r: AsyncMutex<ReadHalf<Box<dyn Transport>>>,
     w: AsyncMutex<WriteHalf<Box<dyn Transport>>>,
     peer: Option<SocketAddr>,
 }
 
 impl Ready {
-    pub(crate) fn tcp(stream: TcpStream, prefix: Vec<u8>) -> Ready {
-        Ready::Tcp {
-            has_prefix: AtomicBool::new(!prefix.is_empty()),
-            prefix: Mutex::new(prefix),
-            stream,
-        }
-    }
-
     pub(crate) fn other(io: Box<dyn Transport>, peer: Option<SocketAddr>) -> Ready {
         let (r, w) = tokio::io::split(io);
-        Ready::Split(Box::new(Split {
+        Ready {
             r: AsyncMutex::new(r),
             w: AsyncMutex::new(w),
             peer,
-        }))
+        }
     }
 }
 
@@ -318,54 +299,31 @@ impl StreamObj {
         if self.aborted.load(Ordering::Acquire) {
             return Err(aborted_error());
         }
-        let ready = match &self.io {
+        match &self.io {
             Io::Tcp(stream) => return stream.try_read(dst),
             Io::Lazy(lazy) => match lazy.ready.get() {
                 None => return Err(io::ErrorKind::WouldBlock.into()),
                 Some(Err((kind, message))) => return Err(io::Error::new(*kind, message.clone())),
-                Some(Ok(ready)) => ready,
+                Some(Ok(_)) => {}
             },
-        };
-        match ready {
-            Ready::Tcp {
-                stream,
-                prefix,
-                has_prefix,
-            } => {
-                if has_prefix.load(Ordering::Acquire) {
-                    let mut p = prefix.lock().unwrap_or_else(|e| e.into_inner());
-                    let n = p.len().min(dst.len());
-                    dst[..n].copy_from_slice(&p[..n]);
-                    p.drain(..n);
-                    if p.is_empty() {
-                        *p = Vec::new();
-                        has_prefix.store(false, Ordering::Release);
-                    }
-                    if n > 0 {
-                        return Ok(n);
-                    }
-                }
-                stream.try_read(dst)
-            }
-            Ready::Split(_) => {
-                let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
-                if held.is_empty() {
-                    return if self.held_end.load(Ordering::Acquire) {
-                        Ok(0)
-                    } else {
-                        Err(io::ErrorKind::WouldBlock.into())
-                    };
-                }
-                // From the front of a deque: a small buffer reads a large chunk in linear time.
-                let n = held.len().min(dst.len());
-                let (a, b) = held.as_slices();
-                let k = a.len().min(n);
-                dst[..k].copy_from_slice(&a[..k]);
-                dst[k..n].copy_from_slice(&b[..n - k]);
-                held.drain(..n);
-                Ok(n)
-            }
         }
+        // A set-up transport: what `readable` read ahead of this call.
+        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        if held.is_empty() {
+            return if self.held_end.load(Ordering::Acquire) {
+                Ok(0)
+            } else {
+                Err(io::ErrorKind::WouldBlock.into())
+            };
+        }
+        // From the front of a deque: a small buffer reads a large chunk in linear time.
+        let n = held.len().min(dst.len());
+        let (a, b) = held.as_slices();
+        let k = a.len().min(n);
+        dst[..k].copy_from_slice(&a[..k]);
+        dst[k..n].copy_from_slice(&b[..n - k]);
+        held.drain(..n);
+        Ok(n)
     }
 
     /// Whether an idle stream (one parked between requests) can carry another request: nothing
@@ -383,31 +341,24 @@ impl StreamObj {
                 _ => return false,
             },
         };
-        match ready {
-            Ready::Tcp {
-                stream, has_prefix, ..
-            } => !has_prefix.load(Ordering::Acquire) && stream.idle_open(),
-            Ready::Split(split) => {
-                if self.held_end.load(Ordering::Acquire)
-                    || !self
-                        .held
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .is_empty()
-                {
-                    return false;
-                }
-                let Ok(mut r) = split.r.try_lock() else {
-                    return false;
-                };
-                let mut probe = [0u8; 1];
-                let mut buf = tokio::io::ReadBuf::new(&mut probe);
-                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-                // Pending: nothing yet (cancel-safe: nothing was taken). Anything else (bytes,
-                // the end, an error) means the connection is not idle and open.
-                Pin::new(&mut *r).poll_read(&mut cx, &mut buf).is_pending()
-            }
+        if self.held_end.load(Ordering::Acquire)
+            || !self
+                .held
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        {
+            return false;
         }
+        let Ok(mut r) = ready.r.try_lock() else {
+            return false;
+        };
+        let mut probe = [0u8; 1];
+        let mut buf = tokio::io::ReadBuf::new(&mut probe);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        // Pending: nothing yet (cancel-safe: nothing was taken). Anything else (bytes, the end,
+        // an error) means the connection is not idle and open.
+        Pin::new(&mut *r).poll_read(&mut cx, &mut buf).is_pending()
     }
 
     /// Waits until [`try_read_into`](Self::try_read_into) may find something (data, the end of
@@ -417,41 +368,31 @@ impl StreamObj {
         // `abort` shuts a raw socket down, which makes it readable (the next `try_read_into`
         // reports the abort); a close while this waits wakes it (shutting down only the read side
         // does not on every OS).
-        let ready = match &self.io {
+        match &self.io {
             Io::Tcp(stream) => return self.until_read_ends(stream.readable()).await,
-            Io::Lazy(lazy) => self.until_read_ends(self.set_up(lazy)).await?,
-        };
-        match ready {
-            Ready::Tcp {
-                stream, has_prefix, ..
-            } => {
-                if has_prefix.load(Ordering::Acquire) {
-                    return Ok(());
-                }
-                stream.readable().await
-            }
-            Ready::Split(_) => {
-                let has = !self
-                    .held
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .is_empty();
-                if has || self.held_end.load(Ordering::Acquire) {
-                    return Ok(());
-                }
-                let chunk = self.read(DEFAULT_HELD).await?;
-                if chunk.is_empty() {
-                    self.held_end.store(true, Ordering::Release);
-                } else {
-                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
-                    match held.is_empty() {
-                        true => *held = chunk.into(),
-                        false => held.extend(&chunk),
-                    }
-                }
-                Ok(())
+            Io::Lazy(lazy) => {
+                self.until_read_ends(self.set_up(lazy)).await?;
             }
         }
+        let has = !self
+            .held
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty();
+        if has || self.held_end.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let chunk = self.read(DEFAULT_HELD).await?;
+        if chunk.is_empty() {
+            self.held_end.store(true, Ordering::Release);
+        } else {
+            let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+            match held.is_empty() {
+                true => *held = chunk.into(),
+                false => held.extend(&chunk),
+            }
+        }
+        Ok(())
     }
 
     /// An error once the stream was aborted.
@@ -478,53 +419,25 @@ impl StreamObj {
 
     /// `read` on a lazy stream.
     async fn read_lazy(&self, lazy: &Lazy, max: u64) -> io::Result<Vec<u8>> {
-        match self.until_read_ends(self.set_up(lazy)).await? {
-            Ready::Tcp {
-                stream,
-                prefix,
-                has_prefix,
-            } => {
-                if has_prefix.load(Ordering::Acquire) {
-                    let mut p = prefix.lock().unwrap_or_else(|e| e.into_inner());
-                    let n = p.len().min(max.clamp(1, 16 << 20) as usize);
-                    let head: Vec<u8> = p.drain(..n).collect();
-                    if p.is_empty() {
-                        *p = Vec::new();
-                        has_prefix.store(false, Ordering::Release);
-                    }
-                    if !head.is_empty() {
-                        return Ok(head);
-                    }
-                }
-                // An `abort` that ran while the setup finished may have found no socket to shut
-                // down; the fences make sure that either it saw this one or this sees the flag.
-                fence(Ordering::SeqCst);
-                if self.aborted.load(Ordering::Relaxed) {
-                    return Err(aborted_error());
-                }
-                self.read_raw(stream, max).await
+        let ready = self.until_read_ends(self.set_up(lazy)).await?;
+        {
+            // What `readable` read ahead comes first.
+            let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+            if !held.is_empty() {
+                let n = held.len().min(max.clamp(1, 16 << 20) as usize);
+                return Ok(held.drain(..n).collect());
             }
-            Ready::Split(split) => {
-                {
-                    // What `readable` read ahead comes first.
-                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
-                    if !held.is_empty() {
-                        let n = held.len().min(max.clamp(1, 16 << 20) as usize);
-                        return Ok(held.drain(..n).collect());
-                    }
-                    if self.held_end.load(Ordering::Acquire) {
-                        return Ok(Vec::new());
-                    }
-                }
-                self.until_read_ends(async {
-                    let mut r = split.r.lock().await;
-                    let mut buf = buffer(max);
-                    r.read_buf(&mut buf).await?;
-                    Ok(buf)
-                })
-                .await
+            if self.held_end.load(Ordering::Acquire) {
+                return Ok(Vec::new());
             }
         }
+        self.until_read_ends(async {
+            let mut r = ready.r.lock().await;
+            let mut buf = buffer(max);
+            r.read_buf(&mut buf).await?;
+            Ok(buf)
+        })
+        .await
     }
 
     /// Writes all of `data` to a raw socket.
@@ -558,60 +471,40 @@ impl StreamObj {
 
     /// `write` on a lazy stream.
     async fn write_lazy(&self, lazy: &Lazy, data: &[u8], turn: Option<Turn>) -> io::Result<()> {
-        match self.until_abort(self.set_up(lazy)).await? {
-            Ready::Tcp { stream, .. } => self.write_tcp(stream, data, turn).await,
-            Ready::Split(split) => {
-                self.until_abort(async {
-                    let mut w = split.w.lock().await;
-                    w.write_all(data).await?;
-                    w.flush().await
-                })
-                .await
-            }
-        }
+        let ready = self.until_abort(self.set_up(lazy)).await?;
+        let _turn = turn;
+        self.until_abort(async {
+            let mut w = ready.w.lock().await;
+            w.write_all(data).await?;
+            w.flush().await
+        })
+        .await
     }
 
-    /// The raw socket when operations can go straight to it: a plain TCP stream, or a lazy one
-    /// that turned out to be a raw socket, once the bytes read ahead of it are delivered. (A
-    /// stream that was aborted has its socket shut down: a read sees the end of the stream.)
+    /// The raw socket when operations can go straight to it: a plain TCP stream. (A stream that
+    /// was aborted has its socket shut down: a read sees the end of the stream.)
     pub(crate) fn plain(&self) -> Option<&TcpStream> {
         match &self.io {
             Io::Tcp(s) => (!self.aborted.load(Ordering::Relaxed)).then_some(s),
-            Io::Lazy(l) => match l.ready.get() {
-                Some(Ok(Ready::Tcp {
-                    stream, has_prefix, ..
-                })) if !has_prefix.load(Ordering::Acquire) => {
-                    // As in `read_lazy`: an `abort` racing the setup either sees this socket or
-                    // is seen here.
-                    fence(Ordering::SeqCst);
-                    (!self.aborted.load(Ordering::Relaxed)).then_some(stream)
-                }
-                _ => None,
-            },
+            Io::Lazy(_) => None,
         }
     }
 
-    /// The raw socket, if there is one yet.
+    /// The raw socket: a plain TCP stream's (a lazy one is another transport).
     fn socket(&self) -> Option<&TcpStream> {
         match &self.io {
             Io::Tcp(s) => Some(s),
-            Io::Lazy(l) => match l.ready.get() {
-                Some(Ok(Ready::Tcp { stream, .. })) => Some(stream),
-                _ => None,
-            },
+            Io::Lazy(_) => None,
         }
     }
 
     pub(crate) fn peer_addr(&self) -> Option<SocketAddr> {
-        if let Some(s) = self.socket() {
-            return s.peer_addr().ok();
-        }
         match &self.io {
+            Io::Tcp(s) => s.peer_addr().ok(),
             Io::Lazy(l) => match l.ready.get() {
-                Some(Ok(Ready::Split(split))) => split.peer,
+                Some(Ok(ready)) => ready.peer,
                 _ => None,
             },
-            Io::Tcp(_) => None,
         }
     }
 
@@ -637,14 +530,8 @@ impl StreamObj {
                 Io::Lazy(lazy) => lazy,
             };
             let _ = tokio::time::timeout(SHUTDOWN, async {
-                match obj.until_abort(obj.set_up(lazy)).await {
-                    Ok(Ready::Tcp { stream, .. }) => {
-                        let _ = shutdown_socket(stream, std::net::Shutdown::Write);
-                    }
-                    Ok(Ready::Split(split)) => {
-                        let _ = split.w.lock().await.shutdown().await;
-                    }
-                    Err(_) => {}
+                if let Ok(ready) = obj.until_abort(obj.set_up(lazy)).await {
+                    let _ = ready.w.lock().await.shutdown().await;
                 }
             })
             .await;

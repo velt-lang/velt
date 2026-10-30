@@ -662,7 +662,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // `readRows` / `readRow` sees them.
         | I::ReadRows
         | I::ReadRow
-        | I::HttpHandler
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrLoadU8x16

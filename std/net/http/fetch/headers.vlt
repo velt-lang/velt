@@ -1,19 +1,18 @@
 // velt/net/http (internal): the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the
-// type of a server request's `headers` (std/http.vlt).
+// type of a received request's `headers` (std/net/http/server/standard.vlt).
 //
 // One flat list, `[name, value, name, value, …]`, in insertion order: names are lowercased when
 // they are added (header names are case-insensitive), values have surrounding whitespace
-// removed. The list is the runtime's format too, so a fetched response's headers arrive as one
-// array without being copied again. Lookups scan the list: a message has a handful of headers,
-// for which a scan beats hashing. A server request's headers stay in the runtime until
-// something needs all of them: `get` and `has` look one name up there. The headers of a
+// removed. The `fetch` client parses a response's headers into that
+// format, so they arrive as one array without being copied again. Lookups scan the list: a message has a handful of headers,
+// for which a scan beats hashing. A received request's headers stay in the connection's
+// buffer until something needs all of them: `get` and `has` look one name up there. The headers of a
 // response made here start with the `content-type` its body implies held as a number
-// (`implied`), which a server hands to the runtime as it is; it becomes the list's first entry
+// (`implied`), which the server writes as it is; it becomes the list's first entry
 // when something reads or changes `content-type` or needs the whole list. The first header
 // added to an empty `Headers` is kept as it was given, outside the list (a new response
 // usually gets one or two: `res.headers.set("server", "velt")` makes no list and lowercases
-// nothing); a server hands it to the runtime that way, and anything else moves it into the
-// list first.
+// nothing); anything else moves it into the list first.
 //
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
@@ -24,6 +23,7 @@
 // index out of bounds.
 
 import { impliedType } from "velt/net/http/fetch/body";
+import { Received } from "velt/net/http/server/received";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -57,9 +57,6 @@ function sameName(a: string, b: string): bool {
   return a.length == b.length && (a == b || a.toLowerCase() == b.toLowerCase());
 }
 
-declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
-declare function velt_rt_http_req_headers(r: u64): string[];
-
 /**
  * `Headers`, an object literal (`{ "content-type": "text/plain" }`), or name-value pairs
  * (`[["accept", "text/html"], ["accept", "application/json"]]`, repeats kept).
@@ -80,8 +77,8 @@ export class Headers {
   private one: bool = false;
   // A fetched response's or a server request's headers (std sets it): changing them is an error.
   private frozen: bool = false;
-  // The server request (runtime key) whose headers the list does not hold yet; 0 once loaded.
-  private req: u64 = 0;
+  // The received request whose headers the list does not hold yet; null once loaded.
+  private received: Received | null = null;
   // The `content-type` a response's body implies (`impliedType`), not in the list yet; 0 when
   // there is none or it was moved there (std sets it).
   private implied: u32 = 0;
@@ -112,11 +109,11 @@ export class Headers {
     return h;
   }
 
-  // The immutable headers of the server request behind runtime key `req`, read from the
-  // runtime when needed (std only).
-  private static ofRequest(req: u64): Headers {
+  // The immutable headers of a request the server received, read from it when needed (std
+  // only: std/net/http/fetch/request.vlt).
+  private static ofReceived(received: Received): Headers {
     const h = new Headers();
-    h.req = req;
+    h.received = received;
     h.frozen = true;
     return h;
   }
@@ -126,29 +123,26 @@ export class Headers {
     return this.items();
   }
 
-  // What a server response hands to the runtime (std only): the first entry as given ("" when
-  // there is none), the rest of the list (null for none), and the implied `content-type`'s
-  // number (the runtime adds the type unless a header names one). A response's headers are
-  // never a server request's, so there is nothing to load.
-  private serverList(): [string, string, string[] | null, u32] {
-    if (!this.one) {
-      return ["", "", this.list, this.implied];
-    }
-    return [this.name0, this.value0, this.list, this.implied];
-  }
-
-  // `serverList` with every entry in the list (std only: a streamed response).
+  // What a server writes for a response (std only: std/net/http/server/standard.vlt): every
+  // entry in the list, and the implied `content-type`'s number (written unless a header names
+  // one). A response's headers are never a received request's, so there is nothing to load.
   private serverFlat(): [string[], u32] {
     this.spill();
     return [this.rest(), this.implied];
   }
 
-  // The whole list: a server request's headers copied out of the runtime (once), the first
-  // entry and the implied `content-type` moved in.
+  // The whole list: a received request's headers copied in (once), the first entry and the
+  // implied `content-type` moved in.
   private items(): string[] {
-    if (this.req != 0) {
-      this.list = velt_rt_http_req_headers(this.req);
-      this.req = 0;
+    const received = this.received;
+    if (received != null) {
+      const list: string[] = [];
+      for (const [name, value] of received.headers()) {
+        list.push(name.toLowerCase());
+        list.push(trimHttp(value));
+      }
+      this.list = list;
+      this.received = null;
     }
     this.fill();
     return this.rest();
@@ -265,9 +259,9 @@ export class Headers {
 
   /** The values of `name` joined with ", ", or null when there is none. */
   get(name: string): string | null {
-    if (this.req != 0) {
-      let out = "";
-      return velt_rt_http_req_header(this.req, name, out) ? out : null;
+    const received = this.received;
+    if (received != null) {
+      return received.header(name);
     }
     if (this.one && this.alone(name, false)) {
       return sameName(this.name0, name) ? trimHttp(this.value0) : null;
@@ -304,9 +298,9 @@ export class Headers {
   }
 
   has(name: string): bool {
-    if (this.req != 0) {
-      let out = "";
-      return velt_rt_http_req_header(this.req, name, out);
+    const received = this.received;
+    if (received != null) {
+      return received.hasHeader(name);
     }
     if (this.one && this.alone(name, false)) {
       return sameName(this.name0, name);

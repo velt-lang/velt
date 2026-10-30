@@ -26,9 +26,6 @@ bytes = "1.12.1"
 dashu-int = "0.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
-http-body-util = "0.1.5"
-hyper = { version = "1.11.1", features = ["http1", "http2", "server"] }
-hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-auto", "http1", "http2", "server-graceful"] }
 itoa = "1.0.18"
 libm = "0.2.16"
 # The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.

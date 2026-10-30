@@ -82,7 +82,6 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "db_bind" => I::DbBind,
         "read_rows" => I::ReadRows,
         "read_row" => I::ReadRow,
-        "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
         "any_delete" => I::AnyDelete,
@@ -287,8 +286,8 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// M3/M4 intrinsics. `MutexWith` and `HttpHandler` take closures and are checked by their
-    /// own code; their signatures here only describe the shapes.
+    /// M3/M4 intrinsics. `MutexWith` takes a closure and is checked by its
+    /// own code; its signature here only describes the shape.
     fn m3_sig(&mut self, i: Intrinsic) -> Sig {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
@@ -387,10 +386,6 @@ impl FnCx<'_, '_> {
                 (vec![(e, B)], ty.option(rows), true)
             }
             I::ReadRow => (vec![(e, B)], ty.option(t), true),
-            I::HttpHandler => {
-                let f = http_handler_fn(ty);
-                (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
-            }
             I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
             // `(g, value: N)`: the value is borrowed; the resumed `yield` takes its own copy.
             I::GeneratorResumeWith => {
@@ -414,11 +409,4 @@ impl FnCx<'_, '_> {
             _ => unreachable!("ICE: intrinsic {i:?} has an M2 signature"),
         }
     }
-}
-
-/// `(raw: u64) => Promise<u64>`: the closure `__intrinsic_http_handler` turns into a handler.
-pub(super) fn http_handler_fn(ty: &mut crate::types::Types) -> TyId {
-    let u64_ = ty.intern(TyKind::Int(IntTy::U64));
-    let ret = ty.promise(u64_);
-    ty.fn_ptr(vec![u64_], ret)
 }

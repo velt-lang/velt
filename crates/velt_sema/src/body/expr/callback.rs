@@ -16,8 +16,6 @@
 //!   `(x) => Resp | Promise<Resp>`): it converts;
 //! - a standard timer expects the promise to run (`() => Promise<void>`) and `f` is not `async`
 //!   (`setTimeout(tick, 10)`): the wrapper is checked as an `async` arrow ([`void task`]);
-//! - it is the handler of a server that runs it on several threads (`serve`): always, by an
-//!   `async` wrapper, so each request copies what it captured.
 //!
 //! An **arrow** is checked against the expected type itself; the cases that need more are
 //! - an `async` arrow where the function type returns `void` (`onClick: () => void`) or a union
@@ -29,8 +27,6 @@
 //!   run on another thread copies what it captured;
 //! - an arrow that is not `async` whose declared result type is a member of the expected union
 //!   (`(req): Response => …`): checked against that member, then wrapped;
-//! - an arrow that is not `async` passed to `serve` ([`FnCx::thread_arrow`]): checked as an
-//!   `async` arrow, its expression body awaited when it is a promise;
 //! - an arrow that is not `async` passed to a standard timer, which takes the promise to run
 //!   (#501): it is checked as an `async` arrow ([void task]), its expression body as a
 //!   statement, awaited when it is a promise (`() => save(doc)` runs `save` to completion).
@@ -40,7 +36,6 @@
 use velt_syntax::ast;
 
 use super::args::as_arrow;
-use super::callback_sig::FnSig;
 use super::callback_wrap::{plan, wrapper, Plan, Shape};
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
@@ -54,8 +49,6 @@ pub(crate) enum CallbackMode {
     Plain,
     /// A standard timer: runs the promise it returns.
     Task,
-    /// `serve`: runs it on several threads at once.
-    Thread,
 }
 
 /// What a wrapper calls.
@@ -75,8 +68,6 @@ pub(super) enum Wrap {
     Discard,
     /// `() => f()` checked as an async arrow (a timer's task).
     Task,
-    /// `(p…) => f(p…)` checked as an async arrow, awaiting a promise (a server's handler).
-    Thread,
 }
 
 /// The timer functions whose first parameter is the callback.
@@ -129,40 +120,6 @@ impl FnCx<'_, '_> {
             .filter(|_| want.rest)
             .and_then(|t| self.cx.ty.array_elem(*t));
         let n = want.fixed;
-        if mode == CallbackMode::Thread {
-            // Any function value for a handler that runs on several threads: an async wrapper,
-            // so each call copies what it captured like any async closure.
-            if let Some(sig) = self.named_fn_sig(arg, false) {
-                if sig.required <= n || want.rest {
-                    let args = self.adapter_args(want, elem, &sig, arg);
-                    let callee = self.callback_callee(arg);
-                    return Some(match args {
-                        Some(args) => self.wrap(callee, want, &args, Wrap::Thread, Some(exp)),
-                        None => self.error_expr(arg.span),
-                    });
-                }
-            }
-            let value = self.callback_value(arg);
-            let sig = match self.cx.ty.kind(value.ty).clone() {
-                TyKind::FnPtr { params, rest, .. } => FnSig {
-                    required: params.len() - usize::from(rest),
-                    params,
-                    rest,
-                    ret: None,
-                },
-                _ => return Some(value),
-            };
-            let Some(args) = self.adapter_args(want, elem, &sig, arg) else {
-                return Some(self.error_expr(arg.span));
-            };
-            return Some(self.wrap(
-                Callee::Value(value, None),
-                want,
-                &args,
-                Wrap::Thread,
-                Some(exp),
-            ));
-        }
         if let Some(h) = self.frameless_named_widened(arg, exp) {
             return Some(h);
         }
@@ -290,10 +247,6 @@ impl FnCx<'_, '_> {
         let arrow = wrapper(call, want, plan, wrap == Wrap::Discard, span);
         match wrap {
             Wrap::Task => self.void_task = Some(arrow.span),
-            Wrap::Thread => {
-                self.thread_task = Some(arrow.span);
-                self.thread_adapter = Some(arrow.span);
-            }
             Wrap::Call | Wrap::Discard => {}
         }
         let mut w = self.closure(&arrow, exp, true);
@@ -401,12 +354,6 @@ impl FnCx<'_, '_> {
             let at = self.cx.fn_info(*c).span;
             self.cx.fn_sites.async_args.push((span, at));
         }
-        if self.thread_adapter == Some(e.span) {
-            self.thread_adapter = None;
-            if let H::Closure(c) = &f.kind {
-                self.cx.thread_adapters.push(*c);
-            }
-        }
         // An error type still unknown (`E` of a generic callee's `T | Promise<T, E>`) is what the
         // async closure rejects with, now that it is checked: the wrapper is typed with it.
         let exp = match self.cx.ty.kind(f.ty).clone() {
@@ -489,65 +436,6 @@ impl FnCx<'_, '_> {
         Some(self.wrap(Callee::Value(f, None), shape, &args, Wrap::Call, exp))
     }
 
-    /// An arrow that is not `async`, passed as the handler of a server that runs it on several
-    /// threads (`serve`): checked as an `async` arrow, so each call copies what it captured and
-    /// modifying a capture is an error, as for any async handler. A declared result type that
-    /// is not a promise is the promise's value type, and an expression body that is a promise
-    /// is awaited (`(req) => respond(req)`).
-    pub(super) fn thread_arrow(
-        &mut self,
-        e: &ast::Expr,
-        exp: Option<TyId>,
-        escaping: bool,
-    ) -> hir::Expr {
-        let ast::ExprKind::Arrow {
-            type_params,
-            params,
-            ret,
-            throws,
-            body,
-            ..
-        } = &e.kind
-        else {
-            unreachable!("ICE: thread_arrow of a non-arrow expression")
-        };
-        let ret = ret.as_ref().map(|t| {
-            let is_promise = self
-                .resolve_quiet(t)
-                .is_some_and(|r| self.cx.ty.promise_payload(r).is_some());
-            if is_promise {
-                t.clone()
-            } else {
-                ast::TypeExpr {
-                    kind: ast::TypeExprKind::Named {
-                        path: vec![ast::Ident {
-                            name: "Promise".into(),
-                            span: t.span,
-                        }],
-                        args: vec![t.clone()],
-                    },
-                    span: t.span,
-                }
-            }
-        });
-        let as_async = synth(
-            ast::ExprKind::Arrow {
-                type_params: type_params.clone(),
-                params: params.clone(),
-                ret,
-                throws: throws.clone(),
-                body: body.clone(),
-                is_async: true,
-            },
-            e.span,
-        );
-        self.await_body = Some(e.span);
-        self.cx.sync_handlers.push(e.span);
-        let h = self.closure(&as_async, exp, escaping);
-        self.await_body = None;
-        h
-    }
-
     /// The type `t` names, without diagnostics or IDE records (the arrow's own check reports
     /// what is wrong with it).
     pub(super) fn resolve_quiet(&mut self, t: &ast::TypeExpr) -> Option<TyId> {
@@ -555,43 +443,6 @@ impl FnCx<'_, '_> {
         let r = self.resolve(t);
         mark.rollback(self.cx);
         (!self.cx.ty.has_error(r)).then_some(r)
-    }
-
-    /// The body of an expression-bodied arrow checked as `async` by [`FnCx::thread_arrow`]: its
-    /// value, awaited when it is a promise or may be one.
-    pub(super) fn awaited_body(&mut self, e: &ast::Expr) -> hir::Block {
-        let h = self.expr(e, self.f.ret, Want::Move);
-        let h = match self.cx.ty.kind(h.ty).clone() {
-            TyKind::Promise(v, _) => {
-                self.awaited_using_shares(&h);
-                self.await_throws(&h);
-                let span = h.span;
-                self.mk(H::Await(Box::new(h)), v, span)
-            }
-            // A value that may be a promise (a handler of `serve`'s own type, passed on).
-            _ => {
-                let span = h.span;
-                self.await_union(h, span).unwrap_or_else(|h| h)
-            }
-        };
-        let h = match self.f.ret {
-            Some(r) => self.coerce(h, r),
-            None => {
-                self.f.ret = Some(h.ty);
-                h
-            }
-        };
-        let span = h.span;
-        let kind = if h.ty == self.cx.ty.unit {
-            S::Expr(h)
-        } else {
-            S::Return(Some(h))
-        };
-        hir::Block {
-            stmts: vec![hir::Stmt { kind, span }],
-            value: None,
-            span: e.span,
-        }
     }
 
     /// The function type `fn_ty` (returning `ret`) with `ret`'s promise member `old` replaced
@@ -655,43 +506,30 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// For a call of a standard function that takes a callback: a timer (`setTimeout`, …), whose
-    /// callback is the promise to run, or `serve`, whose handler runs on several threads. Notes
-    /// the callback argument (`void_task` / `thread_task` for an arrow, `task_callback` /
-    /// `thread_callback` for any other value), for `closure` and `callback_adapter`.
+    /// For a call of a standard timer (`setTimeout`, …), whose callback is the promise to run:
+    /// notes the callback argument (`void_task` for an arrow, `task_callback` for any other
+    /// value), for `closure` and `callback_adapter`.
     pub(super) fn std_callback_arg(&mut self, d: DefId, args: &[ast::Expr]) {
         let info = self.cx.fn_info(d);
         if !self.cx.scopes[info.module].is_std {
             return;
         }
         let name = info.name.rsplit("::").next().unwrap_or("");
-        let (k, thread) = if TIMERS.contains(&name) {
-            (0, false)
-        } else if name == "serve" && self.cx.modules[info.module].path == "std/http" {
-            (1, true)
-        } else {
+        if !TIMERS.contains(&name) {
+            return;
+        }
+        let Some(arg) = args.first() else {
             return;
         };
-        let Some(arg) = args.get(k) else {
-            return;
-        };
-        match (as_arrow(arg), thread) {
-            (Some(a), false) => self.void_task = Some(a.span),
-            (Some(a), true) => {
-                if !matches!(a.kind, ast::ExprKind::Arrow { is_async: true, .. }) {
-                    self.thread_task = Some(a.span);
-                }
-            }
-            (None, false) => self.task_callback = Some(arg.span),
-            (None, true) => self.thread_callback = Some(arg.span),
+        match as_arrow(arg) {
+            Some(a) => self.void_task = Some(a.span),
+            None => self.task_callback = Some(arg.span),
         }
     }
 
     /// How the callee uses the callback argument `arg` (`std_callback_arg`).
     pub(super) fn callback_mode(&self, arg: &ast::Expr) -> CallbackMode {
-        if self.thread_callback == Some(arg.span) {
-            CallbackMode::Thread
-        } else if self.task_callback == Some(arg.span) {
+        if self.task_callback == Some(arg.span) {
             CallbackMode::Task
         } else {
             CallbackMode::Plain

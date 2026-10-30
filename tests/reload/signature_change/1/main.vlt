@@ -1,5 +1,5 @@
 // A changed signature restarts: frames on the stack would call the new code with the old ABI.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 function greet(name: string): string {
   return `hello ${name}`;

@@ -11,7 +11,7 @@ modules, with tests.
 ## Hello, HTTP
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
@@ -35,7 +35,7 @@ serializes any value with `JSON.stringify`, which is generated at compile time f
 ## A JSON API
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 class ApiError extends Error {
   status: number;

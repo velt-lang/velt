@@ -59,7 +59,6 @@ impl<'h> Cx<'h> {
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
-            shared_envs: FxHashMap::default(),
             lay: Layouts::default(),
             locs: None,
             debug: None,
@@ -362,7 +361,6 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::GenThrow(d, _)
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
-        | Work::HandlerInit(d, _)
         | Work::GenNew(d, _)
         | Work::GenFree(d, _) => Some(*d),
         _ => None,

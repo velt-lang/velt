@@ -3,7 +3,7 @@
 // made, so the process stayed alive for the rest of it; the unref'd timer below would then run.
 // Valid TypeScript; prints what Node 22 prints. No leak check: the unref'd timer is never run, so
 // its callback is never freed (as in the other unref goldens).
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request) => new Response("ok"));

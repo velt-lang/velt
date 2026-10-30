@@ -49,6 +49,8 @@ export class HttpResponse {
   private extra: u8[] = Buffer.alloc(256);
   private extraLength: i64 = 0;
   private hasType: bool = false;
+  /// The handler set a `Server` header: the server's own is not sent.
+  private hasServer: bool = false;
   /// The Content-Length a handler set (-1: none), sent for a HEAD request's response.
   private headLength: i64 = -1;
   private keepAlive: bool = true;
@@ -78,6 +80,7 @@ export class HttpResponse {
   private ok: u8[] = utf8Encode("HTTP/1.1 200 OK\r\nServer: Velt\r\nDate: ");
   private statusStart: u8[] = utf8Encode("HTTP/1.1 ");
   private serverDate: u8[] = utf8Encode("\r\nServer: Velt\r\nDate: ");
+  private dateOnly: u8[] = utf8Encode("\r\nDate: ");
   private typeHead: u8[] = utf8Encode("\r\nContent-Type: ");
   private lengthHead: u8[] = utf8Encode("\r\nContent-Length: ");
   private chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
@@ -107,7 +110,7 @@ export class HttpResponse {
   }
 
   /**
-   * Adds header `name: value` (a `content-type` replaces the default one). Throws `TypeError` for
+   * Adds header `name: value` (a `content-type` or `server` replaces the default one). Throws `TypeError` for
    * a name that is not a token or a value with a control character other than TAB (CR, LF, NUL),
    * as Node: a value from the client cannot add a header of its own. The server frames the body,
    * so `Content-Length` and `Transfer-Encoding` are its own: a handler's are not sent, except a
@@ -141,6 +144,8 @@ export class HttpResponse {
     this.extraLength = at + 2;
     if (nameLength == 12 && name.toLowerCase() == "content-type") {
       this.hasType = true;
+    } else if (nameLength == 6 && name.toLowerCase() == "server") {
+      this.hasServer = true;
     }
   }
 
@@ -308,6 +313,7 @@ export class HttpResponse {
     this.statusCode = 200;
     this.extraLength = 0;
     this.hasType = false;
+    this.hasServer = false;
     this.keepAlive = keepAlive;
     this.http11 = http11;
     this.done = false;
@@ -543,7 +549,7 @@ export class HttpResponse {
     // and 304 there is none to describe.
     const noContent = (code >= 100 && code < 200) || code == 204 || code == 304;
     this.noBody = this.headOnly || noContent;
-    if (this.statusCode == 200) {
+    if (this.statusCode == 200 && !this.hasServer) {
       const ok = this.ok;
       this.bytes(ok);
     } else {
@@ -554,8 +560,13 @@ export class HttpResponse {
       this.buf[this.length] = SP;
       this.length++;
       this.text(reason(this.statusCode));
-      const serverDate = this.serverDate;
-      this.bytes(serverDate);
+      if (this.hasServer) {
+        const dateOnly = this.dateOnly;
+        this.bytes(dateOnly);
+      } else {
+        const serverDate = this.serverDate;
+        this.bytes(serverDate);
+      }
     }
     const date = this.date;
     this.bytes(date);

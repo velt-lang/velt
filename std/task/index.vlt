@@ -122,6 +122,12 @@ export class AbortSignal {
     return this.#h;
   }
 
+  // The signal behind a runtime signal handle the caller owns (std only: the runtime's own
+  // signals, such as the dev-mode stop request std/net/http/server/dev.vlt joins).
+  private static adopt(handle: u64): AbortSignal {
+    return new AbortSignal(signalCell(handle));
+  }
+
   /** Whether `abort()` was called (or the timeout elapsed). */
   get aborted(): bool {
     return velt_rt_signal_aborted(this.handle());

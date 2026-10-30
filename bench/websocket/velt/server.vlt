@@ -3,7 +3,7 @@
 //   /bcast  sends every message to every connection on /bcast (a chat room)
 // Usage: server [port]; env PORT, HOST (127.0.0.1).
 
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { args } from "velt/process";
 import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 

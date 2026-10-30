@@ -1,6 +1,6 @@
 // The chat server: every WebSocket connection runs `session`, which joins the room and
 // broadcasts what the client says to everyone connected.
-import { serve, Server } from "velt/http";
+import { serve, HttpServer } from "velt/net/http";
 import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 import { Room } from "./room";
 import { decodeClient, encode, ServerMessage } from "./protocol";
@@ -110,7 +110,7 @@ async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room<WebSocket
 }
 
 // Serves the chat on `port` (0 = any free port): WebSocket `/chat`, a hint on other paths.
-export async function startChat(port: i64): Promise<Server> {
+export async function startChat(port: i64): Promise<HttpServer> {
   const room = shared(new Mutex<Room<WebSocket>>(new Room<WebSocket>()));
   const ids = shared(0);
   return await serve({ port: port as number }, async (req) => {

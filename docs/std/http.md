@@ -1,16 +1,16 @@
 # velt/http
 
-`import { serve, ServeInfo, Server } from "velt/http"`. An HTTP server on hyper: HTTP/1.1
+`import { serve, ServeInfo, HttpServer } from "velt/net/http"`. An HTTP server on hyper: HTTP/1.1
 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls). Handlers take the
 global [`Request`](fetch.md#request) and return the global [`Response`](fetch.md#response), the
 same classes `fetch` uses, as in Deno and Bun. Handlers run concurrently on every core. A
 listening server keeps the process alive after `main` returns, like Node, until
-`server.close()`; dropping the `Server` value does not stop it. A `main` that fails (an uncaught
+`server.close()`; dropping the `HttpServer` value does not stop it. A `main` that fails (an uncaught
 error, or a nonzero exit code) ends the process at once, servers or not. For a walkthrough, see
 [Building an HTTP server](../book/http-server.md).
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -34,7 +34,7 @@ async function main() {
 ## `serve(opts, handler)`
 
 `serve<E>(opts: ServeOptions { port: number; host?; tls?: TlsOptions { cert; key } }, handler: (req:
-Request, info: ServeInfo) => Response | Promise<Response, E> throws E): Promise<Server>`. The default host is
+Request, info: ServeInfo) => Response | Promise<Response, E> throws E): Promise<HttpServer>`. The default host is
 127.0.0.1 (`host: "0.0.0.0"` listens on every interface); port 0 picks a free port. With `tls`
 (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. A `serve` that fails
 (address in use, a TLS certificate or key that does not parse) drops the handler closure before
@@ -92,7 +92,7 @@ it throws.
   with `shared(...)` as the fix shows; the program then runs as in Node.
 
   ```ts
-  import { serve } from "velt/http";
+  import { serve } from "velt/net/http";
 
   class Input {
     onChange: (v: string) => void = (v) => {};
@@ -113,7 +113,7 @@ it throws.
     await server.shutdown();
   }
   ```
-- A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
+- A handler that throws gets a 500 response (`Internal HttpServer Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 
 ## The request
@@ -161,7 +161,7 @@ response `fetch` returned (a proxy: its body is passed on as it arrives).
   status sends none.
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { BodyStream } from "velt/net/http";
 import { utf8Encode } from "velt/encoding";
 
@@ -194,7 +194,7 @@ then on the connection is `stream`, a [`velt/net`](net.md) byte stream (over TLS
 is), released with `close()`.
 
 ```ts
-import { serve, isUpgradeRequest, upgradeConnection } from "velt/http";
+import { serve, isUpgradeRequest, upgradeConnection } from "velt/net/http";
 import { TcpStream } from "velt/net";
 
 async function session(conn: TcpStream): Promise<void> {
@@ -223,18 +223,18 @@ before it sends anything in the new protocol. `upgradeConnection` throws `IoErro
 `req` is not an upgrade request or its connection was taken already. Only HTTP/1.1 connections
 can be upgraded (HTTP/2 has no `Upgrade`). [`velt/net/websocket`](websocket.md) is built on this.
 
-## `Server`
+## `HttpServer`
 
-`Server { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes idle
+`HttpServer { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes idle
 connections; once the last request finished the handler closure is dropped, so values it
 captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same
-and resolves only after that (it consumes the `Server`); a program that exits right after
-`close()` may exit before the handler is dropped. Dropping the `Server` value does not stop it.
+and resolves only after that (it consumes the `HttpServer`); a program that exits right after
+`close()` may exit before the handler is dropped. Dropping the `HttpServer` value does not stop it.
 `serve` (or `velt/net` `listen`) on the port of a server just closed works: it waits (up to 5
 seconds) until the closed server has released the port. The listen backlog is the OS maximum, so a burst of connections
 waits to be accepted instead of being refused (macOS caps every listen queue at
 `kern.ipc.somaxconn`, 128 by default).
-Servers are built only by `serve`: `new Server()` holds no runtime object (its `port` is 0 and
+Servers are built only by `serve`: `new HttpServer()` holds no runtime object (its `port` is 0 and
 `close()` does nothing).
 
 ## Migrating from the server's own `Request` and `Response`
@@ -244,7 +244,7 @@ now take and return the globals; importing the old names is an error that says s
 
 | Before | Now |
 |---|---|
-| `import { serve, Request, Response } from "velt/http"` | `import { serve } from "velt/http"` (`Request` and `Response` are global) |
+| `import { serve } from "velt/net/http"` | `import { serve } from "velt/net/http"` (`Request` and `Response` are global) |
 | `req.path`, `req.query` | `new URL(req.url).pathname`, `url.search.slice(1)` or `url.searchParams` |
 | `req.body` (a string) | `await req.text()` (or `req.json<T>()`, `req.bytes()`, `req.body` as a stream) |
 | `req.header(name)` | `req.headers.get(name)` |

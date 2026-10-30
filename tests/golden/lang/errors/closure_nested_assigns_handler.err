@@ -1,2 +1,3 @@
 closure_nested_assigns_handler.vlt:10:7: error: this async closure modifies captured `hits`, so it must stay on the task that created it
-  = note: requests run it on several threads at once, with its own copy of what it captured: pass `hits` as a parameter instead, or share it with `shared`: `const hits = shared(...)` and `hits.add(1)` / `hits.set(v)`
+closure_nested_assigns_handler.vlt:8:24: but it is passed here to a function that runs it on other threads
+  = note: the spawned task runs it on another thread, with its own copy of what it captured: pass `hits` as a parameter instead, or share it with `shared`: `const hits = shared(...)` and `hits.add(1)` / `hits.set(v)`

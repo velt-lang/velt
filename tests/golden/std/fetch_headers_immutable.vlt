@@ -1,6 +1,6 @@
 // A fetched response's headers are immutable, as in JS: changing them stops the program
 // (`TypeError: immutable`). A copy (`new Headers(res.headers)`) can be changed.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {

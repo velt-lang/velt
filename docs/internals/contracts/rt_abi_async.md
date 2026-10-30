@@ -475,11 +475,6 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
-- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`) are registry keys as
-  well, so a stale or forged one never reaches memory (additive): server operations on a closed
-  handle are no-ops (port 0, `shutdown` resolves at once), a dead response key is ignored
-  (`velt_rt_http_resp_drop`) and the server answers 500 for one, and using a
-  released request is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
   `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
   keeps every handle in a `private` field (the standard library may use the private members of
@@ -548,9 +543,9 @@ denied).
 ## 6. std/net (TCP, TLS over TCP)
 
 Handles (`VeltListener`, `VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket, a TLS stream
-(rustls, §14.8) or an HTTP connection handed over by an upgrade (`velt_rt_http_req_take_upgrade`,
-§14.8); every operation below works on all of them, and one task may read while another writes.
+alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket or a TLS stream
+(rustls, §14.8); every operation below works on both, and one task may read while another
+writes.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
@@ -581,73 +576,12 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | keeps idle stream `s` under `key` (the `fetch` client's origin) for a later `velt_rt_tcp_unpark` in any task; closed instead when the key holds 512 already. The caller gives the handle up. Additive |
 | `velt_rt_tcp_unpark` | `(const VeltStr* key, uint32_t settled) -> VeltStream` | the stream most recently parked under `key` that is still open (each is checked with a look at the socket that must find nothing; one idle over 60 s is closed), or 0. With `settled` not 0, only a stream idle for at least 5 ms, so a close its server sent shortly after the response has arrived (for a request that may not be sent twice). Process-wide runtime state, so no Velt memory is kept and tasks do not take the module lock for it. The WebAssembly runtime defines the client's §6 symbols without a network: connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`). Additive |
 
-## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
+## 7. HTTP (no runtime functions)
 
-**Handler.** A handler `(req: Request) => Promise<Response>` is described by:
-```c
-typedef struct {
-    void     (*init)(void* env, void* req, void* state);    // write the initial state; owns req
-                                                            // (the VeltReq handle as a pointer)
-    uint32_t (*poll)(void* state, void* cx);                // result at state+0: VeltResp, or 1 =
-                                                            // responded (req_respond); 0 ⇒ 500
-    void     (*drop)(void* state);                          // request cancelled (client gone)
-    uint64_t state_size, state_align;
-    void*    env;   // closure captures; shared read-only by concurrent requests (§14.14)
-} VeltHandler;      // 48 bytes
-```
-The runtime stores each request's state inline in the request future (no extra allocation for
-states ≤ 1 KiB) and polls it on a worker. `init` runs once the request's head has arrived; the
-body is received while the handler reads it (`req_text`, `req_bytes`, `req_chunk`).
-The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
-`VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
-it, and using a request after it was dropped stops the program with a clear message instead of
-reading freed memory. While the runtime polls a handler it keeps that handler's request in a
-per-worker frame: accessors given its key read it there (no registry lock or count), and
-`velt_rt_http_req_drop` takes it out of the frame as well as out of the registry, so the check
-still holds. Any other key (a request handed to another task) is looked up in the registry.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_serve` | `(const VeltStr* addr, const VeltHandler* h) -> VeltFut*` | result `IoResult<VeltServer>` once bound; serving continues in the background. `h` is copied. |
-| `velt_rt_http_server_port` | `(VeltServer s) -> u32` | real port (after port 0) |
-| `velt_rt_http_server_close` | `(VeltServer s)` | stop accepting, finish in-flight requests, close idle connections; frees `s` |
-| `velt_rt_http_server_detach` | `(VeltServer s)` | free `s` but keep serving (dropping the `Server` value) |
-| `velt_rt_http_server_shutdown` | `(VeltServer s) -> VeltFut*` | `close` + result `()` once the handler was released (§14.14) |
-| `velt_rt_http_req_method` | `(VeltReq r, VeltStr* out)` | owned copy |
-| `velt_rt_http_req_url` | `(VeltReq r, VeltStr* out)` | the absolute URL: `http://` (`https://` over TLS), the `host` header (HTTP/2: `:authority`; neither: the server's address), path and query |
-| `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; repeated fields joined with `", "`; 0 = absent (`out` untouched) |
-| `velt_rt_http_req_headers` | `(VeltReq r, VeltStrArray* out)` | every header as the flat list `[name, value, …]` (lowercase names, received order; non-UTF-8 values decoded lossily): `req.headers` in one call |
-| `velt_rt_http_req_has_body` | `(VeltReq r) -> u8` | whether the request arrived with a body |
-| `velt_rt_http_req_text` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltStr>`: the rest of the body, UTF-8 decoded lossily, a leading BOM dropped |
-| `velt_rt_http_req_bytes` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the rest of the body |
-| `velt_rt_http_req_chunk` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next chunk (≤ 64 KiB, never empty); empty at the end |
-| `velt_rt_http_req_remote_host` | `(VeltReq r, VeltStr* out)` | the client's IP address |
-| `velt_rt_http_req_remote_port` | `(VeltReq r) -> u32` | the client's port |
-| `velt_rt_http_req_drop` | `(VeltReq r)` | |
-| `velt_rt_http_resp_build` | `(u32 status, const VeltStr* reason, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> VeltResp` | a handler's `Response` in one call; see below |
-| `velt_rt_http_req_respond` | `(VeltReq r, u32 status, const VeltStr* reason, const VeltStr* name, const VeltStr* value, u32 kind, VeltStr* text, u32 implied) -> u64` | `resp_build` with no body or a text one (`kind` 0 or 1) and at most one header (`name` as written, `""` for none, lowercased by parsing; `value` trimmed of HTTP whitespace) for the handler of `r`, handed straight to it: returns 1 (the response is in the handler's frame; the handler returns 1) while the runtime polls that handler, else a `VeltResp` (a handler that runs on after its client left), 0 if a header is invalid |
-| `velt_rt_http_req_respond_list` | `(VeltReq r, u32 status, const VeltStr* reason, const VeltStr* name, const VeltStr* value, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> u64` | `req_respond` with more headers (`name`/`value` first, then the flat list, as for `resp_build`) and any complete body (`kind` 0–2) |
-| `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
-
-A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,
-the program entry waits until no keep-alive references remain — like Node, a listening server
-keeps the process running. (`velt_rt_block_on` itself does not wait.) Pending ref'd timers hold
-one too (`velt_rt_keep_alive_acquire`, §2).
-
-`velt_rt_http_resp_build` turns the global `Response` a handler returned into a `VeltResp`:
-`status` (invalid ⇒ 500), the reason phrase (`""` for the standard one), the headers as the flat
-list `[name, value, …]`, and the body by `kind`: 0 none, 1 `text` (**taken**: zero-copy if owned,
-`*text` left empty), 2 `bytes` (copied: the array may be borrowed), 3 a stream std fills next
-(§14.17), 4 a stream of a fetched response's body (std leaves out a `content-encoding` the
-client decoded). A streamed body drops `content-length`. `implied` is the `content-type`
-the body implies, added unless the headers have one: 0 none, 1 `text/plain;charset=UTF-8`, 2
-`application/json`, 3 `application/x-www-form-urlencoded;charset=UTF-8`. A bodiless status (1xx,
-204, 304) gets no body and no `content-type`. An invalid header name or value builds nothing
-(result 0); std answers 500 then.
-
-**Client**: the global `fetch` has no runtime symbols of its own. Its HTTP/1.1 client is Velt
-code (std/fetch/client/) on the §6 streams, which the runtime pools between requests
-(`velt_rt_tcp_park` / `velt_rt_tcp_unpark`, §6), and bodies are decoded by velt/compress (Velt).
+The HTTP server and client are written in Velt on the TCP and TLS streams of §6
+(std/net/http/server, std/net/http/fetch/client): the runtime has no HTTP of its own. Under
+`velt dev` a server joins the graceful stop through `velt_rt_dev_server_stop` /
+`velt_rt_dev_server_drained` (§13.2).
 
 ## 8. Process
 
@@ -1094,7 +1028,7 @@ Nothing here changes the ABI generated code uses; it is how the runtime behaves 
 `VELT_DEV_SOCKET` names the supervisor's dev channel: a Unix socket path, or on Windows a local
 named pipe (`\\.\pipe\velt-dev-<pid>-<n>`, byte mode; a program retries for up to 5 s while every
 pipe instance is busy). Each request is one connection. When the variable is set,
-`velt_rt_http_serve` and `velt_rt_tcp_listen` do not bind themselves: they connect, send
+`velt_rt_tcp_listen` and `velt_rt_tcp_listen_tls` do not bind themselves: they connect, send
 `listen <addr>\n` (the address exactly as the program passed it) and receive the listening
 socket, or `err <message>\n` (the operation then fails with that message):
 - Unix: `ok\n` with the socket's descriptor attached (`SCM_RIGHTS`);
@@ -1112,7 +1046,15 @@ its port. Without the variable the runtime binds as before.
 ### 13.2 Stopping
 In dev mode (`VELT_DEV_SOCKET` set, once the program listens) the runtime handles a stop request:
 HTTP servers stop accepting (the supervisor still holds the socket), in-flight requests get up to
-1 s to finish, stdout is flushed and the process exits with status 0. The stop request is:
+1 s to finish, stdout is flushed and the process exits with status 0. A server written in Velt
+(std/net/http/server) joins with:
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a signal (the `AbortSignal` handles of §2; the caller owns it) aborted once a stop request arrives; null outside dev mode. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
+
+The stop request is:
 - Unix: SIGTERM. Outside dev mode SIGTERM keeps its default action.
 - Windows (no SIGTERM): before its first `listen` request the program opens a **stop channel**, a
   connection that sends `watch-stop\n` and gets `ok\n`; the supervisor keeps it (by the client
@@ -1155,19 +1097,10 @@ On Windows x64 the JIT (`velt_codegen_cl::DevSession`) registers each loaded pro
 info with `RtlAddFunctionTable` (code and records in one arena), so stack walks get through JIT
 frames as they do through linked code's `.pdata`.
 
-### 13.5 Handler re-read and the rule against cached code pointers
-In dev mode an HTTP server re-reads its `VeltHandler` for every request (an atomic pointer) and
-keeps handler states on the heap, so `velt_rt::http::handler::replace_handler(index, desc)` (Rust
-API for the phase 3 hot swap; `index` = `serve` order) gives new requests new code while requests
-in flight finish on theirs (their future copied `poll`/`drop`). Replaced descriptors are never
-freed. Outside dev mode the descriptor is read once, as before.
-`velt_rt::http::handler::update_handlers(f)` offers every running server's descriptor to `f`
-and installs the replacement it returns: after a hot swap that recompiled a handler, the host
-replaces `init`, `poll`, `drop` and the state size/alignment with the new version's (they share
-one state layout, so all of them change together; `env` stays). In dev builds the descriptor's
-`init` is that version's code itself, not a trampoline.
-Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
-store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
+### 13.5 The rule against cached code pointers
+A hot swap reaches new calls through each function's trampoline; a future in flight keeps the
+`poll`/`drop` of the version that created it (its `VeltFut` header).
+Rule: only vtables (via relocations) and `VeltFut` headers may store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
 flight (a join's or a spawned task's result, a channel item being sent) or with the values a
 channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
@@ -1306,25 +1239,17 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
 | `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
 
-### 14.8 HTTPS, HTTP/2 and response headers (`velt/http` additions)
+### 14.8 TLS
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
-root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
-ALPN `h2` and `http/1.1`. The `fetch` client (Velt code, §7) connects with
-`velt_rt_tcp_connect_tls` and offers `http/1.1` only.
-HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrades`).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
-| `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
-| `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
+root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs. The HTTP server and
+`fetch` client (Velt code, §7) use `velt_rt_tcp_listen_tls` and `velt_rt_tcp_connect_tls`.
 
 ### 14.9 WebSockets (`velt/net/websocket`)
 
-`velt/net/websocket` is written in Velt (`std/net/websocket/index.vlt`, `std/websocket/`) on std/net streams
+`velt/net/websocket` is written in Velt (`std/net/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
-the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
+the connection a request on the Velt HTTP server switched to (`HttpResponse.upgrade`). A `WebSocket` is a struct
 of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
 lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
 (reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
@@ -1520,19 +1445,7 @@ Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framewo
 CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
 lists). Not available on WebAssembly (no `velt_std_postgres__*` symbols in `libvelt_rt_wasm.a`).
 
-### 14.14 Releasing an HTTP handler (stream linux-servers, additive)
-`VeltHandler.env` is null or a closure environment box whose first word is its drop function
-(`void drop(void* env)`, may be null), as closure lowering lays it out. Once a server is closed
-and its last connection and request have finished, the runtime calls that function once, so
-the handler's captures are dropped (their `dispose()` hooks run). A `serve` that fails (the
-address does not bind, the TLS certificate or key does not parse) calls it too, since no server
-will. Before this, `env` was never freed. Every in-flight request keeps the server's handler state alive, so no request can see a
-released environment; under `velt dev`, environments of replaced handlers (§13.5) are still
-never freed.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_server_shutdown` | `(VeltServer s) -> VeltFut*` | like `velt_rt_http_server_close` (frees `s`), then result `()` once every in-flight request finished and `env` was released (`await server.shutdown()`) |
+### 14.14 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
 ### 14.15 PostgreSQL `COPY` (stream linux-servers, additive)
 Writers (`VeltPgCopyIn`) and readers (`VeltPgCopyOut`) are registry keys (`u64`, §3.2 tables).
@@ -1556,34 +1469,7 @@ against the client.
 | `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
 
 
-### 14.17 Streamed response bodies (a `Response` whose body is a `BodyStream`)
-A `VeltResp` body is either complete (`velt_rt_http_resp_build` kinds 1 and 2, §7: sent with
-an exact `Content-Length`, no extra allocation) or **streamed**: `velt_rt_http_resp_stream_open`
-replaces the body with the receiving end of a bounded channel (8 chunks) and returns a writer,
-`VeltRespWriter`, a registry key (§3.2, `u64`). A streamed body has no known length, so hyper
-sends it with chunked transfer encoding (HTTP/1.1) or DATA frames (HTTP/2) and never computes a
-`Content-Length`; the status and headers go out when the handler returns the response, before
-the first chunk. std/http/stream.vlt fills the writer from the `BodyStream`, in a task that
-keeps running after the handler returned (a stored promise of the handler's task, §1.1): it
-writes and flushes each chunk, stops reading the stream once a write or flush returns 0, and
-closes the writer (aborts it when reading the stream failed). No code pointers are stored
-(§13.5).
-
-Writes append a copy to the writer's buffer (`BytesMut`) and never wait; a flush hands the
-buffer to the body as one chunk, waiting for channel room (**backpressure**: a producer faster
-than its client waits in `flush`). A buffer that reaches 16 KiB is also handed over by a write
-when the channel has room. Chunks keep their write order even when several tasks flush
-concurrently. Once the client has gone away (hyper dropped the body) or the writer ended, writes
-and flushes return 0 and discard their data. A writer that is neither closed nor aborted keeps
-its response open.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream (no default `content-type`); opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body; the writer's writes return 0 |
-| `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
-| `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |
-| `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
-| `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |
+### 14.17 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
 ### 14.18 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
 One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per

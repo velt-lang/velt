@@ -115,24 +115,6 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
             "`env` was removed: read a variable with `process.env.NAME` or `process.env[name]` \
              (`string | null`, no import)",
         ),
-        ("velt/http", "fetch" | "Headers") => Some(
-            "`fetch`, `Request`, `Response` and `Headers` are global, as in Node: use them without \
-             an import",
-        ),
-        ("velt/http", "Request" | "Response") => Some(
-            "`velt/http` handlers take and return the global `Request` and `Response`, as in Deno \
-             and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, \
-             `Response.text(body, status)` is `new Response(body, { status })`; the migration \
-             table is in docs/std/http.md)",
-        ),
-        ("velt/http", "ResponseWriter") => Some(
-            "a streamed body is a `BodyStream` from `velt/net/http`: `new \
-             Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`",
-        ),
-        ("velt/http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
-            "`fetch` is global now and returns the standard `Response` (`res.headers` is a \
-             `Headers`, the options are a `RequestInit`), as in Node",
-        ),
         _ => None,
     }
 }

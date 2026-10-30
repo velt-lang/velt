@@ -2,7 +2,7 @@
 // answered with `{"data":…}` or `{"error":{"status","message","data":{"kind"}}}` — the same
 // requests and bodies as `handleActorRequest` in @sigx/actors/server, so one client and one
 // load generator drive both.
-import { serve, Server } from "velt/http";
+import { serve, HttpServer } from "velt/net/http";
 import { Value } from "velt/encoding/json";
 import { Router, Reply, errorReply } from "./runtime";
 
@@ -68,7 +68,7 @@ export async function handleActorRequest(
   return respond(await router.send(type, key, method, args, [], deadline));
 }
 
-export async function serveActors(router: Router, port: i64, host: string): Promise<Server> {
+export async function serveActors(router: Router, port: i64, host: string): Promise<HttpServer> {
   return await serve({ port: port as number, host: host }, async (
     req: Request,
   ): Promise<Response> => {

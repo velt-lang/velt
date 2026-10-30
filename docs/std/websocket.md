@@ -40,7 +40,7 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
   handler still holds the handle.
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt/net/websocket";
 
 async function echo(ws: WebSocket): Promise<void> {
@@ -70,7 +70,7 @@ async function main() {
 A chat room: every message a client sends goes to everyone else in the room.
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 
 async function member(ws: WebSocket): Promise<void> {

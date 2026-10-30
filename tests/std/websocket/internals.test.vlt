@@ -2,7 +2,7 @@
 // the send queue's bounds against a peer that reads slowly or not at all (std/websocket/queue,
 // reader, receive, writer).
 import { utf8Encode } from "velt/encoding";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { connect, listen } from "velt/net";
 import { TimeoutError, timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";

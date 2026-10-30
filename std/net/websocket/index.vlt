@@ -21,7 +21,7 @@
 
 import { IoError } from "velt/io/error";
 import { IoResult, ioError } from "velt/native/result";
-import { isUpgradeRequest, upgradeConnection } from "velt/http";
+import { isUpgradeRequest, upgradeConnection } from "velt/net/http/server/upgrade";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse } from "velt/net/http/server/response";
 import { Request } from "velt/net/http/fetch/request";
@@ -328,9 +328,9 @@ function connection(stream: TcpStream, client: bool, prefix: u8[]): WebSocket {
 }
 
 /**
- * Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one, or was
- * already accepted). Return `response` from the handler; the socket works once that response
- * has been sent.
+ * Accepts a WebSocket upgrade request `serve` received (throws `IoError` "EINVAL" if `req` is
+ * not one, or was already accepted): the `101` is queued at once, ahead of what the socket
+ * sends; return `response` from the handler.
  */
 export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   const key = req.headers.get("sec-websocket-key") ?? "";
@@ -339,7 +339,10 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   }
   try {
     const up = upgradeConnection(req, "websocket", { "sec-websocket-accept": acceptKey(key) });
-    return WebSocketUpgrade { socket: connection(up.stream, false, []), response: up.response };
+    return WebSocketUpgrade {
+      socket: connection(up.stream, false, up.head),
+      response: up.response,
+    };
   } catch (e) {
     throw new IoError("EINVAL", "not a WebSocket upgrade request");
   }

@@ -157,7 +157,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::AdoptPoll(p) => Self::build_adopt_poll(cx, *p),
             Work::AdoptDrop(p) => Self::build_adopt_drop(cx, *p),
-            Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),

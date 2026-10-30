@@ -1,6 +1,6 @@
 // velt/net/http's bodies and headers made by the program: byte, stream, blob and form bodies,
 // clones, the init types, and `Headers`. Valid TypeScript; checks what Node 22 gives.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
 

@@ -4,7 +4,7 @@
 // (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
 // class instances per call (tests/golden/bugs/async_closure_call_clones_class_capture.vlt).
 import { channel } from "velt/sync";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 class Store {
   name: string;

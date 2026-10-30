@@ -1,6 +1,6 @@
 // A handler that captures another variable restarts: the running handler's environment has
 // the old layout.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function main() {
   const greeting = "hello";

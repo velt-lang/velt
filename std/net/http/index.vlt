@@ -1,6 +1,7 @@
 // velt/net/http: HTTP, client and server, as in Node, Deno, Bun and Go: the WHATWG `fetch` API
 // (global) with `Request`, `Response`, `Headers` and their bodies, and the HTTP/1.1 server written
-// in Velt (`serveHttp` with `HttpRequest` and `HttpResponse`). docs/std/net/http.md.
+// in Velt: `serve` with web-standard handlers (`(req: Request) => Response`, as in Deno and Bun)
+// and the lower-level `serveHttp` with `HttpRequest` and `HttpResponse`. docs/std/net/http.md.
 
 export {
   BodyInit,
@@ -15,5 +16,13 @@ export {
   ResponseInit,
 } from "velt/net/http/fetch/fetch";
 export { HttpServeOptions, HttpServer, serveHttp } from "velt/net/http/server/serve";
-export { BodyTooLarge, HttpRequest } from "velt/net/http/server/request";
+export { BodyTooLarge } from "velt/net/http/server/errors";
+export { HttpRequest } from "velt/net/http/server/request";
 export { EventStream, HttpResponse, HttpStream } from "velt/net/http/server/response";
+export { serve } from "velt/net/http/server/standard";
+export { NetAddr, ServeInfo } from "velt/net/http/server/serve_info";
+export {
+  ConnectionUpgrade,
+  isUpgradeRequest,
+  upgradeConnection,
+} from "velt/net/http/server/upgrade";

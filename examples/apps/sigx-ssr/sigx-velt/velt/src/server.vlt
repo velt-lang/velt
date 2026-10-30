@@ -9,7 +9,7 @@
 // only documents (Vite serves the client modules and assets) and reads the template on each
 // request, so edits to index.html show up without a restart.
 
-import { serve, Server } from "velt/http";
+import { serve, HttpServer } from "velt/net/http";
 import { readFile, readFileBytes, exists } from "velt/fs";
 import { args, exit } from "velt/process";
 import { decodeURIComponent } from "velt/net/url";
@@ -158,7 +158,7 @@ async function* streamDocument(
   yield utf8Encode(scriptOf(r.state.script()) + COMPLETE + after.slice(cut));
 }
 
-// --- Server functions ---
+// --- HttpServer functions ---
 //
 // The browser calls a server function through sigx's client (`@sigx/server/client`): `POST
 // /_sigx/fn/<key>` with `{"args":[input]}`, answered by `{"data": result}` or
@@ -330,7 +330,7 @@ export async function serveApp(
   opts: Options,
   render: (pathname: string) => Element,
   fns: ServerFn[] = [],
-): Promise<Server> {
+): Promise<HttpServer> {
   const cached = await readFile(opts.template);
   // Production: where each island's code is (dev has none; the browser finds islands by name).
   const manifestPath = `${opts.staticDir}/.vite/sigx-islands-manifest.json`;

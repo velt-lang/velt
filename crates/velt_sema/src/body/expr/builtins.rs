@@ -137,7 +137,6 @@ impl FnCx<'_, '_> {
         };
         match i {
             Intrinsic::Print | Intrinsic::PrintErr => return self.print(i, args, span),
-            Intrinsic::HttpHandler => return self.http_handler(args, span),
             _ => {}
         }
         let c = self.intrinsic_sig(i, span);

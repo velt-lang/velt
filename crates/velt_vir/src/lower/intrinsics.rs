@@ -367,7 +367,6 @@ impl FnLower<'_, '_> {
             (I::DbBind, [sink, a]) => self.db_bind(sink, a),
             (I::ReadRows, [a]) => self.read_rows(a, true, ty),
             (I::ReadRow, [a]) => self.read_rows(a, false, ty),
-            (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
                 I::WeakMapSet

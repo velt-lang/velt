@@ -1,7 +1,7 @@
 // velt/http request handlers: one that throws, sync handlers, what a handler captures and how
 // each request gets its own copy, module state shared by every request, and the handlers of
 // velt/net/http.
-import { serve, Server, ServeInfo } from "velt/http";
+import { serve, HttpServer, ServeInfo } from "velt/net/http";
 import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { IoError } from "velt/io";
 import { connect } from "velt/net";
@@ -38,7 +38,7 @@ describe("a handler that throws", () => {
   afterAll(() => close());
 
   it("gets a 500 response", async () => {
-    expect(await get(port, "/admin")).toBe("500 Internal Server Error");
+    expect(await get(port, "/admin")).toBe("500 Internal HttpServer Error");
   });
 
   it("leaves the server serving", async () => {
@@ -68,7 +68,7 @@ function prefixed(prefix: string): (req: Request) => Response {
 // A wrapper of `serve` with `serve`'s own handler type passes the handler on.
 async function startWith<E>(
   h: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws E,
-): Promise<Server> {
+): Promise<HttpServer> {
   return await serve({ port: 0 }, h);
 }
 
@@ -114,7 +114,7 @@ describe("a sync handler", () => {
     });
     try {
       expect(await get(s.port, "/home")).toBe("200 async ok");
-      expect(await get(s.port, "/admin")).toBe("500 Internal Server Error");
+      expect(await get(s.port, "/admin")).toBe("500 Internal HttpServer Error");
     } finally {
       await s.shutdown();
     }
@@ -142,7 +142,7 @@ describe("a sync handler", () => {
     const s = await serve({ port: 0 }, (req) => respondThrows(new URL(req.url).pathname));
     try {
       expect(await get(s.port, "/page")).toBe("200 checked /page");
-      expect(await get(s.port, "/admin")).toBe("500 Internal Server Error");
+      expect(await get(s.port, "/admin")).toBe("500 Internal HttpServer Error");
     } finally {
       await s.shutdown();
     }

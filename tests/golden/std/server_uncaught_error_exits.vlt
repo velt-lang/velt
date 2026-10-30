@@ -1,6 +1,6 @@
 // An error escaping `main` ends the process at once, also while a server is listening (like an
 // uncaught exception in Node): the listening server used to keep the failed program alive.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 class Failed extends Error {}
 

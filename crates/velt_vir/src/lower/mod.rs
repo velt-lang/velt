@@ -374,8 +374,6 @@ enum Work {
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
-    /// `(env, req, state)` initializer of an http handler closure's per-request state.
-    HandlerInit(DefId, Vec<TyId>),
     /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
     /// throwing `E`; built only for classes whose initializers construct each other in a
     /// cycle (ctor_init.rs).
@@ -461,9 +459,6 @@ struct Cx<'h> {
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
     by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
-    /// Async closure instances used as http handlers: the capture modes their state machine
-    /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: FxHashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,

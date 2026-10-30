@@ -78,7 +78,7 @@ streamed pages: [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.m
 
 ```tsx
 import { renderToStream, Element } from "velt/jsx";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 async function Posts(): Promise<Element> {
   const posts = await loadPosts(); // a database query

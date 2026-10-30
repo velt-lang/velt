@@ -173,8 +173,9 @@ fn borrowed_places_passed_to_async_functions_are_cloned() {
 #[test]
 fn http_server_shapes() {
     let p = golden("m4/http_server.vlt");
-    let serve = func(&p, "std/http::serve");
-    assert!(intrinsics(serve).contains(&Intrinsic::HttpHandler));
+    // `serve` runs the handler on the server's connection tasks: it reaches `spawn`.
+    let serve = func(&p, "std/net/http/server/serve::serveHttp");
+    assert!(intrinsics(serve).contains(&Intrinsic::Spawn));
     let main = func(&p, "main");
     let handler = closures(&p, main)
         .into_iter()

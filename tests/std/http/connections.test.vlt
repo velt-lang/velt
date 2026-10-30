@@ -1,5 +1,5 @@
 // What a server does with its connections: TLS, time limits, and many connecting at once.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { IoError } from "velt/io";
 import { connect, connectTls, TcpStream } from "velt/net";

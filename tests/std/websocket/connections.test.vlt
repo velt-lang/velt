@@ -1,7 +1,7 @@
 // velt/net/websocket's connections through its public API: messages as an async iterable, the order
 // frames go out in, and topics.
 import { channel, Channel } from "velt/sync";
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { IoError } from "velt/io";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import {

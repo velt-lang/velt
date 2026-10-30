@@ -8,6 +8,7 @@
 // sent `Expect: 100-continue` gets `100 Continue` when the handler first reads. What the handler
 // leaves unread is skipped before the connection's next request (`finish`).
 
+import { BodyTooLarge } from "velt/net/http/server/errors";
 import { utf8DecodeLossy } from "velt/encoding";
 import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
@@ -30,13 +31,6 @@ const CHUNK_DATA: i64 = 1; // `left` bytes of the current chunk to go
 const CHUNK_END: i64 = 2; // the CR LF after a chunk's data
 const CHUNK_TRAILERS: i64 = 3; // trailer lines up to an empty one
 const CHUNK_DONE: i64 = 4;
-
-/// The body a handler collects (`body()`) is larger than the server's `maxBodySize`.
-export class BodyTooLarge extends Error {
-  constructor(limit: i64) {
-    super(`request body larger than ${limit} bytes`);
-  }
-}
 
 /// A request: its head, parsed in place in its connection's buffer, and its body, read on
 /// demand. Valid while the handler runs.
@@ -124,6 +118,29 @@ export class HttpRequest {
     return i < 0 ? null : this.text(this.head.heads[i + 2], this.head.heads[i + 3]);
   }
 
+  /// The values of header `name` (any case) joined with ", " in the order they came, as
+  /// `Headers.get` reads them; null when it was not sent.
+  headerValues(name: string): string | null {
+    let i = this.find(name);
+    if (i < 0) {
+      return null;
+    }
+    const h = this.head;
+    let out = this.text(h.heads[i + 2], h.heads[i + 3]);
+    const n = Buffer.byteLength(name) as i64;
+    i += 4;
+    while (i < (h.heads.length as i64)) {
+      if (
+        h.heads[i + 1] - h.heads[i] == n &&
+        h.buf.utf8EqualsIgnoreCase(name, h.heads[i], h.heads[i + 1])
+      ) {
+        out = `${out}, ${this.text(h.heads[i + 2], h.heads[i + 3])}`;
+      }
+      i += 4;
+    }
+    return out;
+  }
+
   /// Whether header `name` (any case) was sent.
   hasHeader(name: string): bool {
     return this.find(name) >= 0;
@@ -164,6 +181,11 @@ export class HttpRequest {
       out.push([this.text(heads[i], heads[i + 1]), this.text(heads[i + 2], heads[i + 3])]);
     }
     return out;
+  }
+
+  /** The client's address, "ip:port" (IPv6 in brackets: "[::1]:5000"). */
+  remoteAddr(): string {
+    return this.conn.peerAddr();
   }
 
   /**

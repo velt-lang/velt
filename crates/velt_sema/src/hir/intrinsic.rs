@@ -398,11 +398,6 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
     /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
     ReadRow,
-    /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
-    /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
-    /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
-    /// box is leaked and shared by in-flight requests). See std/http.vlt.
-    HttpHandler,
     /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,

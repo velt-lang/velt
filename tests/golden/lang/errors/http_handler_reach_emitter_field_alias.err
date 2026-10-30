@@ -1,4 +1,5 @@
-http_handler_reach_emitter_field_alias.vlt:51:31: error: this handler calls `f`, which changes `last`; requests run at the same time
+http_handler_reach_emitter_field_alias.vlt:51:31: error: this code runs on another thread and calls `f`, which changes `last`
 http_handler_reach_emitter_field_alias.vlt:49:25: `last` is changed here
-  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+http_handler_reach_emitter_field_alias.vlt:50:19: but it is stored in a `{ ls: ((string) => void)[] }`, which is passed here to a function that runs it on other threads
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value every thread shares, as in Node
   = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`

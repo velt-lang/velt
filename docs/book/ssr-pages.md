@@ -119,7 +119,7 @@ the top of the page while the rest loads. The status goes out first, so decide i
 streaming starts:
 
 ```ts
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 import { renderToStream } from "velt/jsx";
 
 async function Slow(): Promise<JSX.Element> {

@@ -12,7 +12,7 @@ single-threaded event loop. Your program is a native binary that uses every core
 
 ```ts
 // server.ts: run it with `velt run server.ts`
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 interface User {
   id: string;

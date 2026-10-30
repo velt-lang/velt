@@ -1,5 +1,5 @@
 // velt/http's responses as the client sees them: status, headers and body.
-import { serve, ServeInfo } from "velt/http";
+import { serve, ServeInfo } from "velt/net/http";
 import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { connect } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
