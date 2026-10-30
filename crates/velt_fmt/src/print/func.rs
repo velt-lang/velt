@@ -275,6 +275,10 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
         Function(_) => true,
         Template { .. } => true,
         Await(inner) | Paren(inner) => breaks_itself(inner),
+        // `chain.last()[0]`, `chain.last()!`: the call breaks.
+        Index { object: inner, .. } | NonNull(inner) => {
+            matches!(inner.kind, Call { .. }) && breaks_itself(inner)
+        }
         _ => false,
     }
 }
