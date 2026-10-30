@@ -5,7 +5,7 @@
 // (#1129). It depends on nothing a body does not already load.
 
 import { IoError } from "velt/io/error";
-import { AbortError } from "velt/task";
+import { AbortError } from "velt/task/errors";
 
 /** Something a body can be made of: a stream, a blob, form data (std only). */
 export class ByteSource {

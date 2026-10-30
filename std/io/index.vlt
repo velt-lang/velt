@@ -2,12 +2,12 @@
 // Node-style `code`), and WHATWG streams (`ReadableStream`, also a global). docs/std/io.md.
 
 export { IoError } from "velt/io/error";
+export { ReadableStreamDefaultController } from "velt/io/streams/controller";
+export { ReadableStreamDefaultReader } from "velt/io/streams/reader";
+export { ReadableStream } from "velt/io/streams/streams";
 export {
   CancelReason,
   QueuingStrategy,
-  ReadableStream,
-  ReadableStreamDefaultController,
-  ReadableStreamDefaultReader,
   ReadableStreamReadResult,
   UnderlyingSource,
-} from "velt/io/streams/streams";
+} from "velt/io/streams/types";
