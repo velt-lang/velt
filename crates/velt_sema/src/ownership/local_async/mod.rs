@@ -115,7 +115,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         // A standard-library function that runs it on other threads: spawns it, from the user's
         // call (`serve`'s handler); a channel or a promise hands a value over once.
         let to_std = (p.why[n][0])
-            .filter(|w| p.flags[n] & CROSSES != 0 && w.in_std && w.boundary == Boundary::Spawn);
+            .filter(|w| p.flags[n] & CROSSES != 0 && w.in_library && w.boundary == Boundary::Spawn);
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
         }
@@ -155,7 +155,7 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
     }
     let mut changed = false;
     for (ty, k, why, c) in found {
-        for (callee, args, span, std, only) in &g.indirect {
+        for (callee, args, span, library, only) in &g.indirect {
             // A call through a variable holding only closures of one function
             // (`crate::defined_accessors`) reaches no closure of another.
             if only.is_some_and(|d| outermost(g, d) != outermost(g, c)) {
@@ -163,7 +163,7 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             }
             if let Some(&a) = args.get(k) {
                 if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
-                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *std)))));
+                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *library)))));
                     changed = true;
                 }
             }
@@ -187,8 +187,8 @@ fn outermost(g: &Graph, mut c: DefId) -> DefId {
 /// function that creates it: `(value: T) => void` in `withResolvers<T>` is `(value: Job) =>
 /// void` where the program calls `withResolvers<Job>()`. Generic parameters of callers that
 /// are generic themselves are followed to their own callers; where that gives no answer (or too
-/// many), the generic type itself, whose parameters match anything; a generic standard library
-/// function the program never calls gives none.
+/// many), the generic type itself, whose parameters match anything; a generic library function
+/// the program never calls gives none.
 fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     let mut owner = c;
     let mut hops = 0;
@@ -206,10 +206,10 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
             continue;
         }
         let sites = g.insts.get(&f).cloned().unwrap_or_default();
-        // A generic function of the standard library that the program never calls directly
+        // A generic library function that the program never calls directly
         // makes no such closure (its methods are called with their type arguments too).
-        let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
-        if sites.is_empty() && std {
+        let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
+        if sites.is_empty() && library {
             continue;
         }
         if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {
@@ -236,13 +236,14 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
 /// server's handler: a copy on each connection's task) would change only those copies of what it
 /// captured, out of sight, so modifying a capture is an error there, as for an async closure. A
 /// closure the program hands to `spawn` itself is copied for the task with what it captures, as
-/// docs/reference/async.md says, and may change its copy. The standard library's closures are not
-/// the user's to change.
+/// docs/reference/async.md says, and may change its copy. A library's closures (std's, a
+/// package's) are not the program's to change.
 fn crossing_sync(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    if f.is_async || f.is_generator || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_std) {
+    if f.is_async || f.is_generator || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
+    {
         return;
     }
     report_mutated(cx, c, why, "closure");
@@ -353,8 +354,10 @@ fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
 /// The label naming where a non-local closure leaves its task.
 pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
     let place = match w.boundary {
-        // The `spawn` is in the standard library: the user's call hands the value to it.
-        Boundary::Spawn if w.in_std => "is passed here to a function that runs it on other threads",
+        // The `spawn` is in a library: the program's call hands the value to it.
+        Boundary::Spawn if w.in_library => {
+            "is passed here to a function that runs it on other threads"
+        }
         Boundary::Spawn => "reaches `spawn` here",
         Boundary::Shared => "reaches `shared(...)` here",
         Boundary::Mutex => "is put in a `Mutex` here, which other threads may lock",

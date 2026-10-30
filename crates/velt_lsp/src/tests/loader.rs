@@ -153,6 +153,7 @@ fn parse(
     diags.extend(parse_diags);
     SourceModule {
         is_std: canonical.starts_with("std/"),
+        is_dependency: false,
         path: canonical,
         file,
         ast,

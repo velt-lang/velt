@@ -125,6 +125,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
             SourceModule {
                 path: m.path.clone(),
                 is_std: m.is_std,
+                is_dependency: m.is_dependency,
                 file: m.file,
                 ast,
                 imports: m.imports.clone(),

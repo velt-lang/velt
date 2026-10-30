@@ -41,7 +41,7 @@ pub(super) fn call_site(
     let fields = &bodies.stores;
     let mut best: Option<(u8, bool, u32, String, Span)> = None;
     for d in order {
-        if d == c || in_std(cx, d) {
+        if d == c || in_library(cx, d) {
             continue;
         }
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
@@ -70,13 +70,13 @@ pub(super) fn call_site(
             _ => passes1(x),
         };
         each_expr(&f.body.block, &mut |e: &Expr| {
-            // `c` passed to the standard library, which calls it.
+            // `c` passed to a library, which calls it.
             if let E::Call {
                 callee: Callee::Def(s, _),
                 args,
             } = &e.kind
             {
-                if in_std(cx, *s) && args.iter().any(passes) {
+                if in_library(cx, *s) && args.iter().any(passes) {
                     let key = (1, !request, e.span.lo);
                     if let Some(text) = shown(cx, f, e) {
                         if best.as_ref().is_none_or(|b| key < (b.0, b.1, b.2)) {

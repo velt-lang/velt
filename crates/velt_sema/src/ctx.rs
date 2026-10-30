@@ -32,6 +32,8 @@ pub(crate) struct ModuleScope {
     pub via_export_type: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
+    /// A library to the program: std or a package it depends on (`SourceModule::is_dependency`).
+    pub is_library: bool,
     /// Some name has a type key (`crate::type_meanings`).
     pub type_keys: bool,
 }
@@ -432,6 +434,7 @@ impl<'m> Ctx<'m> {
                 .iter()
                 .map(|m| ModuleScope {
                     is_std: m.is_std,
+                    is_library: m.is_std || m.is_dependency,
                     ..Default::default()
                 })
                 .collect(),

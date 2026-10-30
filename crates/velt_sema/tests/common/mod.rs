@@ -431,6 +431,7 @@ pub fn run_with(items: Vec<Item>, opts: CheckOptions) -> (Option<hir::Program>, 
     let m = SourceModule {
         path: "main".into(),
         is_std: false,
+        is_dependency: false,
         file: FileId(0),
         ast: Module {
             items,

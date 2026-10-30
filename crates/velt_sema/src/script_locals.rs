@@ -219,6 +219,7 @@ fn with_moved(
             .map(|(k, s)| SourceModule {
                 path: s.path.clone(),
                 is_std: s.is_std,
+                is_dependency: s.is_dependency,
                 file: s.file,
                 ast: ast::Module {
                     items: if k == root {
@@ -255,6 +256,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],

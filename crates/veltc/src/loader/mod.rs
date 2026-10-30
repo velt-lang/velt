@@ -315,9 +315,11 @@ impl Loader<'_, '_> {
         import_meta::fill(&mut ast, path, canonical == "main");
         let index = self.modules.len();
         self.by_file.insert(key, index);
+        let is_dependency = matches!(origin, Origin::Package { .. });
         self.modules.push(SourceModule {
             path: canonical,
             is_std,
+            is_dependency,
             file,
             ast,
             imports: vec![],

@@ -56,6 +56,7 @@ impl Loader {
         self.modules.push(SourceModule {
             path: canonical.to_string(),
             is_std: canonical.starts_with("std/"),
+            is_dependency: false,
             file: FileId(id.0),
             ast,
             imports: vec![],

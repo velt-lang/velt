@@ -193,6 +193,13 @@ Promises behave like JavaScript's, at Rust's cost:
   in JavaScript ([Functions](functions.md#captures)). So `spawn(f())` through an
   async closure value `f` gives the task a copy of `f`, and stops the program
   (``panic: cannot copy …``) when `f` captured such a resource.
+- A callback handed to a library function (std's or a package's) that runs it on other threads,
+  as a server runs its handler once per connection, must not change what it captured (a sync
+  callback included) nor capture a resource without `clone()`: each thread would change, or
+  release, a copy of its own, out of sight. That is a compile-time error at the program's call
+  into the library (``but it is passed here to a function that runs it on other threads``),
+  with the `shared(...)` fix. A closure the program hands to `spawn` itself is copied as above
+  and may change its copy.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
   ([Classes](classes.md)), so each copy releases its own resource; what the returned object
   still shares with the original (a shallow `clone()`) is deep-copied in turn, and a `clone()`

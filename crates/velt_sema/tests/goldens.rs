@@ -642,6 +642,7 @@ fn goldens_with_real_parser() {
         let m = velt_sema::SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],

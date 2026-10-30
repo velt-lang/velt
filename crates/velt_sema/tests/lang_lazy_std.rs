@@ -109,6 +109,7 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
         l.modules.push(velt_sema::SourceModule {
             path: path.to_string(),
             is_std: true,
+            is_dependency: false,
             file,
             ast,
             imports: vec![],

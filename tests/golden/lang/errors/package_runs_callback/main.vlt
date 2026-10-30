@@ -1,0 +1,16 @@
+// A callback handed to a package that runs it on other threads must not change what it
+// captured, as for std's: each thread would change its own copy. The error points at the call
+// into the package, since the `spawn` is the package's, not the program's.
+import { callOnEachWorker, onEachWorker } from "pool";
+
+async function main() {
+  let done = 0;
+  await onEachWorker(4, async (i: number): Promise<void> => {
+    done += 1;
+  });
+  let seen = 0;
+  await callOnEachWorker(4, (i: number) => {
+    seen += 1;
+  });
+  console.log(done, seen);
+}

@@ -20,9 +20,9 @@ use crate::hir::{
     StmtKind as S, TyId,
 };
 
-/// A call through a function value: the callee's type, the argument nodes, the call's span,
-/// whether it is in the standard library, and the function whose closures alone the callee
-/// may be (a variable of `crate::defined_accessors`), if known.
+/// A call through a function value: the callee's type, the argument nodes, the call's span, whether
+/// it is in a library (std or a package the program depends on), and the function whose closures
+/// alone the callee may be (a variable of `crate::defined_accessors`), if known.
 pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -54,19 +54,19 @@ pub(super) enum Boundary {
     FnValue,
 }
 
-/// Why a value crosses: the boundary, where (in user code when the boundary is in the
-/// standard library: the call into it), and the type that carries it there when the value
+/// Why a value crosses: the boundary, where (in the program when the boundary is in a library, std
+/// or a package it depends on: the call into it), and the type that carries it there when the value
 /// is reached through the heap.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Why {
     pub span: Span,
     pub boundary: Boundary,
-    /// `span` is in the standard library.
-    pub std: bool,
-    /// The boundary is in the standard library, reached through the user's call at `span`: a
-    /// std function that hands a callback to other threads runs a copy of it on each (a
-    /// server's handler, a connection per task).
-    pub in_std: bool,
+    /// `span` is in a library (std or a package the program depends on).
+    pub library: bool,
+    /// The boundary is in a library, reached through the program's call at `span`: a library
+    /// function that hands a callback to other threads runs a copy of it on each (a server's
+    /// handler, a connection per task).
+    pub in_library: bool,
     /// A value of this type reaches the boundary, and the closure is stored in it.
     pub via: Option<TyId>,
 }
@@ -77,17 +77,17 @@ impl Why {
     /// how types happen to be numbered.
     pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, String) {
         let via = self.via.map(|t| cx.display(t)).unwrap_or_default();
-        (self.std, self.span.file.0, self.span.lo, via)
+        (self.library, self.span.file.0, self.span.lo, via)
     }
 
-    /// `self`, seen from an argument passed at `site` (`(span, in std)`): a boundary inside the
-    /// standard library is reported at the user's call into it.
+    /// `self`, seen from an argument passed at `site` (`(span, in a library)`): a boundary inside
+    /// a library is reported at the program's call into it.
     pub(super) fn through(self, site: Option<(Span, bool)>) -> Why {
         match site {
-            Some((span, false)) if self.std => Why {
+            Some((span, false)) if self.library => Why {
                 span,
-                std: false,
-                in_std: true,
+                library: false,
+                in_library: true,
                 ..self
             },
             _ => self,
@@ -100,7 +100,7 @@ pub(super) const CROSSES: u8 = 1;
 pub(super) const INDIRECT: u8 = 2;
 pub(super) const STORED: u8 = 4;
 
-/// The call passing an argument into a parameter: its span, and whether it is in std.
+/// The call passing an argument into a parameter: its span, and whether it is in a library.
 pub(super) type Site = Option<(Span, bool)>;
 
 #[derive(Default)]
@@ -109,7 +109,7 @@ pub(super) struct Graph {
     pub nodes: Vec<Node>,
     pub tys: Vec<TyId>,
     /// Per node: the nodes whose values flow into it, each with the call passing them (an
-    /// argument flowing into a parameter: the call's span and whether it is in std).
+    /// argument flowing into a parameter: the call's span and whether it is in a library).
     pub srcs: Vec<Vec<(usize, Site)>>,
     /// Per node: may it hold a value of unknown origin?
     pub unknown: Vec<bool>,
@@ -117,7 +117,7 @@ pub(super) struct Graph {
     /// they flow in (a generic parameter's node gets its callers' concrete types).
     pub inflows: Vec<Vec<(TyId, Site)>>,
     /// Calls through a function value: the callee's type, the argument nodes, and the call
-    /// (span, in std). A closure whose parameter crosses makes the matching argument cross.
+    /// (span, in a library). A closure whose parameter crosses makes the matching argument cross.
     pub indirect: Vec<Indirect>,
     /// The function creating each closure literal.
     pub parent: FxHashMap<DefId, DefId>,
@@ -176,13 +176,13 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         if info.state != BodyState::Done {
             continue;
         }
-        let std = cx.scopes[info.module].is_std;
+        let library = cx.scopes[info.module].is_library;
         let mut w = Walk {
             cx,
             g: &mut g,
             d,
             f,
-            std,
+            library,
         };
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
@@ -195,7 +195,7 @@ struct Walk<'a, 'm> {
     g: &'a mut Graph,
     d: DefId,
     f: &'a FnDef,
-    std: bool,
+    library: bool,
 }
 
 impl Walk<'_, '_> {
@@ -216,8 +216,8 @@ impl Walk<'_, '_> {
         Some(Why {
             span,
             boundary,
-            std: self.std,
-            in_std: false,
+            library: self.library,
+            in_library: false,
             via: None,
         })
     }
@@ -484,7 +484,7 @@ impl Walk<'_, '_> {
         for (a, l) in args.iter().zip(params) {
             let ty = gf.body.locals[l.0 as usize].ty;
             let n = self.g.node(Node::Local(g, l), ty);
-            self.value(a, To::Node(n, Some((span, self.std))));
+            self.value(a, To::Node(n, Some((span, self.library))));
         }
     }
 
@@ -536,7 +536,9 @@ impl Walk<'_, '_> {
                     nodes.push(n);
                 }
                 let only = cell.then_some(self.d);
-                self.g.indirect.push((f.ty, nodes, e.span, self.std, only));
+                self.g
+                    .indirect
+                    .push((f.ty, nodes, e.span, self.library, only));
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {

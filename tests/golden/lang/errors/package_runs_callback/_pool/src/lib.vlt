@@ -1,0 +1,16 @@
+// A package function that runs its callback on other threads, each task with its own copy, as a
+// server runs its handler once per connection.
+export async function onEachWorker(n: number, work: (i: number) => Promise<void>) {
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < n; i++) {
+    tasks.push(spawn(work(i)));
+  }
+  for (const t of tasks) {
+    await t;
+  }
+}
+
+// The same with a plain callback, called inside each task.
+export async function callOnEachWorker(n: number, f: (i: number) => void) {
+  await onEachWorker(n, async (i: number): Promise<void> => f(i));
+}

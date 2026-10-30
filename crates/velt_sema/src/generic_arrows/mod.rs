@@ -72,6 +72,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
         .map(|(k, m)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items: m.ast.items.iter().map(|i| lift_item(k, i)).collect(),
@@ -238,6 +239,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],
@@ -296,6 +298,7 @@ mod tests {
             let m = SourceModule {
                 path: "main".into(),
                 is_std: false,
+                is_dependency: false,
                 file: FileId(0),
                 ast,
                 imports: vec![],

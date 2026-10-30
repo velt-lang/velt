@@ -7,18 +7,17 @@
 //! closure the program hands to `spawn` itself runs on its copy, as docs/reference/async.md says.
 //!
 //! What crosses is followed on the graph of [`super`]: the values flowing into a thread boundary,
-//! the captures of the closures among them,
-//! and through the heap by type ([`super::types`]): a sync closure stored in a field, element or
-//! map value is reached when a value the handler reaches has a type holding a function type of
-//! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
-//! stands for no callback the user stores), and in the direction values flow ([`fits`]: a
-//! `() => void` closure is never a `() => string`). A closure is reached even when no code
-//! a request may run reads the field holding it (`w.onClick = …` while the handler reads only
-//! `w.name`): each request's copy of `w` copies the closure, and those copies share the
-//! variable it captured across threads. A variable declared in a request
-//! (a reached async closure, or a closure made inside one) is that request's own, and the
-//! standard library's closures are not the user's to change, so neither is reported. A reached
-//! closure's assignments include those of the closures it makes.
+//! the captures of the closures among them, and through the heap by type ([`super::types`]): a sync
+//! closure stored in a field, element or map value is reached when a value the handler reaches has
+//! a type holding a function type of its shape, written without generic parameters (the prelude's
+//! `resolve`, a `(T) => void`, stands for no callback the user stores), and in the direction values
+//! flow ([`fits`]: a `() => void` closure is never a `() => string`). A closure is reached even
+//! when no code a request may run reads the field holding it (`w.onClick = …` while the handler
+//! reads only `w.name`): each request's copy of `w` copies the closure, and those copies share the
+//! variable it captured across threads. A variable declared in a request (a reached async closure,
+//! or a closure made inside one) is that request's own, and the closures of a library (std, a
+//! package) are not the program's to change, so neither is reported. A reached closure's
+//! assignments include those of the closures it makes.
 //!
 //! When in doubt the check reports: a missed case crashes, while a reported one has the
 //! `shared(...)` fix-it. So what a local holds is reached by type, not only when the local is
@@ -81,10 +80,9 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         return FxHashSet::default();
     }
     // Where the program stores closures, for the message: only needed when it stores one.
-    let user =
-        g.nodes.iter().enumerate().any(
-            |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_std(cx, *c)),
-        );
+    let user = g.nodes.iter().enumerate().any(
+        |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_library(cx, *c)),
+    );
     let mut bodies = if user {
         Bodies::new(cx)
     } else {
@@ -129,7 +127,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
                 .iter()
                 .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
-                .min_by_key(|w| (w.std, w.span.file, w.span.lo));
+                .min_by_key(|w| (w.library, w.span.file, w.span.lo));
             if let Some(w) = found {
                 work.push((n, w));
             }
@@ -162,7 +160,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
         };
-        if in_std(cx, c) {
+        if in_library(cx, c) {
             continue;
         }
         // A task's closure (and a crossing one) assigning what it captured is reported by
@@ -186,7 +184,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
     }
     // Only what a standard-library function runs on other threads (out of sight); a closure the
     // program spawns itself runs on its own copy (docs/reference/async.md).
-    found.retain(|x| x.2.in_std && x.2.boundary == Boundary::Spawn);
+    found.retain(|x| x.2.in_library && x.2.boundary == Boundary::Spawn);
     let reported: FxHashSet<DefId> = found.iter().map(|x| x.0).collect();
     for (c, ty, w, cap, name, cap_ty, at) in found {
         // The closure making the assigning one runs on the other thread itself: no call to show.
@@ -238,8 +236,8 @@ fn made_by(g: &Graph, c: DefId, requests: &FxHashSet<DefId>) -> bool {
     false
 }
 
-fn in_std(cx: &Ctx, d: DefId) -> bool {
-    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
+fn in_library(cx: &Ctx, d: DefId) -> bool {
+    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_library)
 }
 
 /// May a closure literal of type `lit` be a function value of type `f`? As

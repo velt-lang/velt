@@ -110,6 +110,7 @@ pub fn of_parsed(sm: SourceMap, file: FileId, ast: ast::Module) -> ModuleExports
     let module = SourceModule {
         path: "module".into(),
         is_std: false,
+        is_dependency: false,
         file,
         ast,
         imports: vec![],
