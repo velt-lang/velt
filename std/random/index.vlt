@@ -5,13 +5,12 @@
 // Each thread has its own generator (wyrand), seeded from the OS on first use, so concurrent
 // tasks never contend and every run gives a different sequence.
 
-declare function velt_rt_prng_f64(): f64;
-declare function velt_rt_prng_range(min: i64, max: i64): i64;
+export { random } from "velt/random/prng";
 
-/** A number in [0, 1) (53 random bits), like `Math.random()`. */
-export function random(): f64 {
-  return velt_rt_prng_f64();
-}
+// `randomInt` is defined here rather than re-exported: velt/crypto exports a `randomInt` too (the
+// secure one), and a re-exported name has one import path (std-lint). Which one keeps the name
+// is an API decision left open; until then this index keeps code (scripts/std-lint/allow.vlt).
+import { velt_rt_prng_range } from "velt/random/rt";
 
 /** An integer in [min, max), uniformly distributed; `min` when `max <= min`. */
 export function randomInt(min: i64, max: i64): i64 {

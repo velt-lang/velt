@@ -1,0 +1,8 @@
+// velt/random (internal): the per-thread fast generator: floats in [0, 1).
+
+import { velt_rt_prng_f64 } from "velt/random/rt";
+
+/** A number in [0, 1) (53 random bits), like `Math.random()`. */
+export function random(): f64 {
+  return velt_rt_prng_f64();
+}

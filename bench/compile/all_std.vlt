@@ -184,6 +184,8 @@ import * as std_postgres from "velt/postgres";
 import * as std_child_process from "velt/process/child";
 import * as std_stdin from "velt/process/stdin";
 import * as std_random from "velt/random";
+import * as std_random_prng from "velt/random/prng";
+import * as std_random_rt from "velt/random/rt";
 import * as std_uuid from "velt/random/uuid";
 import * as std_redis from "velt/redis";
 import * as std_redis_args from "velt/redis/args";
