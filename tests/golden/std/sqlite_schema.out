@@ -1,3 +1,4 @@
+pv (view): 1 SELECT core
 t1: a , b , c ; affinities 000; rowid none
   sqlite_autoindex_t1_1 unique: c BINARY
   sqlite_autoindex_t1_2 unique: a BINARY, b BINARY
@@ -49,7 +50,6 @@ vt_content: id INTEGER, c0 ; affinities 30; rowid id
 vt_docsize: id INTEGER, sz BLOB; affinities 30; rowid id
 vt_config without rowid: k  not null, v ; affinities 00; rowid none
   sqlite_autoindex_vt_config_1 (pk): the table itself
-pv (view): unsupported: pv: views are not supported yet
 p6: a INT, b  virtual, c INT stored, d TEXT; affinities 3031; rowid none
 w6 without rowid: x TEXT, v  virtual, k TEXT not null, s  stored; affinities 1010; rowid none
   sqlite_autoindex_w6_1 (pk): the table itself

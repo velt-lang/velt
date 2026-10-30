@@ -57,7 +57,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Testing | [test](test.md) (the runner `velt test` builds into test programs) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
-| Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
+| Databases (moving to packages) | [sqlite](sqlite.md) · [sqlite/engine](sqlite_engine.md) (the SQLite engine in Velt, read-only for now) · [postgres](postgres.md) · [redis](redis.md) |
 
 The database drivers are part of the standard library today. They are moving to separately
 versioned packages; their APIs will stay the same.
@@ -88,7 +88,7 @@ what Velt can't do on its own:
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
 Pure Velt: `velt:path`, `velt:math`, `velt:mem`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
-`velt:timers` (built on `sleep`, `spawn` and `velt:task` signals) and `velt:json`; `velt:jsx`
+`velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:sqlite/engine` and `velt:json`; `velt:jsx`
 too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
 runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).

@@ -10,6 +10,8 @@ import {
   IndexedColumn,
   S_CREATE_INDEX,
   S_CREATE_TABLE,
+  S_CREATE_VIEW,
+  Select,
   Statement,
 } from "velt:sqlite/sql/ast";
 import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
@@ -123,11 +125,12 @@ export class Table {
   strict: bool = false;
   indexes: Index[] = [];
   sql: string;
-  /** "table", or "view" or "virtual table" (which this engine cannot read yet). */
+  /** "table", "virtual table" (which this engine cannot read yet), or "view" (one it cannot read). */
   kind: string = "table";
   /**
    * Why the table cannot be used, or "": its CREATE statement does not parse (the parser's
-   * message), or it is a view or a virtual table. `Schema.table` throws this for it.
+   * message), or it is a virtual table or a view that does not parse. `Schema.table` throws
+   * this for it.
    */
   unsupported: string = "";
 
@@ -158,13 +161,39 @@ export struct SchemaRow {
   sql: string;
 }
 
+/** A view: its name, its column names (if given) and its SELECT. */
+export class View {
+  name: string;
+  columns: string[];
+  select: Select;
+
+  constructor(name: string, columns: string[], select: Select) {
+    this.name = name;
+    this.columns = columns;
+    this.select = select;
+  }
+}
+
 /** The schema of one database file. */
 export class Schema {
-  /** Tables, views and virtual tables, usable or not (`Table.unsupported`). */
+  /** Tables and virtual tables, usable or not (`Table.unsupported`), and unusable views. */
   tables: Table[] = [];
   /** Every row of sqlite_schema (tables, indexes, views, triggers), in its order. */
   rows: SchemaRow[] = [];
+  /** The views this engine can read (one it cannot is in `tables`, unsupported, with why). */
+  views: View[] = [];
   cookie: u32 = 0;
+
+  /** The view `name` (case-insensitive), or null. */
+  view(name: string): View | null {
+    const n = name.toUpperCase();
+    for (const v of this.views) {
+      if (v.name.toUpperCase() == n) {
+        return v;
+      }
+    }
+    return null;
+  }
 
   /**
    * The table `name` (case-insensitive), or null if there is none. One this engine cannot use
@@ -224,8 +253,20 @@ export function loadSchema(db: DbFile): Schema {
     } else if (row.type == "view") {
       const t = new Table(row.name, 0, row.sql);
       t.kind = "view";
-      t.unsupported = "views are not supported yet";
-      schema.tables.push(t);
+      try {
+        const v = parseOne(row.sql);
+        if (v.kind == S_CREATE_VIEW && v.select != null) {
+          schema.views.push(new View(v.name, v.columns, v.select!));
+        } else {
+          t.unsupported = "not a CREATE VIEW statement";
+        }
+      } catch (e) {
+        t.unsupported = e.message;
+      }
+      // A view this engine cannot read is kept with why, so it never reads as missing.
+      if (t.unsupported != "") {
+        schema.tables.push(t);
+      }
     } else if (row.type == "index") {
       // Indexes after their tables; an automatic index (UNIQUE, PRIMARY KEY) has no SQL.
       names.push(row.name);

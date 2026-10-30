@@ -1,0 +1,71 @@
+// velt:sqlite/exec/plan — how each FROM item is read: the WHERE and ON terms, each checked at
+// the innermost FROM level it reads (a LEFT JOIN's ON terms at its own level, before the NULL
+// row decision), and per level a full scan of its table or the rows of its subquery.
+
+import { Expr } from "velt:sqlite/sql/ast";
+import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
+import { Pred, Scope } from "velt:sqlite/exec/scope";
+import { ExprCompiler } from "velt:sqlite/exec/expr";
+
+/** Access paths. */
+export const ACC_SCAN: u8 = 0;
+export const ACC_ROWS: u8 = 4;
+
+/** A WHERE or ON term. */
+export class Term {
+  expr: Expr;
+  pred: Pred;
+  /** The sources of this SELECT it reads. */
+  srcs: Source[] = [];
+  /** The innermost FROM level it reads (-1: none). */
+  level: i64;
+  /** For a LEFT JOIN's ON term, its level; else -1. */
+  on: i64;
+  /** Answered by an access path: not checked again. */
+  used: bool = false;
+  /** Made for the planner from another term (`x = 1 OR x = 2` as `x IN (1, 2)`): never checked. */
+  virtual: bool = false;
+
+  constructor(expr: Expr, pred: Pred, level: i64, on: i64) {
+    this.expr = expr;
+    this.pred = pred;
+    this.level = level;
+    this.on = on;
+  }
+}
+
+/** How one level is read. */
+export class Access {
+  kind: u8 = ACC_SCAN;
+  /** Terms this access answers exactly (marked used once the access is chosen). */
+  uses: Term[] = [];
+}
+
+/** The levels (positions in `sources`) of the sources compiled expressions touched. */
+export function levelOf(touched: Source[], from: usize, sources: Source[]): i64 {
+  let level: i64 = -1;
+  for (let k = from; k < touched.length; k++) {
+    const t = touched[k];
+    for (let i: usize = 0; i < sources.length; i++) {
+      if (sources[i] == t && (i as i64) > level) {
+        level = i as i64;
+      }
+    }
+  }
+  return level;
+}
+
+/** Picks how level `lv` is read. */
+export function chooseAccess(
+  c: ExprCompiler,
+  terms: Term[],
+  sc: Scope,
+  lv: usize,
+  left: bool,
+): Access {
+  const acc = new Access();
+  if (sc.sources[lv].kind == SRC_ROWS) {
+    acc.kind = ACC_ROWS;
+  }
+  return acc;
+}

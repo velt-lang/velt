@@ -63,6 +63,8 @@ export class Expr {
 export struct ResultColumn {
   expr: Expr;
   alias: string;
+  /** The expression's source text (an unaliased column of the result is named by it). */
+  span: string;
 }
 
 /** Join kinds. */
@@ -129,6 +131,10 @@ export class SelectCore {
   having: Expr | null = null;
   /** VALUES (…), (…): one row per entry. */
   values: Expr[][] = [];
+  /** Set by the compiler: a subquery holds an aggregate of this core (its columns are ours). */
+  aggFromInner: bool = false;
+  /** Set by the compiler: its FROM terms once SQLite's flattener merged its subqueries. */
+  flat: i64 = -1;
 }
 
 /** A whole SELECT: WITH, the compound cores, ORDER BY, LIMIT, OFFSET. */

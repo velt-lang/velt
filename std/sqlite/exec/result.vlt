@@ -1,0 +1,297 @@
+// velt:sqlite/exec/result — a SELECT core's result columns (names, affinities, collations),
+// and the ORDER BY and GROUP BY terms that name them by number or alias, with SQLite's rules
+// for which terms are numbers and its messages for those out of range.
+
+import { BINARY } from "velt:sqlite/record";
+import { collationOf } from "velt:sqlite/schema";
+import {
+  E_BINARY,
+  E_BLOB,
+  E_CALL,
+  E_COLLATE,
+  E_COLUMN,
+  E_INT,
+  E_IS,
+  E_ISNULL,
+  E_LIKE,
+  E_NULL,
+  E_REAL,
+  E_STAR,
+  E_STRING,
+  E_UNARY,
+  Expr,
+  OrderTerm,
+  ResultColumn,
+} from "velt:sqlite/sql/ast";
+import { ROWID, SRC_TABLE, Source } from "velt:sqlite/exec/source";
+import { Query, Scope } from "velt:sqlite/exec/scope";
+import { prepareError } from "velt:sqlite/exec/errors";
+import { C, ExprCompiler } from "velt:sqlite/exec/expr";
+import { Emitter, SortKey } from "velt:sqlite/exec/emit";
+
+/** SQLITE_MAX_COLUMN: the most result columns, and ORDER BY and GROUP BY terms (2,000). */
+export const MAX_COLUMN: usize = 2000;
+
+/**
+ * SQLite's `too many columns in result set` when the result columns, `*` and `t.*` expanded,
+ * are more than `MAX_COLUMN` (selectExpander checks it before anything else is resolved).
+ */
+export function checkResultWidth(cols: ResultColumn[], sc: Scope) {
+  let n: usize = 0;
+  for (const rc of cols) {
+    const e = rc.expr;
+    if (e.kind != E_STAR) {
+      n++;
+      continue;
+    }
+    for (const src of sc.fromOrder.length > 0 ? sc.fromOrder : sc.sources) {
+      if (e.table != "" && src.name.toUpperCase() != e.table.toUpperCase()) {
+        continue;
+      }
+      for (let i: usize = 0; i < src.cols.length; i++) {
+        if (e.table != "" || !src.hidden[i]) {
+          n++;
+        }
+      }
+    }
+  }
+  if (n > MAX_COLUMN) {
+    prepareError("too many columns in result set");
+  }
+}
+
+/** SQLite's `too many terms in ORDER BY clause` (or GROUP BY) past `MAX_COLUMN` terms. */
+export function checkTerms(n: usize, kind: string) {
+  if (n > MAX_COLUMN) {
+    prepareError(`too many terms in ${kind} BY clause`);
+  }
+}
+
+/** The result columns: `*` and `t.*` expanded, names, affinities and collations. */
+export function resultColumns(
+  c: ExprCompiler,
+  cols: ResultColumn[],
+  osc: Scope,
+  q: Query,
+  em: Emitter,
+) {
+  for (const rc of cols) {
+    const e = rc.expr;
+    if (e.kind == E_STAR) {
+      let any = false;
+      for (const src of osc.fromOrder.length > 0 ? osc.fromOrder : osc.sources) {
+        if (e.table != "" && src.name.toUpperCase() != e.table.toUpperCase()) {
+          continue;
+        }
+        any = true;
+        for (let i: usize = 0; i < src.cols.length; i++) {
+          if (e.table == "" && src.hidden[i]) {
+            continue;
+          }
+          const ce = c.columnRef(src, i as i64, osc);
+          addResult(q, em, ce, src.cols[i], src, i as i64);
+          q.exprOf.push(null);
+        }
+      }
+      if (!any) {
+        prepareError(e.table == "" ? "no tables specified" : `no such table: ${e.table}`);
+      }
+      continue;
+    }
+    const ce = c.expr(e, osc);
+    let name = rc.alias;
+    let ref: Source | null = null;
+    let col: i64 = -2;
+    if (e.kind == E_COLUMN) {
+      const f = c.lookup(e, osc);
+      if (f != null) {
+        ref = f!.src;
+        col = f!.col;
+      }
+    }
+    if (name == "") {
+      name = rc.span;
+      if (ref != null && col >= 0) {
+        name = ref!.cols[col as usize];
+      } else if (ref != null && col == ROWID && ref!.kind == SRC_TABLE) {
+        // `rowid`, `oid` and `_rowid_` are named after the rowid's alias column, else "rowid".
+        name = ref!.rowidCol >= 0 ? ref!.cols[ref!.rowidCol as usize] : "rowid";
+      }
+    }
+    addResult(q, em, ce, name, ref, col);
+    q.exprOf.push(e);
+  }
+}
+
+export function addResult(
+  q: Query,
+  em: Emitter,
+  ce: C,
+  name: string,
+  src: Source | null,
+  col: i64,
+) {
+  q.names.push(name);
+  q.refSrc.push(src);
+  q.refCol.push(col);
+  q.affs.push(ce.aff);
+  q.colls.push(ce.coll);
+  em.results.push(ce.ev);
+  em.colls.push(ce.coll >= 0 ? ce.coll as u8 : BINARY);
+}
+
+const NOT_A_NUMBER: i64 = -9223372036854775807 - 1;
+
+/**
+ * The integer a term is when SQLite's parser folds it to one (`3`, `-3`, `+3`, and `x IS NULL`
+ * or `x NOTNULL` of a literal, which become 0 or 1), else NOT_A_NUMBER.
+ */
+export function termNumber(e: Expr): i64 {
+  if (e.kind == E_INT && e.text == "") {
+    return e.ival;
+  }
+  if (e.kind == E_UNARY && (e.op == "-" || e.op == "+")) {
+    const v = termNumber(e.a!);
+    if (v == NOT_A_NUMBER) {
+      return v;
+    }
+    return e.op == "-" ? -v : v;
+  }
+  if (isNullTest(e) && foldsToLiteral(e.a!)) {
+    return e.not ? 1 : 0;
+  }
+  if (foldsToFalse(e)) {
+    return 0;
+  }
+  return NOT_A_NUMBER;
+}
+
+/**
+ * The integer 0 as the parser leaves it (EP_IsFalse): the literal, a folded `literal IS NULL`,
+ * or `x AND y` with such a side and no function call on either (sqlite3ExprAnd).
+ */
+export function foldsToFalse(e: Expr): bool {
+  if (e.kind == E_INT && e.text == "" && e.ival == 0) {
+    return true;
+  }
+  if (isNullTest(e) && !e.not && foldsToLiteral(e.a!)) {
+    return true;
+  }
+  if (e.kind == E_BINARY && e.op == "AND") {
+    return (foldsToFalse(e.a!) || foldsToFalse(e.b!)) && !hasCall(e.a!) && !hasCall(e.b!);
+  }
+  return false;
+}
+
+/** Whether a function is called anywhere in `e` (outside subqueries). */
+export function hasCall(e: Expr | null): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  // LIKE and GLOB are calls of like() and glob() to SQLite's parser.
+  if (x.kind == E_CALL || x.kind == E_LIKE) {
+    return true;
+  }
+  if (hasCall(x.a) || hasCall(x.b) || hasCall(x.c)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (hasCall(a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `x IS NULL`, `x ISNULL`, `x NOTNULL`, `x IS NOT NULL`. */
+export function isNullTest(e: Expr): bool {
+  return e.kind == E_ISNULL || (e.kind == E_IS && e.b!.kind == E_NULL);
+}
+
+/** Whether the parser makes `e` (signs aside) a non-NULL literal (sqlite3PExprIsNull). */
+export function foldsToLiteral(e0: Expr): bool {
+  let e = e0;
+  while (e.kind == E_UNARY && (e.op == "-" || e.op == "+")) {
+    e = e.a!;
+  }
+  const k = e.kind;
+  if (k == E_INT || k == E_REAL || k == E_STRING || k == E_BLOB) {
+    return true;
+  }
+  return isNullTest(e) && foldsToLiteral(e.a!);
+}
+
+export function rangeError(k: usize, what: string, n: usize): never {
+  prepareError(`${ordinal(k + 1)} ${what} BY term out of range - should be between 1 and ${n}`);
+}
+
+/** The result column an ORDER BY or GROUP BY term names (a number or an alias), or -1. */
+export function resultIndex(e0: Expr, cols: ResultColumn[], n: usize, what: string, k: usize): i64 {
+  // A COLLATE clause on the term only changes its collation.
+  let e = e0;
+  while (e.kind == E_COLLATE) {
+    e = e.a!;
+  }
+  // A number that fits 32 bits names a column; any other is an expression.
+  // Numbers past the result are reported after every term was read (rangeCheck), as SQLite's
+  // second pass does; numbers below 1 or above 65535 at once.
+  const num = termNumber(e);
+  if (num >= -2147483648 && num <= 2147483647) {
+    if (num < 1 || num > 65535) {
+      rangeError(k, what, n);
+    }
+    return num - 1;
+  }
+  if (e.kind == E_COLUMN && e.table == "") {
+    const want = e.name.toUpperCase();
+    for (let i: usize = 0; i < cols.length; i++) {
+      if (cols[i].alias != "" && cols[i].alias.toUpperCase() == want) {
+        return i as i64;
+      }
+    }
+  }
+  return -1;
+}
+
+export function ordinal(n: usize): string {
+  if (n % 10 == 1 && n % 100 != 11) {
+    return `${n}st`;
+  }
+  if (n % 10 == 2 && n % 100 != 12) {
+    return `${n}nd`;
+  }
+  if (n % 10 == 3 && n % 100 != 13) {
+    return `${n}rd`;
+  }
+  return `${n}th`;
+}
+
+export function orderKeys(c: ExprCompiler, terms: OrderTerm[], osc: Scope, q: Query, em: Emitter) {
+  em.sorting = true;
+  let bad: i64 = -1;
+  for (let k: usize = 0; k < terms.length; k++) {
+    const t = terms[k];
+    const i = resultIndex(t.expr, osc.aliases, q.names.length, "ORDER", k);
+    if (i >= (q.names.length as i64)) {
+      if (bad < 0) {
+        bad = k as i64;
+      }
+      continue;
+    }
+    if (i >= 0) {
+      let coll: u8 = q.colls[i as usize] >= 0 ? q.colls[i as usize] as u8 : BINARY;
+      if (t.expr.kind == E_COLLATE) {
+        coll = collationOf(t.expr.name) as u8;
+      }
+      em.sort.push(new SortKey(i, null, t.desc, t.nulls, coll));
+      continue;
+    }
+    const ce = c.expr(t.expr, osc);
+    const coll: u8 = ce.coll >= 0 ? ce.coll as u8 : BINARY;
+    em.sort.push(new SortKey(-1, ce.ev, t.desc, t.nulls, coll));
+  }
+  if (bad >= 0) {
+    rangeError(bad as usize, "ORDER", q.names.length);
+  }
+}

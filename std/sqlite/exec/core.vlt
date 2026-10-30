@@ -1,0 +1,595 @@
+// velt:sqlite/exec/core — one SELECT core compiled into nested loops: the FROM items (tables,
+// subqueries, CTEs) with their joins, WHERE terms placed at the innermost level they read, and
+// the rows going to the output stage, through the groups of an aggregate query when it is one.
+
+import { BINARY } from "velt:sqlite/record";
+import {
+  E_BINARY,
+  E_CALL,
+  E_COLLATE,
+  E_COLUMN,
+  E_STAR,
+  Expr,
+  FromItem,
+  J_FULL,
+  J_LEFT,
+  J_RIGHT,
+  OrderTerm,
+  SelectCore,
+} from "velt:sqlite/sql/ast";
+import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
+import { AggRestart, Ev, Out, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
+import { AG_COUNT_STAR, AggCtx, Group } from "velt:sqlite/exec/agg";
+import { prepareError } from "velt:sqlite/exec/errors";
+import { C, ExprCompiler } from "velt:sqlite/exec/expr";
+import {
+  MAX_COLUMN,
+  checkResultWidth,
+  checkTerms,
+  orderKeys,
+  rangeError,
+  resultColumns,
+  resultIndex,
+  termNumber,
+} from "velt:sqlite/exec/result";
+export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
+import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
+import { describe } from "velt:sqlite/exec/core_plan";
+import { Emitter, limitValue } from "velt:sqlite/exec/emit";
+import { KeySet } from "velt:sqlite/exec/keys";
+import { Access, Term, chooseAccess, levelOf } from "velt:sqlite/exec/plan";
+import { levelLoop } from "velt:sqlite/exec/loop";
+import { AFF_NONE } from "velt:sqlite/exec/ops";
+import { Val, compareVals, intVal, nullVal } from "velt:sqlite/exec/value";
+
+/** ORDER BY, LIMIT and OFFSET of the SELECT a core is the whole of. */
+export class Tail {
+  orderBy: OrderTerm[] = [];
+  limit: Expr | null = null;
+  offset: Expr | null = null;
+}
+
+/** Splits `e` into its AND terms. */
+export function andTerms(e: Expr | null, out: Expr[]) {
+  if (e == null) {
+    return;
+  }
+  const x = e!;
+  if (x.kind == E_BINARY && x.op == "AND") {
+    andTerms(x.a, out);
+    andTerms(x.b, out);
+    return;
+  }
+  out.push(x);
+}
+
+function colExpr(table: string, name: string): Expr {
+  const e = new Expr(E_COLUMN, 0);
+  e.table = table;
+  e.name = name;
+  return e;
+}
+
+function eqExpr(a: Expr, b: Expr): Expr {
+  const e = new Expr(E_BINARY, 0);
+  e.op = "=";
+  e.a = a;
+  e.b = b;
+  return e;
+}
+
+/** Compiles one core (with the SELECT's ORDER BY and LIMIT when it is the only core). */
+export function compileCore(
+  c: ExprCompiler,
+  core: SelectCore,
+  outer: Scope | null,
+  tail: Tail,
+): Query {
+  // Again as an aggregate query when a subquery turns out to hold one of its aggregates.
+  while (true) {
+    const again = core.aggFromInner;
+    const refs = c.refMark();
+    const rows = c.rowsSrc.length;
+    try {
+      if (core.values.length > 0) {
+        return valuesCore(c, core, outer, tail, new Query());
+      }
+      const fp = compileFrom(c, core, outer);
+      return compileCoreOnce(c, core, outer, tail, fp);
+    } catch (e) {
+      if (e instanceof AggRestart && e.core == core && !again) {
+        // The FROM items compile again: what they counted the first time is taken back.
+        c.rewind(refs, rows);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+/** A core's FROM items compiled: their scope, LEFT JOIN levels, ON terms and their levels. */
+class FromPart {
+  sc: Scope = new Scope();
+  left: bool[] = [];
+  onExprs: Expr[] = [];
+  onLevel: i64[] = [];
+}
+
+// The FROM items: compiled before the rest of the core, in a small frame, since a nested
+// subquery, view or CTE compiles inside it (the rest of the core's frame is not on the stack
+// while nested queries compile).
+function compileFrom(c: ExprCompiler, core: SelectCore, outer: Scope | null): FromPart {
+  const fp = new FromPart();
+  const sc = fp.sc;
+  sc.parent = outer;
+  sc.core = core;
+  for (const item of core.from) {
+    const lv = sc.sources.length;
+    const src = c.fromSource(item, outer);
+    if (item.join == J_RIGHT || item.join == J_FULL) {
+      prepareError("RIGHT and FULL OUTER JOINs are not supported yet");
+    }
+    const isLeft = item.join == J_LEFT && lv > 0;
+    joinColumns(sc, src, item, fp.onExprs, fp.onLevel, isLeft ? lv as i64 : -1);
+    sc.sources.push(src);
+    fp.left.push(isLeft);
+    if (item.on != null) {
+      const parts: Expr[] = [];
+      andTerms(item.on, parts);
+      for (const p of parts) {
+        fp.onExprs.push(p);
+        fp.onLevel.push(isLeft ? lv as i64 : -1);
+      }
+    }
+  }
+  // After its FROM items compiled: theirs are counted (and kept) already.
+  c.noteFromTerms(core);
+  return fp;
+}
+
+function compileCoreOnce(
+  c: ExprCompiler,
+  core: SelectCore,
+  outer: Scope | null,
+  tail: Tail,
+  fp: FromPart,
+): Query {
+  const q = new Query();
+  const sc = fp.sc;
+  const terms: Term[] = [];
+  const left = fp.left;
+  const onExprs = fp.onExprs;
+  const onLevel = fp.onLevel;
+  sc.aliases = core.columns;
+  checkResultWidth(core.columns, sc);
+  // WHERE and ON terms, each at the innermost level it reads.
+  const whereParts: Expr[] = [];
+  andTerms(core.where, whereParts);
+  for (const e of whereParts) {
+    onExprs.push(e);
+    onLevel.push(-1);
+  }
+  for (let i: usize = 0; i < onExprs.length; i++) {
+    const mark = c.track();
+    sc.where = true;
+    let pred: Pred = () => false;
+    try {
+      pred = c.pred(onExprs[i], sc);
+    } finally {
+      sc.where = false;
+    }
+    let level = levelOf(c.touched, mark, sc.sources);
+    if (onLevel[i] > level) {
+      level = onLevel[i];
+    }
+    const t = new Term(onExprs[i], pred, level, onLevel[i]);
+    for (let k = mark; k < c.touched.length; k++) {
+      if (sc.sources.includes(c.touched[k]) && !t.srcs.includes(c.touched[k])) {
+        t.srcs.push(c.touched[k]);
+      }
+    }
+    terms.push(t);
+  }
+  // How each level is read.
+  const access: Access[] = [];
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    const a = chooseAccess(c, terms, sc, lv, left[lv]);
+    for (const t of a.uses) {
+      t.used = true;
+    }
+    access.push(a);
+  }
+  // Aggregates and the output scope.
+  // An aggregate query: GROUP BY, or an aggregate among the result columns (one in ORDER BY
+  // or HAVING alone does not make it one, as in SQLite).
+  let isAgg = core.groupBy.length > 0 || core.aggFromInner;
+  for (const rc of core.columns) {
+    if (ownsAggregate(c, rc.expr, sc)) {
+      isAgg = true;
+    }
+  }
+  if (core.having != null && !isAgg) {
+    prepareError("HAVING clause on a non-aggregate query");
+  }
+  const agg = new AggCtx();
+  const osc = isAgg ? sc.forOutput(agg) : sc;
+  const em = new Emitter(q.out);
+  em.distinct = core.distinct;
+  sc.output = !isAgg;
+  sc.results = !isAgg;
+  resultColumns(c, core.columns, osc, q, em);
+  sc.results = false;
+  q.out.width = q.names.length;
+  // ORDER BY: a sort.
+  checkTerms(tail.orderBy.length, "ORDER");
+  if (tail.orderBy.length > 0) {
+    orderKeys(c, tail.orderBy, osc, q, em);
+  }
+  // LIMIT and OFFSET name no column, not even an enclosing query's (SQLite resolves them in an
+  // empty name context).
+  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
+  // Terms that read no level of this core run once, before the loops.
+  const pre: Pred[] = [];
+  for (const t of terms) {
+    if (t.level < 0 && !t.used && !t.virtual) {
+      pre.push(t.pred);
+    }
+  }
+  let groupStep: Step | null = null;
+  const groups = new GroupState();
+  if (isAgg) {
+    checkTerms(core.groupBy.length, "GROUP");
+    groupStep = groupStepFor(c, core, sc, agg, groups, q);
+  }
+  const having: Pred | null = core.having == null ? null : c.pred(core.having!, osc);
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    q.plan.push(describe(sc.sources[lv], access[lv]));
+  }
+  if (em.sorting) {
+    q.plan.push("USE TEMP B-TREE FOR ORDER BY");
+  }
+  const emitRow: Step = () => em.row();
+  let rowFn: Step = groupStep != null ? groupStep! : emitRow;
+  // `SELECT count(*) FROM … [WHERE …]` alone: the loops only count.
+  const countOnly = countOnlyCore(core, isAgg, agg);
+  const counter = new Counter();
+  if (countOnly) {
+    rowFn = () => {
+      counter.n++;
+    };
+  }
+  let inner = rowFn;
+  for (let lv = sc.sources.length; lv > 0; lv--) {
+    inner = levelLoop(
+      c,
+      sc.sources[lv - 1],
+      access[lv - 1],
+      terms,
+      lv - 1,
+      left[lv - 1],
+      q.out,
+      inner,
+    );
+  }
+  const loops = inner;
+  q.correlated = sc.outer || osc.outer;
+  for (const src of sc.sources) {
+    if (src.kind == SRC_ROWS && c.rowsQuery(src).correlated) {
+      q.correlated = true;
+    }
+  }
+  const need = q;
+  const out = q.out;
+  if (countOnly) {
+    q.body = () => {
+      let limit = limitValue(limitEv, -1);
+      const offset = limitValue(offsetEv, 0);
+      if (need.need >= 0 && (limit < 0 || limit > need.need)) {
+        limit = need.need;
+      }
+      if (limit == 0) {
+        return;
+      }
+      counter.n = 0;
+      let ok = true;
+      for (const p of pre) {
+        if (!p()) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        loops();
+      }
+      if (offset > 0) {
+        return;
+      }
+      out.vals.push(intVal(counter.n));
+      out.rows = 1;
+    };
+    return q;
+  }
+  q.body = () => {
+    let limit = limitValue(limitEv, -1);
+    const offset = limitValue(offsetEv, 0);
+    if (need.need >= 0 && (limit < 0 || limit > need.need)) {
+      limit = need.need;
+    }
+    em.begin(limit, offset);
+    if (limit == 0) {
+      return;
+    }
+    if (isAgg) {
+      groups.reset(agg);
+    }
+    for (const p of pre) {
+      if (!p()) {
+        if (isAgg && core.groupBy.length == 0) {
+          outputGroups(agg, groups, having, em.out, emitRow, core.groupBy.length > 0);
+        }
+        em.finish();
+        return;
+      }
+    }
+    loops();
+    if (isAgg) {
+      outputGroups(agg, groups, having, em.out, emitRow, core.groupBy.length > 0);
+    }
+    em.finish();
+  };
+  return q;
+}
+
+/** Rows counted by a count-only query's loops. */
+class Counter {
+  n: i64 = 0;
+}
+
+// Whether a core is `SELECT count(*) FROM … [WHERE …]` (no GROUP BY, HAVING, DISTINCT, other
+// aggregate or column): its run counts the loops' rows and outputs the count.
+function countOnlyCore(core: SelectCore, isAgg: bool, agg: AggCtx): bool {
+  if (!isAgg || core.groupBy.length > 0 || core.having != null || core.distinct) {
+    return false;
+  }
+  if (agg.fns.length != 1 || agg.bareSrc.length > 0 || core.columns.length != 1) {
+    return false;
+  }
+  const f = agg.fns[0];
+  const e = core.columns[0].expr;
+  return (
+    f.kind == AG_COUNT_STAR && f.filter == null && e.kind == E_CALL && e.star && e.filter == null
+  );
+}
+
+/** USING and NATURAL: the right side's shared columns are hidden, and joined by equality. */
+function joinColumns(sc: Scope, src: Source, item: FromItem, ons: Expr[], lv: i64[], on: i64) {
+  let names: string[] = item.using;
+  if (item.natural) {
+    names = [];
+    for (let i: usize = 0; i < src.cols.length; i++) {
+      for (const l of sc.sources) {
+        const k = l.column(src.cols[i]);
+        if (k >= 0 && !l.hidden[k as usize] && !names.includes(src.cols[i])) {
+          names.push(src.cols[i]);
+        }
+      }
+    }
+  }
+  for (const n of names) {
+    const r = src.column(n);
+    let from: Source | null = null;
+    for (const l of sc.sources) {
+      const k = l.column(n);
+      if (k >= 0 && !l.hidden[k as usize] && from == null) {
+        from = l;
+      }
+    }
+    if (r < 0 || from == null) {
+      prepareError(`cannot join using column ${n} - column not present in both tables`);
+    }
+    src.hidden[r as usize] = true;
+    ons.push(eqExpr(colExpr(from!.name, n), colExpr(src.name, n)));
+    lv.push(on);
+  }
+}
+
+/** VALUES (…), (…): each row's expressions. */
+function valuesCore(
+  c: ExprCompiler,
+  core: SelectCore,
+  outer: Scope | null,
+  tail: Tail,
+  q: Query,
+): Query {
+  const sc = new Scope();
+  sc.parent = outer;
+  const rows: Ev[][] = [];
+  const width = core.values[0].length;
+  if (width > MAX_COLUMN) {
+    prepareError("too many columns in result set");
+  }
+  for (const r of core.values) {
+    if (r.length != width) {
+      prepareError("all VALUES must have the same number of terms");
+    }
+    const evs: Ev[] = [];
+    for (const e of r) {
+      evs.push(c.ev(e, sc));
+    }
+    rows.push(evs);
+  }
+  for (let i: usize = 0; i < width; i++) {
+    q.names.push(`column${i + 1}`);
+    q.affs.push(AFF_NONE);
+    q.colls.push(-1);
+  }
+  q.out.width = width;
+  q.correlated = sc.outer;
+  const out = q.out;
+  const em = new Emitter(out);
+  for (let i: usize = 0; i < width; i++) {
+    em.results.push(() => nullVal());
+    em.colls.push(BINARY);
+  }
+  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
+  const need = q;
+  q.body = () => {
+    let limit = limitValue(limitEv, -1);
+    const offset = limitValue(offsetEv, 0);
+    if (need.need >= 0 && (limit < 0 || limit > need.need)) {
+      limit = need.need;
+    }
+    em.begin(limit, offset);
+    const tmp: Val[] = [];
+    for (const r of rows) {
+      if (out.stop) {
+        break;
+      }
+      __intrinsic_array_truncate(tmp, 0);
+      for (const e of r) {
+        tmp.push(e());
+      }
+      em.put(tmp, 0);
+    }
+  };
+  return q;
+}
+
+/** The groups of an aggregate query during one run. */
+export class GroupState {
+  /** The groups' keys (a group's index in `list` is its key's in `keys`). */
+  keys: KeySet = new KeySet(0, []);
+  list: Group[] = [];
+  keyEvs: Ev[] = [];
+  keyColls: u8[] = [];
+
+  /** The only group of a query without GROUP BY, kept from run to run. */
+  single: Group | null = null;
+
+  reset(agg: AggCtx) {
+    if (this.keyEvs.length == 0) {
+      if (this.single == null) {
+        this.single = agg.newGroup([]);
+      } else {
+        agg.resetGroup(this.single!);
+      }
+      __intrinsic_array_truncate(this.list, 0);
+      this.list.push(this.single!);
+      return;
+    }
+    this.keys = new KeySet(this.keyEvs.length, this.keyColls);
+    this.list = [];
+  }
+}
+
+function groupStepFor(
+  c: ExprCompiler,
+  core: SelectCore,
+  sc: Scope,
+  agg: AggCtx,
+  gs: GroupState,
+  q: Query,
+): Step {
+  let star = false;
+  for (const rc of core.columns) {
+    star = star || rc.expr.kind == E_STAR;
+  }
+  // SQLite resolves the terms first, then rejects one holding an aggregate of this core.
+  sc.groupBy = true;
+  try {
+    for (let k: usize = 0; k < core.groupBy.length; k++) {
+      const e = core.groupBy[k];
+      let ce: C | null = null;
+      // With `*`, a number names a column of the expanded result.
+      let num: i64 = -1;
+      if (star) {
+        let x = e;
+        while (x.kind == E_COLLATE) {
+          x = x.a!;
+        }
+        num = termNumber(x);
+      }
+      if (star && num >= 1 && num <= 65535) {
+        if (num as usize > q.names.length) {
+          rangeError(k, "GROUP", q.names.length);
+        }
+        const at = (num - 1) as usize;
+        if (q.exprOf[at] == null) {
+          ce = c.columnRef(q.refSrc[at]!, q.refCol[at], sc);
+        } else {
+          ce = c.expr(q.exprOf[at]!, sc);
+        }
+      } else {
+        const i = resultIndex(e, core.columns, core.columns.length, "GROUP", k);
+        if (i >= (core.columns.length as i64)) {
+          rangeError(k, "GROUP", core.columns.length);
+        }
+        const target = i >= 0 ? core.columns[i as usize].expr : e;
+        ce = c.expr(target, sc);
+      }
+      const key = ce!;
+      gs.keyEvs.push(key.ev);
+      gs.keyColls.push(key.coll >= 0 ? key.coll as u8 : BINARY);
+    }
+  } finally {
+    sc.groupBy = false;
+  }
+  if (gs.keyEvs.length == 0) {
+    return () => {
+      agg.step(gs.single!);
+    };
+  }
+  return () => {
+    const key: Val[] = [];
+    for (const k of gs.keyEvs) {
+      key.push(k());
+    }
+    const at = gs.keys.find(key, 0);
+    if (at >= 0) {
+      agg.step(gs.list[at as usize]);
+      return;
+    }
+    const ng = agg.newGroup(key);
+    gs.list.push(ng);
+    agg.step(ng);
+  };
+}
+
+function outputGroups(
+  agg: AggCtx,
+  gs: GroupState,
+  having: Pred | null,
+  out: Out,
+  row: Step,
+  grouped: bool,
+) {
+  if (!grouped && gs.list.length == 0) {
+    gs.list.push(agg.newGroup([]));
+  }
+  let list = gs.list;
+  if (grouped) {
+    const colls = gs.keyColls;
+    list.sort((a, b) => {
+      for (let i: usize = 0; i < a.key.length; i++) {
+        const r = compareVals(a.key[i], b.key[i], colls[i]);
+        if (r != 0) {
+          return r as f64;
+        }
+      }
+      return 0.0;
+    });
+  }
+  for (const g of list) {
+    if (out.stop) {
+      break;
+    }
+    agg.cur = g;
+    agg.finishGroup(g);
+    if (having != null && !having!()) {
+      continue;
+    }
+    row();
+  }
+}

@@ -1,0 +1,116 @@
+// velt:sqlite/exec/loop — the loop of one FROM level, as a closure around the loops inside it:
+// a full scan, or the rows of a subquery; for a LEFT JOIN, the row of NULLs when nothing matched.
+
+import { Source } from "velt:sqlite/exec/source";
+import { Out, Pred, Step } from "velt:sqlite/exec/scope";
+import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { ACC_ROWS, Access, Term } from "velt:sqlite/exec/plan";
+
+/** Whether a LEFT JOIN level found a row this time round. */
+class Matched {
+  v: bool = false;
+}
+
+export function allOf(ps: Pred[]): Pred | null {
+  if (ps.length == 0) {
+    return null;
+  }
+  if (ps.length == 1) {
+    return ps[0];
+  }
+  if (ps.length == 2) {
+    const a = ps[0];
+    const b = ps[1];
+    return () => a() && b();
+  }
+  return () => {
+    for (const p of ps) {
+      if (!p()) {
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
+/**
+ * The loop of level `lv`: for each row of `src` that its terms accept, `inner` runs. Stops
+ * early once `out.stop` is set (LIMIT reached).
+ */
+export function levelLoop(
+  c: ExprCompiler,
+  src: Source,
+  acc: Access,
+  terms: Term[],
+  lv: usize,
+  left: bool,
+  out: Out,
+  inner: Step,
+): Step {
+  const wh: Pred[] = [];
+  const on: Pred[] = [];
+  for (const t of terms) {
+    if (t.level != (lv as i64) || t.used || t.virtual) {
+      continue;
+    }
+    if (left && t.on == (lv as i64)) {
+      on.push(t.pred);
+    } else {
+      wh.push(t.pred);
+    }
+  }
+  const where = allOf(wh);
+  const next: Step =
+    where == null
+      ? inner
+      : () => {
+        if (where!()) {
+          inner();
+        }
+      };
+  if (!left) {
+    return scan(c, src, acc, out, next);
+  }
+  const onp = allOf(on);
+  const m = new Matched();
+  const each: Step = () => {
+    if (onp == null || onp!()) {
+      m.v = true;
+      next();
+    }
+  };
+  const loop = scan(c, src, acc, out, each);
+  return () => {
+    m.v = false;
+    loop();
+    if (!m.v && !out.stop) {
+      src.nullRow = true;
+      next();
+      src.nullRow = false;
+    }
+  };
+}
+
+function scan(c: ExprCompiler, src: Source, acc: Access, out: Out, each: Step): Step {
+  if (acc.kind == ACC_ROWS) {
+    const q = c.rowsQuery(src);
+    const p = c.params;
+    return () => {
+      q.open(p);
+      let r: usize = 0;
+      while (!out.stop && q.has(r)) {
+        src.at = r;
+        each();
+        r++;
+      }
+    };
+  }
+  const cur = src.cur!;
+  return () => {
+    let ok = cur.first();
+    while (ok && !out.stop) {
+      each();
+      ok = cur.next();
+    }
+  };
+}

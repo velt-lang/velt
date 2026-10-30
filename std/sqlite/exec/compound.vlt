@@ -1,0 +1,183 @@
+// velt:sqlite/exec/compound — combining the rows of compound selects as SQLite 3.53 does
+// (multiSelectByMerge): UNION ALL without ORDER BY appends; anything else merges the two sides
+// sorted by the ORDER BY (`ORDER BY 1` when there is none), which for UNION, INTERSECT and EXCEPT
+// is extended by every other column. On equal rows UNION keeps the right side's, INTERSECT the
+// left side's, EXCEPT drops the left one; a row equal to the one output before it is skipped.
+// The left side of `a op b op c` is `a op b`, merged the same way in the same order.
+
+import { C_EXCEPT, C_UNION, C_UNION_ALL } from "velt:sqlite/sql/ast";
+import { Query } from "velt:sqlite/exec/scope";
+import { SortKey, compareKeys } from "velt:sqlite/exec/emit";
+import { Val } from "velt:sqlite/exec/value";
+
+function pick(rows: Val[], width: usize, idx: i64[]): Val[] {
+  const out: Val[] = [];
+  for (const r of idx) {
+    for (let j: usize = 0; j < width; j++) {
+      out.push(rows[(r as usize) * width + j]);
+    }
+  }
+  return out;
+}
+
+/** The keys of a merge: the ORDER BY terms, then (`full`) the other columns ascending. */
+export function mergeKeys(sort: SortKey[], width: usize, colls: u8[], full: bool): SortKey[] {
+  const out: SortKey[] = [];
+  for (const s of sort) {
+    out.push(s);
+  }
+  if (full) {
+    for (let j: usize = 0; j < width; j++) {
+      let has = false;
+      for (const s of sort) {
+        if (s.col == (j as i64)) {
+          has = true;
+        }
+      }
+      if (!has) {
+        out.push(new SortKey(j as i64, null, false, 0, colls[j]));
+      }
+    }
+  }
+  return out;
+}
+
+/** The keys of each row (columns `keys[k].col`), `keys.length` a row. */
+function keysOf(rows: Val[], width: usize, keys: SortKey[]): Val[] {
+  const out: Val[] = [];
+  const n = rows.length / width;
+  for (let r: usize = 0; r < n; r++) {
+    for (const k of keys) {
+      out.push(rows[r * width + (k.col as usize)]);
+    }
+  }
+  return out;
+}
+
+/** Rows sorted by `keys` (stable). */
+export function sortedBy(rows: Val[], width: usize, keys: SortKey[]): Val[] {
+  const kv = keysOf(rows, width, keys);
+  const n = rows.length / width;
+  const idx: i64[] = [];
+  for (let r: usize = 0; r < n; r++) {
+    idx.push(r as i64);
+  }
+  idx.sort((a, b) => compareKeys(kv, keys, a as usize, b as usize));
+  return pick(rows, width, idx);
+}
+
+/** Two sides sorted by `keys`, merged as `op`. */
+export function merge(op: u8, left: Val[], right: Val[], width: usize, keys: SortKey[]): Val[] {
+  const lk = keysOf(left, width, keys);
+  const rk = keysOf(right, width, keys);
+  // Both key lists side by side, for compareKeys: left rows first, then right rows.
+  const all: Val[] = lk;
+  for (const v of rk) {
+    all.push(v);
+  }
+  const nl = left.length / width;
+  const nr = right.length / width;
+  const out: Val[] = [];
+  let i: usize = 0;
+  let j: usize = 0;
+  let prev: i64 = -1;
+  const distinct = op != C_UNION_ALL;
+  const emit = (from: Val[], r: usize, key: usize) => {
+    if (distinct && prev >= 0 && compareKeys(all, keys, prev as usize, key) == 0) {
+      return;
+    }
+    prev = key as i64;
+    for (let c: usize = 0; c < width; c++) {
+      out.push(from[r * width + c]);
+    }
+  };
+  while (i < nl || j < nr) {
+    let c: i64 = 0;
+    if (j >= nr) {
+      c = -1;
+    } else if (i >= nl) {
+      c = 1;
+    } else {
+      c = compareKeys(all, keys, i, nl + j);
+    }
+    if (op == C_UNION_ALL) {
+      if (c <= 0) {
+        emit(left, i, i);
+        i++;
+      } else {
+        emit(right, j, nl + j);
+        j++;
+      }
+    } else if (op == C_UNION) {
+      if (c < 0) {
+        emit(left, i, i);
+        i++;
+      } else if (c > 0) {
+        emit(right, j, nl + j);
+        j++;
+      } else {
+        i++;
+      }
+    } else if (op == C_EXCEPT) {
+      if (c < 0) {
+        emit(left, i, i);
+        i++;
+      } else if (c > 0) {
+        j++;
+      } else {
+        i++;
+      }
+    } else {
+      if (c < 0) {
+        i++;
+      } else if (c > 0) {
+        j++;
+      } else {
+        emit(left, i, i);
+        i++;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The rows of arms 0..i of a compound (each arm already run), in `order` when given (else as
+ * SQLite produces them).
+ */
+export function compoundRows(
+  parts: Query[],
+  ops: u8[],
+  i: usize,
+  order: SortKey[] | null,
+  width: usize,
+  colls: u8[],
+): Val[] {
+  const own: Val[] = [];
+  for (const v of parts[i].out.vals) {
+    own.push(v);
+  }
+  if (i == 0) {
+    return order == null ? own : sortedBy(own, width, order!);
+  }
+  const op = ops[i];
+  if (order == null && op == C_UNION_ALL) {
+    const left = compoundRows(parts, ops, i - 1, null, width, colls);
+    for (const v of own) {
+      left.push(v);
+    }
+    return left;
+  }
+  let keys: SortKey[] = [];
+  if (order != null) {
+    keys = order!;
+  } else {
+    keys.push(new SortKey(0, null, false, 0, colls[0]));
+  }
+  if (op != C_UNION_ALL) {
+    keys = mergeKeys(keys, width, colls, true);
+  }
+  const left = compoundRows(parts, ops, i - 1, keys, width, colls);
+  const right = sortedBy(own, width, keys);
+  return merge(op, left, right, width, keys);
+}
