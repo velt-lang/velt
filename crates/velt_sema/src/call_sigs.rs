@@ -265,7 +265,8 @@ fn or_undefined(ty: ast::TypeExpr) -> ast::TypeExpr {
 }
 
 /// What the signatures of the user's modules use that is not supported: optional parameters
-/// (not supported yet) and parameter initializers (TypeScript's TS2371).
+/// (not supported yet) and parameter initializers (TypeScript's TS2371), in call signatures and
+/// in interface methods without a body.
 pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
     struct Sigs(Vec<Diagnostic>);
     impl Sigs {
@@ -291,10 +292,35 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
             }
         }
     }
+    impl Sigs {
+        /// An interface method's signature: a default value belongs to the implementations,
+        /// which may each have their own (`m(x = 1)` in a class); the interface says only that
+        /// the parameter may be left out (`x?: T`).
+        fn method(&mut self, s: &ast::FnSig) {
+            for p in s.params.iter().filter(|p| p.default.is_some()) {
+                if p.optional || p.rest {
+                    continue;
+                }
+                self.0.push(
+                    Diagnostic::error(
+                        "a parameter initializer is only allowed in a function or constructor implementation",
+                        p.span,
+                    )
+                    .with_note(format!(
+                        "declare it optional, `{0}?: T`; an implementation gives its own default with `{0}: T | undefined = …`",
+                        p.name.name
+                    )),
+                );
+            }
+        }
+    }
     impl<'a> Visit<'a> for Sigs {
         fn item(&mut self, item: &'a ast::Item) {
             if let ast::ItemKind::Interface(d) = &item.kind {
                 d.call_sigs.iter().for_each(|s| self.sig(s));
+                for m in d.methods.iter().filter(|m| m.body.is_none()) {
+                    self.method(&m.sig);
+                }
             }
         }
         fn ty(&mut self, t: &'a ast::TypeExpr) {

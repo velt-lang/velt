@@ -153,12 +153,20 @@ fn nested_functions_capture_as_closures() {
 }
 
 #[test]
-fn interface_method_defaults_apply_to_dyn_and_generic_calls() {
+fn interface_method_signatures_take_no_defaults() {
+    // TypeScript's TS2371: the interface declares `b?: i64`, each implementation its default.
+    let r = err_src("interface G<T> { f(a: T, b: i64 = 2): i64; } function main() {}");
+    assert!(
+        r.contains(
+            "a parameter initializer is only allowed in a function or constructor implementation"
+        ),
+        "{r}"
+    );
     let p = ok_src(
-        "interface G<T> { f(a: T, b: i64 = 2): i64; }
+        "interface G<T> { f(a: T, b?: i64): i64; g(b: i64 = 3): i64 { return b; } }
          interface H extends G<string> { }
-         class C implements H { f(a: string, b: i64 = 5): i64 { return b; } }
-         function viaParam<X extends H>(x: X): i64 { return x.f(\"a\"); }
+         class C implements H { f(a: string, b: i64 | undefined = 5): i64 { return b; } }
+         function viaParam<X extends H>(x: X): i64 { return x.f(\"a\") + x.g(); }
          function main() { const g: G<string> = new C(); console.log(g.f(\"a\"), viaParam(new C())); }",
     );
     let lits = |name: &str| -> Vec<u128> {
@@ -170,13 +178,7 @@ fn interface_method_defaults_apply_to_dyn_and_generic_calls() {
             })
             .collect()
     };
-    assert!(
-        lits("main").contains(&2),
-        "interface default used for a Dyn call"
-    );
-    assert!(lits("viaParam").contains(&2), "inherited interface default");
-    let r = err_src("interface G { f(a: i64 = \"x\"): i64; } function main() {}");
-    assert!(r.contains("mismatched types"), "{r}");
+    assert!(lits("viaParam").contains(&3), "a default body's default");
 }
 
 #[test]

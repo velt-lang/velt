@@ -596,6 +596,11 @@ console.log(p.len(), q.len());  // 4 4
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
+- A method without a body declares that a parameter may be left out with `x?: T`; a default
+  value (`x: T = 1`) is an error, as in TypeScript ("a parameter initializer is only allowed in
+  a function or constructor implementation"): each implementation gives its own
+  (`step(by: number | undefined = 1)` in the class). A default body may have defaults, as any
+  method.
 
 ```ts
 interface Named {

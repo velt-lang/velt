@@ -14,8 +14,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   `number`, `live = true` a `boolean`; the same literals, `new C(…)` and arrays of them that type
   [class fields](classes.md) without annotations). A missing return type is inferred from the
   body ([Return types](#return-types)).
-- Default values work on functions, methods, constructors and interface methods; calls through
-  an interface use the interface's defaults. A default may use earlier parameters, `this` and
+- Default values work on functions, methods, constructors and an interface method's default
+  body. A method an interface only declares takes none, as in TypeScript (TS2371, "a parameter
+  initializer is only allowed in a function or constructor implementation"): it declares
+  `q?: T`, and an implementation gives its own default with `q: T | undefined = 1`. A default
+  may use earlier parameters, `this` and
   closures over the function's surroundings (`q: number = p * 2`, `by: number = this.step`,
   `cb: () => number = () => local`), as in JavaScript: the function applies such a default
   itself when the call starts (also to a passed `undefined`), and so every later default that
