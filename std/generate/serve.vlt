@@ -81,6 +81,7 @@ function readType(id: i64, v: JsonValue): Type {
       f.isPrivate = bool(fv.get("private"));
       f.isEsPrivate = bool(fv.get("esPrivate"));
       f.hasDefault = bool(fv.get("hasDefault"));
+      f.isGetter = bool(fv.get("isGetter"));
       f.at = num(fv.get("at"));
       t.fields.push(f);
     }

@@ -194,6 +194,10 @@ pub(crate) struct Ctx<'m> {
     pub generic_recursive: FxHashMap<u32, bool>,
     pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
     pub alias_names: FxHashMap<TyId, String>, // structural type aliases' names, for messages
+    /// Top-level, non-generic aliases of object types, by the type: their module and name, so
+    /// generated code can name a type it cannot write out (a function with properties, an
+    /// object literal type with accessors: `generated::spell`).
+    pub alias_homes: FxHashMap<TyId, (usize, String)>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
@@ -510,6 +514,7 @@ impl<'m> Ctx<'m> {
             generic_recursive: FxHashMap::default(),
             recursive_union_insts: FxHashMap::default(),
             alias_names: FxHashMap::default(),
+            alias_homes: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
             primitive_statics: None,

@@ -15,6 +15,7 @@
 //!   with the generated code added.
 
 pub(crate) mod access;
+pub mod arm;
 pub(crate) mod bind;
 pub(crate) mod demand;
 pub mod model;

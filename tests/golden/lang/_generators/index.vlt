@@ -7,6 +7,9 @@ export declare generated("./gen") function describe<T>(): string;
 /** `value` as text, written per type: fields in order, strings quoted. */
 export declare generated("./gen") function show<T>(value: T): string;
 
+/** Which member of the union `value` holds, and its value. */
+export declare generated("./gen") function armOf<T>(value: T): string;
+
 /** A generated function whose generator writes code that does not compile. */
 export declare generated("./gen") function broken<T>(value: T): string;
 

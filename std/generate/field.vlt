@@ -10,5 +10,7 @@ export class Field {
   isPrivate: bool = false;
   isEsPrivate: bool = false;
   hasDefault: bool = false;
+  /** An object literal's getter (`get k() { … }`): `type` is what it returns. */
+  isGetter: bool = false;
   at: i64 = -1;
 }

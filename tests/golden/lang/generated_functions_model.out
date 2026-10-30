@@ -1,0 +1,10 @@
+Map<string, i32>: map of string, i32
+Record<string, boolean>: record of string, boolean
+shared<i32>: shared of i32
+{ count: Counter; tally: shared<i32> }: object; count: Counter (function); tally: shared<i32> (shared)
+{ inner: Lazy }: object; inner: Lazy
+Lazy: interface
+1 i32: 1
+2 f64: 2.5
+0 string: s
+1 i32[]: 1,2 0 f64[]: 1.5

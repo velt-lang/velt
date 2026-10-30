@@ -417,6 +417,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                         "private": f.private,
                         "esPrivate": f.es_private,
                         "hasDefault": f.has_default,
+                        "isGetter": f.getter,
                         "at": f.at,
                     })).collect::<Vec<_>>(),
                     "base": opt(t.base),

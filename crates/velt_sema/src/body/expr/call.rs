@@ -28,6 +28,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.checked_key_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.generated_arm(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.generated_construct(callee, type_args, args, span) {
             return h;
         }

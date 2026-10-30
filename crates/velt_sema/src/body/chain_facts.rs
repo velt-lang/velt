@@ -15,6 +15,9 @@ impl FnCx<'_, '_> {
         callee: &ast::Expr,
         args: &[ast::Expr],
     ) -> (Vec<Fact>, Vec<Fact>) {
+        if let Some(facts) = self.generated_arm_facts(callee, args) {
+            return facts;
+        }
         let (mut t, f) = match self.dynamic_is_array_facts(callee, args) {
             Some(facts) => facts,
             None => match self.is_array_test(callee, args) {
@@ -88,5 +91,24 @@ impl FnCx<'_, '_> {
             cur = object;
         }
         facts
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The facts of `__arm(v, i)` in generated code (`generated::arm`) on a union local `v`:
+    /// member `i` where it holds, the others where it does not.
+    fn generated_arm_facts(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let (v, i) = self.arm_call(callee, args)?;
+        let (l, _, u) = self.local_with_members(v)?;
+        let n = self.cx.union_members(u)?.len() as u32;
+        let others = (0..n).filter(|k| *k != i).collect();
+        Some((
+            vec![Fact::Members(l, vec![i])],
+            vec![Fact::Members(l, others)],
+        ))
     }
 }

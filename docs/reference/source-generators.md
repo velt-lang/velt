@@ -81,7 +81,11 @@ export function show(req: InstanceRequest, out: Output): void {
   needed the instance).
 
 An optional field (`legs?: i32`) reads as `T | undefined`: the model gives `T` and
-`optional: true`. Compute names from `out` into variables before writing a line that uses them
+`optional: true`; a field `n?: T | null` reads `undefined` when absent and `null` when it holds
+`null`. The prelude's `Map<K, V>`, `Record<K, V>` and `Set<T>` are the kinds `map`, `record` and
+`set` (their `args` are the key and value types, or the element type), a `shared<T>` cell is
+`shared`, and a function with properties is a `function`. An object literal's getter
+(`get b() { … }`) is a field with `isGetter: true` whose `type` is what it returns. Compute names from `out` into variables before writing a line that uses them
 (`const field = out.instance(…); out.line(…)`): one call cannot both modify `out` and read it in
 an argument.
 
@@ -100,6 +104,19 @@ running its constructor:
 ```ts ignore
 // in a generator, for a class `t` of the model:
 out.line(`return __construct<${out.typeName(t.id)}>({ name: n, secret: s });`);
+```
+
+A union is written as its active member with `__arm(v, i)`, true when the union `v` holds its
+member `i` (the index into the model's `arms`). It narrows `v` like `typeof` and `instanceof`
+do, also between members no JavaScript test tells apart (`i32 | f64`, `i32[] | f64[]`, two
+object types without a discriminant):
+
+```ts ignore
+// in a generator, for a union `t` of the model and the parameter `v`:
+for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+  const write = out.instance("write", [t.arms[i]]);
+  out.line(`if (__arm(${v}, ${i})) { return ${write}(${v}); }`);
+}
 ```
 
 `__construct<T>({ … })` takes the fields as an object literal. A field with an initializer that

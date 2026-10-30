@@ -22,8 +22,8 @@ pub struct Model {
 #[derive(Clone, Debug, Default)]
 pub struct ModelType {
     /// `number`, `boolean`, `string`, `void`, `never`, `symbol`, `literal`, `enum`, `array`,
-    /// `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `date`,
-    /// `function`, `any`, `unknown`, `promise` or `opaque`.
+    /// `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `record`,
+    /// `set`, `shared`, `date`, `function`, `any`, `unknown`, `promise` or `opaque`.
     pub kind: &'static str,
     /// As messages show it (`User`, `Map<string, User[]>`).
     pub display: String,
@@ -33,8 +33,8 @@ pub struct ModelType {
     pub spelling: String,
     /// `f64`, `i32`, … for numbers.
     pub repr: String,
-    /// Element (`array`), payload (`option`, `promise`), key and value (`map`), elements
-    /// (`tuple`), type arguments (`class`, `struct`, `interface`, `opaque`).
+    /// Element (`array`, `set`), payload (`option`, `promise`, `shared`), key and value (`map`,
+    /// `record`), elements (`tuple`), type arguments (`class`, `struct`, `interface`, `opaque`).
     pub args: Vec<u32>,
     /// The members of a `union`, in order.
     pub arms: Vec<u32>,
@@ -75,6 +75,8 @@ pub struct ModelField {
     pub private: bool,
     pub es_private: bool,
     pub has_default: bool,
+    /// An object literal's getter (`get k() { … }`): `ty` is what it returns.
+    pub getter: bool,
     pub at: u32,
 }
 
@@ -198,8 +200,11 @@ impl Builder {
                 m.args = args.iter().map(|t| self.id(*t)).collect();
             }
             TyKind::Adt(d, args) => self.adt(cx, d, &args, &mut m),
-            TyKind::Shared(_)
-            | TyKind::Simd(_)
+            TyKind::Shared(x) => {
+                m.kind = "shared";
+                m.args = vec![self.id(x)];
+            }
+            TyKind::Simd(_)
             | TyKind::Error
             | TyKind::Result(..)
             | TyKind::Param(_)
@@ -209,6 +214,28 @@ impl Builder {
     }
 
     fn adt(&mut self, cx: &mut Ctx, d: DefId, args: &[TyId], m: &mut ModelType) {
+        // The prelude's collections are kinds of their own: their structure is their entries,
+        // not their (private) fields.
+        let collection = ["Map", "Record", "Set"]
+            .into_iter()
+            .find(|n| cx.prelude_adt(n) == Some(d) || (*n == "Set" && is_std_set(cx, d)));
+        if let Some(name) = collection {
+            m.kind = match name {
+                "Map" => "map",
+                "Record" => "record",
+                _ => "set",
+            };
+            m.qualified_name = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
+            m.args = args.iter().map(|t| self.id(*t)).collect();
+            return;
+        }
+        // A function with properties is a function (its properties are not data).
+        let t = cx.ty.intern(TyKind::Adt(d, args.to_vec()));
+        if cx.is_callable_object(t) {
+            m.kind = "function";
+            return;
+        }
+        let getters = literal_getters(cx, d);
         match &cx.info[d.0 as usize] {
             DefInfo::Adt(a) => {
                 let std = cx.scopes[a.module].is_std;
@@ -246,7 +273,8 @@ impl Builder {
                     };
                 } else {
                     for (name, declared, optional, readonly, private, has_default, at) in fields {
-                        let ty = cx.subst(declared, args);
+                        let getter = getters.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
+                        let ty = cx.subst(getter.unwrap_or(declared), args);
                         let es_private = name.starts_with('#');
                         let field = ModelField {
                             ty: self.id(ty),
@@ -255,6 +283,7 @@ impl Builder {
                             private,
                             es_private,
                             has_default,
+                            getter: getter.is_some(),
                             at: self.span(at),
                             name,
                         };
@@ -318,6 +347,43 @@ impl Builder {
             _ => m.kind = "opaque",
         }
     }
+}
+
+/// Is `d` std's `Set` (velt/collections; a class whose field 0 is the `Map` of its items)?
+fn is_std_set(cx: &Ctx, d: DefId) -> bool {
+    cx.adt(d).is_some_and(|a| {
+        cx.scopes[a.module].is_std
+            && a.qual_name.ends_with("::Set")
+            && a.fields.first().is_some_and(|f| f.name == "items")
+    })
+}
+
+/// The getters of object literal type `d` (`get k() { … }`, held as a function in field `k`),
+/// with what each returns (as `crate::any`'s `literal_accessors` finds them).
+fn literal_getters(cx: &mut Ctx, d: DefId) -> Vec<(String, TyId)> {
+    let Some(a) = cx.adt(d) else {
+        return vec![];
+    };
+    let n = a.generics.names.len() as u32;
+    let fields: Vec<(String, TyId)> = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+    let own: Vec<TyId> = (0..n).map(|k| cx.ty.intern(TyKind::Param(k))).collect();
+    let owner = cx.ty.intern(TyKind::Adt(d, own));
+    let Some(iface) = cx.impls.iter().find(|i| i.ty == owner).map(|i| i.iface) else {
+        return vec![];
+    };
+    let Some(i) = cx.iface(iface) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for m in i.methods.iter().filter(|m| m.is_getter) {
+        let held = fields.iter().find(|(f, _)| *f == m.name).map(|(_, t)| *t);
+        if let Some(t) = held {
+            if matches!(cx.ty.kind(t), TyKind::FnPtr { .. }) && t != m.ret {
+                out.push((m.name.clone(), m.ret));
+            }
+        }
+    }
+    out
 }
 
 /// The non-generic classes of the program that extend class `d`, directly or not, in
@@ -408,6 +474,7 @@ impl Model {
                     f.private,
                     f.es_private,
                     f.has_default,
+                    f.getter,
                 ];
                 h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
             }

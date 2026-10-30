@@ -9,8 +9,9 @@ export class Type {
   id: i64 = 0;
   /**
    * `number`, `boolean`, `string`, `void`, `never`, `symbol`, `literal`, `enum`, `array`,
-   * `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `date`,
-   * `function`, `any`, `unknown`, `promise` or `opaque`.
+   * `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `record`,
+   * `set`, `shared`, `date`, `function` (also a function with properties), `any`, `unknown`,
+   * `promise` or `opaque`.
    */
   kind: string = "";
   /** As messages show it (`User`, `number[]`). */
@@ -21,7 +22,10 @@ export class Type {
   spelling: string = "";
   /** `f64`, `i32`, … for numbers. */
   repr: string = "";
-  /** Element, payload, key and value, tuple elements or type arguments, by kind. */
+  /**
+   * Element (`array`, `set`), payload (`option`, `promise`, `shared`), key and value (`map`,
+   * `record`), tuple elements or type arguments, by kind.
+   */
   args: i64[] = [];
   /** The members of a union, in order. */
   arms: i64[] = [];

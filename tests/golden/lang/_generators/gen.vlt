@@ -11,10 +11,21 @@ export function describe(req: InstanceRequest, out: Output): void {
     }
     text += ` of ${arms.join(", ")}`;
   }
+  if (t.kind == "map" || t.kind == "record" || t.kind == "set" || t.kind == "shared") {
+    const args: string[] = [];
+    for (const a of t.args) {
+      args.push(req.model.type(a).display);
+    }
+    text += ` of ${args.join(", ")}`;
+  }
   for (const f of t.fields) {
     const opt = f.optional ? "?" : "";
     const vis = f.isPrivate ? "private " : "";
-    text += `; ${vis}${f.name}${opt}: ${req.model.type(f.type).display}`;
+    const get = f.isGetter ? "get " : "";
+    const ft = req.model.type(f.type);
+    const shown = ["function", "map", "record", "set", "shared"].includes(ft.kind);
+    const kind = shown ? ` (${ft.kind})` : "";
+    text += `; ${vis}${get}${f.name}${opt}: ${ft.display}${kind}`;
   }
   for (const m of t.members) {
     text += `; ${m.name} = ${m.value}`;
@@ -112,4 +123,17 @@ export function rebuild(req: InstanceRequest, out: Output): void {
 // Builds a type its request does not hold: not allowed.
 export function forge(req: InstanceRequest, out: Output): void {
   out.line(`return __construct<Hidden>({ code: 1 }).code;`);
+}
+
+// `__arm(v, i)` tests whether the union `v` holds its member `i` and narrows `v` to it, also
+// for members no JavaScript test tells apart (`i32 | f64`, `i32[] | f64[]`).
+export function armOf(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+    const a = req.model.type(t.arms[i]);
+    const label = out.literal(`${i} ${a.display}: `);
+    out.line(`if (__arm(${v}, ${i})) { return ${label} + \`\${${v}}\`; }`);
+  }
+  out.line(`return "none";`);
 }

@@ -136,6 +136,11 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
                 let mut fs = vec![];
                 for (name, declared, optional, readonly) in fields {
                     let ty = cx.subst(declared, &args);
+                    // A function with properties: a type literal would be another type; the
+                    // alias that declared it names it.
+                    if name.starts_with('#') {
+                        return alias_spelling(cx, t);
+                    }
                     let opt = if optional { "?" } else { "" };
                     let ro = if readonly { "readonly " } else { "" };
                     fs.push(format!(
@@ -147,9 +152,11 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
             }
             DefInfo::Adt(a) => {
                 let q = a.qual_name.clone();
-                {
-                    let a = all(cx, &args, depth, params)?;
-                    qualified(cx, &q, &a)?
+                let a = all(cx, &args, depth, params)?;
+                // An object literal type with accessors: by the alias that declared it.
+                match qualified(cx, &q, &a) {
+                    Some(s) => s,
+                    None => alias_spelling(cx, t)?,
                 }
             }
             DefInfo::Enum(e) if e.is_union => {
@@ -188,4 +195,11 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
         TyKind::Param(i) if params => param_placeholder(i),
         TyKind::Param(_) => return None,
     })
+}
+
+/// `__qualified<"<module>", "<alias>">` for an object type a top-level alias declared.
+fn alias_spelling(cx: &mut Ctx, t: TyId) -> Option<String> {
+    let (m, name) = cx.alias_homes.get(&t)?.clone();
+    let path = cx.modules[m].path.clone();
+    qualified(cx, &format!("{path}::{name}"), &[])
 }

@@ -628,6 +628,20 @@ goldens:
   port" below. A generator host for std's generators sits in the std root and is std code (it
   imports their internal files).
 
+- The model's kinds for what the JSON port needs (json port, step 2): the prelude's `Map`,
+  `Record` and `Set` are `map`, `record` and `set` (`args`: key and value, or element), not
+  `opaque`; `shared<T>` is `shared`; a function with properties is a `function`; an object
+  literal's getter is a field with `isGetter` (its `type` is the getter's result). A type that
+  generated code cannot write out (a function with properties, an object literal type with
+  accessors) is spelled by the top-level alias that declared it (`Ctx::alias_homes`).
+- `__arm(v, i)` in generated code (`generated/arm.rs`): whether the union `v` holds its model
+  member `i`, a test narrowing understands (`Fact::Members`), so a generator writes a union as
+  its active member without a JavaScript test per member (none tells `i32 | f64` apart).
+- `velt/reflect` (docs/std/reflect.md, json port step 1): reflection on `any` values from the
+  descriptor (slot 18, velt_vir `any_reflect.rs`), the identity of a value, `isProxy` and a
+  per-thread visit stack. It is the public runtime API the `any` path of `JSON.stringify` is
+  written on, replacing the descriptor's JSON slot.
+
 ### Left for the port of `JSON.stringify` and `JSON.parse`
 
 What `writeJson` lacks before `JSON.stringify<T>` can call it and the glue can go, each needing
