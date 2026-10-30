@@ -14,7 +14,7 @@ declare system function fsync(fd: i32): i32;
 declare system function lastOsError(): i32;
 ```
 
-[`velt/fs/fd`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
+[`velt/fs`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
 and `fstatSync` are Velt code over these declarations.
 
 ## What crosses
@@ -143,7 +143,7 @@ error: system function `pread` is not available on wasm32-wasip1
 A standard-library function that calls one is reported at the program's call of it:
 
 ```text
-app.vlt:4:14: error: `openSync` (velt/fs/fd) is not available on x86_64-pc-windows-msvc
+app.vlt:4:14: error: `openSync` (velt/fs) is not available on x86_64-pc-windows-msvc
   = note: it calls the system function `open`, which x86_64-pc-windows-msvc lacks
 ```
 

@@ -1,0 +1,85 @@
+// velt/fs (internal): the runtime functions velt/fs calls (docs/internals/contracts/rt_abi_async.md
+// §5 and §14.7) and the layouts they return.
+//
+// Extern conventions (the lowering ABI of `declare function`, rt_abi_async.md §3.1): `string`/
+// struct params are passed as `const T*`; a struct result becomes a trailing out-pointer and the
+// runtime function returns nothing. Paths and data are borrowed by the runtime and copied at the
+// call, so the wrappers never copy.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Dirent } from "velt/fs/dirent";
+import { Stats } from "velt/fs/stats";
+
+export declare async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>>;
+export declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
+export declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_append_file(path: string, data: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>>;
+export declare async function velt_rt_fs_read_dir_typed(
+  path: string,
+): Promise<IoResult<DirentList>>;
+export declare async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>>;
+export declare async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>>;
+export declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
+export declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
+export declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
+export declare async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_exists(path: string): Promise<bool>;
+export declare function velt_rt_fs_read_file_sync(path: string): IoResult<string>;
+export declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
+export declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
+export declare function velt_rt_fs_append_file_sync(path: string, data: string): IoStatus;
+export declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
+export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
+export declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
+export declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
+export declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
+export declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
+export declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
+export declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
+export declare function velt_rt_fs_rename_sync(from: string, to: string): IoStatus;
+export declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoStatus;
+export declare function velt_rt_fs_exists_sync(path: string): bool;
+
+export declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
+export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
+export declare async function velt_rt_fs_reader_read_string(
+  r: u64,
+  max: u64,
+): Promise<IoResult<string>>;
+export declare async function velt_rt_fs_reader_read_line(r: u64): Promise<LineRead>;
+export declare function velt_rt_fs_reader_close(r: u64);
+export declare async function velt_rt_fs_open_write(
+  path: string,
+  append: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_rt_fs_writer_write(w: u64, data: string): Promise<IoStatus>;
+export declare async function velt_rt_fs_writer_write_bytes(w: u64, data: u8[]): Promise<IoStatus>;
+export declare async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus>;
+export declare async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus>;
+export declare function velt_rt_fs_writer_free(w: u64);
+
+// The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
+// 1 file, 2 directory, 3 symlink).
+struct DirentList {
+  names: string[];
+  kinds: u8[];
+}
+
+// The runtime's `LineRead` (§14.4).
+struct LineRead {
+  line: IoResult<string>;
+  eof: bool;
+}
+
+/** The entries of a runtime listing, each with its type. */
+export function dirents(list: DirentList): Dirent[] {
+  const out: Dirent[] = [];
+  for (let i = 0; i < list.names.length; i++) {
+    out.push({ name: list.names[i], kind: list.kinds[i] });
+  }
+  return out;
+}

@@ -1,0 +1,62 @@
+// velt/fs (internal): writing to a file descriptor (`writeSync`).
+
+import { EINTR, lastOsError, pwrite, write } from "velt/fs/fd/system";
+import { bufferOffset, descriptor, writeLength, writePosition } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+import { utf8Encode } from "velt/encoding";
+import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
+
+/**
+ * Writes `length` bytes of `buffer` from byte `offset` on (Node's `fs.writeSync`): at
+ * `position` in the file, or at the file's own position when `position` is left out, `null` or
+ * not a valid byte offset (at its end for a file opened to append). Returns the number of bytes
+ * written. `offset` defaults to 0 and `length` to the rest of the buffer. `buffer` is a `u8[]`
+ * (Node's `Buffer`), a typed array or a `DataView`; a string is written as UTF-8, and its third
+ * argument is then the position.
+ */
+export function writeSync(
+  fd: number,
+  buffer: u8[] | ArrayBufferView | string,
+  offset: number | null = null,
+  length?: number | null,
+  position?: number | null,
+): number {
+  const f = descriptor(fd);
+  if (typeof buffer == "string") {
+    const b = utf8Encode(buffer);
+    return writeFrom(f, b, 0, b.length as usize, 0, null, offset);
+  }
+  const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
+  const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
+  const size =
+    buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
+  return writeFrom(f, bytes, base, size, offset, length, position);
+}
+
+// `writeSync` of the `size` bytes of `bytes` from `base`, again when a signal interrupted it.
+function writeFrom(
+  f: i32,
+  bytes: u8[],
+  base: usize,
+  size: usize,
+  offset: number | null,
+  length: number | null | undefined,
+  position: number | null | undefined,
+): number {
+  const off = bufferOffset(size, offset, false);
+  const len = writeLength(size, off, length);
+  const start = base + (off as usize);
+  const end = base + ((off + len) as usize);
+  const at = writePosition(position);
+  while (true) {
+    const n =
+      at < 0 ? write(f, bytes.subarray(start, end)) : pwrite(f, bytes.subarray(start, end), at);
+    if (n >= 0) {
+      return n as number;
+    }
+    const e = lastOsError();
+    if (e != EINTR) {
+      throw osError(e, "write");
+    }
+  }
+}

@@ -76,9 +76,9 @@ function main() {
 ## File descriptors
 
 Node's file-descriptor API, written in Velt over [system functions](../reference/system-functions.md):
-each call is one call of the C library, with no runtime in between. It is the module
-`velt/fs/fd` (`import { openSync, readSync } from "velt/fs/fd"`), not `velt/fs` itself, so a
-program that only reads and writes whole files does not compile it. On macOS and Linux; for
+each call is one call of the C library, with no runtime in between. It is part of
+`velt/fs` (`import { openSync, readSync } from "velt/fs"`), and a program that does not import
+it does not compile it. On macOS and Linux; for
 Windows and WebAssembly, a call of one of them is a compile error at that call, which names the
 system function the target lacks (planned: Windows over its kernel32 functions, and `fs.promises`'
 `FileHandle`).
@@ -113,7 +113,7 @@ for an offset, length, position or descriptor out of range, and a `TypeError` fo
 flags. `EINTR` is retried.
 
 ```ts
-import { openSync, readSync, writeSync, fsyncSync, fstatSync, closeSync, unlinkSync } from "velt/fs/fd";
+import { openSync, readSync, writeSync, fsyncSync, fstatSync, closeSync, unlinkSync } from "velt/fs";
 import { tmpdir } from "velt/os";
 
 function main() {

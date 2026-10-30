@@ -1,6 +1,6 @@
 //! Blocking `std/fs` variants (`readFileSync` ...): same operations and result layouts as the async
 //! ABI, run on the calling thread. Each writes its `IoResult` to `out` and returns nothing:
-//! `std/fs/index.vlt` declares a struct result, which lowers to exactly that (rt_abi_async.md §3.1).
+//! `std/fs/rt.vlt` declares a struct result, which lowers to exactly that (rt_abi_async.md §3.1).
 
 use super::ops::{self, data_arg, path_arg, VeltDirents, VeltStat};
 use crate::bytes::VeltBytes;

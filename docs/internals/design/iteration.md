@@ -431,7 +431,7 @@ caller (section 4): no allocation per item, the same runtime calls as the pull l
 | Source | How | Yields | `E` |
 |---|---|---|---|
 | `Channel<T>` (std/sync/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
-| `FileReader` (std/fs/stream.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
+| `FileReader` (std/fs/file_reader.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
 | velt/process | `export async function* lines()` | remaining lines | `IoError` |
 | `WebSocket` (std/net/websocket/index.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
 | `RedisSubscriber` (std/redis/pubsub.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |

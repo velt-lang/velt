@@ -1,0 +1,78 @@
+// velt/fs (internal): opening and closing file descriptors (`openSync`, `closeSync`) and
+// removing files (`unlinkSync`).
+
+import { close, EINTR, isMac, lastOsError, open, unlink } from "velt/fs/fd/system";
+import { cPath, descriptor, integer, MAX_INT32 } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+
+// Node's flag strings, each between spaces.
+const FLAG_FORMS = " r rs sr r+ rs+ sr+ w wx xw w+ wx+ xw+ a ax xa as sa a+ ax+ xa+ as+ sa+ ";
+
+// The `open` flags of one of Node's flag strings (libuv adds `O_CLOEXEC`): `r` reads, `w`
+// truncates or creates, `a` appends or creates; `+` also the other direction, `x` fails if the
+// file exists, `s` writes through.
+function openFlags(flags: string): i32 {
+  if (flags.length == 0 || flags.includes(" ") || !FLAG_FORMS.includes(` ${flags} `)) {
+    throw new TypeError(`The argument 'flags' is invalid. Received '${flags}'`);
+  }
+  const mac = isMac();
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const plus = flags.includes("+");
+  let f: i32 = plus ? 2 : 1; // O_RDWR, O_WRONLY
+  if (flags.includes("r")) {
+    f = plus ? 2 : 0;
+  } else if (flags.includes("w")) {
+    f |= creat | (mac ? 0x400 : 0x200); // O_TRUNC
+  } else {
+    f |= creat | (mac ? 0x8 : 0x400); // O_APPEND
+  }
+  if (flags.includes("x")) {
+    f |= mac ? 0x800 : 0x80; // O_EXCL
+  }
+  if (flags.includes("s")) {
+    f |= mac ? 0x80 : 0x101000; // O_SYNC
+  }
+  return f | (mac ? 0x1000000 : 0x80000); // O_CLOEXEC
+}
+
+/**
+ * Opens `path` and returns its file descriptor (Node's `fs.openSync`). `flags` is one of Node's
+ * strings (`"r"`, `"r+"`, `"w"`, `"wx"`, `"w+"`, `"a"`, `"ax"`, `"a+"`, ... and the `s`
+ * forms) or the system's `O_*` bits as a number; `mode` is the permission of a file it
+ * creates (before the umask).
+ */
+export function openSync(path: string, flags: string | number = "r", mode: number = 0o666): number {
+  const oflag: i32 =
+    typeof flags == "string"
+      ? openFlags(flags)
+      : integer("flags", flags, -MAX_INT32 - 1, MAX_INT32) as i32;
+  const perm = integer("mode", mode, 0, 4294967295) as u32;
+  const c = cPath(path);
+  while (true) {
+    const fd = open(c, oflag, perm);
+    if (fd >= 0) {
+      return fd as number;
+    }
+    const e = lastOsError();
+    if (e != EINTR) {
+      throw osError(e, "open", path);
+    }
+  }
+}
+
+/** Removes the file `path` (Node's `fs.unlinkSync`; not a directory: `EPERM` or `EISDIR`). */
+export function unlinkSync(path: string) {
+  // `c` is a variable, not a temporary, so its free runs at the end of the function, after
+  // `lastOsError` has read errno (the compiler also captures errno right after the call).
+  const c = cPath(path);
+  if (unlink(c) != 0) {
+    throw osError(lastOsError(), "unlink", path);
+  }
+}
+
+/** Closes the file descriptor `fd` (Node's `fs.closeSync`). */
+export function closeSync(fd: number) {
+  if (close(descriptor(fd)) != 0) {
+    throw osError(lastOsError(), "close");
+  }
+}

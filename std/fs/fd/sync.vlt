@@ -1,0 +1,70 @@
+// velt/fs (internal): flushing, truncating and describing an open file (`fsyncSync`,
+// `fdatasyncSync`, `ftruncateSync`, `fstatSync`).
+
+import {
+  fcntl,
+  fdatasync,
+  fstat,
+  fsync,
+  ftruncate,
+  isMac,
+  lastOsError,
+  Stat,
+} from "velt/fs/fd/system";
+import { descriptor, integer, MAX_SAFE } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+import { Stats } from "velt/fs/stats";
+
+// macOS: `F_FULLFSYNC` (to the disk itself), else `F_BARRIERFSYNC`, else `fsync`, as libuv.
+function fullSync(f: i32): i32 {
+  if (fcntl(f, 51, 0) == 0 || fcntl(f, 85, 0) == 0) {
+    return 0;
+  }
+  return fsync(f);
+}
+
+/** Flushes the file's data and metadata to the disk (Node's `fs.fsyncSync`). */
+export function fsyncSync(fd: number) {
+  const f = descriptor(fd);
+  if ((isMac() ? fullSync(f) : fsync(f)) != 0) {
+    throw osError(lastOsError(), "fsync");
+  }
+}
+
+/** Flushes the file's data to the disk (Node's `fs.fdatasyncSync`). */
+export function fdatasyncSync(fd: number) {
+  const f = descriptor(fd);
+  if ((isMac() ? fullSync(f) : fdatasync(f)) != 0) {
+    throw osError(lastOsError(), "fdatasync");
+  }
+}
+
+/** Sets the file's size to `len` bytes, cutting or extending it with zeros (Node's `fs.ftruncateSync`). */
+export function ftruncateSync(fd: number, len: number = 0) {
+  const f = descriptor(fd);
+  const n = integer("len", len, -MAX_SAFE, MAX_SAFE);
+  if (ftruncate(f, n < 0 ? 0 : n) != 0) {
+    throw osError(lastOsError(), "ftruncate");
+  }
+}
+
+/**
+ * The metadata of the open file `fd` (Node's `fs.fstatSync`): its size, modification time and
+ * type, from the system's `fstat`.
+ */
+export function fstatSync(fd: number): Stats {
+  const f = descriptor(fd);
+  const st: Stat = { st_mode: 0, st_size: 0, st_mtime: 0, st_mtime_nsec: 0 };
+  if (fstat(f, st) != 0) {
+    throw osError(lastOsError(), "fstat");
+  }
+  const kind = st.st_mode & 0o170000;
+  return {
+    size: st.st_size as u64,
+    mtimeMs:
+      (st.st_mtime as number) * 1000 + Math.floor((st.st_mtime_nsec as number) / 1000) / 1000,
+    file: kind == 0o100000,
+    dir: kind == 0o040000,
+    symlink: kind == 0o120000,
+  };
+}

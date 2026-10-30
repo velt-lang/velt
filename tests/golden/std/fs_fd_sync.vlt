@@ -2,7 +2,7 @@
 // Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, `fstatSync`, ...), which
 // velt/fs writes in Velt over system functions: the same results, errors and messages as Node
 // (this program prints what `node` prints for it with `fs` from "node:fs").
-import * as fs from "velt/fs/fd";
+import * as fs from "velt/fs";
 
 function attempt(f: () => string) {
   try {

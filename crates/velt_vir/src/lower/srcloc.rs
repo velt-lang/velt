@@ -109,6 +109,29 @@ impl LocMap {
             .unwrap_or(false)
     }
 
+    /// The std module a program imports the std module `module` (`std/fs/fd/open`) from: the
+    /// nearest loaded folder module (`std/fs`, from `std/fs/index.vlt`) at or above it, or
+    /// `module` itself when none is loaded.
+    pub(super) fn owner_module<'a>(&self, module: &'a str) -> std::borrow::Cow<'a, str> {
+        let owner = self
+            .shown
+            .iter()
+            .zip(&self.std_files)
+            .filter(|(_, std)| **std)
+            .filter_map(|(path, _)| path.strip_suffix("/index.vlt"))
+            .filter(|dir| {
+                module == *dir
+                    || module
+                        .strip_prefix(*dir)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .max_by_key(|dir| dir.len());
+        match owner {
+            Some(dir) => std::borrow::Cow::Owned(dir.to_string()),
+            None => std::borrow::Cow::Borrowed(module),
+        }
+    }
+
     /// `path:line:col`, a std file's path relative to the std root.
     pub(super) fn describe(&self, loc: SrcLoc) -> String {
         let path = self

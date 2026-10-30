@@ -1,0 +1,37 @@
+// velt/fs (internal): `FileWriter`, a file open for buffered writing.
+
+import { checkIo } from "velt/native/status";
+import {
+  velt_rt_fs_writer_close,
+  velt_rt_fs_writer_flush,
+  velt_rt_fs_writer_free,
+  velt_rt_fs_writer_write,
+  velt_rt_fs_writer_write_bytes,
+} from "velt/fs/rt";
+
+/** A file open for writing, buffered (64 KiB). */
+export struct FileWriter {
+  private handle: u64;
+
+  /** Writes `data` as UTF-8 (buffered). */
+  async write(data: string): Promise<void> {
+    checkIo(await velt_rt_fs_writer_write(this.handle, data));
+  }
+
+  /** Writes `data` (buffered). */
+  async writeBytes(data: u8[]): Promise<void> {
+    checkIo(await velt_rt_fs_writer_write_bytes(this.handle, data));
+  }
+
+  /** Pushes buffered data to the operating system. */
+  async flush(): Promise<void> {
+    checkIo(await velt_rt_fs_writer_flush(this.handle));
+  }
+
+  /** Flushes and closes the file, then releases the handle; throws if the final flush fails. */
+  async close(): Promise<void> {
+    const s = await velt_rt_fs_writer_close(this.handle);
+    velt_rt_fs_writer_free(this.handle);
+    checkIo(s);
+  }
+}

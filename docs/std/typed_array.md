@@ -74,9 +74,9 @@ function main() {
   keeps its length whatever happens to `b` afterwards), and `xs.toBytes()` copies a
   `Uint8Array`'s elements into a `u8[]`, and `b.subarray(begin, end)` of a `u8[]` is a
   `Uint8Array` over its bytes, not a copy, whose `length` counts the elements `b` still has
-  when `b` became shorter, as its `slice`, `subarray` and `with` do ([prelude](prelude.md)). An index may be an integer of any type
-  (`xs[k]` with `k: usize`), as for arrays.
-- **To the system**: a typed array or a `DataView` passed to `velt/fs/fd`'s `readSync` /
+  when `b` became shorter, as its `slice`, `subarray` and `with` do ([prelude](prelude.md)). An
+  index may be an integer of any type (`xs[k]` with `k: usize`), as for arrays.
+- **To the system**: a typed array or a `DataView` passed to `velt/fs`'s `readSync` /
   `writeSync` or to a [system function](../reference/system-functions.md#views)'s buffer
   parameter passes its bytes where they are, with no copy (`readSync(fd, page.subarray(0,
   512))` reads into the page).

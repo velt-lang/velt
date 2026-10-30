@@ -39,7 +39,7 @@ pub struct VeltDirents {
     pub kinds: VeltBytes,
 }
 
-/// What a directory entry is (`VeltDirents::kinds`), as `std/fs/index.vlt`'s `Dirent` reads it.
+/// What a directory entry is (`VeltDirents::kinds`), as `std/fs/dirent.vlt`'s `Dirent` reads it.
 pub mod kind {
     /// Anything else (a FIFO, socket or device).
     pub const OTHER: u8 = 0;

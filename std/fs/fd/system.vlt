@@ -1,0 +1,36 @@
+// velt/fs (internal): the system functions of Node's file-descriptor API (`openSync`,
+// `readSync`, ...) and the C layout they fill. Each call of the API is one call of the C library,
+// with nothing in between (docs/reference/system-functions.md). On macOS and Linux; calling it for
+// another target is a compile error that names the system function it lacks.
+
+import { platform } from "velt/os/machine";
+
+export declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+export declare system function close(fd: i32): i32;
+export declare system function read(fd: i32, buf: u8[]): isize;
+export declare system function write(fd: i32, buf: readonly u8[]): isize;
+export declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+export declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+export declare system function fsync(fd: i32): i32;
+export declare system function fdatasync(fd: i32): i32;
+export declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+export declare system function ftruncate(fd: i32, length: i64): i32;
+export declare system function fstat(fd: i32, st: Stat): i32;
+export declare system function unlink(path: readonly u8[]): i32;
+export declare system function lastOsError(): i32;
+
+/** The fields of `struct stat` `fstatSync` reads (the table maps them per target). */
+export struct Stat {
+  st_mode: u32;
+  st_size: i64;
+  st_mtime: i64;
+  st_mtime_nsec: i64;
+}
+
+/** `EINTR`: a signal interrupted the call, which is then made again. */
+export const EINTR: i32 = 4;
+
+/** Whether the program runs on macOS, whose `open` flags and errno numbers differ from Linux's. */
+export function isMac(): bool {
+  return platform() == "darwin";
+}

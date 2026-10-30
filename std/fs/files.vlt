@@ -1,0 +1,55 @@
+// velt/fs (internal): reading and writing whole files (`readFile`, `writeFile`, `appendFile` and
+// their `*Sync` twins).
+
+import { unwrapIo } from "velt/native/result";
+import { checkIo } from "velt/native/status";
+import {
+  velt_rt_fs_append_file,
+  velt_rt_fs_append_file_sync,
+  velt_rt_fs_read_file,
+  velt_rt_fs_read_file_bytes,
+  velt_rt_fs_read_file_bytes_sync,
+  velt_rt_fs_read_file_sync,
+  velt_rt_fs_write_file,
+  velt_rt_fs_write_file_sync,
+} from "velt/fs/rt";
+
+/** Reads a UTF-8 text file (`EILSEQ` if it is not valid UTF-8). */
+export async function readFile(path: string): Promise<string> {
+  return unwrapIo(await velt_rt_fs_read_file(path));
+}
+
+/** Reads a file's bytes. */
+export async function readFileBytes(path: string): Promise<u8[]> {
+  return unwrapIo(await velt_rt_fs_read_file_bytes(path));
+}
+
+/** Creates or truncates the file. */
+export async function writeFile(path: string, data: string): Promise<void> {
+  checkIo(await velt_rt_fs_write_file(path, data));
+}
+
+/** Appends, creating the file if needed. */
+export async function appendFile(path: string, data: string): Promise<void> {
+  checkIo(await velt_rt_fs_append_file(path, data));
+}
+
+/** `readFile`, blocking the calling thread. */
+export function readFileSync(path: string): string {
+  return unwrapIo(velt_rt_fs_read_file_sync(path));
+}
+
+/** `readFileBytes`, blocking the calling thread. */
+export function readFileBytesSync(path: string): u8[] {
+  return unwrapIo(velt_rt_fs_read_file_bytes_sync(path));
+}
+
+/** `writeFile`, blocking the calling thread. */
+export function writeFileSync(path: string, data: string) {
+  checkIo(velt_rt_fs_write_file_sync(path, data));
+}
+
+/** `appendFile`, blocking the calling thread. */
+export function appendFileSync(path: string, data: string) {
+  checkIo(velt_rt_fs_append_file_sync(path, data));
+}
