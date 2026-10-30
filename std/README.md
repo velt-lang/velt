@@ -1,6 +1,6 @@
 # Velt standard library
 
-Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std/<path>.vlt`.
+Written in Velt. The compiler resolves `import { x } from "velt/<path>"` to `std/<path>/index.vlt` (or `std/<path>.vlt`); [docs/internals/design/std-layout.md](../docs/internals/design/std-layout.md) is the layout.
 
 ## Layout
 | Path | Role |

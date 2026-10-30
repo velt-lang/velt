@@ -3,7 +3,7 @@
 // are module state, which every request shares, as in Node (#1872). Before, they became locals
 // of the generated `main`, and the handler, which runs on several threads, was rejected for
 // modifying what it captured.
-import { serve } from "velt/http";
+import { serve } from "velt/net/http";
 
 let hits = 0;
 const byPath = new Map<string, number>();

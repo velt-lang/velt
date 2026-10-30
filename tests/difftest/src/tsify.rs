@@ -94,7 +94,7 @@ mod tests {
         let ts = to_typescript("import { URL } from \"velt/net/url\";\nconst a = \"from x\";\n");
         let line = ts.lines().next().unwrap_or_default();
         assert!(line.starts_with("import { URL } from \"file://"), "{line}");
-        assert!(line.ends_with("/shims/std/url.ts\";"), "{line}");
+        assert!(line.ends_with("/shims/std/net/url.ts\";"), "{line}");
         assert!(ts.contains("const a = \"from x\";"));
     }
 

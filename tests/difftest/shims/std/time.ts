@@ -1,7 +1,7 @@
-// Node twin of std/datetime for the differential harness, on JS `Date` (UTC getters,
+// Node twin of velt/time for the differential harness, on JS `Date` (UTC getters,
 // `Date.UTC`, `Date.parse`, `toISOString`, `toUTCString`). The local-time API uses Node's local
 // zone; the harness runs both sides with `TZ=UTC`. Pattern formatting, month arithmetic and
-// `Duration.toString` have no JS equivalent: they are written from the std/datetime docs.
+// `Duration.toString` have no JS equivalent: they are written from the velt/time docs.
 
 export class DateTimeError extends Error {}
 

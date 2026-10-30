@@ -1,4 +1,4 @@
-// velt/lang/typed_array/bytes_view: `subarray` of a `u8[]` (Node's `buf.subarray` of a `Buffer`): a
+// velt/lang/typed_array (internal): `subarray` of a `u8[]` (Node's `buf.subarray` of a `Buffer`): a
 // `Uint8Array` over the array's bytes, sharing them, as Node's `Buffer` (a `Uint8Array`) does.
 // Loaded for a program that mentions `subarray` (std/prelude/global/bytes_view.vlt).
 //

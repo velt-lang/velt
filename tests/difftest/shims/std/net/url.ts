@@ -1,4 +1,4 @@
-// Node twin of std/url for the differential harness: JS's own WHATWG `URL`/`URLSearchParams`,
+// Node twin of velt/net/url for the differential harness: JS's own WHATWG `URL`/`URLSearchParams`,
 // adapted to the Velt API (errors are `UrlError` with Velt's messages, `searchParams` is a copy
 // that can be assigned back, `keys`/`values`/`entries` return arrays).
 

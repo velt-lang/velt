@@ -1,7 +1,7 @@
-// Node twin of std/csv for the differential harness. Node has no CSV parser, so this is an
-// independent character-level state machine written from RFC 4180 and the std/csv docs (not a
-// port of its byte scanner): records end at LF, CRLF or a lone CR, a final line break starts no
-// record, a leading BOM is skipped, `trim` strips spaces/tabs around fields.
+// Node twin of velt/encoding/csv for the differential harness. Node has no CSV parser, so this is
+// an independent character-level state machine written from RFC 4180 and the velt/encoding/csv docs
+// (not a port of its byte scanner): records end at LF, CRLF or a lone CR, a final line break starts
+// no record, a leading BOM is skipped, `trim` strips spaces/tabs around fields.
 
 export class CsvError extends Error {
   line: number;

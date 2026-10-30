@@ -1,4 +1,4 @@
-// Node twin of std/regex for the differential harness: JS's own `RegExp` behind the Velt API
+// Node twin of velt/text for the differential harness: JS's own `RegExp` behind the Velt API
 // (`RegExpMatch` objects, `matchAll` whatever the flags, an explicit `from` offset that leaves
 // `lastIndex` alone). Without `from`, `test`/`exec` of a `g` or `y` regex start at `lastIndex` and
 // update it, and `replace`/`replaceWith` read and set it, as JS's own methods do.
