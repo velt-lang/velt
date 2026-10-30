@@ -28,10 +28,7 @@ use super::uses::{Access, Collector, Place, Proj, Use};
 pub(super) fn contains(outer: &Place, inner: &Place) -> bool {
     outer.root == inner.root
         && outer.proj.len() <= inner.proj.len()
-        && outer.proj.iter().zip(&inner.proj).all(|pair| match pair {
-            (Proj::Field(a), Proj::Field(b)) => a == b,
-            _ => true,
-        })
+        && (outer.proj.iter().zip(&inner.proj)).all(|(a, b)| a.may_meet(*b))
 }
 
 /// Turn the moves of the iterated place `iter` (or of a place containing it) inside the loop

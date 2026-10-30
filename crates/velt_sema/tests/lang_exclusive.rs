@@ -403,3 +403,34 @@ fn closures_passing_params_on_keep_other_conflicts() {
         "{r}"
     );
 }
+
+#[test]
+fn destructured_parts_are_distinct_places() {
+    // #1873: bindings of distinct tuple elements, array positions and object fields.
+    ok_main(
+        "const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(a, b);
+         const ps: [i64[], i64[]][] = [[[1], [2]]]; for (const [c, d] of ps) { fill(c, d); }
+         const rows: i64[][] = [[1], [2]]; const [e, f] = rows; fill(e, f);
+         const n: [[i64[], i64[]], i64[]] = [[[1], [2]], [3]]; const [[g, h], k] = n;
+         fill(g, h); fill(h, k);
+         const bx = new Box(); const { items, other } = bx; fill(items, other);",
+    );
+    ok_src(
+        "function run(name: string, f: () => void): void {
+           const later: (() => void)[] = []; later.push(() => { console.log(name); f(); }); }
+         function main() { const cases: [string, string][] = [[\"a\", \"b\"]];
+           for (const [name, raw] of cases) { run(name, () => console.log(raw)); } }",
+    );
+}
+
+#[test]
+fn destructured_parts_still_alias_what_they_came_from() {
+    let r = err_main("const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(t[0], a);");
+    assert!(r.contains("cannot use `a` here"), "{r}");
+    let r = err_main("const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(b, t);");
+    assert!(r.contains("cannot use `t` here"), "{r}");
+    let r = err_main("const bx = new Box(); const { items: p, items: q } = bx; fill(p, q);");
+    assert!(r.contains("cannot use `q` here"), "{r}");
+    let r = err_main("const rows: i64[][] = [[1], [2]]; const [e] = rows; fill(rows[1], e);");
+    assert!(r.contains("cannot use `e` here"), "{r}");
+}

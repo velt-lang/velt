@@ -181,7 +181,11 @@ call: directly, as an overlapping place (`a` / `a.f`, `xs` / `xs[i]`), through a
 binding, or as a closure capture. `append(xs, xs)`, `append(g.rows[0], g.rows[1])` and
 `xs.forEach((x) => { xs.push(x); })` are errors
 (``cannot use `xs` here: this call may modify it through another argument``). Reading a number
-is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). An
+is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). So are
+variables destructured from distinct parts of one value: the elements of a tuple or of an array
+pattern and the fields of an object (`const [a, b] = t; append(a, b)`, or
+`for (const [name, input] of cases) it(name, () => check(input))`), while each still overlaps
+the value it came from (`append(t[0], a)` is an error). An
 argument may change the inside of a class instance or an array another argument passes while it
 is evaluated, before the call starts (`this.set(this.src.get(1))` with `get` changing
 `this.src`): JavaScript's callee sees that change too. The change must be to a place inside the

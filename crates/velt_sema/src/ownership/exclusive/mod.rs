@@ -14,7 +14,7 @@
 //!
 //! Places overlap when one is a prefix of the other (`a` / `a.f`, `xs` / `xs[i]`; `xs[i]` and
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
-//! the place they borrow from. The non-Copy params of closures and of named functions used as
+//! the part of the place they borrow from (`t[0]` for `a` in `const [a, b] = t`). The non-Copy params of closures and of named functions used as
 //! values may alias each other (calls through a function value don't check their arguments
 //! against each other), so there they count as one place, unless their types cannot be one
 //! value (instances of unrelated classes, an array and a class instance). Guarantees for code generation: during a call, memory reachable
@@ -434,18 +434,35 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Borrowing bindings of `pat` point into `place`.
-    fn bind(&mut self, pat: &Pat, place: &Place) {
+    /// Borrowing bindings of `pat` point into `place`: each into the part it matches (the
+    /// element of a tuple or array, the field of an object), so bindings of distinct parts are
+    /// distinct places (`for (const [name, raw] of cases) run(name, () => raw)`, #1873). An
+    /// array pattern's rest is a new array. Under `flat` (the payload of a union or the
+    /// alternatives of an or-pattern, where one binding may match different parts) a binding
+    /// points to all of `place`.
+    fn bind(&mut self, pat: &Pat, place: &Place, flat: bool) {
+        let part = |step: Proj| {
+            let mut p = place.clone();
+            if !flat {
+                p.proj.push(step);
+            }
+            p
+        };
         match &pat.kind {
             PatKind::Binding(l, UseMode::Borrow | UseMode::BorrowMut) => {
                 self.aliases.insert(*l, place.clone());
             }
-            PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
-                ps.iter().for_each(|p| self.bind(p, place))
+            PatKind::Tuple(ps) => (ps.iter().enumerate())
+                .for_each(|(i, p)| self.bind(p, &part(Proj::Field(i as u32)), flat)),
+            PatKind::Array { elems, .. } => (elems.iter().enumerate())
+                .for_each(|(i, p)| self.bind(p, &part(Proj::Elem(i as u32)), flat)),
+            PatKind::Adt { fields } => {
+                (fields.iter()).for_each(|(i, p)| self.bind(p, &part(Proj::Field(*i)), flat))
             }
-            PatKind::Array { elems, .. } => elems.iter().for_each(|p| self.bind(p, place)),
-            PatKind::Adt { fields } => fields.iter().for_each(|(_, p)| self.bind(p, place)),
-            PatKind::Some(p) => self.bind(p, place),
+            PatKind::Variant { args: ps, .. } | PatKind::Or(ps) => {
+                ps.iter().for_each(|p| self.bind(p, place, true))
+            }
+            PatKind::Some(p) => self.bind(p, place, flat),
             _ => {}
         }
     }
@@ -685,12 +702,12 @@ impl VisitMut for Checker<'_, '_> {
                         *share_elems = iteration::replaces_bound(&uses, &p, binding);
                     }
                     p.proj.push(Proj::Index);
-                    self.bind(binding, &p);
+                    self.bind(binding, &p, false);
                 }
             }
             S::LetPat { pat, init } => {
                 if let Some((p, _)) = self.collector().place_of(init) {
-                    self.bind(pat, &p);
+                    self.bind(pat, &p, false);
                 }
             }
             _ => {}
@@ -702,7 +719,7 @@ impl VisitMut for Checker<'_, '_> {
             E::Match { scrutinee, arms } => {
                 if let Some((p, _)) = self.collector().place_of(scrutinee) {
                     for a in arms.iter() {
-                        self.bind(&a.pat, &p);
+                        self.bind(&a.pat, &p, false);
                     }
                 }
             }
