@@ -653,8 +653,10 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
   slice(start: number = 0, end: number = Infinity): @C@ {
-    const from = relative(toInteger(start), this.len);
-    const stop = relative(toInteger(end), this.len);
+    // Of the elements left (`length`): the array under a `u8[]`'s view may have shrunk.
+    const len = this.count() as usize;
+    const from = relative(toInteger(start), len);
+    const stop = relative(toInteger(end), len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * @N@) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * @N@) as i64));
@@ -683,10 +685,17 @@ export class @C@ extends TypedArray implements Iterable<number> {
    * buffer: writes through either are seen by both.
    */
   subarray(begin: number = 0, end: number = Infinity): @C@ {
-    const from = relative(toInteger(begin), this.len);
-    const stop = relative(toInteger(end), this.len);
+    // Of the elements left (`length`), as `slice`.
+    const len = this.count() as usize;
+    const from = relative(toInteger(begin), len);
+    const stop = relative(toInteger(end), len);
     const n = stop > from ? stop - from : 0;
-    return @C@.view(this.buf, this.off + from * @N@, n);
+    const at = this.off + from * @N@;
+    if (at > (this.buf.bytes.length as usize)) {
+      // Not even the view's start is left: an empty view with a buffer of its own.
+      return @C@.zeros(0);
+    }
+    return @C@.view(this.buf, at, n);
   }
 
   /** The elements as Node's default locale (en-US) writes them, joined by `,`. */
@@ -718,9 +727,11 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
   with(position: number, value: number): @C@ {
+    // Of the elements left (`length`), as `slice`, which makes the copy.
+    const len = this.count() as usize;
     const index = toInteger(position);
-    const i = index < 0 ? index + (this.len as i64) : index;
-    if (i < 0 || (i as usize) >= this.len) {
+    const i = index < 0 ? index + (len as i64) : index;
+    if (i < 0 || (i as usize) >= len) {
       throw new RangeError("Invalid typed array index");
     }
     const out = this.slice();

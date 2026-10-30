@@ -184,7 +184,10 @@ array after it grows. A Node `Buffer` cannot become shorter; a `u8[]` can (`leng
 `splice`), and then the view (and any typed array over its `buffer`) has the elements the array
 still has in its range: its `length` counts those, `xs[i]` past them panics like any index, a
 write past them does nothing (as one past a view's end in JS), and a method that needs the
-missing elements (`join`, `fill`, …) panics. Growing the array back brings them back.
+missing elements (`join`, `fill`, …) panics. `slice`, `subarray`, `with`, `toReversed` and
+`toSorted` take the elements that are left, as they take `length` (a `subarray` of a view of
+which not even the start is left is empty, with a buffer of its own). Growing the array back
+brings the elements back.
 
 ```ts
 const buf: u8[] = Buffer.alloc(8);
