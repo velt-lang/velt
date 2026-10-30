@@ -1,0 +1,19 @@
+// An error thrown by a class method called through `any` that nothing catches: Node's
+// `Uncaught` report and exit code 1 (#1938).
+class AppError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AppError";
+  }
+}
+class Store {
+  items: string[] = ["a"];
+  at(i: number): string {
+    if (i >= this.items.length) throw new AppError(`no item ${i}`);
+    return this.items[i];
+  }
+}
+const s: any = new Store();
+console.log(s.at(0));
+console.log(s.at(1));
+console.log("not reached");

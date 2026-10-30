@@ -143,7 +143,8 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
-            match (m.kind, self.ready(ty, m)) {
+            let throwing = m.kind == DynMemberKind::Setter;
+            match (m.kind, self.ready_with(ty, m, throwing)) {
                 (DynMemberKind::Setter, Some(r)) => {
                     let f = self.cx.fn_def(r.def);
                     let pt = f.params.get(1).map(|p| p.ty);

@@ -140,7 +140,7 @@ impl FnLower<'_, '_> {
         let Some((k, v)) = self.prelude_record(ty) else {
             crate::lower::ice("a record");
         };
-        if !matches!(self.cx.kind(k), TyKind::Str) || methods.is_empty() {
+        if !matches!(self.cx.kind(k), TyKind::Str) {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
@@ -164,8 +164,7 @@ impl FnLower<'_, '_> {
             self.ret_status(ST_OK);
             self.switch_to(next);
         }
-        self.any_drop_args(argv, 0, argc);
-        self.ret_status(ST_UNSUPPORTED);
+        self.any_record_value_call((data, key, argv, argc, out), ty);
     }
 
     /// `this` for the standard library's method `def` on the value of type `ty` that `data`

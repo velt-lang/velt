@@ -5,12 +5,12 @@
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
-use super::any_glue::OBJECT_PROTO;
-use super::any_member::{ST_OK, ST_UNSUPPORTED};
+use super::any_glue::{Ready, OBJECT_PROTO};
+use super::any_member::{SLOT_APPLY, ST_OK, ST_UNSUPPORTED};
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
@@ -290,6 +290,20 @@ impl FnLower<'_, '_> {
         out: &Place,
         ty: TyId,
     ) {
+        let Some(r) = self.record_get_ready(ty) else {
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.ret_status(ST_UNSUPPORTED);
+            self.switch_to(next);
+        }
+        self.record_get_into(&r, (data, key), out, ty);
+        self.ret_status(ST_OK);
+    }
+
+    /// The record type `ty`'s `__get`, ready to call from glue, when its keys are strings.
+    fn record_get_ready(&mut self, ty: TyId) -> Option<Ready> {
         let (k, _) = self
             .prelude_record(ty)
             .unwrap_or_else(|| super::ice("record"));
@@ -299,20 +313,64 @@ impl FnLower<'_, '_> {
                 .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
         });
         let ready = get.and_then(|m| self.ready(ty, &m));
-        let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {
-            return self.ret_status(ST_UNSUPPORTED);
-        };
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str))
+    }
+
+    /// The value the record (`data`, of type `ty`) holds at the string `key`, boxed into `out`
+    /// (`undefined` for a key it lacks), read with its `__get` `r`.
+    fn record_get_into(
+        &mut self,
+        r: &Ready,
+        (data, key): (vir::Local, vir::Local),
+        out: &Place,
+        ty: TyId,
+    ) {
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
         let kvt = self.cx.ty(k);
         let kp = self.deref_param(key, k);
         let ks = self.share_value(Operand::Copy(kp), k);
         let kslot = Place::local(self.copy_to_temp(ks, kvt));
         let this = self.any_this(data, ty);
-        self.any_invoke(&r, this, vec![(kslot, k)], out);
-        self.ret_status(ST_OK);
+        self.any_invoke(r, this, vec![(kslot, k)], out);
+    }
+
+    /// `rec.k(args)` on a record with string keys held by an `any` (`Object.create(null)`
+    /// with functions stored into it): the value at `k` called through its own apply slot, as
+    /// a field of type `any` is (`any_call_body`), with the record as `this` for a function
+    /// that uses it. A key the record lacks is `undefined`, so the call is "not a function".
+    /// The slot owns the arguments and writes `*out`.
+    pub(super) fn any_record_value_call(
+        &mut self,
+        (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
+        ty: TyId,
+    ) {
+        let Some(r) = self.record_get_ready(ty) else {
+            self.any_drop_args(argv, 0, argc);
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        // The members every object has (later): one shared exit for all of them.
+        let unsupported = self.new_block();
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.goto(unsupported);
+            self.switch_to(next);
+        }
+        let any = self.cx.any_ty();
+        let avt = self.cx.ty(any);
+        let held = Place::local(self.temp(avt));
+        self.record_get_into(&r, (data, key), &held, ty);
+        let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), any);
+        self.this_fn_method_call((&held, any, &fd, &fdesc), (data, argv, argc, out), ty);
+        let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
+        let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
+        let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
+        let st = self.any_slot(fdesc, SLOT_APPLY, a, p);
+        self.drop_glue(held, any);
+        self.terminate(Terminator::Return(st));
+        self.switch_to(unsupported);
+        self.any_drop_args(argv, 0, argc);
+        self.ret_status(ST_UNSUPPORTED);
     }
 }
