@@ -1,0 +1,203 @@
+// check: unfreed blocks at most 8
+// (The 8 blocks, kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4,
+// and this thread's list of retired values, 4.)
+// A `ConcurrentMap` with string keys: the tree orders keys by their first 8 bytes and tells
+// keys that share them apart by the whole string, so keys with long common prefixes (thousands
+// with the same first 8 bytes), keys differing only past byte 8, the empty key, keys with an
+// embedded "\0" (whose first 8 bytes read as those of a shorter key) and non-ASCII keys (some
+// past U+FFFF) are all distinct. Enough keys to split leaves and inner nodes, separators tying
+// with keys; every key deleted and the map filled again; `u64`, string and object values. Keys
+// and values are dropped once deleted or replaced (when the epoch drops them: `main` drains it
+// at the end, outside any section), so nothing but the epoch's own blocks is left unfreed.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { collect, outstanding } from "velt:sync/epoch";
+
+interface Entry {
+  name: string;
+  n: u64;
+}
+
+const N: u64 = 6000;
+
+/** Key `i` of five families: all but the last share long prefixes, so their words tie. */
+function key(i: u64): string {
+  const f = i % 5;
+  const j = i / 5;
+  if (f == 0) {
+    return `user:${String(j).padStart(6, "0")}`;
+  }
+  if (f == 1) {
+    return `session-token-${j}`;
+  }
+  if (f == 2) {
+    return `ключ-${j}`;
+  }
+  if (f == 3) {
+    return `\u{1F600}\u{1F600}${j}`;
+  }
+  return `k\0${j}\0`;
+}
+
+/** Keys that tie on their first 8 bytes in other ways, and the empty key. */
+const ODD: string[] = [
+  "",
+  "\0",
+  "\0\0",
+  "a",
+  "a\0",
+  "a\0\0",
+  "abcdefgh",
+  "abcdefgh\0",
+  "abcdefgh1",
+  "abcdefgh2",
+  "abcdefghij",
+  "abcdefgi",
+  "￿",
+  "\u{10000}",
+  "é",
+  "e",
+];
+
+function wordValues() {
+  const m: ConcurrentMap<string, u64> = ConcurrentMap.create((3 * N) as usize);
+  console.log(m.get(""), m.has("a"), m.delete("a"));
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(key(i), i);
+  }
+  for (let i = 0; i < ODD.length; i++) {
+    m.set(ODD[i], 100000 + (i as u64));
+  }
+  let wrong: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.get(key(i)) != i || !m.has(key(i))) {
+      wrong++;
+    }
+  }
+  for (let i = 0; i < ODD.length; i++) {
+    if (m.get(ODD[i]) != 100000 + (i as u64)) {
+      wrong++;
+    }
+  }
+  // Absent keys next to present ones.
+  let absent: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (!m.has(`${key(i)}x`) && m.get(`${key(i)}\0`) == undefined) {
+      absent++;
+    }
+  }
+  console.log("wrong", wrong, "absent", absent, m.get("abcdefgh\0"), m.get("abcdefgh\0\0"));
+  // Replace every third value with `add`, delete every fourth key.
+  for (let i: u64 = 0; i < N; i += 3) {
+    m.add(key(i), 1000000);
+  }
+  let deleted: u64 = 0;
+  for (let i: u64 = 0; i < N; i += 4) {
+    if (m.delete(key(i))) {
+      deleted++;
+    }
+  }
+  console.log("deleted", deleted, m.delete(key(0)), m.delete("a\0"), m.get("a"), m.get("a\0\0"));
+  for (let i: u64 = 0; i < N; i++) {
+    const want = i % 4 == 0 ? undefined : i % 3 == 0 ? i + 1000000 : i;
+    if (m.get(key(i)) != want) {
+      wrong++;
+    }
+  }
+  console.log("wrong", wrong, m.read("session-token-1", (v) => v.get()));
+  // Every key deleted, so leaves empty and are reused, then the map filled again.
+  for (let i: u64 = 0; i < N; i++) {
+    m.delete(key(i));
+  }
+  for (let i = 0; i < ODD.length; i++) {
+    m.delete(ODD[i]);
+  }
+  let left: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.has(key(i))) {
+      left++;
+    }
+  }
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(`${key(i)}/again`, i);
+  }
+  let refilled: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.get(`${key(i)}/again`) == i && !m.has(key(i))) {
+      refilled++;
+    }
+  }
+  console.log("left", left, "refilled", refilled, m.has(""));
+}
+
+function stringValues() {
+  const m: ConcurrentMap<string, string> = ConcurrentMap.create((3 * N) as usize);
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(key(i), `value ${i}`);
+  }
+  for (let i: u64 = 0; i < N; i += 3) {
+    m.set(key(i), `again ${i}`);
+  }
+  for (let i: u64 = 0; i < N; i += 5) {
+    m.delete(key(i));
+  }
+  let wrong: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    const want = i % 5 == 0 ? undefined : i % 3 == 0 ? `again ${i}` : `value ${i}`;
+    if (m.get(key(i)) != want || m.has(key(i)) != (want != undefined)) {
+      wrong++;
+    }
+  }
+  console.log(
+    "wrong",
+    wrong,
+    m.get(key(7)),
+    m.read(key(6), (v) => v.toUpperCase()),
+    m.read(key(5), (v) => v.length),
+  );
+  for (let i: u64 = 0; i < N; i++) {
+    m.delete(key(i));
+  }
+  for (let i: u64 = 0; i < N; i++) {
+    m.set(key(N + i), `new ${i}`);
+  }
+  let refilled: u64 = 0;
+  for (let i: u64 = 0; i < N; i++) {
+    if (m.get(key(N + i)) == `new ${i}` && m.get(key(i)) == undefined) {
+      refilled++;
+    }
+  }
+  console.log("refilled", refilled);
+}
+
+function objects() {
+  const m: ConcurrentMap<string, Entry> = ConcurrentMap.create(1000);
+  for (let i: u64 = 0; i < 300; i++) {
+    m.set(key(i), { name: `e${i}`, n: i });
+  }
+  m.set(key(10), { name: "ten", n: 10 });
+  m.delete(key(11));
+  const e = m.get(key(10));
+  console.log(
+    e == undefined ? "none" : e.name,
+    m.read(key(42), (v) => v.n * 2),
+    m.get(key(11)) == undefined,
+    m.get(key(299))?.name,
+  );
+}
+
+function drain(): u64 {
+  let rounds: u64 = 0;
+  while (outstanding() > 0 && rounds < 10) {
+    collect();
+    rounds++;
+  }
+  return outstanding();
+}
+
+function main() {
+  wordValues();
+  stringValues();
+  objects();
+  console.log("outstanding", drain());
+}

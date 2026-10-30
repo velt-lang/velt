@@ -1,0 +1,168 @@
+// check: unfreed blocks at most 8
+// (The 8 blocks, kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4,
+// and this thread's list of retired values, 4.)
+// A `ConcurrentMap` whose string keys nearly all share their first 8 bytes ("https://"), so every
+// separator of every inner node ties with every key on its word, and the map finds a key's child
+// by a binary search over the strings of whole nodes of tied separators: on lookups (present
+// keys, and absent ones before, between and after them), on sets that split nodes in the middle
+// of tied runs, and on deletes that empty runs of leaves (their separators removed, the first
+// child's too). A few keys with other words sit before and after the tied ones. Then the same
+// with keys in groups of 100 that share their first 8 bytes, so runs of tied separators sit
+// between separators with other words.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { collect, outstanding } from "velt:sync/epoch";
+
+const N: u64 = 12000;
+
+/** Tied key `j` (all "https://"), in key order as `j` grows. */
+function url(j: u64): string {
+  return `https://example.com/items/${String(j).padStart(6, "0")}`;
+}
+
+/** Key `j` in groups of 100 that share their first 8 bytes ("g000::::" and on), in key order. */
+function grouped(j: u64): string {
+  return `g${String(j / 100).padStart(3, "0")}::::${String(j).padStart(6, "0")}`;
+}
+
+/** Key `j` in a scrambled order (7919 is prime, so this visits every `j` below `N` once). */
+function scrambled(t: u64): u64 {
+  return (t * 7919) % N;
+}
+
+/** Keys with other words than "https://", before and after the tied ones, and its edges. */
+const OTHER: string[] = [
+  "a",
+  "http://example.com/",
+  "https:/",
+  "https:0",
+  "https;//",
+  "zzz",
+  "https://",
+  "https://\u{FFFF}",
+];
+
+/** How many keys `j` in [from, to) do not have their expected value: `j + 1 + add` or absent. */
+function wrong(
+  m: ConcurrentMap<string, u64>,
+  key: (j: u64) => string,
+  from: u64,
+  to: u64,
+  add: u64,
+  present: bool,
+): u64 {
+  let bad: u64 = 0;
+  for (let j = from; j < to; j++) {
+    const g = m.get(key(j));
+    if (present ? g != j + 1 + add : g != undefined) {
+      bad++;
+    }
+  }
+  return bad;
+}
+
+/** How many absent keys right next to present ones (before, between, after) the map has. */
+function neighbours(m: ConcurrentMap<string, u64>, key: (j: u64) => string): u64 {
+  let found: u64 = 0;
+  for (let j: u64 = 0; j < N; j++) {
+    const k = key(j);
+    if (m.has(`${k}\0`) || m.has(`${k}0`) || m.has(k.substring(0, k.length - 1))) {
+      found++;
+    }
+  }
+  if (m.has(key(0).substring(0, 12)) || m.has(key(N))) {
+    found++;
+  }
+  return found;
+}
+
+function run(name: string, key: (j: u64) => string) {
+  const m: ConcurrentMap<string, u64> = ConcurrentMap.create((3 * N) as usize);
+  for (let t: u64 = 0; t < N; t++) {
+    const j = scrambled(t);
+    m.set(key(j), j + 1);
+  }
+  for (let i = 0; i < OTHER.length; i++) {
+    m.set(OTHER[i], 1000000 + (i as u64));
+  }
+  let otherBad: u64 = 0;
+  for (let i = 0; i < OTHER.length; i++) {
+    if (m.get(OTHER[i]) != 1000000 + (i as u64)) {
+      otherBad++;
+    }
+  }
+  console.log(
+    name,
+    "filled: wrong",
+    wrong(m, key, 0, N, 0, true),
+    "neighbours",
+    neighbours(m, key),
+    otherBad,
+  );
+  // Ranges deleted whole, so their leaves empty and leave their parents: in key order, then a
+  // range in reverse order (the first child of a node leaves first).
+  let deleted: u64 = 0;
+  for (let j: u64 = 2000; j < 5000; j++) {
+    deleted += m.delete(key(j)) ? 1 : 0;
+  }
+  for (let j: u64 = 9000; j > 7000; j--) {
+    deleted += m.delete(key(j - 1)) ? 1 : 0;
+  }
+  // Every third key of what is left, scrambled.
+  for (let t: u64 = 0; t < N; t++) {
+    const j = scrambled(t);
+    if (j % 3 == 0 && (j < 2000 || (j >= 5000 && j < 7000) || j >= 9000)) {
+      deleted += m.delete(key(j)) ? 1 : 0;
+    }
+  }
+  let kept = wrong(m, key, 2000, 5000, 0, false) + wrong(m, key, 7000, 9000, 0, false);
+  let lost: u64 = 0;
+  for (let j: u64 = 0; j < N; j++) {
+    if (!((j >= 2000 && j < 5000) || (j >= 7000 && j < 9000))) {
+      lost += j % 3 == 0 ? wrong(m, key, j, j + 1, 0, false) : wrong(m, key, j, j + 1, 0, true);
+    }
+  }
+  console.log(
+    name,
+    "deleted",
+    deleted,
+    "kept",
+    kept,
+    "lost",
+    lost,
+    "neighbours",
+    neighbours(m, key),
+  );
+  // The deleted keys set again, scrambled, with new values: separators go back into tied runs.
+  for (let t: u64 = 0; t < N; t++) {
+    const j = scrambled(t);
+    if ((j >= 2000 && j < 5000) || (j >= 7000 && j < 9000) || j % 3 == 0) {
+      m.set(key(j), j + 1 + N);
+    }
+  }
+  let bad: u64 = 0;
+  for (let j: u64 = 0; j < N; j++) {
+    const again = (j >= 2000 && j < 5000) || (j >= 7000 && j < 9000) || j % 3 == 0;
+    bad += wrong(m, key, j, j + 1, again ? N : 0, true);
+  }
+  console.log(name, "set again: wrong", bad, "neighbours", neighbours(m, key), m.get("https://"));
+  // Everything deleted, in scrambled order.
+  for (let t: u64 = 0; t < N; t++) {
+    m.delete(key(scrambled(t)));
+  }
+  for (let i = 0; i < OTHER.length; i++) {
+    m.delete(OTHER[i]);
+  }
+  console.log(name, "emptied: left", N - wrong(m, key, 0, N, 0, true), m.has("zzz"));
+}
+
+function main() {
+  run("url", url);
+  run("grouped", grouped);
+  let rounds: u64 = 0;
+  while (outstanding() > 0 && rounds < 10) {
+    collect();
+    rounds++;
+  }
+  console.log("outstanding", outstanding());
+}
