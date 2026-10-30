@@ -628,9 +628,15 @@ instance of the round; the offered modules make that rare).
 - **Run time:** the prototype `JSON.stringify` generator (`bench/json/generated`, public APIs
   only: `StringBuilder` and `velt/encoding/json`'s `appendJson*`) writes byte-identical text.
   Before string-building.md step 2 it cost 1.57 G instructions against the glue's 1.01 G
-  (+55%): a literal append was a runtime call. With literal appends inline it costs 1.36 G
-  against 1.10 G (+23%, `compare.sh`, release runtime); the rest is to be found and closed in
-  the compiler before `JSON.stringify` moves (the acceptance criteria allow 3%).
+  (+55%): a literal append was a runtime call. With literal appends inline it cost 1.36 G
+  against 1.10 G (+23%). The rest was a miscompile, not a cost of generated code: sema took a
+  `StringBuilder` parameter that the function appends to for a read-only one (the runtime
+  writes the builder's string, which sema did not know), so it got `frozen`, and `velt_opt`
+  read the buffer's address and capacity once, at the function's entry. Every inline append
+  after the buffer's first growth then saw no room and took the runtime call (and
+  `b.length` in a loop read a stale length). With std's runtime declarations writing their
+  `out`/`buf` strings (a mutable borrow), the generated writer costs 1.07 G against the glue's
+  1.10 G (-3%, `compare.sh`, release runtime, best of 3).
 - **Ergonomics:** `out.line(… out.instance(…) …)` is rejected by Velt's rule that one call
   cannot modify a value and read it in another argument; generators compute names into locals
   first. `Output` could keep its state outside the object the generator holds to lift that.

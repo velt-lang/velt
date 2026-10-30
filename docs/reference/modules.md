@@ -360,7 +360,9 @@ handles). Outside the standard library, a `declare` may only name an export of t
 library of its own package, and must match that export exactly
 ([Packages with native code](../book/native-packages.md)). Anything else is a compile error: a
 program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics (`__intrinsic_*`) are reserved for
-the standard library too.
+the standard library too. A runtime function std declares writes the `string` it takes as `out`
+or `buf` (a string builder, or the slot for its result), so passing a place there modifies it,
+as a modifying method does.
 
 `declare system function` is the exception every module has: it binds a function of the
 platform's C library from the compiler's table of the ones it can call safely (`pread`, `fsync`,

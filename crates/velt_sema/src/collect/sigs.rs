@@ -234,6 +234,19 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
             sig.generics[0].name.span,
         );
     }
+    // A runtime function std declares writes the `string` it takes as `out` or `buf`: a string
+    // builder it appends to, or the slot it puts its result in (docs/reference/modules.md
+    // "Runtime declarations"). Its argument is a mutable borrow, so the owner of the place is
+    // modified too: a `StringBuilder` param of a function that appends to it is no read-only
+    // (`frozen`) one whose fields the optimizer may read once.
+    if kind == FnKind::Extern && !sig.is_system && cx.scopes[module].is_std {
+        for p in &mut ps {
+            let written = p.name == "out" || p.name == "buf";
+            if written && p.mode == PassMode::Borrow && matches!(cx.ty.kind(p.ty), TyKind::Str) {
+                p.mode = PassMode::BorrowMut;
+            }
+        }
+    }
     let f = cx.fn_info_mut(d);
     if kind == FnKind::Extern && sig.is_system {
         f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());
