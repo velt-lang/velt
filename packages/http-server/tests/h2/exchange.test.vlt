@@ -1,11 +1,11 @@
 // Requests and responses over velt/net/http's HTTP/2 server, seen as frames: heads, bodies both
 // ways, streamed responses, HEAD, trailers, 100-continue and the request API.
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
-import { H2Request } from "../../src/h2/request";
-import { H2Response } from "../../src/h2/response";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
 import { bytes, Client, endOf, startServer, TestServer } from "./_h2";
 
-async function handler(req: H2Request, res: H2Response) {
+async function handler(req: HttpRequest, res: HttpResponse) {
   if (req.pathIs("/echo")) {
     const body = await req.bodyText();
     res.header("X-Length", `${body.length}`);
@@ -16,18 +16,18 @@ async function handler(req: H2Request, res: H2Response) {
       `${req.method()} ${req.path()} ${req.query()} ${req.target()} ${req.header("Host")} ${hs}`,
     );
   } else if (req.pathIs("/stream")) {
-    await res.startStream();
-    await res.piece("a");
-    await res.piece(bytes("bc"));
-    await res.finishStream();
+    const out = await res.stream();
+    await out.write("a");
+    await out.write(bytes("bc"));
+    await out.end();
   } else if (req.pathIs("/trailers")) {
     res.addTrailers([["Grpc-Status", "0"]]);
     res.send("x");
   } else if (req.pathIs("/stream-trailers")) {
-    await res.startStream();
-    await res.piece("a");
+    const out = await res.stream();
+    await out.write("a");
     res.addTrailers([["x-sum", "97"]]);
-    await res.finishStream();
+    await out.end();
   } else if (req.pathIs("/server")) {
     res.header("Server", "mine");
     res.send("s");

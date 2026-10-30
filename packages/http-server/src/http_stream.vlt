@@ -1,0 +1,44 @@
+// http-server (internal): `HttpStream`, a streamed response body (`HttpResponse.stream`), and
+// `BodySink`, what it writes into: the response of either protocol (`Http1Response`,
+// `H2Response`), so the stream itself is one class for both.
+
+/// Where a streamed body goes: a response that started one (internal).
+export interface BodySink {
+  /// One piece of the body (not empty).
+  piece(data: string | u8[] | Uint8Array): Promise<void>;
+  /// Ends the body.
+  finishStream(): Promise<void>;
+}
+
+/** A streamed response body (`HttpResponse.stream`). */
+export class HttpStream {
+  private sink: BodySink;
+
+  constructor(sink: BodySink) {
+    this.sink = sink;
+  }
+
+  /**
+   * Writes `data` as the next piece of the body (an empty one writes nothing): sent with what
+   * else is written before the handler next waits. Resolves once at most 64 KiB are still to
+   * be sent; throws if the client went away (and aborts the request's signal).
+   */
+  async write(data: string | u8[] | Uint8Array) {
+    let empty = false;
+    if (typeof data == "string") {
+      empty = data.length == 0;
+    } else if (data instanceof Uint8Array) {
+      empty = data.length == 0;
+    } else {
+      empty = data.length == 0;
+    }
+    if (!empty) {
+      await this.sink.piece(data);
+    }
+  }
+
+  /** Ends the body (the server ends one the handler leaves open). */
+  async end() {
+    await this.sink.finishStream();
+  }
+}

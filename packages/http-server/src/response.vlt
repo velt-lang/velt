@@ -1,173 +1,33 @@
-// http-server (internal): `HttpResponse`, `HttpStream` and `EventStream` (internal to
-// std/http/server, which exports them).
-//
-// A response written at once (`send` and the like) goes into one buffer per connection, so the
-// responses to the requests one read brought leave in one write; the fixed parts of a head are
-// encoded per response and the `Date` value once a second. A streamed response (`stream`, `sse`)
-// writes its head at once and each piece as one chunk (`Transfer-Encoding: chunked`; to an
-// HTTP/1.0 client, the body ends with the connection). Its pieces are queued on the connection
-// (`writeBytesLater`): what the handler writes before it next waits leaves in one write, and
-// `write` waits while more than `QUEUED` bytes are still to be sent, so a fast producer waits for
-// a slow client (backpressure); a client that went away makes it throw and aborts the request's
-// signal (cancellation).
+// http-server (internal): `HttpResponse`, the response a `serveHttp` handler writes: an
+// abstract class, the same over HTTP/1.1 (`Http1Response`, http1/response.vlt) and HTTP/2
+// (`H2Response`, h2/response.vlt), which extend it, so the compiler rejects one that misses a
+// method. What only the server calls (`begin`, `flush`, `tick`, ...) is on those classes. Why
+// not an interface: request.vlt.
 
-import { utf8Encode } from "velt/encoding";
-import { BodyStream, statusText } from "velt/net/http";
+import { BodyStream } from "velt/net/http";
 import { TcpStream } from "velt/net";
-import { AbortController, AbortSignal } from "velt/task";
-import { Head, isTchar } from "./parse";
-import { H2Response } from "./h2/response";
-
-const CR: u8 = 13;
-const LF: u8 = 10;
-const SP: u8 = 32;
-const TAB: u8 = 9;
-const DEL: u8 = 127;
-/// How many bytes of a streamed body may wait to be sent before `write` waits.
-const QUEUED: number = 65536;
-/// The response buffer a connection starts with.
-const INITIAL_OUT: i64 = 16384;
-// Indexes of `HttpResponse.types`.
-const TYPE_TEXT: i64 = 0;
-const TYPE_BYTES: i64 = 1;
-const TYPE_JSON: i64 = 2;
-const TYPE_HTML: i64 = 3;
-const TYPE_SSE: i64 = 4;
+import { AbortSignal } from "velt/task";
+import { EventStream } from "./event_stream";
+import { HttpStream } from "./http_stream";
 
 /**
  * A response being written: `status`, `header`, then one of the `send` methods (the whole
- * response) or `stream` / `sse` (a body written piece by piece). One per connection, reused for
- * its requests; valid while the handler runs.
+ * response) or `stream` / `sse` (a body written piece by piece). Valid while the handler runs.
  */
-export class HttpResponse {
-  /** The responses not yet written to the connection (internal). */
-  buf: u8[] = Buffer.alloc(INITIAL_OUT as usize);
-  length: i64 = 0;
-  private conn: TcpStream;
-  private statusCode: number = 200;
-  /** The headers set for this response, encoded (`name: value\r\n` each). */
-  private extra: u8[] = Buffer.alloc(256);
-  private extraLength: i64 = 0;
-  /** The trailers set for this response, encoded (`name: value\r\n` each). */
-  private trailerBuf: u8[] = [];
-  private trailerLength: i64 = 0;
-  private hasType: bool = false;
-  /// The handler set a `Server` header: the server's own is not sent.
-  private hasServer: bool = false;
-  /// The Content-Length a handler set (-1: none), sent for a HEAD request's response.
-  private headLength: i64 = -1;
-  private keepAlive: bool = true;
-  private http11: bool = true;
-  private done: bool = false;
-  /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
-  private streaming: bool = false;
-  private chunked: bool = false;
-  /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
-  private headOnly: bool = false;
-  /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
-  /// writes as one is not sent.
-  private noBody: bool = false;
-  /// The connection was switched to another protocol (`upgrade`): the server lets it go.
-  private switched: bool = false;
-  // `Date` header bytes for `dateSecond`.
-  private date: u8[] = [];
-  private dateSecond: i64 = -1;
-  // Aborted when a write to the client fails or the server closes (made when first asked for).
-  private stopped: AbortSignal;
-  /// The head of the request being answered (its `Expect: 100-continue` state).
-  private request: Head;
-  private failed: AbortController = new AbortController();
-  private either: AbortSignal | null = null;
-  /// The HTTP/2 response this one stands for (std/net/http/server/h2), or null over HTTP/1.1.
-  private h2: H2Response | null = null;
-  // The fixed parts of a head and the default content types, encoded once per connection
-  // (not module state, #1487), copied as bytes.
-  private ok: u8[] = utf8Encode("HTTP/1.1 200 OK\r\nServer: Velt\r\nDate: ");
-  private statusStart: u8[] = utf8Encode("HTTP/1.1 ");
-  private serverDate: u8[] = utf8Encode("\r\nServer: Velt\r\nDate: ");
-  private dateOnly: u8[] = utf8Encode("\r\nDate: ");
-  private typeHead: u8[] = utf8Encode("\r\nContent-Type: ");
-  private lengthHead: u8[] = utf8Encode("\r\nContent-Length: ");
-  private chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
-  private closeHead: u8[] = utf8Encode("\r\nConnection: close");
-  private keepAliveHead: u8[] = utf8Encode("\r\nConnection: keep-alive");
-  private continue_: u8[] = utf8Encode("HTTP/1.1 100 Continue\r\n\r\n");
-  private types: u8[][] = [
-    utf8Encode("text/plain; charset=utf-8"),
-    utf8Encode("application/octet-stream"),
-    utf8Encode("application/json"),
-    utf8Encode("text/html; charset=utf-8"),
-    utf8Encode("text/event-stream"),
-  ];
-
-  constructor(conn: TcpStream, stopped: AbortSignal, request: Head) {
-    this.conn = conn;
-    this.stopped = stopped;
-    this.request = request;
-  }
-
+export abstract class HttpResponse {
   /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
-  status(code: number) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.status(code);
-      return;
-    }
-    if (!(code >= 100 && code <= 999) || code != Math.floor(code)) {
-      throw new RangeError(`invalid status code: ${code}`);
-    }
-    this.statusCode = code;
-  }
+  abstract status(code: number): void;
 
   /**
-   * Adds header `name: value` (a `content-type` or `server` replaces the default one). Throws `TypeError` for
-   * a name that is not a token or a value with a control character other than TAB (CR, LF, NUL),
-   * as Node: a value from the client cannot add a header of its own. The server frames the body,
-   * so `Content-Length` and `Transfer-Encoding` are its own: a handler's are not sent, except a
-   * Content-Length for the response to a HEAD request (the length a GET would get).
+   * Adds header `name: value` (a `content-type` or `server` replaces the default one). Throws
+   * `TypeError` for a name that is not a token or a value with a control character other than
+   * TAB (CR, LF, NUL), as Node: a value from the client cannot add a header of its own. The
+   * server frames the body, so `Content-Length` and `Transfer-Encoding` are its own: a handler's
+   * are not sent, except a Content-Length for the response to a HEAD request (the length a GET
+   * would get). Over HTTP/2 names are sent in lowercase, and the fields HTTP/2 does not have
+   * (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`) are not sent.
    */
-  header(name: string, value: string) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.header(name, value);
-      return;
-    }
-    const nameLength = Buffer.byteLength(name) as i64;
-    const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
-    if (this.extraLength + n > (this.extra.length as i64)) {
-      const grown: u8[] = Buffer.alloc(((this.extraLength + n) * 2) as usize);
-      grown.set(this.extra.slice(0, this.extraLength), 0);
-      this.extra = grown;
-    }
-    const start = this.extraLength;
-    let at = start;
-    at += this.extra.write(name, at as usize) as i64;
-    const valueStart = at + 2;
-    at = valueStart + (this.extra.write(value, valueStart as usize) as i64);
-    checkField(this.extra, start, start + nameLength, valueStart, at);
-    if (nameLength == 14 && name.toLowerCase() == "content-length") {
-      this.headLength = lengthValue(value);
-      return;
-    }
-    if (nameLength == 17 && name.toLowerCase() == "transfer-encoding") {
-      return;
-    }
-    this.extra[start + nameLength] = 58;
-    this.extra[start + nameLength + 1] = SP;
-    this.extra[at] = CR;
-    this.extra[at + 1] = LF;
-    this.extraLength = at + 2;
-    if (nameLength == 12 && name.toLowerCase() == "content-type") {
-      this.hasType = true;
-    } else if (nameLength == 6 && name.toLowerCase() == "server") {
-      this.hasServer = true;
-    }
-  }
-
-  /// Makes this response stand for `r`, an HTTP/2 response (null: none) (internal).
-  bindH2(r: H2Response | null) {
-    this.h2 = r;
-  }
+  abstract header(name: string, value: string): void;
 
   /**
    * Adds trailers: fields sent after the body (Node's `res.addTrailers`), checked as `header`
@@ -177,111 +37,19 @@ export class HttpResponse {
    * Name them in a `Trailer` header if the client needs to know in advance. Call it before the
    * body ends.
    */
-  addTrailers(trailers: [string, string][]) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.addTrailers(trailers);
-      return;
-    }
-    for (const t of trailers) {
-      const name = t[0];
-      const value = t[1];
-      const nameLength = Buffer.byteLength(name) as i64;
-      const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
-      if (this.trailerLength + n > (this.trailerBuf.length as i64)) {
-        const grown: u8[] = Buffer.alloc(((this.trailerLength + n) * 2) as usize);
-        this.trailerBuf.copy(grown, 0, 0, this.trailerLength);
-        this.trailerBuf = grown;
-      }
-      const b = this.trailerBuf;
-      const start = this.trailerLength;
-      let at = start + (b.write(name, start as usize) as i64);
-      b[at] = 58;
-      b[at + 1] = SP;
-      const valueStart = at + 2;
-      at = valueStart + (b.write(value, valueStart as usize) as i64);
-      checkField(b, start, start + nameLength, valueStart, at);
-      b[at] = CR;
-      b[at + 1] = LF;
-      this.trailerLength = at + 2;
-    }
-  }
-
-  /** The connection closes after this response (internal: an error response to bad input). */
-  closeAfter() {
-    this.keepAlive = false;
-  }
+  abstract addTrailers(trailers: [string, string][]): void;
 
   /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
-  send(body: string) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.send(body);
-      return;
-    }
-    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
-      this.whole(TYPE_TEXT, body, null);
-      return;
-    }
-    const n = Buffer.byteLength(body) as i64;
-    this.head(TYPE_TEXT, null, n);
-    if (!this.noBody) {
-      this.textOf(body, n);
-    }
-  }
+  abstract send(body: string): void;
 
   /** Writes the response with body `body` (default type `application/octet-stream`). */
-  sendBytes(body: u8[]) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.sendBytes(body);
-      return;
-    }
-    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
-      this.whole(TYPE_BYTES, null, body);
-      return;
-    }
-    this.head(TYPE_BYTES, null, body.length as i64);
-    if (!this.noBody) {
-      this.bytes(body);
-    }
-  }
+  abstract sendBytes(body: u8[]): void;
 
   /** Writes the response with JSON text `json` (type `application/json`). */
-  json(json: string) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.json(json);
-      return;
-    }
-    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
-      this.whole(TYPE_JSON, json, null);
-      return;
-    }
-    const n = Buffer.byteLength(json) as i64;
-    this.head(TYPE_JSON, null, n);
-    if (!this.noBody) {
-      this.textOf(json, n);
-    }
-  }
+  abstract json(json: string): void;
 
   /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
-  html(html: string) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      h2.html(html);
-      return;
-    }
-    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
-      this.whole(TYPE_HTML, html, null);
-      return;
-    }
-    const n = Buffer.byteLength(html) as i64;
-    this.head(TYPE_HTML, null, n);
-    if (!this.noBody) {
-      this.textOf(html, n);
-    }
-  }
+  abstract html(html: string): void;
 
   /**
    * Starts a streamed response (default type `text/plain; charset=utf-8`): its head goes out
@@ -289,16 +57,7 @@ export class HttpResponse {
    * unbounded bodies, proxies and Server-Sent Events: nothing of the body is buffered beyond
    * the piece being written.
    */
-  async stream(type: string = "text/plain; charset=utf-8"): Promise<HttpStream> {
-    const h2 = this.h2;
-    if (h2 != null) {
-      await h2.startStream(type);
-      return new HttpStream(this);
-    }
-    this.head(-1, type, -1);
-    await this.queue();
-    return new HttpStream(this);
-  }
+  abstract stream(type?: string): Promise<HttpStream>;
 
   /**
    * Streams `body` as the response (default type `text/html; charset=utf-8`): each chunk is
@@ -307,618 +66,35 @@ export class HttpResponse {
    * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
    * `signal()` is aborted).
    */
-  async sendStream(body: BodyStream, type: string = "text/html; charset=utf-8") {
-    const h2 = this.h2;
-    if (h2 != null) {
-      await h2.sendStream(body, type);
-      return;
-    }
-    // The head goes out with the first chunk: one write less per response.
-    this.head(-1, type, -1);
-    try {
-      for await (const chunk of body) {
-        await this.piece(chunk);
-      }
-    } catch (e) {
-      // The client went away (or the source failed): nothing more can be sent.
-      this.streaming = false;
-      this.keepAlive = false;
-      return;
-    }
-    await this.finishStream();
-  }
+  abstract sendStream(body: BodyStream, type?: string): Promise<void>;
 
   /**
    * Starts a Server-Sent Events response (`text/event-stream`, not cached): `send` writes an
    * event, `comment` a line clients ignore (a keep-alive), `end` finishes it.
    */
-  async sse(): Promise<EventStream> {
-    const h2 = this.h2;
-    if (h2 != null) {
-      await h2.startEvents();
-      return new EventStream(new HttpStream(this));
-    }
-    this.header("Cache-Control", "no-cache");
-    this.head(TYPE_SSE, null, -1);
-    await this.queue();
-    return new EventStream(new HttpStream(this));
-  }
+  abstract sse(): Promise<EventStream>;
 
   /**
    * Aborted when the client can no longer be written to (it went away while a response was
-   * being written) or the server closes: give it to the work done for this request.
+   * being written, or reset its HTTP/2 stream) or the server closes: give it to the work done
+   * for this request.
    */
-  signal(): AbortSignal {
-    const h2 = this.h2;
-    if (h2 != null) {
-      return h2.signal();
-    }
-    const either = this.either;
-    if (either != null) {
-      return either;
-    }
-    const made = AbortSignal.any([this.failed.signal, this.stopped]);
-    this.either = made;
-    return made;
-  }
+  abstract signal(): AbortSignal;
 
   /**
-   * Switches the connection to `protocol` (see `HttpRequest.isUpgrade`): queues `101 Switching
-   * Protocols` with `Upgrade: protocol`, `Connection: Upgrade` and `headers` (after the responses
-   * to earlier requests), and hands the connection over: the returned stream is the caller's,
-   * the server reads, writes and closes it no more. The client waits for the 101 before it sends
-   * in the new protocol. Throws if a response was started or the request is HTTP/1.0.
+   * Switches to `protocol` (see `HttpRequest.isUpgrade`). Over HTTP/1.1: queues `101 Switching
+   * Protocols` with `Upgrade: protocol`, `Connection: Upgrade` and `headers` (after the
+   * responses to earlier requests), and hands the connection over: the returned stream is the
+   * caller's, the server reads, writes and closes it no more. The client waits for the 101
+   * before it sends in the new protocol. Over HTTP/2: accepts an extended CONNECT (200 with
+   * `headers`) and returns a stream carrying the protocol over that one HTTP/2 stream. Throws if
+   * a response was started, or the request is not one asking for `protocol` (or is HTTP/1.0).
    */
-  upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
-    const h2 = this.h2;
-    if (h2 != null) {
-      return h2.upgrade(protocol, headers);
-    }
-    if (this.done) {
-      throw new Error("the response was already sent");
-    }
-    if (!this.http11) {
-      throw new Error("only an HTTP/1.1 connection can be upgraded");
-    }
-    // Checked before anything is kept: a bad name or value throws, and what the check wrote is
-    // dropped, so nothing of it is sent.
-    const start = this.length;
-    try {
-      this.field("Upgrade", protocol);
-      for (const h of headers) {
-        this.field(h[0], h[1]);
-      }
-    } finally {
-      this.length = start;
-    }
-    this.done = true;
-    this.switched = true;
-    this.keepAlive = false;
-    this.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
-    this.text(protocol);
-    this.text("\r\nConnection: Upgrade\r\n");
-    for (const h of headers) {
-      this.field(h[0], h[1]);
-    }
-    this.text("\r\n");
-    this.conn.writeBytesLater(this.buf, 0, this.length as number);
-    this.length = 0;
-    return this.conn;
-  }
-
-  /** Whether the connection was switched to another protocol (internal). */
-  upgraded(): bool {
-    return this.switched;
-  }
-
-  /** Whether writing to the client failed: it went away (internal). */
-  clientGone(): bool {
-    const h2 = this.h2;
-    if (h2 != null) {
-      return h2.clientGone();
-    }
-    return this.failed.signal.aborted;
-  }
+  abstract upgrade(protocol: string, headers?: [string, string][]): TcpStream;
 
   /** Whether a response was started for the current request. */
-  sent(): bool {
-    const h2 = this.h2;
-    if (h2 != null) {
-      return h2.sent();
-    }
-    return this.done;
-  }
+  abstract sent(): bool;
 
-  /** A new request: status 200, no headers (internal). */
-  begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
-    this.headOnly = headOnly;
-    this.headLength = -1;
-    this.switched = false;
-    this.noBody = false;
-    this.statusCode = 200;
-    this.extraLength = 0;
-    this.trailerLength = 0;
-    this.hasType = false;
-    this.hasServer = false;
-    this.keepAlive = keepAlive;
-    this.http11 = http11;
-    this.done = false;
-    this.streaming = false;
-    this.chunked = false;
-  }
-
-  /**
-   * Whether the connection can serve another request after this response (internal): not after
-   * a streamed body that ends with the connection, nor one left unfinished.
-   */
-  reusable(): bool {
-    return this.keepAlive && !this.streaming;
-  }
-
-  /** Whether a streamed body is still open (internal). */
-  streamOpen(): bool {
-    return this.streaming;
-  }
-
-  /**
-   * Ends a streamed body the handler left open; with `send`, also writes what is buffered
-   * (internal: before the server waits for the rest of a request's body).
-   */
-  async endStream(send: bool = false) {
-    if (this.streaming) {
-      await this.finishStream();
-    }
-    if (send) {
-      await this.flush();
-    }
-  }
-
-  /** The `Date` value for the responses of this batch: once a second a new one (internal). */
-  tick(): i64 {
-    const now = Date.now();
-    const second = (now / 1000) as i64;
-    if (second != this.dateSecond) {
-      this.dateSecond = second;
-      this.date = utf8Encode(new Date(now).toUTCString());
-    }
-    return now as i64;
-  }
-
-  /** Writes what is buffered to the connection; a failure aborts `signal()` (internal). */
-  async flush() {
-    if (this.length > 0) {
-      try {
-        await this.conn.writeBytes(this.buf, 0, this.length as number);
-      } catch (e) {
-        this.length = 0;
-        this.failed.abort();
-        throw e;
-      }
-      this.length = 0;
-    }
-  }
-
-  /**
-   * Queues what is buffered, sent with everything else this task writes before it next waits
-   * (one write for a head and the chunks a render produces without waiting); waits only while
-   * more than `QUEUED` bytes are still to be sent (internal).
-   */
-  async queue() {
-    if (this.length > 0) {
-      try {
-        this.conn.writeBytesLater(this.buf, 0, this.length as number);
-        this.length = 0;
-        await this.conn.drained(QUEUED);
-      } catch (e) {
-        this.length = 0;
-        this.failed.abort();
-        throw e;
-      }
-    }
-  }
-
-  /** One piece of a streamed body (internal: `HttpStream.write`). */
-  async piece(data: string | u8[] | Uint8Array) {
-    const h2 = this.h2;
-    if (h2 != null) {
-      await h2.piece(data);
-      return;
-    }
-    if (!this.streaming) {
-      throw new Error("the streamed response has ended");
-    }
-    if (this.noBody) {
-      return;
-    }
-    if (data instanceof Uint8Array) {
-      this.chunk(data.length as i64);
-      this.reserve(data.length as i64 + 2);
-      for (let i = 0; i < data.length; i++) {
-        this.buf[this.length + (i as i64)] = data[i] as u8;
-      }
-      this.length += data.length as i64;
-    } else if (typeof data == "string") {
-      const n = Buffer.byteLength(data) as i64;
-      this.chunk(n);
-      this.text(data);
-    } else {
-      this.chunk(data.length as i64);
-      this.reserve(data.length as i64 + 2);
-      this.buf.set(data, this.length as usize);
-      this.length += data.length as i64;
-    }
-    if (this.chunked) {
-      this.reserve(2);
-      this.buf[this.length] = CR;
-      this.buf[this.length + 1] = LF;
-      this.length += 2;
-    }
-    await this.queue();
-  }
-
-  /** Ends a streamed body (internal: `HttpStream.end`). */
-  async finishStream() {
-    const h2 = this.h2;
-    if (h2 != null) {
-      await h2.finishStream();
-      return;
-    }
-    if (!this.streaming) {
-      return;
-    }
-    this.streaming = false;
-    this.endChunks();
-    // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
-    await this.queue();
-  }
-
-  /// The last chunk of a chunked body, with the trailers.
-  private endChunks() {
-    if (!this.chunked || this.noBody) {
-      return;
-    }
-    this.text("0\r\n");
-    const n = this.trailerLength;
-    if (n > 0) {
-      const t = this.trailerBuf;
-      this.reserve(n);
-      t.copy(this.buf, this.length, 0, n);
-      this.length += n;
-    }
-    this.text("\r\n");
-  }
-
-  /// A whole body sent chunked, so that the trailers can follow it (`TE: trailers`).
-  private whole(type: i64, text: string | null, bytes: u8[] | null) {
-    this.head(type, null, -1);
-    this.streaming = false;
-    if (!this.noBody) {
-      if (text != null) {
-        const n = Buffer.byteLength(text) as i64;
-        if (n > 0) {
-          this.chunk(n);
-          this.textOf(text, n);
-          this.text("\r\n");
-        }
-      } else if (bytes != null && bytes.length > 0) {
-        this.chunk(bytes.length as i64);
-        this.bytes(bytes);
-        this.text("\r\n");
-      }
-    }
-    this.endChunks();
-  }
-
-  /// Whether the request said `TE: trailers` (the client takes trailers).
-  private teTrailers(): bool {
-    const h = this.request;
-    for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
-      if (
-        h.heads[i + 1] - h.heads[i] == 2 &&
-        h.buf.utf8EqualsIgnoreCase("te", h.heads[i], h.heads[i + 1])
-      ) {
-        for (const part of h.buf.utf8Slice(h.heads[i + 2], h.heads[i + 3]).split(",")) {
-          if (part.trim().toLowerCase() == "trailers") {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  /// A chunk's size line (HTTP/1.1), before `n` bytes of data.
-  private chunk(n: i64) {
-    if (!this.chunked) {
-      return;
-    }
-    this.reserve(20);
-    const start = this.length;
-    let v = n;
-    do {
-      const d = v % 16;
-      this.buf[this.length] = (d < 10 ? 48 + d : 87 + d) as u8;
-      this.length++;
-      v = v / 16;
-    } while (v > 0);
-    this.reverse(start);
-    this.buf[this.length] = CR;
-    this.buf[this.length + 1] = LF;
-    this.length += 2;
-  }
-
-  private reserve(n: i64) {
-    if (this.length + n <= (this.buf.length as i64)) {
-      return;
-    }
-    let size = (this.buf.length as i64) * 2;
-    while (size < this.length + n) {
-      size *= 2;
-    }
-    const grown: u8[] = Buffer.alloc(size as usize);
-    grown.set(this.buf.slice(0, this.length), 0);
-    this.buf = grown;
-  }
-
-  private text(s: string) {
-    this.textOf(s, Buffer.byteLength(s) as i64);
-  }
-
-  /// Header `name: value` and its CR LF, checked as `header` checks them.
-  private field(name: string, value: string) {
-    const start = this.length;
-    this.text(name);
-    const nameEnd = this.length;
-    this.text(": ");
-    const valueStart = this.length;
-    this.text(value);
-    checkField(this.buf, start, nameEnd, valueStart, this.length);
-    this.text("\r\n");
-  }
-
-  /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
-  private textOf(s: string, n: i64) {
-    this.reserve(n);
-    this.buf.write(s, this.length as usize);
-    this.length += n;
-  }
-
-  /// The bytes of `b` (a field of `this` passed through a local: one argument, not two).
-  private bytes(b: u8[]) {
-    const n = b.length as i64;
-    this.reserve(n);
-    this.buf.set(b, this.length as usize);
-    this.length += n;
-  }
-
-  private number(n: i64) {
-    this.reserve(20);
-    const start = this.length;
-    let v = n;
-    do {
-      this.buf[this.length] = (48 + v % 10) as u8;
-      this.length++;
-      v = v / 10;
-    } while (v > 0);
-    this.reverse(start);
-  }
-
-  /// Reverses the bytes written since `start` (digits come least significant first).
-  private reverse(start: i64) {
-    let i = start;
-    let j = this.length - 1;
-    while (i < j) {
-      const t = this.buf[i];
-      this.buf[i] = this.buf[j];
-      this.buf[j] = t;
-      i++;
-      j--;
-    }
-  }
-
-  /// The head: content type `types[type]` (or `custom` when `type` < 0) unless one was set;
-  /// `length` < 0 starts a streamed body.
-  private head(type: i64, custom: string | null, length: i64) {
-    if (this.done) {
-      throw new Error("the response was already sent");
-    }
-    this.done = true;
-    // A client that holds its body back until `100 Continue`: a streamed head goes out before
-    // the handler may read the body, so the 100 goes first, as Node sends it, and the connection
-    // stays open. A head written at once stays buffered until the handler returns, so a read
-    // before that still sends its 100 ahead of it.
-    const r = this.request;
-    if (length < 0 && r.expectsContinue && !r.continueSent) {
-      r.continueSent = true;
-      const continue_ = this.continue_;
-      this.bytes(continue_);
-    }
-    const code = this.statusCode as i64;
-    // No body (RFC 9110 §6.4.1): for HEAD the head says what GET's body would be, for 1xx, 204
-    // and 304 there is none to describe.
-    const noContent = (code >= 100 && code < 200) || code == 204 || code == 304;
-    this.noBody = this.headOnly || noContent;
-    if (this.statusCode == 200 && !this.hasServer) {
-      const ok = this.ok;
-      this.bytes(ok);
-    } else {
-      const start = this.statusStart;
-      this.bytes(start);
-      this.number(this.statusCode as i64);
-      this.reserve(1);
-      this.buf[this.length] = SP;
-      this.length++;
-      this.text(statusText(this.statusCode));
-      if (this.hasServer) {
-        const dateOnly = this.dateOnly;
-        this.bytes(dateOnly);
-      } else {
-        const serverDate = this.serverDate;
-        this.bytes(serverDate);
-      }
-    }
-    const date = this.date;
-    this.bytes(date);
-    if (!this.hasType && !noContent) {
-      const typeHead = this.typeHead;
-      this.bytes(typeHead);
-      if (custom != null) {
-        this.text(custom);
-      } else {
-        const t = this.types[type];
-        this.bytes(t);
-      }
-    }
-    if (noContent) {
-      // Neither a length nor chunks: a streamed body is dropped.
-      this.streaming = length < 0;
-      this.chunked = false;
-    } else if (length >= 0) {
-      const lengthHead = this.lengthHead;
-      this.bytes(lengthHead);
-      this.number(this.headOnly && this.headLength >= 0 ? this.headLength : length);
-    } else {
-      this.streaming = true;
-      this.chunked = this.http11;
-      if (this.chunked) {
-        const chunkedHead = this.chunkedHead;
-        this.bytes(chunkedHead);
-      } else {
-        this.keepAlive = false;
-      }
-    }
-    // The client holds its body back until `100 Continue`, which the handler has not asked for
-    // (it did not read yet): if it answers without reading, the body is not waited for, so the
-    // connection closes after this response (RFC 9110 §10.1.1).
-    if (r.expectsContinue && !r.continueSent) {
-      this.keepAlive = false;
-    }
-    if (!this.keepAlive) {
-      const closeHead = this.closeHead;
-      this.bytes(closeHead);
-    } else if (!this.http11) {
-      // HTTP/1.0 closes unless told otherwise.
-      const keepAliveHead = this.keepAliveHead;
-      this.bytes(keepAliveHead);
-    }
-    const extra = this.extra;
-    const n = this.extraLength;
-    this.reserve(n + 4);
-    this.buf[this.length] = CR;
-    this.buf[this.length + 1] = LF;
-    this.length += 2;
-    for (let i: i64 = 0; i < n; i++) {
-      this.buf[this.length + i] = extra[i];
-    }
-    this.length += n;
-    this.buf[this.length] = CR;
-    this.buf[this.length + 1] = LF;
-    this.length += 2;
-  }
-}
-
-/** A streamed response body (`HttpResponse.stream`). */
-export class HttpStream {
-  private res: HttpResponse;
-
-  constructor(res: HttpResponse) {
-    this.res = res;
-  }
-
-  /**
-   * Writes `data` as the next piece of the body (an empty one writes nothing): sent with what
-   * else is written before the handler next waits. Resolves once at most 64 KiB are still to
-   * be sent; throws if the client went away (and aborts the request's signal).
-   */
-  async write(data: string | u8[] | Uint8Array) {
-    let empty = false;
-    if (typeof data == "string") {
-      empty = data.length == 0;
-    } else if (data instanceof Uint8Array) {
-      empty = data.length == 0;
-    } else {
-      empty = data.length == 0;
-    }
-    if (!empty) {
-      await this.res.piece(data);
-    }
-  }
-
-  /** Ends the body (the server ends one the handler leaves open). */
-  async end() {
-    await this.res.finishStream();
-  }
-}
-
-/** A Server-Sent Events stream (`HttpResponse.sse`). */
-export class EventStream {
-  private stream: HttpStream;
-
-  constructor(stream: HttpStream) {
-    this.stream = stream;
-  }
-
-  /**
-   * Writes an event: `data` (each of its lines a `data:` line), with an `event` name and an
-   * `id` when given. Resolves once the connection took it.
-   */
-  async send(data: string, event: string | null = null, id: string | null = null) {
-    let text = "";
-    if (event != null) {
-      text += `event: ${event}\n`;
-    }
-    if (id != null) {
-      text += `id: ${id}\n`;
-    }
-    for (const line of data.split("\n")) {
-      text += `data: ${line}\n`;
-    }
-    await this.stream.write(text + "\n");
-  }
-
-  /** Writes a comment line, which clients ignore: a keep-alive through idle proxies. */
-  async comment(text: string = "") {
-    await this.stream.write(`: ${text}\n\n`);
-  }
-
-  /** Ends the stream. */
-  async end() {
-    await this.stream.end();
-  }
-}
-
-/// Throws `TypeError` unless `b[nameStart..nameEnd)` is a token and `b[valueStart..valueEnd)` has
-/// no control character other than TAB (Node's `ERR_INVALID_HTTP_TOKEN`, `ERR_INVALID_CHAR`).
-function checkField(b: u8[], nameStart: i64, nameEnd: i64, valueStart: i64, valueEnd: i64) {
-  if (nameStart == nameEnd) {
-    throw new TypeError("a header name must not be empty");
-  }
-  for (let i = nameStart; i < nameEnd; i++) {
-    if (!isTchar(b[i])) {
-      throw new TypeError(`invalid header name: ${b.utf8Slice(nameStart, nameEnd)}`);
-    }
-  }
-  for (let i = valueStart; i < valueEnd; i++) {
-    const c = b[i];
-    if (c < SP ? c != TAB : c == DEL) {
-      throw new TypeError(`invalid character in header ${b.utf8Slice(nameStart, nameEnd)}`);
-    }
-  }
-}
-
-/// A Content-Length value a handler set: digits only (`TypeError` otherwise).
-function lengthValue(value: string): i64 {
-  const t = value.trim();
-  let n: i64 = 0;
-  for (let i: i64 = 0; i < (t.length as i64); i++) {
-    const d = (t.charCodeAt(i) as i64) - 48;
-    if (d < 0 || d > 9 || n > 92233720368547757) {
-      throw new TypeError(`invalid Content-Length: ${value}`);
-    }
-    n = n * 10 + d;
-  }
-  if (t.length == 0) {
-    throw new TypeError(`invalid Content-Length: ${value}`);
-  }
-  return n;
+  /** Whether `upgrade` handed the connection over (never over HTTP/2). */
+  abstract upgraded(): bool;
 }

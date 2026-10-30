@@ -5,8 +5,8 @@ import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { delay } from "velt/time";
 import { h2Options } from "../../src/h2/options";
-import { H2Request } from "../../src/h2/request";
-import { H2Response } from "../../src/h2/response";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
 import { bytes, Client, endOf, goaway, startServer } from "./_h2";
 
 describe("HTTP/2 limits", () => {
@@ -14,7 +14,7 @@ describe("HTTP/2 limits", () => {
     const opts = h2Options();
     opts.maxConcurrentStreams = 2;
     const server = await startServer(
-      async (req: H2Request, res: H2Response) => {
+      async (req: HttpRequest, res: HttpResponse) => {
         if (req.pathIs("/slow")) {
           await delay(300);
         }
@@ -43,7 +43,7 @@ describe("HTTP/2 limits", () => {
     const opts = h2Options();
     opts.requestTimeout = 200;
     const server = await startServer(
-      async (req: H2Request, res: H2Response) => {
+      async (req: HttpRequest, res: HttpResponse) => {
         const body = await req.bodyText();
         res.send(`got ${body}`);
       },
@@ -67,7 +67,7 @@ describe("HTTP/2 limits", () => {
   });
 
   it("ends a connection that keeps resetting its streams (rapid reset)", async () => {
-    const server = await startServer(async (req: H2Request, res: H2Response) => {
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       await delay(50);
       res.send("late");
     });
@@ -88,7 +88,7 @@ describe("HTTP/2 limits", () => {
   });
 
   it("ends a connection sending empty DATA frames", async () => {
-    const server = await startServer(async (req: H2Request, res: H2Response) => {
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       const b = await req.body();
       res.send(`${b.length}`);
     });
@@ -105,12 +105,12 @@ describe("HTTP/2 limits", () => {
 
   it("aborts the handler's signal when the client resets its stream", async () => {
     const seen = shared(0 as i64);
-    const server = await startServer(async (req: H2Request, res: H2Response) => {
-      await res.startStream();
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      const out = await res.stream();
       const signal = res.signal();
       try {
         for (let i = 0; i < 1000 && !signal.aborted; i++) {
-          await res.piece("tick ");
+          await out.write("tick ");
           await delay(5);
         }
       } catch (e) {
@@ -133,7 +133,7 @@ describe("HTTP/2 limits", () => {
   });
 
   it("stops gracefully: GOAWAY, then the streams in flight finish", async () => {
-    const server = await startServer(async (req: H2Request, res: H2Response) => {
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       await delay(100);
       res.send("finished");
     });
@@ -148,7 +148,7 @@ describe("HTTP/2 limits", () => {
   });
 
   it("gives the window of a body the handler does not read back", async () => {
-    const server = await startServer(async (req: H2Request, res: H2Response) => {
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       // The body arrives (and waits, unread) before the handler answers.
       await delay(50);
       res.send("no thanks");

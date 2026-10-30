@@ -15,6 +15,13 @@ async function get(port: number, path: string): Promise<string> {
   return `${r.status} ${await r.text()}`;
 }
 
+/// A route written as a function of its own, taking the request and the response: a handler
+/// passes both (they are never one object, so the call compiles).
+function answerHelper(req: HttpRequest, res: HttpResponse) {
+  res.header("X-Helper", req.method());
+  res.send(`helped ${req.path()}`);
+}
+
 async function text(url: string): Promise<string> {
   return await (await fetch(url)).text();
 }
@@ -485,6 +492,8 @@ describe("velt/net/http", () => {
         res.header("Content-Type", "text/x-echo");
         const body = await req.body();
         res.sendBytes(body);
+      } else if (req.pathIs("/helper")) {
+        answerHelper(req, res);
       } else if (req.pathIs("/quiet")) {
         // Nothing sent: an empty 200.
       } else {
@@ -528,6 +537,12 @@ describe("velt/net/http", () => {
 
   it("sets a status", async () => {
     expect(await get(port, "/nope?q")).toBe("404 no /nope?q");
+  });
+
+  it("passes the request and the response to a function of the handler's", async () => {
+    const r = await fetch(`${base}/helper`);
+    expect(r.headers.get("x-helper")).toBe("GET");
+    expect(await r.text()).toBe("helped /helper");
   });
 
   it("answers an empty 200 when the handler sends nothing", async () => {

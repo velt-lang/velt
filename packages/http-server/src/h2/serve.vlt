@@ -4,6 +4,8 @@
 
 import { TcpStream } from "velt/net";
 import { AbortSignal } from "velt/task";
+import { HttpRequest } from "../request";
+import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { H2Options } from "./options";
 import { H2Request } from "./request";
@@ -20,7 +22,7 @@ export async function serveH2<E>(
   initial: u8[],
   opts: H2Options,
   stopped: AbortSignal,
-  handler: (req: H2Request, res: H2Response) => Promise<void, E> throws E,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
 ): Promise<void> {
   const c = new H2Connection(conn, opts, stopped, async (req: H2Request, res: H2Response) => {
     try {

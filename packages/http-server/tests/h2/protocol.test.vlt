@@ -3,11 +3,11 @@
 // handler, and the settings, PING and flow control as the peer drives them.
 import { timeout } from "velt/task";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
-import { H2Request } from "../../src/h2/request";
-import { H2Response } from "../../src/h2/response";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
 import { bytes, Client, endOf, goaway, startServer, TestServer } from "./_h2";
 
-async function handler(req: H2Request, res: H2Response) {
+async function handler(req: HttpRequest, res: HttpResponse) {
   if (req.pathIs("/big")) {
     res.send("x".repeat(100));
   } else {

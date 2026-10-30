@@ -1,17 +1,18 @@
-// http-server (internal): `H2Request`, a request received over HTTP/2, with the methods of
-// HTTP/1.1's `HttpRequest` (server/request.vlt), so a handler reads either the same way:
+// http-server (internal): `H2Request`, a request received over HTTP/2 as `HttpRequest`
+// (request.vlt), so a handler reads it as it reads one over HTTP/1.1:
 // the head from the stream's decoded fields (`:method`, `:path`, and `:authority` as `host` when
 // no `host` field came), the body as DATA frames arrive, giving their window back as it reads.
 
-import { utf8DecodeLossy } from "velt/encoding";
 import { IoError } from "velt/io";
 import { BodyTooLarge } from "../errors";
+import { HttpRequest } from "../request";
 import { H2Connection } from "./connection";
 import { H2Stream } from "./stream";
 import { consumed } from "./streams";
 
-/// A request on an HTTP/2 stream. Valid while the handler runs.
-export class H2Request {
+/// A request on an HTTP/2 stream (the methods are documented on `HttpRequest`). Valid while the
+/// handler runs.
+export class H2Request extends HttpRequest {
   private c: H2Connection;
   private s: H2Stream;
   private overLimit: bool = false;
@@ -19,6 +20,7 @@ export class H2Request {
   private continued: bool = false;
 
   constructor(c: H2Connection, s: H2Stream) {
+    super();
     this.c = c;
     this.s = s;
   }
@@ -138,11 +140,27 @@ export class H2Request {
     return i >= 0 && this.s.fields.value(i).toLowerCase() == protocol.toLowerCase();
   }
 
+  /** The client's address, "ip:port" (IPv6 in brackets: "[::1]:5000"). */
+  remoteAddr(): string {
+    return this.c.conn.peerAddr();
+  }
+
   /**
    * The next piece of the body as it arrives, or null at its end. Throws `IoError`
    * `ECONNRESET` when the client reset the stream before the end.
    */
-  async read(): Promise<u8[] | null> {
+  read(): Promise<u8[] | null, IoError | RangeError> {
+    return this.readPiece();
+  }
+
+  /// The whole body (what `read()` has not taken yet); `BodyTooLarge` beyond `maxBodySize`.
+  body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
+    return this.collect();
+  }
+
+  // `read` and `body`, written as async methods of their own: an abstract method returning a
+  // promise that rejects cannot be implemented by an async method yet.
+  private async readPiece(): Promise<u8[] | null> {
     const s = this.s;
     while (true) {
       const piece = s.take();
@@ -166,8 +184,7 @@ export class H2Request {
     }
   }
 
-  /// The whole body (what `read()` has not taken yet); `BodyTooLarge` beyond `maxBodySize`.
-  async body(): Promise<u8[]> {
+  private async collect(): Promise<u8[]> {
     const limit = this.c.opts.maxBodySize;
     if (this.s.info.contentLength > limit) {
       this.overLimit = true;
@@ -175,7 +192,7 @@ export class H2Request {
     }
     const pieces: u8[][] = [];
     let total: i64 = 0;
-    let piece = await this.read();
+    let piece = await this.readPiece();
     while (piece != null) {
       total += piece.length as i64;
       if (total > limit) {
@@ -183,7 +200,7 @@ export class H2Request {
         throw new BodyTooLarge(limit);
       }
       pieces.push(piece);
-      piece = await this.read();
+      piece = await this.readPiece();
     }
     if (pieces.length == 1) {
       return pieces[0];
@@ -197,17 +214,12 @@ export class H2Request {
     return all;
   }
 
-  /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
-  async bodyText(): Promise<string> {
-    return utf8DecodeLossy(await this.body());
-  }
-
   /// Nothing: an HTTP/2 stream is never handed over.
   takeUnread(): u8[] {
     return [];
   }
 
-  /// Whether the body was read to its end, or there is none (internal).
+  /// Whether the body was read to its end, or there is none.
   bodyRead(): bool {
     return this.s.remoteEnded && this.s.buffered == 0;
   }

@@ -1,6 +1,6 @@
-// http-server (internal): `H2Response`, a response sent over HTTP/2, with the methods of
-// HTTP/1.1's `HttpResponse` (server/response.vlt): the head as one HEADERS frame (HPACK),
-// the body as DATA frames within the client's windows. A streamed body (`startStream`, `piece`)
+// http-server (internal): `H2Response`, a response sent over HTTP/2 as `HttpResponse`
+// (response.vlt): the head as one HEADERS frame (HPACK), the body as DATA frames within the
+// client's windows. A streamed body (`stream`, `sse`, `sendStream`)
 // waits while more than 64 KiB of it are still to be sent, held back by flow control or by the
 // socket: a fast producer waits for a slow client.
 
@@ -8,7 +8,10 @@ import { IoError } from "velt/io";
 import { BodyStream } from "velt/net/http";
 import { AbortSignal } from "velt/task";
 import { TcpStream } from "velt/net";
+import { EventStream } from "../event_stream";
+import { BodySink, HttpStream } from "../http_stream";
 import { isTchar } from "../parse";
+import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
 import { H2Stream } from "./stream";
@@ -17,8 +20,9 @@ import { openTunnel } from "./tunnel";
 /// How many bytes of a streamed body may wait to be sent before `piece` waits.
 const QUEUED: i64 = 65536;
 
-/// A response on an HTTP/2 stream. Valid while the handler runs.
-export class H2Response {
+/// A response on an HTTP/2 stream (the methods are documented on `HttpResponse`). Valid while
+/// the handler runs.
+export class H2Response extends HttpResponse implements BodySink {
   private c: H2Connection;
   private s: H2Stream;
   private code: i64 = 200;
@@ -32,6 +36,7 @@ export class H2Response {
   private noBody: bool = false;
 
   constructor(c: H2Connection, s: H2Stream) {
+    super();
     this.c = c;
     this.s = s;
   }
@@ -83,9 +88,6 @@ export class H2Response {
     }
   }
 
-  /** Nothing: the connection serves other streams after this response (internal). */
-  closeAfter() {}
-
   /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
   send(body: string) {
     const n = Buffer.byteLength(body) as i64;
@@ -126,20 +128,29 @@ export class H2Response {
     this.c.written();
   }
 
-  /**
-   * Starts a streamed response (default type `text/plain; charset=utf-8`): the head goes out
-   * now, the body through `piece` and `finishStream`.
-   */
-  async startStream(type: string = "text/plain; charset=utf-8") {
-    this.head(type, -1);
-    this.streaming = !this.noBody;
-    await this.drain();
+  // `stream`, `sendStream` and `sse` call async methods of their own: an abstract method
+  // returning a promise that rejects cannot be implemented by an async method yet.
+  stream(type?: string): Promise<HttpStream> {
+    return this.streamed(type ?? "text/plain; charset=utf-8");
   }
 
-  /** The head of a Server-Sent Events stream (`text/event-stream`, not cached). */
-  async startEvents() {
+  sse(): Promise<EventStream> {
+    return this.events();
+  }
+
+  sendStream(body: BodyStream, type?: string): Promise<void> {
+    return this.streamBody(body, type ?? "text/html; charset=utf-8");
+  }
+
+  private async streamed(type: string): Promise<HttpStream> {
+    await this.startStream(type);
+    return new HttpStream(this);
+  }
+
+  private async events(): Promise<EventStream> {
     this.header("cache-control", "no-cache");
     await this.startStream("text/event-stream");
+    return new EventStream(new HttpStream(this));
   }
 
   /**
@@ -185,7 +196,7 @@ export class H2Response {
    * Streams `body` as the response (default type `text/html; charset=utf-8`), each chunk as it
    * comes; a client that goes away ends it quietly.
    */
-  async sendStream(body: BodyStream, type: string = "text/html; charset=utf-8") {
+  private async streamBody(body: BodyStream, type: string) {
     await this.startStream(type);
     try {
       for await (const chunk of body) {
@@ -208,13 +219,13 @@ export class H2Response {
    * connection itself is never handed over). Throws if the request is not one, or a response was
    * started.
    */
-  upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
+  upgrade(protocol: string, headers?: [string, string][]): TcpStream {
     const s = this.s;
     const i = s.info.protocol;
     if (i < 0 || s.fields.value(i).toLowerCase() != protocol.toLowerCase()) {
       throw new Error(`not an extended CONNECT request for ${protocol}`);
     }
-    for (const h of headers) {
+    for (const h of headers ?? []) {
       this.header(h[0], h[1]);
     }
     if (this.done) {
@@ -227,7 +238,7 @@ export class H2Response {
     return stream;
   }
 
-  /** Never (internal). */
+  /** Never: the connection is not handed over. */
   upgraded(): bool {
     return false;
   }
@@ -255,6 +266,14 @@ export class H2Response {
     } else if (this.streaming) {
       await this.finishStream();
     }
+  }
+
+  /// Starts a streamed body: the head goes out now, the body through `piece` and
+  /// `finishStream`.
+  private async startStream(type: string) {
+    this.head(type, -1);
+    this.streaming = !this.noBody;
+    await this.drain();
   }
 
   /// The head: `type` unless the handler set one; `length` < 0 for a streamed body.
@@ -297,6 +316,15 @@ export class H2Response {
   }
 }
 
+/// Whether `n` (lowercase) is a field HTTP/2 does not have (RFC 9113 §8.2.2).
+function connectionField(n: string): bool {
+  return n == "transfer-encoding" ||
+    n == "connection" ||
+    n == "keep-alive" ||
+    n == "upgrade" ||
+    n == "proxy-connection";
+}
+
 /// A Content-Length value a handler set: digits only (`TypeError` otherwise).
 function lengthValue(value: string): i64 {
   const t = value.trim();
@@ -335,13 +363,4 @@ function checkValue(name: string, value: string) {
       throw new TypeError(`invalid character in header ${name}`);
     }
   }
-}
-
-/// Whether `n` (lowercase) is a field HTTP/2 does not have (RFC 9113 §8.2.2).
-function connectionField(n: string): bool {
-  return n == "transfer-encoding" ||
-    n == "connection" ||
-    n == "keep-alive" ||
-    n == "upgrade" ||
-    n == "proxy-connection";
 }

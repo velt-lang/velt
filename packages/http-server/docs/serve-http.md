@@ -16,7 +16,8 @@ ends, and the byte-array text methods of the [prelude](../../../docs/std/prelude
 build a server, or another protocol, as fast in the same way.
 
 A handler reads the request through `HttpRequest` and writes the response through
-`HttpResponse`, the same way over HTTP/1.1 and HTTP/2.
+`HttpResponse`, the same way over HTTP/1.1 and HTTP/2: they are abstract classes, which each
+protocol's request and response extend.
 
 ```ts
 import { serveHttp, HttpRequest, HttpResponse } from "http-server";
@@ -102,8 +103,10 @@ HTTP/1.0 request's expectation is ignored.
 
 - `isMethod(m: string): bool`, `pathIs(p: string): bool`: compare without making a string.
 - `method()`, `path()` (the target up to `?`), `query()` (after `?`, without it), `target()`.
-- `header(name): string | null` (any case; the first if repeated), `hasHeader(name)`,
+- `header(name): string | null` (any case; the first if repeated), `headerValues(name): string |
+  null` (all of them joined with `", "`, as `Headers.get` reads them), `hasHeader(name)`,
   `headers(): [string, string][]`.
+- `remoteAddr(): string`: the client's address, `"ip:port"` (IPv6 in brackets: `"[::1]:5000"`).
 - `isUpgrade(protocol): bool`: an HTTP/1.1 request asking to switch its connection to
   `protocol` (`Upgrade: protocol`, `upgrade` among the tokens of its `Connection` headers).
 - `read(): Promise<u8[] | null>`: the next piece of the body as it arrives, null at its end.
@@ -111,6 +114,7 @@ HTTP/1.0 request's expectation is ignored.
 - `body(): Promise<u8[]>`, `bodyText(): Promise<string>` (UTF-8, invalid bytes as U+FFFD): the
   whole body (what `read()` has not taken), up to `maxBodySize` (`BodyTooLarge` beyond it):
   `res.send(await req.bodyText())`.
+- `bodyRead(): bool`: the body was read to its end, or there is none.
 - `keepAlive: bool`: the connection stays open after the response: HTTP/1.1 unless `close` is
   among the `Connection` tokens (`keep-alive, close` closes), HTTP/1.0 with `keep-alive` (the
   response then says `Connection: keep-alive`).
@@ -148,7 +152,7 @@ HTTP/1.0 request's expectation is ignored.
   `comment(text?)` a line clients ignore (a keep-alive), `end()`.
 - `signal(): AbortSignal`: aborted when the client can no longer be written to or the server
   closes; pass it to the work done for the request (`fetch(url, { signal })`).
-- `sent(): bool`.
+- `sent(): bool`; `upgraded(): bool`: `upgrade` handed the connection over.
 - `addTrailers(trailers: [string, string][])` (Node's `res.addTrailers`): fields sent after the
   body, checked as `header` checks them; call it before the body ends. Over HTTP/1.1 they end a
   chunked body: a streamed one always, one written at once (`send` and the like) only when the
@@ -211,7 +215,7 @@ async function main() {
 }
 ```
 
-The HTTP/2 server is Velt code too (`std/net/http/server/h2/`): one task per connection, each
+The HTTP/2 server is Velt code too (`src/h2/`): one task per connection, each
 request's handler a promise on that task, frames parsed in place, HPACK with the dynamic table
 and Huffman coding both ways, and the frames written while one read is processed sent in one
 write. What differs from HTTP/1.1, for a handler:

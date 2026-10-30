@@ -11,7 +11,9 @@ import { statusText } from "velt/net/http";
 import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "./parse";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
-import { serveH2Http } from "./h2/facade";
+import { Http1Request } from "./http1/request";
+import { Http1Response } from "./http1/response";
+import { serveH2 } from "./h2/serve";
 import { H2Options } from "./h2/options";
 import { linger } from "./linger";
 
@@ -49,7 +51,7 @@ export async function connection<E>(
   if (h2 != null && tls) {
     try {
       if ((await conn.alpnProtocol()) == "h2") {
-        await serveH2Http(conn, [], h2, stopped, handler);
+        await serveH2(conn, [], h2, stopped, handler);
         return;
       }
     } catch (e) {
@@ -59,8 +61,8 @@ export async function connection<E>(
     }
   }
   const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
-  const req = new HttpRequest(parser, conn, idle, limits.requestMs);
-  const res = new HttpResponse(conn, stopped, req.head);
+  const req = new Http1Request(parser, conn, idle, limits.requestMs);
+  const res = new Http1Response(conn, stopped, req.head);
   let open = true;
   let rejected = false;
   // When the head being read began to arrive (`Date.now()`), or -1 between requests.
@@ -96,7 +98,7 @@ export async function connection<E>(
       // §3.3): no HTTP/1.1 method is `PRI`.
       if (h2 != null && first && parser.available() >= 3) {
         if (parser.buf.utf8Equals("PRI", parser.pos, parser.pos + 3)) {
-          await serveH2Http(conn, parser.take(parser.available()), h2, stopped, handler);
+          await serveH2(conn, parser.take(parser.available()), h2, stopped, handler);
           return;
         }
         first = false;

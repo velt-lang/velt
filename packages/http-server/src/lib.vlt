@@ -5,8 +5,10 @@
 // response straight into the connection's buffer. WebSockets: `http-server/websocket`.
 
 export { BodyTooLarge } from "./errors";
+export { EventStream } from "./event_stream";
+export { HttpStream } from "./http_stream";
 export { HttpRequest } from "./request";
-export { EventStream, HttpResponse, HttpStream } from "./response";
+export { HttpResponse } from "./response";
 export { HttpServeOptions, HttpServer, serveHttp } from "./serve";
 export { NetAddr, ServeInfo } from "./serve_info";
 export { serve } from "./standard";

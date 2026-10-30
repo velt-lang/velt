@@ -24,19 +24,22 @@ place where Velt loses.
 ```
 serveHttp (packages/http-server/src/serve.vlt)
   ├─ TLS: await conn.alpnProtocol() == "h2"  ─┐
-  ├─ TCP: first bytes "PRI" (the preface)     ├─> serveH2Http (h2/facade.vlt)
-  └─ otherwise HTTP/1.1 as before              │     HttpRequest/HttpResponse pass calls on to
-                                               │     H2Request/H2Response (bindH2)
-                                               └─> serveH2 (h2/serve.vlt) → H2Connection
+  ├─ TCP: first bytes "PRI" (the preface)     ├─> serveH2 (h2/serve.vlt) → H2Connection
+  └─ otherwise HTTP/1.1 as before              │     handlers get the stream's H2Request and
+     (http1/connection.vlt)                    │     H2Response
 ```
 
-Handlers keep their signature, `(req: HttpRequest, res: HttpResponse)`. Over HTTP/2 the two
-objects pass every call on to the stream's `H2Request` / `H2Response`, which have the same
-methods; over HTTP/1.1 that costs one null check per call. The pairs are pooled per connection
-(as many as ran at once) and unbound after each request, so nothing refers back to the
-connection from the pool (no reference cycle: Velt frees by counting). The web-standard
-`serve((req: Request) => Response)` built on `HttpRequest`/`HttpResponse` gets HTTP/2 the same
-way.
+Handlers keep their signature, `(req: HttpRequest, res: HttpResponse)`. `HttpRequest` and
+`HttpResponse` are abstract classes (`src/request.vlt`, `src/response.vlt`): HTTP/1.1's
+`Http1Request` / `Http1Response` (`src/http1/`) and HTTP/2's `H2Request` / `H2Response` extend
+them, so a handler gets the stream's own objects, and a class that misses a method does not
+compile (when HTTP/1.1's classes passed calls on to HTTP/2's by hand, one that was never passed
+on, `headerValues`, read nothing over HTTP/2). What only the server calls (`begin`, `complete`,
+`timedOut`, ...) is on the concrete classes. They are abstract classes rather than interfaces
+so that a handler's `req` and `res` are instances of unrelated classes, which the compiler
+knows cannot be one object: a helper taking both, `acceptWebSocket(req, res)`, can be called
+with them. The web-standard `serve((req: Request) => Response)` built on
+`HttpRequest`/`HttpResponse` gets HTTP/2 the same way.
 
 Files (each under 400 lines, one exported class per file). The wire format the `fetch` client
 shares is std's `velt/net/http/h2` (`std/net/http/h2/`):
@@ -57,7 +60,7 @@ The server's own are in `packages/http-server/src/h2/`:
 | `stream.vlt` | `H2Stream`: one stream's state, request body queue, pending response body |
 | `request.vlt`, `response.vlt` | `H2Request`, `H2Response` (the handler's view) |
 | `validate.vlt` | malformed-request checks (RFC 9113 §8.2, §8.3) |
-| `serve.vlt`, `facade.vlt`, `options.vlt` | entry points and limits |
+| `serve.vlt`, `options.vlt` | entry point and limits |
 
 ### One task per connection, handlers as promises on it
 

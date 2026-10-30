@@ -8,8 +8,8 @@ import { FrameWriter } from "velt/net/http/h2";
 import { HpackDecoder } from "velt/net/http/h2";
 import { HpackEncoder } from "velt/net/http/h2";
 import { H2Options, h2Options } from "../../src/h2/options";
-import { H2Request } from "../../src/h2/request";
-import { H2Response } from "../../src/h2/response";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
 import { serveH2 } from "../../src/h2/serve";
 
 /// A running test server.
@@ -32,7 +32,7 @@ export class TestServer {
 
 /// Serves `handler` over HTTP/2 with prior knowledge on a free port.
 export async function startServer(
-  handler: (req: H2Request, res: H2Response) => Promise<void>,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
   opts: H2Options = h2Options(),
 ): Promise<TestServer> {
   const l = await listen("127.0.0.1:0");
