@@ -6,7 +6,6 @@ import type { Allow } from "./types";
 
 export const allow: Allow = {
   oversize: [
-    "cli/index.vlt",
     "collections/btree/leaf.vlt",
     "collections/btree/pool.vlt",
     "collections/concurrent_map.vlt",
@@ -72,7 +71,6 @@ export const allow: Allow = {
     "text/regex/regexp.vlt",
   ],
   multiClass: [
-    "cli/index.vlt",
     "compress/brotli/state.vlt",
     "encoding/json/tape.vlt",
     "net/http/server/serve.vlt",
@@ -128,7 +126,6 @@ export const allow: Allow = {
     "text/regex/regexp.vlt",
   ],
   indexCode: [
-    "cli/index.vlt",
     "crypto/index.vlt",
     "db/index.vlt",
     "encoding/json/index.vlt",

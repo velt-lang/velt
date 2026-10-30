@@ -1,0 +1,8 @@
+// velt/cli (internal): `FlagSpec`, the settings of a boolean flag.
+
+/** Settings of a boolean flag. */
+export struct FlagSpec {
+  /** One-character alias (`v` for `-v`). */
+  short?: string;
+  help?: string;
+}
