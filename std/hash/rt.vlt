@@ -1,0 +1,4 @@
+// velt/hash (internal): the runtime functions velt/hash calls.
+
+export declare function velt_rt_fnv1a64_str(s: string): u64;
+export declare function velt_rt_fnv1a64_bytes(data: u8[]): u64;
