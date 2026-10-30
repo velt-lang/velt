@@ -1,0 +1,13 @@
+// Prints the version of the SQLite that velt:sqlite links (bench/showcase records it beside
+// the versions the other drivers bundle).
+import { open } from "velt:sqlite";
+
+struct Version {
+  v: string;
+}
+
+function main() {
+  const db = open(":memory:");
+  const row: Version | null = db.prepare("select sqlite_version() as v").get();
+  console.log(row == null ? "unknown" : row.v);
+}

@@ -33,12 +33,17 @@ sqlite 5, compile 17, http 31, websocket 4). It needs about 10 GB of disk for th
    and every implementation's output is checked against the reference (byte for byte, or the
    same JSON value, or the same checksums) in an untimed run before it is timed. An
    implementation whose output differs is shown as n/a with the reason, never timed.
-2. **Release builds and default flags.** Velt: `velt build --release` (Velt's optimizer, then
-   LLVM `-O3`). Rust: `cargo build --release` with each suite's own profile (`rustc -O` for the
-   single-file micro-benchmarks). Node and Bun: no flags. Each toolchain builds for its default
-   CPU (Velt: x86-64-v2, Rust: x86-64), except where a suite's Rust baseline is built for the
-   machine's CPU (`-C target-cpu=native` in the Benchmarks Game and `concurrent_map`, as the
-   published programs are): there Velt gets `--cpu native` too.
+2. **The same build strength.** Velt: `velt build --release`: Velt's optimizer, then LLVM
+   `-O3` on the whole program (the program and the std code it uses are one LLVM module), for
+   x86-64-v2 (Velt's default CPU level on x86_64). Rust gets the equivalent: every
+   `cargo build --release --locked` runs with `opt-level = 3`, `codegen-units = 1`,
+   `lto = "fat"` (environment overrides of each suite's profile) and
+   `-C target-cpu=x86-64-v2`, and every single-file program is built with
+   `rustc -C opt-level=3 -C codegen-units=1 -C lto=fat -C target-cpu=x86-64-v2` (not `-O`,
+   which is opt-level 2). Where a suite's Rust baseline is built for the machine's CPU (the
+   Benchmarks Game, `concurrent_map`, `btree`, `atomics`, as the published programs are), it is
+   `-C target-cpu=native` and Velt gets `--cpu native`. Node and Bun run without flags (React
+   with `NODE_ENV=production`).
 3. **No warm-up tricks.** Every process is timed from start to exit (start-up, JIT and file
    reading included), except where a suite times its own loop for every language alike (the
    SQLite workloads, the fetch scenarios, `concurrent_map`: the program prints its own time).
@@ -66,7 +71,7 @@ server's whole process tree (all `node:cluster` workers, all Bun `reusePort` pro
 
 | category | benchmarks (suite) | Velt | Rust | Node | Bun |
 |---|---|:-:|:-:|:-:|:-:|
-| `startup` | hello world: start-up time (20 runs per round) and executable size (`programs/hello`) | ✓ | ✓ | ✓ | ✓ |
+| `startup` | hello world: start-up time (4 × N rounds of one run each instead of N) and executable size (`programs/hello`) | ✓ | ✓ | ✓ | ✓ |
 | `cpu` | 14 micro-benchmarks: classes, closures (4), fib, floats, hashmap, int32, loops, nbody, shapes, sort, strings (`bench/*.vlt`, `bench/rust`, `bench/node`) | ✓ | ✓ | ✓ | ✓ |
 | `benchmarks-game` | binary-trees, fannkuch-redux, fasta, k-nucleotide, mandelbrot, n-body, pidigits, reverse-complement, spectral-norm at the official sizes, every variant in the suite (`bench/benchmarks-game`) | ✓ | ✓ | ✓ | ✓ |
 | `regex` | regex-redux on `fasta 5000000` (`bench/benchmarks-game/regex-redux`) | ✓ | ✓ (regex crate) | ✓ | ✓ |
@@ -114,10 +119,28 @@ from source with the build cache off, against a runtime library that is prebuilt
 is). A clean `cargo build` of the axum server compiles axum, hyper and tokio as well; the row
 with `main.rs` touched is the edit-and-rebuild time.
 
-Servers run pinned to whole physical cores and the load generator to the others (`taskset`;
-about a third of the cores for the load, at least one; `SERVER_CPUS` and `LOAD_CPUS` override,
-as taskset lists). Velt, axum and `node:cluster` use every server core; Node and Bun as one
-process use one, and Bun with `reusePort` runs one process per server core.
+Servers run pinned to whole physical cores and the load generator to the others (`taskset`):
+half of the physical cores each (on the 6-core builder: 3 cores, 6 threads, for the servers and
+3 for oha), so the load generator can keep up with the fastest servers; `SERVER_CPUS` and
+`LOAD_CPUS` override, as taskset lists. Each timed run records oha's own CPU time, and a row
+where it used 90% or more of its CPUs is marked **load-bound** (its req/s may be the load
+generator's limit, not the server's). Velt (`VELT_THREADS` set to the server CPUs), axum and
+`node:cluster` use every server core; Node and Bun as one process use one, and Bun with
+`reusePort` runs one process per server core. Before any timing, every server is started once
+and every route fetched: status 200, and the body and content-type of the reference server's
+response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,
+which the `tsx` category compares with React's and Preact's byte for byte). A server that fails
+the check, or answers anything but 200 in a timed run, gets no req/s.
+
+Results contain no host name, user name or absolute path: the host is a label
+(`SHOWCASE_HOST_LABEL`, default "benchmark host") and paths are written relative to the
+repository (`<repo>`), the build directory (`$BUILD`) and the home directory (`~`).
+`results/` is gitignored; a run's results are committed deliberately (`git add -f`), after
+review. A benchmark, category or server that raises an error is recorded as failed in
+`results.json` and the run goes on; the tables are written at the end in any case.
+`results.json` also records the installed npm package versions (react, react-dom, preact,
+preact-render-to-string, better-sqlite3, ws) and the SQLite version of every driver.
+`test_report.py` (run by `run.sh` first) tests the list of losses on made-up results.
 
 ## Not covered
 
@@ -136,6 +159,8 @@ process use one, and Bun with `reusePort` runs one process per server core.
 - **Threads against Node `worker_threads` and Bun workers, and `ConcurrentMap` against Rust's
   DashMap**: the suites have no worker-thread programs, and `concurrent_map` compares with
   bbtree's concurrent map only.
+- **Clustered Node and Bun chat servers**: the chat rows compare Velt on the server cores with
+  Node and Bun as one process each; the suite has no clustered Node or Bun chat server.
 - **Rust templating for the TSX rows** (askama, maud): templating is not JSX, so the Rust cell is
   n/a rather than a different kind of program.
 - **bench/array_view, bench/shared, bench/simd, bench/proxy and the other instruction-count

@@ -9,6 +9,7 @@ here are stopped, by the PIDs recorded when they were started.
 import json
 import os
 import signal
+import urllib.error
 import socket
 import subprocess
 import sys
@@ -23,8 +24,10 @@ ROUTES = ["plaintext", "json", "fortunes"]
 
 
 def cpu_sets():
-    """(server cpus, load cpus) as taskset lists: whole physical cores, about a third of them
-    (at least one) for the load generator. SERVER_CPUS / LOAD_CPUS override."""
+    """(server cpus, load cpus) as taskset lists: whole physical cores, half of them (at least
+    one) for the load generator, so it can keep up with the fastest servers (each timed run
+    records its CPU use, and a run where it is near saturation is flagged). SERVER_CPUS /
+    LOAD_CPUS override."""
     if os.environ.get("SERVER_CPUS") and os.environ.get("LOAD_CPUS"):
         return os.environ["SERVER_CPUS"], os.environ["LOAD_CPUS"]
     cores = {}
@@ -35,7 +38,7 @@ def cpu_sets():
             sib = str(cpu)
         cores.setdefault(sib, []).append(cpu)
     groups = list(cores.values())
-    n_load = max(1, len(groups) // 3)
+    n_load = max(1, len(groups) // 2)
     if len(groups) < 2:
         cpus = ",".join(str(c) for c in groups[0])
         return cpus, cpus
@@ -101,13 +104,16 @@ class Server:
     """Server processes started (each in its own process group) and stopped by their PIDs."""
 
     def __init__(self, cmds, cpus, env=None, probe=None):
-        self.procs = []
-        for cmd in cmds:
-            self.procs.append(subprocess.Popen(
-                ["taskset", "-c", cpus, *cmd], env={**os.environ, **(env or {})},
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True))
+        self.procs, self.error = [], None
+        try:
+            for cmd in cmds:
+                self.procs.append(subprocess.Popen(
+                    ["taskset", "-c", cpus, *cmd], env={**os.environ, **(env or {})},
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True))
+        except OSError as e:
+            self.error = str(e)
         self.pids = [p.pid for p in self.procs]
-        self.ok = self._wait(probe)
+        self.ok = self.error is None and self._wait(probe)
 
     def _wait(self, probe):
         for _ in range(300):
@@ -121,7 +127,7 @@ class Server:
         return False
 
     def stderr_tail(self):
-        out = []
+        out = [self.error] if self.error else []
         for p in self.procs:
             if p.poll() is not None and p.stderr:
                 out += p.stderr.read().decode(errors="replace").strip().splitlines()[-3:]
@@ -170,7 +176,7 @@ def http_servers(ctx, server_cpus):
     bun_ts = os.path.join(ctx.here, "bun", "techempower.ts")
     return [
         # (label, lang, [cmd per process] given the port, env, error)
-        ("Velt velt:http", "velt", lambda p: [[velt, str(p)]], {}, verr),
+        ("Velt velt:http", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr),
         ("Rust axum", "rust", lambda p: [[os.path.join(axum_t, "release", "techempower-axum"), str(p)]], {}, aerr),
         ("Node node:http (1 process)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]], {}, nerr),
         (f"Node node:cluster ({n} workers)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]],
@@ -181,18 +187,86 @@ def http_servers(ctx, server_cpus):
     ]
 
 
+LOAD_BOUND = 0.9
+
+
+def seconds(duration):
+    """oha's duration ("10s", "500ms", "1m") in seconds."""
+    for suffix, scale in (("ms", 0.001), ("s", 1), ("m", 60)):
+        if duration.endswith(suffix):
+            return float(duration[: -len(suffix)]) * scale
+    return float(duration)
+
+
 def oha(ctx, load_cpus, url, duration, conns):
+    """One oha run: req/s, latencies, status codes, and oha's own CPU use (wait4) as a share of
+    the load CPUs over the run, so a run where the load generator is the bottleneck shows."""
     cmd = ["taskset", "-c", load_cpus, ctx.oha, "-z", duration, "-c", str(conns), "--no-tui",
            "--output-format", "json", url]
-    p = subprocess.run(cmd, capture_output=True, timeout=600)
-    if p.returncode != 0:
-        raise engine.RunError(p.stderr.decode(errors="replace")[-300:])
-    d = json.loads(p.stdout)
+    metrics, out = engine.run_proc(cmd, timeout=600)
+    d = json.loads(out)
     s, pct = d["summary"], d.get("latencyPercentiles", {})
-    reqs = sum(d.get("statusCodeDistribution", {}).values())
+    codes = {str(k): v for k, v in d.get("statusCodeDistribution", {}).items()}
+    reqs = sum(codes.values())
+    util = metrics["cpu_s"] / (count_cpus(load_cpus) * max(seconds(duration), 1e-3))
     return {"rps": s["requestsPerSec"], "success": s["successRate"], "requests": reqs,
-            "p50_ms": pct.get("p50", 0) * 1000, "p99_ms": pct.get("p99", 0) * 1000,
-            "avg_ms": s["average"] * 1000}
+            # oha cancels the requests still in flight when the duration ends ("aborted due to
+            # deadline"): those are not the server's errors.
+            "status_codes": codes,
+            "errors": {e: n for e, n in d.get("errorDistribution", {}).items() if "deadline" not in e},
+            "aborted_at_deadline": sum(n for e, n in d.get("errorDistribution", {}).items() if "deadline" in e),
+            "p50_ms": (pct.get("p50") or 0) * 1000, "p99_ms": (pct.get("p99") or 0) * 1000,
+            "avg_ms": (s.get("average") or 0) * 1000,
+            "load_cpu_s": metrics["cpu_s"], "load_cpu_share": round(util, 3)}
+
+
+def fetch(port, route):
+    """(status, normalized content-type, body) of one GET."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/{route}", timeout=10) as r:
+            return r.status, r.headers.get("content-type", "").replace(" ", "").lower(), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, (e.headers.get("content-type") or "").replace(" ", "").lower(), e.read()
+
+
+def check_servers(ctx, servers, server_cpus, routes, errors, reference, expected):
+    """Starts each server once and fetches every route: status 200, and the content-type and
+    body of the reference server (or of `expected`, {route: body}). A server that fails is an
+    error and gets no req/s."""
+    got = {}
+    for label, lang, cmds, env, err in servers:
+        if label in errors:
+            continue
+        port = free_port()
+        log(f"[http] check {label}")
+        srv = Server(cmds(port), server_cpus, env, http_probe(port))
+        try:
+            if not srv.ok:
+                errors[label] = f"did not start: {srv.stderr_tail()}"
+                continue
+            got[label] = {route: fetch(port, route) for route in routes}
+        except Exception as e:  # a server that cannot be checked is a failed server
+            errors[label] = f"check failed: {type(e).__name__}: {e}"
+        finally:
+            srv.stop()
+    ref = got.get(reference, {})
+    for label, responses in got.items():
+        for route, (status, ctype, body) in responses.items():
+            want = expected.get(route) if expected else (ref.get(route) or (None, None, None))[2]
+            want_type = (ref.get(route) or (None, None, None))[1]
+            problem = None
+            if status != 200:
+                problem = f"status {status}"
+            elif want is None:
+                problem = f"no reference response ({reference} failed)"
+            elif body != want:
+                problem = f"body differs from the reference ({len(body)} vs {len(want)} bytes)"
+            elif want_type is not None and ctype != want_type:
+                problem = f"content-type {ctype!r}, the reference sends {want_type!r}"
+            if problem and label not in errors:
+                errors[label] = f"check failed: /{route}: {problem}"
+    return {label: {route: {"status": r[0], "content_type": r[1], "bytes": len(r[2])}
+                    for route, r in responses.items()} for label, responses in got.items()}
 
 
 def http_benchmarks(ctx):
@@ -201,17 +275,21 @@ def http_benchmarks(ctx):
         return [{"category": "http", "name": "techempower", "error": "oha not found", "impls": []}]
 
     servers = http_servers(ctx, server_cpus)
-    tsx = core.tsx_servers(ctx)
-    return lambda: (http_run(ctx, servers, server_cpus, load_cpus, ROUTES, "")
-                    + http_run(ctx, tsx, server_cpus, load_cpus, ["small", "large"], "TSX page "))
+    tsx, tsx_expected = core.tsx_servers(ctx, count_cpus(server_cpus))
+    return [lambda: http_run(ctx, servers, server_cpus, load_cpus, ROUTES, "", "Rust axum", None),
+            lambda: http_run(ctx, tsx, server_cpus, load_cpus, ["small", "large"], "TSX page ", "Velt TSX",
+                             tsx_expected())]
 
 
-def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix):
+def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, expected):
     duration = "1s" if ctx.smoke else ctx.http_duration
     warm = "1s" if ctx.smoke else "3s"
     conns = 16 if ctx.smoke else ctx.http_conns
     results = {(label, route): [] for label, *_ in servers for route in routes}
     errors = {label: err for label, _, _, _, err in servers if err}
+    checked = check_servers(ctx, servers, server_cpus, routes, errors, reference, expected)
+    # A route that answered anything but 200 in a timed run fails for that server only.
+    route_errors = {}
     for r in range(ctx.runs):
         k = r % len(servers)
         for label, lang, cmds, env, err in servers[k:] + servers[:k]:
@@ -225,6 +303,8 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix):
                     errors[label] = f"did not start: {srv.stderr_tail()}"
                     continue
                 for route in routes:
+                    if (label, route) in route_errors:
+                        continue
                     url = f"http://127.0.0.1:{port}/{route}"
                     oha(ctx, load_cpus, url, warm, conns)
                     cpu0, _, _ = proc_stats(srv.pids)
@@ -233,9 +313,14 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix):
                     m["server_cpu_s"] = cpu1 - cpu0
                     m["server_us_per_req"] = (cpu1 - cpu0) * 1e6 / max(m["requests"], 1)
                     m["server_rss_mb"], m["server_peak_rss_mb"] = rss, hwm
+                    other = {c: n for c, n in m["status_codes"].items() if c != "200"}
+                    if other or m["errors"]:
+                        route_errors[(label, route)] = (f"round {r + 1}: responses other than 200: "
+                                                        f"{other or m['errors']}")
+                        continue
                     results[(label, route)].append(m)
-            except (engine.RunError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
-                errors[label] = f"round {r + 1}: {e}"
+            except Exception as e:  # a failed round is a result, never the end of the run
+                errors[label] = f"round {r + 1}: {type(e).__name__}: {e}"
             finally:
                 srv.stop()
     benches = []
@@ -249,14 +334,18 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix):
                 summary.update(best_rps=best["rps"], p50_ms=best["p50_ms"], p99_ms=best["p99_ms"],
                                server_us_per_req=min(m["server_us_per_req"] for m in runs),
                                server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs),
-                               min_success=min(m["success"] for m in runs))
-            d = {"label": label, "lang": lang, "runs": runs, "summary": summary}
-            if label in errors:
-                d["error"] = errors[label]
+                               min_success=min(m["success"] for m in runs),
+                               load_cpu_share=best["load_cpu_share"],
+                               load_bound=best["load_cpu_share"] >= LOAD_BOUND)
+            d = {"label": label, "lang": lang, "runs": runs, "summary": summary,
+                 "response_check": checked.get(label)}
+            if label in errors or (label, route) in route_errors:
+                d["error"] = errors.get(label) or route_errors[(label, route)]
             impls.append(d)
         benches.append({"category": "http", "name": f"{prefix}/{route}", "kind": "http", "impls": impls,
                         "load": {"tool": "oha", "duration": duration, "warmup": warm, "connections": conns,
-                                 "server_cpus": server_cpus, "load_cpus": load_cpus}})
+                                 "server_cpus": server_cpus, "load_cpus": load_cpus,
+                                 "load_bound_share": LOAD_BOUND, "reference": reference}})
     return benches
 
 
@@ -316,6 +405,8 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
                     continue
                 res.update(server_cpu_s=cpu1 - cpu0, server_rss_mb=rss, server_peak_rss_mb=hwm)
                 rows[label].append(res)
+            except Exception as e:  # a failed round is a result, never the end of the run
+                errors[label] = f"round {r + 1}: {type(e).__name__}: {e}"
             finally:
                 srv.stop()
                 for suffix in ("", "-wal", "-shm"):

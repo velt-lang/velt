@@ -69,6 +69,14 @@ def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
         return metrics, out.read()
 
 
+def _num(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 def parse_output(kind, text):
     """The numbers a program reports itself: {key: (value, checksum)}."""
     found = {}
@@ -76,17 +84,20 @@ def parse_output(kind, text):
         for line in text.splitlines():
             p = line.split()
             if len(p) == 5 and p[0] == "RESULT":
-                ops, ms = int(p[2]), float(p[4])
+                try:
+                    ops, ms = int(p[2]), float(p[4])
+                except ValueError:
+                    continue
                 found[p[1]] = (ops / (ms / 1000.0) if ms > 0 else 0.0, f"{ops}/{p[3]}")
     elif kind == "cmap":
         for line in text.splitlines():
             p = line.split()
-            if len(p) == 4:
+            if len(p) == 4 and _num(p[2]):
                 found[f"{p[0]} x{p[1]}"] = (float(p[2]), p[3])
     elif kind == "named":
         for line in text.splitlines():
             p = line.split()
-            if len(p) == 3:
+            if len(p) == 3 and _num(p[1]):
                 found[p[0]] = (float(p[1]), p[2])
     elif kind == "fetch":
         for line in text.splitlines():
@@ -122,8 +133,13 @@ def check_output(bench, out, reference, impl, ref_label):
     ref = parse_output(check, reference.decode(errors="replace"))
     if not mine:
         return "printed no results"
-    bad = [k for k, (_, c) in mine.items() if k in ref and ref[k][1] != c]
-    return f"checksums differ from the reference: {', '.join(bad)}" if bad else None
+    missing = [k for k in ref if k not in mine]
+    extra = [k for k in mine if k not in ref]
+    if missing or extra:
+        return (f"results differ from {ref_label}'s: missing {', '.join(missing) or 'none'}, "
+                f"extra {', '.join(extra) or 'none'}")
+    bad = [k for k, (_, c) in mine.items() if ref[k][1] != c]
+    return f"checksums differ from {ref_label}'s: {', '.join(bad)}" if bad else None
 
 
 def summarize(runs, parse, unit):
@@ -165,7 +181,7 @@ def measure(bench, runs, log=sys.stderr):
         print(f"[{bench['category']}] {bench['name']}: check {i['label']}", file=log, flush=True)
         try:
             metrics, out = once(i)
-        except (RunError, OSError) as e:
+        except Exception as e:  # a failed run is a result, never the end of the run
             i["error"] = str(e)
             continue
         if reference is None and bench["check"] != "none" and not bench["check"].startswith("file:"):
@@ -185,7 +201,7 @@ def measure(bench, runs, log=sys.stderr):
                   file=log, flush=True)
             try:
                 metrics, out = once(i)
-            except (RunError, OSError) as e:
+            except Exception as e:  # a failed run is a result, never the end of the run
                 i["error"] = f"round {r + 1}: {e}"
                 continue
             if parse:

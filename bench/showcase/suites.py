@@ -61,9 +61,30 @@ def js_impls(ctx, path, args=(), label_suffix="", error=None, **kw):
     return out
 
 
-def cargo(ctx, what, manifest_dir, target, env=None):
-    return sh(ctx, what, ["cargo", "build", "--release", "-q", "--target-dir", target],
-              cwd=manifest_dir, env=env)
+# Rust gets the build Velt's release build is: LLVM -O3, the whole program optimized as one
+# unit (Velt compiles the program and the std code it uses into one module), and the same CPU
+# level, x86-64-v2 (Velt's default on x86_64), or the machine's own CPU where a suite builds its
+# Rust baseline for it and Velt gets `--cpu native` too.
+RUST_CPU = "x86-64-v2"
+RUSTC = ["rustc", "--edition", "2021", "-C", "opt-level=3", "-C", "codegen-units=1", "-C", "lto=fat"]
+
+
+def rust_profile(native=False):
+    """The environment every `cargo build --release` gets (overriding the suites' profiles)."""
+    return {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "3", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+            "CARGO_PROFILE_RELEASE_LTO": "fat",
+            "RUSTFLAGS": f"-C target-cpu={'native' if native else RUST_CPU}"}
+
+
+def rustc(ctx, what, src, out):
+    """A single-file Rust program, built as rust_profile builds a crate."""
+    return sh(ctx, what, [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", out, src])
+
+
+def cargo(ctx, what, manifest_dir, target, native=False):
+    """`cargo build --release --locked`: the committed lockfile, the rust_profile build."""
+    return sh(ctx, what, ["cargo", "build", "--release", "--locked", "-q", "--target-dir", target],
+              cwd=manifest_dir, env=rust_profile(native))
 
 
 # ---- CPU micro-benchmarks (bench/*.vlt, bench/rust, bench/node) ----
@@ -76,8 +97,7 @@ def micro_benchmarks(ctx):
         if not ctx.wanted_name(name):
             continue
         rust = os.path.join(out, f"{name}-rust")
-        rerr = sh(ctx, f"rustc {name}", ["rustc", "-O", "--edition", "2021", "-o", rust,
-                                         os.path.join(ctx.bench, "rust", f"{name}.rs")])
+        rerr = rustc(ctx, f"rustc {name}", os.path.join(ctx.bench, "rust", f"{name}.rs"), rust)
         velt = os.path.join(out, f"{name}-velt")
         verr = velt_build(ctx, os.path.join(ctx.bench, f"{name}.vlt"), velt)
         benches.append({
@@ -108,8 +128,7 @@ def game_benchmarks(ctx, category):
     rust_target = os.path.join(out, "rust-target")
     if not hasattr(ctx, "game_rust_err"):
         ctx.game_rust_err = cargo(ctx, "benchmarks-game rust (target-cpu=native)",
-                                  os.path.join(here, "rust"), rust_target,
-                                  env={"RUSTFLAGS": "-C target-cpu=native"})
+                                  os.path.join(here, "rust"), rust_target, native=True)
     rust_bin = os.path.join(rust_target, "release")
     programs = sorted(d for d in os.listdir(here) if os.path.isfile(os.path.join(here, d, "bench.conf")))
     programs = [p for p in programs if (p == "regex-redux") == (category == "regex")]
@@ -193,7 +212,7 @@ def async_benchmarks(ctx):
         verr = velt_build(ctx, os.path.join(here, "map.vlt"), velt, ["--cpu", "native"])
         # rust/.cargo/config.toml builds for this CPU, as bbtree's own benchmark does.
         rtarget = os.path.join(out, "cmap-rust")
-        rerr = cargo(ctx, "concurrent_map bbtree (git dependency)", os.path.join(here, "rust"), rtarget)
+        rerr = cargo(ctx, "concurrent_map bbtree (git dependency)", os.path.join(here, "rust"), rtarget, native=True)
         benches.append({
             "category": "async", "name": "concurrent_map", "check": "cmap", "parse": "cmap",
             "unit": "Mops/s",
@@ -331,7 +350,7 @@ def startup_benchmarks(ctx):
     os.makedirs(out, exist_ok=True)
     src = os.path.join(ctx.here, "programs", "hello")
     rust = os.path.join(out, "hello-rust")
-    rerr = sh(ctx, "rustc hello", ["rustc", "-O", "--edition", "2021", "-o", rust, os.path.join(src, "hello.rs")])
+    rerr = rustc(ctx, "rustc hello", os.path.join(src, "hello.rs"), rust)
     velt = os.path.join(out, "hello-velt")
     verr = velt_build(ctx, os.path.join(src, "hello.vlt"), velt)
     sizes = {}
@@ -378,7 +397,8 @@ def compile_benchmarks(ctx):
             "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", vsrc, "-o", o + "-vd"], env=cold),
                       impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", vsrc, "-o", o + "-vr"], env=cold),
                       impl("rustc (debug)", "rust", ["rustc", "--edition", "2021", "-o", o + "-rd", rsrc], env=nocache),
-                      impl("rustc -O", "rust", ["rustc", "-O", "--edition", "2021", "-o", o + "-rr", rsrc], env=nocache)],
+                      impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
+                           [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache)],
         })
     # The HTTP server: velt:http against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
@@ -390,17 +410,18 @@ def compile_benchmarks(ctx):
     clean_t, touch_t = os.path.join(out, "axum-clean"), os.path.join(out, "axum-touch")
     main_rs = os.path.join(axum_src, "src", "main.rs")
     o = os.path.join(out, "server")
-    cargo_cmd = ["cargo", "build", "--release", "-q", "--offline"]
+    cargo_cmd = ["cargo", "build", "--release", "-q", "--offline", "--locked"]
+    relenv = {**nocache, **rust_profile()}
     benches.append({
         "category": "compile", "name": "HTTP server (techempower: velt:http vs axum)", "check": "none",
         "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", os.path.join(te, "server.vlt"), "-o", o + "-vd"], env=cold),
                   impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", os.path.join(te, "server.vlt"), "-o", o + "-vr"], env=cold),
-                  impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--target-dir", clean_t],
+                  impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--locked", "--target-dir", clean_t],
                        env=nocache, cwd=axum_src, pre=_rmtree(clean_t)),
-                  impl("cargo build --release, clean: axum + deps", "rust", [*cargo_cmd, "--target-dir", clean_t],
-                       env=nocache, cwd=axum_src, pre=_rmtree(clean_t)),
-                  impl("cargo build --release, main.rs touched (deps built)", "rust", [*cargo_cmd, "--target-dir", touch_t],
-                       env=nocache, cwd=axum_src, pre=_touch(main_rs))],
+                  impl("cargo build --release (fat LTO, as the runtime rows), clean: axum + deps", "rust",
+                       [*cargo_cmd, "--target-dir", clean_t], env=relenv, cwd=axum_src, pre=_rmtree(clean_t)),
+                  impl("cargo build --release (fat LTO), main.rs touched (deps built)", "rust",
+                       [*cargo_cmd, "--target-dir", touch_t], env=relenv, cwd=axum_src, pre=_touch(main_rs))],
     })
     # Fetch the crates once, outside the timing (the clean builds run --offline).
     ferr = sh(ctx, "cargo fetch (axum)", ["cargo", "fetch", "-q"], cwd=axum_src)

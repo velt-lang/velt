@@ -42,9 +42,9 @@ def tool(name, *extra):
     return None
 
 
-def version(cmd):
+def version(cmd, cwd=None):
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=cwd)
         return (p.stdout or p.stderr).strip().splitlines()[0]
     except (OSError, IndexError, subprocess.TimeoutExpired):
         return None
@@ -67,12 +67,15 @@ def machine(ctx):
     for line in (read("/proc/meminfo") or "").splitlines():
         if line.startswith("MemTotal:"):
             mem = f"{int(line.split()[1]) / 1048576:.1f} GB"
-    commit = version(["git", "-C", ctx.root, "rev-parse", "HEAD"])
+    rev = subprocess.run(["git", "-C", ctx.root, "rev-parse", "HEAD"], capture_output=True, text=True)
+    # An exported tree (git archive) has no .git: VELT_COMMIT names the commit it came from.
+    commit = rev.stdout.strip() if rev.returncode == 0 else os.environ.get("VELT_COMMIT", "unknown (not a git checkout)")
     dirty = subprocess.run(["git", "-C", ctx.root, "status", "--porcelain", "--untracked-files=no"],
                            capture_output=True, text=True).stdout.strip()
     return {
         "date": ctx.date,
-        "host": platform.node(),
+        # A label, not the host name: results are published.
+        "host": os.environ.get("SHOWCASE_HOST_LABEL", "benchmark host"),
         "os": version(["sh", "-c", ". /etc/os-release 2>/dev/null && echo $PRETTY_NAME"]) or platform.platform(),
         "kernel": platform.release(),
         "cpu": cpu or platform.processor(),
@@ -113,19 +116,88 @@ PREPARE = {
 }
 
 
-def run_items(ctx, items):
+def failure(category, name, e):
+    """The error record of a benchmark (or a whole category) that raised: kept, and the run goes on."""
+    suites.log(f"[{category}] {name}: failed: {type(e).__name__}: {e}")
+    return {"category": category, "name": name, "error": f"{type(e).__name__}: {e}"[:600], "impls": []}
+
+
+def run_items(ctx, category, items):
     """items: benchmark dicts (measured by engine), error records, or callables (servers)."""
     records = []
     for item in items:
-        if callable(item):
-            records += item()
-        elif isinstance(item, list):
-            records += run_items(ctx, item)
-        elif item.get("error") and not item.get("impls"):
-            records.append(item)
-        else:
-            records.append(engine.measure(item, ctx.runs))
+        try:
+            if callable(item):
+                records += item()
+            elif isinstance(item, list):
+                records += run_items(ctx, category, item)
+            elif item.get("error") and not item.get("impls"):
+                records.append(item)
+            else:
+                records.append(engine.measure(item, ctx.runs))
+        except Exception as e:  # one benchmark's failure is a result, never the end of the run
+            name = item.get("name", category) if isinstance(item, dict) else category
+            records.append(failure(category, name, e))
     return records
+
+
+def redact(value, subs):
+    """value with machine-specific strings (paths under the repository, the build directory and
+    the home directory; the user name) replaced, recursively, so results can be published."""
+    if isinstance(value, str):
+        for old, new in subs:
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [redact(v, subs) for v in value]
+    if isinstance(value, dict):
+        return {k: redact(v, subs) for k, v in value.items()}
+    return value
+
+
+def redactions(ctx):
+    """The replacements redact makes: longest (most specific) paths first."""
+    subs = [(ctx.out, "$BUILD"), (ctx.root, "<repo>"), (os.path.expanduser("~"), "~")]
+    user = os.environ.get("USER") or os.environ.get("LOGNAME")
+    if user and len(user) > 2:
+        subs.append((f"/{user}/", "/<user>/"))
+        subs.append((f"/{user}", "/<user>"))
+    return [(a, b) for a, b in subs if a and a != "/"]
+
+
+def package_versions(ctx):
+    """The installed npm packages the JS rows use, and each SQLite driver's SQLite version."""
+    out = {}
+    for d, pkgs in ((os.path.join(ctx.here, "tsx"), ("react", "react-dom", "preact", "preact-render-to-string")),
+                    (os.path.join(ctx.bench, "db", "node"), ("better-sqlite3",)),
+                    (os.path.join(ctx.bench, "chat", "node"), ("ws", "better-sqlite3"))):
+        for pkg in pkgs:
+            try:
+                with open(os.path.join(d, "node_modules", pkg, "package.json")) as f:
+                    out[f"npm {pkg} ({os.path.relpath(d, ctx.root)})"] = json.load(f)["version"]
+            except (OSError, ValueError, KeyError):
+                pass
+    q = "select sqlite_version() as v"
+    if ctx.node:
+        out["sqlite (better-sqlite3)"] = version(
+            [ctx.node, "-e", f"console.log(new (require('better-sqlite3'))(':memory:').prepare('{q}').get().v)"],
+            cwd=os.path.join(ctx.bench, "db", "node"))
+    if ctx.bun:
+        out["sqlite (bun:sqlite)"] = version(
+            [ctx.bun, "-e", "const { Database } = require('bun:sqlite'); "
+                            f"console.log(new Database(':memory:').query('{q}').get().v)"])
+    exe = os.path.join(ctx.out, "sqlite", "sqlite-version")
+    os.makedirs(os.path.dirname(exe), exist_ok=True)
+    if suites.velt_build(ctx, os.path.join(ctx.here, "programs", "sqlite_version.vlt"), exe) is None:
+        out["sqlite (velt:sqlite)"] = version([exe])
+    for lock in (os.path.join(ctx.bench, "db", "rust", "Cargo.lock"),
+                 os.path.join(ctx.bench, "sqlite", "rust", "Cargo.lock")):
+        lines = (read(lock) or "").splitlines()
+        for k, line in enumerate(lines[:-1]):
+            if line == 'name = "libsqlite3-sys"':
+                out[f"rusqlite libsqlite3-sys, bundled SQLite ({os.path.relpath(lock, ctx.root)})"] = \
+                    lines[k + 1].split('"')[1]
+    return out
 
 
 def main():
@@ -170,22 +242,37 @@ def main():
     prepared = {}
     for c in cats:
         suites.log(f"== preparing {c}")
-        items = PREPARE[c](ctx)
-        prepared[c] = items if isinstance(items, list) else [items]
+        try:
+            items = PREPARE[c](ctx)
+            prepared[c] = items if isinstance(items, list) else [items]
+        except Exception as e:  # a category that cannot be built is reported, the others still run
+            prepared[c] = [failure(c, f"{c} (build)", e)]
+    try:
+        info["versions"].update(package_versions(ctx))
+    except Exception as e:
+        info["versions"]["packages"] = f"not recorded: {e}"
     info["build_s"] = round(time.time() - t0, 1)
     results = {"machine": info, "settings": {"runs": ctx.runs, "smoke": ctx.smoke,
                                              "http_duration": ctx.http_duration, "http_conns": ctx.http_conns},
                "build_failures": ctx.failures, "categories": {}}
-    for c in cats:
-        suites.log(f"== running {c}")
-        results["categories"][c] = run_items(ctx, prepared[c])
-        # Written after every category, so an interrupted run keeps what it measured.
+    subs = redactions(ctx)
+
+    def save():
         info["loadavg_end"] = read("/proc/loadavg")
         info["total_s"] = round(time.time() - t0, 1)
         with open(os.path.join(a.out, "results.json"), "w") as f:
-            json.dump(results, f, indent=1)
-    report.write(results, a.out)
-    suites.log(f"results: {os.path.join(a.out, 'results.json')} and the Markdown tables beside it")
+            json.dump(redact(results, subs), f, indent=1)
+
+    try:
+        for c in cats:
+            suites.log(f"== running {c}")
+            results["categories"][c] = run_items(ctx, c, prepared[c])
+            # Written after every category, so an interrupted run keeps what it measured.
+            save()
+    finally:
+        save()
+        report.write(redact(results, subs), a.out)
+        suites.log(f"results: {os.path.join(a.out, 'results.json')} and the Markdown tables beside it")
 
 
 if __name__ == "__main__":

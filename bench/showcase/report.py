@@ -48,7 +48,7 @@ def versus(velt, other, higher_better):
 
 def velt_ref(impls, key):
     for i in impls:
-        if i["lang"] == "velt" and not i.get("error"):
+        if i["lang"] == "velt" and i.get("summary", {}).get("runs"):
             v = key(i)
             if v:
                 return v
@@ -67,15 +67,17 @@ def process_table(rec, lines, notes, ms=False):
         if not i.get("error") and rec.get("runs_factor") == 0:
             lines.append(f"| {rec['name']} | {i['label']} | output checked, not timed | | | | | |")
             continue
-        if i.get("error") or not s.get("runs"):
+        if not usable(i):
             lines.append(f"| {rec['name']} | {i['label']} | n/a | | | | | |")
             notes.append(f"{rec['name']}, {i['label']}: {i.get('error', 'no runs')}")
             continue
+        if i.get("error"):
+            notes.append(f"{rec['name']}, {i['label']}: partial, {i['error']}")
         mbs = ""
         if extra_mb:
             mbs = (f" ({rec['input_bytes'] * rec['rounds'] / s['best_wall_s'] / 1e6:,.0f} MB/s, "
                    f"{s['best_wall_s'] * 1000 / rec['rounds']:.2f} ms/op)")
-        lines.append(f"| {rec['name']} | {i['label']} | {num(s['best_wall_s'] * scale)}{mbs} | "
+        lines.append(f"| {rec['name']} | {i['label']}{' (partial)' if i.get('error') else ''} | {num(s['best_wall_s'] * scale)}{mbs} | "
                      f"{num(s['median_wall_s'] * scale)} | {num(s['min_cpu_s'])} | {num(s['peak_rss_mb'], 1)} | "
                      f"{s['runs']} | {versus(vref, s['best_wall_s'], False)} |")
     return f"| benchmark | implementation | best wall {unit} | median wall {unit} | CPU s (user+sys) | peak RSS MB | runs | vs Velt |\n|---|---|---:|---:|---:|---:|---:|---|"
@@ -90,16 +92,18 @@ def reported_table(rec, lines, notes):
             if k not in keys:
                 keys.append(k)
     for i in impls:
-        if i.get("error") or not i.get("summary", {}).get("runs"):
+        if not usable(i):
             lines.append(f"| {rec['name']} | {i['label']} | n/a | | |")
             notes.append(f"{rec['name']}, {i['label']}: {i.get('error', 'no runs')}")
+        elif i.get("error"):
+            notes.append(f"{rec['name']}, {i['label']}: partial, {i['error']}")
     for k in keys:
         vref = velt_ref(impls, lambda i: i.get("summary", {}).get("reported", {}).get(k))
         for i in impls:
             v = i.get("summary", {}).get("reported", {}).get(k)
-            if v is None or i.get("error"):
+            if v is None or not usable(i):
                 continue
-            lines.append(f"| {rec['name']}: {k} | {i['label']} | {num(v)} | "
+            lines.append(f"| {rec['name']}: {k} | {i['label']}{' (partial)' if i.get('error') else ''} | {num(v)} | "
                          f"{num(i['summary']['peak_rss_mb'], 1)} | {versus(vref, v, hb)} |")
     label = {"s": "client's own time, s", "ms": "the program's own time, ms", "ops/s": "ops/s (best)",
              "Mops/s": "Mops/s (best)"}[unit]
@@ -113,22 +117,29 @@ def http_table(recs, lines, notes):
         for i in impls:
             s = i["summary"]
             if not s.get("runs"):
-                lines.append(f"| {rec['name']} | {i['label']} | n/a | | | | | |")
+                lines.append(f"| {rec['name']} | {i['label']} | n/a | | | | | | |")
                 notes.append(f"{rec['name']}, {i['label']}: {i.get('error', 'no runs')}")
                 continue
             ok = "" if s["min_success"] >= 1 else f" ({s['min_success'] * 100:.1f}% ok)"
-            lines.append(f"| {rec['name']} | {i['label']} | {s['best_rps']:,.0f}{ok} | {s['p50_ms']:.2f} | "
+            bound = " **load-bound**" if s.get("load_bound") else ""
+            label = f"{i['label']}{' (partial)' if i.get('error') else ''}"
+            lines.append(f"| {rec['name']} | {label} | {s['best_rps']:,.0f}{ok}{bound} | {s['p50_ms']:.2f} | "
                          f"{s['p99_ms']:.2f} | {s['server_us_per_req']:.1f} | {s['server_peak_rss_mb']:.1f} | "
-                         f"{versus(vref, s['best_rps'], True)} |")
+                         f"{s.get('load_cpu_share', 0) * 100:.0f}% | {versus(vref, s['best_rps'], True)} |")
             if i.get("error"):
                 notes.append(f"{rec['name']}, {i['label']}: {i['error']}")
     load = recs[0]["load"] if recs else {}
-    head = ("| route | server | req/s (best) | p50 ms | p99 ms | server CPU µs/request | server peak RSS MB | vs Velt |\n"
-            "|---|---|---:|---:|---:|---:|---:|---|")
+    head = ("| route | server | req/s (best) | p50 ms | p99 ms | server CPU µs/request | server peak RSS MB "
+            "| load generator CPU | vs Velt |\n"
+            "|---|---|---:|---:|---:|---:|---:|---:|---|")
     note = (f"\nLoad: {load.get('tool')} for {load.get('duration')} per run with {load.get('connections')} "
             f"keep-alive connections after a {load.get('warmup')} warm-up (the same for every server); "
             f"servers on CPUs {load.get('server_cpus')}, the load generator on CPUs {load.get('load_cpus')}. "
-            "Latencies are from the run with the best req/s.\n") if load else ""
+            "Latencies are from the run with the best req/s. Every server's responses were checked "
+            f"first (status 200, and the body and content-type of {load.get('reference')}'s, or the "
+            "rendered page's). *Load generator CPU* is oha's CPU time over the run as a share of its "
+            f"CPUs; at {load.get('load_bound_share', 0.9) * 100:.0f}% or more the row is **load-bound**: "
+            "the load generator, not the server, may have set the req/s.\n") if load else ""
     return head, note
 
 
@@ -180,6 +191,9 @@ def category_md(cat, recs):
                         what = "executable" if k in ("Rust", "Velt") else "runtime executable (the program needs it installed)"
                         out.append(f"| {k} {what} | {v / 1e6:.2f} MB |")
                     out.append("")
+    if cat == "cpu":
+        out += ["`hashmap`: each language's default hash map with its default hash function (Rust: "
+                "`HashMap` with SipHash; Velt, Node and Bun: `Map`).", ""]
     if notes:
         out += ["Not measured (n/a):", ""] + [f"- {n}" for n in notes] + [""]
     return "\n".join(out)
@@ -194,9 +208,10 @@ def headline(impls, lang):
 
 def memory_md(results):
     out = [f"# {TITLES['memory']}", "",
-           "Peak RSS (MB) of the first listed implementation per language in each benchmark (the "
-           "default one: Velt `main`, the fastest published Rust, and so on); every implementation's "
-           "peak RSS is in its category's table. Servers: peak RSS of the server process(es).", "",
+           "Peak RSS (MB) of the first listed implementation per language in each benchmark (Velt "
+           "`main`, the first Rust program by file name, Node and Bun `main.js`, and so on); every "
+           "implementation's peak RSS is in its category's table. Servers: peak RSS of the server "
+           "process(es).", "",
            "| category | benchmark | Velt | Rust | Node | Bun |", "|---|---|---:|---:|---:|---:|"]
     for cat, recs in results["categories"].items():
         if cat == "compile":
@@ -213,40 +228,63 @@ def memory_md(results):
     return "\n".join(out) + "\n"
 
 
+def usable(i):
+    """An implementation with timed runs: compared, even when a later round failed (partial)."""
+    return bool(i.get("summary", {}).get("runs"))
+
+
+def partial(i):
+    return f" (partial: {i['error']})" if i.get("error") and usable(i) else ""
+
+
+def metrics(cat, rec):
+    """[(metric name, value of an implementation, higher is better)] for a record."""
+    if cat == "http" or rec.get("kind") == "http":
+        return [("req/s", lambda i: i["summary"].get("best_rps"), True)]
+    if cat == "websocket" or rec.get("kind") == "websocket":
+        return [("p99", lambda i: i["summary"].get("p99_ms"), False)]
+    if rec.get("parse"):
+        keys = []
+        for i in rec.get("impls", []):
+            for k in i.get("summary", {}).get("reported", {}):
+                if k not in keys:
+                    keys.append(k)
+        hb = rec.get("unit") in HIGHER_IS_BETTER
+        return [(k, (lambda i, k=k: i["summary"].get("reported", {}).get(k)), hb) for k in keys]
+    return [("", lambda i: i["summary"].get("best_wall_s"), False)]
+
+
 def losses(results):
-    """Benchmarks where another implementation beats Velt's first listed one."""
+    """Every benchmark where Velt is not the fastest: another implementation that ran (partial
+    runs included) beat Velt's first listed implementation with results, or no Velt
+    implementation produced a result at all. Compile times are not ranked."""
     out = []
     for cat, recs in results["categories"].items():
         if cat == "compile":
             continue
         for rec in recs:
-            impls = [i for i in rec.get("impls", []) if not i.get("error") and i.get("summary", {}).get("runs")]
-            v = headline(impls, "velt")
-            if not v:
+            if rec.get("runs_factor") == 0:
                 continue
-            s = v["summary"]
-            if cat == "http":
-                key, hb = (lambda i: i["summary"]["best_rps"]), True
-            elif cat == "websocket":
-                key, hb = (lambda i: i["summary"]["p99_ms"]), False
-            elif rec.get("parse"):
-                for k, val in s.get("reported", {}).items():
-                    hb = rec.get("unit") in HIGHER_IS_BETTER
-                    others = [(i["summary"].get("reported", {}).get(k), i["label"]) for i in impls if i["lang"] != "velt"]
-                    others = [o for o in others if o[0]]
-                    if others:
-                        b = max(others) if hb else min(others)
-                        if (b[0] > val) if hb else (b[0] < val):
-                            out.append(f"{cat}: {rec['name']}: {k}: {b[1]} ({versus(val, b[0], hb)})")
+            impls = rec.get("impls", [])
+            veltish = [i for i in impls if i["lang"] == "velt" and "n/a:" not in i.get("error", "")[:4]]
+            if rec.get("error") and not impls:
+                out.append(f"{cat}: {rec['name']}: Velt: n/a (the benchmark failed: {rec['error']})")
                 continue
-            else:
-                key, hb = (lambda i: i["summary"]["best_wall_s"]), False
-            others = [(key(i), i["label"]) for i in impls if i["lang"] != "velt"]
-            if not others:
+            if not veltish:
                 continue
-            b = max(others) if hb else min(others)
-            if (b[0] > key(v)) if hb else (b[0] < key(v)):
-                out.append(f"{cat}: {rec['name']}: {b[1]} ({versus(key(v), b[0], hb)})")
+            for metric, key, hb in metrics(cat, rec):
+                label = f"{rec['name']}: {metric}" if metric else rec["name"]
+                v = next((i for i in veltish if usable(i) and key(i)), None)
+                if v is None:
+                    reason = veltish[0].get("error") or "no result"
+                    out.append(f"{cat}: {label}: Velt: n/a ({reason})")
+                    continue
+                others = [(key(i), i) for i in impls if i["lang"] != "velt" and usable(i) and key(i)]
+                if not others:
+                    continue
+                bv, bi = (max if hb else min)(others, key=lambda o: o[0])
+                if (bv > key(v)) if hb else (bv < key(v)):
+                    out.append(f"{cat}: {label}: {bi['label']}{partial(bi)} ({versus(key(v), bv, hb)})")
     return out
 
 

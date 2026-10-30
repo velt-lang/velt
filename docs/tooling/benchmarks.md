@@ -22,9 +22,12 @@ The full list of benchmarks, which languages each has and what is not covered ar
 - **The same algorithm in every language**, and every implementation's output is checked
   against the reference before it is timed; an implementation with a different output is
   reported as n/a, not timed.
-- **Release builds with default flags**: `velt build --release`, `cargo build --release`, and
-  Node and Bun without flags. Where a Rust baseline is built for the machine's CPU, Velt is
-  too.
+- **The same build strength**: `velt build --release` is LLVM `-O3` on the whole program for
+  x86-64-v2, so Rust is built with `opt-level = 3`, one codegen unit, fat LTO and
+  `-C target-cpu=x86-64-v2` (`cargo build --release --locked`, and `rustc` with those flags for
+  single-file programs). Where a Rust baseline is built for the machine's CPU, Velt is too. Node
+  and Bun run without flags.
+- **Checked before timed**: servers too, by status, body and content-type of every route.
 - **No warm-up that favours one side**: whole processes are timed from start to exit unless a
   suite times its own loop in every language alike, and every server gets the same warm-up.
 - **Interleaved runs, best of N**: each round runs every implementation once in a rotating

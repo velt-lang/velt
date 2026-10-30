@@ -44,6 +44,8 @@ if [[ $(uname) != Linux ]]; then
   exit 2
 fi
 PYTHON=$(command -v python3)
+# The report's own tests first: a run takes hours, a broken report is found in a second.
+"$PYTHON" -m unittest discover -s "$HERE" -p 'test_*.py' 2> /dev/null || "$PYTHON" -m unittest discover -s "$HERE" -p 'test_*.py'
 
 # 1. A quiet machine: a busy one skews wall-clock times by 2-4x.
 load1=$(cut -d' ' -f1 /proc/loadavg)

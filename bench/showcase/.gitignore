@@ -1,2 +1,4 @@
 __pycache__/
 tsx/node_modules/
+# Results are committed deliberately, after review (git add -f).
+results/

@@ -5,8 +5,9 @@ bench/showcase/tsx. Same conventions as suites.py.
 """
 
 import os
+import subprocess
 
-from suites import cargo, impl, js_impls, sh, velt_build
+from suites import cargo, impl, js_impls, rustc, sh, velt_build
 
 # bench/typical programs by the core feature they exercise (every one has rust/<name>.rs and
 # runs in Node and Bun as TypeScript).
@@ -33,15 +34,14 @@ def core_benchmarks(ctx):
     b = ctx.bench
     benches = []
 
-    # bench/typical: Velt, Rust (rustc -O), Node and Bun on the same TypeScript.
+    # bench/typical: Velt, Rust (suites.rustc), Node and Bun on the same TypeScript.
     for area, names in TYPICAL.items():
         for name in names:
             if not ctx.wanted_name(name):
                 continue
             src = os.path.join(b, "typical", f"{name}.vlt")
             rust = os.path.join(out, f"typical-{name}-rust")
-            rerr = sh(ctx, f"rustc typical/{name}", ["rustc", "-O", "--edition", "2021", "-o", rust,
-                                                    os.path.join(b, "typical", "rust", f"{name}.rs")])
+            rerr = rustc(ctx, f"rustc typical/{name}", os.path.join(b, "typical", "rust", f"{name}.rs"), rust)
             velt = os.path.join(out, f"typical-{name}")
             verr = velt_build(ctx, src, velt)
             ts = as_ts(ctx, src, out)
@@ -98,8 +98,7 @@ def core_benchmarks(ctx):
         if not ctx.wanted_name(name):
             continue
         rust = os.path.join(out, f"structs-{name}-rust")
-        rerr = sh(ctx, f"rustc structs/{name}", ["rustc", "-O", "--edition", "2021", "-o", rust,
-                                                os.path.join(b, "structs", "rust", f"{name}.rs")])
+        rerr = rustc(ctx, f"rustc structs/{name}", os.path.join(b, "structs", "rust", f"{name}.rs"), rust)
         impls = [impl("Rust (Copy struct)", "rust", [rust], rerr)]
         for kind in ("struct", "class"):
             exe = os.path.join(out, f"structs-{name}-{kind}")
@@ -119,7 +118,7 @@ def core_benchmarks(ctx):
             continue
         area = "collections" if suite == "btree" else "concurrency"
         target = os.path.join(out, f"{suite}-rust")
-        rerr = cargo(ctx, f"{suite} Rust baseline", os.path.join(b, suite, "rust"), target)
+        rerr = cargo(ctx, f"{suite} Rust baseline", os.path.join(b, suite, "rust"), target, native=True)
         exe = os.path.join(out, suite)
         verr = velt_build(ctx, os.path.join(b, suite, src), exe, ["--cpu", "native"])
         js_na = ("n/a: JavaScript has no built-in sorted map" if suite == "btree"
@@ -189,8 +188,10 @@ def tsx_benchmarks(ctx):
              "check": "results", "parse": "results", "unit": "ops/s", "impls": impls}, *checks]
 
 
-def tsx_servers(ctx):
-    """(label, lang, cmds(port), env, error) for the TSX page servers, like servers.http_servers."""
+def tsx_servers(ctx, server_threads):
+    """([(label, lang, cmds(port), env, error)] for the TSX page servers, like
+    servers.http_servers, and a function giving the expected bodies {route: bytes}: the pages
+    render.vlt prints, which the tsx category compares with React's and Preact's)."""
     here = os.path.join(ctx.here, "tsx")
     out = os.path.join(ctx.out, "tsx")
     os.makedirs(out, exist_ok=True)
@@ -198,7 +199,7 @@ def tsx_servers(ctx):
     verr = velt_build(ctx, os.path.join(here, "server.vlt"), velt)
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     js = os.path.join(here, "server.mjs")
-    servers = [("Velt TSX", "velt", lambda p: [[velt, str(p)]], {}, verr)]
+    servers = [("Velt TSX", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(server_threads)}, verr)]
     for lib, name in (("react", "React"), ("preact", "Preact")):
         servers.append((f"Node node:http + {name} (1 process)", "node",
                         lambda p, lib=lib: [[ctx.node or "node", js, lib, str(p)]], {"NODE_ENV": "production"},
@@ -206,5 +207,17 @@ def tsx_servers(ctx):
         servers.append((f"Bun Bun.serve + {name} (1 process)", "bun",
                         lambda p, lib=lib: [[ctx.bun or "bun", js, lib, str(p)]], {"NODE_ENV": "production"},
                         nerr or (None if ctx.bun else "bun not found")))
-    return servers
+    render = os.path.join(out, "render")
+    if not os.path.isfile(render):
+        velt_build(ctx, os.path.join(here, "render.vlt"), render)
+
+    def expected():
+        pages = {}
+        for page in ("small", "large"):
+            p = subprocess.run([render, "html", page], capture_output=True)
+            if p.returncode == 0:
+                # console.log's newline is not part of the page; the server prepends the doctype.
+                pages[page] = b"<!DOCTYPE html>" + p.stdout.rstrip(bytes([10]))
+        return pages
+    return servers, expected
 
