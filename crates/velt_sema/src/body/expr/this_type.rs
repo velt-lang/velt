@@ -13,9 +13,15 @@ use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// The receiver's type and whether it is `this` (`is_this_value`), for `this_result`.
+    /// The receiver's type and whether it is `this` (`is_this_value`), for `this_result`. A
+    /// value of a type parameter read as its class bound (`class_bound`, an `Upcast`) has the
+    /// parameter's type.
     pub(super) fn this_recv(&self, recv: &hir::Expr) -> (TyId, bool) {
-        (recv.ty, self.is_this_value(recv))
+        let ty = match &recv.kind {
+            H::Upcast(x) if matches!(self.cx.ty.kind(x.ty), TyKind::Param(_)) => x.ty,
+            _ => recv.ty,
+        };
+        (ty, self.is_this_value(recv))
     }
 
     /// The call `call` of method `def` on a receiver of type `to` (before its conversion to the
@@ -33,9 +39,11 @@ impl FnCx<'_, '_> {
         if on_this {
             self.this_calls.insert(call.span);
         }
+        // A receiver of a type parameter bounded by the class (`x: T` with `T extends Base`)
+        // gives `T`, as in TypeScript: each instance downcasts to its own class.
         if to == call.ty
             || self.cx.ty.is_bottom(call.ty)
-            || !matches!(self.cx.ty.kind(to), TyKind::Adt(..))
+            || !matches!(self.cx.ty.kind(to), TyKind::Adt(..) | TyKind::Param(..))
         {
             return call;
         }
