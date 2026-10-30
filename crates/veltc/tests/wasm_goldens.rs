@@ -251,7 +251,6 @@ const WASI_STD: &[&str] = &[
     "simd_values",
     "typed_arrays_basic",
     "typed_arrays_edges",
-    "utf8_prefix",
     "utf8_valid",
 ];
 

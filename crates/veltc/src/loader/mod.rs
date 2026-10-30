@@ -49,6 +49,7 @@ mod pick;
 mod resolve;
 mod spec;
 mod std_root;
+mod visibility;
 mod wanted;
 
 use std::collections::{HashMap, VecDeque};
@@ -620,6 +621,7 @@ impl Loader<'_, '_> {
         };
         let file = self.pick_file(spec, span, &target, &shown)?;
         let key = file_key(&file);
+        let target = self.std_test_origin(target, &file, &key);
         if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
             return self.error(msg, vec![], span);
         }
@@ -785,3 +787,5 @@ mod globals_tests;
 mod tests;
 #[cfg(test)]
 mod ts_tests;
+#[cfg(test)]
+mod visibility_tests;

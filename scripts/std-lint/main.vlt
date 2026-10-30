@@ -82,6 +82,12 @@ class Std {
   }
 }
 
+/** A white-box test next to the code (docs/internals/design/std-layout.md §9): not shipped, so
+ * the size and one-class rules do not apply, and its header says it holds tests. */
+function isTest(file: string): boolean {
+  return file.endsWith(".test.vlt");
+}
+
 function special(file: string): boolean {
   return file.startsWith("prelude/") || file.startsWith("lang/");
 }
@@ -108,7 +114,7 @@ function expectedHeader(std: Std, file: string): string | null {
   }
   const owner = std.owner(file);
   if (owner !== null) {
-    return `// velt/${owner} (internal):`;
+    return isTest(file) ? `// velt/${owner} (tests):` : `// velt/${owner} (internal):`;
   }
   return file.startsWith("lang/") ? `// velt/${dirOf(file)} (internal):` : null;
 }
@@ -223,7 +229,7 @@ function lint(std: Std): Problem[] {
       );
     }
     const lines = text.split("\n").length - 1;
-    if (lines > MAX_LINES && !generated(text)) {
+    if (lines > MAX_LINES && !generated(text) && !isTest(file)) {
       problems.push(
         new Problem(
           file,
@@ -233,7 +239,7 @@ function lint(std: Std): Problem[] {
       );
     }
     const classes = exportedClasses(text);
-    if (classes > 1) {
+    if (classes > 1 && !isTest(file)) {
       problems.push(
         new Problem(
           file,

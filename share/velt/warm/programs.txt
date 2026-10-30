@@ -8,7 +8,7 @@
 # the cache warms for a program that depends on them when it is built.
 ../../../tests/std/fetch/server_api.test.vlt
 ../../../tests/golden/std/number_parse.vlt
-../../../tests/golden/std/btree_invariants.vlt
+../../../tests/golden/std/simd_partial.vlt
 ../../../tests/golden/std/simd_sha.vlt
 ../../../tests/std/websocket/over.test.vlt
 ../../../tests/golden/std/streams_basic.vlt

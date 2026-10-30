@@ -673,6 +673,11 @@ fn classify(graph: &Graph, path: &str) -> Effect {
             _ => Effect::Everything,
         };
     }
+    // std's white-box tests (`std/<module>/<name>.test.vlt`) change no program but their own:
+    // `std_tests` runs them (`velt test std/`).
+    if path.starts_with("std/") && path.ends_with(".test.vlt") {
+        return Effect::ReadByTests(&[], &["std_tests"]);
+    }
     if path.starts_with("std/") {
         return Effect::Std;
     }

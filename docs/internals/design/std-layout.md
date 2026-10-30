@@ -319,6 +319,16 @@ a test that reaches into internals belongs next to them. So:
   convention, which `velt test` already follows), run in the gate with `velt test std/`, and
   are left out of the toolchain's packaged std.
 
+Done: the loader loads std's test files as std code (they import internals by their `velt/`
+path), `crates/veltc/tests/std_tests.rs` runs `velt test std/` with the `tests/std/` suites (a
+change to a std test file selects only that test, `cargo xtask affected`), `scripts/package.sh`
+and `package.ps1` drop them from the packaged std, and `std-lint` exempts them from the size and
+one-class rules (header `// velt/<module> (tests): …`). The goldens and `tests/std` files that
+imported internals became white-box tests (`collections/btree/invariants`, `encoding/utf8`,
+`encoding/json/scan`, `jsx/void_elements`, `net/http/fetch/client/target`,
+`net/websocket/protocol`); the WebSocket ones talk to a `WebSocket` over a stream whose handshake
+the test answers, instead of `packages/http-server`, which std cannot depend on.
+
 ### 10. Intrinsics are declared, not magic names
 
 Today std calls about 85 distinct `__intrinsic_<name>` functions (694 call sites in 77 files:

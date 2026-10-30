@@ -481,6 +481,10 @@ fn std_suites_run_with_std_tests() {
     assert!(p.filterset().unwrap().contains("binary(std_tests)"));
     // A change to std or the runner runs every `veltc` test, `std_tests` with them.
     assert_eq!(plan(&["std/test/index.vlt"]).veltc, Veltc::All);
+    // std's white-box tests run only with `std_tests` (`velt test std/`), no goldens.
+    let p = plan(&["std/encoding/json/scan.test.vlt"]);
+    assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
+    assert_eq!(p.goldens, Goldens::None);
 }
 
 #[test]

@@ -36,7 +36,7 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
 | `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
-| `cargo test -p veltc --test std_tests` | the standard library's behaviour tests: `velt test` over each `tests/std/<module>/`, in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`) |
+| `cargo test -p veltc --test std_tests` | the standard library's tests: `velt test` over each `tests/std/<module>/` (black-box) and over `std/` (its white-box `*.test.vlt` files), in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`, `VELT_STD_TESTS=std` for the white-box ones) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
@@ -134,7 +134,13 @@ them in each.)
   that each test file's process frees every block it allocates (`VELT_RC_STATS=1`, the goldens'
   `// check: no leaks`) and uses the checking allocator as the goldens' debug runs do, so close
   every server and connection a test opens. Matchers for one
-  module's types go in `std/test/<module>.vlt` (`velt/test/http`'s `toHaveStatus`).
+  module's types go in a submodule of `velt/test` (`velt/test/http`'s `toHaveStatus`).
+- **A white-box test next to the code** (`std/<module>/<name>.test.vlt`) when a test needs a
+  module's internals (the B+ tree's invariant checks, the JSON scanner's offsets): tests outside
+  std import only public modules (docs/internals/design/std-layout.md §9). They are std code,
+  so they import internals by their `velt/` path, start with `// velt/<module> (tests): …`, and
+  depend on nothing outside std. `velt test std/` runs them, as does `std_tests`; the toolchain's
+  packaged std leaves them out (`scripts/package.sh`).
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
