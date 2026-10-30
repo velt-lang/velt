@@ -1,7 +1,8 @@
 # velt/net/http
 
 `import { serveHttp, HttpRequest, HttpResponse, HttpServer, HttpStream, EventStream } from
-"velt/net/http"`. An HTTP/1.1 server written in Velt on [std/net](net.md), built to be fast:
+"velt/net/http"`. An HTTP/1.1 and [HTTP/2](#http2) server written in Velt on [std/net](net.md),
+built to be fast:
 keep-alive and pipelining, each request parsed in place in its connection's read buffer (nothing
 is copied or allocated for a request unless the handler asks for a string), and every response
 to the requests one read brought written in one go. Request and response bodies can also be
@@ -15,9 +16,8 @@ text methods of the [prelude](prelude.md) (`write`, `utf8Slice`, `utf8Equals`, t
 code on SIMD vectors). A package written in Velt can build a server, or another protocol, as fast
 in the same way.
 
-[velt/http](http.md) remains the server with HTTP/2 and the fetch-style `Request` and
-`Response`; this module is the lower-level one: a handler reads the request through
-`HttpRequest` and writes the response through `HttpResponse`.
+A handler reads the request through `HttpRequest` and writes the response through
+`HttpResponse`, the same way over HTTP/1.1 and HTTP/2.
 
 ```ts
 import { serveHttp, HttpRequest, HttpResponse } from "velt/net/http";
@@ -51,8 +51,8 @@ async function main() {
 
 `serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) =>
 Promise<void, E> throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?;
-maxHeadSize?; maxHeaders?; maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout? }`:
-the default
+maxHeadSize?; maxHeaders?; maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout?;
+http2?; maxConcurrentStreams? }` (the last two: [HTTP/2](#http2)): the default
 host is 127.0.0.1 and port 0 picks a free port. `idleTimeout` (5 s) is how long a connection
 waits for its next request or more of one; `headersTimeout` (60 s) the most a head may take
 from its first byte, and `requestTimeout` (300 s) the most a body may take from its head, however
@@ -178,6 +178,59 @@ async function main() {
   server.close();
 }
 ```
+
+## HTTP/2
+
+`serveHttp` speaks HTTP/2 (RFC 9113) as well, with the same handlers: over TLS when the client
+chooses it with ALPN (the listener offers `h2` and `http/1.1`, unless `tls.alpn` names the
+protocols), and over plain TCP when the connection starts with the HTTP/2 preface (h2c with
+prior knowledge: `curl --http2-prior-knowledge`). A request with `Upgrade: h2c` is answered over
+HTTP/1.1: RFC 9113 deprecates that upgrade, and browsers use HTTP/2 only over TLS.
+`http2: false` turns it off; `maxConcurrentStreams` (128) is the number of requests of one
+connection whose handlers run at once.
+
+```ts
+import { serveHttp, HttpRequest, HttpResponse } from "velt/net/http";
+
+async function main() {
+  const server = await serveHttp({ port: 0, maxConcurrentStreams: 256 }, async (
+    req: HttpRequest,
+    res: HttpResponse,
+  ) => {
+    res.send(`hello over ${req.header("host")}`);
+  });
+  server.close();
+}
+```
+
+The HTTP/2 server is Velt code too (`std/net/http/server/h2/`): one task per connection, each
+request's handler a promise on that task, frames parsed in place, HPACK with the dynamic table
+and Huffman coding both ways, and the frames written while one read is processed sent in one
+write. What differs from HTTP/1.1, for a handler:
+
+- Requests of one connection run at once (up to `maxConcurrentStreams`); a later one does not
+  wait for an earlier response.
+- Header names arrive in lowercase; `header(name)` matches any case, and `host` is the request's
+  `:authority` when no `host` header came. `headers()` leaves out the pseudo-headers.
+- `keepAlive` is always true; `isUpgrade` is false and `upgrade()` throws: an HTTP/2 connection
+  carries many streams and is never handed over (a WebSocket needs HTTP/1.1).
+- Bodies have flow control: a request body arrives as fast as the handler reads it (up to
+  256 KiB a stream may send ahead), and a response body is sent as fast as the client's
+  windows allow; `HttpStream.write` waits while more than 64 KiB are still to be sent.
+- A client that resets its stream aborts `res.signal()`, and a write to it throws `IoError`;
+  the handler's slot stays taken until it returns, so resetting streams never runs more
+  handlers at once than the limit.
+- Header names a response may not have over HTTP/2 (`Connection`, `Keep-Alive`,
+  `Transfer-Encoding`, `Upgrade`) are not sent.
+- Request trailers are read and dropped; responses have none. Server push is not offered.
+
+Limits: a request head larger than `maxHeadSize` gets 431, a malformed request (an uppercase
+header name, a connection-specific header, a missing `:path`, a `content-length` that does not
+match the body) is reset without reaching the handler, and a connection that resets or opens
+streams it may not, sends empty DATA frames, or floods CONTINUATION frames is closed with
+`ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487, and its relatives). `close()` sends GOAWAY:
+streams in flight finish, then each connection closes. The design and its benchmarks are in
+[docs/internals/design/http2.md](../internals/design/http2.md).
 
 ## Writing fast handlers
 

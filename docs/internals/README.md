@@ -203,6 +203,9 @@ Decisions and their rationale, including what is still planned:
   System.Text.Json (proposed, issue #1655).
 - [Building strings fast](design/string-building.md): builder appends compiled inline, a Velt
   `StringBuilder`, and byte views of strings (proposed, issue #1677).
+- [HTTP/2](design/http2.md): the HTTP/2 server written in Velt behind `serveHttp`: frames,
+  HPACK, streams and flow control on one task per connection, ALPN and h2c, limits against
+  rapid reset and its relatives, benchmarks against hyper.
 - [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
   non-generic functions that programs link, with a VIR fingerprint check per function
   (proposed, issue #1728).
