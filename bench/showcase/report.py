@@ -148,6 +148,9 @@ def reported_table(rec, lines, notes):
 
 def http_table(recs, lines, notes):
     for rec in recs:
+        if rec.get("error") and not rec.get("impls"):
+            notes.append(f"{rec['name']}: {rec['error']}")
+            continue
         impls = rec["impls"]
         key = lambda i: i["summary"].get("best_rps")
         for i in impls:
@@ -165,7 +168,7 @@ def http_table(recs, lines, notes):
                          f"{s.get('load_cpu_share', 0) * 100:.0f}% | {vs_velt(impls, i, s['best_rps'], key, True)} |")
             if i.get("error"):
                 notes.append(f"{rec['name']}, {i['label']}: {i['error']}")
-    load = recs[0]["load"] if recs else {}
+    load = next((r["load"] for r in recs if r.get("load")), {})
     head = ("| route | server | threads | req/s (best) | p50 ms | p99 ms | server CPU µs/request "
             "| server peak RSS MB | load generator CPU | vs Velt (same threads) |\n"
             "|---|---|:-:|---:|---:|---:|---:|---:|---:|---|")
@@ -182,6 +185,9 @@ def http_table(recs, lines, notes):
 
 def ws_table(recs, lines, notes):
     for rec in recs:
+        if rec.get("error") and not rec.get("impls"):
+            notes.append(f"{rec['name']}: {rec['error']}")
+            continue
         impls = rec["impls"]
         key = lambda i: i["summary"].get("p99_ms")
         for i in impls:

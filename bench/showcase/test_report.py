@@ -191,6 +191,14 @@ class Pairing(unittest.TestCase):
         self.assertTrue(lines[1].endswith("| no Velt multi-threaded version |"), lines[1])
 
 
+class Tables(unittest.TestCase):
+    def test_failed_server_category_is_a_note(self):
+        # http_benchmarks returns this record when oha is missing: the table says so.
+        for cat in ("http", "websocket"):
+            md = report.category_md(cat, [{"name": "techempower", "error": "oha not found", "impls": []}])
+            self.assertIn("- techempower: oha not found", md)
+
+
 class Definitions(unittest.TestCase):
     def test_every_benchmarks_game_implementation_is_classified(self):
         import suites
