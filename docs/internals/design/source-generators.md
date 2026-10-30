@@ -608,6 +608,13 @@ goldens:
   program's build stamp.
 - The no-I/O rule (§5): `driver::check_generator_host`, from what the generators reach.
 - Generator modules resolved as imports of the declaring module: relative, package, std.
+- The model's methods (§4): `Type.methods` lists the hooks std's operations call by name
+  (`toJSON`, `toString`, `__inspect`) when a class has one callable that way (velt_sema
+  `hooks::hook`: no type parameters of its own, not async, `toJSON` with no parameter or a
+  `key: string`), with its parameter count and result type. An `option`'s `literal` says what
+  it holds when empty (`null`, `undefined` or `null | undefined`: a field of type
+  `T | undefined` is left out of JSON when empty, one of type `T | null` is written `null`), and
+  a string literal or a string enum's value is JSON text (it is also JavaScript source).
 
 Not yet: decorators (§8), `--emit-generated` and `--no-generators`, per-request output caching
 (today one entry per host run: an edit to one serialized type runs the generator for every

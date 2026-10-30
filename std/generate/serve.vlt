@@ -4,6 +4,7 @@ import { readAllSync } from "velt/process";
 import { JsonValue } from "velt/prelude/json/json";
 import { EnumMember } from "velt/generate/enum_member";
 import { Field } from "velt/generate/field";
+import { Method } from "velt/generate/method";
 import { Output } from "velt/generate/output";
 import { Pending } from "velt/generate/pending";
 import { InstanceRequest } from "velt/generate/instance_request";
@@ -95,6 +96,20 @@ function readType(id: i64, v: JsonValue): Type {
       m.name = str(mv.get("name"));
       m.value = str(mv.get("value"));
       t.members.push(m);
+    }
+  }
+  const methods = v.get("methods");
+  if (methods != null) {
+    for (let i = 0; i < methods.len(); i++) {
+      const mv = methods.at(i);
+      if (mv == null) {
+        continue;
+      }
+      const m = new Method();
+      m.name = str(mv.get("name"));
+      m.params = num(mv.get("params"));
+      m.ret = num(mv.get("ret"));
+      t.methods.push(m);
     }
   }
   return t;

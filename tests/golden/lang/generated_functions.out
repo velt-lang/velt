@@ -8,3 +8,5 @@ Dog { name: 'rex', legs: undefined, good: true }
 { x: 1.5, y: -2 }
 ['a', 'b'] ['a', 'b']
 true
+Stamp: class; at: f64; toJSON(0): string
+Mood: enum; Up = "up\n"

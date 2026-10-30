@@ -8,7 +8,8 @@ use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{AdtKind, DefId, LitValue, TyId, TyKind};
+use crate::hir::{AdtKind, DefId, LitValue, Nothing, TyId, TyKind};
+use crate::hooks;
 
 #[derive(Clone, Debug, Default)]
 pub struct Model {
@@ -45,9 +46,23 @@ pub struct ModelType {
     pub subclasses: Vec<u32>,
     /// Members of an `enum`.
     pub members: Vec<ModelMember>,
-    /// The value of a `literal` type, as JavaScript source (`"a"`, `1`, `true`).
+    /// The value of a `literal` type, as JavaScript source (`"a"`, `1`, `true`); a string is
+    /// also its JSON text. For an `option`: what it holds when empty (`null`, `undefined` or
+    /// `null | undefined`).
     pub literal: String,
+    /// The methods of a class that std's operations call by name (`toJSON`, `toString`,
+    /// `__inspect`), with their parameter count and result type, when callable as such.
+    pub methods: Vec<ModelMethod>,
     pub at: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ModelMethod {
+    pub name: String,
+    /// Its parameters (`toJSON(key)` takes one).
+    pub params: u32,
+    /// Its result type.
+    pub ret: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -135,7 +150,7 @@ impl Builder {
             TyKind::Literal(l) => {
                 m.kind = "literal";
                 m.literal = match l {
-                    LitValue::Str(s) => format!("{s:?}"),
+                    LitValue::Str(s) => json_quote(&s),
                     LitValue::Int(_, v) => v.to_string(),
                     LitValue::Float(_, b) => format!("{}", f64::from_bits(b)),
                     LitValue::Bool(b) => b.to_string(),
@@ -149,9 +164,15 @@ impl Builder {
                 m.kind = "tuple";
                 m.args = ts.iter().map(|t| self.id(*t)).collect();
             }
-            TyKind::Option(x, _) => {
+            TyKind::Option(x, nothing) => {
                 m.kind = "option";
                 m.args = vec![self.id(x)];
+                m.literal = match nothing {
+                    Nothing::Null => "null",
+                    Nothing::Undefined => "undefined",
+                    Nothing::Both => "null | undefined",
+                }
+                .into();
             }
             TyKind::Map(k, v) => {
                 m.kind = "map";
@@ -246,6 +267,20 @@ impl Builder {
                     let b = cx.subst(b, args);
                     m.base = Some(self.id(b));
                 }
+                if kind == AdtKind::Class {
+                    for name in [hooks::TO_JSON, hooks::TO_STRING, hooks::INSPECT] {
+                        let Some((def, ret)) = hooks::hook(cx, d, args, name) else {
+                            continue;
+                        };
+                        let params = cx.fn_info(def).params.len() as u32;
+                        let ret = self.id(ret);
+                        m.methods.push(ModelMethod {
+                            name: name.to_string(),
+                            params,
+                            ret,
+                        });
+                    }
+                }
                 if kind == AdtKind::Class && args.is_empty() {
                     for c in subclasses(cx, d) {
                         let t = cx.ty.intern(TyKind::Adt(c, vec![]));
@@ -272,7 +307,7 @@ impl Builder {
                     .map(|v| ModelMember {
                         name: v.name.clone(),
                         value: match &v.str_value {
-                            Some(s) => format!("{s:?}"),
+                            Some(s) => json_quote(s),
                             None => v.discriminant.to_string(),
                         },
                     })
@@ -376,6 +411,13 @@ impl Model {
                 ];
                 h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
             }
+            h.u32(t.methods.len() as u32);
+            for m in &t.methods {
+                h.str(&m.name);
+                h.u32(m.params);
+                let n = visit(m.ret, &mut order);
+                h.u32(n);
+            }
             h.u32(t.members.len() as u32);
             for m in &t.members {
                 h.str(&m.name);
@@ -384,6 +426,26 @@ impl Model {
         }
         format!("{:032x}", h.0)
     }
+}
+
+/// `s` as a JSON string (also a JavaScript string literal): what `JSON.stringify(s)` writes.
+fn json_quote(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// 128-bit FNV-1a: stable across runs and platforms (the fingerprints are stored).

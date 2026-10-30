@@ -11,6 +11,7 @@ export { Field } from "velt/generate/field";
 export { Model } from "velt/generate/model";
 export { Output, quote } from "velt/generate/output";
 export { InstanceRequest } from "velt/generate/instance_request";
+export { Method } from "velt/generate/method";
 export { GeneratorEntry, serve } from "velt/generate/serve";
 export { Session } from "velt/generate/session";
 export { Type } from "velt/generate/type";

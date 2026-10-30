@@ -2,6 +2,7 @@
 
 import { EnumMember } from "velt/generate/enum_member";
 import { Field } from "velt/generate/field";
+import { Method } from "velt/generate/method";
 
 /** One type of the model: what a generator may know about it. */
 export class Type {
@@ -31,8 +32,13 @@ export class Type {
   subclasses: i64[] = [];
   /** Members of an enum. */
   members: EnumMember[] = [];
-  /** The value of a literal type as JavaScript source (`"a"`, `1`, `true`). */
+  /**
+   * The value of a literal type as JavaScript source (`"a"`, `1`, `true`); a string is also its
+   * JSON text. For an `option`: what it holds when empty (`null`, `undefined` or `null | undefined`).
+   */
   literal: string = "";
+  /** The methods std's operations call by name (`toJSON`, `toString`, `__inspect`). */
+  methods: Method[] = [];
   /** Where it is declared, for `Output.error` (-1: nowhere). */
   at: i64 = -1;
 }

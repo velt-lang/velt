@@ -426,6 +426,11 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                         "value": m.value,
                     })).collect::<Vec<_>>(),
                     "literal": t.literal,
+                    "methods": t.methods.iter().map(|m| json!({
+                        "name": m.name,
+                        "params": m.params,
+                        "ret": m.ret,
+                    })).collect::<Vec<_>>(),
                     "at": opt(t.at),
                 })
             })

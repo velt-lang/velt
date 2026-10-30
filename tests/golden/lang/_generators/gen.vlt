@@ -19,6 +19,9 @@ export function describe(req: InstanceRequest, out: Output): void {
   for (const m of t.members) {
     text += `; ${m.name} = ${m.value}`;
   }
+  for (const m of t.methods) {
+    text += `; ${m.name}(${m.params}): ${req.model.type(m.ret).display}`;
+  }
   if (t.subclasses.length > 0) {
     const subs: string[] = [];
     for (const s of t.subclasses) {
