@@ -123,6 +123,10 @@ function main() {
   const nans: N[] = [NaN, 1u8];
   const mixed: (f64 | string)[] = ["a", NaN];
   console.log(nans.includes(NaN), mixed.includes(NaN), nans.indexOf(NaN), mixed.indexOf(NaN));
+  const noNans: N[] = [1.5, 2u8];
+  const noNanMixed: (f64 | string)[] = ["a", 0.5];
+  const noNanOpt: (f64 | u8 | undefined)[] = [undefined, 2.5];
+  console.log(noNans.includes(NaN), noNanMixed.includes(NaN), noNanOpt.includes(NaN));
   const us: (number | [number, number])[] = [[NaN, 1]];
   console.log(us.includes(NaN), us.indexOf(NaN));
   const vs: (number | [number, number])[] = [NaN];
