@@ -1,7 +1,7 @@
 // velt/generate (internal): one run of the generator host (`Session`).
 
-import { Model } from "./model";
-import { Pending } from "./pending";
+import { Model } from "velt/generate/model";
+import { Pending } from "velt/generate/pending";
 
 /** One run of the host: the model, the instances generated and queued, the output. */
 export class Session {

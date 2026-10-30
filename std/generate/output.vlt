@@ -1,6 +1,6 @@
 // velt/generate (internal): where a generator writes code (`Output`), and `quote`.
 
-import { Session } from "./session";
+import { Session } from "velt/generate/session";
 
 /** Where a generator writes the instance's body, helpers and diagnostics. */
 export class Output {

@@ -47,11 +47,8 @@ pub(crate) struct Ctx<'m> {
     pub root: usize,
     /// The instances of generated functions the driver generated so far (`crate::generated`).
     pub gen: Option<&'m crate::generated::GenInput>,
-    /// Those instances bound to their generated definitions (`crate::generated::bind`), once
-    /// the bodies are checked.
-    pub gen_bound: crate::generated::bind::Bound,
-    /// Some instance offered from an earlier build was not bound: its types changed.
-    pub gen_stale: bool,
+    /// What binding them to their generated definitions found (`crate::generated::bind`).
+    pub gen_binding: crate::generated::Binding,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
     pub defs: Vec<Option<Def>>,
@@ -432,8 +429,7 @@ impl<'m> Ctx<'m> {
             modules,
             root,
             gen: None,
-            gen_bound: Default::default(),
-            gen_stale: false,
+            gen_binding: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),

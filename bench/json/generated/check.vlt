@@ -1,6 +1,6 @@
 // Prints `JSON.stringify` and the generated `stringify` of the same values: the lines must
 // match pairwise.
-import { stringify } from "./index";
+import { stringify } from "./_index";
 
 class Point {
   x: f64 = 1.5;

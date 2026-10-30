@@ -1,4 +1,4 @@
-// The generator of ./index.vlt `write<T>`: one function per type, with each object's constant
+// The generator of ./_index.vlt `write<T>`: one function per type, with each object's constant
 // text (`{"id":`, `,"name":`) written as one literal.
 import { InstanceRequest, Output, Type, Model } from "velt/generate";
 

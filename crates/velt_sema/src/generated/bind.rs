@@ -51,7 +51,7 @@ pub(crate) fn bind(cx: &mut Ctx) -> Bound {
         if !inst.fingerprint.is_empty() && !still_fresh(cx, f, &targs, &inst.fingerprint) {
             // Offered from an earlier build for types that changed since: not bound, so the
             // instance is missing and generated again.
-            cx.gen_stale = true;
+            cx.gen_binding.stale = true;
             continue;
         }
         out.insert((f, targs), body);

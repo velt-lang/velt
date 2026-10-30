@@ -1,6 +1,6 @@
 // velt/generate (internal): what the compiler asks a generator for (`InstanceRequest`).
 
-import { Model } from "./model";
+import { Model } from "velt/generate/model";
 
 /** What the compiler asks a generator for: the body of one instance. */
 export class InstanceRequest {

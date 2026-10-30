@@ -197,7 +197,7 @@ impl Dispatch {
         // A generated function and the generated bodies of its instances share one ABI: callers
         // are checked against the function, lowering calls the bodies (`crate::generated`).
         let mut generated: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-        for ((g, _), body) in &cx.gen_bound {
+        for ((g, _), body) in &cx.gen_binding.bound {
             generated.entry(*g).or_insert_with(|| vec![*g]).push(*body);
         }
         let mut generated: Vec<Vec<DefId>> = generated.into_values().collect();

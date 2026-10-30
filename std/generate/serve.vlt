@@ -2,13 +2,13 @@
 
 import { readAllSync } from "velt/process";
 import { JsonValue } from "velt/prelude/json/json";
-import { EnumMember } from "./enum_member";
-import { Field } from "./field";
-import { Output } from "./output";
-import { Pending } from "./pending";
-import { InstanceRequest } from "./instance_request";
-import { Session, frame } from "./session";
-import { Type } from "./type";
+import { EnumMember } from "velt/generate/enum_member";
+import { Field } from "velt/generate/field";
+import { Output } from "velt/generate/output";
+import { Pending } from "velt/generate/pending";
+import { InstanceRequest } from "velt/generate/instance_request";
+import { Session, frame } from "velt/generate/session";
+import { Type } from "velt/generate/type";
 
 /** A generated function the host can generate: its generator's key, its name, the generator. */
 export type GeneratorEntry = {

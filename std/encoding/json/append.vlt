@@ -5,7 +5,8 @@
 // and the keys (`out.append("{\"id\":")`), which a `StringBuilder` appends inline when they
 // are literal text.
 
-import { writeF64, writeString } from "./writer";
+import { StringBuilder } from "velt/text/string_builder";
+import { writeF64, writeString } from "velt/encoding/json/writer";
 
 declare function velt_rt_strbuf_push_u64(out: string, v: u64);
 

@@ -6,11 +6,11 @@
 // `req.model`, a read-only description of every type the instance reaches (`Type`, `Field`),
 // and writes Velt source to `out`.
 
-export { EnumMember } from "./enum_member";
-export { Field } from "./field";
-export { Model } from "./model";
-export { Output, quote } from "./output";
-export { InstanceRequest } from "./instance_request";
-export { GeneratorEntry, serve } from "./serve";
-export { Session } from "./session";
-export { Type } from "./type";
+export { EnumMember } from "velt/generate/enum_member";
+export { Field } from "velt/generate/field";
+export { Model } from "velt/generate/model";
+export { Output, quote } from "velt/generate/output";
+export { InstanceRequest } from "velt/generate/instance_request";
+export { GeneratorEntry, serve } from "velt/generate/serve";
+export { Session } from "velt/generate/session";
+export { Type } from "velt/generate/type";

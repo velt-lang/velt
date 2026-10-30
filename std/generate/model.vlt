@@ -1,6 +1,6 @@
 // velt/generate (internal): every type a request reaches (`Model`).
 
-import { Type } from "./type";
+import { Type } from "velt/generate/type";
 
 /** Every type a request reaches. */
 export class Model {

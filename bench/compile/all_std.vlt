@@ -26,6 +26,7 @@ import * as std_encoding from "velt/encoding";
 import * as std_encoding_csv from "velt/encoding/csv";
 import * as std_encoding_json from "velt/encoding/json";
 import * as std_fs from "velt/fs";
+import * as std_generate from "velt/generate";
 import * as std_hash from "velt/hash";
 import * as std_io from "velt/io";
 import * as std_jsx from "velt/jsx";

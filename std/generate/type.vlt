@@ -1,7 +1,7 @@
 // velt/generate (internal): a type of the model a generator reads (`Type`).
 
-import { EnumMember } from "./enum_member";
-import { Field } from "./field";
+import { EnumMember } from "velt/generate/enum_member";
+import { Field } from "velt/generate/field";
 
 /** One type of the model: what a generator may know about it. */
 export class Type {

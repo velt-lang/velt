@@ -122,6 +122,15 @@ impl GenFunction {
     }
 }
 
+/// What binding the instances to their generated definitions found ([`bind::bind`]).
+#[derive(Default)]
+pub(crate) struct Binding {
+    /// The instances bound, once the bodies are checked.
+    pub bound: bind::Bound,
+    /// Some instance offered from an earlier build was not bound: its types changed.
+    pub stale: bool,
+}
+
 /// A request for the body of one instance of a generated function.
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -161,14 +170,19 @@ impl Ctx<'_> {
 }
 
 impl crate::body::FnCx<'_, '_> {
-    /// The own body of generated function `f`: a `panic` lowering never builds (each instance
-    /// is built from its generated definition), so callers see only the signature (a missing
-    /// result type is `void`, as for every declaration without a body).
+    /// The own body of `f` (declared by `src`) when it is a generated function: a `panic`
+    /// lowering never builds (each instance is built from its generated definition), so callers
+    /// see only the signature (a missing result type is `void`, as for every declaration
+    /// without a body).
     pub(crate) fn generated_placeholder(
         &mut self,
+        src: crate::defs::FnSource,
         f: &crate::defs::FnInfo,
         out: &mut Vec<crate::hir::Stmt>,
     ) {
+        if !matches!(src, crate::defs::FnSource::Decl(d) if d.sig.generator.is_some()) {
+            return;
+        }
         let span = f.name_span;
         let msg = self.str_lit("ICE: the own body of a generated function ran", span);
         let never = self.cx.ty.never;
@@ -186,7 +200,7 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
     if !cx.has_generated_fns() {
         return Ok(bind::Bound::default());
     }
-    let bound = std::mem::take(&mut cx.gen_bound);
+    let bound = std::mem::take(&mut cx.gen_binding.bound);
     check_throws(cx, &bound);
     let found = demand::compute(cx);
     let missing: Vec<demand::Instance> = (found.into_iter())
@@ -229,7 +243,7 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
         functions,
         requests,
         model: model.model,
-        stale: cx.gen_stale,
+        stale: cx.gen_binding.stale,
     })
 }
 
