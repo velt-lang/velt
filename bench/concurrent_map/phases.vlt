@@ -1,0 +1,137 @@
+// Instruction counts per operation of velt:collections/concurrent_map, one thread, for cachegrind
+// (bench/concurrent_map/phases.sh): `phases <keys> <phase>` fills a map, then runs one phase,
+// and the fill alone (phase `fill`) is subtracted. `<keys>` is `u64` (1M keys `mix(2i)`), `str`
+// (200k keys `key-<n>`), `strtie` (200k keys `user:000` + 6 digits, all tied on their first 8
+// bytes) or `map` (`Map<string, u64>` on the `str` keys). Phases: get hits, get misses, set of
+// present keys, add, delete of half the keys, and `getManyInto` (u64 only), 64 keys a call.
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+function runU64(phase: string): u64 {
+  const n: u64 = 1000000;
+  const m: ConcurrentMap<u64, u64> = ConcurrentMap.create(n as usize);
+  for (let i: u64 = 0; i < n; i++) {
+    m.set(mix(2 * i), i);
+  }
+  let sum: u64 = 0;
+  if (phase == "hit") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(mix(2 * i)) ?? 0;
+    }
+  } else if (phase == "miss") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(mix(2 * i + 1)) ?? 1;
+    }
+  } else if (phase == "set") {
+    for (let i: u64 = 0; i < n; i++) {
+      m.set(mix(2 * i), i + 1);
+    }
+  } else if (phase == "add") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.add(mix(2 * i), 1) ?? 0;
+    }
+  } else if (phase == "delete") {
+    for (let i: u64 = 0; i < n; i += 2) {
+      sum += m.delete(mix(2 * i)) ? 1 : 0;
+    }
+  } else if (phase == "many") {
+    const keys: u64[] = [];
+    const vals: u64[] = [];
+    for (let i: u64 = 0; i < n; i += 64) {
+      keys.length = 0;
+      for (let j: u64 = i; j < i + 64 && j < n; j++) {
+        keys.push(mix(2 * j));
+      }
+      sum += m.getManyInto(keys, vals);
+    }
+  }
+  return sum;
+}
+
+function strKeys(kind: string, n: u64): string[] {
+  const keys: string[] = [];
+  for (let i: u64 = 0; i < n; i++) {
+    // Distinct for every i below 1000003, scattered.
+    const j = (i * 7919) % 1000003;
+    keys.push(kind == "strtie" ? "user:000" + String(j).padStart(6, "0") : "key-" + String(j));
+  }
+  return keys;
+}
+
+function runStr(kind: string, phase: string): u64 {
+  const n: u64 = 200000;
+  const keys = strKeys(kind, n);
+  const absent = strKeys(kind, 2 * n).slice(n as i64);
+  const m: ConcurrentMap<string, u64> = ConcurrentMap.create(n as usize);
+  for (let i: u64 = 0; i < n; i++) {
+    m.set(keys[i], i);
+  }
+  let sum: u64 = 0;
+  if (phase == "hit") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(keys[i]) ?? 0;
+    }
+  } else if (phase == "miss") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(absent[i]) ?? 1;
+    }
+  } else if (phase == "set") {
+    for (let i: u64 = 0; i < n; i++) {
+      m.set(keys[i], i + 1);
+    }
+  } else if (phase == "delete") {
+    for (let i: u64 = 0; i < n; i += 2) {
+      sum += m.delete(keys[i]) ? 1 : 0;
+    }
+  }
+  return sum;
+}
+
+function runMap(phase: string): u64 {
+  const n: u64 = 200000;
+  const keys = strKeys("str", n);
+  const absent = strKeys("str", 2 * n).slice(n as i64);
+  const m = new Map<string, u64>();
+  for (let i: u64 = 0; i < n; i++) {
+    m.set(keys[i], i);
+  }
+  let sum: u64 = 0;
+  if (phase == "hit") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(keys[i]) ?? 0;
+    }
+  } else if (phase == "miss") {
+    for (let i: u64 = 0; i < n; i++) {
+      sum += m.get(absent[i]) ?? 1;
+    }
+  } else if (phase == "set") {
+    for (let i: u64 = 0; i < n; i++) {
+      m.set(keys[i], i + 1);
+    }
+  } else if (phase == "delete") {
+    for (let i: u64 = 0; i < n; i += 2) {
+      sum += m.delete(keys[i]) ? 1 : 0;
+    }
+  }
+  return sum;
+}
+
+function main() {
+  const kind = process.argv[2];
+  const phase = process.argv[3];
+  let sum: u64 = 0;
+  if (kind == "u64") {
+    sum = runU64(phase);
+  } else if (kind == "map") {
+    sum = runMap(phase);
+  } else {
+    sum = runStr(kind, phase);
+  }
+  console.log(kind, phase, sum);
+}
