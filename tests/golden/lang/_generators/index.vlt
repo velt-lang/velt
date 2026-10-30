@@ -1,0 +1,14 @@
+// A library whose functions a source generator writes per type (_generators/gen.vlt;
+// docs/internals/design/source-generators.md).
+
+/** A one-line description of type `T`: its kind and its fields. */
+export declare generated("./gen") function describe<T>(): string;
+
+/** `value` as text, written per type: fields in order, strings quoted. */
+export declare generated("./gen") function show<T>(value: T): string;
+
+/** A generated function whose generator writes code that does not compile. */
+export declare generated("./gen") function broken<T>(value: T): string;
+
+/** A generated function whose generator throws. */
+export declare generated("./gen") function crash<T>(): string;

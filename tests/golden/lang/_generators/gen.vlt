@@ -1,0 +1,82 @@
+// The generator of _generators/index.vlt: runs at compile time, writes Velt source.
+import { Request, Output, Type } from "velt/generate";
+
+export function describe(req: Request, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  let text = `${t.display}: ${t.kind}`;
+  if (t.kind == "union") {
+    const arms: string[] = [];
+    for (const a of t.arms) {
+      arms.push(req.model.type(a).display);
+    }
+    text += ` of ${arms.join(", ")}`;
+  }
+  for (const f of t.fields) {
+    const opt = f.optional ? "?" : "";
+    const vis = f.isPrivate ? "private " : "";
+    text += `; ${vis}${f.name}${opt}: ${req.model.type(f.type).display}`;
+  }
+  for (const m of t.members) {
+    text += `; ${m.name} = ${m.value}`;
+  }
+  if (t.subclasses.length > 0) {
+    const subs: string[] = [];
+    for (const s of t.subclasses) {
+      subs.push(req.model.type(s).display);
+    }
+    text += ` (extended by ${subs.join(", ")})`;
+  }
+  out.line(`return ${out.literal(text)};`);
+}
+
+export function show(req: Request, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  if (t.kind == "number" || t.kind == "boolean") {
+    out.line(`return \`\${${v}}\`;`);
+  } else if (t.kind == "string") {
+    out.line(`return "'" + ${v} + "'";`);
+  } else if (t.kind == "option") {
+    out.line(`if (${v} == null) { return "null"; }`);
+    const inner = out.instance("show", [t.args[0]]);
+    out.line(`return ${inner}(${v});`);
+  } else if (t.kind == "array") {
+    const elem = out.instance("show", [t.args[0]]);
+    out.line(`const parts: string[] = [];`);
+    out.line(`for (const e of ${v}) { parts.push(${elem}(e)); }`);
+    out.line(`return "[" + parts.join(", ") + "]";`);
+  } else if (t.kind == "class" || t.kind == "struct" || t.kind == "object") {
+    const name = t.kind == "object" ? "" : t.display + " ";
+    out.line(`let s = ${out.literal(name + "{")};`);
+    let first = true;
+    for (const f of t.fields) {
+      if (f.isPrivate) {
+        continue;
+      }
+      const sep = first ? " " : ", ";
+      first = false;
+      const key = out.literal(sep + f.name + ": ");
+      const field = out.instance("show", [f.type]);
+      if (f.optional) {
+        // An optional field reads as `T | undefined`.
+        const local = out.fresh("f");
+        out.line(`const ${local} = ${v}.${f.name};`);
+        out.line(`s += ${key} + (${local} == null ? "undefined" : ${field}(${local}));`);
+      } else {
+        out.line(`s += ${key} + ${field}(${v}.${f.name});`);
+      }
+    }
+    out.line(`return s + " }";`);
+  } else {
+    out.error(`show cannot write a ${t.kind} (\`${t.display}\`)`, t.at);
+    out.line(`return "";`);
+  }
+}
+
+export function broken(req: Request, out: Output): void {
+  out.line(`return ${req.params[0]}.noSuchField;`);
+}
+
+export function crash(req: Request, out: Output): void {
+  throw new Error(`crash asked for ${req.model.type(req.args[0]).display}`);
+}

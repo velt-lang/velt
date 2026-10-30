@@ -297,8 +297,7 @@ fn sema_stage(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
     };
-    let (hir, diags) = velt_sema::check_with(&loaded.modules, loaded.root, sema_opts);
-    sess.diagnostics.extend(diags);
+    let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
         let std_files = loaded
@@ -317,7 +316,7 @@ fn sema_stage(
             &mut sess.diagnostics,
         );
     }
-    sess.record("sema", t);
+    let _ = t;
     sess.stop_if_errors()?;
     hir.ok_or_else(|| BuildError::Ice("sema returned no program but reported no errors".into()))
 }

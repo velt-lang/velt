@@ -1,0 +1,11 @@
+// Code a generator writes that does not compile is the generator's bug: reported at the call
+// that needs it, with the error in the generated file as a note.
+import { broken } from "./_generators";
+
+class User {
+  name: string = "";
+}
+
+function main() {
+  console.log(broken(new User()));
+}

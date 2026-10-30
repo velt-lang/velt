@@ -1,0 +1,397 @@
+/**
+ * Source generators (docs/internals/design/source-generators.md): a library declares
+ * `declare generated("./gen") function f<T>(…): R;`, and the module `./gen` exports a function
+ * `f(req: Request, out: Output): void` that writes the body of `f` for each concrete instance
+ * the program uses. The compiler runs it at compile time, in a separate process, and checks
+ * the code it writes with the program.
+ *
+ * A generator reads the types of its instance from `req.model`, a read-only description of
+ * every type the instance reaches (`Type`, `Field`), and writes Velt source to `out`.
+ */
+
+import { readAllSync } from "velt/process";
+import { JsonValue } from "velt/prelude/json/json";
+
+/** One type of the model: what a generator may know about it. */
+export class Type {
+  id: i64 = 0;
+  /**
+   * `number`, `boolean`, `string`, `void`, `never`, `symbol`, `literal`, `enum`, `array`,
+   * `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `date`,
+   * `function`, `any`, `unknown`, `promise` or `opaque`.
+   */
+  kind: string = "";
+  /** As messages show it (`User`, `number[]`). */
+  display: string = "";
+  /** `<module path>::<name>` of a declared type, else "". */
+  qualifiedName: string = "";
+  /** How generated code writes the type ("" when it cannot be named). */
+  spelling: string = "";
+  /** `f64`, `i32`, … for numbers. */
+  repr: string = "";
+  /** Element, payload, key and value, tuple elements or type arguments, by kind. */
+  args: i64[] = [];
+  /** The members of a union, in order. */
+  arms: i64[] = [];
+  /** Fields of objects, classes and structs, inherited ones first. */
+  fields: Field[] = [];
+  /** A class's base class (-1: none) and the classes of the program that extend it. */
+  base: i64 = -1;
+  subclasses: i64[] = [];
+  /** Members of an enum. */
+  members: EnumMember[] = [];
+  /** The value of a literal type as JavaScript source (`"a"`, `1`, `true`). */
+  literal: string = "";
+  /** Where it is declared, for `Output.error` (-1: nowhere). */
+  at: i64 = -1;
+}
+
+/** A field of an object, class or struct type. */
+export class Field {
+  name: string = "";
+  type: i64 = 0;
+  optional: bool = false;
+  readonly: bool = false;
+  /** `private`, or an ES private field (`#x`, whose name keeps the `#`). */
+  isPrivate: bool = false;
+  isEsPrivate: bool = false;
+  hasDefault: bool = false;
+  at: i64 = -1;
+}
+
+/** A member of an enum: its name and its value as JavaScript source. */
+export class EnumMember {
+  name: string = "";
+  value: string = "";
+}
+
+/** Every type a request reaches. */
+export class Model {
+  types: Type[] = [];
+
+  /** The type with id `id`. */
+  type(id: i64): Type {
+    return this.types[id];
+  }
+}
+
+/** What the compiler asks a generator for: the body of one instance. */
+export class Request {
+  /** The generated function's name, and the instance's type arguments (model ids). */
+  fn: string = "";
+  args: i64[] = [];
+  /** The names of the instance's parameters, in order. */
+  params: string[] = [];
+  model: Model = new Model();
+}
+
+/** Where a generator writes the instance's body, helpers and diagnostics. */
+export class Output {
+  #session: Session;
+  #name: string;
+  #body: string[] = [];
+  #helpers: string[] = [];
+  #fresh: i64 = 0;
+
+  constructor(session: Session, name: string) {
+    this.#session = session;
+    this.#name = name;
+  }
+
+  /** Appends code to the body. */
+  body(code: string): void {
+    this.#body.push(code);
+  }
+
+  /** Appends one line of code to the body. */
+  line(code: string): void {
+    this.#body.push(code);
+    this.#body.push("\n");
+  }
+
+  /** Adds a top-level declaration (a helper function or constant) next to the instance. */
+  helper(code: string): void {
+    this.#helpers.push(code);
+  }
+
+  /** A name for a helper that no other instance uses. */
+  fresh(base: string): string {
+    this.#fresh += 1;
+    return `${this.#name}_${base}${this.#fresh}`;
+  }
+
+  /**
+   * The name of the function generated for instance `fn<args…>` of a generated function of
+   * the same generator module (generated in the same run when it is new): code calls it with
+   * the arguments `fn` takes.
+   */
+  instance(fn: string, args: i64[]): string {
+    return this.#session.instance(fn, args);
+  }
+
+  /** How generated code writes model type `id`. */
+  typeName(id: i64): string {
+    return this.#session.model.types[id].spelling;
+  }
+
+  /** `s` as a Velt string literal. */
+  literal(s: string): string {
+    return quote(s);
+  }
+
+  /** Reports an error at `at` (a type's or a field's `at`; -1: at the call that needs it). */
+  error(message: string, at: i64): void {
+    this.#session.report("error", this.#name, at, message);
+  }
+
+  /** The body written so far. */
+  takeBody(): string {
+    return this.#body.join("");
+  }
+
+  takeHelpers(): string {
+    return this.#helpers.join("\n");
+  }
+}
+
+/** `s` as a double-quoted Velt (and JavaScript) string literal. */
+export function quote(s: string): string {
+  let out = "\"";
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c == 10) {
+      out += "\\n";
+    } else if (c == 13) {
+      out += "\\r";
+    } else if (c == 9) {
+      out += "\\t";
+    } else if (c < 32 || c == 0x2028 || c == 0x2029) {
+      out += "\\u" + c.toString(16).padStart(4, "0");
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out + "\"";
+}
+
+/** A generated function the host can generate: its generator's key, its name, the generator. */
+export type GeneratorEntry = {
+  key: string;
+  fn: string;
+  run: (req: Request, out: Output) => void throws Error;
+};
+
+/** One queued instance. */
+class Pending {
+  name: string = "";
+  key: string = "";
+  fn: string = "";
+  args: i64[] = [];
+}
+
+/** One run of the host: the model, the instances generated and queued, the output. */
+export class Session {
+  model: Model = new Model();
+  prefix: string = "";
+  /** The generator key of the instance being generated. */
+  key: string = "";
+  names: Map<string, string> = new Map();
+  params: Map<string, string[]> = new Map();
+  queue: Pending[] = [];
+  next: i64 = 0;
+
+  instance(fn: string, args: i64[]): string {
+    const k = this.key + " " + fn + "<" + args.join(",") + ">";
+    const known = this.names.get(k);
+    if (known != null) {
+      return known;
+    }
+    this.next += 1;
+    const name = `${this.prefix}n${this.next}_${fn}`;
+    this.names.set(k, name);
+    const p = new Pending();
+    p.name = name;
+    p.key = this.key;
+    p.fn = fn;
+    p.args = args;
+    this.queue.push(p);
+    // Tells the compiler about it before its body comes.
+    frame(`instance ${name} ${this.key} ${fn} ${args.join(",")}`, "");
+    return name;
+  }
+
+  report(kind: string, name: string, at: i64, message: string): void {
+    frame(`${kind} ${name} ${at}`, message);
+  }
+}
+
+/** Writes one record: a header line, then `text` with its length in bytes. */
+function frame(header: string, text: string): void {
+  process.stdout.write(`#${header} ${Buffer.byteLength(text)}\n${text}\n`);
+}
+
+function num(v: JsonValue | null): i64 {
+  return v == null ? -1 : (v.asNumber() ?? -1) as i64;
+}
+
+function str(v: JsonValue | null): string {
+  return v == null ? "" : v.asString() ?? "";
+}
+
+function bool(v: JsonValue | null): bool {
+  return v == null ? false : v.asBool() ?? false;
+}
+
+function nums(v: JsonValue | null): i64[] {
+  const out: i64[] = [];
+  if (v == null) {
+    return out;
+  }
+  for (let i = 0; i < v.len(); i++) {
+    out.push(num(v.at(i)));
+  }
+  return out;
+}
+
+function strs(v: JsonValue | null): string[] {
+  const out: string[] = [];
+  if (v == null) {
+    return out;
+  }
+  for (let i = 0; i < v.len(); i++) {
+    out.push(str(v.at(i)));
+  }
+  return out;
+}
+
+function readType(id: i64, v: JsonValue): Type {
+  const t = new Type();
+  t.id = id;
+  t.kind = str(v.get("kind"));
+  t.display = str(v.get("display"));
+  t.qualifiedName = str(v.get("qualifiedName"));
+  t.spelling = str(v.get("spelling"));
+  t.repr = str(v.get("repr"));
+  t.args = nums(v.get("args"));
+  t.arms = nums(v.get("arms"));
+  t.base = num(v.get("base"));
+  t.subclasses = nums(v.get("subclasses"));
+  t.literal = str(v.get("literal"));
+  t.at = num(v.get("at"));
+  const fields = v.get("fields");
+  if (fields != null) {
+    for (let i = 0; i < fields.len(); i++) {
+      const fv = fields.at(i);
+      if (fv == null) {
+        continue;
+      }
+      const f = new Field();
+      f.name = str(fv.get("name"));
+      f.type = num(fv.get("type"));
+      f.optional = bool(fv.get("optional"));
+      f.readonly = bool(fv.get("readonly"));
+      f.isPrivate = bool(fv.get("private"));
+      f.isEsPrivate = bool(fv.get("esPrivate"));
+      f.hasDefault = bool(fv.get("hasDefault"));
+      f.at = num(fv.get("at"));
+      t.fields.push(f);
+    }
+  }
+  const members = v.get("members");
+  if (members != null) {
+    for (let i = 0; i < members.len(); i++) {
+      const mv = members.at(i);
+      if (mv == null) {
+        continue;
+      }
+      const m = new EnumMember();
+      m.name = str(mv.get("name"));
+      m.value = str(mv.get("value"));
+      t.members.push(m);
+    }
+  }
+  return t;
+}
+
+/**
+ * The host's loop (the compiler builds a program whose `main` calls it with the generators it
+ * needs): reads the requests from standard input, runs each generator, and writes the bodies,
+ * the further instances they ask for and their diagnostics to standard output.
+ */
+export function serve(generators: GeneratorEntry[]): void {
+  const doc = JsonValue.parse(readAllSync());
+  const s = new Session();
+  s.prefix = str(doc.get("prefix"));
+  const types = doc.get("types");
+  if (types != null) {
+    for (let i = 0; i < types.len(); i++) {
+      const tv = types.at(i);
+      if (tv != null) {
+        s.model.types.push(readType(i, tv));
+      }
+    }
+  }
+  const functions = doc.get("functions");
+  if (functions != null) {
+    for (let i = 0; i < functions.len(); i++) {
+      const f = functions.at(i);
+      if (f != null) {
+        s.params.set(str(f.get("generator")) + " " + str(f.get("function")), strs(f.get("params")));
+      }
+    }
+  }
+  const requests = doc.get("requests");
+  if (requests != null) {
+    for (let i = 0; i < requests.len(); i++) {
+      const r = requests.at(i);
+      if (r == null) {
+        continue;
+      }
+      const p = new Pending();
+      p.name = str(r.get("name"));
+      p.key = str(r.get("generator"));
+      p.fn = str(r.get("function"));
+      p.args = nums(r.get("typeArgs"));
+      s.names.set(p.key + " " + p.fn + "<" + p.args.join(",") + ">", p.name);
+      s.queue.push(p);
+    }
+  }
+  let i = 0;
+  while (i < s.queue.length) {
+    const p = s.queue[i];
+    i += 1;
+    let found = false;
+    for (const g of generators) {
+      if (g.key != p.key || g.fn != p.fn) {
+        continue;
+      }
+      found = true;
+      s.key = p.key;
+      const req = new Request();
+      req.fn = p.fn;
+      req.args = p.args;
+      req.params = s.params.get(p.key + " " + p.fn) ?? [];
+      req.model = s.model;
+      const out = new Output(s, p.name);
+      try {
+        g.run(req, out);
+      } catch (e) {
+        s.report("error", p.name, -1, `the generator of \`${p.fn}\` threw: ${e.message}`);
+      }
+      frame(`body ${p.name}`, out.takeBody());
+      const helpers = out.takeHelpers();
+      if (helpers.length > 0) {
+        frame(`helper ${p.name}`, helpers);
+      }
+    }
+    if (!found) {
+      s.report("error", p.name, -1, `the generator module exports no function \`${p.fn}\``);
+    }
+  }
+  frame("done", "");
+}

@@ -1,0 +1,2 @@
+10:15: error: the code generated for `broken<User>` by `./gen` does not compile (a bug in the generator)
+= note: <generated>/_generators.1.vlt:5:14: no field `noSuchField` on type `User`
