@@ -262,8 +262,13 @@ function main() {
   `with`, and store what it returns after.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
-  function uses is module state, and its initializer runs where it stands, after the statements
-  above it, as in Node.
+  function uses is module state, and so is one a closure uses that the code assigns or that
+  holds a new object (so a `serve` handler or a test's callback may assign or change it); its
+  initializer runs where it stands, after the statements above it, as in Node. When the rules
+  above rule out module state for one that only closures keep there (it holds a promise, or a
+  `Mutex` `with` callback uses it), it stays a local of `main` instead, with the variables below
+  it whose initializers read it. A `with` callback that calls a function value makes every
+  variable a closure in the script uses a local of `main`.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
   task that never uses it. A read or write of a module-level `let`, or of a constant kept as
   module state, asks the runtime for the state (a constant only read is not: one use that keeps

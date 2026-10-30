@@ -1,0 +1,21 @@
+// check: no leaks
+// A top-level `let` that a `Mutex` `with` callback uses stays a local of the generated `main`,
+// also when a closure assigns it (#1872): a `with` callback cannot use module state, so sema
+// moves the variable the parser kept at module level for the closure back into `main`, where a
+// closure captures it. Both were "the function passed to `with` may use module state" errors.
+const m = shared(new Mutex<number>(0));
+let count = 0;
+count++;
+m.with((v) => {
+  v += 1;
+  count += 10;
+});
+console.log(count);
+
+const n = shared(new Mutex<number>(0));
+let seen = 0;
+const bump = () => {
+  seen++;
+};
+bump();
+console.log(n.with((v) => v + seen), seen);

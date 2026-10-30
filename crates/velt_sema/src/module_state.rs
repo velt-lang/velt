@@ -15,6 +15,10 @@ use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
 #[path = "locked_props.rs"]
 mod locked_props;
+#[path = "module_state_reach.rs"]
+mod reach;
+
+use reach::{propagate, vars_reached, Reach};
 
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
@@ -348,20 +352,15 @@ impl crate::body::FnCx<'_, '_> {
     }
 }
 
-/// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
-/// function value whose body is not known; with the calls that lead there.
-#[derive(Clone)]
-struct Reach {
-    what: String,
-    via: Vec<DefId>,
-}
-
 /// What one body does with module state: its own first use, and the code it may run (calls,
 /// closures it makes, functions it takes as values, the methods a dynamic call may pick, the
 /// initializers a `new` or a constant read evaluates); and the types of the values it handles,
 /// whose class hooks it may run without a call (`replaced_holders::implicit`).
 struct Facts {
     direct: Option<String>,
+    vars: Vec<DefId>, // every module state variable it uses (`script_locals`)
+    made: Vec<DefId>, // the closures and functions it makes as values (same)
+    values: bool,     // it calls a function value whose body is not known (same)
     edges: Vec<DefId>,
     tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
@@ -381,8 +380,9 @@ struct Facts {
 /// through the code that runs without a call (field and constant initializers, and the
 /// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
 /// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
-/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` if it happens
-/// anyway).
+/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` otherwise).
+/// Every variable a refused callback reaches is recorded (`script_locals`; through a function
+/// value it calls, those of the closures the code around it makes: `reach::vars_reached`).
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // Without `any`, no function has properties (locked_props.rs).
     let props = cx.any.is_some_and(|a| a.imp.is_some());
@@ -482,6 +482,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         return;
     }
     let reach = propagate(&facts);
+    let mut refused = vec![];
     for (cb, span, method) in withs {
         let found = match &cb.kind {
             E::Closure(c) => reach.get(c).cloned(),
@@ -495,6 +496,9 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             }),
         };
         let Some(r) = found else { continue };
+        if let E::Closure(c) | E::FnRef(c, _) = &cb.kind {
+            refused.push(*c);
+        }
         let what = match r.via.is_empty() {
             true => r.what,
             false => {
@@ -511,6 +515,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             .with_note(format!("read what you need before `{method}` and pass it in, and store what it returns after")),
         );
     }
+    cx.state_refused.extend(vars_reached(&facts, refused));
 }
 
 /// How a diagnostic names a node of the reach graph: a function, an object type's field
@@ -523,44 +528,6 @@ fn node_name(cx: &Ctx, d: DefId) -> String {
         Some(DefInfo::Global(g)) => format!("the initializer of `{}`", g.name),
         _ => "code that runs without a call".into(),
     }
-}
-
-/// Which functions may reach module state: those that use it, and those that may run one of
-/// them (backwards along the edges, to a fixpoint).
-fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Reach> {
-    let mut reach: FxHashMap<DefId, Reach> = FxHashMap::default();
-    let mut callers: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-    let mut todo = vec![];
-    // In `DefId` order, so a diagnostic names the same path on every run.
-    let mut order: Vec<(&DefId, &Facts)> = facts.iter().collect();
-    order.sort_by_key(|(d, _)| **d);
-    for (&d, f) in order {
-        for &e in &f.edges {
-            callers.entry(e).or_default().push(d);
-        }
-        if let Some(what) = &f.direct {
-            let r = Reach {
-                what: what.clone(),
-                via: vec![],
-            };
-            reach.insert(d, r);
-            todo.push(d);
-        }
-    }
-    while let Some(d) = todo.pop() {
-        let r = reach[&d].clone();
-        for &c in callers.get(&d).map(Vec::as_slice).unwrap_or(&[]) {
-            if reach.contains_key(&c) {
-                continue;
-            }
-            let mut via = vec![d];
-            via.extend(r.via.iter().copied());
-            let what = r.what.clone();
-            reach.insert(c, Reach { what, via });
-            todo.push(c);
-        }
-    }
-    reach
 }
 
 /// Is `e` a closure or a named function written in place (an optional parameter's `Some`, or
@@ -596,6 +563,9 @@ impl<'a, 'm> FactsOf<'a, 'm> {
             std,
             facts: Facts {
                 direct: None,
+                vars: vec![],
+                made: vec![],
+                values: false,
                 edges: vec![],
                 tys: FxHashSet::default(),
                 resumes: false,
@@ -613,6 +583,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
         // taken as values, by the code that passes them, where they count (`passed`).
         if !self.std {
             self.facts.props = true;
+            self.facts.values = true;
             if self.facts.direct.is_none() {
                 self.facts.direct = Some(what.into());
             }
@@ -681,8 +652,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
         }
     }
 
-    /// The methods a virtual call through slot `slot` of class `class` may run: its own and every
-    /// subclass's.
+    /// The methods a virtual call through slot `slot` of class `class` may run (also subclasses').
     fn virtual_methods(&mut self, class: DefId, slot: u32) {
         let ms = self.dispatch.virtual_methods(class, slot);
         self.facts.edges.extend(ms);
@@ -701,6 +671,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                     if self.facts.direct.is_none() {
                         self.facts.direct = Some(format!("uses `{}`", g.name));
                     }
+                    self.facts.vars.push(*d);
                 }
                 // A constant's initializer runs at each read.
                 Some(g)
@@ -712,7 +683,10 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 }
                 _ => {}
             },
-            E::Closure(c) | E::FnRef(c, _) => self.facts.edges.push(*c),
+            E::Closure(c) | E::FnRef(c, _) => {
+                self.facts.edges.push(*c);
+                self.facts.made.push(*c);
+            }
             E::New { def, args, .. } => {
                 let ctor = self.cx.adt(*def).and_then(|a| a.ctor);
                 self.facts.edges.extend(ctor);

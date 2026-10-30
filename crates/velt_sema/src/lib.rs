@@ -24,6 +24,8 @@
 //!
 //! Semantic decisions other stages rely on are documented on [`body`] and the modules above.
 
+#[cfg(test)] // by its name, for the integration tests' loader (`script_locals_tests.rs`)
+extern crate self as velt_sema;
 pub mod hir;
 pub mod js_protos;
 
@@ -106,6 +108,7 @@ mod recursive_aliases;
 mod recursive_unions;
 mod replaced_holders;
 mod resolve;
+mod script_locals;
 mod script_tdz;
 mod suggest;
 mod symbols;
@@ -262,7 +265,9 @@ fn check_on_current_thread(
 ) -> (Option<hir::Program>, Diagnostics) {
     timings::start();
     let out = timings::pass("check", || {
-        check_timed(modules, root, opts, recovered, stack_budget)
+        script_locals::check(modules, root, |m| {
+            check_timed(m, root, opts, recovered, stack_budget)
+        })
     });
     timings::finish();
     out
@@ -275,7 +280,7 @@ fn check_timed(
     opts: CheckOptions,
     recovered: &[(usize, &str)],
     stack_budget: usize,
-) -> (Option<hir::Program>, Diagnostics) {
+) -> script_locals::Checked {
     let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
@@ -308,7 +313,7 @@ fn check_timed(
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
-        return (None, vec![d]);
+        return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
     let null_proto = modules
@@ -415,7 +420,8 @@ fn check_timed(
     union_views::finish(&mut cx);
     cx.upcast_writes();
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
-        return (None, cx.diags);
+        let refused = script_locals::refused(&cx, root);
+        return ((None, cx.diags), refused);
     }
     let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
@@ -480,7 +486,7 @@ fn check_timed(
         unchecked: unchecked.into_iter().collect(),
         any_fn_views,
     };
-    (Some(program), diags)
+    ((Some(program), diags), Default::default())
 }
 
 /// How many times at most a program is checked again for the error types of function types
