@@ -38,7 +38,7 @@ describe("a handler that throws", () => {
   afterAll(() => close());
 
   it("gets a 500 response", async () => {
-    expect(await get(port, "/admin")).toBe("500 Internal HttpServer Error");
+    expect(await get(port, "/admin")).toBe("500 Internal Server Error");
   });
 
   it("leaves the server serving", async () => {
@@ -66,8 +66,8 @@ function prefixed(prefix: string): (req: Request) => Response {
 }
 
 // A wrapper of `serve` with `serve`'s own handler type passes the handler on.
-async function startWith<E>(
-  h: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws E,
+async function startWith<E, F>(
+  h: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
 ): Promise<HttpServer> {
   return await serve({ port: 0 }, h);
 }
@@ -114,7 +114,7 @@ describe("a sync handler", () => {
     });
     try {
       expect(await get(s.port, "/home")).toBe("200 async ok");
-      expect(await get(s.port, "/admin")).toBe("500 Internal HttpServer Error");
+      expect(await get(s.port, "/admin")).toBe("500 Internal Server Error");
     } finally {
       await s.shutdown();
     }
@@ -142,7 +142,7 @@ describe("a sync handler", () => {
     const s = await serve({ port: 0 }, (req) => respondThrows(new URL(req.url).pathname));
     try {
       expect(await get(s.port, "/page")).toBe("200 checked /page");
-      expect(await get(s.port, "/admin")).toBe("500 Internal HttpServer Error");
+      expect(await get(s.port, "/admin")).toBe("500 Internal Server Error");
     } finally {
       await s.shutdown();
     }
