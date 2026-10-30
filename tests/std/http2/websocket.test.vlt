@@ -1,7 +1,7 @@
 // WebSockets over HTTP/2 (RFC 8441): `acceptWebSocket` on an extended CONNECT, the WebSocket's
 // frames carried in the stream's DATA frames, and its close as the stream's end.
-import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
-import { acceptWebSocket } from "velt/net/websocket";
+import { HttpRequest, HttpResponse, serve, serveHttp } from "velt/net/http";
+import { acceptWebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { Client, Frame } from "./_h2";
@@ -68,6 +68,44 @@ describe("WebSockets over HTTP/2", () => {
       await c.flush();
       const rest = await timeout(c.until((f) => f.id == 1 && (f.flags & 1) == 1), 3000);
       expect(rest.startsWith("DATA 1")).toBe(true);
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
+  it("upgrades an extended CONNECT through the web-standard serve", async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      if (!isWebSocketRequest(req)) {
+        return new Response("plain");
+      }
+      const up = upgradeWebSocket(req);
+      const ws = up.socket;
+      spawn(async () => {
+        for await (const m of ws) {
+          await ws.send(`echo ${m.text}`);
+        }
+      });
+      return up.response;
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(1, CONNECT, false);
+      await c.flush();
+      expect(await timeout(c.until((f) => f.type == 1), 3000)).toBe("HEADERS 1 :status=200");
+      c.frame(0, 0, 1, wsFrame(1, "hi"));
+      await c.flush();
+      let got = "";
+      await timeout(
+        c.until((f: Frame) => {
+          if (f.type == 0) {
+            got = `${f.payload[0]} ${f.payload[1]} ${f.payload.utf8Slice(2)}`;
+          }
+          return f.type == 0;
+        }),
+        3000,
+      );
+      expect(got).toBe("129 7 echo hi");
     } finally {
       c.close();
       server.close();

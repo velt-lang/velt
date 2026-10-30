@@ -1,0 +1,43 @@
+// velt/net/http's web-standard `serve` over HTTP/2: the handler's `Request` reads the stream's
+// method, URL and headers (a field sent several times joined with ", ", as `Headers.get` reads
+// it), and the `Response` it returns becomes the stream's HEADERS and DATA.
+import { serve } from "velt/net/http";
+import { describe, expect, it } from "velt/test";
+import { Client, endOf } from "./_h2";
+
+describe("serve over HTTP/2", () => {
+  it("gives the handler the stream's request as a Request", async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      const h = req.headers;
+      return new Response(`${req.method} ${req.url} ${h.get("x-two")} ${h.get("host")}`);
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(
+        1,
+        [
+          ":method",
+          "GET",
+          ":scheme",
+          "http",
+          ":path",
+          "/p?q=1",
+          ":authority",
+          "ex.com",
+          "x-two",
+          "a",
+          "x-two",
+          "b",
+        ],
+        true,
+      );
+      await c.flush();
+      expect(await c.until(endOf(1))).toBe(
+        "HEADERS 1 :status=200\nDATA 1 es 35:GET http://ex.com/p?q=1 a, b ex.com",
+      );
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+});

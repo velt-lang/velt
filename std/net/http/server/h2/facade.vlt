@@ -21,24 +21,52 @@ export async function serveH2Http<E>(
   stopped: AbortSignal,
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
 ): Promise<void> {
-  // One parser for every request facade: it is used only over HTTP/1.1.
-  const parser = new Parser(0, 0, 0);
-  const requests: HttpRequest[] = [];
-  const responses: HttpResponse[] = [];
+  const facades = new Facades(conn, stopped);
   await serveH2(conn, initial, opts, stopped, async (r: H2Request, s: H2Response) => {
-    const req = requests.pop() ?? new HttpRequest(parser, conn, 0);
-    const res = responses.pop() ?? new HttpResponse(conn, stopped, req.head);
-    req.bindH2(r);
-    res.bindH2(s);
+    const req = facades.request(r);
+    const res = facades.response(s, req);
     try {
       await handler(req, res);
     } finally {
-      // Unbound before they are kept: nothing of the stream (or the connection) stays reachable
-      // from them.
-      req.bindH2(null);
-      res.bindH2(null);
-      requests.push(req);
-      responses.push(res);
+      facades.keep(req, res);
     }
   });
+}
+
+/// A connection's facades: the pairs its streams used, kept for the next ones.
+class Facades {
+  private conn: TcpStream;
+  private stopped: AbortSignal;
+  // One parser for every request facade: it is used only over HTTP/1.1.
+  private parser: Parser = new Parser(0, 0, 0);
+  private requests: HttpRequest[] = [];
+  private responses: HttpResponse[] = [];
+
+  constructor(conn: TcpStream, stopped: AbortSignal) {
+    this.conn = conn;
+    this.stopped = stopped;
+  }
+
+  /// A request facade passing its calls on to `r`.
+  request(r: H2Request): HttpRequest {
+    const req = this.requests.pop() ?? new HttpRequest(this.parser, this.conn, 0);
+    req.bindH2(r);
+    return req;
+  }
+
+  /// A response facade passing its calls on to `s`.
+  response(s: H2Response, req: HttpRequest): HttpResponse {
+    const res = this.responses.pop() ?? new HttpResponse(this.conn, this.stopped, req.head);
+    res.bindH2(s);
+    return res;
+  }
+
+  /// The handler returned: the pair is unbound (nothing of the stream, or the connection, stays
+  /// reachable from it) and kept.
+  keep(req: HttpRequest, res: HttpResponse) {
+    req.bindH2(null);
+    res.bindH2(null);
+    this.requests.push(req);
+    this.responses.push(res);
+  }
 }

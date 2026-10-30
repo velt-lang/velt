@@ -5,7 +5,7 @@
 
 import { utf8DecodeLossy } from "velt/encoding";
 import { IoError } from "velt/io/error";
-import { BodyTooLarge } from "velt/net/http/server/request";
+import { BodyTooLarge } from "velt/net/http/server/errors";
 import { H2Connection } from "velt/net/http/server/h2/connection";
 import { H2Stream } from "velt/net/http/server/h2/stream";
 import { consumed } from "velt/net/http/server/h2/streams";
@@ -85,6 +85,26 @@ export class H2Request {
       return this.s.fields.value(a);
     }
     return null;
+  }
+
+  /// The values of header `name` (any case) joined with ", " in the order they came, as
+  /// `Headers.get` reads them; null when it was not sent (`host` as for `header`).
+  headerValues(name: string): string | null {
+    const first = this.find(name);
+    if (first < 0) {
+      return this.header(name);
+    }
+    const f = this.s.fields;
+    const n = Buffer.byteLength(name) as i64;
+    let out = f.value(first);
+    for (let i = first + 1; i < f.count; i++) {
+      if (
+        f.nameLength(i) == n && f.buf.utf8EqualsIgnoreCase(name, f.heads[i * 4], f.heads[i * 4 + 1])
+      ) {
+        out = `${out}, ${f.value(i)}`;
+      }
+    }
+    return out;
   }
 
   /// Whether header `name` (any case) was sent.

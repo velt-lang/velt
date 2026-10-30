@@ -28,6 +28,9 @@ async function handler(req: H2Request, res: H2Response) {
     await res.piece("a");
     res.addTrailers([["x-sum", "97"]]);
     await res.finishStream();
+  } else if (req.pathIs("/server")) {
+    res.header("Server", "mine");
+    res.send("s");
   } else if (req.pathIs("/none")) {
     res.status(204);
     res.send("ignored");
@@ -68,6 +71,23 @@ describe("HTTP/2 exchanges", () => {
     expect(frames).toBe("HEADERS 1 :status=200\nDATA 1 es 5:hello");
     expect(head.replace(/date: [^\n]*/, "date: D")).toBe(
       ":status: 200\nserver: Velt\ndate: D\ncontent-length: 5\ncontent-type: text/x-test",
+    );
+    c.close();
+  });
+
+  it("sends the handler's own server field instead of its own", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/server");
+    await c.flush();
+    let head = "";
+    await c.until((f) => {
+      if (f.type == 1) {
+        head = c.fields(f);
+      }
+      return f.type == 0 && (f.flags & 1) == 1;
+    });
+    expect(head.replace(/date: [^\n]*/, "date: D")).toBe(
+      ":status: 200\ndate: D\ncontent-type: text/plain; charset=utf-8\ncontent-length: 1\nserver: mine",
     );
     c.close();
   });

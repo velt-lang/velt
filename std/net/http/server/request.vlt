@@ -161,6 +161,10 @@ export class HttpRequest {
   /// The values of header `name` (any case) joined with ", " in the order they came, as
   /// `Headers.get` reads them; null when it was not sent.
   headerValues(name: string): string | null {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.headerValues(name);
+    }
     let i = this.find(name);
     if (i < 0) {
       return null;

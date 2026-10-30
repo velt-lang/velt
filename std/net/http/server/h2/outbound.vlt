@@ -29,7 +29,10 @@ export function writeHead(
   const at = out.beginHeaders();
   e.begin(out);
   e.status(out, status);
-  e.field(out, "server", "Velt");
+  if (!hasField(fields, "server")) {
+    // The handler's own `server` replaces it, as over HTTP/1.1.
+    e.field(out, "server", "Velt");
+  }
   e.field(out, "date", c.date);
   if (type.length > 0) {
     e.field(out, "content-type", type);
@@ -45,6 +48,16 @@ export function writeHead(
   if (end) {
     ended(c, s);
   }
+}
+
+/// Whether `fields` (name, value, ...: lowercase names) has `name`.
+function hasField(fields: string[], name: string): bool {
+  for (let i: i64 = 0; i < (fields.length as i64); i += 2) {
+    if (fields[i] == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// How much of the body `s` may send now: the smaller window, the peer's frame size.
