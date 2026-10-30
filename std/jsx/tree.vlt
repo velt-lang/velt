@@ -1,0 +1,84 @@
+// velt/jsx (internal): `Tree`, a template node's strings and child nodes, and the markup of a
+// complete node.
+
+import { Element } from "velt/jsx/node";
+
+/**
+ * The strings and child nodes of a template node: `strings[0] slots[0] strings[1] …
+ * strings[n]` (internal: not re-exported). A separate object so that nodes of one string stay
+ * small.
+ */
+export class Tree {
+  /** The child nodes, all complete. */
+  slots: Element[];
+  /** The strings around `slots`, one more than them; null when all are "". */
+  strings: string[] | null;
+  /**
+   * Template nodes from here to the deepest leaf (1: the slots are strings): rendering recurses
+   * this deep, so `treeNode` flattens a node beyond `MAX_TREE_DEPTH`.
+   */
+  depth: i64;
+
+  constructor(slots: Element[], strings: string[] | null, depth: i64) {
+    this.slots = slots;
+    this.strings = strings;
+    this.depth = depth;
+  }
+}
+
+// Rendering recurses once per template node level, so deeper trees (an element wrapped in a
+// loop, thousands of times) are flattened as they are built instead of overflowing the stack.
+const MAX_TREE_DEPTH = 256;
+
+/**
+ * The complete node `strings[0] slots[0] strings[1] … strings[n]` (`strings` null: all ""),
+ * keeping both arrays; one string when it would be deeper than `MAX_TREE_DEPTH`.
+ */
+export function treeNode(slots: Element[], strings: string[] | null): Element {
+  let depth: i64 = 1;
+  for (const slot of slots) {
+    if (slot.tree != null && slot.tree.depth >= depth) {
+      depth = slot.tree.depth + 1;
+    }
+  }
+  const node = new Element("");
+  node.tree = new Tree(slots, strings, depth);
+  if (depth > MAX_TREE_DEPTH) {
+    return new Element(markupOf(node));
+  }
+  return node;
+}
+
+/** The markup of a complete node. */
+export function markupOf(node: Element): string {
+  if (node.tree == null) {
+    return node.html;
+  }
+  const pieces: string[] = [];
+  pushMarkup(node, pieces);
+  return pieces.join("");
+}
+
+/**
+ * Appends the markup of `node` (its `html`, or its template expanded; not `rest`) to `out`, as
+ * the strings it is made of. Recursive: a tree is no deeper than the calls that built it.
+ */
+export function pushMarkup(node: Element, out: string[]) {
+  if (node.tree == null) {
+    if (node.html != "") {
+      out.push(node.html);
+    }
+    return;
+  }
+  pushString(node.tree, 0, out);
+  for (let i: usize = 0; i < node.tree.slots.length; i++) {
+    pushMarkup(node.tree.slots[i], out);
+    pushString(node.tree, i + 1, out);
+  }
+}
+
+function pushString(tree: Tree, i: usize, out: string[]) {
+  if (tree.strings != null && tree.strings[i] != "") {
+    out.push(tree.strings[i]);
+  }
+}

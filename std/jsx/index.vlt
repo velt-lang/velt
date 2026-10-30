@@ -7,7 +7,8 @@
 // node.vlt (the Element), factory.vlt (what compiled JSX calls), escape.vlt, void_elements.vlt,
 // render.vlt, intrinsic*.vlt (the HTML tags and attributes).
 
-export { Element, RenderError } from "velt/jsx/node";
+export { Element } from "velt/jsx/node";
+export { RenderError } from "velt/jsx/errors";
 export type { Child, AttrValue, Style, Text } from "velt/jsx/node";
 export type { IntrinsicElements, ElementChildrenAttribute } from "velt/jsx/intrinsic";
 export { Fragment, raw } from "velt/jsx/factory";

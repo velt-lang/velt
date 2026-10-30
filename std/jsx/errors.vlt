@@ -1,0 +1,17 @@
+// velt/jsx (internal): `RenderError`, what rendering throws for a component that failed.
+
+/**
+ * Thrown while rendering when a component threw or an async component rejected. Element is not
+ * generic, so the component's own error type cannot travel through the tree: its value is
+ * formatted like `${e}` into `message`, and `component` names the component
+ * (`"<module path>#<Name>"`). Also thrown by `renderToStringSync` for a tree that still has a
+ * pending async component (`component` is then "").
+ */
+export class RenderError extends Error {
+  component: string;
+
+  constructor(component: string, message: string) {
+    super(message);
+    this.component = component;
+  }
+}

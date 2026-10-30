@@ -1,0 +1,21 @@
+// velt/jsx (internal): `Deferred`, the part of a node that waits for an async component.
+
+import { RenderError } from "velt/jsx/errors";
+import { Element } from "velt/jsx/node";
+
+/**
+ * The part of a node that waits for an async component, or the error of a component that threw
+ * (internal: not re-exported). A separate object so that complete nodes, almost all of them,
+ * stay small.
+ */
+export class Deferred {
+  /**
+   * An async component's promise (at most one), started when its node was created; rendered
+   * right after the node's `html`.
+   */
+  pending: Promise<Element, RenderError>[] = [];
+  /** The rest of the node, in document order. */
+  parts: Element[] = [];
+  /** Set instead when a sync component threw: rendering the node throws it. */
+  failure: RenderError | null = null;
+}
