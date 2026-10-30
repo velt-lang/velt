@@ -5,8 +5,10 @@
 // `Response` it returns is written through the connection's `HttpResponse`.
 
 import { IoError } from "velt/io/error";
+import { BodyKind, responseParts } from "velt/net/http/fetch/parts";
 import { Request } from "velt/net/http/fetch/request";
 import { Response } from "velt/net/http/fetch/response";
+import { serverRequest } from "velt/net/http/fetch/source";
 import { Received } from "velt/net/http/server/received";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse } from "velt/net/http/server/response";
@@ -31,7 +33,7 @@ export async function serve<E, F>(
     const received = new Received(hreq, out, secure);
     let res: Response | null = null;
     try {
-      res = await handler(Request.ofReceived(received), new ServeInfo(received));
+      res = await handler(serverRequest(received), new ServeInfo(received));
     } catch (e) {
       console.error("request handler failed:", e);
     }
@@ -63,7 +65,7 @@ function failed(out: HttpResponse) {
 
 /** Writes `res` through `out`: its status, headers and body. */
 async function respond(res: Response, out: HttpResponse) {
-  const b = res.serverBody();
+  const b = responseParts(res);
   out.status(b.status as number);
   const h = b.headers;
   let typed = false;
@@ -81,9 +83,9 @@ async function respond(res: Response, out: HttpResponse) {
     out.header("content-type", type);
   }
   const stream = b.stream;
-  if (b.kind == 3 && stream != null) {
+  if (b.kind == BodyKind.Stream && stream != null) {
     await out.sendStream(stream, "application/octet-stream");
-  } else if (b.kind == 2) {
+  } else if (b.kind == BodyKind.Bytes) {
     out.sendBytes(b.bytes);
   } else {
     out.send(b.text);

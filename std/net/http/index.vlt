@@ -15,6 +15,13 @@ export {
   Response,
   ResponseInit,
 } from "velt/net/http/fetch/fetch";
+export { RequestSource, requestSource, serverRequest } from "velt/net/http/fetch/source";
+export {
+  BodyKind,
+  ResponseParts,
+  responseParts,
+  switchingProtocols,
+} from "velt/net/http/fetch/parts";
 export { HttpServeOptions, HttpServer, serveHttp } from "velt/net/http/server/serve";
 export { BodyTooLarge } from "velt/net/http/server/errors";
 export { HttpRequest } from "velt/net/http/server/request";

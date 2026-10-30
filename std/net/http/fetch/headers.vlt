@@ -1,18 +1,18 @@
 // velt/net/http (internal): the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the
-// type of a received request's `headers` (std/net/http/server/standard.vlt).
+// type of a received request's `headers` (source.vlt).
 //
 // One flat list, `[name, value, name, value, …]`, in insertion order: names are lowercased when
-// they are added (header names are case-insensitive), values have surrounding whitespace
-// removed. The `fetch` client parses a response's headers into that
-// format, so they arrive as one array without being copied again. Lookups scan the list: a message has a handful of headers,
-// for which a scan beats hashing. A received request's headers stay in the connection's
-// buffer until something needs all of them: `get` and `has` look one name up there. The headers of a
-// response made here start with the `content-type` its body implies held as a number
-// (`implied`), which the server writes as it is; it becomes the list's first entry
-// when something reads or changes `content-type` or needs the whole list. The first header
-// added to an empty `Headers` is kept as it was given, outside the list (a new response
-// usually gets one or two: `res.headers.set("server", "velt")` makes no list and lowercases
-// nothing); anything else moves it into the list first.
+// they are added (header names are case-insensitive), values have surrounding whitespace removed.
+// The `fetch` client parses a response's headers into that format, so they arrive as one array
+// without being copied again. Lookups scan the list: a message has a handful of headers, for which
+// a scan beats hashing. A received request's headers stay with its server (its `RequestSource`)
+// until something needs all of them: `get` and `has` look one name up there. The headers of a
+// response made here start with the `content-type` its body implies held as a number (`implied`),
+// which the server writes as it is; it becomes the list's first entry when something reads or
+// changes `content-type` or needs the whole list. The first header added to an empty `Headers` is
+// kept as it was given, outside the list (a new response usually gets one or two:
+// `res.headers.set("server", "velt")` makes no list and lowercases nothing); anything else moves it
+// into the list first.
 //
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
@@ -23,7 +23,7 @@
 // index out of bounds.
 
 import { impliedType } from "velt/net/http/fetch/body";
-import { Received } from "velt/net/http/server/received";
+import { RequestSource } from "velt/net/http/fetch/source";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -78,7 +78,7 @@ export class Headers {
   // A fetched response's or a server request's headers (std sets it): changing them is an error.
   private frozen: bool = false;
   // The received request whose headers the list does not hold yet; null once loaded.
-  private received: Received | null = null;
+  private received: RequestSource | null = null;
   // The `content-type` a response's body implies (`impliedType`), not in the list yet; 0 when
   // there is none or it was moved there (std sets it).
   private implied: u32 = 0;
@@ -109,9 +109,9 @@ export class Headers {
     return h;
   }
 
-  // The immutable headers of a request the server received, read from it when needed (std
-  // only: std/net/http/fetch/request.vlt).
-  private static ofReceived(received: Received): Headers {
+  // The immutable headers of a request a server received, read from its source when needed
+  // (request.vlt).
+  private static ofSource(received: RequestSource): Headers {
     const h = new Headers();
     h.received = received;
     h.frozen = true;

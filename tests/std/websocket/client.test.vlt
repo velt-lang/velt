@@ -2,7 +2,12 @@
 import { channel, Channel } from "velt/sync";
 import { serve } from "velt/net/http";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
-import { WebSocket, connectWebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import {
+  WebSocket,
+  connectWebSocket,
+  isWebSocketRequest,
+  upgradeWebSocket,
+} from "velt/net/websocket";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
 // Server side of one connection: echoes text upper-cased and binary reversed until closed, then

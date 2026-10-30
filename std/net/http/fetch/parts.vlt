@@ -1,0 +1,49 @@
+// velt/net/http (internal): what a server written in Velt needs of the `Response` a handler
+// returns: its parts, to write (`responseParts`), and a `101 Switching Protocols` response for
+// an upgrade (`switchingProtocols`), which the `Response` constructor does not make (its status
+// is 200-599).
+
+import { IoError } from "velt/io/error";
+import { BodyStream } from "velt/net/http/fetch/body";
+import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
+import { Response } from "velt/net/http/fetch/response";
+
+/** Where a response's body is (`ResponseParts.kind`). */
+export enum BodyKind {
+  /** No body. */
+  None,
+  /** `ResponseParts.text`. */
+  Text,
+  /** `ResponseParts.bytes`. */
+  Bytes,
+  /** `ResponseParts.stream`, read as it is sent. */
+  Stream,
+}
+
+/** A response as a server writes it (`responseParts`). */
+export interface ResponseParts {
+  status: i64;
+  /** `[name, value, …]`, lowercase names. */
+  headers: string[];
+  /** The `content-type` the body implies, written unless `headers` names one. */
+  type: string | null;
+  kind: BodyKind;
+  text: string;
+  bytes: u8[];
+  stream: BodyStream | null;
+}
+
+/**
+ * The parts of `res` to write: its status, headers and body, the body as the response holds it
+ * (no copy of a text or bytes). A streamed body (one made from a stream, or a fetched response's
+ * body) is used up, as sending it does in JS: `IoError` "EINVAL" if it was read already. A
+ * fetched body arrives decoded, so its `content-encoding` is not among the headers.
+ */
+export function responseParts(res: Response): ResponseParts throws IoError {
+  return res.serverBody();
+}
+
+/** A `101 Switching Protocols` response with `headers`, for a server's upgrade. */
+export function switchingProtocols(headers: HeadersInit | null = null): Response {
+  return Response.switching(new Headers(headers));
+}

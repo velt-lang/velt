@@ -1,8 +1,8 @@
 // velt/net/http (internal): the WHATWG `Request` and `RequestInit` (docs/std/fetch.md): a request
-// `fetch` can send, made from a URL and the same options `fetch` takes, or one the server received
-// (`serve` hands it to the handler, std/net/http/server/standard.vlt).
+// `fetch` can send, made from a URL and the same options `fetch` takes, or one a server received
+// (`serverRequest`, source.vlt).
 //
-// A received request reads the connection's request (`Received`) lazily, as a fetched
+// A received request reads its server's `RequestSource` lazily, as a fetched
 // `Response` does: its URL, method and headers are made the first time they are read, and its
 // body is received while it is read (`text()`, `json()`, `bytes()`, or chunk by chunk through
 // `req.body`). So a handler pays only for what it looks at, and the state only a request made
@@ -25,7 +25,7 @@ import {
 } from "velt/net/http/fetch/body";
 import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { tee } from "velt/net/http/fetch/tee";
-import { Received } from "velt/net/http/server/received";
+import { RequestSource } from "velt/net/http/fetch/source";
 
 /** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";
@@ -94,8 +94,8 @@ function noBody(): BodyParts {
 export class Request {
   // Null until `headers` is first read.
   #fields: Headers | null = null;
-  // A request the server received (null for one made with `new Request`).
-  #received: Received | null = null;
+  // A request a server received (null for one made with `new Request`).
+  #received: RequestSource | null = null;
   // The URL and method; a received request's are null until first read (a request made here
   // has its URL, and a null method is "GET").
   #target: string | null = null;
@@ -165,8 +165,8 @@ export class Request {
     }
   }
 
-  // A request the server received (std only: std/net/http/server/standard.vlt).
-  private static ofReceived(received: Received): Request {
+  // A request a server received (`serverRequest`, source.vlt).
+  private static ofSource(received: RequestSource): Request {
     const r = new Request("");
     r.#target = null;
     r.#received = received;
@@ -284,7 +284,7 @@ export class Request {
       return known;
     }
     const received = this.#received;
-    const h = received != null ? Headers.ofReceived(received) : new Headers();
+    const h = received != null ? Headers.ofSource(received) : new Headers();
     this.#fields = h;
     return h;
   }
@@ -387,7 +387,7 @@ export class Request {
 
   // Where the body is read from when it is a received request's, unless `clone` teed it: the
   // server's side of the request; null otherwise.
-  private fromServer(): Received | null {
+  private fromServer(): RequestSource | null {
     return this.made() == null ? this.#received : null;
   }
 
@@ -476,9 +476,9 @@ export class Request {
     return s == null ? "" : s.ca;
   }
 
-  // The server's side of a received request, null for one made with `new Request` (std only:
-  // the upgrades of std/net/http/server/upgrade.vlt read it).
-  private serverSide(): Received | null {
+  // The source of a received request, null for one made with `new Request` (`requestSource`,
+  // source.vlt).
+  private serverSide(): RequestSource | null {
     return this.#received;
   }
 

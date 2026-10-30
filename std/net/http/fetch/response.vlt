@@ -28,21 +28,8 @@ import {
 } from "velt/net/http/fetch/body";
 import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { BodyKind, ResponseParts } from "velt/net/http/fetch/parts";
 import { tee } from "velt/net/http/fetch/tee";
-
-/** What a server writes for a response (std only: std/net/http/server/standard.vlt). */
-export interface ServerBody {
-  status: i64;
-  /** `[name, value, …]`, lowercase names. */
-  headers: string[];
-  /** The `content-type` the body implies, written unless `headers` names one. */
-  type: string | null;
-  /** 0 none, 1 `text`, 2 `bytes`, 3 `stream`. */
-  kind: i64;
-  text: string;
-  bytes: u8[];
-  stream: BodyStream | null;
-}
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
@@ -51,8 +38,7 @@ export struct ResponseInit {
   headers?: HeadersInit;
 }
 
-// Where a response's body is (`Response.#source`); the first four are also a `ServerBody`'s
-// `kind`.
+// Where a response's body is (`Response.#source`); the first four are a `BodyKind` (parts.vlt).
 const NONE: i64 = 0;
 const TEXT: i64 = 1;
 const BYTES: i64 = 2;
@@ -168,8 +154,8 @@ export class Response {
     return r;
   }
 
-  // A `101 Switching Protocols` response with `headers` (std only: `upgradeConnection`,
-  // std/net/http/server/upgrade.vlt; the constructor takes 200-599).
+  // A `101 Switching Protocols` response with `headers` (`switchingProtocols`, parts.vlt; the
+  // constructor takes 200-599).
   private static switching(headers: Headers): Response {
     const r = new Response();
     r.#code = 101;
@@ -446,10 +432,10 @@ export class Response {
     }
   }
 
-  // What the server writes for this response (std only: std/net/http/server/standard.vlt): a
-  // streamed body (a `BodyStream`, or a fetched response's body) is used up, as sending it does
-  // in JS. A fetched body arrives decoded, so the coding it was sent in is not passed on.
-  private serverBody(): ServerBody throws IoError {
+  // What a server writes for this response (`responseParts`, parts.vlt): a streamed body (a
+  // `BodyStream`, or a fetched response's body) is used up, as sending it does in JS. A fetched
+  // body arrives decoded, so the coding it was sent in is not passed on.
+  private serverBody(): ResponseParts throws IoError {
     const source = this.#source;
     let headers: string[] = [];
     let implied = this.#implied;
@@ -482,7 +468,7 @@ export class Response {
       status: this.#code,
       headers: headers,
       type: impliedType(implied),
-      kind: source == RUNTIME ? STREAM : source,
+      kind: kindOf(source == RUNTIME ? STREAM : source),
       text: this.#str,
       bytes: this.#data ?? [],
       stream: stream,
@@ -584,4 +570,15 @@ async function* bodyOf(held: Held): AsyncGenerator<u8[], IoError | AbortError> {
     }
     yield chunk;
   }
+}
+
+/// The `BodyKind` of a body source (`NONE` to `STREAM`).
+function kindOf(source: i64): BodyKind {
+  if (source == TEXT) {
+    return BodyKind.Text;
+  }
+  if (source == BYTES) {
+    return BodyKind.Bytes;
+  }
+  return source == STREAM ? BodyKind.Stream : BodyKind.None;
 }

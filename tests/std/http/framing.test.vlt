@@ -340,8 +340,9 @@ describe("request framing", () => {
         wire += await readAll(c2);
         c2.close();
         // The first response's body (the next response, if any, starts with its status line).
-        const body =
-          wire.substring(wire.indexOf("\r\n\r\n", wire.indexOf("200 OK")) + 4).split("HTTP/1.1")[0];
+        const body = wire
+          .substring(wire.indexOf("\r\n\r\n", wire.indexOf("200 OK")) + 4)
+          .split("HTTP/1.1")[0];
         expect(summary(wire)).toBe(expected);
         expect(body).toBe(expectedBody);
       });

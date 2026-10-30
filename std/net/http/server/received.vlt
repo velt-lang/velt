@@ -7,12 +7,13 @@
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
+import { RequestSource } from "velt/net/http/fetch/source";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse } from "velt/net/http/server/response";
 import { BodyTooLarge } from "velt/net/http/server/errors";
 
 /** The server side of a received `Request` (internal). */
-export class Received {
+export class Received implements RequestSource {
   private req: HttpRequest;
   private res: HttpResponse;
   // `http://host` or `https://host`, from the `Host` header.
