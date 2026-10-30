@@ -17,6 +17,7 @@ import { Head, isTchar } from "velt/net/http/server/parse";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { H2Response } from "velt/net/http/server/h2/response";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -75,6 +76,8 @@ export class HttpResponse {
   private request: Head;
   private failed: AbortController = new AbortController();
   private either: AbortSignal | null = null;
+  /// The HTTP/2 response this one stands for (std/net/http/server/h2), or null over HTTP/1.1.
+  private h2: H2Response | null = null;
   // The fixed parts of a head and the default content types, encoded once per connection
   // (not module state, #1487), copied as bytes.
   private ok: u8[] = utf8Encode("HTTP/1.1 200 OK\r\nServer: Velt\r\nDate: ");
@@ -103,6 +106,11 @@ export class HttpResponse {
 
   /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
   status(code: number) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.status(code);
+      return;
+    }
     if (!(code >= 100 && code <= 999) || code != Math.floor(code)) {
       throw new RangeError(`invalid status code: ${code}`);
     }
@@ -117,6 +125,11 @@ export class HttpResponse {
    * Content-Length for the response to a HEAD request (the length a GET would get).
    */
   header(name: string, value: string) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.header(name, value);
+      return;
+    }
     const nameLength = Buffer.byteLength(name) as i64;
     const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
     if (this.extraLength + n > (this.extra.length as i64)) {
@@ -149,6 +162,11 @@ export class HttpResponse {
     }
   }
 
+  /// Makes this response stand for `r`, an HTTP/2 response (null: none) (internal).
+  bindH2(r: H2Response | null) {
+    this.h2 = r;
+  }
+
   /** The connection closes after this response (internal: an error response to bad input). */
   closeAfter() {
     this.keepAlive = false;
@@ -156,6 +174,11 @@ export class HttpResponse {
 
   /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
   send(body: string) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.send(body);
+      return;
+    }
     const n = Buffer.byteLength(body) as i64;
     this.head(TYPE_TEXT, null, n);
     if (!this.noBody) {
@@ -165,6 +188,11 @@ export class HttpResponse {
 
   /** Writes the response with body `body` (default type `application/octet-stream`). */
   sendBytes(body: u8[]) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.sendBytes(body);
+      return;
+    }
     this.head(TYPE_BYTES, null, body.length as i64);
     if (!this.noBody) {
       this.bytes(body);
@@ -173,6 +201,11 @@ export class HttpResponse {
 
   /** Writes the response with JSON text `json` (type `application/json`). */
   json(json: string) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.json(json);
+      return;
+    }
     const n = Buffer.byteLength(json) as i64;
     this.head(TYPE_JSON, null, n);
     if (!this.noBody) {
@@ -182,6 +215,11 @@ export class HttpResponse {
 
   /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
   html(html: string) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.html(html);
+      return;
+    }
     const n = Buffer.byteLength(html) as i64;
     this.head(TYPE_HTML, null, n);
     if (!this.noBody) {
@@ -196,6 +234,11 @@ export class HttpResponse {
    * the piece being written.
    */
   async stream(type: string = "text/plain; charset=utf-8"): Promise<HttpStream> {
+    const h2 = this.h2;
+    if (h2 != null) {
+      await h2.startStream(type);
+      return new HttpStream(this);
+    }
     this.head(-1, type, -1);
     await this.queue();
     return new HttpStream(this);
@@ -209,6 +252,11 @@ export class HttpResponse {
    * `signal()` is aborted).
    */
   async sendStream(body: BodyStream, type: string = "text/html; charset=utf-8") {
+    const h2 = this.h2;
+    if (h2 != null) {
+      await h2.sendStream(body, type);
+      return;
+    }
     // The head goes out with the first chunk: one write less per response.
     this.head(-1, type, -1);
     try {
@@ -229,6 +277,11 @@ export class HttpResponse {
    * event, `comment` a line clients ignore (a keep-alive), `end` finishes it.
    */
   async sse(): Promise<EventStream> {
+    const h2 = this.h2;
+    if (h2 != null) {
+      await h2.startEvents();
+      return new EventStream(new HttpStream(this));
+    }
     this.header("Cache-Control", "no-cache");
     this.head(TYPE_SSE, null, -1);
     await this.queue();
@@ -240,6 +293,10 @@ export class HttpResponse {
    * being written) or the server closes: give it to the work done for this request.
    */
   signal(): AbortSignal {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.signal();
+    }
     const either = this.either;
     if (either != null) {
       return either;
@@ -257,6 +314,10 @@ export class HttpResponse {
    * in the new protocol. Throws if a response was started or the request is HTTP/1.0.
    */
   upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.upgrade(protocol, headers);
+    }
     if (this.done) {
       throw new Error("the response was already sent");
     }
@@ -296,11 +357,19 @@ export class HttpResponse {
 
   /** Whether writing to the client failed: it went away (internal). */
   clientGone(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.clientGone();
+    }
     return this.failed.signal.aborted;
   }
 
   /** Whether a response was started for the current request. */
   sent(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.sent();
+    }
     return this.done;
   }
 
@@ -393,6 +462,11 @@ export class HttpResponse {
 
   /** One piece of a streamed body (internal: `HttpStream.write`). */
   async piece(data: string | u8[] | Uint8Array) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      await h2.piece(data);
+      return;
+    }
     if (!this.streaming) {
       throw new Error("the streamed response has ended");
     }
@@ -427,6 +501,11 @@ export class HttpResponse {
 
   /** Ends a streamed body (internal: `HttpStream.end`). */
   async finishStream() {
+    const h2 = this.h2;
+    if (h2 != null) {
+      await h2.finishStream();
+      return;
+    }
     if (!this.streaming) {
       return;
     }

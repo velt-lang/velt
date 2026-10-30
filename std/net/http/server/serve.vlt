@@ -15,6 +15,8 @@ import { delay } from "velt/time/timers";
 import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/net/http/server/parse";
 import { HttpRequest } from "velt/net/http/server/request";
 import { HttpResponse, reason } from "velt/net/http/server/response";
+import { serveH2Http } from "velt/net/http/server/h2/facade";
+import { H2Options, h2Options } from "velt/net/http/server/h2/options";
 
 const DEFAULT_HOST = "127.0.0.1";
 /// A request head (request line and headers) larger than this is refused (431), as Node's
@@ -51,6 +53,13 @@ export struct HttpServeOptions {
    * 300000, as Node's `requestTimeout`.
    */
   requestTimeout?: number;
+  /**
+   * Serve HTTP/2 too (default true): over TLS when the client chooses it with ALPN ("h2"),
+   * over plain TCP when it starts with the HTTP/2 preface (h2c with prior knowledge).
+   */
+  http2?: bool;
+  /** HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS: requests of a connection at once. Default 128. */
+  maxConcurrentStreams?: number;
 }
 
 /** A running server. */
@@ -100,9 +109,22 @@ export async function serveHttp<E>(
 ): Promise<HttpServer> {
   const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
   const tls = opts.tls;
-  const listener = tls != null ? await listenTls(addr, tls) : await listen(addr);
   const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
+  let h2: H2Options | null = null;
+  if (opts.http2 ?? true) {
+    const o = h2Options(maxHead, maxBody, opts.idleTimeout ?? IDLE_MS);
+    o.maxConcurrentStreams = (opts.maxConcurrentStreams ?? 128) as i64;
+    h2 = o;
+  }
+  let listener: TcpListener;
+  if (tls != null) {
+    // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
+    const alpn = tls.alpn ?? (h2 != null ? ["h2", "http/1.1"] : ["http/1.1"]);
+    listener = await listenTls(addr, { cert: tls.cert, key: tls.key, alpn: alpn });
+  } else {
+    listener = await listen(addr);
+  }
   const maxHeaders = (opts.maxHeaders ?? MAX_HEADERS) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
   const limits = Limits {
@@ -118,7 +140,10 @@ export async function serveHttp<E>(
     const closing = spawn(closeWhen(stopped, listener));
   }
   const reload = dev != null;
-  const done = spawn(acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload));
+  const secure = tls != null;
+  const done = spawn(
+    acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
+  );
   return new HttpServer(listener, stop, done);
 }
 
@@ -143,6 +168,8 @@ async function acceptAll<E>(
   limits: Limits,
   stopped: AbortSignal,
   reload: bool,
+  h2: H2Options | null,
+  secure: bool,
 ): Promise<void> {
   await taskScope(
     async (scope: TaskScope<never>): Promise<void> => {
@@ -152,7 +179,7 @@ async function acceptAll<E>(
           const conn = await listener.accept();
           backoff = 0;
           // The scope waits for it: nothing awaits the handle.
-          const served = connection(conn, handler, maxHead, maxBody, idle, limits, stopped);
+          const served = connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure);
           const task = scope.spawn(guarded(served));
         } catch (e) {
           if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
@@ -206,7 +233,21 @@ async function connection<E>(
   idle: i64,
   limits: Limits,
   stopped: AbortSignal,
+  h2: H2Options | null = null,
+  tls: bool = false,
 ): Promise<void> {
+  if (h2 != null && tls) {
+    try {
+      if ((await conn.alpnProtocol()) == "h2") {
+        await serveH2Http(conn, [], h2, stopped, handler);
+        return;
+      }
+    } catch (e) {
+      // The handshake failed.
+      conn.close();
+      return;
+    }
+  }
   const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
   const req = new HttpRequest(parser, conn, idle, limits.requestMs);
   const res = new HttpResponse(conn, stopped, req.head);
@@ -214,6 +255,8 @@ async function connection<E>(
   let rejected = false;
   // When the head being read began to arrive (`Date.now()`), or -1 between requests.
   let headStart: i64 = -1;
+  // Nothing was read yet: the connection may still turn out to be HTTP/2.
+  let first = true;
   try {
     while (open) {
       const n = parser.readFrom(conn);
@@ -238,6 +281,15 @@ async function connection<E>(
           break;
         }
         continue;
+      }
+      // A connection that starts with the HTTP/2 preface (h2c with prior knowledge, RFC 9113
+      // §3.3): no HTTP/1.1 method is `PRI`.
+      if (h2 != null && first && parser.available() >= 3) {
+        if (parser.buf.utf8Equals("PRI", parser.pos, parser.pos + 3)) {
+          await serveH2Http(conn, parser.take(parser.available()), h2, stopped, handler);
+          return;
+        }
+        first = false;
       }
       // One clock read per batch: the Date header and the time limits.
       const now = res.tick();

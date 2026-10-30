@@ -21,6 +21,7 @@ import {
   Head,
   Parser,
 } from "velt/net/http/server/parse";
+import { H2Request } from "velt/net/http/server/h2/request";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -54,6 +55,13 @@ export class HttpRequest {
   private requestMs: i64;
   private deadline: i64 = 0;
   private late: bool = false;
+  /// The HTTP/2 request this one stands for (std/net/http/server/h2), or null over HTTP/1.1.
+  private h2: H2Request | null = null;
+
+  /// Makes this request stand for `r`, an HTTP/2 request (null: none) (internal).
+  bindH2(r: H2Request | null) {
+    this.h2 = r;
+  }
 
   constructor(parser: Parser, conn: TcpStream, idle: i64, requestMs: i64 = 300000) {
     this.parser = parser;
@@ -76,44 +84,76 @@ export class HttpRequest {
 
   /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`).
   get keepAlive(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return true;
+    }
     return this.head.keepAlive;
   }
 
   /// Whether the method is `m` (`"GET"`), without making a string.
   isMethod(m: string): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.isMethod(m);
+    }
     const h = this.head;
     return h.buf.utf8Equals(m, h.methodStart, h.methodEnd);
   }
 
   /// The method (`"GET"`, `"POST"`, ...).
   method(): string {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.method();
+    }
     return this.text(this.head.methodStart, this.head.methodEnd);
   }
 
   /// Whether the path (the target up to `?`) is `p`, without making a string.
   pathIs(p: string): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.pathIs(p);
+    }
     const h = this.head;
     return h.buf.utf8Equals(p, h.targetStart, h.pathEnd);
   }
 
   /// The path: the request target up to `?` (`/users/1`).
   path(): string {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.path();
+    }
     return this.text(this.head.targetStart, this.head.pathEnd);
   }
 
   /// The query after `?`, without it, or `""`.
   query(): string {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.query();
+    }
     const h = this.head;
     return h.pathEnd < h.targetEnd ? this.text(h.pathEnd + 1, h.targetEnd) : "";
   }
 
   /// The whole request target (`/users/1?full=1`).
   target(): string {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.target();
+    }
     return this.text(this.head.targetStart, this.head.targetEnd);
   }
 
   /// The value of header `name` (any case), the first one if there are several, or null.
   header(name: string): string | null {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.header(name);
+    }
     const i = this.find(name);
     return i < 0 ? null : this.text(this.head.heads[i + 2], this.head.heads[i + 3]);
   }
@@ -143,6 +183,10 @@ export class HttpRequest {
 
   /// Whether header `name` (any case) was sent.
   hasHeader(name: string): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.hasHeader(name);
+    }
     return this.find(name) >= 0;
   }
 
@@ -151,6 +195,10 @@ export class HttpRequest {
    * an `Upgrade` header naming it and `Connection: upgrade` (any case, among other tokens).
    */
   isUpgrade(protocol: string): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return false;
+    }
     if (!this.head.http11) {
       return false;
     }
@@ -175,6 +223,10 @@ export class HttpRequest {
 
   /// The headers' names (as sent) and values, in order.
   headers(): [string, string][] {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.headers();
+    }
     const out: [string, string][] = [];
     const heads = this.head.heads;
     for (let i: i64 = 0; i < (heads.length as i64); i += 4) {
@@ -193,6 +245,10 @@ export class HttpRequest {
    * bodies of any size: what was read is not kept.
    */
   async read(): Promise<u8[] | null> {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return await h2.read();
+    }
     const h = this.head;
     if (this.ended) {
       return null;
@@ -215,6 +271,10 @@ export class HttpRequest {
    * `maxBodySize`.
    */
   async body(): Promise<u8[]> {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return await h2.body();
+    }
     const h = this.head;
     const limit = this.parser.maxBodySize();
     const declared = h.bodyMode == BODY_BUFFERED ? h.bodyEnd - h.bodyStart : h.bodyLength;
@@ -253,21 +313,37 @@ export class HttpRequest {
 
   /// Whether the body was read to its end, or there is none (internal).
   bodyRead(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.bodyRead();
+    }
     return this.ended;
   }
 
   /// Whether the body did not arrive in time (internal: answered 408).
   timedOut(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.timedOut();
+    }
     return this.late;
   }
 
   /// Whether `body()` found the body larger than the server's limit (internal: answered 413).
   bodyTooLarge(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.bodyTooLarge();
+    }
     return this.overLimit;
   }
 
   /// Whether the body was not framed right, or cut short (internal: answered 400, not logged).
   bodyMalformed(): bool {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return h2.bodyMalformed();
+    }
     return this.malformed;
   }
 
@@ -276,11 +352,19 @@ export class HttpRequest {
    * sent in the new protocol along with the request (a WebSocket's first frame).
    */
   takeUnread(): u8[] {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return [];
+    }
     return this.parser.take(this.parser.available());
   }
 
   /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
   async bodyText(): Promise<string> {
+    const h2 = this.h2;
+    if (h2 != null) {
+      return await h2.bodyText();
+    }
     return utf8DecodeLossy(await this.body());
   }
 

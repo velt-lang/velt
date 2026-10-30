@@ -1,0 +1,44 @@
+// velt/net/http (internal): `serveHttp`'s handlers over HTTP/2: each stream's `H2Request` and
+// `H2Response` reach the handler as the `HttpRequest` and `HttpResponse` it is written for, which
+// pass every call on to them. A connection keeps the pairs its streams used for the next ones
+// (as many as ran at once), so a request costs no allocation of them.
+
+import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
+import { Parser } from "velt/net/http/server/parse";
+import { HttpRequest } from "velt/net/http/server/request";
+import { HttpResponse } from "velt/net/http/server/response";
+import { H2Options } from "velt/net/http/server/h2/options";
+import { H2Request } from "velt/net/http/server/h2/request";
+import { H2Response } from "velt/net/http/server/h2/response";
+import { serveH2 } from "velt/net/http/server/h2/serve";
+
+/// Serves `conn` as HTTP/2 with an `HttpRequest`/`HttpResponse` handler (see `serveH2`).
+export async function serveH2Http<E>(
+  conn: TcpStream,
+  initial: u8[],
+  opts: H2Options,
+  stopped: AbortSignal,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+): Promise<void> {
+  // One parser for every request facade: it is used only over HTTP/1.1.
+  const parser = new Parser(0, 0, 0);
+  const requests: HttpRequest[] = [];
+  const responses: HttpResponse[] = [];
+  await serveH2(conn, initial, opts, stopped, async (r: H2Request, s: H2Response) => {
+    const req = requests.pop() ?? new HttpRequest(parser, conn, 0);
+    const res = responses.pop() ?? new HttpResponse(conn, stopped, req.head);
+    req.bindH2(r);
+    res.bindH2(s);
+    try {
+      await handler(req, res);
+    } finally {
+      // Unbound before they are kept: nothing of the stream (or the connection) stays reachable
+      // from them.
+      req.bindH2(null);
+      res.bindH2(null);
+      requests.push(req);
+      responses.push(res);
+    }
+  });
+}
