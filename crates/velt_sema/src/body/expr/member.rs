@@ -421,7 +421,7 @@ impl FnCx<'_, '_> {
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
             // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
-            TyKind::Adt(..) if self.is_std_class(t, "std/text/regex/regexp::RegExpMatch") => {
+            TyKind::Adt(..) if self.is_std_class(t, "std/text/regex/regexp_match::RegExpMatch") => {
                 let prop = ast::Ident {
                     name: "__index".into(),
                     span,

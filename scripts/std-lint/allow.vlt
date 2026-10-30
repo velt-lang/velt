@@ -62,7 +62,6 @@ export const allow: Allow = {
     "sqlite/sql/table.vlt",
     "test/expect.vlt",
     "test/index.vlt",
-    "text/regex/regexp.vlt",
   ],
   multiClass: [
     "encoding/json/tape.vlt",
@@ -114,7 +113,6 @@ export const allow: Allow = {
     "sqlite/sql/lexer.vlt",
     "test/expect.vlt",
     "test/suite.vlt",
-    "text/regex/regexp.vlt",
   ],
   indexCode: [
     "db/index.vlt",

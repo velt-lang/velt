@@ -1,0 +1,64 @@
+// velt/text (internal): the string methods that take a regex (`s.replace(re, …)`, `match`,
+// `matchAll`, `search`, `split`, `replaceAll`), as in JS. An `extend string` block, loaded with
+// `RegExp` (velt/text/regex/regexp imports this module).
+
+import { RegExp } from "velt/text/regex/regexp";
+import { RegExpMatch } from "velt/text/regex/regexp_match";
+
+/**
+ * The string methods that take a regex, as in JS. The compiler calls these for
+ * `s.replace(re, …)` & co. when the first argument is a `RegExp`; they are not called by name.
+ */
+extend string {
+  /** `s.replace(re, replacement)` */
+  __replaceRegExp(re: RegExp, replacement: string): string {
+    return re.replace(this, replacement);
+  }
+
+  /** `s.replace(re, (match, p1, …, offset, s) => …)` (the compiler adapts the function). */
+  __replaceRegExpCalling<E>(
+    re: RegExp,
+    f: (m: RegExpMatch, s: string) => string throws E,
+  ): string throws E {
+    return re.__replaceCalling(this, f);
+  }
+
+  /** `s.replaceAll(re, replacement)`: `re` must have the `g` flag. */
+  __replaceAllRegExp(re: RegExp, replacement: string): string {
+    if (!re.global) {
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
+    }
+    return re.replace(this, replacement);
+  }
+
+  /** `s.replaceAll(re, (match, …) => …)`: `re` must have the `g` flag. */
+  __replaceAllRegExpCalling<E>(
+    re: RegExp,
+    f: (m: RegExpMatch, s: string) => string throws E,
+  ): string throws E {
+    if (!re.global) {
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
+    }
+    return re.__replaceCalling(this, f);
+  }
+
+  /** `s.match(re)` */
+  __matchRegExp(re: RegExp): string[] | null {
+    return re.__match(this);
+  }
+
+  /** `s.matchAll(re)`: `re` must have the `g` flag. */
+  __matchAllRegExp(re: RegExp): RegExpMatch[] {
+    return re.__matchAll(this);
+  }
+
+  /** `s.search(re)` */
+  __searchRegExp(re: RegExp): i64 {
+    return re.__search(this);
+  }
+
+  /** `s.split(re, limit)` */
+  __splitRegExp(re: RegExp, limit?: number): string[] {
+    return re.__split(this, limit);
+  }
+}

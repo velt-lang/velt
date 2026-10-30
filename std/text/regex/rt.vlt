@@ -1,0 +1,34 @@
+// velt/text (internal): the runtime functions behind `RegExp` (rt_abi_async.md §14): the Rust
+// `regex` engine.
+
+import { IoResult } from "velt/native/result";
+
+export declare function velt_rt_regex_new(pattern: string, flags: string): IoResult<u64>;
+
+export declare function velt_rt_regex_free(re: u64);
+
+export declare function velt_rt_regex_last_index(re: u64): f64;
+
+export declare function velt_rt_regex_set_last_index(re: u64, value: f64);
+
+export declare function velt_rt_regex_group_count(re: u64): u64;
+
+export declare function velt_rt_regex_group_names(re: u64): string[];
+
+export declare function velt_rt_regex_test(re: u64, s: string, from: u64): bool;
+
+// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
+export declare function velt_rt_regex_exec(re: u64, s: string, from: u64, out: i64[]): bool;
+
+export declare function velt_rt_regex_exec_all(re: u64, s: string): i64[];
+
+export declare function velt_rt_regex_replace(
+  re: u64,
+  s: string,
+  replacement: string,
+  all: bool,
+): string;
+
+export declare function velt_rt_regex_split(re: u64, s: string, limit: u64): string[];
+
+export declare function velt_rt_regex_escape(s: string): string;

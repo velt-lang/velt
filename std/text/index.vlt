@@ -1,6 +1,9 @@
 // velt/text: text processing: JavaScript-flavoured regular expressions (`RegExp`, also a
 // global), `StringBuilder` (also a global) and HTML escaping. docs/std/text.md.
 
-export { Pattern, RegExp, RegExpError, RegExpMatch } from "velt/text/regex/regexp";
+export { RegExpError } from "velt/text/regex/errors";
+export { Pattern } from "velt/text/regex/pattern";
+export { RegExp } from "velt/text/regex/regexp";
+export { RegExpMatch } from "velt/text/regex/regexp_match";
 export { StringBuilder } from "velt/text/string_builder";
 export { escapeHtml } from "velt/text/html";

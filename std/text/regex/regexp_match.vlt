@@ -1,0 +1,114 @@
+// velt/text (internal): `RegExpMatch`, one match of a `RegExp` (JS's match array).
+
+/** One match: the matched text, where it is, and its capture groups. */
+export class RegExpMatch {
+  /** Position of the match in the subject (code units). */
+  index: number;
+  /** Position just past the match. */
+  end: number;
+  /** The matched text (JS `m[0]`). */
+  value: string;
+  /** Groups 1.. (JS `m[1]`, `m[2]`, …); null for a group that did not take part. */
+  captures: (string | null)[];
+  /** Name of each group in `captures` ("" when unnamed). */
+  names: string[];
+
+  constructor(
+    index: number,
+    end: number,
+    value: string,
+    captures: (string | null)[],
+    names: string[],
+  ) {
+    this.index = index;
+    this.end = end;
+    this.value = value;
+    this.captures = captures;
+    this.names = names;
+  }
+
+  /** `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist. */
+  __index(n: usize): string {
+    return this.group(n) ?? "";
+  }
+
+  /** Group `n` (0 = the whole match); null if it did not take part or does not exist. */
+  group(n: usize): string | null {
+    if (n == 0) {
+      return this.value.clone();
+    }
+    if (n > this.captures.length) {
+      return null;
+    }
+    return this.captures[n - 1].clone();
+  }
+
+  /**
+   * `replacement` for this match of `s`, with `$&`, `$1`…`$99`, `$<name>`, `` $` ``, `$'` and
+   * `$$` expanded as JS's `replace` does.
+   */
+  substitute(s: string, replacement: string): string {
+    let out = "";
+    let i: i64 = 0;
+    while (true) {
+      const at = replacement.indexOf("$", i);
+      if (at < 0) {
+        out += replacement.slice(i);
+        return out;
+      }
+      out += replacement.slice(i, at);
+      const c = replacement.charCodeAt(at + 1);
+      let used: i64 = 2;
+      if (c == 36) {
+        out += "$";
+      } else if (c == 38) {
+        out += this.value;
+      } else if (c == 96) {
+        out += s.slice(0, this.index as i64);
+      } else if (c == 39) {
+        out += s.slice(this.end as i64);
+      } else if (c >= 48 && c <= 57) {
+        const groups = this.captures.length as i64;
+        const d1 = c - 48;
+        const c2 = replacement.charCodeAt(at + 2);
+        const two = c2 >= 48 && c2 <= 57 ? d1 * 10 + c2 - 48 : 0;
+        let g: i64 = 0;
+        if (two >= 1 && two <= groups) {
+          g = two;
+          used = 3;
+        } else if (d1 >= 1 && d1 <= groups) {
+          g = d1;
+        }
+        if (g == 0) {
+          used = 1;
+          out += "$";
+        } else {
+          out += this.captures[(g - 1) as usize] ?? "";
+        }
+      } else if (c == 60 && this.names.some((n) => n != "")) {
+        const close = replacement.indexOf(">", at + 2);
+        if (close < 0) {
+          used = 1;
+          out += "$";
+        } else {
+          out += this.named(replacement.slice(at + 2, close)) ?? "";
+          used = close + 1 - at;
+        }
+      } else {
+        used = 1;
+        out += "$";
+      }
+      i = at + used;
+    }
+  }
+
+  /** The named group `(?<name>…)`; null if it did not take part or does not exist. */
+  named(name: string): string | null {
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        return this.captures[i].clone();
+      }
+    }
+    return null;
+  }
+}
