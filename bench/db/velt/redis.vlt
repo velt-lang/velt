@@ -2,7 +2,7 @@
 // Prints `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed
 // loop. `quick` as the first argument runs 1/20 of the sizes. Keys live under a per-run prefix
 // and are deleted at the end (never FLUSHALL).
-import { connect, RedisClient, RedisError } from "velt/redis";
+import { connect, RedisClient, RedisError } from "redis";
 import { args } from "velt/process";
 import { uuidv4 } from "velt/random/uuid";
 

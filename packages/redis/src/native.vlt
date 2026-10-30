@@ -1,0 +1,49 @@
+// redis (internal): the native library's functions (native/src/abi.rs; the ABI is
+// docs/native_abi.md) and the C layouts they return. Every other file of the package is plain
+// Velt.
+
+import { IoResult, IoStatus } from "velt/native";
+
+/** The library's `VeltRedisReply` (see reply.vlt for its layout). */
+export struct RawReply {
+  tags: u8[];
+  nums: i64[];
+  strs: string[];
+}
+
+// The library's `VeltRedisMessage`: kind 0 = closed, 1 = message, 2 = pattern message.
+export struct RawMessage {
+  kind: u32;
+  channel: string;
+  message: string;
+  pattern: string;
+}
+
+export declare async function velt_redis__connect(url: string, ca: string): Promise<IoResult<u64>>;
+export declare async function velt_redis__duplicate(c: u64): Promise<IoResult<u64>>;
+export declare function velt_redis__close(c: u64);
+export declare async function velt_redis__command(
+  c: u64,
+  args: string[],
+): Promise<IoResult<RawReply>>;
+export declare async function velt_redis__pipeline(
+  c: u64,
+  args: string[],
+  counts: u64[],
+  atomic: bool,
+): Promise<IoResult<RawReply>>;
+export declare async function velt_redis__subscribe(
+  c: u64,
+  url: string,
+  ca: string,
+  names: string[],
+  patterns: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_redis__sub_next(s: u64): Promise<IoResult<RawMessage>>;
+export declare async function velt_redis__sub_change(
+  s: u64,
+  names: string[],
+  patterns: bool,
+  subscribe: bool,
+): Promise<IoStatus>;
+export declare function velt_redis__sub_close(s: u64);

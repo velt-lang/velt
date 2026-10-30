@@ -1,0 +1,39 @@
+// redis (internal): `RedisError`, the package's error, and the checks that turn a failed native
+// result into one.
+
+import { errorCodeName, IoResult } from "velt/native";
+import { RawReply } from "./native";
+
+// `VeltErr.code` of an error reply from the server.
+const SERVER_ERROR: i32 = 100;
+
+/**
+ * A failed Redis operation. `code` is the server's error code for error replies ("ERR",
+ * "WRONGTYPE", "NOAUTH", "WRONGPASS", "EXECABORT", …) or a Node-style I/O code for connection
+ * failures ("ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EINVAL" for a bad URL or argument).
+ */
+export class RedisError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** The error of a failed native operation. */
+export function redisError(code: i32, message: string): RedisError {
+  if (code == SERVER_ERROR) {
+    const space = message.indexOf(" ");
+    return new RedisError(space > 0 ? message.slice(0, space) : message, message);
+  }
+  return new RedisError(errorCodeName(code), message);
+}
+
+/** The reply of a successful operation; throws `RedisError` otherwise. */
+export function checkReply(r: IoResult<RawReply>): RawReply {
+  if (r.code != 0) {
+    throw redisError(r.code, r.message);
+  }
+  return r.value;
+}

@@ -17,10 +17,13 @@
 //! Filter with `VELT_PACKAGES=<name>` (several separated by `,`). Needs cargo for the packages
 //! with native code; `VELT_SKIP_NATIVE_E2E=1` skips those.
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 mod no_window;
 mod runtime_support;
+mod test_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -191,4 +194,89 @@ fn every_package_passes_its_tests() {
             .collect()
     });
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// A program that closes its Redis client ends (packages/redis): closing used to abort the
+/// connection's driver task while its reader task, waiting on the socket, was left running, and
+/// its pending read kept the process alive forever after `main` returned. Against a stand-in
+/// server on a local port that answers every command with `+PONG`, so it needs no Redis.
+#[test]
+fn a_closed_redis_client_lets_the_program_end() {
+    let root = root();
+    let skip_native = std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1");
+    if skip_native || !packages(&root).iter().any(|p| p.ends_with("redis")) {
+        eprintln!("skipped (VELT_SKIP_NATIVE_E2E=1 or VELT_PACKAGES)");
+        return;
+    }
+    runtime_support::build_native_runtime(&root);
+    let server = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+    let port = server.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for conn in server.incoming() {
+            let Ok(mut conn) = conn else { return };
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                // One command per read: the client sends one PING and waits for its reply.
+                while matches!(conn.read(&mut buf), Ok(n) if n > 0) {
+                    if conn.write_all(b"+PONG\r\n").is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    let tmp = test_dir::TestDir::new();
+    let app = tmp.path().join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    let dep = root.join("packages/redis").to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        app.join("package.vlt"),
+        format!(
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: {{ redis: {{ path: \"{dep}\" }} }},\n}};\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("src/main.vlt"),
+        format!(
+            "import {{ connect }} from \"redis\";\n\nasync function main() {{\n  const c = await connect(\"redis://127.0.0.1:{port}\");\n  console.log(await c.ping());\n  c.close();\n  console.log(\"closed\");\n}}\n"
+        ),
+    )
+    .unwrap();
+    // Built first (cargo may build the native library), then run with a deadline.
+    let exe = app.join(if cfg!(windows) { "app.exe" } else { "app" });
+    let built = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "-o"])
+        .arg(&exe)
+        .arg("src/main.vlt")
+        .current_dir(&app)
+        .output()
+        .expect("run velt build");
+    assert!(
+        built.status.success(),
+        "velt build failed:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let mut child = no_window::command(&exe)
+        .current_dir(&app)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("run the program");
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait") {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut stdout = String::new();
+    let _ = child.stdout.take().unwrap().read_to_string(&mut stdout);
+    assert_eq!(stdout, "PONG\nclosed\n");
+    let status = status.expect("the program did not end within 30 s of closing its client");
+    assert!(status.success(), "{status}");
 }
