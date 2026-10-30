@@ -76,12 +76,13 @@ without an initializer, one whose initializer awaits (`const server = await serv
 literal a closure changes (`const stats = { n: 0 }`), or a new object declared with a type that
 checks narrow (`const m: object = new Map()`): those stay locals of `main`, which a closure
 captures as a copy. So does one that module state can't hold: a promise (`let p =
-Promise.resolve(1)` that a closure assigns), or one a `Mutex` `with` callback uses, also
-through a closure it calls ([module state](variables.md#module-state)), with the variables below it whose initializers
-read it (`let ok = p !== undefined;`). A callback that calls a function value from elsewhere
-(a parameter, a loop variable, the locked value, a variable of the closure that makes the
-callback) may run any closure the code around it makes, so the variables those closures use
-stay locals of `main` then.
+Promise.resolve(1)` that a closure assigns), or one a `Mutex` `with` callback uses
+([module state](variables.md#module-state)), with the variables below it whose initializers
+read it (`let ok = p !== undefined;`). A `with` callback that calls a function value (`v +=
+add()`, a parameter, a loop variable, the locked value) may run any closure the script makes,
+so then every variable a closure in the script uses stays a local of `main`. That one
+callback turns module state off for the whole script, as before: a task or a request handler
+that assigns such a variable (`spawn(async () => { hits++; })`) is then rejected.
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant

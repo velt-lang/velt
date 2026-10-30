@@ -67,7 +67,7 @@ fn a_with_callback_reading_many_moves_them_in_one_extra_check() {
 }
 
 /// A `with` callback that calls a closure using such variables: the check can't follow a call
-/// through a function value, so the variables the closure's initializer names move.
+/// through a function value, so the variables of the closures the code around it makes move.
 #[test]
 fn a_with_callback_calling_a_closure_moves_what_the_closure_uses() {
     let src = "const m = shared(new Mutex<number>(0));
@@ -83,10 +83,9 @@ fn a_with_callback_calling_a_closure_moves_what_the_closure_uses() {
     assert_eq!(r.checks, 2);
 }
 
-/// A `with` callback that calls a function value that comes from elsewhere than a variable's
-/// initializer: a parameter of a function it calls, a closure made inside another closure, a
-/// loop variable over an array of closures, the locked value. The variables of the closures
-/// the code around the callback makes move.
+/// A `with` callback that calls a function value from a parameter of a function it calls, a
+/// variable of the closure that makes the callback, a loop variable over an array of closures
+/// or the locked value: the variables of the closures the code around the callback makes move.
 #[test]
 fn a_with_callback_calling_a_function_value_from_elsewhere_moves_what_closures_use() {
     let head = "const m = shared(new Mutex<number>(0));

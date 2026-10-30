@@ -170,7 +170,6 @@ pub(crate) struct Ctx<'m> {
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     pub state_refused: Vec<DefId>, // module-level variables that can't be state (script_locals.rs)
-    pub state_called: Vec<String>, // variables a refused callback calls the value of (same)
     pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
     pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
     pub global_cycles: u32,       // constants found to depend on themselves (driver::ensure_global)
@@ -498,7 +497,6 @@ impl<'m> Ctx<'m> {
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
             state_refused: Vec::new(),
-            state_called: Vec::new(),
             lazy: crate::body::lazy_std::Lazy::new(),
             global_props: Default::default(),
             global_cycles: 0,

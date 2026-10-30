@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Facts;
-use crate::hir::{self, DefId};
+use crate::hir::DefId;
 
 /// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
 /// function value whose body is not known; with the calls that lead there.
@@ -53,17 +53,13 @@ pub(super) fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Rea
 }
 
 /// Every module state variable the code from `todo` may reach (along the edges), so a
-/// refused variable moves in one extra check however many a callback reaches (`script_locals`);
-/// and the names of the variables whose function values that code calls, whose initializers'
-/// variables move too: a call through a function value has no edges. Such a value may also
-/// come from elsewhere (a parameter, a loop variable, the locked value, a variable of another
-/// closure): from what the callback sees, the closures and functions that the code making the
-/// callback makes, and the code making that code, out to a named function. Their variables count.
-pub(super) fn vars_reached(
-    facts: &FxHashMap<DefId, Facts>,
-    mut todo: Vec<DefId>,
-) -> (Vec<DefId>, Vec<String>) {
-    let (mut seen, mut vars, mut called) = (FxHashSet::default(), vec![], vec![]);
+/// refused variable moves in one extra check however many a callback reaches (`script_locals`).
+/// A call through a function value has no edges: the value comes from what the callback sees,
+/// so when that code calls one, the variables of the closures and functions that the code
+/// making the callback makes count too, and those of the code making that code, out to a named
+/// function.
+pub(super) fn vars_reached(facts: &FxHashMap<DefId, Facts>, mut todo: Vec<DefId>) -> Vec<DefId> {
+    let (mut seen, mut vars) = (FxHashSet::default(), vec![]);
     // The bodies whose makers' values count: the callbacks, and the bodies that call a value.
     let (mut origins, mut values) = (todo.clone(), false);
     let (mut makers, mut up) = (None::<FxHashMap<DefId, Vec<DefId>>>, FxHashSet::default());
@@ -73,7 +69,6 @@ pub(super) fn vars_reached(
                 continue;
             };
             vars.extend(&f.vars);
-            called.extend(f.called.iter().cloned());
             todo.extend(&f.edges);
             if f.values {
                 values = true;
@@ -81,7 +76,7 @@ pub(super) fn vars_reached(
             }
         }
         if !values {
-            return (vars, called);
+            return vars;
         }
         let makers = makers.get_or_insert_with(|| {
             let mut by: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
@@ -101,18 +96,7 @@ pub(super) fn vars_reached(
             }
         }
         if todo.is_empty() {
-            return (vars, called);
-        }
-    }
-}
-
-/// The variable a call through a function value reads it from: `f()`, `o.f()`, `fs[0]()`.
-pub(super) fn callee_root(mut e: &hir::Expr) -> Option<&hir::Expr> {
-    loop {
-        match &e.kind {
-            hir::ExprKind::Field { base, .. } | hir::ExprKind::Index { base, .. } => e = base,
-            hir::ExprKind::Local(..) | hir::ExprKind::Global(_) => return Some(e),
-            _ => return None,
+            return vars;
         }
     }
 }
