@@ -6,7 +6,7 @@ use super::*;
 use crate::interp::{Interp, RecordingHost, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{AggId, Callee, Program};
+use velt_vir::vir::{AggId, Callee, Program, UnOp};
 
 /// What the inner loop's body does besides reading the view.
 #[derive(Clone, Copy, PartialEq)]
@@ -28,6 +28,16 @@ enum Extra {
     EarlyCopy,
     /// The view's offset is an `Atomic`'s word (another thread may store to it).
     AtomicOffset,
+    /// The body runs only when a word read through a pointer is 1, as after `instanceof`
+    /// (`(*vtable as u64) == id`): the pointer may then hold another class.
+    TypeTest,
+    /// The inner loop runs while that word is 1 (`while (x instanceof C)`).
+    TypeTestExit,
+    /// The body runs only when `!null_bytes`, a `bool` the loop does not compute (a type
+    /// test's result kept in a local).
+    Flag,
+    /// The body runs only on even iterations (`i % 2 == 0`): a counter's test.
+    Counter,
 }
 
 struct Aggs {
@@ -193,7 +203,42 @@ fn program(extra: Extra) -> (Program, Aggs) {
     fb.assign(pre, i, Rvalue::Use(int(0, Ty::U64)));
     fb.goto(pre, inner);
     fb.assign(inner, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
-    fb.branch(inner, c, body, latch);
+    // A test between the loop's head and the body: true goes to the body, false to `skip`
+    // (the next iteration) or, for `TypeTestExit`, out of the inner loop.
+    let guard = matches!(
+        extra,
+        Extra::TypeTest | Extra::TypeTestExit | Extra::Flag | Extra::Counter
+    );
+    if guard {
+        let (test, skip) = (fb.block(), fb.block());
+        fb.branch(inner, c, test, latch);
+        let g = fb.local(Ty::Bool);
+        match extra {
+            Extra::TypeTest | Extra::TypeTestExit => {
+                let word = Place {
+                    local: pc,
+                    proj: vec![Proj::Deref(Ty::U64)],
+                };
+                fb.assign(test, g, bin(BinOp::Eq, copy_place(word), int(1, Ty::U64)));
+            }
+            Extra::Flag => fb.assign(test, g, Rvalue::Unary(UnOp::Not, copy_local(null_bytes))),
+            _ => {
+                let m = fb.local(Ty::U64);
+                fb.assign(test, m, bin(BinOp::Rem, copy_local(i), int(2, Ty::U64)));
+                fb.assign(test, g, bin(BinOp::Eq, copy_local(m), int(0, Ty::U64)));
+            }
+        }
+        let other = if extra == Extra::TypeTestExit {
+            latch
+        } else {
+            skip
+        };
+        fb.branch(test, g, body, other);
+        fb.assign(skip, i, bin(BinOp::Add, copy_local(i), int(1, Ty::U64)));
+        fb.goto(skip, inner);
+    } else {
+        fb.branch(inner, c, body, latch);
+    }
 
     // The view the body reads: `pv`, or `w`, which a copy of `pv` in the loop may replace.
     let read = match extra {
@@ -243,7 +288,13 @@ fn program(extra: Extra) -> (Program, Aggs) {
             fb.assign(tail, s, bin(BinOp::Add, copy_local(s), copy_place(first)));
         }
         Extra::LateCopy => fb.assign(tail, w, Rvalue::Use(copy_local(pv))),
-        Extra::Nothing | Extra::EarlyCopy | Extra::AtomicOffset => {}
+        Extra::Nothing
+        | Extra::EarlyCopy
+        | Extra::AtomicOffset
+        | Extra::TypeTest
+        | Extra::TypeTestExit
+        | Extra::Flag
+        | Extra::Counter => {}
     }
     fb.assign(tail, i, bin(BinOp::Add, copy_local(i), int(1, Ty::U64)));
     fb.goto(tail, inner);
@@ -447,4 +498,46 @@ fn only_object_fields_are_followed() {
     assert!(!reads(place(vec![Proj::Deref(Ty::U64)])));
     assert!(!reads(place(vec![Proj::Cast(cell), Proj::Field(0)])));
     assert!(!reads(place(vec![holder])));
+}
+
+#[test]
+fn a_read_under_a_type_test_stays_under_it() {
+    // In front of the loops the read would run for objects the test rejects, which may be of
+    // another class without such a field.
+    let (before, _) = program(Extra::TypeTest);
+    assert_eq!(run_main(&before, 4, 3, false), Ok(3 * 4 * (7 + 3)));
+    let mut after = before.clone();
+    assert!(!optimize(&mut after));
+    // The view's two reads and the tested word.
+    assert_eq!(reads_in_loops(&after.funcs[1]), 3);
+    same_behaviour(&before, &after);
+}
+
+#[test]
+fn a_loop_whose_own_test_is_a_type_test_keeps_its_reads() {
+    let (before, _) = program(Extra::TypeTestExit);
+    let mut after = before.clone();
+    assert!(!optimize(&mut after));
+    assert_eq!(reads_in_loops(&after.funcs[1]), 3);
+    same_behaviour(&before, &after);
+}
+
+#[test]
+fn a_test_of_a_kept_bool_keeps_the_reads() {
+    let (before, _) = program(Extra::Flag);
+    let mut after = before.clone();
+    assert!(!optimize(&mut after));
+    assert_eq!(reads_in_loops(&after.funcs[1]), 2);
+    same_behaviour(&before, &after);
+}
+
+#[test]
+fn a_counter_s_test_in_the_loop_still_lets_the_reads_out() {
+    let (before, _) = program(Extra::Counter);
+    // Iterations 0 and 2 of 4 read, in each of 3 rounds.
+    assert_eq!(run_main(&before, 4, 3, false), Ok(3 * 2 * (7 + 3)));
+    let mut after = before.clone();
+    assert!(optimize(&mut after));
+    assert_eq!(reads_in_loops(&after.funcs[1]), 0);
+    same_behaviour(&before, &after);
 }

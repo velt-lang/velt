@@ -18,15 +18,29 @@
 //!   `Atomic`'s word, which may change, is never read here);
 //! - **the pointers are object or header pointers**: `p` is a pointer local the loop does not
 //!   assign (or assigns only copies of one such local, a copy that dominates the read), every
-//!   `Deref` names a class object or the array header, every pointer followed after the first
+//!   `Deref` reads a class object's or the array header's aggregate, every pointer followed after the first
 //!   is a field of a class object (never an array's data pointer: element memory is checked by
 //!   index, which a read in front of the loop would skip), and no `Cast` (an enum view) or
-//!   `Atomic` aggregate is on the way.
+//!   `Atomic` aggregate is on the way;
+//! - **no test of the loop narrows a type**: every branch and switch in it tests a counter
+//!   (`counters::counted`: a comparison of numbers, one of which the loop computes from itself
+//!   from one iteration to the next, like `i < n` or a bounds check of `xs[i]`). A `Deref`'s
+//!   aggregate is the class the program reads the object as there, which may be a type test's
+//!   conclusion: after `a instanceof B`, `a.inner` is `(*a as B).inner`, and an `A` (or a
+//!   `Small` of a `Small | Wide`, or another class behind an interface) has no such field, so
+//!   the read in front of the loop would read past its object and follow what it found. A type
+//!   test (an `instanceof`'s class id, a union's tag, a `bool` kept from one, `while (a
+//!   instanceof B)`, `j < n && a instanceof B`) compares a value no iteration changes, so it is
+//!   not a counter's test; a test outside the loop that the read relies on also guards the
+//!   reads in front of it, which run only where the loop is entered, on the same pointers.
 //!
 //! The reads in front of the loop may run where the loop's own would not (no iteration, or a
 //! branch inside the loop not taken), so they must be safe to make anyway:
 //! - each pointer is tested for null before it is followed: a `T | null` field, or a field of
 //!   an object whose constructor has not set it yet (the zero fill);
+//! - the aggregates read are the objects' layout there: the loop's tests narrow nothing, so
+//!   whatever makes the loop's reads see the object as that class (its declared type, or a test
+//!   in front of the loop) holds in front of it too;
 //! - a non-null object or header pointer held by a local the loop reads is valid in front of
 //!   it: a local holds an owned, counted or borrowed reference, and sema keeps a borrowed
 //!   object alive (or rejects the program) while any later use of the local may run, whatever
@@ -82,10 +96,11 @@ pub(crate) fn run(aggs: &[AggLayout], kinds: &Kinds, func: &mut Function) -> boo
         .map(|lp| {
             let relevant = lp.body.iter().zip(&reads).any(|(b, r)| *b && *r);
             if relevant {
-                LoopFacts::of(kinds, func, &usage, lp)
+                LoopFacts::of(aggs, kinds, func, &usage, lp)
             } else {
                 LoopFacts {
                     quiet: false,
+                    counted: false,
                     defs: Defs::new(),
                 }
             }
@@ -420,12 +435,20 @@ type Defs = HashMap<u32, Option<(Local, Vec<(usize, usize)>)>>;
 struct LoopFacts {
     /// Nothing in the loop writes memory or calls anything but a computing SIMD operation.
     quiet: bool,
+    /// Every test in the loop is a counter's ([`counters::counted`]).
+    counted: bool,
     /// The locals the loop assigns.
     defs: Defs,
 }
 
 impl LoopFacts {
-    fn of(kinds: &Kinds, func: &Function, usage: &Usage, lp: &Loop) -> LoopFacts {
+    fn of(
+        aggs: &[AggLayout],
+        kinds: &Kinds,
+        func: &Function,
+        usage: &Usage,
+        lp: &Loop,
+    ) -> LoopFacts {
         let mut quiet = true;
         let mut defs = Defs::new();
         let writes_memory = |p: &Place| {
@@ -463,7 +486,13 @@ impl LoopFacts {
                 }
             }
         }
-        LoopFacts { quiet, defs }
+        // Only a loop that writes nothing is worth the walk.
+        let counted = quiet && counters::counted(aggs, func, lp);
+        LoopFacts {
+            quiet,
+            counted,
+            defs,
+        }
     }
 }
 
@@ -526,7 +555,8 @@ impl Cx<'_> {
         let mut best = None;
         for &li in around {
             // The block-0 head has no edge from outside to give a block in front.
-            if !self.facts[li].quiet || self.loops[li].head == 0 {
+            let facts = &self.facts[li];
+            if !facts.quiet || !facts.counted || self.loops[li].head == 0 {
                 break;
             }
             let Some(root) = self.resolve(li, place.local, (b, at), 0) else {
@@ -696,5 +726,6 @@ fn zero(ty: Ty) -> Const {
     }
 }
 
+mod counters;
 #[cfg(test)]
 mod tests;

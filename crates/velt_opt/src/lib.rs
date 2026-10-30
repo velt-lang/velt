@@ -72,9 +72,10 @@
 //! - `dead_fills`: at the same point, the zero fill of a new object is dropped when every
 //!   field is written after it before anything can read the object.
 //! - `invariant_reads`: then, a read through object and array header pointers (a typed
-//!   array's buffer, its bytes' length) inside a loop nest that writes no memory and calls
-//!   nothing is made once in front of the outermost such loop, each pointer tested for null
-//!   first, so LLVM sees the bound of an inner loop's check defined outside every loop.
+//!   array's buffer, its bytes' length) inside a loop nest that writes no memory, calls
+//!   nothing and tests only counters (no type test) is made once in front of the outermost such
+//!   loop, each pointer tested for null first, so LLVM sees the bound of an inner loop's check
+//!   defined outside every loop.
 //! - `cold_calls`: last, the calls of a function to one callee that never returns (the
 //!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
 //!   small function with many checks stays cheap enough for LLVM to inline.

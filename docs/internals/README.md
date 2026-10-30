@@ -54,7 +54,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    the reference never leaves the local), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
    `frame_slots`, each followed by a cleanup; `invariant_reads` (a read through object and
-   array header pointers inside a loop nest that writes no memory and calls nothing, such as a
+   array header pointers inside a loop nest that writes no memory, calls nothing and tests only
+   counters (a type test such as `instanceof` decides which class the read sees), such as a
    typed array's buffer and its bytes' length, is made once in front of the outermost such
    loop, each pointer tested for null first: LLVM cannot move such a chain out of an outer loop
    when the inner loop may run no iteration, and then keeps the inner loop's bounds check);
