@@ -79,15 +79,13 @@ handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]
 (`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
 
 ## Rules for std code
-- Only files under `std/` may call compiler intrinsics, spelled `__intrinsic_<snake_case>` after the
-  `Intrinsic` enum in `crates/velt_sema/src/hir.rs` (`ArrayWithCapacity` → `__intrinsic_array_with_capacity`).
-- A function taking a callback rethrows what the callback throws by being generic over its error
-  type: `map<U, E>(f: (x: T) => U throws E): U[] throws E`.
-- Every file starts with a `//` comment describing its role; keep files under 400 lines.
+The layout and the rules (modules are folders, `index.vlt` only re-exports, one exported class
+per file, headers, imports): CONTRIBUTING.md "The standard library", checked by
+`scripts/std-lint`. Beyond those:
+- Only std code may call compiler intrinsics, spelled `__intrinsic_<snake_case>` after the
+  `Intrinsic` enum in `crates/velt_sema/src/hir/intrinsic.rs`.
 - Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
   their module is loaded (they cannot be exported).
-- Element-returning methods clone (`find`, `filter`, `slice`, `Map.get`, `Map.keys()`…). For Copy
-  types a clone is a plain copy. Iteration and callbacks borrow.
 
 ## Performance notes
 Std code is monomorphized and inlined like user code, so write plain index loops.

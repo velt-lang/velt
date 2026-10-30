@@ -198,6 +198,11 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         let mut fmt = Command::new(&velt);
         fmt.args(["fmt", "--check", "std", "examples"]);
         gate.step("velt fmt --check (std, examples)", &mut fmt)?;
+        // The std layout and quality rules (docs/internals/design/std-layout.md §2, §6).
+        let mut lint = Command::new(&velt);
+        lint.current_dir(root)
+            .args(["run", "scripts/std-lint/main.vlt"]);
+        gate.step("std-lint", &mut lint)?;
     }
     if part.has(Part::Test) && plan.full && opts.smoke && !cfg!(windows) {
         let velt = target_dir(root).join("debug/velt");

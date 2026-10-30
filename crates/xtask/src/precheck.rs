@@ -46,6 +46,8 @@ const FORMATTED: &[&str] = &["std", "examples"];
 /// The formatter's crate: a change to it or to a crate it depends on can change how the files
 /// under [`FORMATTED`] format.
 const FORMATTER: &str = "velt_fmt";
+/// The std lint: a change to it checks all of std.
+const STD_LINT: &str = "scripts/std-lint/";
 
 /// The file-size rule, which veltc's `standards` test includes with `#[path]`.
 const FILE_SIZE_RS: &str = "crates/xtask/src/file_size.rs";
@@ -99,6 +101,17 @@ pub struct Selection {
     pub sized: Vec<String>,
     /// `tests/difftest` changed: its `cargo fmt` and clippy.
     pub difftest: bool,
+    /// The std layout and quality rules (scripts/std-lint, docs/internals/design/std-layout.md
+    /// §6): the changed std files, or all of std when the lint itself changed.
+    pub std_lint: StdLint,
+}
+
+/// What `std-lint` checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StdLint {
+    None,
+    Files(Vec<String>),
+    All,
 }
 
 /// The checks for a change touching `paths` (relative, `/`-separated); `exists` says whether a
@@ -110,6 +123,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         velt_fmt: false,
         sized: vec![],
         difftest: false,
+        std_lint: StdLint::None,
     };
     let mut changed = BTreeSet::new();
     let mut formatted = BTreeSet::new();
@@ -139,8 +153,19 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
             path.strip_prefix(d)
                 .is_some_and(|rest| rest.starts_with('/'))
         });
+        if path.starts_with(STD_LINT) {
+            sel.std_lint = StdLint::All;
+        }
         if !exists(path) {
             continue;
+        }
+        if path.starts_with("std/") && path.ends_with(".vlt") {
+            if let StdLint::None = sel.std_lint {
+                sel.std_lint = StdLint::Files(vec![]);
+            }
+            if let StdLint::Files(files) = &mut sel.std_lint {
+                files.push(path.clone());
+            }
         }
         if file_size::applies(path) {
             sel.sized.push(path.clone());
@@ -227,6 +252,9 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     if sel.velt_fmt {
         velt_fmt(&mut r);
     }
+    if sel.std_lint != StdLint::None {
+        std_lint(&mut r, &sel.std_lint);
+    }
     file_sizes(&mut r, &sel.sized);
     clippy(&mut r, &sel.clippy);
     if sel.difftest {
@@ -270,6 +298,33 @@ fn velt_fmt(r: &mut Runner) {
         &format!("velt fmt --check {}", FORMATTED.join(" ")),
         &mut fmt,
         fix,
+    );
+}
+
+/// `scripts/std-lint` on the changed std files (or all of std), with the base revision for its
+/// shrink-only allow lists.
+fn std_lint(r: &mut Runner, which: &StdLint) {
+    let mut build = cargo(&["build", "--quiet", "--workspace", "--bin", "velt"]);
+    if !r.step("build velt", &mut build, "fix the build errors above") {
+        return;
+    }
+    let velt = target_dir(r.root).join("debug").join(exe("velt"));
+    let mut lint = Command::new(velt);
+    lint.current_dir(r.root).args([
+        "run",
+        "scripts/std-lint/main.vlt",
+        "--",
+        "--base",
+        "origin/main",
+    ]);
+    if let StdLint::Files(files) = which {
+        lint.args(files);
+    }
+    r.step(
+        "std-lint (docs/internals/design/std-layout.md §2, §6)",
+        &mut lint,
+        "follow the message of each problem: std files live in module folders, an index.vlt only \
+         re-exports, one exported class per file, at most 400 lines",
     );
 }
 
@@ -408,6 +463,17 @@ mod tests {
         assert_eq!(s.clippy, packages(&["velt_fmt"]));
         assert_eq!(s.rustfmt, Crates::None);
         assert!(s.sized.is_empty());
+    }
+
+    #[test]
+    fn std_changes_lint_their_files_and_a_lint_change_lints_all_of_std() {
+        let s = sel(&["std/fs/index.vlt", "std/deleted.vlt", "docs/std/fs.md"]);
+        assert_eq!(s.std_lint, StdLint::Files(vec!["std/fs/index.vlt".into()]));
+        assert_eq!(sel(&["crates/xtask/src/main.rs"]).std_lint, StdLint::None);
+        assert_eq!(
+            sel(&["std/fs/index.vlt", "scripts/std-lint/allow.vlt"]).std_lint,
+            StdLint::All
+        );
     }
 
     #[test]
