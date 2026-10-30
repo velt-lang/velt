@@ -23,17 +23,21 @@ impl FnCx<'_, '_> {
             ast::Lit::Undefined => return self.undefined_lit(exp, span),
             _ => self.hint(exp),
         };
-        // A literal expected as a union takes the type of the member it belongs to.
+        // A literal expected as a union takes the type of the member it belongs to; with
+        // several number members, one that holds its value (`256` as `f64 | u8`'s `f64`).
         let exp = exp.map(|t| match self.cx.union_def(t) {
-            Some(_) => self
-                .lit_member_quiet(
-                    t,
-                    ast::SignedLit {
-                        lit: l.clone(),
-                        negative: false,
-                    },
-                )
-                .map_or(t, |(_, m)| m),
+            Some(_) => {
+                let lit = ast::SignedLit {
+                    lit: l.clone(),
+                    negative: negated,
+                };
+                let fits = self.number_lit_members(t, &lit).unwrap_or_default();
+                let own = self.lit_member_quiet(t, lit).map(|(_, m)| m);
+                match own {
+                    Some(m) if fits.is_empty() || fits.iter().any(|f| f.1 == m) => m,
+                    _ => fits.first().map_or(own.unwrap_or(t), |f| f.1),
+                }
+            }
             None => t,
         });
         match l {

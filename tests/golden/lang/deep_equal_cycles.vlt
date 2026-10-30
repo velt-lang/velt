@@ -1,0 +1,88 @@
+// `deepEqual` and `assertEq` on values that hold themselves (#1881) stop at a cycle, as Node's
+// `util.isDeepStrictEqual` does: two rings of one length are equal, rings of two lengths are
+// not, and a cycle on one side only differs. Cycles through object values, arrays and `Map`s.
+type L = { v: number; next: L | null };
+
+function ring(n: number, v: (i: number) => number): L {
+  const first: L = { v: v(0), next: null };
+  let cur = first;
+  for (let i = 1; i < n; i++) {
+    const x: L = { v: v(i), next: null };
+    cur.next = x;
+    cur = x;
+  }
+  cur.next = first;
+  return first;
+}
+
+function rings() {
+  const one = (i: number): number => 1;
+  const sizes: number[][] = [
+    [1, 1],
+    [1, 2],
+    [2, 1],
+    [2, 2],
+    [2, 4],
+    [3, 6],
+    [2, 3],
+    [3, 3],
+  ];
+  for (const s of sizes) {
+    console.log("rings", s[0], s[1], deepEqual(ring(s[0], one), ring(s[1], one)));
+  }
+  console.log("values", deepEqual(ring(2, (i) => i), ring(4, (i) => i % 2)));
+  console.log("values swapped", deepEqual(ring(2, (i) => i), ring(2, (i) => 1 - i)));
+  const p: L = { v: 1, next: null };
+  const q: L = { v: 1, next: null };
+  p.next = q;
+  q.next = q;
+  console.log("tail", deepEqual(p, ring(1, one)), deepEqual(ring(1, one), p));
+  const l1: L = { v: 1, next: { v: 2, next: null } };
+  const l2: L = { v: 1, next: { v: 2, next: null } };
+  const l3: L = { v: 1, next: { v: 3, next: null } };
+  console.log("lists", deepEqual(l1, l2), deepEqual(l1, l3));
+  const r1 = ring(3, one);
+  const r2 = ring(3, one);
+  assertEq(r1, r2);
+  console.log("assertEq rings");
+}
+
+type T = { v: number; kids: T[] };
+
+function arrays() {
+  const a: T = { v: 1, kids: [] };
+  a.kids.push(a);
+  const b: T = { v: 1, kids: [] };
+  b.kids.push(b);
+  const c: T = { v: 1, kids: [] };
+  c.kids.push(b);
+  console.log("arrays", deepEqual(a, b), deepEqual(a, c));
+}
+
+type M = { v: number; m: Map<string, M> };
+
+function maps() {
+  const x: M = { v: 1, m: new Map() };
+  x.m.set("self", x);
+  const y: M = { v: 1, m: new Map() };
+  y.m.set("self", y);
+  const z: M = { v: 2, m: new Map() };
+  z.m.set("self", z);
+  console.log("maps", deepEqual(x, y), deepEqual(x, z));
+}
+
+type U = { v: number; next: U | string };
+
+function unions() {
+  const u1: U = { v: 1, next: "end" };
+  u1.next = u1;
+  const u2: U = { v: 1, next: "end" };
+  u2.next = u2;
+  const u3: U = { v: 1, next: "end" };
+  console.log("unions", deepEqual(u1, u2), deepEqual(u1, u3));
+}
+
+rings();
+arrays();
+maps();
+unions();

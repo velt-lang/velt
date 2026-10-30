@@ -5,7 +5,7 @@
 //! values are converted to `any`, the `any` table of the concrete type: lower/any.rs) and share / format /
 //! clone / drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables),
 //! then the class's virtual methods
-//! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
+//! (`AdtDef::vtable`) or the interface's methods (and `toEqual`'s entries after them, eq_dyn.rs). A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
@@ -207,6 +207,7 @@ impl Cx<'_> {
             .map(|(slot, f)| (slot, Const::Func(f)))
             .collect();
         entries.push((SLOT_NAME, Const::Static(self.static_str_object(&name))));
+        entries.extend(self.obj_deep_eq_entry(cls));
         entries
     }
 
@@ -324,6 +325,7 @@ impl Cx<'_> {
             let t = self.generic_slot_table(key, (index, ty), entry);
             entries.push((slot as i128, Const::Static(t)));
         }
+        entries.extend(self.dyn_deep_eq_entry(index, ty));
         entries
     }
 }

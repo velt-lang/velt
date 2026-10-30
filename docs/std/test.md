@@ -45,7 +45,12 @@ imports this module. How they run:
   group, and the group's tests don't run. An `afterAll` that throws is printed where it ran and
   fails the run. A test's name is escaped on its report line (`\n` for a line break).
 - `toEqual` compares with `__intrinsic_deep_eq`: `deepEqual`'s comparison, but a class instance
-  that isn't the same object compares by its fields and numbers with `Object.is`. Cycles go by
+  that isn't the same object compares by its fields and numbers with `Object.is`. The fields
+  are those of the object's own class, whatever type holds it: two `Shape`s (an interface) or
+  two `Animal`s (a base class) are equal when they are objects of one class with equal fields,
+  a subclass's fields included. Objects of two different classes are unequal; Vitest's
+  `toEqual` compares them by their fields' names too (its `toStrictEqual` doesn't), so there a
+  `Cat` with the fields of an `Animal` equals the `Animal`. Cycles go by
   Vitest's rule: an object met again with the same partner while being compared is equal (a
   parent pointer, rings of one length), with another partner different (rings of two lengths).
 

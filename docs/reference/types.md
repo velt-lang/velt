@@ -550,7 +550,16 @@ one that stops early, or a sum of floats, whose order it must keep.
   `T` (in either order) as if both were `T | null`: `null` equals no value. Likewise a union
   compares with one of its members (`string | number` with `number`): the two are equal when
   the union holds that member with an equal value, so the string `"3"` never equals the
-  number `3`, as with `===` in JS.
+  number `3`, as with `===` in JS. Every number is a number, though: in a union of several
+  number types (`f64 | u8`, which `[bytes[0], bytes.length]` has) two values are equal when
+  their numbers are, whichever members hold them, so `1.0` equals `1u8` (in `===`, `switch`,
+  `Map` and `Set` keys, `indexOf`, `includes` and `deepEqual`), and `x === 1` tests every
+  member that can hold a 1. A number literal type is a number member too: in `1 | 2 | u8`, the
+  `1` equals `1u8`. The comparison is exact: an `i64` above 2^53 equals no `f64` it only
+  rounds to. A literal goes to a member that can hold it (`256` as `f64 | u8` is the `f64`);
+  when none holds it exactly, a float member takes it rounded, as a plain float type does
+  (`x === 0.1` with `x: f32 | u8` tests the `f32` nearest 0.1). `includes` finds a `NaN` in a
+  union array, as in a `number[]`; `indexOf` doesn't, as in JS.
 - An interface value compares the object behind it: two `Shape` values of one class instance
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it
@@ -575,7 +584,9 @@ one that stops early, or a sum of floats, whose order it must keep.
   ```
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
-  and values, in any key order; other class instances by identity. `assertEq` uses it.
+  and values, in any key order; other class instances by identity. A value that holds itself
+  (a ring of object values) compares without looping: the same cycle on both sides is equal.
+  `assertEq` uses it.
 - `<`, `<=`, `>`, `>=` work on numbers and strings, and on a class or struct implementing
   `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
   `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).

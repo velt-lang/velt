@@ -455,7 +455,9 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   instances compare by identity; `==` compares every object by identity. This is Node's
   `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
-  says `false`).
+  says `false`). Values that hold themselves stop at the cycle: an object met again while it
+  is being compared is equal if it meets the same partner again (two rings of one length),
+  else different (rings of two lengths, a cycle on one side only), as Node answers.
 
 ```ts
 const a: Record<string, i64[]> = { x: [1], y: [2] };

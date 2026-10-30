@@ -26,13 +26,10 @@ describe("byte bodies", () => {
     const buf = await new Response(raw).arrayBuffer();
     const f = new Float64Array(buf);
     raw.length = 0;
-    expect(f.length).toBe(1);
-    expect(f[0]).toBe(1.5);
+    expect([f.length, f[0]]).toEqual([1, 1.5]);
     f[0] = 2;
     raw.push(7);
-    expect(raw[0]).toBe(7);
-    expect(raw.length).toBe(1);
-    expect(f[0]).toBe(2);
+    expect([raw[0], f[0], raw.length]).toEqual([7, 2, 1]);
   });
 
   it("are read by subclasses of Response and Request", async () => {
