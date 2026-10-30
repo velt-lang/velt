@@ -30,6 +30,12 @@ fn path(root: &Path) -> PathBuf {
         .join("member-stamp")
 }
 
+/// Whether `velt <args>` has a member stamp: not `--watch`, which keeps running (the workspace
+/// command must start it), and whose runs leave the stamp of a plain `velt test` as it was.
+fn applies(args: &[OsString]) -> bool {
+    !args.iter().any(|a| a == "--watch")
+}
+
 /// The key of `velt <args>` (the command and its options) run by this `velt` now.
 pub(crate) fn key(args: &[OsString]) -> Key {
     let mut h = KeyHasher::new();
@@ -55,6 +61,9 @@ pub(super) fn write(
     stamps: &[Option<&str>],
     listed: &[(PathBuf, String)],
 ) {
+    if !applies(args) {
+        return;
+    }
     // A directory that changed during the run (a test file added, or the first run making
     // `target/`) makes the stamp untrustworthy: none, and the next run writes one.
     let unchanged = listed
@@ -87,7 +96,7 @@ pub(super) fn remove(root: &Path) {
 /// How many tests passed, when the member stamp of the package at `root` is of `velt <args>`
 /// and nothing it records changed.
 pub(crate) fn up_to_date(root: &Path, args: &[OsString]) -> Option<usize> {
-    if !stamp::enabled() {
+    if !stamp::enabled() || !applies(args) {
         return None;
     }
     stamp::still_valid(&path(root), &key(args))
@@ -134,5 +143,23 @@ mod tests {
         assert_eq!(up_to_date(root, &args), Some(3));
         write(root, &args, 3, &[None], &[]);
         assert_eq!(up_to_date(root, &args), None);
+    }
+
+    /// `velt test --watch` keeps running: no stamp may stand for it (the workspace command would
+    /// report the member unchanged and exit), and its runs leave a plain run's stamp alone.
+    #[test]
+    fn a_watch_run_has_no_member_stamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let exe = root.join("target").join("velt").join("test").join("h");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "one").unwrap();
+        let plain = [OsString::from("test")];
+        let watch = [OsString::from("test"), OsString::from("--watch")];
+
+        write(root, &plain, 2, &[Some(&build_stamp(&exe))], &[]);
+        write(root, &watch, 5, &[Some(&build_stamp(&exe))], &[]);
+        assert_eq!(up_to_date(root, &watch), None);
+        assert_eq!(up_to_date(root, &plain), Some(2));
     }
 }

@@ -179,7 +179,7 @@ export const pkg: Package = {
   outside the program: [kept results](../book/testing.md#results-that-are-kept)) and of which
   nothing changed isn't started at all: it is listed as `Unchanged core (packages/core): 3
   passed`, so a workspace with nothing changed is tested in about the time it takes to start
-  `velt` once. `velt build`
+  `velt` once (also with `-p <member>`, never with `--watch`). `velt build`
   skips libraries (the programs that use them build them), and `velt run -p <member>` and
   `velt dev -p <member>` run one member's program from anywhere in the workspace; its arguments
   follow `--` (`velt run -p server -- --port 8080`).

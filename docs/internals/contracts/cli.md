@@ -79,10 +79,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
   `test --no-cache` (additive, #1855): runs every test file. A `velt test` in a package that
   passed with every file kept writes `target/velt/test/member-stamp` (the build stamp's format;
-  key over the command line, the `velt` binary and the `VELT_*` environment; `objects` = tests
-  passed; entries = its harnesses' build-stamp entries and the directories discovery listed), and
-  removes it otherwise; `velt test` on several members doesn't start a member whose member stamp
-  for the same command is unchanged, printing `Unchanged <name> (<dir>): <n> passed`. Without it, a file whose harness is
+  key over the command line after member selection, the `velt` binary and the `VELT_*`
+  environment; `objects` = tests passed; entries = its harnesses' build-stamp entries from before
+  the run and the directories discovery listed), and removes it otherwise; `velt test` on
+  members (several, or one with `-p`) doesn't start a member whose member stamp for the same
+  command is unchanged, printing `Unchanged <name> (<dir>): <n> passed`. `--watch` has no member
+  stamp. Without it, a file whose harness is
   unchanged since all its tests passed, and whose tests reach nothing outside the program (the
   build stamp's `outside` record, per file of a harness), is not run: the runner prints its kept
   report after `running <path> (cached)`; a file whose tests do reach outside prints `running
