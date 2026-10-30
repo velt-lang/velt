@@ -1,0 +1,4 @@
+// Start-up and binary size: the smallest program (bench/showcase, category "startup").
+function main() {
+  console.log("Hello, World!");
+}

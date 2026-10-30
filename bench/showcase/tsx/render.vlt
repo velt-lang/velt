@@ -1,0 +1,53 @@
+// Server-side rendering of one component tree (_page.vlt) to an HTML string, the small page
+// (10 rows) and the large one (1000 rows) rendered N times each (bench/showcase, category
+// "tsx"). render.mjs is the same on React and Preact. Prints
+// `RESULT tsx.<page> <renders> <checksum> <ms>`: the time of the render loop only, and a
+// checksum of the HTML (its length summed over the renders, plus a hash of the last page) that
+// must be the same in every implementation.
+//
+//   render [both|small|large] [scale]    20000 small and 500 large renders, divided by scale
+//   render html <small|large>            prints the page itself
+
+import { renderToStringSync } from "velt:jsx";
+import { args } from "velt:process";
+import { items, Page } from "./_page";
+
+function hash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33 + s.charCodeAt(i)) % 1000000007;
+  }
+  return h;
+}
+
+function bench(name: string, rows: i64, renders: i64) {
+  const data = items(rows);
+  const title = `${name} page`;
+  let total = 0;
+  let last = "";
+  const t0 = performance.now();
+  for (let r: i64 = 0; r < renders; r++) {
+    last = renderToStringSync(<Page title={title} items={data} />);
+    total += last.length;
+  }
+  const ms = performance.now() - t0;
+  console.log(`RESULT tsx.${name} ${renders} ${(total + hash(last)) % 1000000007} ${ms}`);
+}
+
+function main() {
+  const argv = args();
+  const which = argv.length > 0 ? argv[0] : "both";
+  if (which == "html") {
+    const big = argv.length > 1 && argv[1] == "large";
+    const title = big ? "large page" : "small page";
+    console.log(renderToStringSync(<Page title={title} items={items(big ? 1000 : 10)} />));
+    return;
+  }
+  const scale: i64 = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 1;
+  if (which == "small" || which == "both") {
+    bench("small", 10, 20000 / scale);
+  }
+  if (which == "large" || which == "both") {
+    bench("large", 1000, 500 / scale);
+  }
+}

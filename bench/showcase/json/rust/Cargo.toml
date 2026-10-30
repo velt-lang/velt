@@ -1,0 +1,19 @@
+[package]
+name = "showcase_json_typed"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# The same versions and features as bench/json/corpora/rust.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sonic-rs = "0.5"
+simd-json = "0.19"
+indexmap = { version = "2", features = ["serde"] }
+
+[profile.release]
+codegen-units = 1

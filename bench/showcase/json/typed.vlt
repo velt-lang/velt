@@ -1,0 +1,192 @@
+// Typed JSON on the standard corpora (bench/json/corpora/data): `JSON.parse<T>` into structs
+// that declare the fields a program would read (unknown members are skipped, as serde does),
+// and `JSON.stringify` of that typed value. rust/ is the same structs on serde_json, sonic-rs
+// and simd-json; typed.mjs is Node's and Bun's JSON.parse with the same field reads.
+//
+//   typed <canada|citm|twitter> <file> <rounds> <parse|write>
+// parse: prints a checksum of the fields read (the same in every language);
+// write: parses once, stringifies `rounds` times and prints the last text.
+import { readFileSync } from "velt:fs";
+import { args } from "velt:process";
+
+struct Geometry {
+  type: string;
+  coordinates: f64[][][];
+}
+
+struct Properties {
+  name: string;
+}
+
+struct Feature {
+  type: string;
+  properties: Properties;
+  geometry: Geometry;
+}
+
+struct Canada {
+  type: string;
+  features: Feature[];
+}
+
+struct Hashtag {
+  text: string;
+}
+
+struct Entities {
+  hashtags: Hashtag[];
+}
+
+struct User {
+  screen_name: string;
+  followers_count: i64;
+}
+
+struct Status {
+  id_str: string;
+  text: string;
+  retweet_count: i64;
+  favorite_count: i64;
+  user: User;
+  entities: Entities;
+}
+
+struct SearchMetadata {
+  count: i64;
+}
+
+struct Twitter {
+  statuses: Status[];
+  search_metadata: SearchMetadata;
+}
+
+struct Event {
+  id: i64;
+  name: string;
+  subTopicIds: i64[];
+  topicIds: i64[];
+}
+
+struct Price {
+  amount: i64;
+  audienceSubCategoryId: i64;
+  seatCategoryId: i64;
+}
+
+struct Area {
+  areaId: i64;
+  blockIds: i64[];
+}
+
+struct SeatCategory {
+  areas: Area[];
+  seatCategoryId: i64;
+}
+
+struct Performance {
+  id: i64;
+  eventId: i64;
+  start: i64;
+  prices: Price[];
+  seatCategories: SeatCategory[];
+}
+
+struct Citm {
+  areaNames: Map<string, string>;
+  events: Map<string, Event>;
+  performances: Performance[];
+}
+
+function canadaSum(c: Canada): string {
+  let rings: i64 = 0;
+  let points: i64 = 0;
+  let s = 0;
+  for (const f of c.features) {
+    for (const ring of f.geometry.coordinates) {
+      rings += 1;
+      for (const p of ring) {
+        points += 1;
+        s += Math.round(p[0] * 100) + Math.round(p[1] * 100);
+      }
+    }
+  }
+  return `${c.features.length} ${rings} ${points} ${s}`;
+}
+
+function twitterSum(t: Twitter): string {
+  let text: i64 = 0;
+  let followers: i64 = 0;
+  let tags: i64 = 0;
+  let rt: i64 = 0;
+  for (const st of t.statuses) {
+    text += st.text.length + st.id_str.length + st.user.screen_name.length;
+    followers += st.user.followers_count;
+    tags += st.entities.hashtags.length;
+    rt += st.retweet_count + st.favorite_count;
+  }
+  return `${t.statuses.length} ${text} ${followers} ${tags} ${rt} ${t.search_metadata.count}`;
+}
+
+function citmSum(c: Citm): string {
+  let prices: i64 = 0;
+  let amount: i64 = 0;
+  let areas: i64 = 0;
+  for (const p of c.performances) {
+    prices += p.prices.length;
+    for (const pr of p.prices) {
+      amount += pr.amount;
+    }
+    for (const sc of p.seatCategories) {
+      areas += sc.areas.length;
+    }
+  }
+  let topics: i64 = 0;
+  for (const e of c.events.values()) {
+    topics += e.topicIds.length + e.subTopicIds.length;
+  }
+  return `${c.areaNames.size} ${c.events.size} ${c.performances.length} ${prices} ${amount} ${areas} ${topics}`;
+}
+
+function main() {
+  const argv = args();
+  const corpus = argv[0];
+  const text = readFileSync(argv[1]);
+  const rounds = parseInt(argv[2], 10) as i64;
+  const write = argv[3] == "write";
+  let out = "";
+  if (corpus == "canada") {
+    if (write) {
+      const v = JSON.parse<Canada>(text);
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = JSON.stringify(v);
+      }
+    } else {
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = canadaSum(JSON.parse<Canada>(text));
+      }
+    }
+  } else if (corpus == "twitter") {
+    if (write) {
+      const v = JSON.parse<Twitter>(text);
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = JSON.stringify(v);
+      }
+    } else {
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = twitterSum(JSON.parse<Twitter>(text));
+      }
+    }
+  } else {
+    if (write) {
+      const v = JSON.parse<Citm>(text);
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = JSON.stringify(v);
+      }
+    } else {
+      for (let r: i64 = 0; r < rounds; r++) {
+        out = citmSum(JSON.parse<Citm>(text));
+      }
+    }
+  }
+  console.log(out);
+}

@@ -1,0 +1,36 @@
+// An HTTP server returning the TSX page of _page.vlt, rendered per request: `/small` (10 rows)
+// and `/large` (1000 rows); anything else is a plain-text probe. server.mjs is the same on
+// React or Preact (node:http, or Bun.serve under Bun). Usage: server <port>
+import { renderToStringSync } from "velt:jsx";
+import { serve } from "velt:http";
+import { args } from "velt:process";
+import { items, Page } from "./_page";
+
+const SMALL = items(10);
+const LARGE = items(1000);
+
+function html(body: string): Response {
+  return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
+  const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
+    const url = req.url;
+    const path = url.slice(url.indexOf("/", 8));
+    if (path == "/small") {
+      return html(
+        `<!DOCTYPE html>${renderToStringSync(<Page title="small page" items={SMALL} />)}`,
+      );
+    }
+    if (path == "/large") {
+      return html(
+        `<!DOCTYPE html>${renderToStringSync(<Page title="large page" items={LARGE} />)}`,
+      );
+    }
+    return new Response("ok");
+  });
+  console.log(`listening on http://127.0.0.1:${server.port}`);
+  await sleep(1000000000);
+}
