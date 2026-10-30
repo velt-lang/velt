@@ -138,6 +138,7 @@ impl FnLower<'_, '_> {
     ) -> Vec<Option<Operand>> {
         let mut out = vec![];
         let later = self.later_each(args);
+        let mut pending: Vec<Place> = vec![];
         for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             let t = self.vty(a.ty);
             let v = match (t, mode) {
@@ -156,16 +157,25 @@ impl FnLower<'_, '_> {
                 (Ty::Agg(_), _) => {
                     let v = self.consume(a);
                     let v = self.maybe_transfer(v, a.ty);
-                    Some(Operand::Copy(Place::local(self.copy_to_temp(v, t))))
+                    let tmp = Place::local(self.copy_to_temp(v, t));
+                    if *mode == PassMode::Owned {
+                        self.pending_owned(tmp.clone(), a.ty, later, &mut pending);
+                    }
+                    Some(Operand::Copy(tmp))
                 }
                 (_, PassMode::Owned) => {
                     let v = self.consume(a);
                     let v = self.hold_owned(v, a.ty, later);
-                    Some(self.maybe_transfer(v, a.ty))
+                    let v = self.maybe_transfer(v, a.ty);
+                    Some(self.pending_scalar(v, a.ty, later, &mut pending))
                 }
                 _ => Some(self.expr_held(a, later)),
             };
             out.push(v);
+        }
+        // The call's state takes them now.
+        for p in pending {
+            self.take_temp(&p);
         }
         out
     }

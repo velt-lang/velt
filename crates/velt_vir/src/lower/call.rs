@@ -7,6 +7,7 @@ use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::foreign::ForeignBuf;
 use super::operand::proj;
+use super::sequence::Later;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
@@ -350,6 +351,9 @@ impl FnLower<'_, '_> {
         let mut recv = self.proxy_recv.take();
         let kept = std::mem::take(&mut self.kept_args);
         let changed = std::mem::take(&mut self.changed_args);
+        // Owned arguments evaluated before a later one that may throw: dropped on that path
+        // until the call takes them (`pending_owned`).
+        let mut pending: Vec<Place> = vec![];
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             self.owner_write = false;
             if *mode == PassMode::BorrowMut {
@@ -404,11 +408,15 @@ impl FnLower<'_, '_> {
                         _ => self.consume(a),
                     };
                     let tmp = self.copy_to_temp(v, t);
+                    if *mode == PassMode::Owned {
+                        self.pending_owned(Place::local(tmp), a.ty, later, &mut pending);
+                    }
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, PassMode::Owned) => {
                     let v = self.owned_arg(a);
-                    argv.push(self.hold_owned(v, a.ty, later));
+                    let v = self.hold_owned(v, a.ty, later);
+                    argv.push(self.pending_scalar(v, a.ty, later, &mut pending));
                 }
                 (_, m) => {
                     let v = match m {
@@ -431,11 +439,52 @@ impl FnLower<'_, '_> {
             }
         }
         self.owner_write = false;
+        // The call takes them now.
+        for p in pending {
+            self.take_temp(&p);
+        }
         if let (Some(r), Some(v)) = (recv, argv.first()) {
             self.proxy_recv_lowered(r, &v.clone());
         }
         self.finish_borrows(outer);
         argv
+    }
+
+    /// The owned argument at `p` (of type `ty`), when an argument after it (`later`) may throw:
+    /// registered for dropping until the call takes it, so an error a later argument throws
+    /// frees it (`f(x, g())` where `g` throws), as it does a temporary. Unregistered (`take_temp`)
+    /// once every argument is evaluated.
+    pub(super) fn pending_owned(
+        &mut self,
+        p: Place,
+        ty: TyId,
+        later: Later,
+        pending: &mut Vec<Place>,
+    ) {
+        if !later.memory || self.dead() || !self.needs_drop(ty) {
+            return;
+        }
+        let ty = self.sub(ty);
+        self.own_place(p.clone(), ty);
+        pending.push(p);
+    }
+
+    /// [`pending_owned`](Self::pending_owned) for an owned scalar argument `v` (a pointer to
+    /// its object), first copied to a temporary of its own when it needs to be.
+    pub(super) fn pending_scalar(
+        &mut self,
+        v: Operand,
+        ty: TyId,
+        later: Later,
+        pending: &mut Vec<Place>,
+    ) -> Operand {
+        if !later.memory || self.dead() || !self.needs_drop(ty) {
+            return v;
+        }
+        let vt = self.vty(ty);
+        let tmp = self.copy_to_temp(v, vt);
+        self.pending_owned(Place::local(tmp), ty, later, pending);
+        Operand::Copy(Place::local(tmp))
     }
 
     /// Borrow-ABI arguments: every aggregate by pointer, the caller keeps ownership (a value

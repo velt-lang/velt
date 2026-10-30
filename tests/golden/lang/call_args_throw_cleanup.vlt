@@ -1,0 +1,127 @@
+// An argument evaluated before a later argument that throws is freed on the throwing path: a
+// variable or parameter handed over as an owned argument, a fresh object, a string or an array,
+// in any position, for functions, methods, constructors, async functions and calls through a
+// function value or an interface, as in Node, where the error simply drops them.
+// check: no leaks
+class E {
+  a: E | null = null;
+}
+
+interface Keeper {
+  put(a: E, b: E): void;
+}
+
+class Box implements Keeper {
+  keep: E[] = [];
+  put(a: E, b: E): void {
+    this.keep.push(a);
+  }
+}
+
+class Pair {
+  a: E;
+  b: E;
+  constructor(a: E, b: E) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+function mk(a: E, b: E): E {
+  const e = new E();
+  e.a = a;
+  return e;
+}
+
+function many(a: E, s: string, xs: E[], c: E, b: E): E {
+  const e = new E();
+  e.a = c;
+  xs.push(a);
+  return e;
+}
+
+async function later(a: E, b: E): Promise<E> {
+  return a;
+}
+
+function boom(): E {
+  throw new Error("boom");
+}
+
+function param(e: E): E {
+  return mk(e, boom());
+}
+
+function local(): void {
+  const e = new E();
+  mk(e, boom());
+}
+
+function fresh(): void {
+  mk(new E(), boom());
+}
+
+function several(): void {
+  const e = new E();
+  const s = `s${e.a === null}`;
+  many(e, s, [new E()], new E(), boom());
+}
+
+function method(): void {
+  const b = new Box();
+  const e = new E();
+  b.put(e, boom());
+}
+
+function viaInterface(): void {
+  const k: Keeper = new Box();
+  const e = new E();
+  k.put(e, boom());
+}
+
+function ctor(): void {
+  const e = new E();
+  const p = new Pair(e, boom());
+  console.log(p.a === p.b);
+}
+
+function viaValue(): void {
+  const f = mk;
+  const e = new E();
+  f(e, boom());
+}
+
+async function awaited(): Promise<void> {
+  const e = new E();
+  await later(e, boom());
+}
+
+async function main() {
+  const cases: [string, () => void][] = [
+    [
+      "param",
+      () => {
+        param(new E());
+      },
+    ],
+    ["local", local],
+    ["fresh", fresh],
+    ["several", several],
+    ["method", method],
+    ["interface", viaInterface],
+    ["constructor", ctor],
+    ["function value", viaValue],
+  ];
+  for (const [name, f] of cases) {
+    try {
+      f();
+    } catch (e) {
+      console.log(`${name}: ${(e as Error).message}`);
+    }
+  }
+  try {
+    await awaited();
+  } catch (e) {
+    console.log(`async: ${(e as Error).message}`);
+  }
+}
