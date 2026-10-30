@@ -31,6 +31,7 @@ mod callback_sig;
 mod callback_wrap;
 mod cast_member;
 mod chain;
+mod class_bound;
 mod closure;
 mod closure_sig;
 mod coerce;

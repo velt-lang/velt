@@ -1,0 +1,5 @@
+generic_class_bound_errors.vlt:12:20: error: no field `nope` on type `Base`
+generic_class_bound_errors.vlt:16:5: error: the type `Other` does not satisfy the constraint `Base`
+  = note: required by `T extends Base` of function `f`
+generic_class_bound_errors.vlt:17:5: error: the type `f64` does not satisfy the constraint `Base`
+  = note: required by `T extends Base` of function `f`

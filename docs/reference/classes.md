@@ -723,7 +723,12 @@ interface value by its own interface and the ones it extends, so `f<Person>` fit
 `function f<T extends Named>` with `interface Person extends Named`, and its methods are
 called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
-`T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
+`T extends string | number`; [Generic functions](functions.md#generic-functions)). A **class
+bound** (`T extends Base`, `E extends Error`) is satisfied by the class and its subclasses
+(classes are nominal: another class with the same fields is not one), and inside the generic
+body a `T` has the class's fields, getters, setters and methods, and converts to the class
+(`const b: Base = x`). Each instantiation reads them from its own class: an overriding method
+runs, and a `T` returned keeps the subclass's type (`touch(new Sub()).extra`). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves
 the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
 it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
@@ -749,6 +754,37 @@ const s = new Stack<string>();
 s.push("a");
 s.push("b");
 console.log(s.pop() ?? "empty", s.items.length);
+```
+
+```ts
+class Shape {
+  name: string = "shape";
+  area(): number {
+    return 0;
+  }
+}
+
+class Square extends Shape {
+  side: number = 2;
+  override area(): number {
+    return this.side * this.side;
+  }
+}
+
+function label<T extends Shape>(s: T): T {
+  s.name = `${s.name} of ${s.area()}`;
+  return s;
+}
+
+class NotFound extends Error {}
+
+function describe<E extends Error>(e: E): string {
+  return `${e.name}: ${e.message}`;
+}
+
+const sq = label(new Square());
+console.log(sq.name, sq.side);                    // shape of 4 2
+console.log(describe(new NotFound("no user")));   // Error: no user
 ```
 
 ## `extend`

@@ -426,9 +426,10 @@ function main() {
 
 In the body, a value of a type parameter bounded by an array or primitive type reads the
 bound's fields and elements (`xs.length` and `xs[0]` on a `T extends number[]`), through the
-value as an `any`, converted to the bound's type. Not yet: its methods (`s.toUpperCase()` on a
-`T extends string`), the members of a class bound (`x.size` on a `T extends Map<K, V>`, which
-are resolved statically), `Object.keys(o)` on a `T extends Record<string, V>` (take the bound's
+value as an `any`, converted to the bound's type. A value of a type parameter bounded by a
+class has the class's members (`x.size` on a `T extends Map<K, V>`, `e.message` on an
+`E extends Error`; [Generics](classes.md#generics)). Not yet: its methods (`s.toUpperCase()` on
+a `T extends string`), `Object.keys(o)` on a `T extends Record<string, V>` (take the bound's
 type as the parameter's where the body needs them, #1212), and more than one such bound for a
 parameter (`T extends A & B` with both no interfaces).
 

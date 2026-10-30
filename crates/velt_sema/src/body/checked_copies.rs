@@ -280,9 +280,11 @@ impl FnCx<'_, '_> {
         self.with_payload(e, |s| s.expr(e, exp, want))
     }
 
-    /// `object` evaluated as the receiver of a member access or call.
+    /// `object` evaluated as the receiver of a member access or call (a value of a type
+    /// parameter bounded by a class as that class, `class_bound`).
     pub(crate) fn receiver_expr(&mut self, object: &ast::Expr) -> hir::Expr {
-        self.payload_expr(object, None, Want::Borrow)
+        let h = self.payload_expr(object, None, Want::Borrow);
+        self.as_class_bound(h)
     }
 
     /// The initializer `e` of an untyped `let` or `const` `name`: a narrowed module variable or
