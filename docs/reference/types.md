@@ -3362,7 +3362,8 @@ stops with a `TypeError` naming #924 rather than giving a wrong value: a method 
 call, string indexing, generic methods, and members whose type is an enum. A function or method
 whose type says it may throw is called as any other, and returns its value when it doesn't
 throw; an error it throws through `any` can't be caught yet (#1938): it ends the process with
-Node's `Uncaught …` report and exit code 1, what Node does when nothing catches it. An `async`
+Node's `Uncaught …` report and exit code 1, what Node does when nothing catches it, but without
+running the `finally` blocks around the call first, which Node does. An `async`
 function held by an `any` can't be called through it yet (its promise has no `any` form).
 The built-in methods of a string, an array, a number or a boolean held are called as in
 JavaScript (see "Operators and built-in methods on `any`" below). A member of a literal type (`kind: "ok"`), a union or an
