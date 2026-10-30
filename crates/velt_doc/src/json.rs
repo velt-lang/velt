@@ -172,10 +172,13 @@ pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
     ])
 }
 
-/// How a module is imported: `std/fs` is `velt/fs`; a package's modules by their name.
+/// How a module is imported: `std/fs` (its folder's `index.vlt`) is `velt/fs`; a package's
+/// modules by their name. A prelude module is never imported (its names are global): its
+/// specifier (`velt/prelude/core`) only identifies it.
 pub fn specifier(module: &str) -> String {
+    let module = module.strip_suffix("/index").unwrap_or(module);
     match module.strip_prefix("std/") {
-        Some(rest) => format!("velt:{rest}"),
+        Some(rest) => format!("velt/{rest}"),
         None => module.to_string(),
     }
 }
@@ -612,7 +615,8 @@ mod tests {
     #[test]
     fn specifiers() {
         assert_eq!(specifier("std/fs"), "velt/fs");
-        assert_eq!(specifier("std/prelude/core"), "velt:prelude/core");
+        assert_eq!(specifier("std/fs/index"), "velt/fs");
+        assert_eq!(specifier("std/prelude/core"), "velt/prelude/core");
         assert_eq!(specifier("pkg/util"), "pkg/util");
     }
 }
