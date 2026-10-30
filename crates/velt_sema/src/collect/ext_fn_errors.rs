@@ -53,7 +53,7 @@ pub(super) fn resolve_target(
     };
     let target = with_error_params(cx, resolved, &mut at, 0);
     for _ in n..at.next {
-        let name = unused_name(generics);
+        let name = unused_name(cx, generics, env.module, t.span);
         generics.push(&name);
     }
     if let Some(e) = at.fixed {
@@ -133,11 +133,18 @@ fn error_param(cx: &mut Ctx, e: TyId, free: bool, at: &mut Target) -> TyId {
     p
 }
 
-/// The name of an added parameter: `E`, or else the first of `E1`, `E2`, … no parameter of the
-/// block shows as, ended with `HIDDEN_PARAM`. Source can't name it, so a type `E` in the scope
-/// keeps its meaning in the block's methods; messages show `E`.
-fn unused_name(g: &Generics) -> String {
-    let taken = |s: &str| g.names.iter().any(|n| shown_param(n) == s);
+/// The name of an added parameter: `E`, or else the first of `E1`, `E2`, … that no parameter
+/// of the block shows as and no type in the block's scope (`module`, at `at`) is named,
+/// ended with `HIDDEN_PARAM`. Source can't name it, so a type `E` in the scope keeps its
+/// meaning in the block's methods; messages show the name without the mark, and it names
+/// nothing else there (`throws E1` beside a class `E`).
+fn unused_name(cx: &Ctx, g: &Generics, module: usize, at: Span) -> String {
+    let taken = |s: &str| {
+        g.names.iter().any(|n| shown_param(n) == s)
+            || cx
+                .lookup_type_item_at(module, s, at)
+                .is_some_and(|item| cx.is_type_item(item))
+    };
     let shown = (0..)
         .map(|k| match k {
             0 => "E".to_string(),

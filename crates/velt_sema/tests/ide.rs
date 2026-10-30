@@ -447,3 +447,24 @@ fn def_at_resolves_intersection_fields_to_their_operand() {
         .expect("age");
     assert_eq!(age.span.lo, at(INTERSECTION, "age: i64", 0, 0));
 }
+
+#[test]
+fn extension_methods_on_function_types_hover_without_the_hidden_error_parameter() {
+    // The error type of `() => R` is a parameter the compiler adds (#1878): the hover lists
+    // only the block's own, and names it apart from the class `E` in scope.
+    let src = "class E { name: string = \"e\"; }
+extend<R> (() => R) {
+  run(e: E): R { console.log(e.name); return this(); }
+  map<U>(g: (r: R) => U): U { return g(this()); }
+}
+function main() { const f = () => 1; console.log(f.run(new E()), f.map((x: number) => x)); }";
+    let (a, file) = analyze(src);
+    let run = a.def_at(file, at(src, "run(e", 0, 0)).expect("run");
+    assert_eq!(run.detail, "(method) run<R>(e: E): R throws E1");
+    let map = a.def_at(file, at(src, "map<U>", 0, 0)).expect("map");
+    assert!(
+        map.detail.starts_with("(method) map<R, U>(g: ") && map.detail.ends_with("): U throws E1"),
+        "{}",
+        map.detail
+    );
+}

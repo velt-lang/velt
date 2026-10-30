@@ -1,0 +1,16 @@
+// The error type an `extend` target's function type gets (#1878) is named apart from the types
+// in scope: beside a class `E`, a message about `this` shows it as `E1`. TypeScript has no
+// `extend`, so there is no Node comparison.
+
+class E {
+  name: string = "the class E";
+}
+
+extend<R> (() => R) {
+  bad(): number {
+    return this;
+  }
+}
+
+const f = () => 1;
+console.log(f.bad(), new E().name);
