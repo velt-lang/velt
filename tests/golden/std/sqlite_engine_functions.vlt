@@ -1,5 +1,5 @@
-// The query engine's scalar functions (velt:sqlite/exec/func: text and number functions, and
-// printf) against C SQLite (velt:sqlite): each call's result is compared with
+// The query engine's scalar functions (velt:sqlite/exec/func: text and number functions, printf,
+// the date and time functions) against C SQLite (velt:sqlite): each call's result is compared with
 // what C SQLite computes for the same SQL; the calls that differ are printed. The arguments are
 // literals, read back from C SQLite as typed values.
 import { open, Database } from "velt:sqlite";
@@ -179,6 +179,30 @@ const CALLS: Call[] = [
   // like() checks the ESCAPE before a NULL operand, as likeFunc does.
   call("like", ["NULL", "1", "12"]),
   call("like", ["1", "NULL", "12"]),
+  call("date", ["'2024-02-29'", "'+1 year'"]),
+  call("date", ["'2024-01-31'", "'+1 month'"]),
+  call("time", ["'12:34:56.789'"]),
+  call("datetime", ["1700000000", "'unixepoch'"]),
+  call("datetime", ["'2024-03-10 12:00'", "'-36 hours'", "'start of day'"]),
+  call("datetime", ["2460000.5"]),
+  call("julianday", ["'2000-01-01 12:00:00'"]),
+  call("unixepoch", ["'2038-01-19 03:14:08'"]),
+  call("unixepoch", ["'2024-01-01'", "'subsec'"]),
+  call("strftime", ["'%Y-%m-%d %H:%M:%f %j %w %W %s'", "'2024-12-31 23:59:59.5'"]),
+  call("strftime", ["'%J %e %k %l %p %I %u %G %V %g'", "'2021-01-03 07:08:09'"]),
+  call("date", ["'2024-05-15'", "'weekday 0'"]),
+  // A date already on the weekday it asks for stays.
+  call("date", ["'2024-05-19'", "'weekday 0'"]),
+  // A negative year as C's %04d writes it: the sign counts in the width.
+  call("strftime", ["'%Y'", "'-0001-01-01'"]),
+  call("strftime", ["'%Y %F'", "'-0123-12-31'"]),
+  call("strftime", ["'%G %g'", "'-0009-01-04'", "'weekday 6'"]),
+  call("strftime", ["'%Y-%m-%d'", "'0000-01-01'", "'-1 year'"]),
+  call("date", ["'2024-05-15'", "'start of month'", "'+1 month'", "'-1 day'"]),
+  call("date", ["'not a date'"]),
+  call("date", ["'2024-02-30'"]),
+  call("datetime", ["'2024-01-01T10:00:00+02:30'"]),
+  call("time", ["'24:00'"]),
 ];
 
 // Calls whose results are compared by type and size only: they are too long to print.
