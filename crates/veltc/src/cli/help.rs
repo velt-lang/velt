@@ -149,6 +149,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &[
             "check [<file.vlt>] [--json] [--locked] [-v]",
             "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
+            "check --std [--json] [-v]",
             "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
         ],
         about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
@@ -159,7 +160,9 @@ pub const COMMANDS: &[CommandHelp] = &[
                 `src/lib.vlt`, with no `main`). With `--ts-compat`, checks the given files \
                 (directories: their `.vlt`, `.ts` and `.tsx` files), or without paths the \
                 folders the package's `tsCompat` lists, then reports what in them `tsc` would \
-                reject or run differently, for code shared with TypeScript.",
+                reject or run differently, for code shared with TypeScript. With `--std`, checks \
+                every file of the standard library and every definition in it, also those no \
+                program reaches (for the standard library's own development).",
         options: &[
             WORKSPACE,
             PACKAGE,
@@ -171,6 +174,7 @@ pub const COMMANDS: &[CommandHelp] = &[
                 "lint the given files and directories (default: the package's `tsCompat` \
                  folders) for the TypeScript/Velt common subset",
             ),
+            ("--std", "check all of the standard library ($VELT_STD), every definition"),
             LOCKED,
             VERBOSE,
         ],

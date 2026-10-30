@@ -180,6 +180,7 @@ A build never compiles the same thing twice:
 ```
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
+velt check --std [--json] [-v]
 ```
 
 Parses and type-checks a file with every file it imports, or the whole current package, and prints
@@ -212,6 +213,10 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
   `labels` and `notes`, plus `code` and `fix` (`null` except for `--ts-compat` findings).
 - `-v` prints per-stage timings.
+- `--std` checks the whole standard library (`$VELT_STD`, else the toolchain's): every file
+  but its tests, every definition, also those no program reaches. A program checks only the std
+  code it uses, and may import only std's public modules, so this is what the standard
+  library's own development (and its CI) runs.
 
 ### Code shared with TypeScript: `--ts-compat`
 

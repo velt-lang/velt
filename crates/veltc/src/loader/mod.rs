@@ -385,6 +385,28 @@ impl Loader<'_, '_> {
         if self.by_file.contains_key(&key) {
             return;
         }
+        // A file of the standard library (`velt check --std`) is std code, at its std path.
+        if let (Some(std), Some(std_key)) = (&self.opts.std_root, &self.std_key) {
+            if key.starts_with(std_key) {
+                let std = Origin::Std(std.clone());
+                match self.read(file) {
+                    Ok(src) => {
+                        let canonical = std.canonical(file);
+                        let index = self.add(file, key, src, canonical, std);
+                        queue.push_back(index);
+                    }
+                    Err(e) => {
+                        let span = Span::new(self.sm.add(file, String::new()), 0, 0);
+                        self.error(
+                            format!("cannot read `{}`: {e}", file.display()),
+                            vec![],
+                            span,
+                        );
+                    }
+                }
+                return;
+            }
+        }
         let natural = origin.canonical(file);
         let canonical = if is_std_path(&natural) || self.is_taken(&natural) {
             self.fallback_name(&natural)

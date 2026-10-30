@@ -213,22 +213,59 @@ fn all_std_imports_every_std_module() {
 }
 
 /// All of std type-checks (#1658): every program checks the std definitions it reaches only
-/// (docs/internals/design/lazy-std.md), so `velt check` of all_std.vlt with laziness off
-/// (`VELT_EAGER_STD=1`) is what checks every definition of std, the prelude's free functions
-/// included. It must report nothing, not even a warning.
+/// (docs/internals/design/lazy-std.md), and a program may import std's public modules only, so
+/// `velt check --std` (every file of std, every definition) is what checks all of it, internal
+/// files and the prelude's free functions included. It must report nothing, not even a warning.
 #[test]
 fn all_of_std_checks_without_diagnostics() {
     let root = &root();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["check", "bench/compile/all_std.vlt"])
+        .args(["check", "--std"])
         .current_dir(root)
         .env("VELT_STD", root.join("std"))
-        .env("VELT_EAGER_STD", "1")
         .output()
-        .expect("run velt check");
+        .expect("run velt check --std");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success() && stderr.trim().is_empty(),
-        "velt check bench/compile/all_std.vlt with VELT_EAGER_STD=1:\n{stderr}"
+        "velt check --std:\n{stderr}"
     );
+}
+
+/// `velt check --std` checks the files nothing public reaches too (an internal helper only a
+/// white-box test uses): an error in one is reported.
+#[test]
+fn check_std_reaches_internal_files() {
+    let root = &root();
+    let tmp = tempfile::tempdir().unwrap();
+    let std = tmp.path().join("std");
+    copy_dir(&root.join("std"), &std);
+    std::fs::write(
+        std.join("collections/unreached_probe.vlt"),
+        "// velt/collections (internal): a probe nothing imports.\nexport function probe(): i64 {\n  return \"not a number\";\n}\n",
+    )
+    .unwrap();
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "--std"])
+        .current_dir(tmp.path())
+        .env("VELT_STD", &std)
+        .output()
+        .expect("run velt check --std");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("unreached_probe.vlt"),
+        "{stderr}"
+    );
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_dir(&path, &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
 }

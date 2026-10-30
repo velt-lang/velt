@@ -107,6 +107,9 @@ pub struct CheckScope {
     /// Further modules checked as library modules in the same run (`velt check` in a package:
     /// every module under `src/` and `tests/`); modules they share are loaded and checked once.
     pub extra_roots: Vec<PathBuf>,
+    /// Check every definition of std the loaded modules hold, reached or not (`velt check
+    /// --std`).
+    pub eager_std: bool,
 }
 
 /// What a successful build produced.
@@ -292,6 +295,7 @@ fn sema_stage(
     let t = Instant::now();
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
+        eager_std: scope.eager_std,
     };
     let (hir, diags) = velt_sema::check_with(&loaded.modules, loaded.root, sema_opts);
     sess.diagnostics.extend(diags);
@@ -323,6 +327,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let scope = CheckScope {
         require_main: true,
         extra_roots: vec![],
+        eager_std: false,
     };
     let hir = check_program(sess, opts, &scope)?;
 

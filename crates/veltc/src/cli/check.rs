@@ -19,9 +19,12 @@ pub struct CheckArgs {
     pub locked: bool,
     /// `-v`: per-stage timings on stderr.
     pub verbose: bool,
+    /// `--std`: check every file of the standard library, every definition, reached or not
+    /// (for the standard library's own development).
+    pub std: bool,
 }
 
-/// Parse `velt check [<file.vlt>] [--json] [--locked] [-v]` and
+/// Parse `velt check [<file.vlt>] [--json] [--locked] [-v]`, `velt check --std` and
 /// `velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]`.
 pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
     let mut c = CheckArgs::default();
@@ -31,6 +34,7 @@ pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
         match arg.as_str() {
             "--json" => c.json = true,
             "--locked" => c.locked = true,
+            "--std" => c.std = true,
             "--ts-compat" => ts_compat = true,
             "-v" | "--verbose" => c.verbose = true,
             s if s.starts_with('-') && s.len() > 1 => {
@@ -60,6 +64,13 @@ mod tests {
     #[test]
     fn check_args() {
         assert_eq!(p(&["check"]).unwrap(), Command::Check(CheckArgs::default()));
+        assert_eq!(
+            p(&["check", "--std"]).unwrap(),
+            Command::Check(CheckArgs {
+                std: true,
+                ..CheckArgs::default()
+            })
+        );
         assert_eq!(
             p(&["check", "a.vlt", "--json", "--locked", "-v"]).unwrap(),
             Command::Check(CheckArgs {

@@ -9,14 +9,13 @@
 #
 # Builds velt (release) unless --velt is given, builds the benchmarks below (LLVM, --release),
 # runs each once natively (it must succeed; its time is shown, not compared) and once under
-# valgrind's cachegrind for the count, plus the instructions of `velt check` over the whole
-# standard library (bench/compile/all_std.vlt with VELT_EAGER_STD=1, which checks every std
-# definition: parsing and type checking). Writes the counts to --out (default:
+# valgrind's cachegrind for the count, plus the instructions of `velt check --std` over the
+# whole standard library (every file, every definition: parsing and type checking). Writes the counts to --out (default:
 # $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
 # compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
-# non-blank, non-comment lines of std/**/*.vlt): the standard library grows with almost every
+# non-blank, non-comment lines of std/**/*.vlt, its tests aside): the standard library grows with almost every
 # feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
 # baseline row without the lines is compared in total.
 # Benchmarks with a Node version (bench/node/<name>.js, bench/json/node/<name>.js) also run under
@@ -136,15 +135,15 @@ echo "compile/check_all_std" >&2
 # Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
 # slowdown of the same size. Not blank lines, `//` lines, or the lines of a comment that starts a
 # line (`/** … */`).
-std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
+std_lines=$(find "$ROOT/std" -name '*.vlt' ! -name '*.test.vlt' -exec cat {} + | awk '
   block { if (/\*\//) block = 0; next }
   /^[ \t]*(\/\/|$)/ { next }
   /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
   { n++ }
   END { print n + 0 }')
-# With laziness off (VELT_EAGER_STD=1): a program checks only the std definitions it reaches
-# (docs/internals/design/lazy-std.md), and the row measures checking all of std.
-row=$(VELT_EAGER_STD=1 count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
+# `--std` checks every definition, as with laziness off: a program checks only the std
+# definitions it reaches (docs/internals/design/lazy-std.md), and the row measures all of std.
+row=$(VELT_STD="$ROOT/std" count "compile/check_all_std" "$VELT" check --std)
 printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
 "$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" "$NODE_FILE" <<'EOF'

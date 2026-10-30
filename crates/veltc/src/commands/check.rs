@@ -85,6 +85,9 @@ fn report_findings(sess: &Session, findings: &[Finding]) {
 fn resolve(
     args: &CheckArgs,
 ) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
+    if args.std {
+        return std_scope(args.locked);
+    }
     let (input, scope, same_path) = match &args.input {
         Some(file) => {
             super::project::check_input_file(file).map_err(BuildError::Failed)?;
@@ -94,6 +97,34 @@ fn resolve(
     };
     let opts = options_for(&input, args.locked)?;
     Ok((opts, scope, same_path))
+}
+
+/// `velt check --std`: every file of the standard library (its tests aside), loaded as std code
+/// below an empty root, each definition checked whether or not anything reaches it.
+fn std_scope(
+    locked: bool,
+) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
+    let std = crate::loader::std_root().ok_or_else(|| {
+        BuildError::Failed("cannot find the standard library; set VELT_STD".into())
+    })?;
+    let mut extra_roots: Vec<PathBuf> = discover::source_files(&std)
+        .map_err(BuildError::Failed)?
+        .into_iter()
+        .filter(|f| {
+            let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
+            name.is_some_and(|n| n.ends_with(".vlt") && !n.ends_with(".test.vlt"))
+        })
+        .collect();
+    extra_roots.sort();
+    let input = std.join("__velt_check_std.vlt");
+    let mut opts = options_for(&input, locked)?;
+    opts.root_source = Some(String::new());
+    let scope = CheckScope {
+        require_main: false,
+        extra_roots,
+        eager_std: true,
+    };
+    Ok((opts, scope, vec![]))
 }
 
 /// Build options for checking `input` (inside its package, if any).
@@ -126,6 +157,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
     let scope = CheckScope {
         require_main,
         extra_roots,
+        eager_std: false,
     };
     Ok((input, scope, same_path))
 }

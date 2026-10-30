@@ -177,11 +177,17 @@ pub struct CheckOptions {
     /// `main` is a library module: every body is still checked and the program's `entry` is
     /// `None`; a `main` that is there is validated either way.
     pub require_main: bool,
+    /// Check every definition of std, also those the program never reaches (`velt check
+    /// --std`); otherwise std's bodies are checked as the program reaches them (lazy std).
+    pub eager_std: bool,
 }
 
 impl Default for CheckOptions {
     fn default() -> Self {
-        Self { require_main: true }
+        Self {
+            require_main: true,
+            eager_std: false,
+        }
     }
 }
 
@@ -312,6 +318,9 @@ fn check_timed(
                   last: bool,
                   views: &union_views::Families| {
         let mut cx = ctx::Ctx::new(modules, root);
+        if opts.eager_std {
+            cx.lazy.on = false;
+        }
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;

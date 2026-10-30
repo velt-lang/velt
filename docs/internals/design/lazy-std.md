@@ -102,9 +102,9 @@ to compare.
 Std code has no errors, so no message changes. A user module's own code is always checked, and
 so is every std module it imports directly. An error in a deferred std function that a program
 reaches is reported as before. One that nothing reaches is not reported, which only matters
-while std itself is being written. What checks every std definition is `velt check
-bench/compile/all_std.vlt` with `VELT_EAGER_STD=1`: all_std.vlt imports every module, which makes
-them all eager except the prelude, whose free functions and statics would stay deferred.
+while std itself is being written. What checks every std definition is `velt check --std`:
+every file of std (a program may import only std's public modules, so no program reaches the
+internal files nothing public uses), with laziness off (`CheckOptions::eager_std`).
 `crates/veltc/tests/bench_programs.rs` `all_of_std_checks_without_diagnostics` runs it in CI and
 requires no diagnostics, and nightly's `compile/check_all_std` measures it the same way.
 
