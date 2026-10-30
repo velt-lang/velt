@@ -1,4 +1,4 @@
-// std/jsx/intrinsic: the JSX types of std/jsx (docs/internals/contracts/jsx.md): which lower-case
+// velt/jsx (internal): the JSX types of std/jsx (docs/internals/contracts/jsx.md): which lower-case
 // tags exist and which attributes each accepts (attribute types: std/jsx/attrs/*.vlt). A tag or
 // attribute that is not listed is a compile error, so typos are caught; custom elements
 // (`<my-widget>`, `<annotation-xml>`) and hyphenated attributes (`data-*`, `aria-*`,

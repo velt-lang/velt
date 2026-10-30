@@ -1,4 +1,4 @@
-// velt/lang/number/parse (std-internal) — `Number(s)` and `parseFloat(s)` in Velt, with exact JavaScript
+// velt/lang/number (internal): `Number(s)` and `parseFloat(s)` in Velt, with exact JavaScript
 // semantics (#1658, part of #1655): decimal values are correctly rounded (exact arithmetic when it
 // is exact, else Eisel-Lemire, velt/lang/number/eisel_lemire; a mantissa of more than 19 significant
 // digits goes to the runtime's arbitrary-precision parser), `0x`/`0o`/`0b` values exactly at any

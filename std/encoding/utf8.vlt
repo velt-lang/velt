@@ -1,4 +1,4 @@
-// std/encoding/utf8 (std-internal): UTF-8 validation in Velt, skipping ASCII sixteen and 64
+// velt/encoding (internal): UTF-8 validation in Velt, skipping ASCII sixteen and 64
 // bytes at a time with SIMD vectors. `utf8Valid` (std/encoding) and the WebSocket reader's check
 // of text that arrives in pieces (std/websocket/bytes) use it.
 

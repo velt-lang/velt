@@ -1,4 +1,4 @@
-// std/url/host (std-internal): the WHATWG host parser (url.spec.whatwg.org §3.5) for std/url.
+// velt/net/url (internal): the WHATWG host parser (url.spec.whatwg.org §3.5) for std/url.
 //
 // Supported: ASCII domains (percent-decoded, lowercased, checked for forbidden code points), IPv4
 // in every WHATWG spelling (`127.1`, `0x7f.0.0.1`, `2130706433`) normalized to dotted decimal,

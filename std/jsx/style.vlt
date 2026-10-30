@@ -1,4 +1,4 @@
-// std/jsx/style: the `style` attribute's object form (`style={{ color: c, fontSize: 12 }}`),
+// velt/jsx (internal): the `style` attribute's object form (`style={{ color: c, fontSize: 12 }}`),
 // rendered with React's rules, so the value is react-dom 19's: `color:red;font-size:12px`.
 // Names are camelCase CSS properties written in kebab-case (`msTransition` is
 // `-ms-transition`; custom properties such as `--accent` stay as written), numbers get `px`

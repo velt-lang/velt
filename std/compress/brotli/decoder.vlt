@@ -1,6 +1,6 @@
-// std/compress/brotli/decoder (internal to velt/compress/brotli/brotli_decoder): the decoder's driver: it runs
-// the stream's parts in order (headers, uncompressed and metadata blocks, commands) as far as
-// the input and the room for output allow, and keeps the output buffer.
+// velt/compress (internal): the decoder's driver: it runs the stream's parts in order (headers,
+// uncompressed and metadata blocks, commands) as far as the input and the room for output allow,
+// and keeps the output buffer.
 //
 // Input may stop anywhere. A step that can run out of it (a header, or a command step within 16
 // bytes of the input's end) starts from a saved state: when it turns out to have needed more

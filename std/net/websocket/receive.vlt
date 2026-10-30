@@ -1,4 +1,4 @@
-// std/websocket/receive (std-internal): what receiving a message needs besides the steps of a
+// velt/net/websocket (internal): what receiving a message needs besides the steps of a
 // connection's `Reader` (std/websocket/reader), which `WebSocket.receive` drives itself: the
 // turn of the task that reads from the stream, and the steps that are neither a message nor a
 // read (waiting for another task's read, answering a ping or the peer's close frame, failing

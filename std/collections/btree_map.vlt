@@ -1,4 +1,4 @@
-// std/collections/btree_map: `BTreeMap<K, V>`, a map that keeps its keys in ascending order
+// velt/collections (internal): `BTreeMap<K, V>`, a map that keeps its keys in ascending order
 // (`K extends Comparable<K>`: numbers, strings, bool, user types that implement `Comparable`).
 //
 // A B+tree of 32-slot nodes in flat pools (velt/collections/btree/pool): lookups, inserts and

@@ -1,4 +1,4 @@
-// std/fetch/client/conn (std-internal): one HTTP/1.1 connection of the client while a request
+// velt/net/http (internal): one HTTP/1.1 connection of the client while a request
 // uses it: the stream, a read buffer, and the request's signal, which every wait races so an
 // abort stops the request at once (the stream is then closed, never pooled). Between requests a
 // keep-alive connection is parked in the runtime's pool under its origin (`TcpStream.park`,

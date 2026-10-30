@@ -1,6 +1,5 @@
-// std/compress/brotli/commands (internal to velt/compress/brotli/brotli_decoder): the commands of a compressed
-// meta-block (RFC 7932 section 9.3): literals inserted, then a back-reference copied or a word
-// of the static dictionary written.
+// velt/compress (internal): the commands of a compressed meta-block (RFC 7932 section 9.3):
+// literals inserted, then a back-reference copied or a word of the static dictionary written.
 //
 // This is where decoding spends its time, so the bit reader, the output position and the whole
 // command and block state live in locals for the length of the loop (one function, so that

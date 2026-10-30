@@ -1,4 +1,4 @@
-// std/html: escaping text for HTML output.
+// velt/text (internal): escaping text for HTML output.
 //
 // `escapeHtml` is one pass in the runtime (`velt_rt_html_escape`, rt_abi_async.md §14.10): the
 // output is sized once and copied in chunks, where a chain of `replaceAll` calls in Velt would

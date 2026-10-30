@@ -1,4 +1,4 @@
-// velt/net/http/fetch/streams: `Response.body` and `Request.body`, the body as a `ReadableStream` of
+// velt/net/http (internal): `Response.body` and `Request.body`, the body as a `ReadableStream` of
 // `Uint8Array`s. `extend` blocks of their own, loaded (with velt/io/streams/streams and the typed arrays)
 // only by programs that use `Response` and read a `body` property
 // (std/prelude/global/fetch_body.vlt), so other fetch and http programs don't compile them.

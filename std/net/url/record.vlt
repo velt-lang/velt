@@ -1,4 +1,4 @@
-// std/url/record (std-internal): the URL record, its parser and serializer, for std/url.
+// velt/net/url (internal): the URL record, its parser and serializer, for std/url.
 //
 // A simplified WHATWG basic URL parser (url.spec.whatwg.org §4.4): the input is split into
 // scheme, authority, path, query and fragment by scanning for delimiters instead of running the

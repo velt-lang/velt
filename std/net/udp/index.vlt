@@ -1,4 +1,4 @@
-// std/udp: UDP sockets (rt_abi_async.md §14.6). Addresses are "host:port" strings, like
+// velt/net/udp: UDP sockets (rt_abi_async.md §14.6). Addresses are "host:port" strings, like
 // std/net; a received datagram names its sender as "ip:port".
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt/native/result";

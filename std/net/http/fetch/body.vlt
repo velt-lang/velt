@@ -1,6 +1,6 @@
-// std/fetch/body: what a request or response body can be made from (`BodyInit`), the parts the
-// client and the server take (text or bytes, and the `content-type` they imply),
-// and `BodyStream`, a body read chunk by chunk.
+// velt/net/http (internal): what a request or response body can be made from (`BodyInit`), the
+// parts the client and the server take (text or bytes, and the `content-type` they imply), and
+// `BodyStream`, a body read chunk by chunk.
 
 import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task";

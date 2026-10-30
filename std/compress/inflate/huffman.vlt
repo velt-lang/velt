@@ -1,4 +1,4 @@
-// std/compress/inflate/huffman (std-internal): the decoding tables of a DEFLATE block's Huffman
+// velt/compress (internal): the decoding tables of a DEFLATE block's Huffman
 // codes (RFC 1951 §3.2.2), built as zlib's `inflate_table` builds them.
 //
 // A table is indexed by the next bits of the input, least significant first, which are a code

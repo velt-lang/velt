@@ -1,4 +1,4 @@
-// std/prelude/process: the members of the builtin `process` namespace that the compiler turns
+// Prelude the members of the builtin `process` namespace that the compiler turns
 // into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`__processWrite`),
 // `process.env.NAME` / `process.env[name]` (`__processEnv`) and `process.memoryUsage()`
 // (`processMemoryUsage`). The rest of Node's `process` is in `velt/process` (docs/std/process.md).

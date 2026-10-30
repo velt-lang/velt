@@ -1,4 +1,4 @@
-// velt/collections/btree/line: `Line`, the 32 `u16` words of a B-tree node, internal.
+// velt/collections (internal): `Line`, the 32 `u16` words of a B-tree node, internal.
 //
 // A line is 64 bytes, four `u16x8` vectors: slots 0 to 30 hold a word per key (two bytes of the
 // key's encoding past the node's prefix, `EMPTY` past the last key) and slot 31 (`HEAD`) the

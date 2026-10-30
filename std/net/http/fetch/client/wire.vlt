@@ -1,4 +1,4 @@
-// std/fetch/client/wire (std-internal): HTTP/1.1 on the wire (RFC 9112): the request head the
+// velt/net/http (internal): HTTP/1.1 on the wire (RFC 9112): the request head the
 // client writes, and the response head it reads, parsed in place in the connection's buffer.
 //
 // A request head goes into one byte array with its body when the body is small, so most

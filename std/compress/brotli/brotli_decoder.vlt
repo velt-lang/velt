@@ -1,4 +1,4 @@
-// std/compress/brotli: Brotli decompression (RFC 7932), the `br` content coding of HTTP.
+// velt/compress (internal): Brotli decompression (RFC 7932), the `br` content coding of HTTP.
 //
 // `brotliDecompress` decodes a whole stream at once into one array that grows as the
 // meta-blocks' headers announce their lengths. `BrotliDecoder` takes the input in pieces and

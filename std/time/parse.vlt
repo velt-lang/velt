@@ -1,4 +1,4 @@
-// std/datetime/parse (std-internal): ISO 8601 / RFC 3339 and HTTP-date parsers for std/datetime.
+// velt/time (internal): ISO 8601 / RFC 3339 and HTTP-date parsers for std/datetime.
 //
 // Both return epoch ms, or null where std/datetime throws `DateTimeError`.
 

@@ -1,4 +1,4 @@
-// std/jsx/escape: HTML escaping of text and attributes (docs/internals/contracts/jsx.md
+// velt/jsx (internal): HTML escaping of text and attributes (docs/internals/contracts/jsx.md
 // "Escaping").
 //
 // Text and attribute values escape `&`, `<`, `>`, `"` and `'` as react-dom does: like std/html

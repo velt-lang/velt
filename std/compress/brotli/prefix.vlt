@@ -1,5 +1,5 @@
-// std/compress/brotli/prefix (internal to velt/compress/brotli/brotli_decoder): prefix codes (RFC 7932 section
-// 3) read from the stream and turned into lookup tables.
+// velt/compress (internal): prefix codes (RFC 7932 section 3) read from the stream and turned into
+// lookup tables.
 //
 // A table is `u32` entries `symbol << 16 | length`, indexed by the next 8 input bits (the
 // root). A code longer than 8 bits has its root entry point at a second-level table instead:

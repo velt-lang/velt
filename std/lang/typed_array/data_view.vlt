@@ -1,4 +1,4 @@
-// velt/lang/typed_array/data_view: `DataView` (ES2024 §25.3), reads and writes of numbers of any
+// velt/lang/typed_array (internal): `DataView` (ES2024 §25.3), reads and writes of numbers of any
 // size at any byte offset of an `ArrayBuffer`, big-endian unless `littleEndian` is true.
 // Programs use the global (velt/lang/typed_array).
 

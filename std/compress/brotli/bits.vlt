@@ -1,5 +1,4 @@
-// std/compress/brotli/bits (internal to velt/compress/brotli/brotli_decoder): the input of a Brotli stream and
-// the bit reader over it.
+// velt/compress (internal): the input of a Brotli stream and the bit reader over it.
 //
 // The input is kept in one buffer of its own, followed by at least `PAD` zero bytes, so the
 // reader loads eight bytes at a time (one 16-byte vector load) without a check per byte; bits

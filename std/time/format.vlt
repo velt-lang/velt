@@ -1,4 +1,4 @@
-// std/datetime/format (std-internal): ISO 8601, HTTP-date and pattern formatting for std/datetime.
+// velt/time (internal): ISO 8601, HTTP-date and pattern formatting for std/datetime.
 
 import {
   DateParts,

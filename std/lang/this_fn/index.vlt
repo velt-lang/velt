@@ -1,4 +1,4 @@
-// std/this_fn (std-internal): the value of a function expression with a `this: any` parameter
+// velt/lang/this_fn: the value of a function expression with a `this: any` parameter
 // (docs/reference/functions.md "Function expressions"), whose `this` is the object it is called
 // on, as in JavaScript. Sema makes `function (this: any, a: A) { body }` a `__ThisFn` holding the
 // closure `(this, arguments) => { let a: A = arguments[0]; body }`, held as a `Function`. A call

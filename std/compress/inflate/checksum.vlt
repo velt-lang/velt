@@ -1,4 +1,4 @@
-// std/compress/inflate/checksum (std-internal): the checks a gzip member (CRC-32, RFC 1952 §8)
+// velt/compress (internal): the checks a gzip member (CRC-32, RFC 1952 §8)
 // and a zlib stream (Adler-32, RFC 1950 §9) end with, computed as the output is made.
 //
 // CRC-32 folds 64 bytes per step with carry-less multiplication where the CPU has it (Intel's

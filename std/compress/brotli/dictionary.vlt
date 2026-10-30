@@ -1,5 +1,5 @@
-// std/compress/brotli/dictionary (internal to velt/compress/brotli/brotli_decoder): the static dictionary of RFC
-// 7932 (appendix A) and its 121 word transforms (appendix B).
+// velt/compress (internal): the static dictionary of RFC 7932 (appendix A) and its 121 word
+// transforms (appendix B).
 //
 // The dictionary is 122,784 bytes that are not all UTF-8, so it cannot be one string literal,
 // and an array literal of that many numbers is a source file of as many lines once formatted.

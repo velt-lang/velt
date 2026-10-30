@@ -1,4 +1,4 @@
-// std/child_process: run other programs (rt_abi_async.md §14.3).
+// velt/process/child: run other programs (rt_abi_async.md §14.3).
 //
 // `exec` / `execSync` run a program to completion and return its exit code and output;
 // `execShell` goes through the platform shell (`sh -c`, `cmd /C`). `spawn` starts a program

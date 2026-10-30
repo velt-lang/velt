@@ -1,8 +1,8 @@
-// velt/encoding/json/tape — a parsed JSON document as one flat tape (#1660, part of #1655): what a
-// `JsonValue` from `JSON.parseValue` reads. No allocation per value: two words per value in one
-// array, numbers decoded once, strings left in the source until a reader asks for one (only
-// strings with escapes are decoded while parsing), and each array's elements and each object's
-// keys listed together in one array of positions, so `at(i)` is O(1).
+// velt/encoding/json (internal): a parsed JSON document as one flat tape (#1660, part of #1655):
+// what a `JsonValue` from `JSON.parseValue` reads. No allocation per value: two words per value in
+// one array, numbers decoded once, strings left in the source until a reader asks for one (only
+// strings with escapes are decoded while parsing), and each array's elements and each object's keys
+// listed together in one array of positions, so `at(i)` is O(1).
 //
 // A tape's values never change after it is built (only `find` adds the hash index of a large
 // object it searches); values share it. Editing a value (`set`, `push`, …) turns that value into

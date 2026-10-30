@@ -1,4 +1,4 @@
-// std/jsx/attrs/global: the global HTML attributes, which every element accepts
+// velt/jsx (internal): the global HTML attributes, which every element accepts
 // (std/jsx/intrinsic.vlt maps tags to attribute types; every attribute type in std/jsx/attrs is
 // `HtmlAttrs & { … }`, and all are public as `velt/jsx/attrs/attrs`). Event handlers (`onclick`, …) are
 // not attributes here: std/jsx renders on the server, so a handler would be a compile error anyway;

@@ -1,4 +1,5 @@
-// velt/encoding/json/reader — the pull reader under the decoders `JSON.parse<T>` compiles for each type.
+// velt/encoding/json (internal): the pull reader under the decoders `JSON.parse<T>` compiles for
+// each type.
 //
 // The reader lexes its source on demand. The first failure is sticky: every later call fails
 // too, and `message` turns it into the `JsonError` message. Commas and colons are handled by

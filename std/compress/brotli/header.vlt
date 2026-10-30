@@ -1,5 +1,5 @@
-// std/compress/brotli/header (internal to velt/compress/brotli/brotli_decoder): the stream header and meta-block
-// headers of RFC 7932 (sections 9.1 and 9.2), and block switches (section 6).
+// velt/compress (internal): the stream header and meta-block headers of RFC 7932 (sections 9.1 and
+// 9.2), and block switches (section 6).
 //
 // A compressed meta-block's header sets up everything its commands are decoded with: the block
 // types of the three categories, the context modes and maps, and the prefix code tables, all

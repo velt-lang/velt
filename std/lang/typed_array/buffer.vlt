@@ -1,5 +1,5 @@
-// velt/lang/typed_array/buffer: the conversions and the byte loads and stores of the typed arrays
-// of, and the conversions their elements go through (ES2024 §25.1, §10.4.5; the numbers are
+// velt/lang/typed_array (internal): the conversions and the byte loads and stores of the typed
+// arrays of, and the conversions their elements go through (ES2024 §25.1, §10.4.5; the numbers are
 // JS's: `ToUint8`, `ToUint8Clamp`, `ToInt32`, …). Programs use the global.
 //
 // An `ArrayBuffer` owns a `u8[]` of fixed length. Views (`Uint8Array`, `Float64Array`,

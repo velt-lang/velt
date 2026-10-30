@@ -1,4 +1,4 @@
-// std/net_bytes (std-internal): writing a `u8[]` to a stream (`velt_rt_tcp_write_bytes`).
+// velt/net (internal): writing a `u8[]` to a stream (`velt_rt_tcp_write_bytes`).
 // Not part of the public API.
 
 import { IoStatus } from "velt/native/result";

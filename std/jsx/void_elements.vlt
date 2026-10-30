@@ -1,4 +1,4 @@
-// std/jsx/void_elements: the HTML elements that have no end tag
+// velt/jsx (internal): the HTML elements that have no end tag
 // (docs/internals/contracts/jsx.md: the compiler writes precompiled templates with the same
 // list, so both lowerings agree).
 

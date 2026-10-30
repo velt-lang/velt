@@ -1,4 +1,4 @@
-// std/cli: command-line argument parsing (Node's `util.parseArgs` rules, commander-style API).
+// velt/cli: command-line argument parsing (Node's `util.parseArgs` rules, commander-style API).
 //
 // Build a parser, then parse an argv array (usually `args()` from std/process):
 //

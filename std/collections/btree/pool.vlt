@@ -1,4 +1,4 @@
-// velt/collections/btree/pool: the nodes of `BTreeMap` (velt/collections/btree_map), internal.
+// velt/collections (internal): the nodes of `BTreeMap` (velt/collections/btree_map), internal.
 //
 // A B+tree whose nodes live in flat pools, a struct of arrays, nodes linked by `u32` index:
 // node `n`'s keys are slots `n * F .. n * F + F`. Leaves hold up to `CAP` entries and link to

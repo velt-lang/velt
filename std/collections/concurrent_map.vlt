@@ -1,4 +1,4 @@
-// std/collections/concurrent_map: `ConcurrentMap`, a map from `u64` or `string` keys to values
+// velt/collections (internal): `ConcurrentMap`, a map from `u64` or `string` keys to values
 // that many threads read and write at once, through a `shared` value: a B+ tree with optimistic
 // lock coupling (Leis et al., "The ART of Practical Synchronization"; bbtree's concurrent map
 // uses the same protocol). Built only on public std APIs: `Atomic<u64>`, velt/simd

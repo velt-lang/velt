@@ -1,4 +1,4 @@
-// std/jsx/render: turns an Element into HTML, as one string or as a streamed response body.
+// velt/jsx (internal): turns an Element into HTML, as one string or as a streamed response body.
 //
 // A complete element already is its HTML, as a string or a tree of template strings (node.vlt)
 // joined or written once. Otherwise the renderer walks the node's

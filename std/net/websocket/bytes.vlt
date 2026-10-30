@@ -1,4 +1,4 @@
-// std/websocket/bytes (std-internal): the byte-level pieces of the WebSocket codec: masking
+// velt/net/websocket (internal): the byte-level pieces of the WebSocket codec: masking
 // keys, text in and out of buffers, the UTF-8 check of text that arrives in pieces
 // (std/encoding/utf8), and `ByteBuf`, a byte array that grows by doubling. Public APIs only, as a
 // package would write them. Not part of the public API.

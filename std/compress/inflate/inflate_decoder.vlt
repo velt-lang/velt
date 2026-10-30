@@ -1,4 +1,4 @@
-// std/compress/inflate: DEFLATE decompression (docs/std/compress.md): raw DEFLATE (RFC 1951),
+// velt/compress (internal): DEFLATE decompression (docs/std/compress.md): raw DEFLATE (RFC 1951),
 // zlib (RFC 1950) and gzip (RFC 1952, several members in a row as one stream), in Velt.
 //
 // `gunzip`, `inflate` and `inflateRaw` decode a whole stream into one buffer, sized from the

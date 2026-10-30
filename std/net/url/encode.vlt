@@ -1,4 +1,4 @@
-// std/url/encode (std-internal): percent-encoding and UTF-8 helpers shared by std/url.
+// velt/net/url (internal): percent-encoding and UTF-8 helpers shared by std/url.
 //
 // Works on the UTF-8 bytes of a string: an encoder copies them into a `u8[]` once, escapes what
 // its set asks for, and turns the bytes back into a string once. The copy writes a lone

@@ -1,4 +1,4 @@
-// std/test/suite: `describe`, `it`/`test` and the hooks (docs/book/testing.md), as Vitest's.
+// velt/test (internal): `describe`, `it`/`test` and the hooks (docs/book/testing.md), as Vitest's.
 //
 // A call at a test file's top level only queues what it registers (`queued`): it runs when the
 // program starts, in every process of a test program shared by several files, and must not run

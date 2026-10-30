@@ -1,4 +1,4 @@
-// std/websocket/queue (std-internal): the sending side of a connection. Not part of the public
+// velt/net/websocket (internal): the sending side of a connection. Not part of the public
 // API.
 //
 // A send encodes its frame into the connection's `SendQueue` at the call, under the queue's

@@ -1,4 +1,4 @@
-// velt/lang/number/eisel_lemire (std-internal) — decimal to double, correctly rounded, in Velt (#1658):
+// velt/lang/number (internal): decimal to double, correctly rounded, in Velt (#1658):
 // Eisel-Lemire algorithm (Daniel Lemire, "Number Parsing at a Gigabyte per Second", 2021), as
 // fast_float and Rust's core::num::dec2flt::lemire implement it. A mantissa of up to 19 digits
 // times a power of ten is multiplied by the 128-bit power of five (std/lang/number/pow5.vlt); in the

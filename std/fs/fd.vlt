@@ -1,7 +1,8 @@
-// velt/fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a module of
-// its own so that a program importing `velt/fs` does not compile it. It is Velt code over system functions (docs/reference/system-functions.md):
-// each call is one call of the C library, with nothing in between. On macOS and Linux; calling
-// it for another target is a compile error that names the system function it lacks.
+// velt/fs (internal): Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a
+// module of its own so that a program importing `velt/fs` does not compile it. It is Velt code over
+// system functions (docs/reference/system-functions.md): each call is one call of the C library,
+// with nothing in between. On macOS and Linux; calling it for another target is a compile error
+// that names the system function it lacks.
 //
 // Errors are Node's: an `IoError` whose `code` is the errno's name and whose message is libuv's
 // (`ENOENT: no such file or directory, open 'a.txt'`), and `RangeError`s and `TypeError`s with

@@ -1,5 +1,5 @@
-// std/regex: JavaScript-flavoured regular expressions over the runtime's Rust `regex` engine
-// (rt_abi_async.md §14). Matching is linear-time (no catastrophic backtracking); in exchange
+// velt/text (internal): JavaScript-flavoured regular expressions over the runtime's Rust `regex`
+// engine (rt_abi_async.md §14). Matching is linear-time (no catastrophic backtracking); in exchange
 // lookaround and backreferences are not supported (compiling them throws `RegExpError`).
 //
 // Offsets are UTF-16 code units, like every Velt string position (`slice`, `indexOf`).

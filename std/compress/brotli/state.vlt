@@ -1,6 +1,5 @@
-// std/compress/brotli/state (internal to velt/compress/brotli/brotli_decoder): what a Brotli decoder holds
-// between steps, shared by the header reader (header.vlt), the command loop (commands.vlt) and
-// the driver (decoder.vlt).
+// velt/compress (internal): what a Brotli decoder holds between steps, shared by the header reader
+// (header.vlt), the command loop (commands.vlt) and the driver (decoder.vlt).
 //
 // `Cursor` is the part a command step changes besides the bit reader, kept apart so that the
 // driver can save it before a step that may run out of input and put it back after (decoder.vlt);

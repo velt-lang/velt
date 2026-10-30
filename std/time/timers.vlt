@@ -1,8 +1,8 @@
-// std/timers: timers that run a promise later (`setTimeout`, `setInterval` and their `clear`
-// functions, which are also globals: std/prelude/timers.vlt, as are `setImmediate` and
+// velt/time (internal): timers that run a promise later (`setTimeout`, `setInterval` and their
+// `clear` functions, which are also globals: std/prelude/timers.vlt, as are `setImmediate` and
 // `clearImmediate`) and a pull-based, drift-free interval (`Ticker`, like Go's `time.Ticker` /
-// tokio's `interval`):
-// `const t = new Ticker(100); while (await t.tick()) { ... }`, or `for await (const n of t)`.
+// tokio's `interval`): `const t = new Ticker(100); while (await t.tick()) { ... }`, or `for await
+// (const n of t)`.
 
 import { AbortController, AbortSignal } from "velt/task";
 

@@ -1,4 +1,4 @@
-// velt/lang/record/symbols: the symbol keys and the defined accessors of a `Record`
+// velt/lang/record (internal): the symbol keys and the defined accessors of a `Record`
 // (std/prelude/record.vlt, fields 2 and 3), as Node keeps them: symbol keys in a table of their
 // own, accessors that `Object.defineProperty` defines in another. Sema calls these methods for a
 // key that is a symbol or `string | symbol`, and in a program that defines accessors for every

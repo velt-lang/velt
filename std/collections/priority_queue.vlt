@@ -1,4 +1,4 @@
-// std/collections/priority_queue: `PriorityQueue<T>`, a binary heap ordered by a comparator.
+// velt/collections (internal): `PriorityQueue<T>`, a binary heap ordered by a comparator.
 //
 // `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` is a min-heap and
 // `(a, b) => b - a` a max-heap (the `sort(cmp)` convention). Elements are only swapped inside the

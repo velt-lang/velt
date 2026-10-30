@@ -1,5 +1,6 @@
-// Prelude: `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` (docs/std/prelude.md#weakmap-weakset-and-weakref), on velt_rt's
-// weak-reference core (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
+// Prelude: `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>`
+// (docs/std/prelude.md#weakmap-weakset-and-weakref), on velt_rt's weak-reference core
+// (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
 //
 // A key (a `WeakSet` member, a `WeakRef` target) must be an object: a class instance, an object
 // type or an array (sema checks it). The compiler counts its type and makes it, and every type

@@ -1,4 +1,4 @@
-// std/fetch/client/send (std-internal): sending a `fetch` request and receiving the response's
+// velt/net/http (internal): sending a `fetch` request and receiving the response's
 // head: on a pooled or new connection, again on a new one when a reused connection turns out
 // to have been closed (for a method that may be sent twice), and again for each redirect the
 // Fetch standard says to follow ("HTTP-redirect fetch").

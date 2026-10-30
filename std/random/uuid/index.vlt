@@ -1,4 +1,5 @@
-// std/uuid: RFC 9562 UUIDs — random v4, time-ordered v7, parsing, formatting and validation.
+// velt/random/uuid: RFC 9562 UUIDs — random v4, time-ordered v7, parsing, formatting and
+// validation.
 //
 // Text form is the canonical lowercase `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (parsing accepts
 // either case); binary form is 16 bytes in network order. Randomness comes from the OS CSPRNG.

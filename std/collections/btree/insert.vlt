@@ -1,4 +1,4 @@
-// velt/collections/btree/insert: inserts into a `Pool` (velt/collections/btree/pool), internal.
+// velt/collections (internal): inserts into a `Pool` (velt/collections/btree/pool), internal.
 //
 // An entry goes into the leaf its key belongs to; a full leaf moves entries to a sibling with
 // room (`shiftToSibling`), and only when both are full splits in two, the new leaf going right

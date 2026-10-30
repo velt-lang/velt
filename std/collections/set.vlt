@@ -1,5 +1,5 @@
-// std/collections/set: `Set<T>`, an insertion-ordered hash set with JS `Set` semantics, plus the
-// ES2025 set algebra (`union`, `intersection`, `difference`, `symmetricDifference`,
+// velt/collections (internal): `Set<T>`, an insertion-ordered hash set with JS `Set` semantics,
+// plus the ES2025 set algebra (`union`, `intersection`, `difference`, `symmetricDifference`,
 // `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`).
 //
 // Built on the prelude `Map<T, bool>` (Robin Hood index over dense insertion-ordered entries),

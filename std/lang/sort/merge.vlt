@@ -1,5 +1,5 @@
-// Building blocks of the stable sort (std/lang/sort/stable.vlt): insertion sort, run reversal and
-// merging sorted runs through a scratch buffer.
+// velt/lang/sort (internal): building blocks of the stable sort (stable.vlt): insertion sort,
+// run reversal and merging sorted runs through a scratch buffer.
 //
 // `x` goes before `y` when `neg(cmp(x, y))`. Elements move between an array and a scratch
 // buffer of the same length with `__intrinsic_array_move` (raw bits: no clone, no drop), so

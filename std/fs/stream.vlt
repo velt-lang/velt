@@ -1,4 +1,4 @@
-// std/fs_stream: reading and writing files in chunks (rt_abi_async.md §14.7), for files too
+// velt/fs (internal): reading and writing files in chunks (rt_abi_async.md §14.7), for files too
 // large to hold in memory or produced incrementally (logs, exports, line-by-line processing).
 //
 // `openRead` gives a `FileReader` (bytes, text chunks or lines); `openWrite` a buffered

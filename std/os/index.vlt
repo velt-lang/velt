@@ -1,4 +1,4 @@
-// std/os: facts about the machine (a subset of Node's `os` module, rt_abi_async.md §14).
+// velt/os: facts about the machine (a subset of Node's `os` module, rt_abi_async.md §14).
 
 declare function velt_rt_os_platform(): string;
 declare function velt_rt_os_arch(): string;

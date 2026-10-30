@@ -1,4 +1,5 @@
-// velt/encoding/json/writer — what `JSON.stringify<T>` writes for numbers and strings, in Velt (#1668).
+// velt/encoding/json (internal): what `JSON.stringify<T>` writes for numbers and strings, in Velt
+// (#1668).
 //
 // The writers append to the string builder of the glue the compiler generates (`out`, a
 // `VeltStrBuf` the functions only pass on to the builder's primitives, never read: every call

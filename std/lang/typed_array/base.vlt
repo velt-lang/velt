@@ -1,4 +1,4 @@
-// velt/lang/typed_array/base: what the typed arrays share (ES2024 §23.2: `%TypedArray%`): the
+// velt/lang/typed_array (internal): what the typed arrays share (ES2024 §23.2: `%TypedArray%`): the
 // std-only base class `TypedArray`, the layout of a new array, and the default sort order.
 // Programs use the globals (velt/lang/typed_array).
 //

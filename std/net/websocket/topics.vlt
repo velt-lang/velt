@@ -1,4 +1,4 @@
-// std/websocket/topics (std-internal): publish/subscribe. Not part of the public API.
+// velt/net/websocket (internal): publish/subscribe. Not part of the public API.
 //
 // A publish encodes the frame once and appends the same bytes to every subscriber's queue, so a
 // message to many sockets costs one encode and one queue append per socket. An idle

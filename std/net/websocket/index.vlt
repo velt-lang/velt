@@ -1,8 +1,7 @@
-// std/websocket: WebSocket connections (RFC 6455), accepted by a std/http server or opened as a
-// client (`ws://`, `wss://`). Written in Velt on std/net streams: framing in
-// std/websocket/frame, the receiving side in std/websocket/reader and receive, the sending side
-// in std/websocket/queue and writer, the handshake in std/websocket/handshake, topics in
-// std/websocket/topics.
+// velt/net/websocket: WebSocket connections (RFC 6455), accepted by a std/http server or opened as
+// a client (`ws://`, `wss://`). Written in Velt on std/net streams: framing in std/websocket/frame,
+// the receiving side in std/websocket/reader and receive, the sending side in std/websocket/queue
+// and writer, the handshake in std/websocket/handshake, topics in std/websocket/topics.
 //
 // Server: inside a `serve` handler, `upgradeWebSocket(req)` claims the connection and gives
 // back the `101` response the handler must return; talk to the socket from a spawned task:

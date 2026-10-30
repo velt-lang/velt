@@ -1,7 +1,7 @@
-// velt/lang/record/reflect: what `Reflect` and `Object.getOwnPropertyDescriptor` do to a record's
-// symbol keys and accessors (velt/lang/record/symbols). `Reflect`, given a record as an `any`, calls
-// the `__anyRec_` functions through `any` (velt_vir `any_builtin.rs`), which reach the record's
-// own methods at its value type. Loaded by std/prelude/global/record_reflect.vlt.
+// velt/lang/record (internal): what `Reflect` and `Object.getOwnPropertyDescriptor` do to a
+// record's symbol keys and accessors (velt/lang/record/symbols). `Reflect`, given a record as an
+// `any`, calls the `__anyRec_` functions through `any` (velt_vir `any_builtin.rs`), which reach the
+// record's own methods at its value type. Loaded by std/prelude/global/record_reflect.vlt.
 
 import "velt/lang/record/symbols";
 

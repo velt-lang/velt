@@ -1,6 +1,6 @@
-// velt/lang/typed_array/core: `ArrayBuffer`, and `BufferView`, what typed arrays and `DataView` are
-// (a byte range of a buffer). The small part of the typed arrays that `fetch` bodies need: a
-// program that uses `Response` loads this module, and the typed array classes only when it
+// velt/lang/typed_array (internal): `ArrayBuffer`, and `BufferView`, what typed arrays and
+// `DataView` are (a byte range of a buffer). The small part of the typed arrays that `fetch` bodies
+// need: a program that uses `Response` loads this module, and the typed array classes only when it
 // names one or reads `bytes()` (std/prelude/global/fetch_bytes.vlt). Programs use the globals.
 //
 // An `ArrayBuffer` owns a `u8[]` of fixed length. Views (`Uint8Array`, `Float64Array`,

@@ -1,5 +1,5 @@
-// std/proxy/array: the array methods called on a proxy of an array (`push`, `pop`, `shift`,
-// `unshift`, `splice`, `map`, `filter`, `forEach`, `some`, `every`, `find`, `includes`,
+// velt/lang/proxy (internal): the array methods called on a proxy of an array (`push`, `pop`,
+// `shift`, `unshift`, `splice`, `map`, `filter`, `forEach`, `some`, `every`, `find`, `includes`,
 // `indexOf`, `join`, `slice`, `reverse`, `sort`; issue #823, docs/reference/types.md "Proxy and
 // Reflect").
 //

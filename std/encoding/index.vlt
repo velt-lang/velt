@@ -1,4 +1,4 @@
-// std/encoding: byte <-> text encodings — Base64 (RFC 4648 §4 and the URL-safe §5 alphabet),
+// velt/encoding: byte <-> text encodings — Base64 (RFC 4648 §4 and the URL-safe §5 alphabet),
 // lowercase hex, and UTF-8 (strict and lossy decoding, validation).
 //
 // Strings are stored as UTF-8, so `utf8Encode` is a copy of a string's bytes (a lone surrogate

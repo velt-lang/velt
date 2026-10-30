@@ -1,4 +1,4 @@
-// std/datetime/civil (std-internal): proleptic Gregorian calendar arithmetic for std/datetime.
+// velt/time (internal): proleptic Gregorian calendar arithmetic for std/datetime.
 //
 // Days are counted from 1970-01-01 (day 0) with Howard Hinnant's `days_from_civil` /
 // `civil_from_days` algorithms (http://howardhinnant.github.io/date_algorithms.html): exact for

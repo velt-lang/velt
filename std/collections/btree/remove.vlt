@@ -1,4 +1,4 @@
-// velt/collections/btree/remove: deletes from a `Pool` (velt/collections/btree/pool), internal.
+// velt/collections (internal): deletes from a `Pool` (velt/collections/btree/pool), internal.
 //
 // A leaf below `MIN_LEAF` entries takes entries from a sibling that has more, or merges with it,
 // by rank (velt/collections/btree/leaf `moveRanks`, no leaf is sorted), and the parent loses a

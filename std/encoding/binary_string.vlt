@@ -1,4 +1,4 @@
-// std/encoding/binary_string: `btoa` and `atob` (globals, as in Node): Base64 of a "binary
+// velt/encoding (internal): `btoa` and `atob` (globals, as in Node): Base64 of a "binary
 // string", whose code units are bytes (0..255).
 //
 // Both read the string's UTF-8 bytes once: a code unit up to 0x7F is one byte, one from 0x80

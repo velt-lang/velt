@@ -1,4 +1,4 @@
-// velt/jsx/attrs/attrs: the HTML attribute types of std/jsx, for JSX providers that extend them
+// velt/jsx (internal): the HTML attribute types of std/jsx, for JSX providers that extend them
 // (docs/internals/contracts/jsx.md "Extending `IntrinsicElements`"). `HtmlAttrs` holds the
 // global attributes; every other type is `HtmlAttrs & { … }` with the element's own. The SVG
 // and MathML types are built the same way on `SvgAttrs` and `MathAttrs`.

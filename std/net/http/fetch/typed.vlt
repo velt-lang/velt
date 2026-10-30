@@ -1,4 +1,4 @@
-// velt/net/http/fetch/typed: the body readers of `Response` and `Request` that give typed arrays,
+// velt/net/http (internal): the body readers of `Response` and `Request` that give typed arrays,
 // `bytes()` and `arrayBuffer()`. They are `extend` blocks of their own, loaded (with the typed
 // arrays) only by programs that name them or a typed array (std/prelude/global/fetch_bytes.vlt
 // and typed_array.vlt), so a fetch or http program that never reads bytes does not compile the

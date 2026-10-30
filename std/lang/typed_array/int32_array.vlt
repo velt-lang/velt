@@ -1,5 +1,6 @@
-// velt/lang/typed_array/int32_array: `Int32Array` (ES2024 §23.2), a view of a byte range of an `ArrayBuffer`
-// (std/lang/typed_array/buffer.vlt) as 32-bit signed integers. Programs use the global.
+// velt/lang/typed_array (internal): `Int32Array` (ES2024 §23.2), a view of a byte range of an
+// `ArrayBuffer` (std/lang/typed_array/buffer.vlt) as 32-bit signed integers. Programs use the
+// global.
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads

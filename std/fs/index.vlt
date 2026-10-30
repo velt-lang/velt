@@ -1,4 +1,4 @@
-// std/fs: file system access over the runtime (docs/internals/contracts/rt_abi_async.md §5).
+// velt/fs: file system access over the runtime (docs/internals/contracts/rt_abi_async.md §5).
 //
 // Every operation has an async form (runs on the runtime's blocking pool) and a `*Sync` form
 // (blocks the calling thread). Failures throw `IoError` (from "velt/io") with a Node-style `code`.

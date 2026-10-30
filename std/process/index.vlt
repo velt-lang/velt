@@ -1,4 +1,4 @@
-// std/process: command-line arguments, setting environment variables, working directory and exit
+// velt/process: command-line arguments, setting environment variables, working directory and exit
 // (rt_abi_async.md §8), byte writes to standard output (`stdout.write`) and whether the standard
 // streams are terminals (`stdout.isTTY`, `isatty(fd)`). Reading variables
 // (`process.env.NAME`) and writing strings (`process.stdout.write(s)`) are on the builtin

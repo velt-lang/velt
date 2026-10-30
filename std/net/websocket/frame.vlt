@@ -1,4 +1,4 @@
-// std/websocket/frame (std-internal): RFC 6455 framing, parsing (and unmasking in place) and
+// velt/net/websocket (internal): RFC 6455 framing, parsing (and unmasking in place) and
 // the header of a frame to send. Not part of the public API.
 
 import { utf8Encode } from "velt/encoding";

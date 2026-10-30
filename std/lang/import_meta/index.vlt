@@ -1,4 +1,4 @@
-// std/import_meta (std-internal): the value of `import.meta` (docs/reference/modules.md). The
+// velt/lang/import_meta: the value of `import.meta` (docs/reference/modules.md). The
 // parser imports `ImportMeta` (as `__ImportMeta`) into every module that mentions `import.meta`
 // and makes the module constant `new __ImportMeta(dirname, filename, main, url)`, whose
 // arguments the compiler fills in. Not part of the public API.

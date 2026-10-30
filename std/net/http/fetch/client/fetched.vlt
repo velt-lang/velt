@@ -1,4 +1,4 @@
-// std/fetch/client/fetched (std-internal): a response whose head has arrived, as a `Response`
+// velt/net/http (internal): a response whose head has arrived, as a `Response`
 // of velt/net/http/fetch/response holds it: the status, the head kept as it was read (headers are made
 // into strings only when a program asks for them), the URL, and the body still to receive.
 //

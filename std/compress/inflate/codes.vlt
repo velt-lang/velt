@@ -1,4 +1,4 @@
-// std/compress/inflate/codes (std-internal): the inner loop of a DEFLATE block, the literals
+// velt/compress (internal): the inner loop of a DEFLATE block, the literals
 // and matches of its Huffman codes (RFC 1951 §3.2.5).
 //
 // `fast` runs while 16 input bytes and a longest match (plus 16 bytes of slack) of output room

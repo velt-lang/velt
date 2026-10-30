@@ -1,4 +1,4 @@
-// std/net: TCP, and TLS over TCP, over the runtime (docs/internals/contracts/rt_abi_async.md
+// velt/net: TCP, and TLS over TCP, over the runtime (docs/internals/contracts/rt_abi_async.md
 // §6). A TLS connection (`connectTls`, a `listenTls` listener) is a `TcpStream` like any other.
 //
 // Handles: the runtime's `VeltListener` / `VeltStream` are opaque `u64` handles (rt_abi_async.md

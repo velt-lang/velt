@@ -1,8 +1,8 @@
-// velt/encoding/json/scan — byte-level JSON lexing (RFC 8259) for the pull reader, skipping and
-// `JsonValue`. Strings without escapes are byte ranges of the source (no copy until a decoder
-// asks for the text); only strings with escapes are decoded. Escapes decode to UTF-16 code
-// units, so a lone surrogate escape stays a lone surrogate (joined with a half next to it, as
-// string concatenation joins halves).
+// velt/encoding/json (internal): byte-level JSON lexing (RFC 8259) for the pull reader, skipping
+// and `JsonValue`. Strings without escapes are byte ranges of the source (no copy until a decoder
+// asks for the text); only strings with escapes are decoded. Escapes decode to UTF-16 code units,
+// so a lone surrogate escape stays a lone surrogate (joined with a half next to it, as string
+// concatenation joins halves).
 //
 // Port of crates/velt_text/src/json_scan.rs (#1668): the same tokens, error details and error
 // offsets.

@@ -1,4 +1,4 @@
-// std/package: the type of the package manifest, `package.vlt` (docs/tooling/manifest.md).
+// velt/package: the type of the package manifest, `package.vlt` (docs/tooling/manifest.md).
 //
 // Types only. `velt` never compiles a manifest: it reads it as data (vpm::manifest::read). These
 // types give editors completion, hover and errors while writing one:

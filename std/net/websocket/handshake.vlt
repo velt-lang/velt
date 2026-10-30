@@ -1,4 +1,4 @@
-// std/websocket/handshake (std-internal): the opening handshake (RFC 6455 §4), server side (the
+// velt/net/websocket (internal): the opening handshake (RFC 6455 §4), server side (the
 // accept key) and client side (the HTTP/1.1 upgrade request over a std/net stream). Not part of
 // the public API.
 

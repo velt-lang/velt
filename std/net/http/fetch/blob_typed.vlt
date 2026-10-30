@@ -1,4 +1,4 @@
-// velt/net/http/fetch/blob_typed: the `Blob` readers that give typed arrays and streams, `bytes()`,
+// velt/net/http (internal): the `Blob` readers that give typed arrays and streams, `bytes()`,
 // `arrayBuffer()` and `stream()`. `extend` blocks of their own, loaded (with what they give) only
 // by programs that call them (std/prelude/global/blob_typed.vlt).
 

@@ -1,4 +1,4 @@
-// std/mem: facts about how values are stored, for code that manages memory layouts itself
+// velt/mem: facts about how values are stored, for code that manages memory layouts itself
 // (Rust's `std::mem`).
 
 export { Arena } from "velt/mem/arena";

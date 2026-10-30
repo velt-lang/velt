@@ -1,5 +1,5 @@
-// std/proxy: JavaScript's `Proxy` and `Reflect` (issue #823; docs/reference/types.md "Proxy and
-// Reflect"), globals loaded when a module names one of them (std/prelude/global/proxy.vlt).
+// velt/lang/proxy: JavaScript's `Proxy` and `Reflect` (issue #823; docs/reference/types.md "Proxy
+// and Reflect"), globals loaded when a module names one of them (std/prelude/global/proxy.vlt).
 //
 // A proxy is a dynamic value: `new Proxy(target, handler)` has the type `any` and holds a
 // `Proxy` object. Its descriptor slots (velt_vir `lower/any_proxy.rs`) call the `__` methods

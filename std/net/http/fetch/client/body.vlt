@@ -1,4 +1,4 @@
-// std/fetch/client/body (std-internal): a response body as it arrives on its connection, its
+// velt/net/http (internal): a response body as it arrives on its connection, its
 // framing undone (RFC 9112 §6): a `content-length`, chunks (`transfer-encoding: chunked`), or
 // everything until the server closes the connection.
 //

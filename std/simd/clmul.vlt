@@ -1,7 +1,7 @@
-// velt/simd/clmul: carry-less multiplication of 64-bit lanes as methods of `u64x2` (docs/std/simd.md
-// "Carry-less multiplication"): x86's PCLMULQDQ and ARM's PMULL, the instruction behind CRC
-// folding and GHASH. `a.clmulLow(b)` is the 128-bit product of the low lanes as polynomials over
-// GF(2) (XOR instead of addition, no carries), its low 64 bits in lane 0.
+// velt/simd (internal): carry-less multiplication of 64-bit lanes as methods of `u64x2`
+// (docs/std/simd.md "Carry-less multiplication"): x86's PCLMULQDQ and ARM's PMULL, the instruction
+// behind CRC folding and GHASH. `a.clmulLow(b)` is the 128-bit product of the low lanes as
+// polynomials over GF(2) (XOR instead of addition, no carries), its low 64 bits in lane 0.
 //
 // Every method always works: it is the instruction where the CPU has it (`u64x2.hasClmulX86()`,
 // `u64x2.hasClmulArm()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact

@@ -1,5 +1,5 @@
-// std/datetime: `DateTime`, a UTC-first instant (JS `Date` without its local-time pitfalls), and
-// `Duration`.
+// velt/time (internal): `DateTime`, a UTC-first instant (JS `Date` without its local-time
+// pitfalls), and `Duration`.
 //
 // A DateTime is epoch milliseconds (i64, proleptic Gregorian, no leap seconds) in a Copy
 // struct, so it passes and stores like a number. Getters and `toISOString` are UTC; local time

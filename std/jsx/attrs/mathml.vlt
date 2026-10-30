@@ -1,4 +1,4 @@
-// std/jsx/attrs/mathml: attribute types of MathML Core elements (each is `MathAttrs`, the
+// velt/jsx (internal): attribute types of MathML Core elements (each is `MathAttrs`, the
 // attributes every MathML element accepts, `&` its own; public as `velt/jsx/attrs/attrs`).
 
 import type { Style } from "velt/jsx/node";

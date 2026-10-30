@@ -1,4 +1,4 @@
-// std/fetch/client/target (std-internal): a request's URL as the client uses it: its WHATWG
+// velt/net/http (internal): a request's URL as the client uses it: its WHATWG
 // serialization (what `res.url` reports), where to connect, the `host` header and the
 // request-target.
 //

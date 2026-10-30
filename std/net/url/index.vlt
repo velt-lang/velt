@@ -1,4 +1,4 @@
-// std/url: WHATWG-style `URL` and `URLSearchParams`, plus JS's `encodeURIComponent` family.
+// velt/net/url: WHATWG-style `URL` and `URLSearchParams`, plus JS's `encodeURIComponent` family.
 //
 // Parsing follows the WHATWG URL Standard for the inputs people write (std/net/url/record.vlt):
 // special schemes (http https ws wss ftp file) get lowercased hosts, dropped default ports,

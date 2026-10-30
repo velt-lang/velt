@@ -1,6 +1,6 @@
-// std/fetch/response: the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to, what
-// a server handler returns (std/http.vlt), or a response built with `new Response(body, init)` /
-// `Response.json(data)`.
+// velt/net/http (internal): the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to,
+// what a server handler returns (std/http.vlt), or a response built with `new Response(body, init)`
+// / `Response.json(data)`.
 //
 // A fetched response holds the client's response (`Fetched`, std/net/http/fetch/client/fetched.vlt) whose
 // head has arrived; its body is received by the first `text()`, `json()`, `bytes()` or

@@ -1,4 +1,4 @@
-// std/jsx/factory: the functions compiled JSX calls (docs/internals/contracts/jsx.md "Required
+// velt/jsx (internal): the functions compiled JSX calls (docs/internals/contracts/jsx.md "Required
 // exports" and "SSR precompile"), plus `raw`. Internal: std/jsx/jsx-runtime re-exports them.
 //
 // Every factory renders what it can at once (node.vlt): text is escaped into the new node's strings

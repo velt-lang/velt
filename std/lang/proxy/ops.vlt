@@ -1,9 +1,9 @@
-// std/proxy/ops: the operations on `any` that a proxy answers with its traps, which sema calls
-// in a program that has loaded `Proxy` (std/prelude/global/proxy.vlt) instead of the prelude's
-// (std/prelude/adapt.vlt): a spread, `Object.hasOwn`, `Object.values` / `entries` and
+// velt/lang/proxy (internal): the operations on `any` that a proxy answers with its traps, which
+// sema calls in a program that has loaded `Proxy` (std/prelude/global/proxy.vlt) instead of the
+// prelude's (std/prelude/adapt.vlt): a spread, `Object.hasOwn`, `Object.values` / `entries` and
 // `delete` of an `any`; the operations whose key is a symbol constant (`p[KEY]`, `KEY in p`,
-// `delete p[KEY]`, `Object.hasOwn(p, KEY)`); and `new Proxy(target, handler)` with a handler
-// typed `any` (issue #823; docs/reference/types.md "Proxy and Reflect").
+// `delete p[KEY]`, `Object.hasOwn(p, KEY)`); and `new Proxy(target, handler)` with a handler typed
+// `any` (issue #823; docs/reference/types.md "Proxy and Reflect").
 //
 // A symbol constant names a member of a typed value by its key name (U+FFFF and `Symbol(d)`,
 // velt_sema's `symbols.rs`); sema passes both that name and the symbol itself, so a plain value

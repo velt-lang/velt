@@ -1,4 +1,4 @@
-// std/task: cancellation, timeouts, task scopes and task placement (docs/std/task.md).
+// velt/task: cancellation, timeouts, task scopes and task placement (docs/std/task.md).
 //
 // `AbortController` / `AbortSignal` follow TypeScript's shapes. Cancellation is cooperative:
 // `abort()` sets the signal and wakes the tasks waiting on it; code that accepts a signal checks

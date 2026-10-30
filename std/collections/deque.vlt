@@ -1,4 +1,4 @@
-// std/collections/deque: `Deque<T>`, a double-ended queue on a growable ring buffer: O(1)
+// velt/collections (internal): `Deque<T>`, a double-ended queue on a growable ring buffer: O(1)
 // amortized push and pop at both ends, O(1) indexing.
 //
 // Slots are `(T | undefined)[]` (empty slots are `undefined`) with a power-of-two capacity plus

@@ -1,4 +1,4 @@
-// velt/text/string_builder — `StringBuilder` (a global): builds a string in place, one buffer that
+// velt/text (internal): `StringBuilder` (a global): builds a string in place, one buffer that
 // grows by doubling, so `n` appends cost O(total length) (#1677). Velt's own; JavaScript builds
 // with `+=` and `join`, which Velt compiles to the same builder.
 //

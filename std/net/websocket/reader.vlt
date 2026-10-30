@@ -1,4 +1,4 @@
-// std/websocket/reader (std-internal): the receiving side of a connection. Not part of the
+// velt/net/websocket (internal): the receiving side of a connection. Not part of the
 // public API.
 //
 // The connection's `Reader` holds the bytes read and not yet parsed, and a fragmented message

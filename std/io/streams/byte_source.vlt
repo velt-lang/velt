@@ -1,4 +1,4 @@
-// velt/io/streams/byte_source (std-internal): `ByteSource`, the base class of the bodies a fetch body
+// velt/io (internal): `ByteSource`, the base class of the bodies a fetch body
 // (`BodyInit`, std/net/http/fetch/body.vlt) takes besides text and bytes: `ReadableStream<R>`, `Blob` (and
 // `File`) and `FormData`. `BodyInit` names this class rather than each of them, so a program that
 // uses `Response` without them loads neither velt/io/streams/streams, the typed arrays nor the form code

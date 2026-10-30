@@ -1,7 +1,7 @@
-// std/stdin: reading standard input (rt_abi_async.md §14.4), line by line or all at once, as
-// text or bytes. Sync and async reads share one buffered stream; text is UTF-8 (invalid bytes
-// become U+FFFD). A line already buffered costs no system call (and no hop to the blocking pool
-// for `await readLine()`).
+// velt/process (internal): reading standard input (rt_abi_async.md §14.4), line by line or all at
+// once, as text or bytes. Sync and async reads share one buffered stream; text is UTF-8 (invalid
+// bytes become U+FFFD). A line already buffered costs no system call (and no hop to the blocking
+// pool for `await readLine()`).
 
 import { IoError } from "velt/io/error";
 import { IoResult, unwrapIo } from "velt/native/result";

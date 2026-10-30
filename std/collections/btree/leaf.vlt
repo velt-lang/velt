@@ -1,4 +1,4 @@
-// velt/collections/btree/leaf: entries of a leaf of a `Pool` (velt/collections/btree/pool),
+// velt/collections (internal): entries of a leaf of a `Pool` (velt/collections/btree/pool),
 // internal.
 //
 // A leaf keeps its keys and values in physical slots `0 .. n` in the order they came, its words

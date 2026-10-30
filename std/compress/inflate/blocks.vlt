@@ -1,4 +1,4 @@
-// std/compress/inflate/blocks (std-internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
+// velt/compress (internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
 // three-bit header, stored blocks, and the fixed or dynamic Huffman tables of the others, whose
 // symbols velt/compress/inflate/codes decodes.
 //

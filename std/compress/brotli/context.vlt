@@ -1,5 +1,5 @@
-// std/compress/brotli/context (internal to velt/compress/brotli/brotli_decoder): the literal context lookup of
-// RFC 7932 section 7.1, for the four context modes in one table of 256 numbers.
+// velt/compress (internal): the literal context lookup of RFC 7932 section 7.1, for the four
+// context modes in one table of 256 numbers.
 //
 // Byte `m` (mode m: 0 LSB6, 1 MSB6, 2 UTF8, 3 signed) of `CONTEXT[b]` is what the previous byte
 // `b` adds to the context, byte `4 + m` what the byte before it adds. The two are disjoint bit

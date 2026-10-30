@@ -1,4 +1,4 @@
-// std/compress/error: the error a decoder of velt/compress throws for input it cannot decode.
+// velt/compress (internal): the error a decoder of velt/compress throws for input it cannot decode.
 
 /** Compressed input that is not valid, or that ends before its stream does. */
 export class CompressError extends Error {

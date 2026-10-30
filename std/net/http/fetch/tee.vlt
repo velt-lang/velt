@@ -1,4 +1,4 @@
-// std/fetch/tee (std-internal): one body read by two readers, for `Response.clone()` and
+// velt/net/http (internal): one body read by two readers, for `Response.clone()` and
 // `Request.clone()`: the source's chunks are pulled once, each handed to both readers (the
 // second gets a copy, so neither can change the other's), as JS tees a body's stream. A chunk
 // one reader has not read yet waits for it, so a reader that never reads keeps the rest of the

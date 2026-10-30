@@ -1,4 +1,4 @@
-// velt/collections/btree/inline_key: `InlineKey`, the order-preserving bytes of a key that
+// velt/collections (internal): `InlineKey`, the order-preserving bytes of a key that
 // `BTreeMap` keeps beside its keys, a few per key, to search nodes without reading the keys.
 //
 // A key's encoding is a byte string that orders as the keys do: for keys `a < b`, `a`'s bytes

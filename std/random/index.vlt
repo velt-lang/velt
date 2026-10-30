@@ -1,4 +1,4 @@
-// std/random: fast pseudo-random numbers (like JavaScript's `Math.random()`), for simulations,
+// velt/random: fast pseudo-random numbers (like JavaScript's `Math.random()`), for simulations,
 // sampling, shuffling, jitter and load generation. NOT for secrets, tokens or anything an
 // attacker must not predict: use std/crypto (`randomBytes`, `randomInt`) for those.
 //

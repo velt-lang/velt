@@ -1,4 +1,4 @@
-// velt/collections/btree/edges: the smallest and the largest key of a `Pool`
+// velt/collections (internal): the smallest and the largest key of a `Pool`
 // (velt/collections/btree/pool), internal.
 //
 // A node at the edge of the tree (the root, and the first and last node of each level) lacks a

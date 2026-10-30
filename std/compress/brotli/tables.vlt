@@ -1,6 +1,6 @@
-// std/compress/brotli/tables (internal to velt/compress/brotli/brotli_decoder): the fixed tables of RFC 7932.
-// Module constants that are arrays of number literals, so each is read-only data that costs
-// nothing to reach (docs/reference/variables.md, "Tables").
+// velt/compress (internal): the fixed tables of RFC 7932. Module constants that are arrays of
+// number literals, so each is read-only data that costs nothing to reach
+// (docs/reference/variables.md, "Tables").
 
 /** The order in which the code lengths of the code length alphabet are sent (section 3.5). */
 export const CODE_LENGTH_ORDER: u8[] = [

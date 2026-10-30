@@ -1,4 +1,4 @@
-// std/compress/inflate/tables (std-internal): the constant tables of DEFLATE (RFC 1951 §3.2.5)
+// velt/compress (internal): the constant tables of DEFLATE (RFC 1951 §3.2.5)
 // and of gzip's CRC-32 (RFC 1952 §8). Module constants that are arrays of number literals, so
 // each is stored once in the program and read where it is.
 

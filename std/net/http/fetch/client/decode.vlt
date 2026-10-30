@@ -1,4 +1,4 @@
-// std/fetch/client/decode (std-internal): undoing the codings a server compressed a body with
+// velt/net/http (internal): undoing the codings a server compressed a body with
 // (`content-encoding`), as Node's `fetch` does: `gzip` / `x-gzip` (several members), `deflate`
 // (zlib-wrapped or raw, decided by the first byte) and `br`, in any combination of up to five,
 // the last one undone first. A list naming another coding leaves the body as it is; an empty

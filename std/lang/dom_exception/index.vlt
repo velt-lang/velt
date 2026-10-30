@@ -1,6 +1,6 @@
-// std/dom_exception: the WebIDL `DOMException` (a global, as in Node), the error web APIs throw
-// (`btoa`/`atob`'s `InvalidCharacterError`). Its `name` says what went wrong and `code` is the
-// legacy number of that name (0 for names without one), as Node computes it at construction.
+// velt/lang/dom_exception: the WebIDL `DOMException` (a global, as in Node), the error web APIs
+// throw (`btoa`/`atob`'s `InvalidCharacterError`). Its `name` says what went wrong and `code` is
+// the legacy number of that name (0 for names without one), as Node computes it at construction.
 
 /**
  * The error web APIs throw (a global, as in Node): `name` is the kind (`"InvalidCharacterError"`,

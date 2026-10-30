@@ -1,4 +1,4 @@
-// std/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), secure random bytes/integers
+// velt/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), secure random bytes/integers
 // and constant-time comparison.
 //
 // The hashes are Velt: where the CPU has SHA instructions (`velt/simd`, #1330: ARMv8 SHA2, x86

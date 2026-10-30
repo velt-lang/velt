@@ -1,5 +1,5 @@
-// std/fetch/headers: the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the type
-// of a server request's `headers` (std/http.vlt).
+// velt/net/http (internal): the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the
+// type of a server request's `headers` (std/http.vlt).
 //
 // One flat list, `[name, value, name, value, …]`, in insertion order: names are lowercased when
 // they are added (header names are case-insensitive), values have surrounding whitespace

@@ -1,6 +1,6 @@
-// std/arena: a typed memory pool (region). Values are appended to one growing array and named by
-// their `u32` index, and the whole pool is released at once with `reset()`, which keeps the
-// memory for the next round: a per-iteration tree costs no allocation after the first one.
+// velt/mem (internal): a typed memory pool (region). Values are appended to one growing array and
+// named by their `u32` index, and the whole pool is released at once with `reset()`, which keeps
+// the memory for the next round: a per-iteration tree costs no allocation after the first one.
 //
 // Best with Copy structs that link to each other by index
 // (`struct Node { left: u32; right: u32 }`), the arena shape of Rust's bumpalo / typed-arena

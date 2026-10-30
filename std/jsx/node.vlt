@@ -1,4 +1,4 @@
-// std/jsx/node: the value every JSX expression evaluates to (internal; std/jsx and
+// velt/jsx (internal): the value every JSX expression evaluates to (internal; std/jsx and
 // std/jsx/jsx-runtime export it).
 //
 // std/jsx renders eagerly: building an element renders it, so a tree without async components

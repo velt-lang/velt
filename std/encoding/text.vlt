@@ -1,4 +1,4 @@
-// velt/encoding/text: the WHATWG `TextEncoder` and `TextDecoder` (globals, as in Node:
+// velt/encoding (internal): the WHATWG `TextEncoder` and `TextDecoder` (globals, as in Node:
 // docs/std/encoding.md), apart from the rest of velt/encoding so that a program using only
 // Base64 or hex does not load the typed arrays they take and give.
 

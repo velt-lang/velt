@@ -1,4 +1,4 @@
-// std/json: the `json.Value` name for dynamic JSON values.
+// velt/encoding/json: the `json.Value` name for dynamic JSON values.
 //
 // `JSON`, `JsonError` and the value class itself are globals (std/prelude/json/json.vlt, loaded
 // when a module names them: std/prelude/global/json.vlt), because `JSON.stringify`/`JSON.parse`

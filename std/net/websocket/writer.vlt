@@ -1,4 +1,4 @@
-// std/websocket/writer (std-internal): the flusher that writes a connection's `SendQueue`, and
+// velt/net/websocket (internal): the flusher that writes a connection's `SendQueue`, and
 // what a send or a close waits for. Not part of the public API.
 
 import { IoError } from "velt/io/error";

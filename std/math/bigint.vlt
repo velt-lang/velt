@@ -1,4 +1,5 @@
-// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (dashu-int).
+// velt/math (internal): arbitrary-precision integers (JS `BigInt`), backed by the runtime
+// (dashu-int).
 //
 // Velt has no operator overloading, so arithmetic is methods: `a.add(b)` returns a new BigInt
 // like JS `a + b`; `a.addAssign(b)` changes `a` in place like `a += b`, reusing its buffer (hot

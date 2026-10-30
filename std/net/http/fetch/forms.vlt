@@ -1,4 +1,4 @@
-// velt/net/http/fetch/forms: the body readers of `Response` and `Request` that give a `Blob` or a
+// velt/net/http (internal): the body readers of `Response` and `Request` that give a `Blob` or a
 // `FormData`, `blob()` and `formData()`. `extend` blocks of their own, loaded (with the blob and
 // form code) only by programs that call them (std/prelude/global/fetch_forms.vlt).
 

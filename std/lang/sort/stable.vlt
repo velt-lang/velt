@@ -1,8 +1,9 @@
-// The stable sort behind `sort(cmp)` and `toSorted(cmp)` (std/prelude/sort.vlt): the shape of
-// Rust's driftsort. One scan finds the long natural runs (ascending, or strictly descending
-// and then reversed, which keeps the sort stable); the stretches between them are sorted by
-// a stable quicksort; then neighbouring runs are merged pairwise (std/lang/sort/merge.vlt).
-// O(n log n) comparisons and moves, O(n) for sorted, reversed or sorted-then-appended input.
+// velt/lang/sort (internal): the stable sort behind `sort(cmp)` and `toSorted(cmp)`
+// (std/prelude/sort.vlt): the shape of Rust's driftsort. One scan finds the long natural runs
+// (ascending, or strictly descending and then reversed, which keeps the sort stable); the stretches
+// between them are sorted by a stable quicksort; then neighbouring runs are merged pairwise
+// (std/lang/sort/merge.vlt). O(n log n) comparisons and moves, O(n) for sorted, reversed or
+// sorted-then-appended input.
 //
 // The quicksort partitions into a scratch buffer as long as the array: elements less than
 // the pivot fill it from the front in order, the others from the back, and come back in order
