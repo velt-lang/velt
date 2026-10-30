@@ -3,7 +3,7 @@
 import { EINTR, lastOsError, pwrite, write } from "velt/fs/fd/system";
 import { bufferOffset, descriptor, writeLength, writePosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
-import { utf8Encode } from "velt/encoding";
+import { utf8Encode } from "velt/encoding/utf8";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
 
 /**

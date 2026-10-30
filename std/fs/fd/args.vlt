@@ -1,7 +1,7 @@
 // velt/fs (internal): the arguments of the file-descriptor API as Node checks them, and the
 // `RangeError`s and `TypeError`s with Node's messages for those it rejects.
 
-import { utf8Encode } from "velt/encoding";
+import { utf8Encode } from "velt/encoding/utf8";
 
 /** `Number.MAX_SAFE_INTEGER`: the largest offset, length or position Node accepts. */
 export const MAX_SAFE: number = 9007199254740991;
