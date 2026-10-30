@@ -1,0 +1,134 @@
+// velt/collections (internal): the node layout of `ConcurrentMap`
+// (velt/collections/concurrent_map's header): its words and constants, and the hashes, tags and key
+// words of its keys.
+
+import { InlineKey } from "velt/collections/btree/inline_key";
+import { utf8Length } from "velt/encoding/string_bytes";
+import { u8x16 } from "velt/simd";
+
+export const NODE: u64 = 128;
+export const LEAF_CAP: u64 = 56;
+export const INNER_CAP: u64 = 55;
+export const TAGS: u64 = 2;
+export const TAG_WORDS: u64 = 14;
+export const PAIRS: u64 = 16;
+export const INDEX: u64 = 2;
+export const GROUPS: u64 = 6;
+export const GROUP0: u64 = 16;
+export const LEAF_BIT: u64 = 4294967296;
+export const LEN_MASK: u64 = 4294967295;
+export const LEVEL_SHIFT: u64 = 40;
+export const EXCLUSIVE: u64 = 1;
+export const SHARED_MASK: u64 = 2097150;
+export const VERSION_UNIT: u64 = 2097152;
+export const LANES: u64 = 0x0001000100010001;
+export const HIGHS: u64 = 0x8000800080008000;
+/** The one key a map cannot hold: unused key slots of inner nodes hold it. */
+export const MAX_KEY: u64 = 18446744073709551615;
+export const NONE: u64 = 18446744073709551615;
+/** `spare`: the top node's index + 1 (0 for none) in the low half, a count of changes above. */
+export const SPARE_TAG: u64 = 4294967296;
+/** `tryAdd`'s answers: added (with the value before), the key is absent, or start over. */
+export const ADD_DONE: u64 = 0;
+export const ADD_ABSENT: u64 = 1;
+export const ADD_RETRY: u64 = 2;
+/** `tryDelete`'s answers: the key is absent, removed, start over, or its leaf would empty. */
+export const DEL_ABSENT: u64 = 0;
+export const DEL_DONE: u64 = 1;
+export const DEL_RETRY: u64 = 2;
+export const DEL_LAST: u64 = 3;
+/**
+ * `skeys` entries per node: one per leaf slot, then the node's fence, the string of the
+ * separator left of it in its parent.
+ */
+export const SKEYS: u64 = 57;
+export const FENCE: u64 = 56;
+/** Nodes per entry of capacity: a split leaf keeps 28 entries, plus the inner nodes above. */
+export const ENTRIES_PER_NODE: u64 = 27;
+
+/**
+ * A key's tag: 16 bits of its hash, never 0 (an empty lane). `k` is what `hashKey` gives: a
+ * `u64` key itself, a string's hash.
+ */
+export function tagOf(k: u64): u64 {
+  return ((k * 0x9E3779B97F4A7C15) >> 48) | 1;
+}
+
+/** A key's home slot in a leaf: other bits of the hash than its tag's, scaled to the slots. */
+export function homeOf(k: u64): u64 {
+  return ((((k * 0x9E3779B97F4A7C15) >> 16) & 4294967295) * LEAF_CAP) >> 32;
+}
+
+/**
+ * What a key's tag and home slot are made from (`tagOf`, `homeOf`): a `u64` key itself, the
+ * hash of a whole string (its word, the first 8 bytes, would give keys with a common prefix one
+ * tag).
+ */
+export function hashKey<K>(k: u64, key: K): u64 {
+  if (typeIs<K, string>()) {
+    return strHash(asType<string>(key));
+  }
+  return k;
+}
+
+/**
+ * A hash of all of the bytes of `s`, 16 at a time (zero past its end, so the length is mixed in
+ * too: `"a"` and `"a\0"` differ). Not seeded: keys an attacker picks to collide share tags, which
+ * makes their leaf's lookups compare more strings, nothing worse.
+ */
+export function strHash(s: string): u64 {
+  const n = utf8Length(s);
+  let h = (n as u64) ^ 0x243F6A8885A308D3;
+  for (let i: usize = 0; i < n; i += 16) {
+    const v = u8x16.loadString(s, i).asU64x2();
+    h = (h ^ v.lane(0)) * 0x9E3779B97F4A7C15;
+    h = (h ^ (h >> 32) ^ v.lane(1)) * 0xBF58476D1CE4E5B9;
+    h ^= h >> 29;
+  }
+  return h;
+}
+
+/** Slot `home` if it is set in the mask `free`, else the lowest set (one is). */
+export function pick(free: u64, home: u64): u64 {
+  return ((free >> home) & 1) != 0 ? home : free.trailingZeros() as u64;
+}
+
+/** Word of key `j` of an inner node, from its base. */
+export function keyAt(j: u64): u64 {
+  return GROUP0 + ((j >> 3) << 4) + (j & 7);
+}
+
+/** Word of child `i` of an inner node, from its base. */
+export function childAt(i: u64): u64 {
+  return GROUP0 + ((i >> 3) << 4) + 8 + (i & 7);
+}
+
+export function rangeError(what: string): never {
+  panic(`RangeError: ConcurrentMap.${what}`);
+}
+
+/** Whether a `shared<V>` is an atomic integer, which `add` and `set` change in place. */
+export function atomicShared<V>(): bool {
+  return typeIs<V, i64>() || typeIs<V, u64>() || typeIs<V, isize>() || typeIs<V, usize>();
+}
+
+/** The tree word of `key`: a `u64` key itself, a string's first 8 bytes in order. */
+export function keyWord<K>(key: K): u64 {
+  if (typeIs<K, u64>()) {
+    return asType<u64>(key);
+  }
+  if (typeIs<K, string>()) {
+    return asType<string>(key).inlineKey(0);
+  }
+  rangeError("keys other than u64 and string are not supported");
+}
+
+/** The order of strings `a` and `b` (-1, 0 or 1), read in place where they are kept. */
+export function strOrder(a: string, b: string): i64 {
+  return a.compareTo(b);
+}
+
+/** Whether strings `a` and `b` are equal, read in place. */
+export function strSame(a: string, b: string): bool {
+  return a == b;
+}

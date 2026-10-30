@@ -1,0 +1,350 @@
+// velt/collections (internal): inserting into `ConcurrentMap`: taking a node from the arena,
+// setting a key's value (splitting full nodes on the way down), adding to a value.
+
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import {
+  ADD_ABSENT,
+  ADD_DONE,
+  ADD_RETRY,
+  childAt,
+  EXCLUSIVE,
+  hashKey,
+  homeOf,
+  INNER_CAP,
+  keyAt,
+  LEAF_BIT,
+  LEAF_CAP,
+  LEN_MASK,
+  LEVEL_SHIFT,
+  NODE,
+  NONE,
+  PAIRS,
+  rangeError,
+  SHARED_MASK,
+  SKEYS,
+  SPARE_TAG,
+  TAG_WORDS,
+  TAGS,
+} from "velt/collections/concurrent/layout";
+import { isUnchanged, readVersion, tryLockAt, unlock } from "velt/collections/concurrent/latch";
+import {
+  childFor,
+  findSlot,
+  freeSlot,
+  place,
+  sameKey,
+  tagAt,
+} from "velt/collections/concurrent/search";
+import {
+  insertSeparator,
+  padKeys,
+  reindex,
+  setTag,
+  splitInner,
+  splitInnerKeyed,
+  splitLeaf,
+  splitLeafKeyed,
+} from "velt/collections/concurrent/split";
+
+/** A node for a split: a spare one (its tags cleared) if any, else one never used. */
+export function alloc<K, V extends Frozen>(cm: ConcurrentMap<K, V>): u64 {
+  while (true) {
+    const s = cm.spare.load("acquire");
+    const top = s & LEN_MASK;
+    if (top == 0) {
+      break;
+    }
+    // The next spare, in the meta word; read stale if another thread took `top` meanwhile,
+    // and then the exchange fails, as the count of changes moved on.
+    const below = cm.w[(top - 1) * NODE + 1].load("relaxed") & LEN_MASK;
+    if (
+      cm.spare.compareExchange(s, ((s & ~LEN_MASK) + SPARE_TAG) | below, "acquire", "relaxed") == s
+    ) {
+      const b = (top - 1) * NODE;
+      for (let w: u64 = 0; w < TAG_WORDS; w++) {
+        cm.w[b + TAGS + w].store(0, "relaxed");
+      }
+      return top - 1;
+    }
+  }
+  const n = cm.next.add(1, "relaxed");
+  if (n >= cm.nodes) {
+    rangeError("set: out of room (create the map with a larger capacity)");
+  }
+  return n;
+}
+
+/** One descent of `set` of `key` (word `k`); `false` to start over. */
+export function trySet<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+  val: u64,
+): bool {
+  let n = cm.root.load("acquire");
+  let v = readVersion(cm, n * NODE);
+  if (cm.root.load("acquire") != n) {
+    return false;
+  }
+  let parent = NONE;
+  let pv: u64 = 0;
+  while (true) {
+    const base = n * NODE;
+    const meta = cm.w[base + 1].load("relaxed");
+    const leaf = (meta & LEAF_BIT) != 0;
+    const len = meta & LEN_MASK;
+    if (len >= (leaf ? LEAF_CAP : INNER_CAP)) {
+      splitFull(cm, n, v, meta, parent, pv);
+      return false;
+    }
+    if (leaf) {
+      if (!tryLockAt(cm, base, v)) {
+        return false;
+      }
+      const i = findSlot(cm, base, k, key);
+      if (i < LEAF_CAP) {
+        cm.w[base + PAIRS + 1 + 2 * i].store(val, "relaxed");
+      } else {
+        place(cm, base, k, key, val);
+        cm.w[base + 1].store(meta + 1, "relaxed");
+      }
+      unlock(cm, base, v);
+      return true;
+    }
+    const next = descend(cm, base, v, k, key);
+    if (next == NONE) {
+      return false;
+    }
+    parent = n;
+    pv = v;
+    n = next;
+    v = readVersion(cm, n * NODE);
+    if (!isUnchanged(cm, base, pv)) {
+      return false;
+    }
+  }
+}
+
+/**
+ * Splits full node `n` (at version `v`, its meta word `meta`), holding its parent (`NONE` for
+ * the root) at version `pv` too; does nothing if either changed. The caller starts over.
+ */
+export function splitFull<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  n: u64,
+  v: u64,
+  meta: u64,
+  parent: u64,
+  pv: u64,
+) {
+  const base = n * NODE;
+  const leaf = (meta & LEAF_BIT) != 0;
+  if (parent != NONE && !tryLockAt(cm, parent * NODE, pv)) {
+    return;
+  }
+  if (!tryLockAt(cm, base, v)) {
+    if (parent != NONE) {
+      unlock(cm, parent * NODE, pv);
+    }
+    return;
+  }
+  if (parent == NONE && cm.root.load("relaxed") != n) {
+    unlock(cm, base, v);
+    return;
+  }
+  const right = alloc(cm);
+  // For string keys, the split sets `right`'s fence (the separator's string) before `right`
+  // is linked.
+  let sep: u64 = 0;
+  if (typeIs<K, string>()) {
+    sep = leaf ? splitLeafKeyed(cm, n, right) : splitInnerKeyed(cm, n, right);
+  } else {
+    sep = leaf ? splitLeaf(cm, n, right) : splitInner(cm, n, right);
+  }
+  if (parent == NONE) {
+    const r = alloc(cm);
+    const rb = r * NODE;
+    cm.w[rb + keyAt(0)].store(sep, "relaxed");
+    padKeys(cm, rb, 1);
+    cm.w[rb + childAt(0)].store(n, "relaxed");
+    cm.w[rb + childAt(1)].store(right, "relaxed");
+    const below = leaf ? 0 : (meta >> LEVEL_SHIFT) & 255;
+    cm.w[rb + 1].store(((below + 1) << LEVEL_SHIFT) | 1, "relaxed");
+    reindex(cm, rb, 1);
+    cm.root.store(r, "release");
+  } else {
+    insertSeparator(cm, parent, sep, right);
+    unlock(cm, parent * NODE, pv);
+  }
+  unlock(cm, base, v);
+}
+
+/** One descent of `set` of a boxed value (`trySet`'s, storing `boxed`); `false` to start over. */
+export function trySetBoxed<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+  boxed: shared<V>,
+): bool {
+  let n = cm.root.load("acquire");
+  let v = readVersion(cm, n * NODE);
+  if (cm.root.load("acquire") != n) {
+    return false;
+  }
+  let parent = NONE;
+  let pv: u64 = 0;
+  while (true) {
+    const base = n * NODE;
+    const meta = cm.w[base + 1].load("relaxed");
+    const leaf = (meta & LEAF_BIT) != 0;
+    if ((meta & LEN_MASK) >= (leaf ? LEAF_CAP : INNER_CAP)) {
+      splitFull(cm, n, v, meta, parent, pv);
+      return false;
+    }
+    if (leaf) {
+      if (!tryLockAt(cm, base, v)) {
+        return false;
+      }
+      let i = findSlot(cm, base, k, key);
+      if (i >= LEAF_CAP) {
+        const h = hashKey(k, key);
+        i = freeSlot(cm, base, h);
+        cm.w[base + PAIRS + 2 * i].store(k, "relaxed");
+        setTag(cm, base, i, h);
+        if (typeIs<K, string>()) {
+          cm.skeys[n * SKEYS + i].store(shared(asType<string>(key)), "release");
+        }
+        cm.w[base + 1].store(meta + 1, "relaxed");
+      }
+      // Replacing a value retires the one before: freed once no reader has it.
+      cm.vals[n * LEAF_CAP + i].store(boxed, "release");
+      unlock(cm, base, v);
+      return true;
+    }
+    const next = descend(cm, base, v, k, key);
+    if (next == NONE) {
+      return false;
+    }
+    parent = n;
+    pv = v;
+    n = next;
+    v = readVersion(cm, n * NODE);
+    if (!isUnchanged(cm, base, pv)) {
+      return false;
+    }
+  }
+}
+
+/** The child of the inner node at `base` (at version `v`) that holds `key`, or `NONE`. */
+export function descend<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  v: u64,
+  k: u64,
+  key: K,
+): u64 {
+  const c = cm.w[childFor(cm, base, k, key)].load("relaxed");
+  if (!isUnchanged(cm, base, v) || c >= cm.nodes) {
+    return NONE;
+  }
+  return c;
+}
+
+/**
+ * One descent of `add`: `[ADD_DONE, value before]`, `[ADD_ABSENT, 0]` or `[ADD_RETRY, 0]`.
+ * The descent is `get`'s; the leaf is then taken exclusively at the version read, as `set`
+ * takes it, and the value changed in place.
+ */
+export function tryAdd<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+  delta: u64,
+): [u64, u64] {
+  const n = cm.root.load("acquire");
+  let b = n * NODE;
+  if ((cm.w.length as u64) < NODE || b > (cm.w.length as u64) - NODE) {
+    return [ADD_RETRY, 0];
+  }
+  let v = readVersion(cm, b);
+  if (cm.root.load("acquire") != n) {
+    return [ADD_RETRY, 0];
+  }
+  let meta = cm.w[b + 1].load("relaxed");
+  const levels = (meta >> LEVEL_SHIFT) & 255;
+  if (levels == 0) {
+    // The root is the leaf: take it at the version read.
+    if ((meta & LEAF_BIT) == 0 || !tryLockAt(cm, b, v)) {
+      return [ADD_RETRY, 0];
+    }
+  } else {
+    for (let l: u64 = 1; l < levels; l++) {
+      const c = cm.w[childFor(cm, b, k, key)].load("relaxed");
+      const cb = c * NODE;
+      if (c >= cm.nodes || (cm.w.length as u64) < NODE || cb > (cm.w.length as u64) - NODE) {
+        return [ADD_RETRY, 0];
+      }
+      const vc = readVersion(cm, cb);
+      if (!isUnchanged(cm, b, v)) {
+        return [ADD_RETRY, 0];
+      }
+      b = cb;
+      v = vc;
+    }
+    const c = cm.w[childFor(cm, b, k, key)].load("relaxed");
+    const cb = c * NODE;
+    if (c >= cm.nodes || (cm.w.length as u64) < NODE || cb > (cm.w.length as u64) - NODE) {
+      return [ADD_RETRY, 0];
+    }
+    // The leaf: taken at once, its latch's line fetched for writing by this one
+    // read-modify-write (a version read first would fetch it shared, the take again). It is
+    // the right leaf if the parent did not change since it named it: a leaf's keys change
+    // hands only in a split, which changes the parent.
+    const old = cm.w[cb].or(EXCLUSIVE, "acquire");
+    if ((old & EXCLUSIVE) != 0) {
+      return [ADD_RETRY, 0];
+    }
+    // As in `tryLockAt`: the latch is taken before any write to the leaf is seen (a reader
+    // that sees the add taken back from another key's value sees the leaf changed).
+    Atomic.fence("release");
+    if (!isUnchanged(cm, b, v)) {
+      unlock(cm, cb, old & ~SHARED_MASK);
+      return [ADD_RETRY, 0];
+    }
+    b = cb;
+    v = old & ~SHARED_MASK;
+    meta = cm.w[b + 1].load("relaxed");
+  }
+  if ((meta & LEAF_BIT) == 0) {
+    unlock(cm, b, v);
+    return [ADD_RETRY, 0];
+  }
+  // Write first, to the home slot: its value word is the first access to its pair's line,
+  // which then arrives ready for writing (a read first would fetch it shared, and the write
+  // would have to fetch it again). The key, in the same line, is checked after; if it is not
+  // there, the add is taken back while the leaf is still held, so no reader sees it.
+  const h = homeOf(hashKey(k, key));
+  const hat = b + PAIRS + 1 + 2 * h;
+  const was = cm.w[hat].add(delta, "relaxed");
+  if (cm.w[hat - 1].load("relaxed") == k && tagAt(cm, b, h) != 0) {
+    if (typeIs<K, string>()) {
+      if (sameKey(cm, b, h, asType<string>(key))) {
+        unlock(cm, b, v);
+        return [ADD_DONE, was];
+      }
+    } else {
+      unlock(cm, b, v);
+      return [ADD_DONE, was];
+    }
+  }
+  cm.w[hat].sub(delta, "relaxed");
+  const i = findSlot(cm, b, k, key);
+  if (i >= LEAF_CAP) {
+    unlock(cm, b, v);
+    return [ADD_ABSENT, 0];
+  }
+  const at = b + PAIRS + 1 + 2 * i;
+  const before = cm.w[at].add(delta, "relaxed");
+  unlock(cm, b, v);
+  return [ADD_DONE, before];
+}

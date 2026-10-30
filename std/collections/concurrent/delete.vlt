@@ -1,0 +1,244 @@
+// velt/collections (internal): deleting from `ConcurrentMap`: removing a key, unlinking an emptied
+// leaf and the inner nodes left without a child, and putting them on the free list.
+
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import {
+  childAt,
+  DEL_ABSENT,
+  DEL_DONE,
+  DEL_LAST,
+  DEL_RETRY,
+  FENCE,
+  keyAt,
+  LEAF_BIT,
+  LEAF_CAP,
+  LEN_MASK,
+  MAX_KEY,
+  NODE,
+  NONE,
+  SKEYS,
+  SPARE_TAG,
+} from "velt/collections/concurrent/layout";
+import { isUnchanged, readVersion, tryLockAt, unlock } from "velt/collections/concurrent/latch";
+import { backTies, findSlot, position } from "velt/collections/concurrent/search";
+import { descend } from "velt/collections/concurrent/insert";
+import { clearTag, reindex } from "velt/collections/concurrent/split";
+
+/**
+ * One descent of `delete`: `DEL_DONE`, `DEL_ABSENT`, `DEL_RETRY`, or `DEL_LAST` (nothing done)
+ * when the key's leaf holds one key and has a parent: then `tryDeleteLast` unlinks it.
+ */
+export function tryDelete<K, V extends Frozen>(cm: ConcurrentMap<K, V>, k: u64, key: K): u64 {
+  let n = cm.root.load("acquire");
+  let v = readVersion(cm, n * NODE);
+  if (cm.root.load("acquire") != n) {
+    return DEL_RETRY;
+  }
+  let depth: u64 = 0;
+  while (true) {
+    const base = n * NODE;
+    const meta = cm.w[base + 1].load("relaxed");
+    if ((meta & LEAF_BIT) == 0) {
+      const next = descend(cm, base, v, k, key);
+      if (next == NONE) {
+        return DEL_RETRY;
+      }
+      n = next;
+      const vc = readVersion(cm, n * NODE);
+      if (!isUnchanged(cm, base, v)) {
+        return DEL_RETRY;
+      }
+      v = vc;
+      depth++;
+      continue;
+    }
+    if (depth > 0 && (meta & LEN_MASK) == 1) {
+      // Only for a key the leaf holds: `tryDeleteLast` takes the whole path and bumps every
+      // version, which an absent key needs not cost concurrent readers.
+      const i = findSlot(cm, base, k, key);
+      if (!isUnchanged(cm, base, v)) {
+        return DEL_RETRY;
+      }
+      return i < LEAF_CAP ? DEL_LAST : DEL_ABSENT;
+    }
+    return deleteIn(cm, base, v, meta, k, key);
+  }
+}
+
+/**
+ * Deletes `key` (word `k`) from the leaf at `base`, taken at version `v` (its meta word read at
+ * it).
+ */
+export function deleteIn<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  v: u64,
+  meta: u64,
+  k: u64,
+  key: K,
+): u64 {
+  if (!tryLockAt(cm, base, v)) {
+    return DEL_RETRY;
+  }
+  const i = findSlot(cm, base, k, key);
+  if (i >= LEAF_CAP) {
+    unlock(cm, base, v);
+    return DEL_ABSENT;
+  }
+  clearTag(cm, base, i);
+  if (!typeIs<V, u64>()) {
+    cm.vals[(base / NODE) * LEAF_CAP + i].store(null, "release");
+  }
+  if (typeIs<K, string>()) {
+    cm.skeys[(base / NODE) * SKEYS + i].store(null, "release");
+  }
+  cm.w[base + 1].store(meta - 1, "relaxed");
+  unlock(cm, base, v);
+  return DEL_DONE;
+}
+
+/**
+ * One descent of `delete` for a key whose leaf holds only it: the leaf, and the inner nodes
+ * above it that have no other child, are unlinked from the lowest ancestor with another child
+ * and put on the free list. Every node from that ancestor down is taken at the version read on
+ * the way down, so none changed since. Without such an ancestor the leaf only empties.
+ */
+export function tryDeleteLast<K, V extends Frozen>(cm: ConcurrentMap<K, V>, k: u64, key: K): u64 {
+  // Node, version pairs from the root down.
+  const path: u64[] = [];
+  let n = cm.root.load("acquire");
+  let v = readVersion(cm, n * NODE);
+  if (cm.root.load("acquire") != n) {
+    return DEL_RETRY;
+  }
+  // The lowest inner node seen with two children or more, as an index into `path`.
+  let top = NONE;
+  let meta: u64 = 0;
+  while (true) {
+    const base = n * NODE;
+    meta = cm.w[base + 1].load("relaxed");
+    path.push(n);
+    path.push(v);
+    if ((meta & LEAF_BIT) != 0) {
+      break;
+    }
+    if ((meta & LEN_MASK) > 0) {
+      top = path.length as u64 - 2;
+    }
+    const next = descend(cm, base, v, k, key);
+    if (next == NONE) {
+      return DEL_RETRY;
+    }
+    n = next;
+    const vc = readVersion(cm, n * NODE);
+    if (!isUnchanged(cm, base, v)) {
+      return DEL_RETRY;
+    }
+    v = vc;
+  }
+  const leaf = n * NODE;
+  if (top == NONE || (meta & LEN_MASK) != 1) {
+    return deleteIn(cm, leaf, v, meta, k, key);
+  }
+  const end = path.length as u64;
+  for (let j = top; j < end; j += 2) {
+    if (!tryLockAt(cm, path[j] * NODE, path[j + 1])) {
+      // Back out of those taken, in the order taken.
+      for (let u = top; u < j; u += 2) {
+        unlock(cm, path[u] * NODE, path[u + 1]);
+      }
+      return DEL_RETRY;
+    }
+  }
+  const i = findSlot(cm, leaf, k, key);
+  if (i < LEAF_CAP) {
+    clearTag(cm, leaf, i);
+    if (!typeIs<V, u64>()) {
+      cm.vals[n * LEAF_CAP + i].store(null, "release");
+    }
+    if (typeIs<K, string>()) {
+      cm.skeys[n * SKEYS + i].store(null, "release");
+    }
+    cm.w[leaf + 1].store(meta - 1, "relaxed");
+    removeChild(cm, path[top], k, key);
+  }
+  if (typeIs<K, string>()) {
+    if (i < LEAF_CAP) {
+      for (let j = top + 2; j < end; j += 2) {
+        cm.skeys[path[j] * SKEYS + FENCE].store(null, "release");
+      }
+    }
+  }
+  // Every node is unlocked with its version bumped, the freed ones too, before `release`. A
+  // reused node is not locked or bumped again: its version is already newer than any a stale
+  // holder read before the free. That keeps writers out of reused nodes: a `set` that stopped
+  // at a freed leaf after validating its parent fails `tryLockAt` at the version it read, where
+  // it would otherwise put its key into a leaf of another range (or an unlinked one). Readers
+  // would be safe without it, since a freed node's range was empty.
+  for (let j = top; j < end; j += 2) {
+    unlock(cm, path[j] * NODE, path[j + 1]);
+  }
+  if (i >= LEAF_CAP) {
+    return DEL_ABSENT;
+  }
+  // Unlocked first: a reader that still reaches one waits while it is held.
+  for (let j = top + 2; j < end; j += 2) {
+    release(cm, path[j]);
+  }
+  return DEL_DONE;
+}
+
+/**
+ * Removes the child holding `key` (word `k`) from inner node `p` (held, with two children or
+ * more), and one key next to it, so a neighbour takes over its (empty) range.
+ */
+export function removeChild<K, V extends Frozen>(cm: ConcurrentMap<K, V>, p: u64, k: u64, key: K) {
+  const b = p * NODE;
+  const meta = cm.w[b + 1].load("relaxed");
+  const len = meta & LEN_MASK;
+  let i: u64 = 0;
+  if (typeIs<K, string>()) {
+    i = backTies(cm, b, position(cm, b, k), k, asType<string>(key));
+  } else {
+    i = position(cm, b, k);
+  }
+  // Child i lies between keys i - 1 and i: the first child goes with the key after it, any
+  // other with the key before it. (For string keys, separator i - 1's string goes with child
+  // i, its fence, cleared as the child is freed.)
+  const sep = i > 0 ? i - 1 : 0;
+  if (typeIs<K, string>()) {
+    // Separator 0 goes with child 0: its string is the fence of child 1, which becomes the
+    // first child, whose fence is never read. Cleared (retired to the epoch: a reader of the
+    // version before may still read it). Any other removed child's fence goes with it as the
+    // child is freed; a separator that stays keeps its string alive, deleted key or not.
+    if (i == 0) {
+      const c = cm.w[b + childAt(1)].load("relaxed");
+      if (c < cm.nodes) {
+        cm.skeys[c * SKEYS + FENCE].store(null, "release");
+      }
+    }
+  }
+  for (let j = sep; j + 1 < len; j++) {
+    cm.w[b + keyAt(j)].store(cm.w[b + keyAt(j + 1)].load("relaxed"), "relaxed");
+  }
+  cm.w[b + keyAt(len - 1)].store(MAX_KEY, "relaxed");
+  for (let j = i; j < len; j++) {
+    cm.w[b + childAt(j)].store(cm.w[b + childAt(j + 1)].load("relaxed"), "relaxed");
+  }
+  cm.w[b + 1].store(meta - 1, "relaxed");
+  reindex(cm, b, len - 1);
+}
+
+/** Pushes node `n`, unlinked and not held, on the free list. */
+export function release<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64) {
+  while (true) {
+    const s = cm.spare.load("relaxed");
+    cm.w[n * NODE + 1].store(s & LEN_MASK, "relaxed");
+    if (
+      cm.spare.compareExchange(s, ((s & ~LEN_MASK) + SPARE_TAG) | (n + 1), "release", "relaxed") ==
+      s
+    ) {
+      return;
+    }
+  }
+}

@@ -9,7 +9,7 @@
 // their keys in full. A type with an order of its own implements `InlineKey` with an `extend`
 // block (or `implements InlineKey`) to get the fast search.
 
-import { isAscii, utf8ByteAt, utf8Length } from "velt/encoding";
+import { isAscii, utf8ByteAt, utf8Length } from "velt/encoding/string_bytes";
 import { mask8x16, u8x16 } from "velt/simd";
 
 /** The bytes of a key that order as the keys do, for `BTreeMap`'s node search. */

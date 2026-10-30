@@ -6,9 +6,6 @@ import type { Allow } from "./types";
 
 export const allow: Allow = {
   oversize: [
-    "collections/btree/leaf.vlt",
-    "collections/btree/pool.vlt",
-    "collections/concurrent_map.vlt",
     "encoding/json/reader.vlt",
     "encoding/json/scan.vlt",
     "encoding/json/tape.vlt",

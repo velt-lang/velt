@@ -10,7 +10,8 @@ import { F, NONE, Pool, SLOT_MASK, SLOT_SHIFT, windowOf } from "velt/collections
 import { insert } from "velt/collections/btree/insert";
 import { removeAt } from "velt/collections/btree/remove";
 import { afterRemove, edgeOrder, isEdge } from "velt/collections/btree/edges";
-import { NO_SLOT, descendMany, leafFind, leafRank, slotAtRank } from "velt/collections/btree/leaf";
+import { NO_SLOT, leafFind, leafRank, slotAtRank } from "velt/collections/btree/leaf";
+import { descendMany } from "velt/collections/btree/batch";
 
 export { InlineKey } from "velt/collections/btree/inline_key";
 
