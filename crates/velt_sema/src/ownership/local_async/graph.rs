@@ -80,6 +80,15 @@ impl Why {
         (self.library, self.span.file.0, self.span.lo, via)
     }
 
+    /// `self.rank(cx) < other.rank(cx)`, naming the holders only when the rest is equal.
+    pub(super) fn before(&self, other: &Why, cx: &crate::ctx::Ctx) -> bool {
+        let key = |w: &Why| (w.library, w.span.file.0, w.span.lo);
+        match key(self).cmp(&key(other)) {
+            std::cmp::Ordering::Equal if self.via != other.via => self.rank(cx) < other.rank(cx),
+            o => o.is_lt(),
+        }
+    }
+
     /// `self`, seen from an argument passed at `site` (`(span, in a library)`): a boundary inside
     /// a library is reported at the program's call into it.
     pub(super) fn through(self, site: Option<(Span, bool)>) -> Why {

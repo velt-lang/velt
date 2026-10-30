@@ -36,7 +36,7 @@ mod callbacks;
 mod graph;
 mod types;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use velt_common::Diagnostic;
 
@@ -53,7 +53,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {

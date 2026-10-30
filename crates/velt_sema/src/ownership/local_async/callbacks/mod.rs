@@ -92,12 +92,15 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         bodies.homes = homes(cx, g);
     }
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
         while let Some((n, w)) = work.pop() {
-            if why[n].is_some() {
+            // A node keeps its preferred reason (`Why::rank`): one found later may be better (a
+            // value the program hands to a library, after a type inside the library that only
+            // happens to have the closure's shape), and only some reasons are reported.
+            if why[n].is_some_and(|old| !w.before(&old, cx)) {
                 continue;
             }
             why[n] = Some(w);
@@ -120,7 +123,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
         rooted = roots.len();
         for (n, node) in g.nodes.iter().enumerate() {
-            if !matches!(node, Node::Lit(_)) || why[n].is_some() || flags[n] & STORED == 0 {
+            if !matches!(node, Node::Lit(_)) || flags[n] & STORED == 0 {
                 continue;
             }
             let found = fns
@@ -128,7 +131,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
                 .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
                 .min_by_key(|w| (w.library, w.span.file, w.span.lo));
-            if let Some(w) = found {
+            if let Some(w) = found.filter(|w| why[n].is_none_or(|old| w.before(&old, cx))) {
                 work.push((n, w));
             }
         }
