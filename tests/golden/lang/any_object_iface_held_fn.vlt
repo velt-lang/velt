@@ -1,7 +1,8 @@
 // A function held through `any` and called with an object literal converts the argument to its
 // parameter's interface (#1909): a function type, a closure, an optional function. And the
 // conversions in a generic class's method, in a generic function another one calls and to a
-// type parameter given the interface, each at its type arguments.
+// type parameter given the interface, each at its type arguments; a generic function held in an
+// object or an array.
 interface SetupCtx {
   props: any;
   emit(name: string): void;
@@ -59,6 +60,30 @@ function conv<T>(o: unknown): T {
   return o as T;
 }
 console.log(conv<Box<string>>({ value: "c", show: () => "conv" } as unknown).show());
+// Accessors are filled by plain fields: an object without functions converts to `T` given an
+// interface with a getter or a setter.
+interface G {
+  get y(): number;
+  label: string;
+}
+interface S {
+  get v(): number;
+  set v(x: number);
+}
+const gs = conv<G>({ y: 2, label: "g" } as unknown);
+const ss = conv<S>({ v: 3 } as unknown);
+ss.v = 4;
+console.log(gs.y, gs.label, ss.v);
+
+// A generic function held inside an object or an array.
+function inObj<P>(setup: (c: Box<P>) => string): any {
+  return { setup: setup } as any;
+}
+function inArr<P>(setup: (c: Box<P>) => string): any {
+  return [setup] as any;
+}
+console.log(inObj<number>((b) => b.show() + b.value).setup({ value: 2, show: () => "obj" }));
+console.log(inArr<boolean>((b) => b.show())[0]({ value: true, show: () => "arr" }));
 console.log(outer<boolean>({ value: true, show: () => "yes" } as unknown));
 const l = list<number>([{ value: 1, show: () => "one" }] as unknown);
 console.log(l[0].value, l[0].show(), emitted.join(","));

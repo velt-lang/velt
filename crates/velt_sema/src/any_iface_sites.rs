@@ -38,8 +38,9 @@ type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
 #[derive(Default)]
 struct Unit {
     convs: Vec<(TyId, Span)>,
-    /// The parameter types of the functions converted to `any` with type parameters in them,
-    /// which a call through `any` converts its arguments to.
+    /// The types of the values converted to `any`: a function in one (also in its fields,
+    /// elements and options) converts the arguments of a call through `any` to its parameter
+    /// types ([`instantiated_conversions`]).
     held: Vec<TyId>,
     sites: Vec<(DefId, Vec<TyId>, Span)>,
     bounds: Vec<(TyId, DefId, u32, Span)>,
@@ -94,23 +95,61 @@ pub(crate) fn check(cx: &mut Ctx) {
 }
 
 /// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) to interfaces written
-/// with type parameters that an object converted to `any` may fill, as each site instantiating their definitions makes them (substituted, through the
-/// generic definitions in between): the interfaces such a conversion reaches at run time
-/// (`object_ifaces::make_dynamic_object_impls`, #1909).
+/// with type parameters that an object converted to `any` may fill, as each site instantiating
+/// their definitions makes them (substituted, through the generic definitions in between): the
+/// interfaces such a conversion reaches at run time (`object_ifaces::make_dynamic_object_impls`,
+/// #1909).
 pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
     let units = collect(cx);
     let callers = callers_of(&units);
-    let convs = (units.iter())
-        .flat_map(|(d, u)| {
-            let held = u.held.iter().map(move |t| (*d, *t, 0, Span::DUMMY));
-            (u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span))).chain(held)
-        })
-        .filter(|(_, t, ..)| cx.may_fill_generic(*t))
+    let mut convs: Vec<(DefId, TyId, usize, Span)> = (units.iter())
+        .flat_map(|(d, u)| u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span)))
         .collect();
+    for (d, u) in &units {
+        for &t in &u.held {
+            if !cx.has_type_params(t) {
+                continue;
+            }
+            let params = fn_params_in(cx, t);
+            convs.extend(params.into_iter().map(|p| (*d, p, 0, Span::DUMMY)));
+        }
+    }
+    convs.retain(|(_, t, ..)| cx.may_fill_generic(*t));
     let mut out = vec![];
     carry(cx, &callers, convs, &mut |_, t, _, _| out.push(t));
     out.sort_unstable_by_key(|t| t.0);
     out.dedup();
+    out
+}
+
+/// The parameter types of the functions in a value of type `t`: itself, its options, elements
+/// and map values, and the fields of an object type (with its arguments).
+fn fn_params_in(cx: &mut Ctx, t: TyId) -> Vec<TyId> {
+    let mut out = vec![];
+    let mut seen: FxHashSet<TyId> = FxHashSet::default();
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        if !seen.insert(t) || seen.len() > 4096 {
+            continue;
+        }
+        match cx.ty.kind(t).clone() {
+            TyKind::FnPtr { params, .. } => out.extend(params),
+            TyKind::Array(e) | TyKind::Option(e, _) => todo.push(e),
+            TyKind::Map(_, v) => todo.push(v),
+            TyKind::Adt(d, args) if cx.is_object_type(t) => {
+                let fields: Vec<TyId> = (cx.adt(d).into_iter())
+                    .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                    .collect();
+                for f in fields {
+                    todo.push(match args.is_empty() {
+                        true => f,
+                        false => cx.subst(f, &args),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
     out
 }
 
@@ -138,15 +177,20 @@ fn carry(
     done: &mut dyn FnMut(&mut Ctx, TyId, usize, Span),
 ) {
     let mut needs: FxHashMap<DefId, FxHashSet<(TyId, usize)>> = FxHashMap::default();
-    let mut work: Vec<(DefId, TyId, usize)> = vec![];
+    // Each target carried: its definition, its size, and the one it was carried from.
+    let mut path: Vec<(DefId, u32, Option<usize>)> = vec![];
+    let mut work: Vec<(DefId, TyId, usize, usize)> = vec![];
     for (d, t, k, span) in start {
         match cx.has_type_params(t) {
-            true if needs.entry(d).or_default().insert((t, k)) => work.push((d, t, k)),
+            true if needs.entry(d).or_default().insert((t, k)) => {
+                path.push((d, size(cx, t), None));
+                work.push((d, t, k, path.len() - 1));
+            }
             true => {}
             false => done(cx, t, k, span),
         }
     }
-    while let Some((g, t, k)) = work.pop() {
+    while let Some((g, t, k, at)) = work.pop() {
         let Some(sites) = callers.get(&g) else {
             continue;
         };
@@ -157,14 +201,55 @@ fn carry(
             };
             if !cx.has_type_params(s) {
                 done(cx, s, k, *span);
-            } else if depth(cx, s, 0) <= MAX_DEPTH && needs.entry(*me).or_default().insert((s, k)) {
-                // A target that grows at each instantiation (`conv<T[]>` in `conv<T>`) is the
-                // instantiation cycle `instantiation_cycles` reports: bounded here.
-                work.push((*me, s, k));
+                continue;
+            }
+            // A target that comes back to a definition it was carried through, larger
+            // (`Box<W<T>>` from `Box<T>` in `f<T>` calling `f<W<T>>`), grows at each
+            // instantiation: the instantiation cycle `instantiation_cycles` reports. Carrying it
+            // on would multiply the work at each round (with several such calls), up to
+            // `MAX_DEPTH`.
+            let n = size(cx, s);
+            if depth(cx, s, 0) > MAX_DEPTH || grows(&path, at, *me, n) {
+                continue;
+            }
+            if needs.entry(*me).or_default().insert((s, k)) {
+                path.push((*me, n, Some(at)));
+                work.push((*me, s, k, path.len() - 1));
             }
         }
     }
 }
+
+/// Was a smaller target than one of size `n` carried through definition `me` on the way to
+/// `path[at]` ([`carry`])?
+fn grows(path: &[(DefId, u32, Option<usize>)], at: usize, me: DefId, n: u32) -> bool {
+    let mut cur = Some(at);
+    while let Some(i) = cur {
+        let (d, m, up) = path[i];
+        if d == me && m < n {
+            return true;
+        }
+        cur = up;
+    }
+    false
+}
+
+/// The number of types `t` is made of (bounded by `MAX_SIZE`).
+fn size(cx: &Ctx, t: TyId) -> u32 {
+    let mut n = 0;
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        n += 1;
+        if n >= MAX_SIZE {
+            break;
+        }
+        todo.extend(crate::types::children(cx.ty.kind(t)));
+    }
+    n
+}
+
+/// The size [`size`] counts up to.
+const MAX_SIZE: u32 = 4096;
 
 /// How deeply a carried target may nest types ([`check_any_ifaces`]).
 const MAX_DEPTH: u32 = 12;
@@ -205,11 +290,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } => u.convs.push((e.ty, e.span)),
-        E::ToDyn { expr, .. } => {
-            if let TyKind::FnPtr { params, .. } = tys.kind(expr.ty) {
-                u.held.extend(params.iter().copied());
-            }
-        }
+        E::ToDyn { expr, .. } => u.held.push(expr.ty),
         E::Call {
             callee:
                 Callee::Dyn {
