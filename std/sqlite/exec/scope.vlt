@@ -8,6 +8,7 @@ import { Out, Source } from "velt:sqlite/exec/source";
 
 export { Out } from "velt:sqlite/exec/source";
 import { AggCtx } from "velt:sqlite/exec/agg";
+import { Pull } from "velt:sqlite/exec/pull";
 import { Val, nullVal } from "velt:sqlite/exec/value";
 
 /** A compiled expression: evaluates to a value against the rows the loops stand on. */
@@ -46,6 +47,8 @@ export class Query {
   ranEpoch: i64 = -1;
   /** How the loops read each FROM item (EXPLAIN QUERY PLAN's words). */
   plan: string[] = [];
+  /** The rows read one at a time, when they go out in the loops' order (velt:sqlite/exec/pull). */
+  pull: Pull | null = null;
   /** At most this many rows are needed (-1: all): EXISTS and scalar subqueries need one. */
   need: i64 = -1;
 

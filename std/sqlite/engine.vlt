@@ -1,5 +1,5 @@
-// velt:sqlite/engine — the SQLite engine written in Velt: queries over a database file's bytes
-// (docs/std/sqlite_engine.md). Read-only for now: SELECT
+// velt:sqlite/engine — the SQLite engine written in Velt: queries over a database file's bytes,
+// with the statement API of velt:sqlite (docs/std/sqlite_engine.md). Read-only for now: SELECT
 // with joins, subqueries, CTEs, aggregates, compound selects; writing is step 4 of
 // docs/internals/design/sqlite-engine.md.
 //
@@ -8,21 +8,26 @@
 // are read straight from the b-tree pages and decoded only for the columns a query uses.
 
 import { DbFile } from "velt:sqlite/format";
+import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
 import { Schema, loadSchema } from "velt:sqlite/schema";
 import { Parser } from "velt:sqlite/sql/parser";
 import { statement } from "velt:sqlite/sql/statement";
 import { T_EOF, T_SEMI } from "velt:sqlite/sql/lexer";
 import { S_SELECT } from "velt:sqlite/sql/ast";
-import { Params, Query } from "velt:sqlite/exec/scope";
+import { Out, Params, Query } from "velt:sqlite/exec/scope";
+import { Pull } from "velt:sqlite/exec/pull";
 import { SelectCompiler } from "velt:sqlite/exec/select";
 import { SqlRunError } from "velt:sqlite/exec/errors";
-import { Val } from "velt:sqlite/exec/value";
+import { bindJson } from "velt:sqlite/exec/bind";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt:sqlite/exec/value";
+import { CellKind, RowSource, readRow, readRows } from "velt:db";
 import { readFileBytesSync } from "velt:fs";
 
 /**
  * A failed operation. `code` is SQLite's result code name: "SQLITE_ERROR" (bad SQL, an unknown
  * table or column, a failure while running), "SQLITE_CORRUPT" (a malformed file),
- * "SQLITE_CANTOPEN" (a file that cannot be read).
+ * "SQLITE_CANTOPEN" (a file that cannot be read), "SQLITE_RANGE" (parameters),
+ * "SQLITE_MISMATCH" (a row that does not fit the requested type).
  */
 export class SqliteError extends Error {
   code: string;
@@ -30,6 +35,74 @@ export class SqliteError extends Error {
   constructor(code: string, message: string) {
     super(message);
     this.code = code;
+  }
+}
+
+/** The rows of a run, read by velt:db's `readRows` into typed values. */
+export class Rows implements RowSource {
+  out: Out;
+  names: string[];
+  row: i64 = -1;
+
+  constructor(out: Out, names: string[]) {
+    this.out = out;
+    this.names = names;
+  }
+
+  columnCount(): i64 {
+    return this.names.length as i64;
+  }
+
+  columnName(i: i64): string {
+    return this.names[i as usize];
+  }
+
+  next(): bool {
+    this.row++;
+    return this.row < (this.out.rows as i64);
+  }
+
+  /** The value's position in the output (fields are read in place: no copy of the value). */
+  pos(i: i64): usize {
+    return (this.row as usize) * this.out.width + (i as usize);
+  }
+
+  kind(i: i64): CellKind {
+    const t = this.out.vals[this.pos(i)].t;
+    if (t == NULL) {
+      return CellKind.Null;
+    }
+    if (t == INTEGER) {
+      return CellKind.Int;
+    }
+    if (t == REAL) {
+      return CellKind.Float;
+    }
+    return t == TEXT ? CellKind.Text : CellKind.Blob;
+  }
+
+  bool(i: i64): bool {
+    return this.out.vals[this.pos(i)].i != 0;
+  }
+
+  int(i: i64): i64 {
+    return this.out.vals[this.pos(i)].i;
+  }
+
+  float(i: i64): f64 {
+    return this.out.vals[this.pos(i)].r;
+  }
+
+  text(i: i64): string {
+    return this.out.vals[this.pos(i)].s;
+  }
+
+  blob(i: i64): u8[] {
+    return this.out.vals[this.pos(i)].b;
+  }
+
+  json(i: i64): string {
+    return "null";
   }
 }
 
@@ -63,10 +136,160 @@ export class Statement {
     return this.query.names;
   }
 
+  /** Every row. */
+  all<T>(): T[] {
+    this.noParams();
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullAll<T>(p!);
+    }
+    this.exec(-1);
+    return this.decodeAll<T>();
+  }
+
+  /** Every row, with `params` bound (an array binds `?` by position, an object by name). */
+  allWith<T, P>(params: P): T[] {
+    this.bind<P>(params);
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullAll<T>(p!);
+    }
+    this.exec(-1);
+    return this.decodeAll<T>();
+  }
+
+  /** The first row, or null if there is none. */
+  get<T>(): T | null {
+    this.noParams();
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullFirst<T>(p!);
+    }
+    this.exec(1);
+    return this.decodeFirst<T>();
+  }
+
+  getWith<T, P>(params: P): T | null {
+    this.bind<P>(params);
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullFirst<T>(p!);
+    }
+    this.exec(1);
+    return this.decodeFirst<T>();
+  }
+
+  /**
+   * Every row as values, read one at a time through the getters typed reads use when the
+   * query allows it (else as `values()`): for tests comparing the two paths.
+   */
+  pulledValues(): Val[] {
+    this.noParams();
+    const p = this.query.pull;
+    if (p == null) {
+      return this.values();
+    }
+    this.params.epoch++;
+    p!.begin(-1);
+    const out: Val[] = [];
+    const n = p!.columnCount();
+    while (p!.next()) {
+      for (let i: i64 = 0; i < n; i++) {
+        const k = p!.kind(i);
+        if (k == CellKind.Int) {
+          out.push(intVal(p!.int(i)));
+        } else if (k == CellKind.Float) {
+          out.push(realVal(p!.float(i)));
+        } else if (k == CellKind.Text) {
+          out.push(textVal(p!.text(i)));
+        } else if (k == CellKind.Blob) {
+          out.push(blobVal(p!.blob(i)));
+        } else {
+          out.push(nullVal());
+        }
+      }
+    }
+    this.pulled(p!, "");
+    return out;
+  }
+
+  // The rows decoded as they are read (no values in between).
+  private pullAll<T>(p: Pull): T[] {
+    this.params.epoch++;
+    p.begin(-1);
+    let rows: T[] = [];
+    let mismatch = "";
+    try {
+      rows = readRows<T, Pull>(p);
+    } catch (e) {
+      mismatch = e.message;
+    }
+    this.pulled(p, mismatch);
+    return rows;
+  }
+
+  private pullFirst<T>(p: Pull): T | null {
+    this.params.epoch++;
+    p.begin(1);
+    let row: T | null = null;
+    let mismatch = "";
+    try {
+      row = readRow<T, Pull>(p);
+    } catch (e) {
+      mismatch = e.message;
+    }
+    this.pulled(p, mismatch);
+    return row;
+  }
+
+  // After a pulled run: the parameters dropped, and its error (a failure while running comes
+  // first: a row the decoder rejected may only be its consequence).
+  private pulled(p: Pull, mismatch: string) {
+    __intrinsic_array_truncate(this.params.vals, 0);
+    if (p.err != null) {
+      const e = p.err!;
+      p.err = null;
+      if (e instanceof SqlRunError) {
+        throw new SqliteError("SQLITE_ERROR", e.message);
+      }
+      throw new SqliteError("SQLITE_CORRUPT", e.message);
+    }
+    if (mismatch != "") {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${mismatch}`,
+      );
+    }
+  }
+
   /** Every row as values (velt:sqlite/exec/value's `Val`), `columns().length` a row. */
   values(): Val[] {
+    this.noParams();
     this.exec(-1);
     return this.query.out.vals;
+  }
+
+  valuesWith<P>(params: P): Val[] {
+    this.bind<P>(params);
+    this.exec(-1);
+    return this.query.out.vals;
+  }
+
+  // Without parameters given: velt:sqlite's error when the statement has any.
+  private noParams() {
+    if (this.count > 0) {
+      throw new SqliteError(
+        "SQLITE_RANGE",
+        `the statement has ${this.count} parameter(s) but none were given (use runWith / getWith / allWith)`,
+      );
+    }
+  }
+
+  private bind<P>(params: P) {
+    const msg = bindJson(JSON.stringify(params), this.params, this.names, this.count);
+    if (msg != "") {
+      throw new SqliteError("SQLITE_RANGE", msg);
+    }
   }
 
   private exec(need: i64) {
@@ -82,6 +305,28 @@ export class Statement {
       throw new SqliteError("SQLITE_CORRUPT", e.message);
     }
     __intrinsic_array_truncate(this.params.vals, 0);
+  }
+
+  private decodeAll<T>(): T[] {
+    try {
+      return readRows<T, Rows>(new Rows(this.query.out, this.query.names));
+    } catch (e) {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${e.message}`,
+      );
+    }
+  }
+
+  private decodeFirst<T>(): T | null {
+    try {
+      return readRow<T, Rows>(new Rows(this.query.out, this.query.names));
+    } catch (e) {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${e.message}`,
+      );
+    }
   }
 }
 

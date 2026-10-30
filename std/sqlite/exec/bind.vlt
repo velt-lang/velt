@@ -1,0 +1,316 @@
+// velt:sqlite/exec/bind — a statement's parameters from the JSON text of the value bound, as
+// velt:sqlite binds them: an array binds `?` by position, an object by name (`:id`, `@id` and
+// `$id` all take the field `id`), a single value binds `?1`. Integers in i64's range bind as
+// INTEGER, other numbers as REAL, strings as TEXT, booleans as 0 and 1, null as NULL, an array of
+// bytes inside an array or object as a BLOB. An array or a single value must have one value per
+// parameter, and an object a field for each (named) parameter, with velt:sqlite's messages.
+
+import { Params } from "velt:sqlite/exec/scope";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt:sqlite/exec/value";
+import { utf8Encode } from "velt:encoding";
+
+class Reader {
+  b: u8[];
+  at: usize = 0;
+  bad: bool = false;
+
+  constructor(b: u8[]) {
+    this.b = b;
+  }
+
+  space() {
+    while (this.at < this.b.length) {
+      const c = this.b[this.at];
+      if (c != 32 && c != 9 && c != 10 && c != 13) {
+        break;
+      }
+      this.at++;
+    }
+  }
+
+  peek(): u8 {
+    this.space();
+    return this.at < this.b.length ? this.b[this.at] : 0;
+  }
+
+  eat(c: u8): bool {
+    if (this.peek() == c) {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  str(): string {
+    const start = this.at;
+    this.at++;
+    while (this.at < this.b.length && this.b[this.at] != 34) {
+      if (this.b[this.at] == 92) {
+        this.at++;
+      }
+      this.at++;
+    }
+    this.at++;
+    const raw = this.b.utf8Slice(start as i64, this.at as i64);
+    try {
+      return JSON.parse<string>(raw);
+    } catch (e) {
+      this.bad = true;
+      return "";
+    }
+  }
+
+  /** One scalar (or an array of bytes as a BLOB). */
+  value(): Val {
+    const c = this.peek();
+    if (c == 34) {
+      return textVal(this.str());
+    }
+    if (c == 110) {
+      this.at += 4;
+      return nullVal();
+    }
+    if (c == 116) {
+      this.at += 4;
+      return intVal(1);
+    }
+    if (c == 102) {
+      this.at += 5;
+      return intVal(0);
+    }
+    if (c == 91) {
+      this.at++;
+      const bytes: u8[] = [];
+      if (!this.eat(93)) {
+        while (true) {
+          const v = this.value();
+          bytes.push((v.i & 255) as u8);
+          if (!this.eat(44)) {
+            break;
+          }
+        }
+        this.eat(93);
+      }
+      return blobVal(bytes);
+    }
+    return this.number();
+  }
+
+  number(): Val {
+    const start = this.at;
+    let real = false;
+    while (this.at < this.b.length) {
+      const c = this.b[this.at];
+      if (c == 46 || c == 101 || c == 69) {
+        real = true;
+      } else if (!(c == 45 || c == 43 || (c >= 48 && c <= 57))) {
+        break;
+      }
+      this.at++;
+    }
+    if (this.at == start) {
+      this.bad = true;
+      this.at++;
+      return nullVal();
+    }
+    if (!real) {
+      const n = exactInt(this.b, start, this.at);
+      if (n.ok) {
+        return intVal(n.v);
+      }
+    }
+    // Past i64 as written: the f64 the text stands for, an INTEGER when it is integral and in
+    // [-2^63, 2^63), as velt:sqlite binds an f64 (JSON.stringify(-2 ** 63) is
+    // "-9223372036854776000").
+    const f = parseFloat(this.b.utf8Slice(start as i64, this.at as i64));
+    if (f == Math.trunc(f) && f >= -9223372036854775808.0 && f < 9223372036854775808.0) {
+      return intVal(f as i64);
+    }
+    return realVal(f);
+  }
+}
+
+struct Exact {
+  ok: bool;
+  v: i64;
+}
+
+// The integer b[from..to] (`-`? digits) when it is in i64's range, exactly; not ok when it is
+// out of range (it binds as REAL then, as SQLite reads such a number).
+function exactInt(b: u8[], from: usize, to: usize): Exact {
+  let i = from;
+  const neg = i < to && b[i] == 45;
+  if (neg || (i < to && b[i] == 43)) {
+    i++;
+  }
+  if (i == to) {
+    return Exact { ok: false, v: 0 };
+  }
+  // Accumulated as a negative number, which reaches i64's minimum.
+  let v: i64 = 0;
+  const min: i64 = -9223372036854775807 - 1;
+  while (i < to) {
+    const c = b[i];
+    if (c < 48 || c > 57) {
+      return Exact { ok: false, v: 0 };
+    }
+    const d = (c - 48) as i64;
+    if (v < (min + d) / 10) {
+      return Exact { ok: false, v: 0 };
+    }
+    v = v * 10 - d;
+    i++;
+  }
+  if (!neg && v == min) {
+    return Exact { ok: false, v: 0 };
+  }
+  return Exact { ok: true, v: neg ? v : -v };
+}
+
+/**
+ * The common case without the reader: an array of (at most 18-digit) integers, one for each
+ * parameter, or one integer. False (nothing bound) for anything else.
+ */
+function bindInts(json: string, p: Params, count: usize): bool {
+  const n = __intrinsic_str_byte_len(json);
+  let i: usize = 0;
+  let array = false;
+  if (n > 0 && __intrinsic_str_byte_at(json, 0) == 91) {
+    array = true;
+    i = 1;
+  }
+  const vals: i64[] = [];
+  let v: i64 = 0;
+  let digits = 0;
+  let neg = false;
+  while (i < n) {
+    const c = __intrinsic_str_byte_at(json, i as u64);
+    if (c >= 48 && c <= 57) {
+      if (digits >= 18) {
+        return false;
+      }
+      v = v * 10 + ((c - 48) as i64);
+      digits++;
+    } else if (c == 45 && digits == 0 && !neg) {
+      neg = true;
+    } else if ((c == 44 || c == 93) && array && digits > 0) {
+      vals.push(neg ? -v : v);
+      v = 0;
+      digits = 0;
+      neg = false;
+      if (c == 93) {
+        if (i + 1 != n) {
+          return false;
+        }
+        break;
+      }
+    } else if (c == 93 && array && digits == 0 && vals.length == 0 && i + 1 == n) {
+      break;
+    } else {
+      return false;
+    }
+    i++;
+  }
+  if (!array) {
+    if (digits == 0) {
+      return false;
+    }
+    vals.push(neg ? -v : v);
+  }
+  if (vals.length != count) {
+    return false;
+  }
+  __intrinsic_array_truncate(p.vals, 0);
+  for (const x of vals) {
+    p.vals.push(intVal(x));
+  }
+  return true;
+}
+
+function countError(count: usize, n: usize): string {
+  return `the statement has ${count} parameter(s) but ${n} value(s) were given`;
+}
+
+/**
+ * Binds the JSON text of a parameter value; returns "" or an error message. `names[i]` is
+ * parameter i+1's name with its sigil ("" for `?`), `count` the number of parameters.
+ */
+export function bindJson(json: string, p: Params, names: string[], count: usize): string {
+  if (bindInts(json, p, count)) {
+    return "";
+  }
+  const r = new Reader(utf8Encode(json));
+  __intrinsic_array_truncate(p.vals, 0);
+  for (let i: usize = 0; i < count; i++) {
+    p.vals.push(nullVal());
+  }
+  const c = r.peek();
+  if (c == 91) {
+    r.at++;
+    let i: usize = 0;
+    if (!r.eat(93)) {
+      while (true) {
+        const v = r.value();
+        if (i < count) {
+          p.vals[i] = v;
+        }
+        i++;
+        if (r.bad || !r.eat(44)) {
+          break;
+        }
+      }
+    }
+    if (r.bad) {
+      return "parameters are not valid JSON";
+    }
+    if (i != count) {
+      return countError(count, i);
+    }
+  } else if (c == 123) {
+    r.at++;
+    const set: bool[] = [];
+    for (let i: usize = 0; i < count; i++) {
+      set.push(false);
+    }
+    if (!r.eat(125)) {
+      while (true) {
+        const key = r.str();
+        r.eat(58);
+        const v = r.value();
+        for (let i: usize = 0; i < names.length; i++) {
+          const n = names[i];
+          if (n.length > 1 && n.slice(1) == key) {
+            p.vals[i] = v;
+            set[i] = true;
+          }
+        }
+        if (r.bad || !r.eat(44)) {
+          break;
+        }
+      }
+    }
+    if (r.bad) {
+      return "parameters are not valid JSON";
+    }
+    // velt:sqlite's checks, in its order: a positional parameter, then a missing field.
+    for (let i: usize = 0; i < count; i++) {
+      const n = names[i];
+      if (n.length <= 1 || n.startsWith("?")) {
+        return `parameter ${i + 1} is positional (\`?\`); pass an array to bind it`;
+      }
+      if (!set[i]) {
+        return `missing named parameter "${n.slice(1)}"`;
+      }
+    }
+  } else {
+    const v = r.value();
+    if (r.bad) {
+      return "parameters are not valid JSON";
+    }
+    if (count != 1) {
+      return countError(count, 1);
+    }
+    p.vals[0] = v;
+  }
+  return "";
+}

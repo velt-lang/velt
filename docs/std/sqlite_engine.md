@@ -19,18 +19,36 @@ for its bare columns.
 - `Database.prepare(sql): Statement` parses and plans one SELECT (a trailing `;` is fine).
   Plans are cached by their text (the 200 used last), so preparing the same SQL again is a
   lookup. SQL the engine can't run yet fails here with a message naming it.
-- `Statement`: `columns(): string[]`, the result's column names; `values(): Val[]`, every
-  row's values (`velt:sqlite/exec/value`'s `Val`: its storage class `t` and the field for it),
+- `Statement`, as in `velt:sqlite`: `all<T>(): T[]`, `get<T>(): T | null` (stops after the first
+  row), `allWith<T>(params)`, `getWith<T>(params)`; also `columns(): string[]` and
+  `values()` / `valuesWith(params)`, every value as a `Val` (`velt:sqlite/exec/value`),
   `columns().length` a row; `plan(): string[]`, how each FROM item is read, in the words of
   SQLite's `EXPLAIN QUERY PLAN` (`SEARCH posts USING INTEGER PRIMARY KEY (rowid=?)`).
+- **Rows** fill `T` by column name through `velt:db`'s `readRows`, straight from the engine's
+  values (no text in between): INTEGER into integer and `f64` fields, REAL into `f64`, TEXT into
+  `string`, BLOB into `u8[]`, NULL into `T | null`. A row that doesn't fit throws
+  `SQLITE_MISMATCH`.
+- **Parameters**: `?`, `?NNN`, `:name`, `@name` and `$name`, bound as in `velt:sqlite`: an
+  array (or a single value) by position, with one value for each parameter, an object by name,
+  with a field for each; an integer in i64's range (and an integral `f64` in it) → INTEGER,
+  other numbers → REAL, string → TEXT, bool → 0/1, null → NULL, an array of bytes → BLOB. A
+  wrong number of values, a missing field, a `?` in a statement bound by an object, or no
+  parameters at all for a statement that has some is `SQLITE_RANGE` with `velt:sqlite`'s
+  message.
 - `SqliteError { code, message }`: `SQLITE_ERROR` (unknown table, column or function, wrong
-  arguments, an error while running such as `integer overflow` in `sum()`), `SQLITE_CORRUPT`,
-  `SQLITE_CANTOPEN`. Messages are SQLite's
+  arguments, an error while running such as `integer overflow` in `sum()`), `SQLITE_RANGE`,
+  `SQLITE_MISMATCH`, `SQLITE_CORRUPT`, `SQLITE_CANTOPEN`. Messages are SQLite's
   (`no such column: x`, `misuse of aggregate: count()`).
 
 ```ts
 import { open } from "velt:sqlite";
 import { openDatabase } from "velt:sqlite/engine";
+
+struct Post {
+  id: i64;
+  title: string;
+  likes: i64;
+}
 
 function main() {
   // Written by C SQLite, read by the Velt engine.
@@ -42,11 +60,12 @@ function main() {
   `);
   c.close();
   const db = openDatabase("blog.db");
-  const st = db.prepare(`SELECT p.id, p.title, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS likes
-                         FROM posts p ORDER BY likes DESC, p.id LIMIT 10`);
-  const vals = st.values();
-  for (let i: usize = 0; i + 3 <= vals.length; i += 3) {
-    console.log(vals[i].i, vals[i + 1].s, vals[i + 2].i);
+  const top: Post[] = db
+    .prepare(`SELECT p.id, p.title, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS likes
+              FROM posts p ORDER BY likes DESC, p.id LIMIT ?`)
+    .allWith([10]);
+  for (const p of top) {
+    console.log(p.id, p.title, p.likes);
   }
 }
 ```

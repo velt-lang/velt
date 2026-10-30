@@ -1,0 +1,467 @@
+// velt:sqlite/exec/pull — a query read one row at a time, for velt:db's `readRows` and `readRow`
+// to decode straight into the requested type: the FROM levels stepped as nested walks
+// (velt:sqlite/exec/walk), each level's terms checked as its loop checks them, the result
+// columns read when the decoder asks for them. A plain column is read from the record as the
+// type the decoder wants (no `Val`, text decoded once, into the field). Only queries whose rows
+// go out in the loops' order take this path: no aggregate, sort, DISTINCT or window.
+
+import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
+import { CellKind, RowSource } from "velt:db";
+import { Cursor } from "velt:sqlite/btree";
+import { SRC_TABLE, Source, cursorText } from "velt:sqlite/exec/source";
+import { Ev, Pred } from "velt:sqlite/exec/scope";
+import { Walk } from "velt:sqlite/exec/walk";
+import { Val, nullVal } from "velt:sqlite/exec/value";
+import { limitValue } from "velt:sqlite/exec/emit";
+import { A_REAL } from "velt:sqlite/schema";
+
+const FRESH: u8 = 0;
+const ACTIVE: u8 = 1;
+const NULLED: u8 = 2;
+
+/** A query's rows, stepped by `next`. */
+export class Pull implements RowSource {
+  names: string[];
+  /** The levels: their walks, sources, terms, and whether each is a LEFT JOIN's right side. */
+  walks: Walk[] = [];
+  srcs: Source[] = [];
+  wheres: (Pred | null)[] = [];
+  ons: (Pred | null)[] = [];
+  left: bool[] = [];
+  /** Terms that read no level: checked once. */
+  pre: Pred[] = [];
+  /** The result columns; a plain column's source and column (else null). */
+  evs: Ev[] = [];
+  plain: (Source | null)[] = [];
+  cols: i64[] = [];
+  /**
+   * How each column is read: computed, a plain column through its source, or straight from a
+   * table cursor (`tcol` of `tcur`, not through an index; -1 the rowid) for the common case.
+   */
+  how: u8[] = [];
+  /** The computed columns. */
+  computed: usize[] = [];
+  at: usize[] = [];
+  tsrc: Source[] = [];
+  tcur: Cursor[] = [];
+  tcol: i64[] = [];
+  treal: bool[] = [];
+  limitEv: Ev | null = null;
+  offsetEv: Ev | null = null;
+  /** One level, not a LEFT JOIN (the common case, stepped without the nesting). */
+  single: bool = false;
+
+  /** A run's state. */
+  state: u8[] = [];
+  matched: bool[] = [];
+  started: bool = false;
+  done: bool = false;
+  limit: i64 = -1;
+  offset: i64 = 0;
+  emitted: i64 = 0;
+  /** Values of computed columns, for the current row (`seen`: computed this row). */
+  cache: Val[] = [];
+  seen: bool[] = [];
+  /** An error while running: reading stops, and the statement throws it. */
+  err: Error | null = null;
+
+  constructor(names: string[]) {
+    this.names = names;
+  }
+
+  /** Starts a run; `need` caps the rows (-1: all). */
+  begin(need: i64) {
+    this.started = false;
+    this.done = false;
+    this.emitted = 0;
+    this.err = null;
+    __intrinsic_array_truncate(this.state, 0);
+    __intrinsic_array_truncate(this.matched, 0);
+    for (let i: usize = 0; i < this.walks.length; i++) {
+      this.state.push(FRESH);
+      this.matched.push(false);
+    }
+    __intrinsic_array_truncate(this.cache, 0);
+    __intrinsic_array_truncate(this.seen, 0);
+    for (let i: usize = 0; i < this.evs.length; i++) {
+      this.cache.push(nullVal());
+      this.seen.push(false);
+    }
+    try {
+      this.limit = limitValue(this.limitEv, -1);
+      this.offset = limitValue(this.offsetEv, 0);
+    } catch (e) {
+      this.fail(e);
+    }
+    if (need >= 0 && (this.limit < 0 || this.limit > need)) {
+      this.limit = need;
+    }
+    if (this.offset < 0) {
+      this.offset = 0;
+    }
+  }
+
+  fail(e: Error) {
+    if (this.err == null) {
+      this.err = e;
+    }
+    this.done = true;
+  }
+
+  columnCount(): i64 {
+    return this.names.length as i64;
+  }
+
+  columnName(i: i64): string {
+    return this.names[i as usize];
+  }
+
+  next(): bool {
+    if (this.done) {
+      return false;
+    }
+    try {
+      if (this.advance()) {
+        // Computed columns are computed now, as SQLite computes a row (an error in one the
+        // decoder does not read still stops the statement).
+        const computed = this.computed;
+        for (let j: usize = 0; j < computed.length; j++) {
+          const i = computed[j];
+          this.seen[i] = false;
+          this.value(i);
+        }
+        return !this.done;
+      }
+    } catch (e) {
+      this.fail(e);
+    }
+    this.done = true;
+    for (const s of this.srcs) {
+      s.nullRow = false;
+    }
+    return false;
+  }
+
+  /** Moves to the next row the query outputs (OFFSET skipped, LIMIT counted). */
+  advance(): bool {
+    if (this.limit >= 0 && this.emitted >= this.limit) {
+      return false;
+    }
+    if (this.single && this.started) {
+      // One level, not a LEFT JOIN: its next row its terms accept.
+      const w = this.walks[0];
+      const where = this.wheres[0];
+      while (w.step()) {
+        if (where == null || where!()) {
+          if (this.offset > 0) {
+            this.offset--;
+            continue;
+          }
+          this.emitted++;
+          return true;
+        }
+      }
+      return false;
+    }
+    const n = this.walks.length as i64;
+    let lv: i64 = n - 1;
+    if (!this.started) {
+      this.started = true;
+      for (const p of this.pre) {
+        if (!p()) {
+          return false;
+        }
+      }
+      lv = 0;
+      if (n == 0) {
+        // No FROM: one row.
+        if (this.offset > 0) {
+          return false;
+        }
+        this.emitted++;
+        return true;
+      }
+    } else if (n == 0) {
+      return false;
+    }
+    while (lv >= 0) {
+      if (!this.level(lv as usize)) {
+        lv--;
+        continue;
+      }
+      if (lv < n - 1) {
+        lv++;
+        this.state[lv as usize] = FRESH;
+        continue;
+      }
+      if (this.offset > 0) {
+        this.offset--;
+        continue;
+      }
+      this.emitted++;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Moves level `lv` to its next row its terms accept (a LEFT JOIN's row of NULLs when it
+   * matched none); false when there is no more.
+   */
+  level(lv: usize): bool {
+    const w = this.walks[lv];
+    const src = this.srcs[lv];
+    while (true) {
+      let ok = false;
+      const st = this.state[lv];
+      if (st == FRESH) {
+        this.state[lv] = ACTIVE;
+        this.matched[lv] = false;
+        ok = w.start();
+      } else if (st == NULLED) {
+        src.nullRow = false;
+        this.state[lv] = ACTIVE;
+        this.matched[lv] = true;
+        return false;
+      } else {
+        ok = w.step();
+      }
+      const where = this.wheres[lv];
+      if (!ok) {
+        if (this.left[lv] && !this.matched[lv]) {
+          this.state[lv] = NULLED;
+          src.nullRow = true;
+          if (where == null || where!()) {
+            return true;
+          }
+          src.nullRow = false;
+        }
+        return false;
+      }
+      if (this.left[lv]) {
+        const on = this.ons[lv];
+        if (on != null && !on!()) {
+          continue;
+        }
+        this.matched[lv] = true;
+      }
+      if (where == null || where!()) {
+        return true;
+      }
+    }
+  }
+
+  /** The value of computed column `i` for the current row. */
+  value(i: usize): Val {
+    if (!this.seen[i]) {
+      this.seen[i] = true;
+      try {
+        this.cache[i] = this.evs[i]();
+      } catch (e) {
+        this.fail(e);
+        this.cache[i] = nullVal();
+      }
+    }
+    return this.cache[i];
+  }
+
+  /** Column `i` of the current row as a value. */
+  rowVal(i: usize): Val {
+    const src = this.plain[i];
+    if (src != null) {
+      try {
+        return src!.col(this.cols[i]);
+      } catch (e) {
+        this.fail(e);
+        return nullVal();
+      }
+    }
+    return this.value(i);
+  }
+
+  /** Sets how each column is read (after `plain` and `cols`). */
+  readers() {
+    for (let i: usize = 0; i < this.plain.length; i++) {
+      let h = H_EXPR;
+      const src = this.plain[i];
+      if (src != null) {
+        h = H_PLAIN;
+        const s = src!;
+        const col = this.cols[i];
+        if (s.kind == SRC_TABLE && !s.viaIndex) {
+          h = col < 0 || col == s.rowidCol ? H_ROWID : H_COL;
+          this.tsrc.push(s);
+          this.tcur.push(s.cur!);
+          this.tcol.push(col);
+          this.treal.push(col >= 0 && s.affs[col as usize] == A_REAL);
+        }
+      }
+      this.how.push(h);
+      this.at.push(this.tcur.length - 1);
+      if (h == H_EXPR) {
+        this.computed.push(i);
+      }
+    }
+  }
+
+  /** Column `k` of a table's current row (H_COL): its storage class. */
+  colType(k: usize): u8 {
+    const x = this.at[k];
+    if (this.tsrc[x].nullRow) {
+      return NULL;
+    }
+    const c = this.tcur[x];
+    const col = this.tcol[x] as usize;
+    if (col >= c.columnCount()) {
+      return this.tsrc[x].typeAt(this.tcol[x]);
+    }
+    const t = c.columnType(col);
+    return t == INTEGER && this.treal[x] ? REAL : t;
+  }
+
+  kind(i: i64): CellKind {
+    const k = i as usize;
+    let t: u8 = NULL;
+    const h = this.how[k];
+    if (h == H_COL) {
+      try {
+        t = this.colType(k);
+      } catch (e) {
+        this.fail(e);
+      }
+      return cellKind(t);
+    }
+    if (h == H_ROWID) {
+      return this.tsrc[this.at[k]].nullRow ? CellKind.Null : CellKind.Int;
+    }
+    const src = this.plain[k];
+    if (src != null) {
+      try {
+        t = src!.typeAt(this.cols[k]);
+      } catch (e) {
+        this.fail(e);
+      }
+    } else {
+      t = this.value(k).t;
+    }
+    if (t == INTEGER) {
+      return CellKind.Int;
+    }
+    if (t == TEXT) {
+      return CellKind.Text;
+    }
+    if (t == NULL) {
+      return CellKind.Null;
+    }
+    return t == REAL ? CellKind.Float : CellKind.Blob;
+  }
+
+  bool(i: i64): bool {
+    return this.int(i) != 0;
+  }
+
+  int(i: i64): i64 {
+    const k = i as usize;
+    const h = this.how[k];
+    if (h == H_ROWID) {
+      return this.tcur[this.at[k]].rowid;
+    }
+    if (h == H_COL) {
+      const x = this.at[k];
+      const col = this.tcol[x] as usize;
+      try {
+        const c = this.tcur[x];
+        return col < c.columnCount() ? c.int(col) : this.tsrc[x].intAt(this.tcol[x]);
+      } catch (e) {
+        this.fail(e);
+        return 0;
+      }
+    }
+    const src = this.plain[k];
+    if (src != null) {
+      try {
+        return src!.intAt(this.cols[k]);
+      } catch (e) {
+        this.fail(e);
+        return 0;
+      }
+    }
+    return this.value(k).i;
+  }
+
+  float(i: i64): f64 {
+    const k = i as usize;
+    const src = this.plain[k];
+    if (src != null) {
+      try {
+        return src!.realAt(this.cols[k]);
+      } catch (e) {
+        this.fail(e);
+        return 0;
+      }
+    }
+    return this.value(k).r;
+  }
+
+  text(i: i64): string {
+    const k = i as usize;
+    if (this.how[k] == H_COL) {
+      const x = this.at[k];
+      const col = this.tcol[x] as usize;
+      try {
+        const c = this.tcur[x];
+        return col < c.columnCount() ? cursorText(c, col) : this.tsrc[x].textAt(this.tcol[x]);
+      } catch (e) {
+        this.fail(e);
+        return "";
+      }
+    }
+    const src = this.plain[k];
+    if (src != null) {
+      try {
+        return src!.textAt(this.cols[k]);
+      } catch (e) {
+        this.fail(e);
+        return "";
+      }
+    }
+    return this.value(k).s;
+  }
+
+  blob(i: i64): u8[] {
+    const k = i as usize;
+    const src = this.plain[k];
+    if (src != null) {
+      try {
+        return src!.col(this.cols[k]).b;
+      } catch (e) {
+        this.fail(e);
+        return [];
+      }
+    }
+    return this.value(k).b;
+  }
+
+  json(i: i64): string {
+    return "null";
+  }
+}
+
+/** How a column is read. */
+const H_EXPR: u8 = 0;
+const H_PLAIN: u8 = 1;
+const H_ROWID: u8 = 2;
+const H_COL: u8 = 3;
+
+function cellKind(t: u8): CellKind {
+  if (t == INTEGER) {
+    return CellKind.Int;
+  }
+  if (t == TEXT) {
+    return CellKind.Text;
+  }
+  if (t == NULL) {
+    return CellKind.Null;
+  }
+  return t == REAL ? CellKind.Float : CellKind.Blob;
+}

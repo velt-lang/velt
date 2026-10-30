@@ -1,0 +1,43 @@
+1 ann 2 (null)
+2 bo 3.5 hi
+3 cy -1 x
+bo 3.5
+true
+cy
+2:bo 3:cy
+ann!
+2
+1
+2 2
+id | who | score * 2 | upper(name)
+SEARCH users USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH users USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH users USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+SCAN users
+id | id | id | id
+true
+true false
+pulled: 1 'ann' 2.0 NULL X'0102' 2 'bo' 3.5 'hi' NULL 3 'cy' -1.0 'x' X''
+pulled: 2 'bo' 3 'cy'
+pulled: 'cy' -1.0 'bo' 3.5
+pulled: NULL X'0102' 2 'ANN' 'hi' NULL 3 'BO'
+[1234567890123456789]: integer|1234567890123456789
+[9223372036854775807]: integer|9223372036854775807
+[-9223372036854775808]: integer|-9223372036854775808
+{"a":-123456789012345678,"b":"x","c":9223372036854775807}: integer|-123456789012345678 'x' 9223372036854775807
+{"a":-9223372036854776000,"b":100000000000000000000,"c":"y"}: integer|-9223372036854775808 1.0e+20 'y'
+100000000000000000000: real|1.0e+20
+[]: the statement has 1 parameter(s) but 0 value(s) were given
+[1,2]: the statement has 1 parameter(s) but 2 value(s) were given
+{"a":1}: parameter 1 is positional (`?`); pass an array to bind it
+{"a":1}: missing named parameter "b"
+{"a":1,"z":2}: integer|1
+no parameters: the statement has 1 parameter(s) but none were given (use runWith / getWith / allWith)
+no parameters: 1 row(s)
+SQLITE_ERROR no such column: nosuch
+SQLITE_ERROR no such table: nosuch
+SQLITE_ERROR incomplete input
+SQLITE_ERROR only SELECT statements are supported yet
+SQLITE_ERROR integer overflow
+SQLITE_ERROR integer overflow
+SQLITE_MISMATCH
