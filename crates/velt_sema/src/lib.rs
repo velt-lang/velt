@@ -24,6 +24,8 @@
 //!
 //! Semantic decisions other stages rely on are documented on [`body`] and the modules above.
 
+#[cfg(test)] // by its name, for the integration tests' loader (`script_locals_tests.rs`)
+extern crate self as velt_sema;
 pub mod hir;
 pub mod js_protos;
 

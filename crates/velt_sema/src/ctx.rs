@@ -164,8 +164,7 @@ pub(crate) struct Ctx<'m> {
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
-    /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
-    pub replaced_unions: FxHashSet<DefId>,
+    pub replaced_unions: FxHashSet<DefId>, // union defs readonly erasure replaced (union_layouts)
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
@@ -174,8 +173,7 @@ pub(crate) struct Ctx<'m> {
     pub state_called: Vec<String>, // variables a refused callback calls the value of (same)
     pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
     pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
-    /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
-    pub global_cycles: u32,
+    pub global_cycles: u32,       // constants found to depend on themselves (driver::ensure_global)
     /// How many function values (arrows, function expressions, literal methods) are being
     /// checked inside the module constant being checked: a read of the constant there runs
     /// later, once it is initialized (`body::driver::ensure_global`).
