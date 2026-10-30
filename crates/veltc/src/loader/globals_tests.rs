@@ -27,7 +27,7 @@ fn globals_load_when_a_user_module_names_them() {
         "// URL\nexport function fetch() {}\nexport class Response {}\n",
     );
     t.write("std/net/url/index.vlt", "export class URL {}\n");
-    t.write("std/server.vlt", "export class Response {}\n");
+    t.write("std/server/index.vlt", "export class Response {}\n");
     let opts = || LoadOptions {
         std_root: Some(std.clone()),
         ..Default::default()

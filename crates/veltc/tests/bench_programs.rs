@@ -157,8 +157,10 @@ fn bench_programs_compile() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// The std modules under `dir` (`std/` paths without `.vlt`, as `velt/` names them), outside
-/// the prelude.
+/// The public std modules under `dir` (`std/` paths without `/index.vlt`, as `velt/` names
+/// them): those user code may import (`velt_common::std_modules::importable`), a folder's
+/// `index.vlt` outside the prelude and `lang/`, and the modules in the old form until they leave
+/// std (`sqlite.vlt`).
 fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     for entry in entries {
@@ -169,11 +171,11 @@ fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
             .to_string_lossy();
         let rel = rel.replace('\\', "/");
         if path.is_dir() {
-            if rel != "prelude" {
-                std_modules(std, &path, out);
-            }
-        } else if let Some(module) = rel.strip_suffix(".vlt") {
-            // A folder module's file is its folder: `cli/index.vlt` is `velt/cli`.
+            std_modules(std, &path, out);
+        } else if velt_common::std_modules::importable(&rel)
+            && (rel.ends_with("/index.vlt") || !rel.contains('/'))
+        {
+            let module = rel.strip_suffix(".vlt").unwrap_or(&rel);
             out.push(module.strip_suffix("/index").unwrap_or(module).to_string());
         }
     }
@@ -182,7 +184,8 @@ fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
 /// `compile/check_all_std` (bench/nightly.sh) divides the instructions of `velt check
 /// bench/compile/all_std.vlt` by the code lines of all of `std/`: a cost per line only while
 /// that program loads every std module. A module it misses counts as lines nobody checks, and
-/// importing it later from a checked module shows as a slowdown per line.
+/// importing it later from a checked module shows as a slowdown per line. User code imports only
+/// public modules, whose own imports reach their internal files.
 #[test]
 fn all_std_imports_every_std_module() {
     let root = &root();
@@ -204,7 +207,7 @@ fn all_std_imports_every_std_module() {
         .collect();
     assert!(
         missing.is_empty(),
-        "bench/compile/all_std.vlt does not import every std module; add:\n{}",
+        "bench/compile/all_std.vlt does not import every public std module; add:\n{}",
         missing.join("\n")
     );
 }

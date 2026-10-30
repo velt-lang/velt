@@ -1,4 +1,4 @@
-// velt/jsx (internal): std/jsx without the SSR precompile exports, so the compiler
+// velt/jsx/generic/jsx-runtime: std/jsx without the SSR precompile exports, so the compiler
 // lowers every element to `jsx`/`Fragment` calls. Used to check that both lowerings render
 // byte-identical HTML (`/** @jsxImportSource std/jsx/generic */`).
 

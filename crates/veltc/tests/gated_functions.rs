@@ -31,7 +31,9 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
             &std,
         );
     }
-    std::fs::write(std.join("zz_gated.vlt"), probe).unwrap();
+    // A module of its own (a folder's index.vlt): user code imports only modules.
+    std::fs::create_dir_all(std.join("zz_gated")).unwrap();
+    std::fs::write(std.join("zz_gated/index.vlt"), probe).unwrap();
     let file = dir.path().join("main.vlt");
     std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();

@@ -28,6 +28,6 @@ console.log(resolve("./z") === import.meta.resolve("./z"));
 const json = JSON.stringify(import.meta);
 console.log(json.startsWith('{"dirname":'), json.includes('"main":true,"url":'), json.includes("resolve"));
 if (import.meta.url === "") {
-  // Never runs: the paths differ between machines (import_meta_print.vlt shows the form).
+  // Never runs: the paths differ between machines (std/lang/import_meta/print.test.vlt: the form).
   console.log(import.meta);
 }

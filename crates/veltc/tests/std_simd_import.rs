@@ -28,8 +28,10 @@ fn std_module_without_the_import_is_told_to_import() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
         &std,
     );
+    // A module of its own (a folder's index.vlt): user code imports only modules.
+    std::fs::create_dir_all(std.join("zz_probe")).unwrap();
     std::fs::write(
-        std.join("zz_probe.vlt"),
+        std.join("zz_probe/index.vlt"),
         "export function probe(): u8 {\n  return u8x16.splat(3).lane(0);\n}\n",
     )
     .unwrap();

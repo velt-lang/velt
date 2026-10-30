@@ -4,8 +4,8 @@
 // on the server; everything else renders through std/jsx.
 
 import * as std from "velt/jsx/jsx-runtime";
-import type { IntrinsicElements as Html } from "velt/jsx/intrinsic";
-import type { HtmlAttrs } from "velt/jsx/attrs/attrs";
+import type { IntrinsicElements as Html } from "velt/jsx";
+import type { HtmlAttrs } from "velt/jsx/attrs";
 
 export { Element } from "velt/jsx/jsx-runtime";
 export type { Child, ElementChildrenAttribute } from "velt/jsx/jsx-runtime";

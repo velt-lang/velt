@@ -422,8 +422,8 @@ fn only_files_below_the_std_root_are_std() {
         "export function one(): i64 { return 1; }\n",
     );
     t.write(
-        "std/escape.vlt",
-        "import { x } from \"../outside\";\nexport function y() {}\n",
+        "std/escape/index.vlt",
+        "import { x } from \"../../outside\";\nexport function y() {}\n",
     );
     t.write("outside.vlt", "export function x() {}\n");
     // std modules are std; the root and its own modules are not.
@@ -445,7 +445,7 @@ fn only_files_below_the_std_root_are_std() {
     );
     assert_eq!(
         messages(&d),
-        ["module `../outside` resolves to a file outside the standard library"]
+        ["module `../../outside` resolves to a file outside the standard library"]
     );
     // A user's relative import of a std file.
     let (_, d) = load_with_std(

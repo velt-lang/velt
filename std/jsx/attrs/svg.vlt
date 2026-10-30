@@ -1,5 +1,5 @@
-// velt/jsx (internal): attribute types of SVG elements (each is `SvgAttrs`, the core and
-// presentation attributes every SVG element accepts, `&` its own; public as `velt/jsx/attrs/attrs`).
+// velt/jsx/attrs (internal): attribute types of SVG elements (each is `SvgAttrs`, the core and
+// presentation attributes every SVG element accepts, `&` its own; public as `velt/jsx/attrs`).
 // Names are SVG's, case included (`viewBox`, `preserveAspectRatio`). Hyphenated presentation
 // attributes (`stroke-width`, `fill-opacity`, `font-size`) and namespaced ones (`xlink:href`,
 // `xml:space`) are not checked against these types (docs/internals/contracts/jsx.md).

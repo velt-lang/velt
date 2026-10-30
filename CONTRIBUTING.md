@@ -213,7 +213,15 @@ shrinks.
   `// velt/<module> (internal): <role>` elsewhere (`// Prelude: …`, `// Global …` in the
   prelude); `velt run scripts/std-lint/main.vlt --fix-headers` writes the module part.
 - **Imports**: std code imports from the file that defines a name (`velt/io/error`), user code
-  and tests from the module (`velt/io`).
+  and tests from the module (`velt/io`). The loader enforces it: from outside std (programs,
+  packages, tests under `tests/`), a `velt/…` import must name a module's `index.vlt` outside
+  `prelude/` and `lang/`, else it is an error naming the module the file belongs to. A test that
+  needs internals is a white-box test next to the code (below).
+- **The compiler names std modules in one table**, `velt_common::std_modules`
+  (`std_module!(lang_proxy)`, `std_item!(lang_proxy, "Proxy")`): a std file the compiler looks
+  into moves with its entry there, never with a string literal elsewhere.
+- **The prelude's load order** is the list in `std/prelude/index.vlt`; a new prelude file is
+  added there.
 - **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3, its page
   under `docs/std/`, and end-to-end tests under `tests/golden/std/` or `tests/std/`.
 - Callbacks rethrow what they throw (`map<U, E>(f: (x: T) => U throws E): U[] throws E`);

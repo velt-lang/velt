@@ -1,9 +1,9 @@
 // A JSX runtime whose `IntrinsicAttributes` has a required field: every component element must
 // give it, as in TypeScript.
 
-import { Element } from "velt/jsx/node";
-import type { AttrValue } from "velt/jsx/node";
-import { jsxComponent } from "velt/jsx/factory";
+import { Element } from "velt/jsx";
+import type { AttrValue } from "velt/jsx";
+import { jsxComponent } from "velt/jsx/jsx-runtime";
 
 export * from "velt/jsx/jsx-runtime";
 

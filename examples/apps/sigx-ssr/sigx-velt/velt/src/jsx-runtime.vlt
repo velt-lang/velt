@@ -4,7 +4,7 @@
 // each component, event handlers dropped.
 
 import { escapeHtml } from "velt/text";
-import type { IntrinsicElements as Html } from "velt/jsx/intrinsic";
+import type { IntrinsicElements as Html } from "velt/jsx";
 import { Element, Builder } from "./node";
 import type { Child, Text } from "./node";
 

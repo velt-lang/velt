@@ -11,7 +11,7 @@ import {
   InflateDecoder,
   InflateFormat,
 } from "velt/compress";
-import { CompressError } from "velt/compress/errors";
+import { CompressError } from "velt/compress";
 import { hexDecode } from "velt/encoding";
 
 // 400 words of text: dynamic Huffman blocks (Python's `zlib`, level 6).

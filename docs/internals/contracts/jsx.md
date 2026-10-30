@@ -360,15 +360,15 @@ component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
 ## Extending `IntrinsicElements`
-A provider usually starts from std's HTML types rather than copying them: `velt/jsx/intrinsic`
-exports std's `IntrinsicElements`, and `velt/jsx/attrs/attrs` the attribute types it is made of
+A provider usually starts from std's HTML types rather than copying them: `velt/jsx`
+exports std's `IntrinsicElements`, and `velt/jsx/attrs` the attribute types it is made of
 (`HtmlAttrs`, `ButtonAttrs`, …). An intersection extends either one, and a field present in
 both parts merges recursively, so `Html & { button: Events }` gives `<button>` std's attributes
 plus the handlers. `Omit` replaces an attribute's type (an intersection only narrows one):
 
 ```ts ignore
-import type { IntrinsicElements as Html } from "velt/jsx/intrinsic";
-import type { HtmlAttrs } from "velt/jsx/attrs/attrs";
+import type { IntrinsicElements as Html } from "velt/jsx";
+import type { HtmlAttrs } from "velt/jsx/attrs";
 import type { Style } from "velt/jsx";
 
 export type Handler = () => void;

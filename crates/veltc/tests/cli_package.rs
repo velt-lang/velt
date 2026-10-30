@@ -660,7 +660,7 @@ fn ts_and_tsx_modules_in_a_package() {
     );
     s.write(
         "app/src/main.vlt",
-        "import { renderToStringSync } from \"velt/jsx/render\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
+        "import { renderToStringSync } from \"velt/jsx\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
     );
     // The package's JSX provider applies to `.tsx` modules.
     let err = s.fail("app", &["check"]);

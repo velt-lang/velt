@@ -297,6 +297,19 @@ every OS, as TypeScript's `forceConsistentCasingInFileNames` requires: `"./Util"
 disk and the specifier to write (`import it as "./util"`). Files whose names differ only in case
 (`Util.ts` next to `util.vlt`) are different modules everywhere.
 
+A `"velt/x"` specifier names a standard library *module*: a folder of `std/` with an `index.vlt`,
+which is the module's public API (`"velt/net/http"` is `std/net/http/index.vlt`). The other files
+of `std/` are internal to the module whose folder holds them, and a program or package that
+imports one gets an error naming that module, with the import to write instead:
+
+```text
+error: `velt/encoding/json/scan` is internal to `velt/encoding/json`
+  = note: import what you need from "velt/encoding/json", the module's public API
+```
+
+The prelude (`std/prelude/`) and what implements the language and its globals (`std/lang/`) are
+never imported. Standard library code itself imports any std file.
+
 The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mutex`, `assert`,
 …) is always in scope without an import ([Built-ins](builtins.md)).
 

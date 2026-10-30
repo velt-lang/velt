@@ -285,7 +285,9 @@ function lint(std: Std): Problem[] {
   const exporters: Map<string, string> = new Map();
   for (const dir of std.indexes) {
     const file = dir.length == 0 ? "index.vlt" : dir + "/index.vlt";
-    if (special(file)) {
+    // A JSX provider (`<source>/jsx-runtime`) re-exports its source's names by contract
+    // (docs/internals/contracts/jsx.md).
+    if (special(file) || dir.endsWith("jsx-runtime")) {
       continue;
     }
     for (const [name, from] of reexported(std.text(file))) {

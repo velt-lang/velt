@@ -1,5 +1,6 @@
 //! The standard library modules the compiler knows by name, in one table
-//! (docs/internals/design/std-layout.md §5), and the prelude's load order (§4).
+//! (docs/internals/design/std-layout.md §5), the prelude's load order (§4) and which std files
+//! user code may import (§2).
 //! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
 //!
 //! Each entry names a module by its path below the std root (`prelude/adapt` for
@@ -195,6 +196,43 @@ pub fn prelude_order(index_src: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// The std folders user code never imports: the prelude (implicit) and `lang/` (what
+/// implements the language).
+const NOT_IMPORTABLE: [&str; 2] = ["prelude", "lang"];
+
+/// The modules in the old form (`sqlite.vlt` next to `sqlite/`) that stay importable, with
+/// their files, until they move to `packages/` (std-layout.md §3).
+const LEAVING: [&str; 3] = ["sqlite", "postgres", "redis"];
+
+/// Whether user code (any module not loaded from std) may import the std file at `rel_file`
+/// (its path below the std root, `/`-separated: `net/http/index.vlt`): a module's `index.vlt`
+/// outside `prelude/` and `lang/` (std-layout.md §2).
+pub fn importable(rel_file: &str) -> bool {
+    let first = rel_file.split('/').next().unwrap_or("");
+    let first = first.strip_suffix(".vlt").unwrap_or(first);
+    if LEAVING.contains(&first) {
+        return true;
+    }
+    rel_file.ends_with("/index.vlt") && !NOT_IMPORTABLE.contains(&first)
+}
+
+/// The module that owns the std file at `rel_file` (as for [`importable`]): the nearest folder
+/// above it with an `index.vlt` (`has_index("encoding/json")`), as its module path
+/// (`encoding/json`). `None` for a file in no module, and in `prelude/` and `lang/`, which are
+/// not modules.
+pub fn owner(rel_file: &str, has_index: &dyn Fn(&str) -> bool) -> Option<String> {
+    let mut dir = rel_file.rsplit_once('/').map(|(d, _)| d)?;
+    if NOT_IMPORTABLE.contains(&dir.split('/').next().unwrap_or("")) {
+        return None;
+    }
+    loop {
+        if has_index(dir) {
+            return Some(dir.to_string());
+        }
+        dir = dir.rsplit_once('/').map(|(d, _)| d)?;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +302,37 @@ mod tests {
             listed, files,
             "std/prelude/index.vlt must list every prelude file once"
         );
+    }
+
+    #[test]
+    fn user_code_imports_module_indexes_outside_prelude_and_lang() {
+        assert!(importable("fs/index.vlt"));
+        assert!(importable("net/http/index.vlt"));
+        assert!(!importable("encoding/json/scan.vlt"));
+        assert!(!importable("lang/proxy/index.vlt"));
+        assert!(!importable("prelude/array.vlt"));
+        assert!(!importable("prelude/index.vlt"));
+        assert!(importable("sqlite.vlt") && importable("sqlite/btree.vlt"));
+    }
+
+    #[test]
+    fn a_file_belongs_to_the_nearest_module_above_it() {
+        let indexes = ["encoding", "encoding/json", "net/http"];
+        let has = |d: &str| indexes.contains(&d);
+        assert_eq!(
+            owner("encoding/json/scan.vlt", &has).as_deref(),
+            Some("encoding/json")
+        );
+        assert_eq!(
+            owner("encoding/utf8.vlt", &has).as_deref(),
+            Some("encoding")
+        );
+        assert_eq!(
+            owner("net/http/fetch/client/wire.vlt", &has).as_deref(),
+            Some("net/http")
+        );
+        assert_eq!(owner("lang/proxy/ops.vlt", &|_| true), None);
+        assert_eq!(owner("stray.vlt", &has), None);
+        assert_eq!(owner("x/y.vlt", &has), None);
     }
 }

@@ -20,7 +20,7 @@ A module containing JSX compiles to calls into `velt/jsx/jsx-runtime` and sees i
   (`string | i64 | f64 | bool | null`, text the precompiler folds into strings),
   `IntrinsicElements`, `ElementChildrenAttribute`, `RenderError { component; message }`.
   `Element`'s fields are internal: its markup comes from `renderToString`.
-- `velt/jsx/attrs/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
+- `velt/jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
   (the global attributes) and one type per element with attributes of its own (`AnchorAttrs`,
   `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`; `SvgAttrs` and `MathAttrs` and the
   types built on them, such as `CircleAttrs` and `MoAttrs`, for SVG and MathML), for providers

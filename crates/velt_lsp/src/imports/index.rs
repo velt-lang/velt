@@ -2,11 +2,10 @@
 //! standard library root and the modules of a dependency. Shared by `veltc`'s loader and the
 //! tests' loader, so both list the same modules.
 //!
-//! A std module is a folder's `index.vlt` (docs/internals/design/std-layout.md): any other file
-//! belongs to the module of the nearest folder above it that has one, and is internal (not
-//! offered), as is a module whose header comment says so (`Internal: …`) and everything in
-//! `lang/`. A JSX runtime (`jsx/jsx-runtime`) is public wherever it is. The prelude is imported
-//! implicitly and never listed.
+//! The std modules offered are those user code may import (docs/internals/design/std-layout.md
+//! §2, the loader's rule: [`velt_common::std_modules::importable`]): a folder's `index.vlt`
+//! outside `prelude/` and `lang/`. Every other std file is internal to a module and is not
+//! offered.
 
 use std::path::{Path, PathBuf};
 
@@ -25,14 +24,18 @@ pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
     let mut out: Vec<ModuleEntry> = files
         .into_iter()
         .filter_map(|path| {
+            let file = std_file_rel(std_root, &path)?;
+            // A module in the old form (`sqlite.vlt`) is offered until it moves to `packages/`,
+            // but not its files.
+            let module = file.ends_with("/index.vlt") || !file.contains('/');
+            if !module || !velt_common::std_modules::importable(&file) {
+                return None;
+            }
             let rel = module_rel(std_root, &path)?;
-            if rel == "prelude" || rel.starts_with("prelude/") || !is_std_rel(&rel) {
+            if !is_std_rel(&rel) {
                 return None;
             }
             let header = header(&path);
-            if is_internal(std_root, &rel, &path, &header) {
-                return None;
-            }
             Some(ModuleEntry {
                 doc: describe(&header),
                 spec: format!("velt/{rel}"),
@@ -115,30 +118,11 @@ fn is_std_rel(rel: &str) -> bool {
     })
 }
 
-fn is_internal(std_root: &Path, rel: &str, path: &Path, header: &str) -> bool {
-    if says_internal(header) || rel == "lang" || rel.starts_with("lang/") {
-        return true;
-    }
-    if rel.ends_with("jsx-runtime") || path.file_stem().is_some_and(|s| s == "index") {
-        return false;
-    }
-    // Owned by the module of a folder above it (`fs/stream` in the folder of `fs/index.vlt`),
-    // or by a module file next to its folder (`sqlite/btree` next to `sqlite.vlt`, until the
-    // drivers leave std).
-    let segments: Vec<&str> = rel.split('/').collect();
-    (1..segments.len()).any(|n| {
-        let prefix = segments[..n].join("/");
-        std_root.join(&prefix).join("index.vlt").is_file()
-            || std_root.join(format!("{prefix}.vlt")).is_file()
-    })
-}
-
-/// Whether `header` calls the module internal (the word, not `docs/internals/…`).
-fn says_internal(header: &str) -> bool {
-    let lower = header.to_ascii_lowercase();
-    lower
-        .match_indices("internal")
-        .any(|(i, word)| !lower[i + word.len()..].starts_with(|c: char| c.is_ascii_alphabetic()))
+/// The path of `file` below `std_root`, `/`-separated (`net/http/index.vlt`).
+fn std_file_rel(std_root: &Path, file: &Path) -> Option<String> {
+    let rel = file.strip_prefix(std_root).ok()?;
+    let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
 }
 
 /// The first paragraph of the `//` comment a file starts with, as one line.
@@ -222,7 +206,7 @@ mod tests {
         write(root, "jsx/index.vlt", "// velt/jsx: rendering.\n");
         write(
             root,
-            "jsx/jsx-runtime.vlt",
+            "jsx/jsx-runtime/index.vlt",
             "// velt/jsx/jsx-runtime: runtime.\n",
         );
         write(

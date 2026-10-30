@@ -183,12 +183,24 @@ JSX default, the LSP's hidden list (which rule 2 makes unnecessary). Every other
 table. `velt_common` is the natural home and is a contract: the first PR says so (CLAUDE.md rule
 1). After that, a move changes that one table, and the tool rewrites it (§7).
 
+Done: `crates/velt_common/src/std_modules.rs` is the table. Each entry names a module by its path
+below the std root (`lang_proxy => "lang/proxy"`); the macros `std_module!`, `std_item!`,
+`std_dir!` and `std_specifier!` spell its canonical path, a definition's qualified name, its
+folder prefix and its import specifier as literals, and a test checks that every entry names a
+file of `std/`. The same module holds the prelude's order (`prelude_order`) and the visibility
+rule (`importable`, `owner`), which the loader and the language server share; the LSP offers
+exactly the modules the rule lets a program import, so its own list of hidden modules is gone.
+
 The loader gains:
 
 - `velt/` resolution to std (with the folder-module lookup it already has for
   `std/net/index.vlt`, `crates/veltc/src/loader/locate.rs:182`);
 - the visibility rule: from user code, the target must be an `index.vlt` outside `prelude/` and
-  `lang/`; otherwise "`velt/json/scan` is internal to `velt/encoding/json`";
+  `lang/`; otherwise "`velt/json/scan` is internal to `velt/encoding/json`" (done: user code is
+  any module not loaded from std, packages included; the error notes the module to import from;
+  the import the parser adds for `import.meta` is exempt, and so are std's test files, which
+  `velt test std/` imports; `velt/sqlite`, `velt/postgres` and `velt/redis` stay importable whole
+  until they move to `packages/`);
 - the error for a `velt:` specifier (§1);
 - the explicit prelude order.
 

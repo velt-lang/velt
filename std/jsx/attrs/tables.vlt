@@ -1,6 +1,6 @@
-// velt/jsx (internal): attribute types of table cells and columns
+// velt/jsx/attrs (internal): attribute types of table cells and columns
 // (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
-// `velt/jsx/attrs/attrs`).
+// `velt/jsx/attrs`).
 
 import type { HtmlAttrs } from "velt/jsx/attrs/global";
 

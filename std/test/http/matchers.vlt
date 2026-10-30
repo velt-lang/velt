@@ -1,5 +1,5 @@
-// velt/test (internal): matchers for a `Response` (`velt/net/http/fetch/fetch`), for tests of HTTP
-// servers and clients (docs/book/testing.md): `import "velt/test/http"` adds them to
+// velt/test/http (internal): matchers for a `Response` (`velt/net/http/fetch/fetch`), for tests
+// of HTTP servers and clients (docs/book/testing.md): `import "velt/test/http"` adds them to
 // `expect(response)`.
 
 import { Response } from "velt/net/http/fetch/fetch";

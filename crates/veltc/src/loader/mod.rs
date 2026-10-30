@@ -478,21 +478,27 @@ impl Loader<'_, '_> {
                 _ => None,
             })
             .collect();
-        let mut imports: Vec<(String, Span, Option<Vec<String>>)> = vec![];
+        let mut imports: Vec<(String, Span, Option<Vec<String>>, bool)> = vec![];
         for (imp, exported) in items {
             let skip = exported && is_std && !self.wanted.needs(index, &imp);
             if skip && self.pure(index, &imp.from) {
                 continue;
             }
-            imports.push((imp.from.clone(), imp.from_span, wanted::names_taken(&imp)));
+            let written = !velt_syntax::is_synthesized_import(&imp);
+            imports.push((
+                imp.from.clone(),
+                imp.from_span,
+                wanted::names_taken(&imp),
+                written,
+            ));
         }
         let first = self.resolved.insert(index);
-        for (spec, span, names) in imports {
+        for (spec, span, names, written) in imports {
             let known = self.modules[index].imports.iter().find(|(s, _)| *s == spec);
             let target = match known {
                 Some((_, path)) => self.modules.iter().position(|m| m.path == *path),
                 None => {
-                    let target = self.import(index, &spec, span, queue);
+                    let target = self.import(index, &spec, span, written, queue);
                     if let Some(t) = target {
                         let canonical = self.modules[t].path.clone();
                         self.modules[index].imports.push((spec, canonical));
@@ -542,7 +548,7 @@ impl Loader<'_, '_> {
             },
         };
         let spec = jsx::runtime_spec(&source);
-        match self.import(index, &spec, span, queue) {
+        match self.import(index, &spec, span, true, queue) {
             Some(target) => {
                 self.modules[index].jsx_runtime = Some(self.modules[target].path.clone())
             }
@@ -556,12 +562,14 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// Locate (and load if new) the module `spec` imported by module `index`.
+    /// Locate (and load if new) the module `spec` imported by module `index`; `written`: the
+    /// import is the source's, so std's visibility rule applies ([`visibility`]).
     fn import(
         &mut self,
         index: usize,
         spec: &str,
         span: Span,
+        written: bool,
         queue: &mut VecDeque<usize>,
     ) -> Option<usize> {
         let (importer, from) = self.origins[index].clone();
@@ -622,6 +630,11 @@ impl Loader<'_, '_> {
         let file = self.pick_file(spec, span, &target, &shown)?;
         let key = file_key(&file);
         let target = self.std_test_origin(target, &file, &key);
+        if written {
+            if let Err((msg, notes)) = self.visible(&from, &target, &key, spec) {
+                return self.error(msg, notes, span);
+            }
+        }
         if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
             return self.error(msg, vec![], span);
         }
@@ -667,31 +680,6 @@ impl Loader<'_, '_> {
         let new = self.add(&file, key, src, canonical, target.origin);
         queue.push_back(new);
         Some(new)
-    }
-
-    /// A module is std exactly when its file lies below the std root (`key`: its [`file_key`],
-    /// so symlinks and junctions are resolved): a `velt/` path must not leave the root, and user
-    /// code must not load a std file under a non-std origin (deduplication would hand that copy
-    /// to std's own imports).
-    fn std_membership(&self, origin: &Origin, key: &Path, spec: &str) -> Result<(), String> {
-        let Some(std_key) = &self.std_key else {
-            return Ok(());
-        };
-        let inside = key.starts_with(std_key);
-        match origin {
-            Origin::Std(_) if !inside => Err(format!(
-                "module `{spec}` resolves to a file outside the standard library"
-            )),
-            Origin::Std(_) => Ok(()),
-            _ if inside => {
-                let rel = vpm::relpath::relative(key, std_key);
-                let rel = module_path(&rel);
-                Err(format!(
-                    "module `{spec}` is a file of the standard library: import it as `velt/{rel}`"
-                ))
-            }
-            _ => Ok(()),
-        }
     }
 
     /// The path a `paths` alias maps `spec` to, resolved like a relative import's (bare

@@ -4,7 +4,7 @@
 // in small chunks, a stream that expands a thousandfold read in bounded chunks, and the errors:
 // truncated, garbage, data after the end, a reserved bit set.
 import { brotliDecompress, BrotliDecoder } from "velt/compress";
-import { CompressError } from "velt/compress/errors";
+import { CompressError } from "velt/compress";
 import { hexDecode } from "velt/encoding";
 
 // Node's `zlib.brotliCompressSync("hello brotli")`.
