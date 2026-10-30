@@ -12,3 +12,23 @@ export declare generated("./gen") function broken<T>(value: T): string;
 
 /** A generated function whose generator throws. */
 export declare generated("./gen") function crash<T>(): string;
+
+/** The fields of `value`, private ones too, as `name=value` pairs. */
+export declare generated("./gen") function peek<T>(value: T): string;
+
+/** A copy of `value` built without its constructor. */
+export declare generated("./gen") function rebuild<T>(value: T): T;
+
+/** A generated function whose code builds a type it was not given. */
+export declare generated("./gen") function forge<T>(): i32;
+
+/** A class no request reaches. */
+class Hidden {
+  code: i32;
+  private constructor(code: i32) {
+    this.code = code;
+  }
+}
+
+/** A generated function whose generator reads the clock. */
+export declare generated("./impure") function stamped<T>(): string;

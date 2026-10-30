@@ -19,19 +19,20 @@ pub(crate) fn bind(cx: &mut Ctx) -> Bound {
         return out;
     };
     for inst in &gen.instances {
-        let Some(m) = cx.modules.iter().position(|s| s.path == inst.module) else {
-            ice_missing(cx, &inst.module, "module");
+        let index = |path: &str| cx.modules.iter().position(|s| s.path == path);
+        let (Some(m), Some(g)) = (index(&inst.module), index(&inst.body_module)) else {
+            ice_missing(cx, &inst.body_module, "module");
             continue;
         };
-        let def = |cx: &Ctx, name: &str| match cx.scopes[m].items.get(name) {
+        let def = |cx: &Ctx, m: usize, name: &str| match cx.scopes[m].items.get(name) {
             Some(Item::Def(d)) => Some(*d),
             _ => None,
         };
-        let (Some(f), Some(body)) = (def(cx, &inst.function), def(cx, &inst.body)) else {
+        let (Some(f), Some(body)) = (def(cx, m, &inst.function), def(cx, g, &inst.body)) else {
             ice_missing(cx, &inst.function, "generated function");
             continue;
         };
-        let env = TyEnv::new(m, &[]);
+        let env = TyEnv::new(g, &[]);
         let targs: Vec<TyId> = (inst.type_args.iter())
             .map(|name| {
                 let t = ast::TypeExpr {

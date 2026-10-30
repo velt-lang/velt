@@ -1,0 +1,2 @@
+6:15: error: the code generated for `forge<i32>` by `./gen` does not compile (a bug in the generator)
+= note: <generated>/_generators/1.vlt:5:20: generated code cannot build `Hidden` without its constructor

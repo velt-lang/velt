@@ -23,11 +23,12 @@ const OFFER_KIND: &str = "generated-offer";
 
 /// The key of a round's output: the compiler, the host program (which generators) and the
 /// requests with their model.
-pub(super) fn output_key(src: &str, input: &str) -> Option<Key> {
+pub(super) fn output_key(root: &Path, src: &str, input: &str) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
-    h.part(b"generate-output-v2");
+    h.part(b"generate-output-v3");
     h.part(&crate::build_cache::compiler_identity().0);
+    h.part(root.as_os_str().as_encoded_bytes());
     h.part(src.as_bytes());
     h.part(input.as_bytes());
     Some(h.finish())
@@ -87,19 +88,28 @@ fn read_files<'a>(entry: &'a [u8], key: &Key) -> Option<(Vec<String>, &'a [u8])>
 /// What a build generated, to offer to the next build of the same program.
 #[derive(Default)]
 pub(super) struct Offer {
-    /// `(declaring module, file name in the source map, text)` per generated file.
-    pub files: Vec<(String, String, String)>,
+    pub files: Vec<OfferFile>,
     /// The instances in them, with their fingerprints.
     pub instances: Vec<GenInstance>,
     /// What the generators' builds read (build-stamp entries).
     pub generator_files: Vec<String>,
 }
 
+/// A generated module of an offer.
+pub(super) struct OfferFile {
+    /// The declaring module's path and the generated module's.
+    pub module: String,
+    pub path: String,
+    pub text: String,
+    /// [`velt_sema::generated::GenModule::access`].
+    pub access: Vec<String>,
+}
+
 /// The key of program `root`'s offer.
 pub(super) fn offer_key(root: &Path, require_main: bool) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
-    h.part(b"generate-offer-v1");
+    h.part(b"generate-offer-v2");
     h.part(&crate::build_cache::compiler_identity().0);
     h.part(root.as_os_str().as_encoded_bytes());
     h.part(&[u8::from(require_main)]);
@@ -116,20 +126,26 @@ pub(super) fn load_offer(key: &Key) -> Option<Offer> {
         generator_files,
         ..Offer::default()
     };
+    let strings = |v: &Value, k: &str| {
+        (v.get(k)?.as_array()?.iter())
+            .map(|a| a.as_str().map(String::from))
+            .collect::<Option<Vec<_>>>()
+    };
     for f in v.get("files")?.as_array()? {
-        offer
-            .files
-            .push((text(f, "module")?, text(f, "name")?, text(f, "text")?));
+        offer.files.push(OfferFile {
+            module: text(f, "module")?,
+            path: text(f, "path")?,
+            text: text(f, "text")?,
+            access: strings(f, "access")?,
+        });
     }
     for i in v.get("instances")?.as_array()? {
-        let type_args = (i.get("typeArgs")?.as_array()?.iter())
-            .map(|a| a.as_str().map(String::from))
-            .collect::<Option<Vec<_>>>()?;
         offer.instances.push(GenInstance {
             module: text(i, "module")?,
             function: text(i, "function")?,
-            type_args,
+            type_args: strings(i, "typeArgs")?,
             body: text(i, "body")?,
+            body_module: text(i, "bodyModule")?,
             fingerprint: text(i, "fingerprint")?,
         });
     }
@@ -146,14 +162,15 @@ pub(super) fn store_offer(key: &Key, offer: &Offer) {
         return;
     }
     let v = json!({
-        "files": offer.files.iter().map(|(m, n, t)| json!({
-            "module": m, "name": n, "text": t,
+        "files": offer.files.iter().map(|f| json!({
+            "module": f.module, "path": f.path, "text": f.text, "access": f.access,
         })).collect::<Vec<_>>(),
         "instances": offer.instances.iter().map(|i| json!({
             "module": i.module,
             "function": i.function,
             "typeArgs": i.type_args,
             "body": i.body,
+            "bodyModule": i.body_module,
             "fingerprint": i.fingerprint,
         })).collect::<Vec<_>>(),
     });

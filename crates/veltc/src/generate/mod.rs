@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
-use velt_sema::generated::{GenInput, GenInstance};
+use velt_sema::generated::{GenInput, GenInstance, GenModule};
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
+use velt_syntax::ast::ItemKind;
 
 use crate::driver::Session;
 
@@ -42,11 +43,10 @@ pub(crate) fn check(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    packages: Option<&vpm::PackageGraph>,
 ) -> Option<hir::Program> {
     let declares = modules.iter().any(declares_generated);
-    let root_path = modules
-        .get(root)
-        .map(|m| sess.sm.get(m.file).path.clone());
+    let root_path = modules.get(root).map(|m| sess.sm.get(m.file).path.clone());
     let offer_key = (declares.then_some(root_path).flatten())
         .and_then(|p| cache::offer_key(&p, opts.require_main));
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
@@ -60,7 +60,7 @@ pub(crate) fn check(
         sess.diagnostics.truncate(mark);
     }
     let mut st = Rounds::default();
-    let program = rounds(sess, modules, root, opts, &mut st)?;
+    let program = rounds(sess, modules, root, (opts, packages), &mut st)?;
     if let Some(key) = offer_key.filter(|_| !st.offer.instances.is_empty()) {
         cache::store_offer(&key, &st.offer);
     }
@@ -80,15 +80,22 @@ fn check_offered(
 ) -> Option<hir::Program> {
     let mut next: Vec<SourceModule> = modules.iter().map(copy_module).collect();
     let mut input = GenInput::default();
-    for (module, name, text) in offer.files {
-        let m = next.iter_mut().find(|m| m.path == module)?;
-        let file = sess.sm.add(PathBuf::from(GENERATED_DIR).join(name), text.clone());
-        let (ast, errors) = velt_syntax::parse_file(file, &text);
+    for f in offer.files {
+        let file = sess
+            .sm
+            .add(PathBuf::from(&f.path).with_extension("vlt"), f.text.clone());
+        let (ast, errors) = velt_syntax::parse_file(file, &f.text);
         if !errors.is_empty() {
             return None;
         }
-        m.ast.items.extend(ast.items);
+        let gm = generated_module(&next, &f.module, &f.path, file, ast)?;
+        next.push(gm);
         input.files.push(file);
+        input.modules.push(GenModule {
+            path: f.path,
+            declaring: f.module,
+            access: f.access,
+        });
     }
     input.instances = offer.instances;
     let t = Instant::now();
@@ -117,7 +124,7 @@ fn rounds(
     sess: &mut Session,
     modules: &[SourceModule],
     root: usize,
-    opts: CheckOptions,
+    (opts, packages): (CheckOptions, Option<&vpm::PackageGraph>),
     st: &mut Rounds,
 ) -> Option<hir::Program> {
     let mut owned: Option<Vec<SourceModule>> = None;
@@ -152,26 +159,23 @@ fn rounds(
             return None;
         }
         let t = Instant::now();
-        let generated = run::run(sess, current, &demand, round);
+        let generated = run::run(sess, current, &demand, round, packages);
         sess.timings.push(("generate", t.elapsed()));
-        let generated = generated?;
+        let mut generated = generated?;
         let mut next: Vec<SourceModule> = current.iter().map(copy_module).collect();
-        for (module, text) in generated.modules {
-            let Some(m) = next.iter_mut().find(|m| m.path == module) else {
-                continue;
-            };
-            let name = format!("{module}.{round}.vlt");
-            let path = PathBuf::from(GENERATED_DIR).join(&name);
-            emit(&path, &text);
-            let file = sess.sm.add(path, text.clone());
+        for g in generated.modules {
+            let path = module_path(&g.declaring, round);
+            let file_path = PathBuf::from(&path).with_extension("vlt");
+            emit(&file_path, &g.text);
+            let file = sess.sm.add(file_path, g.text.clone());
             let described = (generated.described.iter())
-                .filter(|d| d.module == module)
+                .filter(|d| d.module == g.declaring)
                 .cloned()
                 .collect();
             st.files.push((file, described));
-            let (ast, errors) = velt_syntax::parse_file(file, &text);
+            let at = demand.requests.first().map_or(Span::DUMMY, |r| r.at);
+            let (ast, errors) = velt_syntax::parse_file(file, &g.text);
             if !errors.is_empty() {
-                let at = demand.requests.first().map_or(Span::DUMMY, |r| r.at);
                 let mut d = Diagnostic::error(
                     "the code a generator wrote does not parse (a bug in the generator)",
                     at,
@@ -183,15 +187,49 @@ fn rounds(
                 sess.diagnostics.extend(errors);
                 return None;
             }
-            m.ast.items.extend(ast.items);
+            if let Some(i) = ast
+                .items
+                .iter()
+                .find(|i| matches!(i.kind, ItemKind::Import(_)))
+            {
+                let d =
+                    Diagnostic::error("generated code cannot import (a bug in the generator)", at)
+                        .with_note(format!(
+                            "it sees what `{}` imports and declares; an import at {}:{}",
+                            g.declaring,
+                            file_path_of(&sess.sm, file),
+                            sess.sm.line_col(file, i.span.lo).0
+                        ));
+                sess.diagnostics.push(d);
+                return None;
+            }
+            let Some(gm) = generated_module(&next, &g.declaring, &path, file, ast) else {
+                continue;
+            };
+            next.push(gm);
             st.input.files.push(file);
-            st.offer.files.push((module, name, text));
+            let module = GenModule {
+                path: path.clone(),
+                declaring: g.declaring.clone(),
+                access: g.access.clone(),
+            };
+            st.input.modules.push(module);
+            st.offer.files.push(cache::OfferFile {
+                module: g.declaring,
+                path,
+                text: g.text,
+                access: g.access,
+            });
         }
         for (inst, fp) in generated.instances.iter().zip(generated.fingerprints) {
             st.offer.instances.push(GenInstance {
                 fingerprint: fp,
+                body_module: module_path(&inst.module, round),
                 ..inst.clone()
             });
+        }
+        for inst in &mut generated.instances {
+            inst.body_module = module_path(&inst.module, round);
         }
         for f in generated.generator_files {
             if !st.offer.generator_files.contains(&f) {
@@ -204,11 +242,42 @@ fn rounds(
     None
 }
 
+/// The path of the module generated for declaring module `declaring` in round `round` (its file
+/// in the source map adds `.vlt`): `<generated>/<module>/<round>`, which no import can name.
+fn module_path(declaring: &str, round: u32) -> String {
+    format!("{GENERATED_DIR}/{declaring}/{round}")
+}
+
+/// A generated module of the program: not std, with the imports of the module it was generated
+/// for (whose scope it is checked in); `None` when that module is not in the program.
+fn generated_module(
+    modules: &[SourceModule],
+    declaring: &str,
+    path: &str,
+    file: FileId,
+    ast: velt_syntax::ast::Module,
+) -> Option<SourceModule> {
+    let decl = modules.iter().find(|m| m.path == declaring)?;
+    Some(SourceModule {
+        path: path.to_string(),
+        is_std: false,
+        file,
+        ast,
+        imports: decl.imports.clone(),
+        jsx_runtime: None,
+        is_dependency: decl.is_dependency,
+    })
+}
+
+fn file_path_of(sm: &velt_common::SourceMap, file: FileId) -> String {
+    sm.get(file).path.display().to_string()
+}
+
 /// Whether module `m` declares a generated function.
 fn declares_generated(m: &SourceModule) -> bool {
-    m.ast.items.iter().any(|i| {
-        matches!(&i.kind, velt_syntax::ast::ItemKind::Function(f) if f.sig.generator.is_some())
-    })
+    m.ast.items.iter().any(
+        |i| matches!(&i.kind, velt_syntax::ast::ItemKind::Function(f) if f.sig.generator.is_some()),
+    )
 }
 
 /// With [`EMIT_ENV`] set to a directory, generated modules are written there too, to read them
@@ -241,15 +310,23 @@ fn copy_module(m: &SourceModule) -> SourceModule {
     }
 }
 
-/// What one round generated: source text per declaring module, and the instances in it.
+/// What one round generated: a module per declaring module, and the instances in them.
 struct Generated {
-    modules: Vec<(String, String)>,
+    modules: Vec<GeneratedText>,
     instances: Vec<GenInstance>,
     /// Per instance: its fingerprint, for offers.
     fingerprints: Vec<String>,
     described: Vec<Described>,
     /// What the host's build read (build-stamp entries).
     generator_files: Vec<String>,
+}
+
+/// The code generated for one declaring module in a round.
+struct GeneratedText {
+    declaring: String,
+    text: String,
+    /// The qualified names of the declared types its requests reach ([`GenModule::access`]).
+    access: Vec<String>,
 }
 
 /// One instance in a generated file: where its code is, `fn<types>` by `<generator>`, and the

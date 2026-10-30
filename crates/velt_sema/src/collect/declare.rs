@@ -32,6 +32,7 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
     }
+    crate::generated::access::inherit_scopes(cx);
     collect_prelude(cx);
 }
 

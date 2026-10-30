@@ -1,6 +1,6 @@
 # Design: source generators (compile-time code written in Velt, for any library)
 
-Status: proposed; steps 1–4 of "Order of work" are built on branch `source-generators`
+Status: in progress on branch `source-generators`: steps 1–6 of "Order of work" are built
 ("As built so far" at the end). Owners: `velt_syntax` (the declaration), `velt_sema` (demand, the type model, checking
 generated code, the access rule), `velt_vir` (instantiating a generated function), `veltc` (the
 generation loop, the generator host, caching), std (`velt/generate`, and each generator).
@@ -240,17 +240,28 @@ generators the program needs. The generator build is ordinary Velt, compiled by 
 compiler, so generator authors get the whole language and std, with three restrictions that make
 generators pure functions of their input (needed for caching, §9, and for security, §11):
 
-- no I/O: importing `velt/fs`, `velt/net`, `velt/child_process`, `velt/process` (env, argv),
-  `velt/os`, `velt/http`, timers, databases or native packages is a compile error in a generator
-  build ("a generator cannot read files: it gets everything from its request");
-- no `declare function` externs of its own (only std's);
-- the clock and randomness read fixed values.
+- no I/O: the files, the network, the environment, child processes, standard input;
+- no code outside Velt: no `declare function` externs of its own, no native packages;
+- no clock and no randomness.
 
-**Running it.** The generator build is compiled with the Cranelift JIT backend and run in a
-child process, `velt generate --host`: the same `velt` binary, as `velt dev --host` is
-([hot-reload.md](hot-reload.md), "Phase 2": the runtime is linked into `velt`, no link step and
-no new executable for the OS to check). The compiler writes requests to its stdin and reads
-results from its stdout. A child process rather than the compiler's own:
+These are checked when the generator build is compiled, from what its generators can reach (the
+runtime functions and externs reachable from the functions the host registers, as `velt test`
+decides whether a test reaches outside, `driver/outside.rs`), with the host's own plumbing in
+`velt/generate` left out: "a source generator cannot reach the clock: it runs at compile time and
+gets everything from its request". Checking reachability rather than imports catches a std module
+that reads the clock as surely as an import of `velt/fs`, and needs no list of modules to keep up
+to date. (An earlier draft gave the clock and randomness fixed values; rejecting them is simpler
+and keeps generators obviously deterministic.)
+
+**Running it.** The generator build is compiled once into an executable kept in the build cache
+(with a build stamp of its own, so a host whose generators did not change is neither compiled
+nor linked again) and run as a child process; without a build cache it is JIT-compiled and run
+by `velt __generate-host`, as `velt dev --host` runs a program ([hot-reload.md](hot-reload.md)).
+The compiler writes requests to its stdin and reads results from its stdout. One host is built
+per directory its generator modules are imported from: its root sits beside the declaring module
+and imports the generator module by the specifier the declaration wrote, so a relative path, a
+package's module and a std module (imported as `velt/…`) resolve as imports of the declaring
+module do, with the program's packages. A child process rather than the compiler's own:
 
 - a crash, a stack overflow, an uncaught `throw`, an endless loop (a timeout) or
   `process.exit` ends the host, not the compiler, which reports it as a diagnostic at the
@@ -305,12 +316,13 @@ common case.
 One rule replaces the special cases. In a generated module, for every type in the request's
 model:
 
-- its `private` and `protected` fields and methods may be read and written (as code in the class
-  could), ES `#private` fields included;
+- its `private` fields and methods may be read and written, and its private constructor called
+  (as code in the class could);
 - a class may be built **without running its constructor**, with the sanctioned form
-  `construct<T>({ …fields })` from `velt/generate/access`. Every field without an initializer
-  must be given; a field with an initializer that is left out gets the initializer's value.
-  `construct` is a compile error outside generated code.
+  `__construct<T>({ …fields })`. Every field without an initializer must be given; a field with
+  an initializer that is left out gets the initializer's value, an optional one is absent.
+  `__construct` means nothing outside generated code, and in it only for the types of its
+  requests.
 
 This is what .NET's partial classes give a generator, and what today's JSON glue does. A library
 does not get access to a type the program never hands it: the model of a request holds only
@@ -321,7 +333,14 @@ rules (ES private fields are skipped, a class with a private constructor is writ
 decoded).
 
 Generated modules are never std modules (`SourceModule::is_std` is false even for std's
-generators). They cannot call compiler intrinsics. What std's generated code needs is a public,
+generators).
+
+The access is granted per generated module: its code has the access of every declared class and
+struct that its requests' models reach (`GenModule::access`). ES private fields (`#x`) are not
+included: as in JavaScript, nothing outside the class sees them, and no std generator needs them
+(Node's `JSON.stringify`, `util.inspect`, `assert.deepStrictEqual` and `structuredClone` all skip
+them). The sanctioned form is `__construct<T>({ … })`, a name only generated code resolves (as
+`__qualified` is), so that generated code needs no import. They cannot call compiler intrinsics. What std's generated code needs is a public,
 documented API that a package can call too: the JSON reader and writer (json-engine.md step 12
 makes them public anyway), and a small `velt/generate/runtime` for what only the compiler knows
 at run time (a typed proxy's tag, an object's class for subclass dispatch, the cycle guard of
@@ -330,9 +349,10 @@ same powers as any package's.
 
 **Scope.** A generated module is checked in the scope of the module that declares the generated
 function: its imports and top-level declarations, exported or not, are visible, as if the
-generated code were appended to it. It may add imports of its own, resolved from that module.
-The names returned by `Output.typeName` are bound by the compiler in that scope, so no import of
-the user's types is needed.
+generated code were appended to it. It cannot import: what its code needs, the declaring module
+imports (a generated module is added after the program is loaded, and the loader is not run
+again for it). The names returned by `Output.typeName` are bound by the compiler in that scope,
+so no import of the user's types is needed.
 
 ### 8. Decorators are generator input
 
@@ -571,18 +591,27 @@ goldens:
   (`velt_sema/src/generated/demand.rs`), the model (`model.rs`), spellings with
   `__qualified<"module", "Name">` (`spell.rs`), binding (`bind.rs`, `hir::Program::generated`),
   the redirect in lowering (`velt_vir` `generated_instance`), the driver's rounds and the host
-  (`veltc/src/generate.rs`, `velt __generate-host`), `velt/generate` (`std/generate/index.vlt`).
-- Generated code is appended to the declaring module (its scope, as §7 says), in a file of its
-  own in the source map (`<generated>/<module>.<round>.vlt`; `VELT_EMIT_GENERATED=<dir>` writes
-  them out until `--emit-generated` exists).
+  (`veltc/src/generate/`), `velt/generate` (`std/generate/index.vlt`).
+- Generated code is a module of its own per declaring module and round
+  (`<generated>/<module>/<round>`, never std), checked in the declaring module's scope
+  (`generated/access.rs` `inherit_scopes`); `VELT_EMIT_GENERATED=<dir>` writes the modules out
+  until `--emit-generated` exists.
+- The access rule (`generated/access.rs`): `private` members and `__construct<T>` for the
+  declared types its requests reach.
 - A generated function and its generated bodies share pass modes: they are joined like a vtable
   slot's (`ownership/mutation.rs`), so callers checked against the declaration call the bodies
   with the same ABI. A body throws only what the declaration's `throws` lists.
+- Caching (§9): the output of each host run by its input (`generate/cache.rs`), the offered
+  modules with a fingerprint per instance (`Model::fingerprint`: the model closure of its type
+  arguments renumbered from them, without positions, and the function's signature), the host
+  executable in the build cache (`generate/host.rs`), and the generators' files in the
+  program's build stamp.
+- The no-I/O rule (§5): `driver::check_generator_host`, from what the generators reach.
+- Generator modules resolved as imports of the declaring module: relative, package, std.
 
-Not yet: caching (§9), the access rule and `construct<T>` (§7), the no-I/O rule of the
-generator build (§5), decorators, package specifiers for generator modules, and generated code
-of std modules being non-std (it inherits the declaring module's `is_std` while it is appended
-to it; §7 needs it in a module of its own with the declaring module's scope).
+Not yet: decorators (§8), `--emit-generated` and `--no-generators`, per-request output caching
+(today one entry per host run: an edit to one serialized type runs the generator for every
+instance of the round; the offered modules make that rare).
 
 ### Measured (Apple M4, a shared machine)
 
@@ -593,6 +622,9 @@ to it; §7 needs it in a module of its own with the declaring module's scope).
   the host (116–400 ms wall, almost all of it the host compiling `velt/generate` and the
   generators and JIT-compiling them). Far over the 10% criterion: caching the output (§9) and the
   compiled host are required before any std operation moves onto generators.
+- **With generators, cached** (the steady state: the last build's modules offered): 679 M
+  instructions against 629 M (+8%; one check, the offered module parsed and checked with the
+  program, the offer and the generators' files read from the cache).
 - **Run time:** the prototype `JSON.stringify` generator (`bench/json/generated`, public APIs
   only) writes byte-identical text and costs about 1.57 G instructions against the glue's 1.01 G
   for the same work (+55%; `compare.sh`, release runtime). A literal append (`Writer.raw`,

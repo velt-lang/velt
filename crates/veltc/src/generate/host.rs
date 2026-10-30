@@ -30,8 +30,12 @@ pub(super) struct Host {
 
 /// The host for the generators `src` imports (`root`: its virtual path, which their relative
 /// imports resolve from). `Err`: the host does not build, with its diagnostics as text.
-pub(super) fn prepare(root: &Path, src: &str) -> Result<Host, String> {
-    match executable(root, src) {
+pub(super) fn prepare(
+    root: &Path,
+    src: &str,
+    packages: Option<&vpm::PackageGraph>,
+) -> Result<Host, String> {
+    match executable(root, src, packages) {
         Some(built) => built,
         None => Ok(Host {
             command: jit_command(root, src)?,
@@ -42,7 +46,11 @@ pub(super) fn prepare(root: &Path, src: &str) -> Result<Host, String> {
 }
 
 /// The cached executable host: `None` without a build cache.
-fn executable(root: &Path, src: &str) -> Option<Result<Host, String>> {
+fn executable(
+    root: &Path,
+    src: &str,
+    packages: Option<&vpm::PackageGraph>,
+) -> Option<Result<Host, String>> {
     let dir = crate::build_cache::root()?;
     let key = velt_build_cache::Key::of(&[
         b"generate-host-v1",
@@ -63,9 +71,11 @@ fn executable(root: &Path, src: &str) -> Option<Result<Host, String>> {
         input: root.to_path_buf(),
         root_source: Some(src.to_string()),
         output: Some(exe.clone()),
+        packages: packages.cloned(),
         ..BuildOptions::default()
     };
     let mut sess = Session::new();
+    sess.generator_build = true;
     let built = stamp::required(|| driver::build(&mut sess, &opts));
     let exe = match built {
         Ok(Artifact::Executable(p)) => p,
@@ -148,10 +158,13 @@ pub fn host_main(root: &Path) -> ExitCode {
         ..BuildOptions::default()
     };
     let mut sess = Session::new();
+    sess.generator_build = true;
     let symbols = velt_rt_host::abi_symbols::symbol_table();
     let mut session = velt_codegen_cl::DevSession::new(&symbols);
     session.set_debug_info(false);
-    let program = match driver::compile(&mut sess, &opts) {
+    let program = match driver::compile(&mut sess, &opts)
+        .and_then(|p| driver::check_generator_host(&mut sess, &p).map(|()| p))
+    {
         Ok(p) => p,
         Err(e) => {
             eprint!("{}", report(&sess, &e));

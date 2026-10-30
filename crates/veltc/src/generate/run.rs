@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use velt_sema::generated::{spell, Demand, GenInstance};
 use velt_sema::SourceModule;
 
-use super::{cache, host, Described, Generated};
+use super::{cache, host, Described, Generated, GeneratedText};
 use crate::driver::Session;
 
 /// One instance the host generated.
@@ -27,111 +27,69 @@ pub(super) fn run(
     modules: &[SourceModule],
     demand: &Demand,
     round: u32,
+    packages: Option<&vpm::PackageGraph>,
 ) -> Option<Generated> {
     let first_at = demand.requests.first().map_or(Span::DUMMY, |r| r.at);
-    // One key per generator module, by its file.
-    let mut keys: Vec<PathBuf> = vec![];
+    // One key per generator module (by its file), and one host per directory the generator
+    // modules are imported from.
+    let mut files: Vec<PathBuf> = vec![];
     let mut fn_keys: Vec<String> = vec![];
+    let mut hosts: Vec<HostPlan> = vec![];
+    // Only the generator modules of requested functions run (with every function of theirs: a
+    // generator may ask for instances of the module's other functions).
+    let requested: Vec<(&str, &str)> = (demand.requests.iter())
+        .map(|r| &demand.functions[r.function])
+        .map(|f| (f.module.as_str(), f.generator.as_str()))
+        .collect();
     for f in &demand.functions {
-        let Some(decl) = modules.iter().find(|m| m.path == f.module) else {
+        let decl = modules.iter().find(|m| m.path == f.module);
+        let Some(decl) = decl.filter(|_| requested.contains(&(&f.module, &f.generator))) else {
             fn_keys.push(String::new());
             continue;
         };
         let decl_path = sess.sm.get(decl.file).path.clone();
-        let Some(path) = resolve_generator(&decl_path, &f.generator) else {
-            let msg = format!(
-                "the generator module `{}` must be a relative path (`./…`) for now",
-                f.generator
-            );
+        let Some((file, dir, spec)) = locate_generator(&decl_path, &f.generator, packages) else {
+            let msg = format!("cannot find the generator module `{}`", f.generator);
             sess.diagnostics
                 .push(Diagnostic::error(msg, f.generator_span));
             return None;
         };
-        let i = keys.iter().position(|k| *k == path).unwrap_or_else(|| {
-            keys.push(path);
-            keys.len() - 1
+        let i = files.iter().position(|k| *k == file).unwrap_or_else(|| {
+            files.push(file);
+            files.len() - 1
         });
-        fn_keys.push(format!("g{i}"));
-    }
-    let dir = keys
-        .first()
-        .and_then(|k| k.parent())
-        .map(Path::to_path_buf)?;
-    // The host program: every generated function of every generator module the requests name.
-    let mut src = String::from("import { serve } from \"velt/generate\";\n");
-    for (i, k) in keys.iter().enumerate() {
-        let spec = relative_spec(&dir, k);
-        src.push_str(&format!("import * as g{i} from {spec:?};\n"));
-    }
-    src.push_str("\nfunction main() {\n  serve([\n");
-    let mut entries = vec![];
-    for (f, key) in demand.functions.iter().zip(&fn_keys) {
-        if key.is_empty() || entries.contains(&(key.clone(), f.function.clone())) {
-            continue;
+        let key = format!("g{i}");
+        let h = hosts.iter().position(|h| h.dir == dir).unwrap_or_else(|| {
+            hosts.push(HostPlan {
+                dir,
+                imports: vec![],
+                entries: vec![],
+            });
+            hosts.len() - 1
+        });
+        let host = &mut hosts[h];
+        if !host.imports.iter().any(|(k, _)| *k == key) {
+            host.imports.push((key.clone(), spec));
         }
-        src.push_str(&format!(
-            "    {{ key: {key:?}, fn: {:?}, run: {key}.{} }},\n",
-            f.function, f.function
-        ));
-        entries.push((key.clone(), f.function.clone()));
+        if !host.entries.contains(&(key.clone(), f.function.clone())) {
+            host.entries.push((key.clone(), f.function.clone()));
+        }
+        fn_keys.push(key);
     }
-    src.push_str("  ]);\n}\n");
     let prefix = format!("__gen_r{round}_");
     let request_names: Vec<String> = (demand.requests.iter().enumerate())
         .map(|(i, r)| format!("{prefix}{i}_{}", demand.functions[r.function].function))
         .collect();
-    let input = json!({
-        "prefix": prefix,
-        "types": model_json(&demand.model),
-        "functions": demand.functions.iter().zip(&fn_keys).map(|(f, key)| json!({
-            "generator": key,
-            "function": f.function,
-            "params": f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
-        "requests": demand.requests.iter().zip(&request_names).map(|(r, name)| json!({
-            "name": name,
-            "generator": fn_keys[r.function],
-            "function": demand.functions[r.function].function,
-            "typeArgs": r.type_args,
-        })).collect::<Vec<_>>(),
-    });
-    let host_root = dir.join("__velt_generate_host.vlt");
-    let input = input.to_string();
-    let failed = |sess: &mut Session, msg: String| {
-        let f = &demand.functions[demand.requests[0].function];
-        let d = Diagnostic::error(format!("the generator `{}` failed", f.generator), first_at)
-            .with_note(msg);
-        sess.diagnostics.push(d);
-    };
-    let key = cache::output_key(&src, &input);
-    let (output, generator_files) = match key.as_ref().and_then(cache::cached_output) {
-        Some(hit) => hit,
-        None => {
-            if super::guard::building(&src) {
-                let msg = "generators need generated code to be built, in a cycle";
-                sess.diagnostics.push(Diagnostic::error(msg, first_at));
-                return None;
-            }
-            let ran = super::guard::with(&src, || {
-                host::prepare(&host_root, &src).and_then(|h| {
-                    let files = h.files.clone();
-                    h.run(&input).map(|out| (out, files))
-                })
-            });
-            match ran {
-                Ok((out, files)) => {
-                    if let Some(key) = &key {
-                        cache::store_output(key, &out, &files);
-                    }
-                    (out, files)
-                }
-                Err(msg) => {
-                    failed(sess, msg);
-                    return None;
-                }
-            }
-        }
-    };
+    let types = model_json(&demand.model);
+    let functions: Vec<Value> = (demand.functions.iter().zip(&fn_keys))
+        .map(|(f, key)| {
+            json!({
+                "generator": key,
+                "function": f.function,
+                "params": f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let mut written: Vec<(String, Written)> = (demand.requests.iter().zip(&request_names))
         .map(|(r, name)| {
             let w = Written {
@@ -143,12 +101,51 @@ pub(super) fn run(
             (name.clone(), w)
         })
         .collect();
+    let mut outputs = vec![];
+    let mut generator_files: Vec<String> = vec![];
+    for host in &hosts {
+        let requests: Vec<Value> = (demand.requests.iter().zip(&request_names))
+            .filter(|(r, _)| host.imports.iter().any(|(k, _)| *k == fn_keys[r.function]))
+            .map(|(r, name)| {
+                json!({
+                    "name": name,
+                    "generator": fn_keys[r.function],
+                    "function": demand.functions[r.function].function,
+                    "typeArgs": r.type_args,
+                })
+            })
+            .collect();
+        let Some(first) = (demand.requests.iter())
+            .find(|r| host.imports.iter().any(|(k, _)| *k == fn_keys[r.function]))
+        else {
+            continue;
+        };
+        let input = json!({
+            "prefix": prefix,
+            "types": types,
+            "functions": functions,
+            "requests": requests,
+        })
+        .to_string();
+        let src = host.source();
+        let at = first.at;
+        let generator = &demand.functions[first.function].generator;
+        let (out, files) = run_host(sess, host, &src, &input, packages, (generator, at))?;
+        outputs.push(out);
+        for f in files {
+            if !generator_files.contains(&f) {
+                generator_files.push(f);
+            }
+        }
+    }
     let mut errors: Diagnostics = vec![];
-    if let Err(msg) = parse_frames(&output, &mut written, &mut errors, demand, first_at) {
-        let d =
-            Diagnostic::error("a generator's output could not be read", first_at).with_note(msg);
-        sess.diagnostics.push(d);
-        return None;
+    for output in &outputs {
+        if let Err(msg) = parse_frames(output, &mut written, &mut errors, demand, first_at) {
+            let d = Diagnostic::error("a generator's output could not be read", first_at)
+                .with_note(msg);
+            sess.diagnostics.push(d);
+            return None;
+        }
     }
     if !errors.is_empty() {
         sess.diagnostics.extend(errors);
@@ -156,6 +153,7 @@ pub(super) fn run(
     }
     // The code, per declaring module.
     let mut modules_out: Vec<(String, String)> = vec![];
+    let mut accesses: Vec<(String, Vec<String>)> = vec![];
     let mut instances = vec![];
     let mut fingerprints = vec![];
     let mut described = vec![];
@@ -240,11 +238,35 @@ pub(super) fn run(
             function: f.function.clone(),
             type_args,
             body: name.clone(),
+            // Set by the driver, which names the generated module.
+            body_module: String::new(),
             fingerprint: String::new(),
         });
+        let access = reachable_types(&demand.model, &w.args);
+        match accesses.iter_mut().find(|(m, _)| *m == f.module) {
+            Some((_, a)) => {
+                for q in access {
+                    if !a.contains(&q) {
+                        a.push(q);
+                    }
+                }
+            }
+            None => accesses.push((f.module.clone(), access)),
+        }
     }
     Some(Generated {
-        modules: modules_out,
+        modules: (modules_out.into_iter())
+            .map(|(declaring, text)| {
+                let access = (accesses.iter().find(|(m, _)| *m == declaring))
+                    .map(|(_, a)| a.clone())
+                    .unwrap_or_default();
+                GeneratedText {
+                    declaring,
+                    text,
+                    access,
+                }
+            })
+            .collect(),
         instances,
         fingerprints,
         described,
@@ -252,36 +274,124 @@ pub(super) fn run(
     })
 }
 
-/// The generator module file `spec` names, from the declaring module at `decl`.
-fn resolve_generator(decl: &Path, spec: &str) -> Option<PathBuf> {
-    if !spec.starts_with("./") && !spec.starts_with("../") {
-        return None;
+/// The qualified names of the declared classes and structs that model types `roots` reach:
+/// the types whose access code generated for them has.
+fn reachable_types(model: &velt_sema::generated::model::Model, roots: &[u32]) -> Vec<String> {
+    let mut seen: Vec<u32> = roots.to_vec();
+    let mut out = vec![];
+    let mut next = 0;
+    while next < seen.len() {
+        let Some(t) = model.types.get(seen[next] as usize) else {
+            next += 1;
+            continue;
+        };
+        next += 1;
+        if matches!(t.kind, "class" | "struct") && !t.qualified_name.is_empty() {
+            out.push(t.qualified_name.clone());
+        }
+        let refs = (t.args.iter().chain(&t.arms).chain(&t.subclasses))
+            .copied()
+            .chain(t.base)
+            .chain(t.fields.iter().map(|f| f.ty));
+        for r in refs {
+            if !seen.contains(&r) {
+                seen.push(r);
+            }
+        }
     }
-    let mut p = decl.parent()?.join(spec);
-    if p.extension().is_none() {
-        p.set_extension("vlt");
-    }
-    Some(p)
+    out
 }
 
-/// An import specifier for `to` from a module in `dir`.
-fn relative_spec(dir: &Path, to: &Path) -> String {
-    let from: Vec<_> = dir.components().collect();
-    let to = to.with_extension("");
-    let target: Vec<_> = to.components().collect();
-    let common = from.iter().zip(&target).take_while(|(a, b)| a == b).count();
-    let mut parts: Vec<String> = vec![];
-    for _ in common..from.len() {
-        parts.push("..".into());
+/// One host program: the generator modules it imports (`(key, specifier)`) from a virtual root
+/// in `dir`, and the generated functions it serves (`(key, function)`).
+struct HostPlan {
+    dir: PathBuf,
+    imports: Vec<(String, String)>,
+    entries: Vec<(String, String)>,
+}
+
+impl HostPlan {
+    fn source(&self) -> String {
+        let mut src = String::from("import { serve } from \"velt/generate\";\n");
+        for (key, spec) in &self.imports {
+            src.push_str(&format!("import * as {key} from {spec:?};\n"));
+        }
+        src.push_str("\nfunction main() {\n  serve([\n");
+        for (key, function) in &self.entries {
+            src.push_str(&format!(
+                "    {{ key: {key:?}, fn: {function:?}, run: {key}.{function} }},\n"
+            ));
+        }
+        src.push_str("  ]);\n}\n");
+        src
     }
-    for c in &target[common..] {
-        parts.push(c.as_os_str().to_string_lossy().into_owned());
+}
+
+/// The generator module `spec` names, resolved like an import of the declaring module at
+/// `decl` (a relative path, a package's module or a std module): its file, the directory its
+/// host's root is put in and the specifier the host imports it by. The host's root sits beside
+/// the declaring module, so it imports the generator by the same specifier; a std generator is
+/// imported as the std module it is (`velt/…`).
+fn locate_generator(
+    decl: &Path,
+    spec: &str,
+    packages: Option<&vpm::PackageGraph>,
+) -> Option<(PathBuf, PathBuf, String)> {
+    let std_root = crate::loader::std_root();
+    let resolver = packages.map(|g| g as &dyn crate::loader::PackageResolver);
+    let file = crate::loader::resolve_module(spec, decl, std_root.as_deref(), resolver)?;
+    if let Some(std) = std_root
+        .as_deref()
+        .filter(|s| crate::loader::in_std(&file, s))
+    {
+        let rel = vpm::relpath::relative(&file, std);
+        let module = crate::loader::module_path(&rel).to_string();
+        return Some((file, std.to_path_buf(), format!("velt/{module}")));
     }
-    let s = parts.join("/");
-    if s.starts_with("..") {
-        s
-    } else {
-        format!("./{s}")
+    Some((file, decl.parent()?.to_path_buf(), spec.to_string()))
+}
+
+/// Run the host `plan` (source `src`) on `input`, from the output cache when it has the
+/// answer: its output and the files its build read. `None` with the error in `sess`
+/// (`failing`: the generator to blame and the call that needed it).
+fn run_host(
+    sess: &mut Session,
+    plan: &HostPlan,
+    src: &str,
+    input: &str,
+    packages: Option<&vpm::PackageGraph>,
+    failing: (&str, Span),
+) -> Option<(Vec<u8>, Vec<String>)> {
+    let (generator, at) = failing;
+    let host_root = plan.dir.join("__velt_generate_host.vlt");
+    let key = cache::output_key(&host_root, src, input);
+    if let Some(hit) = key.as_ref().and_then(cache::cached_output) {
+        return Some(hit);
+    }
+    if super::guard::building(src) {
+        let msg = "generators need generated code to be built, in a cycle";
+        sess.diagnostics.push(Diagnostic::error(msg, at));
+        return None;
+    }
+    let ran = super::guard::with(src, || {
+        host::prepare(&host_root, src, packages).and_then(|h| {
+            let files = h.files.clone();
+            h.run(input).map(|out| (out, files))
+        })
+    });
+    match ran {
+        Ok((out, files)) => {
+            if let Some(key) = &key {
+                cache::store_output(key, &out, &files);
+            }
+            Some((out, files))
+        }
+        Err(msg) => {
+            let d =
+                Diagnostic::error(format!("the generator `{generator}` failed"), at).with_note(msg);
+            sess.diagnostics.push(d);
+            None
+        }
     }
 }
 

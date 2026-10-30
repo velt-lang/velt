@@ -159,6 +159,9 @@ pub struct Session {
     /// What the source generators the build ran read, as build-stamp `file` entries
     /// (`crate::generate`): a changed generator rebuilds the program.
     pub generator_inputs: Vec<String>,
+    /// This builds a source generator host, whose generators must not reach outside the
+    /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
+    pub generator_build: bool,
 }
 
 impl Session {
@@ -300,7 +303,8 @@ fn sema_stage(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
     };
-    let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts);
+    let packages = opts.packages.as_ref();
+    let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
         let std_files = loaded
@@ -546,6 +550,7 @@ fn build_on_current_thread(
         None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
     };
     let mut program = program?;
+    check_generator_host(sess, &program)?;
     // For the stamp: what the program reaches outside itself (`velt test` keeps a result only
     // for a program that reaches nothing).
     let reaches = outside::reaches(&program);
@@ -639,6 +644,23 @@ fn build_on_current_thread(
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));
     }
     Ok(Artifact::Executable(paths.executable))
+}
+
+/// In a source generator host ([`Session::generator_build`]): an error when the generators reach
+/// outside the program. A generator is a pure function of its request, which makes its output
+/// cacheable and running it at compile time safe (docs/internals/design/source-generators.md §5).
+pub fn check_generator_host(sess: &mut Session, program: &vir::Program) -> Result<(), BuildError> {
+    if !sess.generator_build {
+        return Ok(());
+    }
+    let reaches = outside::generator_reaches(program);
+    if reaches == "-" {
+        return Ok(());
+    }
+    Err(BuildError::Failed(format!(
+        "a source generator cannot reach {reaches}: it runs at compile time and gets everything \
+         from its request"
+    )))
 }
 
 /// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).

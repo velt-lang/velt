@@ -549,7 +549,7 @@ impl FnCx<'_, '_> {
         Some((d, slots))
     }
 
-    fn fill_struct(
+    pub(crate) fn fill_struct(
         &mut self,
         d: DefId,
         mut slots: Vec<Option<TyId>>,

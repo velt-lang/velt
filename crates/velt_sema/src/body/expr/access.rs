@@ -5,6 +5,8 @@
 //!   use the private members of its own types (one std type builds another's handle, as
 //!   `TcpListener.accept()` builds a `TcpStream`), so no std handle can be built or read by user
 //!   code.
+//! - Code generated for a type has that type's access (`crate::generated::access`): a generated
+//!   module may use the private members (and private constructor) of its requests' types.
 //! - A `private constructor` is callable (`new C()`) only inside the body of its class (or, for a
 //!   std class, anywhere in std, like its other private members); a `protected` one also inside
 //!   the bodies of its subclasses (TypeScript's rules; extending a class with a private
@@ -139,7 +141,7 @@ impl FnCx<'_, '_> {
     /// May this body use the private members of type `owner`: inside `owner`'s body, or
     /// anywhere in the standard library for a std type.
     pub(crate) fn private_allowed(&self, owner: DefId) -> bool {
-        if self.in_body_of(owner) {
+        if self.in_body_of(owner) || self.cx.generated_access(self.module, owner) {
             return true;
         }
         let owner_module = self.cx.adt(owner).map(|a| a.module);

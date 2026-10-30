@@ -80,3 +80,33 @@ export function broken(req: Request, out: Output): void {
 export function crash(req: Request, out: Output): void {
   throw new Error(`crash asked for ${req.model.type(req.args[0]).display}`);
 }
+
+// Code generated for a type has that type's access: it reads private fields.
+export function peek(req: Request, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  const parts: string[] = [];
+  for (const f of t.fields) {
+    parts.push(`${f.name}=\${${v}.${f.name}}`);
+  }
+  out.line("return `" + parts.join(" ") + "`;");
+}
+
+// `__construct` builds a class without running its constructor: fields with an initializer
+// that it leaves out take the initializer's value.
+export function rebuild(req: Request, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  const inits: string[] = [];
+  for (const f of t.fields) {
+    if (!f.hasDefault) {
+      inits.push(`${f.name}: ${v}.${f.name}`);
+    }
+  }
+  out.line(`return __construct<${out.typeName(t.id)}>({ ${inits.join(", ")} });`);
+}
+
+// Builds a type its request does not hold: not allowed.
+export function forge(req: Request, out: Output): void {
+  out.line(`return __construct<Hidden>({ code: 1 }).code;`);
+}

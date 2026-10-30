@@ -14,6 +14,7 @@
 //!   with the type model each generator reads) instead of a program, and the driver checks again
 //!   with the generated code added.
 
+pub(crate) mod access;
 pub(crate) mod bind;
 pub(crate) mod demand;
 pub mod model;
@@ -30,24 +31,42 @@ use crate::hir::DefId;
 /// generated files.
 pub const QUALIFIED: &str = "__qualified";
 
-/// What the driver generated so far: items it appended to the declaring modules, in files listed
-/// in `files`.
+/// What the driver generated so far: generated modules it added to the program
+/// (docs/internals/design/source-generators.md §7), and the instances in them.
 #[derive(Clone, Debug, Default)]
 pub struct GenInput {
     pub instances: Vec<GenInstance>,
-    /// The generated source files (their items are generated code: `__qualified` resolves there).
+    pub modules: Vec<GenModule>,
+    /// The generated source files (their items are generated code: `__qualified` and
+    /// `__construct` resolve there).
     pub files: Vec<FileId>,
 }
 
-/// One generated instance: in module `module` (the declaring module's path), the generated
-/// function `function` at the types the type aliases `type_args` name, whose body is the
-/// function item `body` of the same module.
+/// A generated module: never a std module, checked in the scope of the module declaring the
+/// generated functions it implements (that module's imports and top-level declarations,
+/// exported or not, as if it were appended to it), with the access of the types it was
+/// generated for.
+#[derive(Clone, Debug)]
+pub struct GenModule {
+    /// Its path among the program's modules.
+    pub path: String,
+    /// The declaring module's path.
+    pub declaring: String,
+    /// The qualified names of the declared types of its requests' models: its code may use their
+    /// `private` members and build them with `__construct`.
+    pub access: Vec<String>,
+}
+
+/// One generated instance: of the generated function `function` declared in module `module`,
+/// at the types the type aliases `type_args` name, whose body is the function item `body` of the
+/// generated module `body_module` (where the aliases are declared too).
 #[derive(Clone, Debug)]
 pub struct GenInstance {
     pub module: String,
     pub function: String,
     pub type_args: Vec<String>,
     pub body: String,
+    pub body_module: String,
     /// The [`model::Model::fingerprint`] of the request the code was generated for, with the
     /// function's [`GenFunction::signature`]: an instance offered from an earlier build
     /// (docs/internals/design/source-generators.md §9) is bound only while the types it was
