@@ -66,8 +66,11 @@ sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It 
 5. **Like against like.** Every implementation states how many threads it computes on, in its
    benchmark definition (`threads=ST` or `threads=MT` in `suites.py`, `core.py`, `servers.py`;
    the Benchmarks Game files are listed one by one in `suites.GAME_THREADS`, and a file missing
-   there is an error, never guessed from its name). Single-threaded: a plain program, `_st`,
-   `Velt 1 thread`, one Node or Bun process. Multi-threaded: `_mt`, the Rust programs on rayon
+   there is an error, never guessed from its name). Single-threaded (*threads* 1): the
+   program's code runs on one thread in one process: a plain program, `_st`, `Velt 1 thread`,
+   one Node or Bun process. Every runtime adds helper threads to that one (Velt's monitor and
+   spare workers, Node's libuv pool and V8's threads), so a "1" process has more than one
+   thread, in every language alike. Multi-threaded: `_mt`, the Rust programs on rayon
    or threads, Node's `worker_threads` programs, tokio's multi-thread runtime, `node:cluster`,
    Bun `reusePort`, Velt with `VELT_THREADS` at the server cores. The tables' *threads* column
    shows it, and *vs Velt* compares each row with Velt's first implementation of the same kind
@@ -165,8 +168,11 @@ keep-alive and pipelining as for any client), no options the other servers do no
 (`VELT_THREADS` set to the server CPUs) and axum use every server core, and Velt runs a second
 time on one thread (`VELT_THREADS=1`), the row the one-process servers are compared with.
 One worker thread, that is: the runtime also has its monitor thread, and may start a spare
-worker while one is blocked; every server run records the server's peak thread count (all its
-processes, from `/proc/<pid>/status`) as `server_peak_threads` in results.json.
+worker while one is blocked. Every server run records the server's peak thread count during the
+measured load (all its processes, from `/proc/<pid>/status`): `server_peak_threads` in
+results.json and the *peak threads* column of the HTTP and WebSocket tables. In a smoke run in
+WSL (10 server CPUs): Velt on one thread 4–7, one node:http process 7, Velt on all cores 13,
+axum 11, node:cluster 77.
 Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
 response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,

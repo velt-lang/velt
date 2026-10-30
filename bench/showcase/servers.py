@@ -122,6 +122,7 @@ class PeakThreads:
     and a spare worker it may start while one is blocked)."""
 
     def __init__(self, pids, every=0.1):
+        # Only the processes that exist now are counted: one forked after sampling starts is not.
         self.pids, self.every, self.peak = [p for root in pids for p in tree(root)], every, 0
         self.done = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)

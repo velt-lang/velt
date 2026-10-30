@@ -192,6 +192,22 @@ class Pairing(unittest.TestCase):
 
 
 class Tables(unittest.TestCase):
+    def test_peak_threads_column(self):
+        common = dict(min_success=1.0, p50_ms=1.0, p99_ms=2.0, server_us_per_req=10.0, server_peak_rss_mb=5.0,
+                      deliveries_per_s=100.0, delivered_ratio=1.0, server_cpu_s=1.0)
+        recs = [{"name": "/plaintext", "kind": "http",
+                 "impls": [impl("Velt (1 thread)", "velt", threads="st", best_rps=100.0, server_peak_threads=5, **common),
+                           impl("Old run", "node", threads="st", best_rps=50.0, **common)]}]
+        for cat in ("http", "websocket"):
+            md = report.category_md(cat, recs)
+            head = next(line for line in md.splitlines() if line.startswith("| route") or line.startswith("| scenario"))
+            col = head.split(" | ").index("peak threads")
+            cells = {line.split(" | ")[1]: line.split(" | ")[col] for line in md.splitlines()
+                     if line.startswith("| /plaintext")}
+            self.assertEqual(cells["Velt (1 thread)"], "5", cat)
+            # A run that did not record it (results written before the field) leaves it empty.
+            self.assertEqual(cells["Old run"], "", cat)
+
     def test_failed_server_category_is_a_note(self):
         # http_benchmarks returns this record when oha is missing: the table says so.
         for cat in ("http", "websocket"):

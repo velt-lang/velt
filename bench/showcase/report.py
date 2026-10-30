@@ -157,21 +157,21 @@ def http_table(recs, lines, notes):
             s = i["summary"]
             t = KIND_CELL[kind(i)]
             if not s.get("runs"):
-                lines.append(f"| {rec['name']} | {i['label']} | {t} | n/a | | | | | | |")
+                lines.append(f"| {rec['name']} | {i['label']} | {t} | n/a | | | | | | | |")
                 notes.append(f"{rec['name']}, {i['label']}: {i.get('error', 'no runs')}")
                 continue
-            ok = "" if s["min_success"] >= 1 else f" ({s['min_success'] * 100:.1f}% ok)"
+            ok ="" if s["min_success"] >= 1 else f" ({s['min_success'] * 100:.1f}% ok)"
             bound = " **load-bound**" if s.get("load_bound") else ""
             label = f"{i['label']}{' (partial)' if i.get('error') else ''}"
             lines.append(f"| {rec['name']} | {label} | {t} | {s['best_rps']:,.0f}{ok}{bound} | {s['p50_ms']:.2f} | "
                          f"{s['p99_ms']:.2f} | {s['server_us_per_req']:.1f} | {s['server_peak_rss_mb']:.1f} | "
-                         f"{s.get('load_cpu_share', 0) * 100:.0f}% | {vs_velt(impls, i, s['best_rps'], key, True)} |")
+                         f"{peak_threads(s)} | {s.get('load_cpu_share', 0) * 100:.0f}% | {vs_velt(impls, i, s['best_rps'], key, True)} |")
             if i.get("error"):
                 notes.append(f"{rec['name']}, {i['label']}: {i['error']}")
     load = next((r["load"] for r in recs if r.get("load")), {})
     head = ("| route | server | threads | req/s (best) | p50 ms | p99 ms | server CPU µs/request "
-            "| server peak RSS MB | load generator CPU | vs Velt (same threads) |\n"
-            "|---|---|:-:|---:|---:|---:|---:|---:|---:|---|")
+            "| server peak RSS MB | peak threads | load generator CPU | vs Velt (same threads) |\n"
+            "|---|---|:-:|---:|---:|---:|---:|---:|---:|---:|---|")
     note = (f"\nLoad: {load.get('tool')} for {load.get('duration')} per run with {load.get('connections')} "
             f"keep-alive connections after a {load.get('warmup')} warm-up (the same for every server); "
             f"servers on CPUs {load.get('server_cpus')}, the load generator on CPUs {load.get('load_cpus')}. "
@@ -194,21 +194,30 @@ def ws_table(recs, lines, notes):
             s = i["summary"]
             t = KIND_CELL[kind(i)]
             if not s.get("runs"):
-                lines.append(f"| {rec['name']} | {i['label']} | {t} | n/a | | | | | | |")
+                lines.append(f"| {rec['name']} | {i['label']} | {t} | n/a | | | | | | | |")
                 notes.append(f"{rec['name']}, {i['label']}: {i.get('error', 'no runs')}")
                 continue
-            vs = vs_velt(impls, i, s["p99_ms"], key, False)
+            vs =vs_velt(impls, i, s["p99_ms"], key, False)
             lines.append(f"| {rec['name']} | {i['label']} | {t} | {s['p50_ms']:.2f} | {s['p99_ms']:.2f} | "
                          f"{s['deliveries_per_s']:,.0f} | {s['delivered_ratio']:.3f} | {s['server_cpu_s']:.2f} | "
-                         f"{s['server_peak_rss_mb']:.1f} | {vs + ' (p99)' if '×' in vs else vs} |")
+                         f"{s['server_peak_rss_mb']:.1f} | {peak_threads(s)} | {vs + ' (p99)' if '×' in vs else vs} |")
     return ("| scenario | server | threads | p50 ms | p99 ms | deliveries/s | delivered | server CPU s "
-            "| server peak RSS MB | vs Velt (same threads) |\n|---|---|:-:|---:|---:|---:|---:|---:|---:|---|")
+            "| server peak RSS MB | peak threads | vs Velt (same threads) |\n"
+            "|---|---|:-:|---:|---:|---:|---:|---:|---:|---:|---|")
 
 
-THREADS_NOTE = ("*threads*: 1 for a single-threaded implementation (one thread, one process), *many* "
-                "for one that uses several threads or processes; *vs Velt* compares each row with "
-                "Velt's first implementation of the same kind (named when the benchmark has more "
-                "than one).")
+def peak_threads(s):
+    """The server's peak thread count over its runs (all its processes), or "" when the run did
+    not record it."""
+    return str(s["server_peak_threads"]) if s.get("server_peak_threads") else ""
+
+
+THREADS_NOTE = ("*threads*: 1 for an implementation that runs the program's code on one thread in "
+                "one process, *many* for one that runs it on several threads or processes. Every "
+                "runtime adds helper threads to that one (Velt's monitor and spare workers, Node's "
+                "libuv pool and V8's threads; the servers' *peak threads* column counts them all). "
+                "*vs Velt* compares each row with Velt's first implementation of the same kind "
+                "(named when the benchmark has more than one).")
 
 
 def category_md(cat, recs):
