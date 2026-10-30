@@ -128,26 +128,12 @@ export class H2Response extends HttpResponse implements BodySink {
     this.c.written();
   }
 
-  // `stream`, `sendStream` and `sse` call async methods of their own: an abstract method
-  // returning a promise that rejects cannot be implemented by an async method yet.
-  stream(type?: string): Promise<HttpStream> {
-    return this.streamed(type ?? "text/plain; charset=utf-8");
-  }
-
-  sse(): Promise<EventStream> {
-    return this.events();
-  }
-
-  sendStream(body: BodyStream, type?: string): Promise<void> {
-    return this.streamBody(body, type ?? "text/html; charset=utf-8");
-  }
-
-  private async streamed(type: string): Promise<HttpStream> {
-    await this.startStream(type);
+  async stream(type?: string): Promise<HttpStream> {
+    await this.startStream(type ?? "text/plain; charset=utf-8");
     return new HttpStream(this);
   }
 
-  private async events(): Promise<EventStream> {
+  async sse(): Promise<EventStream> {
     this.header("cache-control", "no-cache");
     await this.startStream("text/event-stream");
     return new EventStream(new HttpStream(this));
@@ -196,8 +182,8 @@ export class H2Response extends HttpResponse implements BodySink {
    * Streams `body` as the response (default type `text/html; charset=utf-8`), each chunk as it
    * comes; a client that goes away ends it quietly.
    */
-  private async streamBody(body: BodyStream, type: string) {
-    await this.startStream(type);
+  async sendStream(body: BodyStream, type?: string): Promise<void> {
+    await this.startStream(type ?? "text/html; charset=utf-8");
     try {
       for await (const chunk of body) {
         await this.piece(chunk);

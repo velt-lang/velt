@@ -149,18 +149,7 @@ export class H2Request extends HttpRequest {
    * The next piece of the body as it arrives, or null at its end. Throws `IoError`
    * `ECONNRESET` when the client reset the stream before the end.
    */
-  read(): Promise<u8[] | null, IoError | RangeError> {
-    return this.readPiece();
-  }
-
-  /// The whole body (what `read()` has not taken yet); `BodyTooLarge` beyond `maxBodySize`.
-  body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
-    return this.collect();
-  }
-
-  // `read` and `body`, written as async methods of their own: an abstract method returning a
-  // promise that rejects cannot be implemented by an async method yet.
-  private async readPiece(): Promise<u8[] | null> {
+  async read(): Promise<u8[] | null, IoError | RangeError> {
     const s = this.s;
     while (true) {
       const piece = s.take();
@@ -184,7 +173,8 @@ export class H2Request extends HttpRequest {
     }
   }
 
-  private async collect(): Promise<u8[]> {
+  /// The whole body (what `read()` has not taken yet); `BodyTooLarge` beyond `maxBodySize`.
+  async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
     const limit = this.c.opts.maxBodySize;
     if (this.s.info.contentLength > limit) {
       this.overLimit = true;
@@ -192,7 +182,7 @@ export class H2Request extends HttpRequest {
     }
     const pieces: u8[][] = [];
     let total: i64 = 0;
-    let piece = await this.readPiece();
+    let piece = await this.read();
     while (piece != null) {
       total += piece.length as i64;
       if (total > limit) {
@@ -200,7 +190,7 @@ export class H2Request extends HttpRequest {
         throw new BodyTooLarge(limit);
       }
       pieces.push(piece);
-      piece = await this.readPiece();
+      piece = await this.read();
     }
     if (pieces.length == 1) {
       return pieces[0];

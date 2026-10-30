@@ -111,14 +111,12 @@ export class Http1Request extends HttpRequest {
     return this.conn.peerAddr();
   }
 
-  // `read` and `body` return the promise of the reader's async method: an abstract method
-  // returning a promise that rejects cannot be implemented by an async method yet.
-  read(): Promise<u8[] | null, IoError | RangeError> {
-    return this.reader.read();
+  async read(): Promise<u8[] | null, IoError | RangeError> {
+    return await this.reader.read();
   }
 
-  body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
-    return this.reader.all();
+  async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
+    return await this.reader.all();
   }
 
   bodyRead(): bool {

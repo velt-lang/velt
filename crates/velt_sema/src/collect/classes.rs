@@ -561,6 +561,14 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         f.ret_span.and_then(|s| cx.site_in(s, f.ret))
     };
     let (ms, bs) = (site(cx, m.def), site(cx, base.def()));
+    // An `async` override of a method returning a promise: its result is written `Promise<T>`
+    // and its errors are its `throws`, which the group bounds by the promise's error type
+    // (`throws::groups`, as for an interface method's implementations): the results compare by
+    // what the promises resolve with.
+    let br = match (cx.fn_info(m.def).is_async, cx.fn_info(base.def()).is_async) {
+        (true, false) => cx.ty.promise_payload(br).map_or(br, |v| cx.ty.promise(v)),
+        _ => br,
+    };
     let ret_ok = cx.unify_promise_results((mr, ms), (br, bs))
         || super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {

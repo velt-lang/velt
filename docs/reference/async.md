@@ -791,7 +791,13 @@ can.
   and every override are `async` when any of them can fail, unless the failing one only
   returns a rejecting promise: a synchronous override whose body throws nothing may return a
   promise that rejects, when both results are `Promise<T>` written without an error type, and
-  the base method's promise then rejects with that too. A getter cannot be `async`, so a getter returning a promise from an interface cannot
+  the base method's promise then rejects with that too. An abstract method never runs, so
+  it is never the one that must be `async`: `abstract read(): Promise<u8[], IoError>` (or
+  `Promise<u8[]>`, or `Promise<u8[]> throws IoError`) is implemented by
+  `async read(): Promise<u8[], IoError> { … }` (or one whose errors are inferred), as an
+  interface method is. The error type written in a base method's promise, abstract or not,
+  bounds what its `async` overrides may reject with (an override rejecting with
+  more is an error: `` `Sub.read` throws `Other`, but `Base.read` does not allow it ``). A getter cannot be `async`, so a getter returning a promise from an interface cannot
   fail, and overridden getters throw at the read. A method declared as returning a type
   parameter (`get(): T`) throws its errors for every type argument: an `async` implementation
   for `T = Promise<…>` must not fail. A default body of such an interface method can be `async` too:

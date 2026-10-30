@@ -122,29 +122,15 @@ export class Http1Response extends HttpResponse implements BodySink {
     this.sendText(TYPE_HTML, html);
   }
 
-  // `stream`, `sendStream` and `sse` call async methods of their own: an abstract method
-  // returning a promise that rejects cannot be implemented by an async method yet.
-  stream(type?: string): Promise<HttpStream> {
-    return this.startStream(type ?? "text/plain; charset=utf-8");
-  }
-
-  sendStream(body: BodyStream, type?: string): Promise<void> {
-    return this.streamBody(body, type ?? "text/html; charset=utf-8");
-  }
-
-  sse(): Promise<EventStream> {
-    return this.startEvents();
-  }
-
-  private async startStream(type: string): Promise<HttpStream> {
-    writeHead(this, -1, type, -1);
+  async stream(type?: string): Promise<HttpStream> {
+    writeHead(this, -1, type ?? "text/plain; charset=utf-8", -1);
     await this.queue();
     return new HttpStream(this);
   }
 
-  private async streamBody(body: BodyStream, type: string) {
+  async sendStream(body: BodyStream, type?: string): Promise<void> {
     // The head goes out with the first chunk: one write less per response.
-    writeHead(this, -1, type, -1);
+    writeHead(this, -1, type ?? "text/html; charset=utf-8", -1);
     try {
       for await (const chunk of body) {
         await this.piece(chunk);
@@ -158,7 +144,7 @@ export class Http1Response extends HttpResponse implements BodySink {
     await this.finishStream();
   }
 
-  private async startEvents(): Promise<EventStream> {
+  async sse(): Promise<EventStream> {
     this.header("Cache-Control", "no-cache");
     writeHead(this, TYPE_SSE, null, -1);
     await this.queue();
