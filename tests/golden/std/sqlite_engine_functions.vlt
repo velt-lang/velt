@@ -169,6 +169,7 @@ const CALLS: Call[] = [
   call("printf", ["'%.999999995d'", "1"]),
   call("printf", ["'%,.900000000d'", "1"]),
   call("printf", ["'%2147483647.1f'", "1.0"]),
+  call("printf", ["'%999999987.3f'", "1.5"]),
   call("min", []),
   // An empty pattern (or one starting with a NUL) gives x's text; %c's width counts characters.
   call("replace", ["12", "''", "'x'"]),
@@ -184,6 +185,8 @@ const CALLS: Call[] = [
 const SIZED: Call[] = [
   // A float's precision stops at 100,000,000 digits (SQLITE_FP_PRECISION_LIMIT).
   call("printf", ["'%.2147483647f'", "1.0"]),
+  // The widest float C accepts: its buffer's NUL counts against the limit, the result's does not.
+  call("printf", ["'%999999986.3f'", "1.5"]),
 ];
 
 function sizeOf(v: Val): string {

@@ -313,7 +313,8 @@ function real(
   const precision = precision0 > FP_PRECISION_LIMIT ? FP_PRECISION_LIMIT : precision0;
   // SQLite's buffer for a finite number: its integer digits (%f), the digits after the point,
   // the width, 10 more and the NUL; first without the integer digits, so a width that cannot
-  // fit fails before the number is written.
+  // fit fails before the number is written. The NUL counts against the limit here (`room + 1`),
+  // unlike the result's own bytes.
   const special = r != r || ((r == Infinity || r == -Infinity) && !zero);
   let p = precision < 0 ? 6 : precision;
   if (conv == FMT_GENERIC) {
@@ -321,13 +322,13 @@ function real(
   }
   const need = p + width + 11;
   if (!special) {
-    fits(need, room);
+    fits(need, room + 1);
   }
   let s = formatReal(r, conv, precision, alt2, zero, alt);
   if (!special && conv == FMT_FLOAT) {
     const dot = s.indexOf(".");
     const digits = (dot < 0 ? s.length as i64 : dot) - (s.startsWith("-") ? 1 : 0);
-    fits(need + (digits > 1 ? digits - 1 : 0), room);
+    fits(need + (digits > 1 ? digits - 1 : 0), room + 1);
   }
   if (c == 69 || c == 71) {
     s = s.replace("e", "E");
