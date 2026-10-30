@@ -6,6 +6,29 @@ use super::*;
 /// of the type, so its type is used and its methods are checked.
 const LAZY_PRELUDE_METHODS: &[&str] = &["__fromReader", "__runtimeHandle", "__writeJson"];
 
+/// The definitions named by `std_item!(<entry>, "<item>")` in `src` (velt_common's std module
+/// table): per use, the byte offset of the item's text, its module's canonical path and the
+/// item (`"Proxy.__view"`).
+fn std_items(src: &str) -> Vec<(usize, String, String)> {
+    let mut out = vec![];
+    for (i, m) in src.match_indices("std_item!(") {
+        let rest = &src[i + m.len()..];
+        let Some((entry, rest)) = rest.split_once(',') else {
+            continue;
+        };
+        let entry = entry.trim();
+        let Some(open) = rest.find('"') else {
+            continue;
+        };
+        let item: String = rest[open + 1..].chars().take_while(|c| *c != '"').collect();
+        let rel = velt_common::std_modules::rel(entry)
+            .unwrap_or_else(|| panic!("ICE: `{entry}` is not in velt_common's std module table"));
+        let at = i + m.len() + entry.len() + 1 + open + 1;
+        out.push((at, format!("std/{rel}"), item));
+    }
+    out
+}
+
 /// The `"__…"` names in the Rust sources under `dir` (string literals, with or without a module
 /// path or an owner before them: `"__x"`, `"…::__x"`, `"{}.__x"`).
 fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
@@ -23,6 +46,7 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
             continue;
         }
         let src = std::fs::read_to_string(&path).expect("source file");
+        let items = std_items(&src);
         for (i, _) in src.match_indices("__") {
             let before = src[..i].chars().last();
             if !matches!(before, Some('"') | Some(':') | Some('.')) {
@@ -30,9 +54,10 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
             }
             // A definition of a std module outside the prelude (`"std/lang/proxy::Proxy.__view"`):
             // `every_std_definition_lowering_names_stays_checked` checks those.
-            let line = &src[src[..i].rfind('\n').map_or(0, |l| l + 1)..i];
-            let lit = line.rfind('"').map_or("", |q| &line[q + 1..]);
-            if lit.starts_with("std/") && !HELPERS.iter().any(|p| lit.starts_with(p)) {
+            let item = items
+                .iter()
+                .find(|(at, _, item)| (*at..at + item.len()).contains(&i));
+            if item.is_some_and(|(_, m, _)| !HELPERS.iter().any(|p| m.starts_with(p))) {
                 continue;
             }
             let name: String = src[i..]
@@ -82,7 +107,7 @@ fn every_name_lowering_looks_up_is_a_helper() {
     );
 }
 
-/// The `"std/<module>::<name>"` literals in the Rust sources under `dir`, outside tests.
+/// The `std_item!(<module>, "<name>")` uses in the Rust sources under `dir`, outside tests.
 fn std_literals(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
     for entry in std::fs::read_dir(dir).expect("source directory") {
         let path = entry.expect("source entry").path();
@@ -99,12 +124,7 @@ fn std_literals(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
         }
         let src = std::fs::read_to_string(&path).expect("source file");
         let src = src.split("#[cfg(test)]").next().unwrap_or_default();
-        for (i, _) in src.match_indices("\"std/") {
-            let lit: String = src[i + 1..].chars().take_while(|c| *c != '"').collect();
-            if let Some((module, name)) = lit.split_once("::") {
-                out.push((module.to_string(), name.to_string()));
-            }
-        }
+        out.extend(std_items(src).into_iter().map(|(_, m, name)| (m, name)));
     }
 }
 
@@ -129,8 +149,12 @@ fn every_std_definition_lowering_names_stays_checked() {
         "{names:?}"
     );
     const INTERFACES: &[(&str, &str)] = &[("std/db/row_source", "RowSource")];
+    // Names lowering compares the callee of a call with (it compiles such a call its own way),
+    // never looks up: a call of one is checked code calling a checked function.
+    const RECOGNIZED: &[(&str, &str)] = &[("std/text/string_builder", "StringBuilder.append")];
     let missing: Vec<_> = (names.iter())
         .filter(|(m, name)| !INTERFACES.contains(&(m.as_str(), name.as_str())))
+        .filter(|(m, name)| !RECOGNIZED.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| {
             let eager = EAGER.iter().any(|p| m.starts_with(p)) || JSON_GLUE.contains(&m.as_str());
             let prelude = HELPERS.iter().any(|p| m.starts_with(p))

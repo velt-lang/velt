@@ -1,0 +1,16 @@
+// std's handles (sockets, files, WebSockets) have no JSON form: a private field holds the runtime
+// handle, so `JSON.parse` cannot forge one and `JSON.stringify` does not write one. (The database
+// drivers that this test covered left std for packages/.)
+import { TcpStream } from "velt/net";
+import { FileReader } from "velt/fs";
+import { WebSocket } from "velt/net/websocket";
+
+function write(s: TcpStream): string {
+  return JSON.stringify(s);
+}
+
+function main() {
+  const t = JSON.parse<TcpStream>('{"handle":1}');
+  const f = JSON.parse<FileReader>('{"handle":1}');
+  const w = JSON.parse<WebSocket>('{"handle":1}');
+}

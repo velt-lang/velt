@@ -1,6 +1,7 @@
 # Database clients — Velt vs Node and Rust
 
-Inserts and queries per second through Velt' `std/sqlite`, `std/redis` and `std/postgres`,
+Inserts and queries per second through Velt's `sqlite`, `redis` and `postgres` packages
+(`packages/`, path dependencies of `velt/package.vlt`; std's `velt/sqlite` … until 2026-10),
 against the usual Node drivers (`better-sqlite3`, `ioredis`, `pg`) and Rust crates (`rusqlite`,
 `redis`, `tokio-postgres` + `deadpool-postgres`). Run everything with `bench/db/run.sh` (see
 `--help`); results are in `RESULTS.md`.

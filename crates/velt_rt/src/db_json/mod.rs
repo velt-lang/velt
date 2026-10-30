@@ -1,5 +1,5 @@
-//! Database-agnostic JSON plumbing shared by the database drivers (`std/postgres`, and any
-//! client/server driver that binds parameters and returns rows the same way; `std/sqlite` binds
+//! Database-agnostic JSON plumbing shared by the database drivers (`packages/postgres`, and any
+//! client/server driver that binds parameters and returns rows the same way; `packages/sqlite` binds
 //! its parameters here and writes its rows in binary form, `json/rows_bin.rs`).
 //!
 //! std passes query parameters as `JSON.stringify(params)` of a user object or array, and

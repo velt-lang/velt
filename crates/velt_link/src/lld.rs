@@ -170,18 +170,13 @@ fn macho_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
         args.push(req.runtime_lib.into());
     }
     args.extend(native::lld_shared_args(req.native));
-    let base = [
-        "-lSystem",
-        "-framework",
-        "CoreFoundation",
-        "-framework",
-        "SystemConfiguration",
-    ];
-    args.extend(base.map(OsString::from));
+    args.push("-lSystem".into());
     // The packages' prelinked objects' libraries (frameworks resolve to the kit's stubs). libc,
     // libm and libiconv are in libSystem (rustc lists them for every staticlib).
-    let covered: Vec<&str> = base.into_iter().chain(["-lc", "-lm", "-liconv"]).collect();
-    args.extend(native::system_lib_args(req.native, &covered));
+    args.extend(native::system_lib_args(
+        req.native,
+        &["-lSystem", "-lc", "-lm", "-liconv"],
+    ));
     args
 }
 

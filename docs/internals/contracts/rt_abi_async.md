@@ -1275,194 +1275,25 @@ Stable hash (`velt/hash`, additive):
 | `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt/hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
 | `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
 
-### 14.11 SQLite (`velt/sqlite`; stream db, additive)
+### 14.11 SQLite (moved)
 
-The crate `velt_std_sqlite` over `rusqlite` (SQLite compiled in: `bundled`; also
-`column_decltype`), built on the native-package SDK only and linked into the runtime
-(native_abi.md "Drivers in the runtime"): its functions are `velt_std_sqlite__*` exports with
-the signatures below. **Synchronous**: a typical statement takes microseconds, less than a
-blocking-pool round trip. A database is a registry key of `Mutex<Option<Connection>>` plus a
-failure counter and the last error; a statement is a key of `{ Arc<db>, sql }` that re-finds
-its compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call,
-so closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). A
-null or closed handle (a closed `Database` / `Statement` in std) fails the same way instead of
-crashing.
+The SQLite driver left the runtime for the `sqlite` package (`packages/sqlite`, a package with
+native code); its library's functions are documented there (`packages/sqlite/docs/native_abi.md`).
 
-Errors: `err.code` is SQLite's **extended result code** (never 0; e.g. 2067
-`SQLITE_CONSTRAINT_UNIQUE`), `message` SQLite's message. Parameter problems are `SQLITE_RANGE`
-(25), a closed handle or several statements in one `prepare` `SQLITE_MISUSE` (21).
+### 14.12 Redis (moved)
 
-Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an object binds
-`:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
-array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
-INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
-arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. For the parameter
-types it can, std hands the parameters to a sink instead (`bind_begin`, native_abi.md "Parameter
-sinks"), which binds them as their JSON text would. Rows come through a row cursor
-(native_abi.md "Row cursors"), which std decodes with `jsonParseCursor<T>`: they
-read as the JSON `[{"col":value,...}]` keyed by column name, INTEGER exact, REAL a number
-(non-finite ⇒ `null`), TEXT a string, BLOB a number array, NULL `null`; a 0/1 value in a column
-declared `BOOL`/`BOOLEAN` is `false`/`true`. The cursor holds the connection's lock until std
-gives it back with `close_rows`, as a sink does until it is handed on or given up.
+The Redis client left the runtime for the `redis` package (`packages/redis`, a package with
+native code); its library's functions are documented there (`packages/redis/docs/native_abi.md`).
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_sqlite__open` | `(string path, bool readonly, bool create, u32 timeout_ms) -> IoResult<u64>` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
-| `velt_std_sqlite__close` | `(u64 db) -> IoStatus` | closes the connection (finalizing cached statements) and releases the handle; null or closed ⇒ no-op |
-| `velt_std_sqlite__exec` | `(u64 db, string sql) -> IoStatus` | `;`-separated statements, no parameters |
-| `velt_std_sqlite__pragma` | `(u64 db, string source) -> IoResult<string>` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
-| `velt_std_sqlite__in_transaction` | `(u64 db) -> bool` | not in autocommit mode; false when closed |
-| `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
-| `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
-| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement; the connection keeps it per SQL text (preparing the same text again compiles nothing) |
-| `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
-| `velt_std_sqlite__open_rows` | `(u64 stmt, string params, bool first_only) -> IoResult<u64>` | binds, steps to the first row: a row cursor (`RawCursor*`) for `jsonParseCursor<T[]>`; `first_only` ⇒ the first row alone (`<T>`), or 0 if there is none |
-| `velt_std_sqlite__close_rows` | `(u64 cursor) -> IoStatus` | releases a cursor (and the connection's lock); fails with what SQLite met while stepping; 0 ⇒ no-op |
-| `velt_std_sqlite__bind_begin` | `(u64 stmt) -> IoResult<u64>` | a parameter sink (`RawSink*`) for `dbBind<P>` |
-| `velt_std_sqlite__open_rows_bound` | `(u64 sink, bool first_only) -> IoResult<u64>` | `open_rows` with the parameters the sink bound (missing or extra ones fail as with JSON text) |
-| `velt_std_sqlite__run_bound` | `(u64 sink) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | `run` with the parameters the sink bound |
-| `velt_std_sqlite__bind_abort` | `(u64 sink)` | gives up a sink std did not use (it then binds JSON text) |
-| `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
-| `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
-| `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
+### 14.13 PostgreSQL (moved)
 
-Not available on WebAssembly (no symbols in `libvelt_rt_wasm.a`: linking fails with undefined
-`velt_std_sqlite__*`).
-
-### 14.12 Redis (std/redis; stream db, additive)
-
-The crate `velt_std_redis`, built on the native-package SDK only and linked into the runtime
-(native_abi.md "Drivers in the runtime"): a RESP2 client over the runtime's own sockets
-(`velt_native::net::TcpStream`, on Velt's scheduler the worker's reactor) and timers, with TLS
-from the shared client configuration (`velt_tls`: `ring`, webpki roots + extra PEM CAs). A
-client is a registry key of one **multiplexed** connection: requests from any number of tasks
-are queued in order and written in batches, and a reader task completes them in order;
-in-flight operations keep a reference, so `close` is allowed any time, and a closed handle
-fails with `EBADF`. A failed connection fails the commands already written to it
-(`ECONNRESET`); later commands reopen it (exponential backoff for up to 10 s, stream
-linux-servers) or fail with the connect error. A subscriber is a key of a dedicated subscribed
-connection whose messages are pulled (no callbacks are stored, §13.5).
-
-URLs: `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS); percent-decoded
-credentials, `[v6]` hosts, `?db=N`. The handshake sends `AUTH` and `SELECT` as needed; connecting
-(TCP + TLS + handshake) times out after 10 s (`ETIMEDOUT`). A bad URL is `EINVAL`.
-
-Errors: I/O failures use the §3 codes. An **error reply** from the server uses code **100**
-with the reply text as the message (`WRONGTYPE Operation against …`); std/redis takes its first
-word as `RedisError.code`. A reply that is not valid RESP is `EILSEQ`.
-
-Commands are encoded from the borrowed `string[]` when called (an `#[export(async)]` `fn`
-returning its future, native_abi.md); replies are written straight into Velt's arrays.
-
-```
-RawReply   { tags: u8[]; nums: i64[]; strs: string[] }
-  One entry per node in pre-order (a node, then its children). tags: 0 nil, 1 status,
-  2 error, 3 int, 4 bulk string, 5 array; nums: the int value or the array's length (else 0);
-  strs: the text of status/error/string nodes (else ""; invalid UTF-8 becomes U+FFFD).
-RawMessage { kind: u32; channel: string; message: string; pattern: string }
-  kind: 0 = closed (after close), 1 = message, 2 = pattern message (pattern set)
-```
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_redis__connect` | `async (string url, string ca) -> IoResult<u64>` | `ca`: extra PEM CAs for `rediss://` (`""` = none) |
-| `velt_std_redis__duplicate` | `async (u64 c) -> IoResult<u64>` | a second connection opened like `c` |
-| `velt_std_redis__close` | `(u64 c)` | releases the handle (through any copy; again: no-op) |
-| `velt_std_redis__command` | `async (u64 c, string[] args) -> IoResult<RawReply>` | one command (`args[0]` its name); an error reply fails with code 100 |
-| `velt_std_redis__pipeline` | `async (u64 c, string[] args, u64[] counts, bool atomic) -> IoResult<RawReply>` | `args` split by `counts`, sent together; one array node per command (error replies as nodes); `atomic`: in `MULTI`/`EXEC`, the result is `EXEC`'s array |
-| `velt_std_redis__subscribe` | `async (u64 c, string url, string ca, string[] names, bool patterns) -> IoResult<u64>` | a new subscribed connection (to client `c`'s server, or `url` when `c` is 0); resolves once every name is confirmed |
-| `velt_std_redis__sub_next` | `async (u64 s) -> IoResult<RawMessage>` | the next message; kind 0 after `close` |
-| `velt_std_redis__sub_change` | `async (u64 s, string[] names, bool patterns, bool subscribe) -> IoStatus` | (un)subscribe, once confirmed |
-| `velt_std_redis__sub_close` | `(u64 s)` | pending and later `next` calls return kind 0 |
-
-Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm`.
-
-### 14.13 PostgreSQL (`velt/postgres`; stream db, additive)
-
-The crate `velt_std_postgres`, built on the native-package SDK only (`velt_native`, `velt_text`) and linked into the runtime (native_abi.md "Drivers in the runtime"); its functions are `velt_std_postgres__*` exports, with the signatures below. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream (§14.18). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
-TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
-roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
-`verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
-`verify-ca`). No channel binding (SCRAM falls back to SCRAM-SHA-256). Every server round trip is
-an async leaf (§1). `VeltPgClient` is an `Arc` of `{ connection (tokio-postgres client + LRU
-statement cache of 256 + transaction depth), pool lease, failure counter, last 32 failures }`;
-operations keep an `Arc` of the connection, so `close` is safe while they run. `VeltPgPool` is
-an `Arc` of `{ config, semaphore(max), idle connections }`. The null handle (a closed `Client`,
-an ended `Pool` in std) fails with `ECLOSED` instead of crashing. No code pointers are stored
-(§13.5): `transaction(fn)` is Velt over `begin` / `end` and the failure counter.
-
-Errors: `err.code` is only the failure flag (the §3 code when an I/O error caused it, else 99);
-`message` is JSON `{"code":…,"message":…,"detail":…|null,"constraint":…|null}` where `code` is
-the SQLSTATE (`"23505"`) or a name: §3 names (`"ECONNREFUSED"`, `"ETIMEDOUT"` …),
-`"ECONNRESET"` (connection lost), `"ECLOSED"`, `"EINVAL"` (connection string, parameters, bad
-transaction nesting), `"ETLS"`, `"ENOTSUP"` (undecodable column type), `"UNKNOWN"`.
-
-Parameters (`params`) are JSON text as in §14.11 (`db_json`): `""` = none, an array (or scalar)
-binds `$1..$n` (count must match), an object binds `:name` / `$name` placeholders, which are
-rewritten to `$n` once per SQL text and cached (`::` casts, literals, quoted identifiers, dollar
-quotes and comments are skipped; mixing with `$1` ⇒ `EINVAL`; missing member ⇒ `EINVAL`). Values
-are converted for the prepared parameter types: Int ⇒ int2/int4/int8/oid (range-checked),
-float4/float8, numeric, text types; Float ⇒ float4/float8, numeric, text types; Bool ⇒ bool,
-text types; Bytes ⇒ bytea; Text ⇒ text types and json/jsonb in binary, any other type in text
-format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`. For the parameter
-types it can, std hands them to a sink instead (`bind_begin`, native_abi.md "Parameter sinks"),
-which keeps them as the JSON text would have parsed.
-Rows come through a row cursor (native_abi.md "Row cursors", decoded by
-`jsonParseCursor`), the values as JSON text would give them (batches still return
-JSON text, `db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
-⇒ `null`), numeric ⇒ string of its digits, bool, text types/enums ⇒ string, uuid ⇒ string,
-date/time/timestamp ⇒ ISO 8601 string, timestamptz ⇒ ISO 8601 UTC with `Z`, json/jsonb ⇒ the
-document, bytea ⇒ number array, arrays ⇒ nested arrays, domains ⇒ base type, NULL ⇒ `null`;
-other column types ⇒ `ENOTSUP` (checked before any row).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_std_postgres__query_rows` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<u64>`: a row cursor (`RawCursor*`) over the rows, given back to `close_rows`; `first_only` ⇒ the first row alone, or 0 if there is none |
-| `velt_std_postgres__query_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink, u8 first_only) -> VeltFut*` | `query_rows` with the parameters a sink took |
-| `velt_std_postgres__execute_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink) -> VeltFut*` | `execute` with the parameters a sink took |
-| `velt_std_postgres__bind_begin` | `() -> u64` | a parameter sink (`RawSink*`) for `dbBind<P>`, handed on to a `…_bound` call |
-| `velt_std_postgres__bind_abort` | `(u64 sink)` | gives up a sink std did not use |
-| `velt_std_postgres__close_rows` | `(u64 cursor, VeltErr* out)` | releases a row cursor; fails if a value could not be read; 0 ⇒ no-op |
-| `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
-| `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
-| `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
-| `velt_std_postgres__end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
-| `velt_std_postgres__depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
-| `velt_std_postgres__error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_std_postgres__reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
-| `velt_std_postgres__error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
-| `velt_std_postgres__note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
-| `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
-| `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
-| `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
-| `velt_std_postgres__pool_query_rows` / `_pool_query_bound` / `_pool_execute_bound` | as the client's, with `VeltPgPool p` | on a borrowed connection |
-| `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
-| `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
-| `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
-| `velt_std_postgres__pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
-
-Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framework
-CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
-lists). Not available on WebAssembly (no `velt_std_postgres__*` symbols in `libvelt_rt_wasm.a`).
+The PostgreSQL driver left the runtime for the `postgres` package (`packages/postgres`, a
+package with native code); its library's functions, including `COPY` (formerly §14.15) and
+batches (§14.18), are documented there (`packages/postgres/docs/native_abi.md`).
 
 ### 14.14 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
-### 14.15 PostgreSQL `COPY` (stream linux-servers, additive)
-Writers (`VeltPgCopyIn`) and readers (`VeltPgCopyOut`) are registry keys (`u64`, §3.2 tables).
-Errors are the JSON `PgError` of §14.13 (`ECLOSED` for a released handle); failures count
-against the client.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
-| `velt_std_postgres__copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
-| `velt_std_postgres__copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
-| `velt_std_postgres__copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
-| `velt_std_postgres__copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
-| `velt_std_postgres__copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
-| `velt_std_postgres__copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
+### 14.15 PostgreSQL `COPY` (moved to `packages/postgres/docs/native_abi.md`)
 
 ### 14.16 Fast random numbers (`velt/random`; stream linux-servers, additive)
 | Symbol | Signature | Notes |
@@ -1473,25 +1304,5 @@ against the client.
 
 ### 14.17 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
-### 14.18 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
-One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
-set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
-instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream
-(`postgres/wire`) between tokio-postgres and the socket/TLS stream that injects the group between
-two driver requests and routes the server's replies up to its `ReadyForQuery` back to the batch.
-The runtime opens the socket itself for that (`Config::connect_raw`): hosts/`hostaddr`s/ports in
-order, `connect_timeout`, keepalives; `target_session_attrs` and `load_balance_hosts` are not
-supported. The statement is prepared by tokio-postgres (types, cache) and a second time under a
-batch name (`velt_b<n>`, `Parse` at the head of the first group; closed when evicted).
+### 14.18 PostgreSQL batches (moved to `packages/postgres/docs/native_abi.md`)
 
-`sets` is JSON: an array with one element per execution, each a parameter set as §14.13
-`params` (array ⇒ `$1..$n`, object ⇒ named placeholders, scalar ⇒ one parameter; the first
-element decides named vs positional). `[]` ⇒ `"[]"` without a server round trip. Errors are the
-§14.13 JSON `PgError`; when an execution fails, the server skips the rest of the group, so the
-whole batch fails with that error (its SQLSTATE) and, outside a transaction, the group's
-earlier writes are rolled back with it (all or nothing). Failures count against the client.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
-| `velt_std_postgres__pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_std_postgres__query_batch`, on one pooled connection |

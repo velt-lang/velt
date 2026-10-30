@@ -217,10 +217,11 @@ plus the PEM CAs you pass in `ca`), and uses HTTP/2 when the server offers it. W
 
 ## Databases
 
-[`velt/postgres`](../std/postgres.md) (async, with a connection pool),
-[`velt/sqlite`](../std/sqlite.md) (embedded) and [`velt/redis`](../std/redis.md) decode rows
-straight into your classes with the same compile-time JSON machinery: `const users: User[] = await
-db.query("SELECT …", [id])`.
+The database drivers are packages: [`postgres`](../../packages/postgres/README.md) (async, with a
+connection pool), [`sqlite`](../../packages/sqlite/README.md) (embedded) and
+[`redis`](../../packages/redis/README.md), in the Velt repository's `packages/`. The SQL drivers
+decode rows straight into your classes with the same compile-time machinery as `JSON.parse`:
+`const users: User[] = await db.query("SELECT …", [id])`.
 
 ## Performance
 

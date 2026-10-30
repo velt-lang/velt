@@ -208,24 +208,6 @@ fn a_program_without_packages_declares_nothing() {
     assert_eq!(d, "");
 }
 
-/// std's drivers reach the compiler with their signature records (what `check_std_driver`
-/// checks std's declarations against).
-#[test]
-fn std_driver_records_reach_the_compiler() {
-    let sigs = velt_rt_host::abi_symbols::driver_signatures();
-    let get = |n: &str| sigs.iter().find(|(name, _)| *name == n).map(|(_, s)| *s);
-    assert_eq!(
-        get("velt_std_postgres__query_rows"),
-        Some("async (u64,string,string,bool)->IoResult<u64>")
-    );
-    assert_eq!(get("velt_std_postgres__close"), Some("(u64)->void"));
-    // And a program using std's driver compiles (its declarations match).
-    let d = check_alone(
-        "import { connect } from \"velt/postgres\";\n\nasync function main() {\n  const c = await connect(\"postgres://nobody@127.0.0.1:1/x\");\n  c.close();\n}\n",
-    );
-    assert_eq!(d, "", "{d}");
-}
-
 /// Diagnostics of lowering `src` (a program without packages) for `target`: what
 /// `velt build --target` reports before code generation.
 fn lower_for(src: &str, target: &str) -> String {

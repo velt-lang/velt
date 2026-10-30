@@ -38,6 +38,7 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test std_tests` | the standard library's tests: `velt test` over each `tests/std/<module>/` (black-box) and over `std/` (its white-box `*.test.vlt` files), in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`, `VELT_STD_TESTS=std` for the white-box ones) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
+| `cargo test -p veltc --test packages` | `velt test` in each of the repository's packages (`packages/<name>/`, the database drivers), in debug and release mode, after building a package's native crate, whose `cargo test` runs too; the database tests need `VELT_TEST_PG_URL`, `VELT_TEST_REDIS_URL` (and `VELT_TEST_REDISS_URL` + `_CA`), which `scripts/linux-check.sh --services` sets (filter with `VELT_PACKAGES=sqlite`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
@@ -141,6 +142,9 @@ them in each.)
   so they import internals by their `velt/` path, start with `// velt/<module> (tests): …`, and
   depend on nothing outside std. `velt test std/` runs them, as does `std_tests`; the toolchain's
   packaged std leaves them out (`scripts/package.sh`).
+- **A package's own tests** (`packages/<name>/tests/*.test.vlt`) for the libraries in
+  `packages/`, which move to repositories of their own later: they test the package through its
+  API (white-box tests import `../src/...`) and run with `cargo test -p veltc --test packages`.
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is

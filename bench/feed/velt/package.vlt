@@ -1,9 +1,12 @@
 import type { Package } from "velt/package";
 
-// The benchmark's Velt programs, on the repository's database packages (their native libraries
-// are built with cargo the first time).
+// The benchmark's Velt server, on the repository's HTTP server and sqlite packages (sqlite's
+// native library is built with cargo the first time).
 export const pkg: Package = {
   name: "feed-bench",
   version: "0.1.0",
-  dependencies: { sqlite: { path: "../../../packages/sqlite" } },
+  dependencies: {
+    "http-server": { path: "../../../packages/http-server" },
+    sqlite: { path: "../../../packages/sqlite" },
+  },
 };

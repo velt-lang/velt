@@ -415,9 +415,9 @@ ending the stream is always an explicit `close()` (or `stop()`).
 | [`FileReader`](../std/fs/stream.md) | `for await (const line of reader.lines())` | end of file |
 | [standard input](../std/process/stdin.md) | `for await (const line of lines())` | end of input |
 | [`WebSocket`](../std/net/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
-| [`RedisSubscriber`](../std/redis.md) | `for await (const m of sub)` | `sub.close()` |
+| [`RedisSubscriber`](../../packages/redis/README.md) (the `redis` package) | `for await (const m of sub)` | `sub.close()` |
 | [`Ticker`](../std/time/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
-| [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
+| [postgres `CopyReader`](../../packages/postgres/README.md) (the `postgres` package) | `for await (const chunk of reader)` | the end of the `COPY` |
 
 ```ts
 import { channel, Channel, ChannelClosed } from "velt/sync";

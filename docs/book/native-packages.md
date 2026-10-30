@@ -219,7 +219,10 @@ the object's life close them (see `packages/sqlite/src/lib.vlt`).
 ## Building and publishing
 
 While you work on the package, any program that depends on it by path builds the crate with
-cargo when needed. To publish:
+cargo when needed, into the package's own `target/velt-native/` (where the package really is,
+also when the path goes through a symbolic link), so the programs that share the package share
+the build. The Velt repository's database drivers in `packages/` are such packages; its examples
+and benchmarks depend on them by path. To publish:
 
 ```sh
 velt native build                                  # this machine's target → target/velt-native/<triple>/

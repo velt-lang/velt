@@ -119,7 +119,7 @@ const EXPECTED: &str = "sqlite true\n1 ada\n2 grace\nget grace\nerror SQLITE_CON
 
 fn server(version: &str) -> String {
     format!(
-        r#"import {{ serve }} from "velt/net/http";
+        r#"import {{ serve }} from "http-server";
 import {{ open }} from "sqlite";
 
 struct Count {{
@@ -257,6 +257,21 @@ fn sqlite_package_with_native_code() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), EXPECTED);
         std::fs::rename(home.join("cache.moved"), home.join("cache")).unwrap();
     }
+
+    // The server program serves with the repository's HTTP server package, published there too.
+    let http = tmp.path().join("http-server");
+    copy_dir(&repo().join("packages/http-server"), &http);
+    let mut manifest = vpm::Manifest::from_dir(&http).unwrap();
+    manifest.registry = Some(url.clone());
+    std::fs::write(http.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    ok(
+        velt(&http, &home_a, &["publish"]),
+        "velt publish http-server",
+    );
+    ok(
+        velt(&app, &home, &["add", "http-server"]),
+        "velt add http-server",
+    );
 
     // `velt dev`: the JIT host loads the library; a Velt edit hot-swaps and the database the
     // program opened before the swap is still there.

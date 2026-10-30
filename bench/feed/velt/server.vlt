@@ -5,7 +5,7 @@
 
 import { hmacSha256, timingSafeEqual } from "velt/crypto";
 import { base64UrlDecode, utf8Decode, utf8Encode } from "velt/encoding";
-import { serve } from "velt/net/http";
+import { serve } from "http-server";
 import { open, Database, SqliteError } from "sqlite";
 
 const POST_COLUMNS =

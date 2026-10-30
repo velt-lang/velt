@@ -312,7 +312,7 @@ mod tests {
             "velt/prelude/array",
             "velt/net/url/encode",
             "velt/net/bytes",
-            "velt/redis/args",
+            "velt/db/native",
         ] {
             assert!(
                 !specs.iter().any(|s| s == internal),

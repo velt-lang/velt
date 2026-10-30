@@ -92,7 +92,7 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
-  Velt's own modules (`velt/sqlite`, `velt/hash`, `velt/math`, …) and the methods JS has no
+  Velt's own modules (`velt/db`, `velt/hash`, `velt/math`, …) and the methods JS has no
   counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
   types they declare, as do a program's and its packages' own functions and `extend` methods.
 - **Where an integer type is expected, the standard library's integers convert by

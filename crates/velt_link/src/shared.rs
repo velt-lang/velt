@@ -1,6 +1,6 @@
 //! Linking against the runtime as a shared library (`velt_rt_shared`: `libvelt_rt_shared.so`,
 //! `libvelt_rt_shared.dylib`, `velt_rt_shared.dll` + its import library `velt_rt_shared.dll.lib`).
-//! Debug builds use it: the static runtime holds tokio, hyper, rustls, SQLite, … and linking it
+//! Debug builds use it: the static runtime holds tokio, hyper, rustls, … and linking it
 //! takes seconds, while resolving against a shared library's symbol table takes milliseconds.
 //!
 //! The executable finds the library through an rpath to the directory it was found in (Linux,

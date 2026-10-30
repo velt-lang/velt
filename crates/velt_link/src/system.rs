@@ -41,8 +41,6 @@ const WINDOWS: Platform = Platform {
         "bcrypt.lib",
         "dbghelp.lib",
         "synchronization.lib",
-        // `whoami` (tokio-postgres' default user name).
-        "secur32.lib",
         "msvcrt.lib",
     ],
     shared_native_libs: &["kernel32.lib", "msvcrt.lib"],
@@ -78,10 +76,6 @@ const MACOS: Platform = Platform {
     // rustc's list minus `-lSystem`: `cc` always links libSystem, and passing it again makes
     // ld64 print "ignoring duplicate libraries" into every link error.
     native_libs: &[
-        "-framework",
-        "SystemConfiguration",
-        "-framework",
-        "CoreFoundation",
         "-liconv",
         "-lc",
         "-lm",
@@ -425,7 +419,9 @@ mod tests {
             "{mac:?}"
         );
         let mac = args("aarch64-apple-darwin", "/t/libvelt_rt.a");
-        assert!(mac.contains(&"SystemConfiguration".to_string()), "{mac:?}");
+        assert!(mac.contains(&"-liconv".to_string()), "{mac:?}");
+        // Frameworks only a package needs are the package's (its bundle's system libraries).
+        assert!(!mac.iter().any(|a| a == "-framework"), "{mac:?}");
 
         let linux = args("x86_64-unknown-linux-gnu", "/t/libvelt_rt_shared.so");
         assert!(linux.contains(&"-lm".to_string()) && linux.contains(&"-lc".to_string()));

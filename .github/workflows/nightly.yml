@@ -1,6 +1,7 @@
-# Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
-# (they are skipped without their URLs) and the parser's robustness test cuts every golden at
-# every character (pull requests and the queue cut a sample), and then the differential tests
+# Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database packages' tests
+# run (packages/postgres and packages/redis, crates/veltc/tests/packages.rs; they do nothing without
+# their URLs) and the parser's robustness test cuts every golden at every character (pull
+# requests and the queue cut a sample), and then the differential tests
 # against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones

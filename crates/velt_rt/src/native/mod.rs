@@ -23,7 +23,6 @@ mod aio;
 mod aio_tests;
 mod futures;
 #[cfg(test)]
-mod redis_tests;
 #[cfg(test)]
 use crate::task::{FUT_RESULT_OFFSET, PENDING, READY};
 pub use aio::{DropStateFn, ForeignVTable, NativePollFn, WakerArg};
@@ -219,13 +218,6 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
 #[no_mangle]
 pub extern "C" fn velt_rt_native_api() -> *const VeltRtApi {
     &VELT_RT_API
-}
-
-/// Hands the table to the SDK the drivers linked into the runtime are built on (std's
-/// `velt_std_*` crates): what a package's `velt_native_init_<pkg>` does, at start-up.
-pub fn embed() {
-    // SAFETY: the static table, whose layout the SDK's mirrors (`sdk_layouts_match_the_runtime`).
-    unsafe { velt_native::__embed(&VELT_RT_API as *const VeltRtApi as *const velt_native::Api) };
 }
 
 /// `void velt_rt_native_check(int32_t rc, const VeltStr* package)`: after a native package's init

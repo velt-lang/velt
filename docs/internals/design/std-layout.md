@@ -159,6 +159,15 @@ The hyper-based server (`velt:http` `serve`, `crates/velt_rt/src/http/`, the `hy
 removed. The examples and `velt new` templates depend on the package by path, as the sqlite
 examples do.
 
+As built (commit 6): each package has `src/lib.vlt` (its API, named re-exports), `native/` (the
+crate, outside the cargo workspace and the runtime), `tests/` (`velt test`, run for every package
+by `crates/veltc/tests/packages.rs`), `README.md` and `docs/` (the native ABI; the engine for
+sqlite). packages/sqlite keeps the driver's API (the prototype's is gone: its README maps one to
+the other) and has the engine as `sqlite/engine`, sharing the driver's `SqliteError`. What the
+drivers took from std-only intrinsics is public std API now: velt/db's `decodeRows`, `decodeRow`
+and `bindParams`, velt/native's `errorCodeName`, `Array.reserve`/`truncate` and velt/encoding's
+`utf8ByteAt`/`utf8Length` (the last ones existed).
+
 Every row maps to entries in `layout.vlt`; that file is authoritative where they differ. The
 whole tree after the move is in the appendix.
 
@@ -483,9 +492,10 @@ building and passing its tests:
 - **The JSON engine in the prelude.** `prelude/json/json.vlt` belongs in `velt/encoding/json`
   but lowering treats `std/prelude/` specially; it moves with commit 8, when the module table
   (§5) carries that privilege instead of the path.
-- **Path dependencies with native code.** `packages/sqlite`'s native part is tested only through
-  the registry flow; the repository's tests and examples need a path dependency on a native
-  package to work (commit 6).
+- **Path dependencies with native code** (resolved in commit 6): a path dependency on a package
+  with native code builds its crate with cargo into the package's `target/velt-native/`, as vpm
+  already did; `crates/veltc/tests/packages.rs` runs `velt test` in every package that way, and
+  `examples/apps/todo-api` and `bench/` depend on the database packages by path.
 
 ## Appendix: the tree after the move
 
@@ -502,12 +512,7 @@ std/
     brotli/                       (implementation)          11 files
     inflate/                      (implementation)          6 files
   crypto/                         velt/crypto               1 file
-  db/                             velt/db                   1 file
-    postgres/                     velt/db/postgres          1 file
-    redis/                        velt/db/redis             5 files
-    sqlite/                       velt/db/sqlite            8 files
-      exec/                       (implementation)          10 files
-      sql/                        (implementation)          7 files
+  db/                             velt/db                   5 files
   encoding/                       velt/encoding             5 files
     csv/                          velt/encoding/csv         1 file
     json/                         velt/encoding/json        5 files

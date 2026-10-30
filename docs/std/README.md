@@ -83,10 +83,11 @@ The prelude's globals have pages of their own too: [Symbol](prelude/symbol.md) a
 arrays, `ArrayBuffer` and `DataView`](prelude/typed_array.md). Servers are a package:
 [http-server](../../packages/http-server/README.md) (`serve`, `serveHttp`, WebSocket servers).
 
-The database drivers, [sqlite](sqlite.md) (with [sqlite/engine](sqlite_engine.md), the SQLite
-engine in Velt, read-only for now), [postgres](postgres.md) and [redis](redis.md), are part of
-the standard library today. They are moving to separately versioned packages; their APIs will
-stay the same.
+Database drivers are packages, not std: the repository's `packages/` holds
+[sqlite](../../packages/sqlite/README.md) (with a SQLite engine written in Velt,
+[sqlite/engine](../../packages/sqlite/docs/engine.md)), [postgres](../../packages/postgres/README.md)
+and [redis](../../packages/redis/README.md). They are written on public std APIs only
+([`velt/db`](db.md), `velt/native`) and will move to repositories of their own.
 
 ## Runtime-backed and pure modules
 
@@ -108,9 +109,6 @@ what Velt can't do on its own:
 | `velt/random` | a per-thread wyrand generator |
 | `velt/time` | only the local UTC offset; calendar math, parsing and formatting are Velt |
 | `velt/hash` | FNV-1a over a string's or array's bytes, without a copy |
-| `velt/sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
-| `velt/postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
-| `velt/redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
 Pure Velt: `velt/path`, `velt/mem`, `velt/collections`, `velt/encoding` (with
 `velt/encoding/csv` and `velt/encoding/json`), `velt/cli`, `velt/jsx`, `velt/generate`,

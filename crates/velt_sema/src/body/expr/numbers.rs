@@ -39,7 +39,7 @@ impl FnCx<'_, '_> {
 
     /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
     /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
-    /// code? Its integers are numbers there. Velt's own modules (`velt/sqlite`, `velt/hash`, …),
+    /// code? Its integers are numbers there. Velt's own modules (`velt/db`, `velt/hash`, …),
     /// the prelude modules JS has no counterpart of (`js_api::VELT_PRELUDE`: the ordering
     /// protocol, bit counts) and the SIMD types keep their declared integer types.
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {

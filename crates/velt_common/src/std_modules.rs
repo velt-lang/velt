@@ -95,7 +95,7 @@ table! {
     // Modules and their files that lowering and the checks know.
     collections => "collections",
     collections_set => "collections/set",
-    db => "db",
+    db_row_source => "db/row_source",
     encoding_json_reader => "encoding/json/reader",
     encoding_json_writer => "encoding/json/writer",
     /// The default JSX provider (`jsxImportSource`).

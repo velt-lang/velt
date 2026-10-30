@@ -272,7 +272,7 @@ non-ASCII text), and 18–77 % faster than a `String` result (checked, then copi
 A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
 JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
 into a `velt_native::Array<u8>`, the Velt array itself). std decodes them with the std-only
-intrinsic `__intrinsic_json_parse_rows<T>(rows, flags, max_depth)`: the same generated decoder
+intrinsic `Intrinsic::JsonParseRows` (`(rows, flags, max_depth)`): the same generated decoder
 as `JSON.parse<T>`, over a reader made from the array (`velt_rt_json_reader_new_with` flag 4,
 rt_abi_async.md), which answers every call as it would for the JSON the rows stand for
 (`[{"col":value,...},...]`, or with `single` one row's object). No number formatting or

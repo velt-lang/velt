@@ -41,14 +41,6 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring", "s
 ryu = "1.0.23"
 velt_text = { path = "../velt_text" }
 velt_tls = { path = "../velt_tls" }
-# std/postgres's driver (an SDK-only crate, linked in: its exports are std's externs).
-velt_std_postgres = { path = "../velt_std_postgres" }
-# std/sqlite's driver (the same: an SDK-only crate, linked in).
-velt_std_sqlite = { path = "../velt_std_sqlite" }
-# std/redis's driver (the same).
-velt_std_redis = { path = "../velt_std_redis" }
-# The SDK the drivers are built on: the runtime hands it its function table at start-up.
-velt_native = { path = "../velt_native" }
 socket2 = "0.6.5"
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
