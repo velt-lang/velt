@@ -753,6 +753,8 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
+  `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64, sourceEnd: i64): i64`
+  (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
   `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,

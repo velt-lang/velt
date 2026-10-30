@@ -159,8 +159,9 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
-`fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
-Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
+`fill`, `slice` and `concat`, plus `set(src, offset)`, `copyWithin(target, start, end)` and
+`copy(target, targetStart, sourceStart, sourceEnd)` (a range into another array, returning the
+number of bytes copied) like Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
 Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
 needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and

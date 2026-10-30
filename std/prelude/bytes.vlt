@@ -15,6 +15,13 @@ declare function velt_rt_bytes_uninit(n: u64): u8[];
 declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
+declare function velt_rt_bytes_copy(
+  dst: u8[],
+  src: u8[],
+  targetStart: i64,
+  sourceStart: i64,
+  sourceEnd: i64,
+): i64;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
@@ -457,6 +464,26 @@ extend Array<u8> {
     if (!velt_rt_bytes_set(this, src, offset as u64)) {
       panic("RangeError: offset is out of bounds");
     }
+  }
+
+  /**
+   * Copies the bytes in [sourceStart, sourceEnd) of this array into `target` at `targetStart`,
+   * as Node's `buf.copy(target, targetStart, sourceStart, sourceEnd)`: as many as fit there, and
+   * returns their number; `sourceEnd` past the end is the end. A RangeError panic for a negative
+   * position or a `sourceStart` past the end, as Node throws. One copy, no intermediate array:
+   * moving bytes between a protocol's buffers (within one array, `copyWithin`).
+   */
+  copy(
+    target: u8[],
+    targetStart: i64 = 0,
+    sourceStart: i64 = 0,
+    sourceEnd: i64 = 9223372036854775807,
+  ): i64 {
+    const n = velt_rt_bytes_copy(target, this, targetStart, sourceStart, sourceEnd);
+    if (n < 0) {
+      panic("RangeError: copy: a position is out of range");
+    }
+    return n;
   }
 
   /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
