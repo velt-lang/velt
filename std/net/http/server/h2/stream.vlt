@@ -9,7 +9,7 @@
 
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
-import { FieldList } from "velt/net/http/server/h2/field_list";
+import { FieldList } from "velt/net/http/h2";
 import { RequestFields } from "velt/net/http/server/h2/validate";
 
 // States (RFC 9113 §5.1). A stream the server knows is open or half-closed; an idle one has no

@@ -1,4 +1,4 @@
-// velt/net/http (internal): `FieldList`, the header fields of one HTTP/2 header block as
+// velt/net/http/h2 (internal): `FieldList`, the header fields of one HTTP/2 header block as
 // the HPACK decoder wrote them: their bytes one after another in `buf`, four offsets each in
 // `heads` (name start, name end, value start, value end), as h1's `Head` keeps a request's
 // headers, so a request's accessors read either the same way.

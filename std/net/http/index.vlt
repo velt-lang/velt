@@ -16,6 +16,7 @@ export {
   ResponseInit,
 } from "velt/net/http/fetch/fetch";
 export { RequestSource, requestSource, serverRequest } from "velt/net/http/fetch/source";
+export { statusText } from "velt/net/http/fetch/status";
 export {
   BodyKind,
   ResponseParts,

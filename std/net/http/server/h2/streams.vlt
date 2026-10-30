@@ -21,7 +21,7 @@ import {
   REFUSED_STREAM,
   STREAM_CLOSED,
   readU32,
-} from "velt/net/http/server/h2/frame";
+} from "velt/net/http/h2";
 import { endBody, pumpAll, pumpStream, writeHead } from "velt/net/http/server/h2/outbound";
 import { H2Request } from "velt/net/http/server/h2/request";
 import { H2Response } from "velt/net/http/server/h2/response";

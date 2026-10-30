@@ -1,4 +1,4 @@
-// velt/net/http (internal): the HPACK static table (RFC 7541 Appendix A).
+// velt/net/http/h2 (internal): the HPACK static table (RFC 7541 Appendix A).
 //
 // As functions over string literals rather than a module-level array: a module constant that is
 // not a number literal is module state, behind one process-wide lock (#1487), and the decoder

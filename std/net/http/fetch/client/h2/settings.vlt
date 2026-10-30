@@ -13,7 +13,7 @@ import {
   SETTINGS_MAX_CONCURRENT_STREAMS,
   SETTINGS_MAX_FRAME_SIZE,
   readU32,
-} from "velt/net/http/server/h2/frame";
+} from "velt/net/http/h2";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";
 import { startCall } from "velt/net/http/fetch/client/h2/frames";
 

@@ -1,4 +1,4 @@
-// velt/net/http (internal): HTTP/2 frame types, flags, settings and error codes (RFC 9113
+// velt/net/http/h2 (internal): HTTP/2 frame types, flags, settings and error codes (RFC 9113
 // §6, §7, §11), and reading a frame header.
 
 /// The client connection preface (RFC 9113 §3.4): "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".

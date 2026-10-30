@@ -1,11 +1,11 @@
 // HPACK (RFC 7541) as the HTTP/2 server decodes requests and encodes responses: the examples of
 // Appendix C, Huffman coding, and the blocks a decoder must refuse.
 import { describe, expect, it } from "velt/test";
-import { FieldList } from "velt/net/http/server/h2/field_list";
-import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
-import { HpackDecoder } from "velt/net/http/server/h2/hpack_decoder";
-import { HpackEncoder } from "velt/net/http/server/h2/hpack_encoder";
-import { huffmanDecode, huffmanEncode, huffmanLength } from "velt/net/http/server/h2/huffman";
+import { FieldList } from "velt/net/http/h2";
+import { FrameWriter } from "velt/net/http/h2";
+import { HpackDecoder } from "velt/net/http/h2";
+import { HpackEncoder } from "velt/net/http/h2";
+import { huffmanDecode, huffmanEncode, huffmanLength } from "velt/net/http/h2";
 
 function hex(s: string): u8[] {
   const t = s.replaceAll(" ", "");

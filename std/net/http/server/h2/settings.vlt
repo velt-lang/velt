@@ -14,7 +14,7 @@ import {
   SETTINGS_INITIAL_WINDOW_SIZE,
   SETTINGS_MAX_FRAME_SIZE,
   readU32,
-} from "velt/net/http/server/h2/frame";
+} from "velt/net/http/h2";
 import { pumpAll } from "velt/net/http/server/h2/outbound";
 
 /// Applies the settings at `c.rbuf[at..at + length)` (a multiple of 6): false after a connection

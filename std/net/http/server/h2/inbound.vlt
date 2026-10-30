@@ -30,7 +30,7 @@ import {
   ACK,
   frameLength,
   readStreamId,
-} from "velt/net/http/server/h2/frame";
+} from "velt/net/http/h2";
 import {
   onData,
   onHeaderBlock,

@@ -1,4 +1,4 @@
-// velt/net/http (internal): `HpackEncoder`, HPACK encoding (RFC 7541 §6) of response
+// velt/net/http/h2 (internal): `HpackEncoder`, HPACK encoding (RFC 7541 §6) of
 // header blocks into a connection's `FrameWriter`.
 //
 // What a server sends repeats from response to response (`server`, `content-type`, the `date`
@@ -8,9 +8,9 @@
 // an intermediary does not compress them either. A literal string is Huffman-coded when that is
 // shorter.
 
-import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
-import { huffmanEncode, huffmanLength } from "velt/net/http/server/h2/huffman";
-import { staticNameIndex, staticStatusIndex } from "velt/net/http/server/h2/hpack_static";
+import { FrameWriter } from "velt/net/http/h2/frame_writer";
+import { huffmanEncode, huffmanLength } from "velt/net/http/h2/huffman";
+import { staticNameIndex, staticStatusIndex } from "velt/net/http/h2/hpack_static";
 
 /// A field larger than this (name + value + 32) is not added to the table: it would evict much
 /// for little.

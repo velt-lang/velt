@@ -3,7 +3,7 @@
 // by the server's stop or, while draining, by its last stream ending.
 
 import { AbortController } from "velt/task";
-import { NO_ERROR } from "velt/net/http/server/h2/frame";
+import { NO_ERROR } from "velt/net/http/h2";
 import { H2Connection } from "velt/net/http/server/h2/connection";
 import { expire } from "velt/net/http/server/h2/streams";
 

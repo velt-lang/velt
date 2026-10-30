@@ -7,7 +7,7 @@
 // that one large response does not hold back the others.
 
 import { H2Connection } from "velt/net/http/server/h2/connection";
-import { DATA, END_STREAM, HEADER_LENGTH } from "velt/net/http/server/h2/frame";
+import { DATA, END_STREAM, HEADER_LENGTH } from "velt/net/http/h2";
 import { CLOSED, H2Stream } from "velt/net/http/server/h2/stream";
 
 /**

@@ -10,6 +10,7 @@ import {
   requestSource,
   responseParts,
   serverRequest,
+  statusText,
   switchingProtocols,
 } from "velt/net/http";
 import { describe, expect, it } from "velt/test";
@@ -125,5 +126,16 @@ describe("switchingProtocols", () => {
     const res = switchingProtocols({ upgrade: "websocket" });
     expect(res.status).toBe(101);
     expect(res.headers.get("upgrade")).toBe("websocket");
+  });
+});
+
+describe("statusText", () => {
+  it("is Node's reason phrase, Unknown for a status it does not list", () => {
+    expect([statusText(200), statusText(404), statusText(418), statusText(599)]).toEqual([
+      "OK",
+      "Not Found",
+      "I'm a Teapot",
+      "Unknown",
+    ]);
   });
 });

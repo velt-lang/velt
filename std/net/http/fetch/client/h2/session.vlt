@@ -17,11 +17,11 @@ import {
   SETTINGS_ENABLE_PUSH,
   SETTINGS_INITIAL_WINDOW_SIZE,
   SETTINGS_MAX_HEADER_LIST_SIZE,
-} from "velt/net/http/server/h2/frame";
-import { FieldList } from "velt/net/http/server/h2/field_list";
-import { FrameWriter } from "velt/net/http/server/h2/frame_writer";
-import { HpackDecoder } from "velt/net/http/server/h2/hpack_decoder";
-import { HpackEncoder } from "velt/net/http/server/h2/hpack_encoder";
+} from "velt/net/http/h2";
+import { FieldList } from "velt/net/http/h2";
+import { FrameWriter } from "velt/net/http/h2";
+import { HpackDecoder } from "velt/net/http/h2";
+import { HpackEncoder } from "velt/net/http/h2";
 import { CALL_CANCEL, CALL_CREDIT, H2Call } from "velt/net/http/fetch/client/h2/call";
 import { errorEvent, H2Event } from "velt/net/http/fetch/client/h2/event";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";

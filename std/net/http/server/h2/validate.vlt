@@ -2,7 +2,7 @@
 // pass (RFC 9113 §8.1, §8.2, §8.3). A request that fails one is malformed: its stream is reset
 // with PROTOCOL_ERROR, and the handler never sees it.
 
-import { FieldList } from "velt/net/http/server/h2/field_list";
+import { FieldList } from "velt/net/http/h2";
 
 /// Where a request's pseudo-header fields are in its `FieldList` (-1: absent), and its
 /// `content-length` (-1: none).

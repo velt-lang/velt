@@ -1,4 +1,4 @@
-// velt/net/http (internal): `HpackDecoder`, HPACK header block decoding (RFC 7541 §6) into
+// velt/net/http/h2 (internal): `HpackDecoder`, HPACK header block decoding (RFC 7541 §6) into
 // a `FieldList`.
 //
 // One decoder per connection: every header block of the connection goes through it, in order,
@@ -9,10 +9,10 @@
 // (`overflow`): a small block that refers to a large entry many times (an "HPACK bomb") costs
 // the time to read it and nothing more.
 
-import { DynamicTable } from "velt/net/http/server/h2/hpack_table";
-import { FieldList } from "velt/net/http/server/h2/field_list";
-import { huffmanDecode } from "velt/net/http/server/h2/huffman";
-import { STATIC_COUNT, staticName, staticValue } from "velt/net/http/server/h2/hpack_static";
+import { DynamicTable } from "velt/net/http/h2/hpack_table";
+import { FieldList } from "velt/net/http/h2/field_list";
+import { huffmanDecode } from "velt/net/http/h2/huffman";
+import { STATIC_COUNT, staticName, staticValue } from "velt/net/http/h2/hpack_static";
 
 /// The largest integer a block may hold (a length or an index): beyond it the block is refused.
 const MAX_INT: i64 = 0x7fffffff;

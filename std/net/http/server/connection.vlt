@@ -9,7 +9,8 @@ import { TcpStream } from "velt/net";
 import { AbortSignal } from "velt/task";
 import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/net/http/server/parse";
 import { HttpRequest } from "velt/net/http/server/request";
-import { HttpResponse, reason } from "velt/net/http/server/response";
+import { HttpResponse } from "velt/net/http/server/response";
+import { statusText } from "velt/net/http/fetch/status";
 import { serveH2Http } from "velt/net/http/server/h2/facade";
 import { H2Options } from "velt/net/http/server/h2/options";
 import { linger } from "velt/net/http/server/linger";
@@ -83,7 +84,7 @@ export async function connection<E>(
           if (headStart >= 0 && Date.now() >= headStart + limits.headMs && !stopped.aborted) {
             res.begin(false, true);
             res.status(408);
-            res.send(reason(408));
+            res.send(statusText(408));
             await res.flush();
             rejected = true;
           }
@@ -131,7 +132,7 @@ export async function connection<E>(
                 const code = req.bodyTooLarge() ? 413 : req.timedOut() ? 408 : 400;
                 res.closeAfter();
                 res.status(code);
-                res.send(reason(code));
+                res.send(statusText(code));
               }
             } else if (!res.clientGone()) {
               if (!res.sent()) {
@@ -178,7 +179,7 @@ export async function connection<E>(
         if (e instanceof BadRequest) {
           res.begin(false, true);
           res.status(e.status);
-          res.send(reason(e.status));
+          res.send(statusText(e.status));
           rejected = true;
         }
         open = false;

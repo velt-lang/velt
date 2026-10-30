@@ -10,7 +10,7 @@ import { H2Connection } from "velt/net/http/server/h2/connection";
 import { endBody, sendBytes } from "velt/net/http/server/h2/outbound";
 import { H2Stream } from "velt/net/http/server/h2/stream";
 import { consumed, streamError } from "velt/net/http/server/h2/streams";
-import { CANCEL } from "velt/net/http/server/h2/frame";
+import { CANCEL } from "velt/net/http/h2";
 
 /// How much of what the protocol writes may wait for window before it is read no further.
 const QUEUED: i64 = 65536;

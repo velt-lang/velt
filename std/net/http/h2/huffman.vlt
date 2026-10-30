@@ -1,4 +1,4 @@
-// velt/net/http (internal): the HPACK Huffman code (RFC 7541 §5.2, Appendix B): decoding
+// velt/net/http/h2 (internal): the HPACK Huffman code (RFC 7541 §5.2, Appendix B): decoding
 // through the tables of h2/huffman_table.vlt, and encoding.
 //
 // Decoding keeps up to 64 bits of input in a register: the next 8 bits find a code of 8 bits or
@@ -14,7 +14,7 @@ import {
   HUFFMAN_LENGTHS,
   HUFFMAN_OFFSET,
   HUFFMAN_SYMBOLS,
-} from "velt/net/http/server/h2/huffman_table";
+} from "velt/net/http/h2/huffman_table";
 
 /**
  * Decodes the Huffman-coded bytes `src[start..end)` into `out` from `at`: the end of what was

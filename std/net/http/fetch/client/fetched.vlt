@@ -8,7 +8,7 @@
 
 import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task";
-import { reason } from "velt/net/http/server/response";
+import { statusText } from "velt/net/http/fetch/status";
 import { BodyReader } from "velt/net/http/fetch/client/body";
 import { H2Body } from "velt/net/http/fetch/client/h2/body";
 import { Chain, CHUNK, codingsOf, decodeAll, tooMany } from "velt/net/http/fetch/client/decode";
@@ -64,7 +64,7 @@ export class Fetched {
     if (h.reasonEnd > h.reasonStart) {
       return h.reason();
     }
-    return reason(this.status as number);
+    return statusText(this.status as number);
   }
 
   /** The headers, `[name, value, …]`, names lowercase. */

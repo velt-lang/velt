@@ -1,4 +1,4 @@
-// velt/net/http (internal): the HPACK dynamic table a decoder keeps (RFC 7541 §2.3.2,
+// velt/net/http/h2 (internal): the HPACK dynamic table a decoder keeps (RFC 7541 §2.3.2,
 // §4): entries newest first, each costing its name's and value's length plus 32 bytes, the
 // oldest evicted to stay within the size the peer's encoder was allowed.
 

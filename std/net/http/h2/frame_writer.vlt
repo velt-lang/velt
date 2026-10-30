@@ -1,4 +1,4 @@
-// velt/net/http (internal): `FrameWriter`, the frames a connection has to send, encoded
+// velt/net/http/h2 (internal): `FrameWriter`, the frames a connection has to send, encoded
 // one after another into one buffer that leaves in one write (`TcpStream.writeBytesLater`): the
 // responses to every request one read brought go out together, as h1's pipelined responses do.
 
@@ -13,7 +13,7 @@ import {
   SETTINGS,
   WINDOW_UPDATE,
   ACK,
-} from "velt/net/http/server/h2/frame";
+} from "velt/net/http/h2/frame";
 
 /// An output buffer of frames.
 export class FrameWriter {
