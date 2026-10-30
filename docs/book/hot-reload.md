@@ -11,7 +11,7 @@ velt dev server.vlt       # one file
 ## A session
 
 Take a server that counts requests (in a package that depends on
-[http-server](../../packages/http-server/README.md): `velt add http-server`):
+[http-server](../../packages/http-server/README.md#readme), as `velt new --template api` sets up):
 
 ```ts
 import { serve } from "http-server";

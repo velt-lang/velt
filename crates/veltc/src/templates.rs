@@ -174,12 +174,12 @@ impl Template {
         }
     }
 
-    /// The packages a project from this template starts with: the servers' HTTP server
-    /// (packages/http-server, from the registry).
-    pub fn dependencies(self) -> &'static [(&'static str, &'static str)] {
+    /// The packages a project from this template starts with: the servers' HTTP server, from
+    /// the Velt repository on GitHub (packages/http-server, the `main` branch).
+    pub fn dependencies(self) -> Vec<(&'static str, vpm::manifest::Dependency)> {
         match self {
-            Template::Api | Template::Websocket => &[("http-server", "0.1")],
-            Template::App | Template::Cli | Template::Lib => &[],
+            Template::Api | Template::Websocket => vec![("http-server", http_server())],
+            Template::App | Template::Cli | Template::Lib => vec![],
         }
     }
 
@@ -197,7 +197,7 @@ impl Template {
                     self.is_lib()
                         .then(|| format!("What {name} does, in one sentence."))
                         .as_deref(),
-                    self.dependencies(),
+                    &self.dependencies(),
                 ),
             ),
             ScaffoldFile {
@@ -223,6 +223,19 @@ impl Template {
         files
     }
 }
+
+/// `http-server` as a git dependency on the Velt repository.
+pub fn http_server() -> vpm::manifest::Dependency {
+    vpm::manifest::Dependency::Detailed(vpm::manifest::DetailedDependency {
+        git: Some(HTTP_SERVER_REPO.to_string()),
+        branch: Some("main".to_string()),
+        path: Some("packages/http-server".to_string()),
+        ..Default::default()
+    })
+}
+
+/// The repository `http-server` comes from.
+pub const HTTP_SERVER_REPO: &str = "https://github.com/velt-lang/velt";
 
 #[cfg(test)]
 mod tests {

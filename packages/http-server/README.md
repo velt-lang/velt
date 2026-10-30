@@ -22,8 +22,13 @@ straight into it), is in [docs/serve-http.md](docs/serve-http.md).
 ```ts ignore
 // package.vlt
 dependencies: {
-  "http-server": "0.1",                                    // from the registry
-  // "http-server": { path: "../velt/packages/http-server" },  // or a checkout
+  // From the Velt repository (`velt new --template api` writes this):
+  "http-server": {
+    git: "https://github.com/velt-lang/velt",
+    branch: "main",
+    path: "packages/http-server",
+  },
+  // Or a checkout: "http-server": { path: "../velt/packages/http-server" },
 },
 ```
 

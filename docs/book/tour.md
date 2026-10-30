@@ -207,7 +207,8 @@ they can't modify captured variables, so they share state through `shared(...)` 
 ## An HTTP server
 
 The server is a package written in Velt ([http-server](../../packages/http-server/README.md)):
-`velt add http-server` adds it to yours.
+`velt new --template api` makes a package that depends on it (its
+[README](../../packages/http-server/README.md) shows the dependency to add to yours).
 
 ```ts
 import { serve } from "http-server";

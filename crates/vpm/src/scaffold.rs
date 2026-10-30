@@ -67,12 +67,11 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
     manifest_text_depending(name, description, &[])
 }
 
-/// [`manifest_text_with`] for a package that starts with registry dependencies: `(name,
-/// version requirement)` (a template's server, say).
+/// [`manifest_text_with`] for a package that starts with dependencies (a template's server, say).
 pub fn manifest_text_depending(
     name: &str,
     description: Option<&str>,
-    dependencies: &[(&str, &str)],
+    dependencies: &[(&str, crate::manifest::Dependency)],
 ) -> String {
     Manifest {
         registry: None,
@@ -86,12 +85,7 @@ pub fn manifest_text_depending(
         toolchain: Some(this_toolchain_pin()),
         dependencies: dependencies
             .iter()
-            .map(|(n, v)| {
-                (
-                    n.to_string(),
-                    crate::manifest::Dependency::Version(v.to_string()),
-                )
-            })
+            .map(|(n, d)| (n.to_string(), d.clone()))
             .collect(),
         paths: BTreeMap::new(),
         native: None,

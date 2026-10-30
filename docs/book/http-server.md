@@ -1,10 +1,11 @@
 # Building an HTTP server
 
-This guide builds a small JSON API for todos: routing, request bodies, validation, errors as
-status codes, shared state, and tests. The server is
-[http-server](../../packages/http-server/README.md), a package written in Velt: HTTP/1.1 with
-keep-alive, HTTP/2, and HTTPS. Add it to your package with `velt add http-server`. Handlers run
-concurrently on every core.
+This guide builds a small JSON API for todos: routing, request bodies, validation, errors as status
+codes, shared state, and tests. The server is [http-server](../../packages/http-server/README.md), a
+package written in Velt: HTTP/1.1 with keep-alive, HTTP/2, and HTTPS, from the Velt repository:
+`velt new todo --template api` depends on it, or add `"http-server": { git:
+"https://github.com/velt-lang/velt", branch: "main", path: "packages/http-server" }` to your
+`package.vlt`'s `dependencies`. Handlers run concurrently on every core.
 
 `velt new todo --template api` generates a larger version of the same design, split into
 modules, with tests.
