@@ -89,14 +89,15 @@ function columnRefs(e: Expr | null, out: Expr[]) {
 }
 
 /**
- * An aggregate call `e` where it cannot be, with one of SQLite's two messages. Where name
+ * An aggregate call `e` where it cannot be, with SQLite's message (`message`). Where name
  * resolution allows no aggregate (another aggregate's arguments or FILTER, LIMIT, and WHERE or
  * ON of a query that is no aggregate query; `sc` is where the call is written, as SQLite's name
  * context, whichever query the aggregate belongs to) it is `misuse of aggregate function f()`;
  * elsewhere (WHERE of an aggregate query, ORDER BY of one that is not, a subquery's result
  * column owned by a query that cannot take it) it is the code generator's `misuse of
- * aggregate: f()`. A name in the arguments that does not resolve is reported instead, as in
- * SQLite, whose name error comes later and replaces the message.
+ * aggregate: f()`. In a core's own GROUP BY, an aggregate it owns gets SQLite's GROUP BY
+ * message. A name in the arguments that does not resolve is reported instead, as in SQLite,
+ * whose name error comes later and replaces the message.
  */
 export function aggMisuse(c: ExprCompiler, e: Expr, sc: Scope, message: string): never {
   const was = sc.inAggArgs;

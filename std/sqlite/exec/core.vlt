@@ -21,7 +21,7 @@ import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
 import { AggRestart, Ev, Out, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
 import { AG_COUNT_STAR, AggCtx, Group } from "velt:sqlite/exec/agg";
 import { prepareError } from "velt:sqlite/exec/errors";
-import { C, ExprCompiler, hasAggregate } from "velt:sqlite/exec/expr";
+import { C, ExprCompiler } from "velt:sqlite/exec/expr";
 import {
   MAX_COLUMN,
   checkResultWidth,
@@ -496,42 +496,45 @@ function groupStepFor(
   for (const rc of core.columns) {
     star = star || rc.expr.kind == E_STAR;
   }
-  for (let k: usize = 0; k < core.groupBy.length; k++) {
-    const e = core.groupBy[k];
-    let ce: C | null = null;
-    // With `*`, a number names a column of the expanded result.
-    let num: i64 = -1;
-    if (star) {
-      let x = e;
-      while (x.kind == E_COLLATE) {
-        x = x.a!;
+  // SQLite resolves the terms first, then rejects one holding an aggregate of this core.
+  sc.groupBy = true;
+  try {
+    for (let k: usize = 0; k < core.groupBy.length; k++) {
+      const e = core.groupBy[k];
+      let ce: C | null = null;
+      // With `*`, a number names a column of the expanded result.
+      let num: i64 = -1;
+      if (star) {
+        let x = e;
+        while (x.kind == E_COLLATE) {
+          x = x.a!;
+        }
+        num = termNumber(x);
       }
-      num = termNumber(x);
-    }
-    if (star && num >= 1 && num <= 65535) {
-      if (num as usize > q.names.length) {
-        rangeError(k, "GROUP", q.names.length);
-      }
-      const at = (num - 1) as usize;
-      if (q.exprOf[at] == null) {
-        ce = c.columnRef(q.refSrc[at]!, q.refCol[at], sc);
+      if (star && num >= 1 && num <= 65535) {
+        if (num as usize > q.names.length) {
+          rangeError(k, "GROUP", q.names.length);
+        }
+        const at = (num - 1) as usize;
+        if (q.exprOf[at] == null) {
+          ce = c.columnRef(q.refSrc[at]!, q.refCol[at], sc);
+        } else {
+          ce = c.expr(q.exprOf[at]!, sc);
+        }
       } else {
-        ce = c.expr(q.exprOf[at]!, sc);
+        const i = resultIndex(e, core.columns, core.columns.length, "GROUP", k);
+        if (i >= (core.columns.length as i64)) {
+          rangeError(k, "GROUP", core.columns.length);
+        }
+        const target = i >= 0 ? core.columns[i as usize].expr : e;
+        ce = c.expr(target, sc);
       }
-    } else {
-      const i = resultIndex(e, core.columns, core.columns.length, "GROUP", k);
-      if (i >= (core.columns.length as i64)) {
-        rangeError(k, "GROUP", core.columns.length);
-      }
-      const target = i >= 0 ? core.columns[i as usize].expr : e;
-      if (hasAggregate(target)) {
-        prepareError("aggregate functions are not allowed in the GROUP BY clause");
-      }
-      ce = c.expr(target, sc);
+      const key = ce!;
+      gs.keyEvs.push(key.ev);
+      gs.keyColls.push(key.coll >= 0 ? key.coll as u8 : BINARY);
     }
-    const key = ce!;
-    gs.keyEvs.push(key.ev);
-    gs.keyColls.push(key.coll >= 0 ? key.coll as u8 : BINARY);
+  } finally {
+    sc.groupBy = false;
   }
   if (gs.keyEvs.length == 0) {
     return () => {

@@ -141,6 +141,11 @@ export class Scope {
    * the core is an aggregate query, whichever query the aggregate belongs to.
    */
   where: bool = false;
+  /**
+   * Set while the core's GROUP BY terms compile: an aggregate the core owns is not allowed
+   * there, even inside a subquery; one an enclosing query owns is.
+   */
+  groupBy: bool = false;
 
   /** The same sources in an aggregate query's output mode. */
   forOutput(agg: AggCtx): Scope {
