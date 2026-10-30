@@ -11,3 +11,4 @@ import { JsonValue } from "velt/prelude/json/json";
 export type Value = JsonValue;
 
 export { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
+export { writeJson } from "velt/encoding/json/generated";

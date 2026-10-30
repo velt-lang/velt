@@ -24,7 +24,7 @@ use velt_common::{FileId, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnSource};
-use crate::hir::DefId;
+use crate::hir::{AdtKind, DefId};
 
 /// The name a generated module uses for a type it cannot import: `__qualified<"<module path>",
 /// "<name>", …type arguments>` (written by the driver from [`spell`]), resolved only in
@@ -281,6 +281,38 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         self.item_type(item, &name, &args[2..], t, env)
+    }
+}
+
+impl Ctx<'_> {
+    /// The class `__qualified<"<module path>", "<name>">` names in generated code (no type
+    /// arguments, no diagnostics): what `instanceof` tests and narrows to there.
+    pub(crate) fn qualified_class(&self, t: &velt_syntax::ast::TypeExpr) -> Option<DefId> {
+        use velt_syntax::ast::{Lit, TypeExprKind};
+        let TypeExprKind::Named { path, args } = &t.kind else {
+            return None;
+        };
+        if path.len() != 1 || path[0].name != QUALIFIED || !self.in_generated_file(t.span) {
+            return None;
+        }
+        let text = |a: &velt_syntax::ast::TypeExpr| match &a.kind {
+            TypeExprKind::Literal(l) => match &l.lit {
+                Lit::Str(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let [module, name] = args.as_slice() else {
+            return None;
+        };
+        let (module, name) = (text(module)?, text(name)?);
+        let m = self.modules.iter().position(|m| m.path == module)?;
+        match self.scopes[m].items.get(&name)? {
+            crate::ctx::Item::Def(d) if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Class) => {
+                Some(*d)
+            }
+            _ => None,
+        }
     }
 }
 

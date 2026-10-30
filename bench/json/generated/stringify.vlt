@@ -1,5 +1,5 @@
-// `bench/json/stringify.vlt` through the generated `stringify` of ./_index.vlt (the same work).
-import { stringify } from "./_index";
+// `bench/json/stringify.vlt` through ./_stringify.vlt (the source-generated `writeJson`): the same work.
+import { stringify } from "./_stringify";
 
 struct Item {
   id: i64;

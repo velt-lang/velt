@@ -1,0 +1,13 @@
+// velt/encoding/json (internal): `writeJson<T>`, which appends a value's JSON text to a
+// `StringBuilder`; its body is generated per type at compile time by
+// velt/encoding/json/generate/write (docs/internals/design/source-generators.md). The code it
+// generates calls the functions imported here.
+
+import { StringBuilder } from "velt/text/string_builder";
+import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
+
+/** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
+export declare generated("velt/encoding/json/generate/write") function writeJson<T>(
+  w: StringBuilder,
+  value: T,
+): void;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Instructions retired by bench/json/stringify.vlt (the compiler's JSON glue) and by
-# generated/stringify.vlt (the same work through the source-generated `stringify` of
-# ./_index.vlt), built by the same compiler with the same runtime, best of RUNS.
+# generated/stringify.vlt (the same work through velt/encoding/json's source-generated
+# `writeJson`), built by the same compiler with the same runtime, best of RUNS.
 #
 #   bench/json/generated/compare.sh [runs]
 #

@@ -3,7 +3,34 @@
 `import { Value } from "velt/encoding/json"`. `JSON` itself is a global, like the prelude's names: it needs
 no import, and a program whose code never names `JSON`, `JsonValue`, `JsonError`,
 `JsonParseOptions` or `JsonReplacer` doesn't load it, so it costs that program no compile time.
-This module only exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`).
+This module exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`), and
+what code that writes JSON itself builds on:
+
+- `writeJson<T>(w: StringBuilder, value: T)` appends what `JSON.stringify(value)` writes. Its
+  body is generated for each type at compile time by a source generator written in Velt, which
+  uses nothing a package could not use ([source generators](../reference/source-generators.md)).
+  It writes numbers, booleans, strings, literal types, enums, arrays, tuples, `T | null`,
+  objects, structs and classes (a class value as its dynamic class, and through its `toJSON()`)
+  for now; other types are a compile error at the call.
+- `appendJsonString(w, s)`, `appendJsonNumber(w, x)` and `appendJsonUint(w, n)` append a string,
+  an `f64` and a `u64` as `JSON.stringify` writes them; the caller appends the punctuation and
+  the keys (a literal `w.append("{\"id\":")` is appended inline).
+
+```ts
+import { writeJson } from "velt/encoding/json";
+
+class Point {
+  x: f64 = 1;
+  y: f64 = 2.5;
+}
+
+function main() {
+  const w = new StringBuilder();
+  w.append("points: ");
+  writeJson(w, [new Point()]);
+  console.log(w.toString()); // points: [{"x":1,"y":2.5}]
+}
+```
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.

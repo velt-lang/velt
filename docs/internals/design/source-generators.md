@@ -616,6 +616,47 @@ goldens:
   `T | undefined` is left out of JSON when empty, one of type `T | null` is written `null`), and
   a string literal or a string enum's value is JSON text (it is also JavaScript source).
 
+- `writeJson<T>(w: StringBuilder, value: T)` in velt/encoding/json (`generated.vlt`), generated
+  by `velt/encoding/json/generate/write` (std/encoding/json/generate/write.vlt): numbers,
+  booleans, strings, literal types, enums (numeric and string), arrays, tuples, options,
+  objects, structs and classes, with JavaScript's key order (array indexes first), optional and
+  `T | undefined` fields left out when empty, ES private fields and function fields left out,
+  `private` fields written, a class value written as its dynamic class (an `instanceof` chain,
+  most derived first: `instanceof __qualified<…>` names a class in generated code) and through
+  its `toJSON()`. It writes what `JSON.stringify` writes for each (golden
+  `std/json_write_generated`), but `JSON.stringify` does not call it yet: see "Left for the
+  port" below. A generator host for std's generators sits in the std root and is std code (it
+  imports their internal files).
+
+### Left for the port of `JSON.stringify` and `JSON.parse`
+
+What `writeJson` lacks before `JSON.stringify<T>` can call it and the glue can go, each needing
+a decision or a public runtime API:
+
+- **`any` and interface values.** The glue writes an `any` through slot 14 of its descriptor,
+  which every boxed type gets when the program writes an `any`, and which calls the glue's
+  writer of the concrete type. The types boxed into an `any` are known only in lowering, so no
+  generator request names them: either sema demands `writeJson<T>` for every type converted to
+  `any` in a program that writes one (more instances), or the slot stays compiler glue that
+  calls a generated instance demanded that way.
+- **Typed proxies and views** (`proxy_tagged`: written as the `any` they convert to), **cycle
+  detection** (`velt_rt_json_enter`/`leave` for recursive object types and `any` values),
+  object literal **getters**, the **presence slot** of `a?: T | null` (written as `null` when
+  present), **functions with properties**, `Map<string, V>`, `Record<K, V>`, `JsonValue`
+  (`__writeJson`) and `Shared<T>`: a small public `velt/generate/runtime` (or
+  velt/encoding/json) API for the first two; the rest need model additions (a field's presence
+  slot, getters, the prelude's `Map` and `Record` as kinds of their own instead of `opaque`).
+- **Unions** written as their active member: generated code needs a test per arm that Velt's
+  narrowing understands (`typeof`, a discriminant, `instanceof`), or a model of the variant
+  order with a runtime tag API.
+- **Errors**: `sema/json`'s messages ("cannot convert to or from JSON: `A` contains …") at the
+  call site, in the order sema reports them, also when the program has other errors (a
+  generator runs only for a program that checks without errors). `Output.error` at `-1` reports
+  at the call; the order and the "other errors" case need the rounds to report generator
+  errors with sema's.
+- **Compile time**: the second round must check only the generated modules (or the offered
+  ones must cost what the glue's instantiation costs) to meet the 3%/10% criteria.
+
 Not yet: decorators (§8), `--emit-generated` and `--no-generators`, per-request output caching
 (today one entry per host run: an edit to one serialized type runs the generator for every
 instance of the round; the offered modules make that rare).
@@ -644,6 +685,14 @@ instance of the round; the offered modules make that rare).
   `b.length` in a loop read a stale length). With std's runtime declarations writing their
   `out`/`buf` strings (a mutable borrow), the generated writer costs 1.07 G against the glue's
   1.10 G (-3%, `compare.sh`, release runtime, best of 3).
+- **`writeJson` against the glue** (bench/json/generated/compare.sh, release runtime, best of
+  5): 1.060 G instructions against 1.100 G (-3.6%). Compile time of
+  `bench/json/generated/stringify.vlt` against `bench/json/stringify.vlt` (debug `velt`, best of
+  5, interleaved): warm (the last build's code offered) 682 M against 621 M (+9.8%); cold (no
+  output cache and no offer, the host executable cached) 1.04 G against 624 M (+66%: the host
+  run, 41 ms, and the second check, 30 ms, of a 157 ms build). Both are over the criteria
+  (3% warm, 10% cold): the second round checks the whole program again, and the offered module
+  is checked with it.
 - **Ergonomics:** `out.line(… out.instance(…) …)` is rejected by Velt's rule that one call
   cannot modify a value and read it in another argument; generators compute names into locals
   first. `Output` could keep its state outside the object the generator holds to lift that.

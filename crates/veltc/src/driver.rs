@@ -277,7 +277,9 @@ fn load_modules(
             .map(|g| g as &dyn loader::PackageResolver),
         root_source: opts.root_source.clone(),
         overlay: None,
-        std_root_as_std: false,
+        // A source generator host for std's generators sits in the std root and imports their
+        // internal files: it is std code (docs/internals/design/source-generators.md §5).
+        std_root_as_std: sess.generator_build,
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,
