@@ -302,7 +302,7 @@ def main():
                "build_failures": ctx.failures, "categories": {}}
     subs = redactions(ctx)
     # The build phase leaves the load average high: timing starts once it has settled.
-    info["settle"] = settle(a.max_load, 60 if ctx.smoke else a.settle_timeout, a.force or ctx.smoke)
+    info["settle"] = settle(a.max_load, min(a.settle_timeout, 60) if ctx.smoke else a.settle_timeout, a.force or ctx.smoke)
     info["loadavg_by_category"] = {}
 
     def save():
