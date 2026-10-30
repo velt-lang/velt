@@ -39,7 +39,7 @@ import { H2Response } from "velt/net/http/server/h2/response";
 import { CLOSED, H2Stream } from "velt/net/http/server/h2/stream";
 import { frames } from "velt/net/http/server/h2/inbound";
 import { expire, startHandlers } from "velt/net/http/server/h2/streams";
-import { linger } from "velt/net/http/server/h2/linger";
+import { linger } from "velt/net/http/server/linger";
 import { waitForInput } from "velt/net/http/server/h2/wait";
 
 /// Queued output beyond which the connection reads no more frames until the peer has read most
