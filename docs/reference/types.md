@@ -3155,8 +3155,9 @@ array: `slots as { default: () => VNode[] }` where `slots.default` holds `(scope
 any[]` gives a `default` that calls the held function with no arguments and converts each element
 of its result to `VNode`. Extra arguments are dropped and missing ones are `undefined`, as in Node,
 and a rest parameter of the target type (`(...xs: number[]) => string`) passes its elements as
-separate arguments. This reaches members of objects inside the value (`{ inner: { deep: { f } } }`)
-and the results of the converted functions. The function is made once, at the conversion, so each
+separate arguments. This reaches members of objects inside the value (`{ inner: { deep: { f } } }`),
+up to four objects deep, and the results of the converted functions; a function five or more
+objects deep stops the conversion with a `TypeError`. The function is made once, at the conversion, so each
 call costs one call through `any`, and the member read twice is one function (`s.f === s.f`). Two
 conversions of the same object give two functions, though: `(o as S).f === (o as S).f` is `false`,
 where Node keeps the one function. In a program that makes proxies, the converted object is a view
