@@ -7,6 +7,7 @@
 // handler is woken through `wake()`, which settles the promise it awaits; the connection wakes
 // every waiting stream when it ends, so no handler waits for ever.
 
+import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { FieldList } from "velt/net/http/server/h2/field_list";
 import { RequestFields } from "velt/net/http/server/h2/validate";
@@ -28,7 +29,14 @@ export class H2Stream {
   state: i64 = CLOSED;
   /// The request head, and where its pseudo-headers are.
   fields: FieldList = new FieldList();
-  info: RequestFields = { method: -1, scheme: -1, authority: -1, path: -1, contentLength: -1 };
+  info: RequestFields = {
+    method: -1,
+    scheme: -1,
+    authority: -1,
+    path: -1,
+    protocol: -1,
+    contentLength: -1,
+  };
 
   // The request body: DATA payloads not read yet (from `head`), their size, the size of all.
   chunks: u8[][] = [];
@@ -68,6 +76,13 @@ export class H2Stream {
 
   // Who waits: a handler for body or window (`wake` settles it).
   private waiter: (() => void) | null = null;
+  /// Who waits for window (a response body writer), apart from a reader of the body.
+  private outWaiter: (() => void) | null = null;
+  /// The server's end of the stream pair of an extended CONNECT tunnel (h2/tunnel.vlt).
+  tunnel: TcpStream | null = null;
+  /// The tunnel's directions that have ended.
+  tunnelOut: bool = false;
+  tunnelIn: bool = false;
   private aborter: AbortController | null = null;
 
   /// Prepares a pooled stream for request `id`.
@@ -93,6 +108,10 @@ export class H2Stream {
     this.late = false;
     this.trailers.length = 0;
     this.waiter = null;
+    this.outWaiter = null;
+    this.tunnel = null;
+    this.tunnelOut = false;
+    this.tunnelIn = false;
     this.aborter = null;
   }
 
@@ -119,7 +138,12 @@ export class H2Stream {
     if (a != null) {
       a.abort();
     }
+    const t = this.tunnel;
+    if (t != null) {
+      t.abort();
+    }
     this.wake();
+    this.wakeOut();
   }
 
   /// A DATA payload of the request.
@@ -187,6 +211,22 @@ export class H2Stream {
     const w = this.waiter;
     if (w != null) {
       this.waiter = null;
+      w();
+    }
+  }
+
+  /// A promise that settles at the next `wakeOut()`: a writer waiting for window.
+  waitForWindow(): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.outWaiter = () => resolve();
+    return promise;
+  }
+
+  /// Wakes the writer waiting for window, if one is.
+  wakeOut() {
+    const w = this.outWaiter;
+    if (w != null) {
+      this.outWaiter = null;
       w();
     }
   }

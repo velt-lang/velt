@@ -356,13 +356,19 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
  * HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, `Sec-WebSocket-Version: 13`, a key of 16
  * base64-encoded bytes) is answered here instead (RFC 6455 §4.2.2): 426 with
  * `Sec-WebSocket-Version: 13` for another version or no upgrade, else 400; it then returns null.
- * Throws `IoError` "EINVAL" if a response was started.
+ * Over HTTP/2 the handshake is an extended CONNECT (RFC 8441, `:protocol: websocket`), answered
+ * 200, and the socket runs on that one stream. Throws `IoError` "EINVAL" if a response was
+ * started.
  */
 export function acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null {
   if (res.sent()) {
     throw new IoError("EINVAL", "a response was already started");
   }
   const version = req.header("sec-websocket-version");
+  if (req.isMethod("CONNECT") && req.isUpgrade("websocket") && version == "13") {
+    // Over HTTP/2 (RFC 8441): an extended CONNECT, answered 200 without a key.
+    return connection(res.upgrade("websocket"), false, []);
+  }
   if (!req.isUpgrade("websocket") || (version != null && version != "13")) {
     res.status(426);
     res.header("Upgrade", "websocket");

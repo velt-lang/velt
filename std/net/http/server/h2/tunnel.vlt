@@ -1,0 +1,98 @@
+// velt/net/http (internal): an extended CONNECT tunnel (RFC 8441): a stream whose DATA frames
+// carry another protocol (a WebSocket). The handler gets one end of a `streamPair` (velt/net), so
+// the protocol's code works on a stream as over HTTP/1.1; two promises on the connection's task
+// move bytes between the other end and the stream's frames, within the flow-control windows both
+// ways: the client's window is given back as the protocol takes what it sent, and what the
+// protocol writes waits for the client's window.
+
+import { streamPair, TcpStream } from "velt/net";
+import { H2Connection } from "velt/net/http/server/h2/connection";
+import { endBody, sendBytes } from "velt/net/http/server/h2/outbound";
+import { H2Stream } from "velt/net/http/server/h2/stream";
+import { consumed, streamError } from "velt/net/http/server/h2/streams";
+import { CANCEL } from "velt/net/http/server/h2/frame";
+
+/// How much of what the protocol writes may wait for window before it is read no further.
+const QUEUED: i64 = 65536;
+
+/// Opens the tunnel of `s` (its 200 sent already): the handler's end of the pair.
+export function openTunnel(c: H2Connection, s: H2Stream): TcpStream {
+  const pair = streamPair();
+  const mine = pair[0];
+  s.tunnel = mine;
+  const toClient = outward(c, s, mine);
+  const fromClient = inward(c, s, mine);
+  return pair[1];
+}
+
+/// What the protocol writes, as DATA frames; its end of stream as END_STREAM.
+async function outward(c: H2Connection, s: H2Stream, mine: TcpStream) {
+  const buf: u8[] = Buffer.alloc(16384);
+  try {
+    while (!s.reset) {
+      const n = mine.tryRead(buf);
+      if (n == null) {
+        endBody(c, s);
+        c.written();
+        break;
+      }
+      if (n == 0) {
+        await mine.readable();
+        continue;
+      }
+      sendBytes(c, s, buf, 0, n as i64, false);
+      if (!c.inBatch && c.flush() > QUEUED) {
+        await c.conn.drained(QUEUED as number);
+      }
+      while (s.pending > QUEUED && !s.reset) {
+        await s.waitForWindow();
+      }
+    }
+  } catch (e) {
+    // The protocol's end was closed or aborted: the stream is cancelled.
+    if (!s.reset && !s.localEnded) {
+      streamError(c, s.id, CANCEL);
+      c.written();
+    }
+  }
+  closeIfDone(c, s, mine, true);
+}
+
+/// The client's DATA, written to the protocol's end; END_STREAM as its end of stream.
+async function inward(c: H2Connection, s: H2Stream, mine: TcpStream) {
+  try {
+    while (true) {
+      const piece = s.take();
+      if (piece != null) {
+        await mine.writeBytes(piece);
+        consumed(c, s, piece.length as i64);
+        c.written();
+        continue;
+      }
+      if (s.reset) {
+        break;
+      }
+      if (s.remoteEnded) {
+        mine.shutdown();
+        break;
+      }
+      await s.waitForWake();
+    }
+  } catch (e) {
+    // The protocol's end went away; `outward` sees it too.
+  }
+  closeIfDone(c, s, mine, false);
+}
+
+/// Closes the server's end once both directions are done.
+function closeIfDone(c: H2Connection, s: H2Stream, mine: TcpStream, out: bool) {
+  if (out) {
+    s.tunnelOut = true;
+  } else {
+    s.tunnelIn = true;
+  }
+  if (s.tunnelOut && s.tunnelIn) {
+    s.tunnel = null;
+    mine.close();
+  }
+}

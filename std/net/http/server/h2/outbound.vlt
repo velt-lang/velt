@@ -164,7 +164,7 @@ export function pumpStream(c: H2Connection, s: H2Stream) {
     }
   }
   // A writer waiting for the buffer to drain.
-  s.wake();
+  s.wakeOut();
 }
 
 /// After the connection window grew: the waiting streams send, in order, while it lasts.

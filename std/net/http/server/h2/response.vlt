@@ -12,6 +12,8 @@ import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { H2Connection } from "velt/net/http/server/h2/connection";
 import { endBody, sendBytes, sendText, writeHead } from "velt/net/http/server/h2/outbound";
 import { H2Stream } from "velt/net/http/server/h2/stream";
+import { openTunnel } from "velt/net/http/server/h2/tunnel";
+import { TcpStream } from "velt/net";
 
 /// How many bytes of a streamed body may wait to be sent before `piece` waits.
 const QUEUED: i64 = 65536;
@@ -201,9 +203,29 @@ export class H2Response {
     return this.s.signal();
   }
 
-  /** Throws: an HTTP/2 connection carries many streams and is never handed over. */
-  upgrade(protocol: string, headers: [string, string][] = []): never {
-    throw new Error("an HTTP/2 stream cannot be upgraded");
+  /**
+   * Accepts an extended CONNECT for `protocol` (RFC 8441, `req.isUpgrade(protocol)`): answers
+   * 200 with `headers` and returns a stream carrying the protocol over this HTTP/2 stream (the
+   * connection itself is never handed over). Throws if the request is not one, or a response was
+   * started.
+   */
+  upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
+    const s = this.s;
+    const i = s.info.protocol;
+    if (i < 0 || s.fields.value(i).toLowerCase() != protocol.toLowerCase()) {
+      throw new Error(`not an extended CONNECT request for ${protocol}`);
+    }
+    for (const h of headers) {
+      this.header(h[0], h[1]);
+    }
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    this.done = true;
+    writeHead(this.c, s, 200, "", -1, this.fields, false);
+    const stream = openTunnel(this.c, s);
+    this.c.written();
+    return stream;
   }
 
   /** Never (internal). */
@@ -268,7 +290,7 @@ export class H2Response {
       }
     }
     while (s.pending > QUEUED && !s.reset) {
-      await s.waitForWake();
+      await s.waitForWindow();
     }
     if (s.reset) {
       throw new IoError("ECONNRESET", "the client reset the stream");

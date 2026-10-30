@@ -197,7 +197,7 @@ export class HttpRequest {
   isUpgrade(protocol: string): bool {
     const h2 = this.h2;
     if (h2 != null) {
-      return false;
+      return h2.isUpgrade(protocol);
     }
     if (!this.head.http11) {
       return false;

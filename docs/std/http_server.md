@@ -158,7 +158,8 @@ HTTP/1.0 request's expectation is ignored.
   after the body, always. Name them in a `Trailer` header when the client needs to know in
   advance (gRPC's `grpc-status` is sent this way). The web `Response` has no trailers (the Fetch
   standard dropped them), so the web-standard `serve` cannot send any.
-- `upgrade(protocol, headers: [string, string][] = []): TcpStream`: answers `101 Switching
+- `upgrade(protocol, headers: [string, string][] = []): TcpStream` (over HTTP/2: see
+  [HTTP/2](#http2)): answers `101 Switching
   Protocols` (after the responses to earlier requests) and hands the connection over: the
   stream is the caller's, the server no longer reads, writes or closes it. The client waits for
   the 101 before it speaks the new protocol; what it sent already is `req.takeUnread()`. Names and
@@ -220,8 +221,13 @@ write. What differs from HTTP/1.1, for a handler:
   wait for an earlier response.
 - Header names arrive in lowercase; `header(name)` matches any case, and `host` is the request's
   `:authority` when no `host` header came. `headers()` leaves out the pseudo-headers.
-- `keepAlive` is always true; `isUpgrade` is false and `upgrade()` throws: an HTTP/2 connection
-  carries many streams and is never handed over (a WebSocket needs HTTP/1.1).
+- `keepAlive` is always true. The connection is never handed over: `isUpgrade(protocol)` is true
+  for an extended CONNECT (RFC 8441: `:method CONNECT`, `:protocol websocket`; the server
+  announces SETTINGS_ENABLE_CONNECT_PROTOCOL), and `upgrade(protocol)` answers it 200 and
+  returns a `TcpStream` that carries the protocol over that one stream (one end of a
+  `streamPair`, velt/net), within the stream's flow control both ways. `acceptWebSocket` of
+  [velt/net/websocket](websocket.md) does this by itself, so a WebSocket server works over
+  HTTP/1.1 and HTTP/2 alike.
 - Bodies have flow control: a request body arrives as fast as the handler reads it (up to
   256 KiB a stream may send ahead), and a response body is sent as fast as the client's
   windows allow; `HttpStream.write` waits while more than 64 KiB are still to be sent.

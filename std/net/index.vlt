@@ -20,6 +20,8 @@ import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
 
+export { streamPair } from "velt/net/pair";
+
 declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_listener_port(l: u64): u32;
 declare function velt_rt_tcp_listener_close(l: u64);
@@ -187,10 +189,7 @@ export struct TcpStream {
     return unwrapIo(await velt_rt_tcp_readable_within(this.handle, ms as i64, h)) == 1;
   }
 
-  /**
-   * The protocol the TLS handshake chose with ALPN (`"h2"`), or null: none agreed, or not TLS
-   * (Node's `socket.alpnProtocol`). Waits for the handshake; throws `IoError` if it fails.
-   */
+  /** The protocol TLS's ALPN chose (`"h2"`), or null (none, not TLS); waits for the handshake. */
   async alpnProtocol(): Promise<string | null> {
     const p = unwrapIo(await velt_rt_tcp_alpn(this.handle));
     return p == "" ? null : p;

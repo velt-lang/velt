@@ -41,7 +41,7 @@ describe("HTTP/2 connection rules", () => {
     c.frame(6, 0, 0, bytes("12345678"));
     await c.flush();
     expect(await c.until((f) => f.type == 6, true)).toBe(
-      "SETTINGS 4\nWINDOW_UPDATE 0 983041\nSETTINGS ack\nPING ack",
+      "SETTINGS 5\nWINDOW_UPDATE 0 983041\nSETTINGS ack\nPING ack",
     );
     c.close();
   });

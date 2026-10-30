@@ -70,7 +70,8 @@ handler waiting for body or window) and waits for the handlers.
 ### Output: one write per read
 
 Frames go into one `FrameWriter` buffer per connection. After the frames of one read are
-processed (and the handlers that answered at once have answered), the buffer is queued with
+processed (and the handlers that answered at once have answered; handlers start once no more
+frames have arrived, up to four reads), the buffer is queued with
 `writeBytesLater`: the responses, SETTINGS and PING acknowledgements and window updates of a
 read leave in one system call, as the HTTP/1.1 server's pipelined responses do. A handler that
 answers later queues its frames the same way; `writeBytesLater` joins everything queued before
@@ -174,8 +175,17 @@ arrives.
   §6.5.1); a `Content-Length` body drops them. The web `Response` has no trailer API (the Fetch
   standard removed it), so nothing maps there.
 - Server push: not offered (SETTINGS_ENABLE_PUSH 0 is what we send; browsers removed it).
-- Extended CONNECT (RFC 8441, WebSockets over HTTP/2): not offered; `upgrade()` throws over
-  HTTP/2, so a WebSocket uses HTTP/1.1.
+- Extended CONNECT (RFC 8441, WebSockets over HTTP/2): we send SETTINGS_ENABLE_CONNECT_PROTOCOL
+  1 and accept `:protocol` on a CONNECT with `:scheme`, `:path` and `:authority`
+  (`:protocol` anywhere else is malformed). `req.isUpgrade("websocket")` is true for it, and
+  `res.upgrade` answers 200 and returns one end of a `streamPair` (velt/net, an in-memory
+  stream pair added for this); two promises on the connection's task move bytes between the
+  other end and the stream's DATA frames (`h2/tunnel.vlt`), the client's window given back as
+  the protocol reads, the protocol's writes waiting for the client's window (64 KiB at most).
+  An end of stream either way is END_STREAM / `shutdown`, a reset aborts the pair. So
+  velt/net/websocket's code, written on streams, runs unchanged: `acceptWebSocket` answers an
+  extended CONNECT with 200 and no key (RFC 8441 §5). The web-standard `upgradeWebSocket` gets
+  the same once its upgrade path takes this branch.
 
 ### `Upgrade: h2c`
 
@@ -262,10 +272,11 @@ h2spec -t -k -h localhost -p 8443 -o 3        # TLS, ALPN
 Result: 145 of 145 over TLS, and against `serveH2` alone on plain TCP. Through `serveHttp` on
 plain TCP, 3.5 #2 ("invalid connection preface") gets HTTP/1.1's 400 instead of GOAWAY: bytes
 that do not start with the preface are an HTTP/1.1 request to a server that speaks both, and
-the 400 is the right answer to them. Two tests (8.1.2.6 #1 and #2, a `content-length` that does
-not match the DATA) depend on timing: when the DATA frames arrive in a later read than the
-request head, the handler has already answered, so the client sees the response before the reset
-it expects (Go's server behaves the same); they pass when the frames come in one read.
+the 400 is the right answer to them. Handlers start only after the frames the client sent right
+behind a request have been read (up to four reads that find data at once), so an error frame
+behind a request (a zero WINDOW_UPDATE, DATA that does not match `content-length`) resets the
+stream before the handler answers; without that, h2spec's 6.9 #2, 6.9.1 #3 and 8.1.2.6 #1–2
+failed when their frames came in separate reads.
 
 ## Benchmarks
 
@@ -286,5 +297,4 @@ carry that layer's cost over HTTP/2 too.
 
 ## Not done (follow-ups)
 
-- Extended CONNECT (RFC 8441) for WebSockets over HTTP/2.
 - An HTTP/2 client for `fetch`.

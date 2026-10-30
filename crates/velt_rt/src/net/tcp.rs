@@ -298,6 +298,18 @@ pub unsafe extern "C" fn velt_rt_tcp_read_string(s: StreamHandle, max: u64) -> *
     })
 }
 
+/// `streamPair()`: two connected in-memory streams (what one writes, the other reads; a
+/// `shutdown` is the other's end of stream), as two stream handles. For a protocol carried over
+/// another one (a WebSocket over an HTTP/2 stream), where the inner protocol's code expects a
+/// stream.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_pair(out: *mut crate::array::VeltArray<u64>) {
+    let (a, b) = tokio::io::duplex(64 << 10);
+    let a = STREAMS.insert(StreamObj::ready(Ready::other(Box::new(a), None)));
+    let b = STREAMS.insert(StreamObj::ready(Ready::other(Box::new(b), None)));
+    out.write(crate::array::VeltArray::from_vec(vec![a.bits(), b.bits()]));
+}
+
 /// `alpnProtocol()` → `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake
 /// done): the protocol ALPN chose, "" for none or a plain TCP stream.
 #[no_mangle]

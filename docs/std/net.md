@@ -66,6 +66,11 @@
   there: the handshake runs with the stream's first read or write, which throws if it fails
   or takes more than 10 s.
 
+- `streamPair(): [TcpStream, TcpStream]`: two connected in-memory streams, as Node's
+  `duplexPair()`: what one writes the other reads, one's `shutdown()` is the other's end of
+  stream; close both. For a protocol carried inside another one (the HTTP/2 server runs a
+  WebSocket over an HTTP/2 stream this way).
+
 A TLS stream is a `TcpStream` like any other: one task can read while another writes, and
 `shutdown()` sends TLS's close_notify. `alpn` lists the protocols to offer, most preferred
 first, and `await stream.alpnProtocol()` is the one the handshake chose (`"h2"`,

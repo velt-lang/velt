@@ -111,9 +111,11 @@ export class H2Request {
     return out;
   }
 
-  /// Always false: HTTP/2 has no `Upgrade` (RFC 9113 §8.6).
+  /// Whether this is an extended CONNECT (RFC 8441) for `protocol` (`"websocket"`): HTTP/2's
+  /// way to carry another protocol on a stream, as `Upgrade` does on an HTTP/1.1 connection.
   isUpgrade(protocol: string): bool {
-    return false;
+    const i = this.s.info.protocol;
+    return i >= 0 && this.s.fields.value(i).toLowerCase() == protocol.toLowerCase();
   }
 
   /**

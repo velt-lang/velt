@@ -373,7 +373,7 @@ export class HttpResponse {
   upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
     const h2 = this.h2;
     if (h2 != null) {
-      h2.upgrade(protocol, headers);
+      return h2.upgrade(protocol, headers);
     }
     if (this.done) {
       throw new Error("the response was already sent");

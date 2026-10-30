@@ -1,0 +1,17 @@
+// velt/net (internal): `streamPair`, two connected in-memory streams.
+
+import { TcpStream } from "velt/net";
+
+declare function velt_rt_tcp_pair(): u64[];
+
+/**
+ * Two connected in-memory streams, as Node's `duplexPair()` (or a `socketpair`): what one
+ * writes, the other reads, and one's `shutdown()` is the other's end of stream. Each is a
+ * `TcpStream` like any other (close both). For a protocol carried inside another one: the HTTP/2
+ * server gives a WebSocket over an HTTP/2 stream one end, and moves bytes between the other end
+ * and the stream's frames.
+ */
+export function streamPair(): [TcpStream, TcpStream] {
+  const h = velt_rt_tcp_pair();
+  return [TcpStream.ofHandle(h[0]), TcpStream.ofHandle(h[1])];
+}

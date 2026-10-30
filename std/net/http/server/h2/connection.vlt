@@ -24,6 +24,7 @@ import {
   SETTINGS_MAX_CONCURRENT_STREAMS,
   SETTINGS_MAX_FRAME_SIZE,
   SETTINGS_MAX_HEADER_LIST_SIZE,
+  SETTINGS_ENABLE_CONNECT_PROTOCOL,
   SETTINGS_ENABLE_PUSH,
   isPreface,
   mayBePreface,
@@ -39,6 +40,7 @@ import { CLOSED, H2Stream } from "velt/net/http/server/h2/stream";
 import { frames } from "velt/net/http/server/h2/inbound";
 import { expire, startHandlers } from "velt/net/http/server/h2/streams";
 import { linger } from "velt/net/http/server/h2/linger";
+import { waitForInput } from "velt/net/http/server/h2/wait";
 
 /// Queued output beyond which the connection reads no more frames until the peer has read most
 /// of it: a peer that sends PINGs or requests but does not read the answers gets no more.
@@ -148,6 +150,8 @@ export class H2Connection {
       o.maxHeaderListSize,
       SETTINGS_ENABLE_PUSH,
       0,
+      SETTINGS_ENABLE_CONNECT_PROTOCOL,
+      1,
     ]);
     if (o.connectionWindow > DEFAULT_WINDOW) {
       this.out.windowUpdate(0, o.connectionWindow - DEFAULT_WINDOW);
@@ -156,6 +160,7 @@ export class H2Connection {
     initial.copy(this.rbuf, 0);
     this.rlen = initial.length as i64;
     let preface = false;
+    let deferred = 0;
     try {
       while (!this.done) {
         if (!preface) {
@@ -176,6 +181,14 @@ export class H2Connection {
           this.inBatch = true;
           frames(this);
           if (this.starting.length > 0 && !this.done) {
+            // Frames the client sent right behind the requests are processed first (an error
+            // on a new stream resets it before its handler answers), a few reads at most.
+            if (deferred < 4 && this.readMore()) {
+              deferred++;
+              this.inBatch = false;
+              continue;
+            }
+            deferred = 0;
             startHandlers(this);
           }
           if (this.nextDeadline <= Date.now()) {
@@ -196,7 +209,7 @@ export class H2Connection {
           break;
         }
         if (n == 0) {
-          if (!(await this.waitForInput())) {
+          if (!(await waitForInput(this))) {
             break;
           }
           continue;
@@ -207,47 +220,6 @@ export class H2Connection {
       // The peer went away, or a write failed.
     }
     await this.finish();
-  }
-
-  /// Waits for input: false when the connection should end (idle with no streams, or the server
-  /// stopped and the last stream is done).
-  private async waitForInput(): Promise<bool> {
-    while (true) {
-      if (this.stopped.aborted && !this.goingAway) {
-        this.goaway(NO_ERROR, "");
-        this.flush();
-      }
-      if (this.goingAway && this.inUse == 0) {
-        return false;
-      }
-      let signal = this.stopped;
-      if (this.goingAway || this.stopped.aborted) {
-        const w = new AbortController();
-        this.wakeLoop = w;
-        signal = w.signal;
-      }
-      let idle = this.inUse > 0 ? 3600000 : this.opts.idleTimeout;
-      if (this.inUse > 0 && this.nextDeadline < MAX_TIME) {
-        // Not past the next request body's deadline.
-        const left = (this.nextDeadline - Date.now()) as number;
-        idle = left < 1 ? 1 : left < idle ? left : idle;
-      }
-      const ready = await this.conn.readableWithin(idle, signal);
-      this.wakeLoop = null;
-      if (this.nextDeadline <= Date.now()) {
-        expire(this);
-        this.flush();
-      }
-      if (ready) {
-        return true;
-      }
-      if (!this.stopped.aborted && !this.goingAway && this.inUse == 0) {
-        // Idle: tell the peer, then close.
-        this.goaway(NO_ERROR, "idle");
-        this.flush();
-        return false;
-      }
-    }
   }
 
   /// Ends the connection: every stream is reset (its handler's signal aborted, its waits woken),
@@ -376,6 +348,17 @@ export class H2Connection {
       this.dateSecond = second;
       this.date = new Date(now as number).toUTCString();
     }
+  }
+
+  /// Reads what has arrived already, without waiting: whether there was something.
+  private readMore(): bool {
+    this.room(HEADER_LENGTH + MIN_MAX_FRAME_SIZE);
+    const n = this.conn.tryRead(this.rbuf, this.rlen as number, this.rbuf.length as number);
+    if (n == null || n == 0) {
+      return false;
+    }
+    this.rlen += n as i64;
+    return true;
   }
 
   /// Room in the read buffer for `n` more bytes past `rlen`: what was parsed is dropped first.

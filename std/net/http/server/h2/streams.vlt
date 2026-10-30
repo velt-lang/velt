@@ -129,7 +129,7 @@ export function onData(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
     return;
   }
   if (n > 0) {
-    if (s.running) {
+    if (s.running || s.tunnel != null) {
       s.push(c.rbuf.slice(start, end));
     } else {
       // The handler has returned: nobody reads it.
@@ -342,7 +342,8 @@ async function serve(c: H2Connection, s: H2Stream) {
     // The stream was reset or the connection ended meanwhile.
   }
   s.running = false;
-  if (!s.reset) {
+  // A tunnel's data is the tunnel's (h2/tunnel.vlt), also after the handler returned.
+  if (!s.reset && s.tunnel == null) {
     giveBack(c, s);
     if (!s.remoteEnded && s.localEnded) {
       // The response is complete: the rest of the request is not needed (RFC 9113 §8.1).

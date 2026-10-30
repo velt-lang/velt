@@ -11,6 +11,8 @@ export struct RequestFields {
   scheme: i64;
   authority: i64;
   path: i64;
+  /// `:protocol` of an extended CONNECT (RFC 8441), -1 otherwise.
+  protocol: i64;
   contentLength: i64;
 }
 
@@ -98,6 +100,7 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
   out.scheme = -1;
   out.authority = -1;
   out.path = -1;
+  out.protocol = -1;
   out.contentLength = -1;
   let regular = false;
   for (let i: i64 = 0; i < f.count; i++) {
@@ -118,8 +121,11 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
       } else if (f.nameIs(i, ":path")) {
         slot = out.path;
         out.path = i;
+      } else if (f.nameIs(i, ":protocol")) {
+        slot = out.protocol;
+        out.protocol = i;
       } else {
-        // `:status`, `:protocol` (extended CONNECT is not offered) or unknown.
+        // `:status` or unknown.
         return false;
       }
       if (slot >= 0 || !valueOk(f, i)) {
@@ -142,8 +148,14 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
   if (out.method < 0) {
     return false;
   }
-  if (f.value(out.method) == "CONNECT") {
+  const connect = f.value(out.method) == "CONNECT";
+  if (connect && out.protocol < 0) {
     return out.authority >= 0 && out.scheme < 0 && out.path < 0;
+  }
+  // An extended CONNECT (RFC 8441 §4) has `:scheme`, `:path` and `:authority`; `:protocol` is
+  // only for it.
+  if (out.protocol >= 0 && (!connect || out.authority < 0)) {
+    return false;
   }
   if (out.scheme < 0 || out.path < 0) {
     return false;

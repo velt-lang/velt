@@ -49,6 +49,8 @@ export const SETTINGS_MAX_CONCURRENT_STREAMS: i64 = 3;
 export const SETTINGS_INITIAL_WINDOW_SIZE: i64 = 4;
 export const SETTINGS_MAX_FRAME_SIZE: i64 = 5;
 export const SETTINGS_MAX_HEADER_LIST_SIZE: i64 = 6;
+/// RFC 8441: extended CONNECT (WebSockets over HTTP/2).
+export const SETTINGS_ENABLE_CONNECT_PROTOCOL: i64 = 8;
 
 // Error codes (RFC 9113 §7).
 export const NO_ERROR: i64 = 0;
