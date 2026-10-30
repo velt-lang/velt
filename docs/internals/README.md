@@ -206,6 +206,9 @@ Decisions and their rationale, including what is still planned:
 - [HTTP/2](design/http2.md): the HTTP/2 server written in Velt behind `serveHttp`: frames,
   HPACK, streams and flow control on one task per connection, ALPN and h2c, limits against
   rapid reset and its relatives, benchmarks against hyper.
+- [Source generators](design/source-generators.md): generic functions whose bodies a library's
+  generator, written in Velt, produces per type at compile time from a read-only type model;
+  std's JSON, equality, clone and inspect move onto it (proposed).
 - [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
   non-generic functions that programs link, with a VIR fingerprint check per function
   (proposed, issue #1728).
